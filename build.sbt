@@ -15,16 +15,29 @@ scalaVersion := "2.11.12"
 crossScalaVersions := Seq("2.12.8", "2.11.12")
 
 libraryDependencies ++= Seq(
-  "org.apache.spark" %% "spark-hive" % "2.4.0",
+  // Adding test classifier seems to break transitive resolution of the core dependencies
+  "org.apache.spark" %% "spark-hive" % "2.4.1",
+  "org.apache.spark" %% "spark-sql" % "2.4.1",
+  "org.apache.spark" %% "spark-core" % "2.4.1",
+  "org.apache.spark" %% "spark-catalyst" % "2.4.1",
+
+  // Test deps
   "org.scalatest" %% "scalatest" % "3.0.5" % "test",
-  "org.apache.spark" %% "spark-sql" % "2.4.0" % "test" classifier "tests",
-  "org.apache.spark" %% "spark-catalyst" % "2.4.0" % "test" classifier "tests",
-  "org.apache.spark" %% "spark-core" % "2.4.0" % "test" classifier "tests"
+  "org.apache.spark" %% "spark-catalyst" % "2.4.1" % "test" classifier "tests",
+  "org.apache.spark" %% "spark-core" % "2.4.1" % "test" classifier "tests",
+  "org.apache.spark" %% "spark-sql" % "2.4.1" % "test" classifier "tests"
 )
 
-// Display full-length stacktraces from ScalaTest:
 testOptions in Test += Tests.Argument("-oF")
 
-scalacOptions ++= Seq("-target:jvm-1.8")
+javaOptions += "-Xmx3g"
 
-javacOptions ++= Seq("-source", "1.8", "-target", "1.8")
+fork in Test := true
+
+// Configurations to speed up tests and reduce memory footprint
+javaOptions in Test ++= Seq(
+  "-Dspark.ui.enabled=false",
+  "-Dspark.ui.showConsoleProgress=false",
+  "-Dspark.databricks.delta.snapshotPartitions=2",
+  "-Dspark.sql.shuffle.partitions=5"
+)
