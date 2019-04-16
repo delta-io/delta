@@ -320,6 +320,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
         deltaFile(deltaLog.logPath, attemptVersion),
         actions.map(_.json).toIterator)
       val commitTime = System.nanoTime()
+      val snapshot = deltaLog.update()
+      if (snapshot.version < attemptVersion) {
+        throw new IllegalStateException(
+          s"The committed version is $attemptVersion " +
+            s"but the current version is ${snapshot.version}.")
+      }
 
       // Post stats
       var numAbsolutePaths = 0

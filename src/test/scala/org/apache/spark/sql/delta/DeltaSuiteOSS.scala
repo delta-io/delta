@@ -47,7 +47,7 @@ class DeltaSuiteOSS extends QueryTest with SharedSQLContext {
     checkAnswer(data.toDF(), Row(1) :: Row(2) :: Row(3) :: Row(4) :: Row(5) :: Row(6) :: Nil)
   }
 
-  ignore("partitioned append - nulls") {
+  test("partitioned append - nulls") {
     val tempDir = Utils.createTempDir()
     Seq(Some(1), None).toDF()
       .withColumn("is_odd", $"value" % 2 === 1)
