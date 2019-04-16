@@ -30,6 +30,11 @@ libraryDependencies ++= Seq(
 
 testOptions in Test += Tests.Argument("-oF")
 
+// Don't execute in parallel since we can't have multiple Sparks in the same JVM
+parallelExecution in Test := false
+
+scalacOptions ++= Seq("-target:jvm-1.8")
+
 javaOptions += "-Xmx3g"
 
 fork in Test := true

@@ -202,7 +202,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
   /**
    * Returns the latest version that has committed for the idempotent transaction with given `id`.
    */
-  def txnVersion(id: String): Long = snapshot.transactions(id)
+  def txnVersion(id: String): Long = snapshot.transactions.getOrElse(id, -1L)
 
   /**
    * Modifies the state of the log by adding a new commit that is based on a read at

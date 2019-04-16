@@ -16,23 +16,13 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils}
-
 import org.apache.spark.sql._
 import org.apache.spark.sql.sources.DataSourceRegister
 import org.apache.spark.sql.test.SharedSQLContext
 import org.apache.spark.util.{ThreadUtils, Utils}
 
-class DeltaSuiteOSS extends QueryTest with SharedSQLContext {
+class DeltaSuiteOSS extends QueryTest with SharedSQLContext with PartitionByHackImplicits {
   import testImplicits._
-
-  implicit class BetterWriter[A](dfw: DataFrameWriter[A]) {
-    def partitionByHack(columns: String*): DataFrameWriter[A] = {
-      dfw.option(
-        DeltaSourceUtils.PARTITIONING_COLUMNS_KEY,
-        DeltaDataSource.encodePartitioningColumns(columns))
-    }
-  }
 
   test("append then read") {
     val tempDir = Utils.createTempDir()

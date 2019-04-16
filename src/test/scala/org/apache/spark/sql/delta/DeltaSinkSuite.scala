@@ -22,7 +22,7 @@ import java.util.Locale
 
 import org.scalatest.time.SpanSugar._
 
-import org.apache.spark.sql.{AnalysisException, DataFrame}
+import org.apache.spark.sql._
 import org.apache.spark.sql.execution.DataSourceScanExec
 import org.apache.spark.sql.execution.datasources.{FilePartition, FileScanRDD, HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.streaming.MemoryStream
@@ -50,14 +50,14 @@ class DeltaSinkSuite extends StreamTest {
         val df = inputData.toDF()
         val query = df.writeStream
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
-          .format("tahoe")
+          .format("delta")
           .start(outputDir.getCanonicalPath)
         val log = DeltaLog.forTable(spark, outputDir.getCanonicalPath)
         try {
           inputData.addData(1)
           query.processAllAvailable()
 
-          val outputDf = spark.read.format("tahoe").load(outputDir.getCanonicalPath)
+          val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
           checkDatasetUnorderly(outputDf.as[Int], 1)
           assert(log.update().transactions.head == (query.id.toString -> 0L))
 
@@ -89,14 +89,14 @@ class DeltaSinkSuite extends StreamTest {
             .writeStream
             .outputMode("complete")
             .option("checkpointLocation", checkpointDir.getCanonicalPath)
-            .format("tahoe")
+            .format("delta")
             .start(outputDir.getCanonicalPath)
         val log = DeltaLog.forTable(spark, outputDir.getCanonicalPath)
         try {
           inputData.addData(1)
           query.processAllAvailable()
 
-          val outputDf = spark.read.format("tahoe").load(outputDir.getCanonicalPath)
+          val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
           checkDatasetUnorderly(outputDf.as[Long], 1L)
           assert(log.update().transactions.head == (query.id.toString -> 0L))
 
@@ -127,7 +127,7 @@ class DeltaSinkSuite extends StreamTest {
           df.writeStream
             .option("checkpointLocation", checkpointDir.getCanonicalPath)
             .outputMode("update")
-            .format("tahoe")
+            .format("delta")
             .start(outputDir.getCanonicalPath)
         }
         Seq("update", "not support").foreach { msg =>
@@ -145,7 +145,7 @@ class DeltaSinkSuite extends StreamTest {
         val e = intercept[IllegalArgumentException] {
           df.writeStream
             .option("checkpointLocation", checkpointDir.getCanonicalPath)
-            .format("tahoe")
+            .format("delta")
             .start()
         }
         Seq("path", " not specified").foreach { msg =>
@@ -164,7 +164,7 @@ class DeltaSinkSuite extends StreamTest {
         .writeStream
         .partitionBy("value")
         .option("checkpointLocation", checkpointDir.getCanonicalPath)
-        .format("tahoe")
+        .format("delta")
         .start(outputDir.getCanonicalPath)
 
       try {
@@ -174,7 +174,7 @@ class DeltaSinkSuite extends StreamTest {
         failAfter(streamingTimeout) {
           query.processAllAvailable()
         }
-        val outputDf = spark.read.format("tahoe").load(outputDir.getCanonicalPath)
+        val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
         checkDatasetUnorderly(outputDf.as[(String, Int)], ("hello world", "hello world".length))
       } finally {
         query.stop()
@@ -192,7 +192,7 @@ class DeltaSinkSuite extends StreamTest {
           .writeStream
           .partitionBy("id")
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
-          .format("tahoe")
+          .format("delta")
           .start(outputDir.getCanonicalPath)
       try {
 
@@ -201,7 +201,7 @@ class DeltaSinkSuite extends StreamTest {
           query.processAllAvailable()
         }
 
-        val outputDf = spark.read.format("tahoe").load(outputDir.getCanonicalPath)
+        val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
         val expectedSchema = new StructType()
           .add(StructField("id", IntegerType))
           .add(StructField("value", IntegerType))
@@ -274,7 +274,7 @@ class DeltaSinkSuite extends StreamTest {
       val query =
         outputDf.writeStream
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
-          .format("tahoe")
+          .format("delta")
           .start(outputDir.getCanonicalPath)
       try {
         def addTimestamp(timestampInSecs: Int*): Unit = {
@@ -285,7 +285,7 @@ class DeltaSinkSuite extends StreamTest {
         }
 
         def check(expectedResult: ((Long, Long), Long)*): Unit = {
-          val outputDf = spark.read.format("tahoe").load(outputDir.getCanonicalPath)
+          val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
             .selectExpr(
               "CAST(start as BIGINT) AS start",
               "CAST(end as BIGINT) AS end",
@@ -319,7 +319,7 @@ class DeltaSinkSuite extends StreamTest {
           .writeStream
           .partitionBy("id")
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
-          .format("tahoe")
+          .format("delta")
           .start(outputDir.getCanonicalPath)
       try {
 
@@ -332,7 +332,7 @@ class DeltaSinkSuite extends StreamTest {
           spark.range(100)
             .select('id.cast("integer"), 'id % 4 as 'by4, 'id.cast("integer") * 1000 as 'value)
             .write
-            .format("tahoe")
+            .format("delta")
             .partitionBy("id", "by4")
             .mode("append")
             .save(outputDir.getCanonicalPath)
@@ -355,7 +355,7 @@ class DeltaSinkSuite extends StreamTest {
           .writeStream
           .partitionBy("id")
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
-          .format("tahoe")
+          .format("delta")
           .start(outputDir.getCanonicalPath)
       try {
 
@@ -368,7 +368,7 @@ class DeltaSinkSuite extends StreamTest {
           spark.range(100).select('id, ('id * 3).cast("string") as 'value)
             .write
             .partitionBy("id")
-            .format("tahoe")
+            .format("delta")
             .mode("append")
             .save(outputDir.getCanonicalPath)
         }
@@ -388,10 +388,10 @@ class DeltaSinkSuite extends StreamTest {
           .toDF("id", "value")
           .writeStream
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
-          .format("tahoe")
+          .format("delta")
       spark.range(100).select('id, ('id * 3).cast("string") as 'value)
         .write
-        .format("tahoe")
+        .format("delta")
         .mode("append")
         .save(outputDir.getCanonicalPath)
 
@@ -415,7 +415,7 @@ class DeltaSinkSuite extends StreamTest {
           .writeStream
           .partitionBy("id", "value")
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
-          .format("tahoe")
+          .format("delta")
           .start(outputDir.getCanonicalPath)
       val e = intercept[StreamingQueryException] {
         inputData.addData(1)
