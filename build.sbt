@@ -28,6 +28,7 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-sql" % "2.4.1" % "test" classifier "tests"
 )
 
+
 testOptions in Test += Tests.Argument("-oF")
 
 // Don't execute in parallel since we can't have multiple Sparks in the same JVM
