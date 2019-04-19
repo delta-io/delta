@@ -30,10 +30,8 @@ import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
 import org.apache.hadoop.mapreduce.Job
 
-import org.apache.spark.TaskContext
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
-import org.apache.spark.sql.functions.{coalesce, col}
 import org.apache.spark.util.SerializableConfiguration
 
 /**
@@ -209,7 +207,7 @@ trait Checkpoints extends DeltaLogging {
 
 object Checkpoints {
 
-  import org.apache.spark.sql.delta.storage.HDFSLogStore
+  import org.apache.spark.sql.delta.storage.HDFSLogStoreImpl
   /**
    * Writes out the contents of a [[Snapshot]] into a checkpoint file that
    * can be used to short-circuit future replays of the log.
@@ -231,7 +229,7 @@ object Checkpoints {
     }
 
     // If HDFSLogStore then use rename, otherwise write directly
-    val useRename = deltaLog.store.isInstanceOf[HDFSLogStore]
+    val useRename = deltaLog.store.isInstanceOf[HDFSLogStoreImpl]
 
     val checkpointSize = spark.sparkContext.longAccumulator("checkpointSize")
     val numOfFiles = spark.sparkContext.longAccumulator("numOfFiles")

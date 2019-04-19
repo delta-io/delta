@@ -11,7 +11,7 @@
 
 Delta Lake Core is .... (copy text from delta docs)
 
-See the [Delta Documentation](https://docs.delta.io) for more details.
+See the [Delta Lake Documentation](https://docs.delta.io) for more details.
 
 # Usage Guide
 
@@ -120,7 +120,7 @@ Current version of Delta Lake depends on SNAPSHOT build of Apache Spark 2.4 (nig
 
 ### Compatibility with storage systems
 
-Delta Lake stores the transaction log of a table in the same storage system as the table. Hence, Delta Lake's ACID guarantees are predicated on the atomicity and durabiility guarantees of the storage system. Specifically, it requires the storage system to provide the following. 
+Delta Lake stores the transaction log of a table in the same storage system as the table. Hence, Delta Lake's ACID guarantees are predicated on the atomicity and durability guarantees of the storage system. Specifically, it requires the storage system to provide the following. 
 
 1. Atomic visibility of files: There must a way for a file to visible in its entirely or not visible at all. 
 2. Consistent listing: Once a file has been written in a directory, all future listings for that directory must return that file.
