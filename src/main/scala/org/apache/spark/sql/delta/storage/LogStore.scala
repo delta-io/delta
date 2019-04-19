@@ -16,16 +16,9 @@
 
 package org.apache.spark.sql.delta.storage
 
-import java.io.{BufferedReader, FileNotFoundException, InputStreamReader}
-import java.nio.charset.StandardCharsets.UTF_8
-import java.nio.file.FileAlreadyExistsException
-import java.util.UUID
-
-import scala.collection.JavaConverters._
-
-import org.apache.commons.io.IOUtils
+import org.apache.spark.sql.delta.DeltaLog
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileStatus, FileSystem, Path, RawLocalFileSystem}
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.internal.Logging
@@ -33,33 +26,67 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.util.Utils
 
 /**
- * Used to read and write individual deltas to/from the distributed storage system.
- * Internally, the correctness of the optimistic concurrency control relies
- * on mutual exclusion for writing a given log delta.
+ * General interface for all critical file system operations required to read and write the
+ * [[DeltaLog]]. The correctness of the [[DeltaLog]] is predicated on the atomicity and
+ * durability guarantees of the implementation of this interface. Specifically,
+ *
+ * 1. Atomic visibility of files: Any file written through this store must
+ *    be made visible atomically. In other words, this should not generate partial files.
+ *
+ * 2. Consistent listing: Once a file has been written in a directory, all future listings for
+ *    that directory must return that file.
  */
 trait LogStore {
 
+  /** Read the given `path` */
   final def read(path: String): Seq[String] = read(new Path(path))
 
+  /** Read the given `path` */
   def read(path: Path): Seq[String]
 
+  /**
+   * Write the given `actions` to the given `path` without overwriting any existing file.
+   * Implementation must throw [[java.nio.file.FileAlreadyExistsException]] exception if the file
+   * already exists. Furthermore, implementation must ensure that the entire file is made
+   * visible atomically, that is, it should not generate partial files.
+   */
   final def write(path: String, actions: Iterator[String]): Unit = write(new Path(path), actions)
 
+  /**
+   * Write the given `actions` to the given `path` with or without overwrite as indicated.
+   * Implementation must throw [[java.nio.file.FileAlreadyExistsException]] exception if the file
+   * already exists and overwrite = false. Furthermore, implementation must ensure that the
+   * entire file is made visible atomically, that is, it should not generate partial files.
+   */
   def write(path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit
 
+  /**
+   * List the paths in the same directory that are lexicographically greater or equal to
+   * (UTF-8 sorting) the given `path`. The result should also be sorted by the file name.
+   */
   final def listFrom(path: String): Iterator[FileStatus] = listFrom(new Path(path))
 
+  /**
+   * List the paths in the same directory that are lexicographically greater or equal to
+   * (UTF-8 sorting) the given `path`. The result should also be sorted by the file name.
+   */
   def listFrom(path: Path): Iterator[FileStatus]
 
+  /** Invalidate any caching that the implementation may be using */
   def invalidateCache(): Unit
 
+  /** Resolve the fully qualified path for the given `path`. */
   def resolvePathOnPhysicalStorage(path: Path): Path = {
-    throw new UnsupportedOperationException(
-      s"Resolving path for generating Hive manifest is not supported with ${this.getClass}")
+    throw new UnsupportedOperationException()
   }
 }
 
 object LogStore extends Logging {
+
+  val DEFAULT_LOGSTORE_CLASS = {
+      classOf[HDFSLogStoreImpl].getName
+  }
+
   def apply(sc: SparkContext): LogStore = {
     apply(sc.getConf, sc.hadoopConfiguration)
   }
@@ -67,7 +94,7 @@ object LogStore extends Logging {
   def apply(sparkConf: SparkConf, hadoopConf: Configuration): LogStore = {
     val logStoreClass = Utils.classForName(sparkConf.get(
       "spark.databricks.tahoe.logStore.class",
-      classOf[HDFSLogStore].getName))
+      DEFAULT_LOGSTORE_CLASS))
     logInfo("LogStore class: " + logStoreClass)
     logStoreClass.getConstructor(classOf[SparkConf], classOf[Configuration])
       .newInstance(sparkConf, hadoopConf).asInstanceOf[LogStore]
@@ -80,116 +107,3 @@ trait LogStoreProvider {
   }
 }
 
-/**
- * This is a LogStore implementation for HDFS or HDFS like file system (such as Azure blob storage).
- * The file system must support file atomic rename. However, overwriting a file is not atomic and
- * the caller must handle partial files.
- */
-class HDFSLogStore(sparkConf: SparkConf, hadoopConf: Configuration) extends LogStore {
-
-  def this(sc: SparkContext) = this(sc.getConf, sc.hadoopConfiguration)
-
-  protected def getHadoopConfiguration: Configuration = {
-    SparkSession.getActiveSession.map(_.sessionState.newHadoopConf()).getOrElse(hadoopConf)
-  }
-
-  override def read(path: Path): Seq[String] = {
-    val fs = path.getFileSystem(getHadoopConfiguration)
-    val stream = fs.open(path)
-    try {
-      val reader = new BufferedReader(new InputStreamReader(stream, UTF_8))
-      IOUtils.readLines(reader).asScala.map(_.trim)
-    } finally {
-      stream.close()
-    }
-  }
-
-  def write(path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit = {
-    val fs = path.getFileSystem(getHadoopConfiguration)
-    if (fs.isInstanceOf[RawLocalFileSystem]) {
-      // We need to add `synchronized` for RawLocalFileSystem as its rename will not throw an
-      // exception when the target file exists. Hence we must make sure `exists + rename` in
-      // `writeInternal` for RawLocalFileSystem is atomic in our tests.
-      synchronized {
-        writeInternal(fs, path, actions, overwrite)
-      }
-    } else {
-      // rename is atomic and also will fail when the target file exists. Not need to add the extra
-      // `synchronized`.
-      writeInternal(fs, path, actions, overwrite)
-    }
-  }
-
-  private def writeInternal(
-      fs: FileSystem,
-      path: Path,
-      actions: Iterator[String],
-      overwrite: Boolean): Unit = {
-    // mimic S3 behavior
-    if (!fs.exists(path.getParent)) {
-      throw new FileNotFoundException(s"No such file or directory: ${path.getParent}")
-    }
-    if (overwrite) {
-      val stream = fs.create(path, true)
-      try {
-        actions.map(_ + "\n").map(_.getBytes("utf-8")).foreach(stream.write)
-      } finally {
-        stream.close()
-      }
-    } else {
-      if (fs.exists(path)) {
-        throw new FileAlreadyExistsException(path.toString)
-      }
-      val tempPath = createTempPath(path)
-      var streamClosed = false // This flag is to avoid double close
-      var renameDone = false // This flag is to save the delete operation in most of cases.
-      val stream = fs.create(tempPath)
-      try {
-        actions.map(_ + "\n").map(_.getBytes("utf-8")).foreach(stream.write)
-        stream.close()
-        streamClosed = true
-        try {
-          if (fs.rename(tempPath, path)) {
-            renameDone = true
-          } else {
-            if (fs.exists(path)) {
-              throw new FileAlreadyExistsException(path.toString)
-            } else {
-              throw new IllegalStateException(s"Cannot rename $tempPath to $path")
-            }
-          }
-        } catch {
-          case e: org.apache.hadoop.fs.FileAlreadyExistsException =>
-            throw new FileAlreadyExistsException(path.toString)
-        }
-      } finally {
-        if (!streamClosed) {
-          stream.close()
-        }
-        if (!renameDone) {
-          fs.delete(tempPath, false)
-        }
-      }
-    }
-  }
-
-  private def createTempPath(path: Path): Path = {
-    new Path(path.getParent, s".${path.getName}.${UUID.randomUUID}.tmp")
-  }
-
-  override def listFrom(path: Path): Iterator[FileStatus] = {
-    val fs = path.getFileSystem(getHadoopConfiguration)
-    // mimic S3 behavior
-    if (!fs.exists(path.getParent)) {
-      throw new FileNotFoundException(s"No such file or directory: ${path.getParent}")
-    }
-    val files = fs.listStatus(path.getParent)
-    files.filter(_.getPath.getName >= path.getName).sortBy(_.getPath.getName).iterator
-  }
-
-  override def invalidateCache(): Unit = {}
-
-  override def resolvePathOnPhysicalStorage(path: Path): Path = {
-    path.getFileSystem(getHadoopConfiguration).makeQualified(path)
-  }
-}

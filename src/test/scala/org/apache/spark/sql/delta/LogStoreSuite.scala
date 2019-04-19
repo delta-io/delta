@@ -19,28 +19,22 @@ package org.apache.spark.sql.delta
 import java.io.{File, IOException}
 import java.net.URI
 
-import org.apache.spark.sql.delta.storage.LogStore
+import org.apache.spark.sql.delta.storage._
 import org.apache.hadoop.fs.{Path, RawLocalFileSystem}
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSQLContext
 import org.apache.spark.util.Utils
 
-class LogStoreSuite extends QueryTest with SharedSQLContext {
+class LogStoreSuite
+  extends QueryTest
+  with LogStoreProvider
+  
+  with SharedSQLContext {
 
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    switchToPrivilegedAclUser()
-  }
-
-  override def afterAll(): Unit = {
-    switchToSuper()
-    super.afterAll()
-  }
-
-  test("simple read / write") {
+  test("read / write") {
     val tempDir = Utils.createTempDir()
-    val store = LogStore(spark.sparkContext)
+    val store = createLogStore(spark)
 
     val deltas = Seq(0, 1).map(i => new File(tempDir, i.toString)).map(_.getCanonicalPath)
     store.write(deltas(0), Iterator("zero", "none"))
@@ -52,7 +46,7 @@ class LogStoreSuite extends QueryTest with SharedSQLContext {
 
   test("detects conflict") {
     val tempDir = Utils.createTempDir()
-    val store = LogStore(spark.sparkContext)
+    val store = createLogStore(spark)
 
     val deltas = Seq(0, 1).map(i => new File(tempDir, i.toString)).map(_.getCanonicalPath)
     store.write(deltas(0), Iterator("zero"))
@@ -65,7 +59,7 @@ class LogStoreSuite extends QueryTest with SharedSQLContext {
 
   test("listFrom") {
     val tempDir = Utils.createTempDir()
-    val store = LogStore(spark.sparkContext)
+    val store = createLogStore(spark)
 
     val deltas =
       Seq(0, 1, 2, 3, 4).map(i => new File(tempDir, i.toString)).map(_.toURI).map(new Path(_))
@@ -86,24 +80,56 @@ class LogStoreSuite extends QueryTest with SharedSQLContext {
     val tempDir = Utils.createTempDir()
     val path = new Path(new URI(s"fake://${tempDir.toURI.getRawPath}/1.json"))
 
+    val (fsImplConf, fsImplClass, errMsg) = {
+        (
+          "fs.AbstractFileSystem.fake.impl",
+          classOf[FakeAbstractFileSystem],
+          "No AbstractFileSystem for scheme: fake"
+        )
+    }
+
     // Make sure it will fail without FakeFileSystem
     val e = intercept[IOException] {
-      spark.sharedState.logStore.listFrom(path)
+      createLogStore(spark).listFrom(path)
     }
-    assert(e.getMessage.contains("No FileSystem for scheme: fake"))
+    assert(e.getMessage.contains(errMsg))
 
-    withSQLConf(s"fs.fake.impl" -> classOf[FakeFileSystem].getName) {
-      spark.sharedState.logStore.listFrom(path)
+    withSQLConf(fsImplConf -> fsImplClass.getName) {
+      createLogStore(spark).listFrom(path)
     }
   }
 }
 
 /** A fake file system to test whether session Hadoop configuration will be picked up. */
 class FakeFileSystem extends RawLocalFileSystem {
-
-  override def getScheme: String = "fake"
-
-  override def getUri: URI = {
-    URI.create(s"fake:///")
-  }
+  override def getScheme: String = FakeFileSystem.scheme
+  override def getUri: URI = FakeFileSystem.uri
 }
+
+object FakeFileSystem {
+  val scheme = "fake"
+  val uri = URI.create(s"$scheme:///")
+}
+
+// BEGIN-END
+/**
+ * A fake AbstractFileSystem to test whether session Hadoop configuration will be picked up.
+ * This is a wrapper around [[FakeFileSystem]].
+ */
+class FakeAbstractFileSystem(uri: URI, conf: org.apache.hadoop.conf.Configuration)
+  extends org.apache.hadoop.fs.DelegateToFileSystem(
+    uri,
+    new FakeFileSystem,
+    conf,
+    FakeFileSystem.scheme,
+    false) {
+
+  // Implementation copied from RawLocalFs
+  import org.apache.hadoop.fs.local.LocalConfigKeys
+  import org.apache.hadoop.fs._
+
+  override def getUriDefaultPort(): Int = -1
+  override def getServerDefaults(): FsServerDefaults = LocalConfigKeys.getServerDefaults()
+  override def isValidName(src: String): Boolean = true
+}
+// END-EDGE
