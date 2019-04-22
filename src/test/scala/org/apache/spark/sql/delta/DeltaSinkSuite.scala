@@ -30,7 +30,7 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.streaming.{StreamingQueryException, StreamTest}
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 
-class DeltaSinkSuite extends StreamTest {
+class DeltaSinkSuite extends StreamTest with DeltaOSSTestUtils {
 
   override val streamingTimeout = 60.seconds
   import testImplicits._
@@ -162,7 +162,7 @@ class DeltaSinkSuite extends StreamTest {
         .map(s => (s, s.length))
         .toDF("value", "len")
         .writeStream
-        .partitionBy("value")
+        .partitionByHack("value")
         .option("checkpointLocation", checkpointDir.getCanonicalPath)
         .format("delta")
         .start(outputDir.getCanonicalPath)
@@ -190,7 +190,7 @@ class DeltaSinkSuite extends StreamTest {
         ds.map(i => (i, i * 1000))
           .toDF("id", "value")
           .writeStream
-          .partitionBy("id")
+          .partitionByHack("id")
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
           .format("delta")
           .start(outputDir.getCanonicalPath)
@@ -317,7 +317,7 @@ class DeltaSinkSuite extends StreamTest {
         ds.map(i => (i, i * 1000))
           .toDF("id", "value")
           .writeStream
-          .partitionBy("id")
+          .partitionByHack("id")
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
           .format("delta")
           .start(outputDir.getCanonicalPath)
@@ -333,7 +333,7 @@ class DeltaSinkSuite extends StreamTest {
             .select('id.cast("integer"), 'id % 4 as 'by4, 'id.cast("integer") * 1000 as 'value)
             .write
             .format("delta")
-            .partitionBy("id", "by4")
+            .partitionByHack("id", "by4")
             .mode("append")
             .save(outputDir.getCanonicalPath)
         }
@@ -353,7 +353,7 @@ class DeltaSinkSuite extends StreamTest {
         ds.map(i => (i, i * 1000))
           .toDF("id", "value")
           .writeStream
-          .partitionBy("id")
+          .partitionByHack("id")
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
           .format("delta")
           .start(outputDir.getCanonicalPath)
@@ -367,7 +367,7 @@ class DeltaSinkSuite extends StreamTest {
         val e = intercept[AnalysisException] {
           spark.range(100).select('id, ('id * 3).cast("string") as 'value)
             .write
-            .partitionBy("id")
+            .partitionByHack("id")
             .format("delta")
             .mode("append")
             .save(outputDir.getCanonicalPath)
@@ -413,7 +413,7 @@ class DeltaSinkSuite extends StreamTest {
         ds.map(i => (i, i * 1000))
           .toDF("id", "value")
           .writeStream
-          .partitionBy("id", "value")
+          .partitionByHack("id", "value")
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
           .format("delta")
           .start(outputDir.getCanonicalPath)
