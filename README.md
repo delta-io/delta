@@ -12,6 +12,10 @@ Delta Lake is a next-generation engine built on top of Apache Spark. Delta Lake 
 
 See the [Delta Lake Documentation](https://docs.delta.io) for more details.
 
+# Build
+
+Status of `master`: [![CircleCI](https://circleci.com/gh/delta-io/delta/tree/master.svg?style=svg)](https://circleci.com/gh/delta-io/delta/tree/master)
+
 # Usage Guide
 
 ## Latest Binaries
@@ -35,7 +39,6 @@ Scala 2.11:
       <artifactId>delta-core_2.11</artifactId>
       <version>0.1.0</version>
     </dependency>
-    
 
 ## Reading and Write to Delta Lake tables from using Apache Spark
 
