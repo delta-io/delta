@@ -1,15 +1,14 @@
-# TODO
-- Complete the intro
-- Add circle ci badge
-- Update Linking section
-- Add time travel code snippets
-- Verify all the links everywhere
-
-
-
 # Delta Lake Core
 
-Delta Lake Core is .... (copy text from delta docs)
+Delta Lake is a next-generation engine built on top of Apache Spark. Delta Lake provides ACID transactions, optimized layouts and indexes, and execution engine improvements for building data pipelines to support big data use cases: batch and streaming ingests, fast interactive queries, and machine learning. Specifically, Delta offers:
+
+- ACID transactions: Serializable isolation levels ensure that readers never see inconsistent data.
+- Efficient upserts: Fine-grained updates easily handle late coming data and changing records.
+- High throughput streaming ingestion: Ingest high volume data directly into query tables.
+- Optimized data layout: Choose a data layout that suits your query patterns; Delta Lake automatically manages the layout to reduce query latency.
+- Schema enforcement and evolution: Automatically handles schema variations to clean bad records during ingestion.
+- Data versioning and time travel: Automatically versions your data for easy rollback and lets you time travel to query earlier versions.
+- Execution engine optimizations: Optimizes operations with nested data types, higher order functions, range and data skew joins.
 
 See the [Delta Lake Documentation](https://docs.delta.io) for more details.
 
@@ -37,111 +36,10 @@ Scala 2.11:
       <version>0.1.0</version>
     </dependency>
     
-### SBT
-
-You can add in the same dependency in an SBT project by adding the corresponding line to your build.sbt file:
-
-Scala 2.12:
-    
-    libraryDependencies += "io.delta" %% "delta-core" % "0.1.0"
-    
-### PySpark
-
-To use Delta Lake with Python, first install or upgrade PySpark to version 2.4.2 or later:
-
-    pip install pyspark
-
-You can then run PySpark with the argument
-
-    --packages io.delta:delta-core_2.12:0.1.0
 
 ## Reading and Write to Delta Lake tables from using Apache Spark
 
-You can write a to Delta Lake tables using standard Apache Spark DataFrame APIs. 
-
-#### Scala API
-
-    import org.apache.spark.sql.SparkSession
-
-    val spark: SparkSession = ...  // create SparkSession
-
-    // Writing to a Delta Lake table from a batch job
-    dataframe.write
-      .format("delta")
-      .mode("overwrite")
-      .save("pathToDeltaTable")
-
-    // Reading from a Delta Lake table in a batch job 
-    val dataframe = spark.read
-      .format("delta")
-      .load("pathToDeltaTable")
-
-    // Writing to a Delta lake table from a streaming job
-    streamingDataFrame.writeStream
-      .format("delta")
-      .start("pathToDeltaTable")
-
-    // Writing to a Delta lake table from a streaming job
-    val streamingDataFrame = spark.readStream
-      .format("delta")
-      .load("pathToDeltaTable")
-
-#### Java API
-
-    import org.apache.spark.sql.SparkSession;
-    import org.apache.spark.sql.Dataset;
-    import org.apache.spark.sql.Row;
-
-    SparkSession spark = ...   // create SparkSession
-
-    // Writing to a Delta Lake table from a batch job
-    dataframe.write()
-      .format("delta")
-      .mode("overwrite")
-      .save("pathToDeltaTable");
-
-    // Reading from a Delta Lake table in a batch job 
-    Dataset<Row> dataframe = spark.read()
-      .format("delta")
-      .load("pathToDeltaTable");
-
-    // Writing to a Delta lake table from a streaming job
-    streamingDataFrame.writeStream()
-      .format("delta")
-      .start("pathToDeltaTable");
-
-    // Writing to a Delta lake table from a streaming job
-    Dataset<Row> streamingDataFrame = spark.readStream()
-      .format("delta")
-      .load("pathToDeltaTable");
-
-
-#### Python API
-
-    from pyspark.sql import SparkSession
-
-    spark = ... # create SparkSession
-
-    # Writing to a Delta Lake table from a batch job
-    dataframe.write \
-      .format("delta") \
-      .mode("overwrite") \
-      .save("pathToDeltaTable")
-
-    # Reading from a Delta Lake table in a batch job 
-    dataframe = spark.read \
-      .format("delta") \
-      .load("pathToDeltaTable") \
-
-    # Writing to a Delta lake table from a streaming job
-    streamingDataFrame.writeStream  \
-      .format("delta") \
-      .start("pathToDeltaTable")
-
-    # Writing to a Delta lake table from a streaming job
-    streamingDataFrame = spark.readStream \
-      .format("delta") \
-      .load("pathToDeltaTable")
+See the [Quick Start Guide](https://docs.delta.io).
 
 ## Compatibility
 

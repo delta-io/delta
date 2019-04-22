@@ -57,8 +57,7 @@ javaOptions in Test ++= Seq(
   "-Dspark.ui.enabled=false",
   "-Dspark.ui.showConsoleProgress=false",
   "-Dspark.databricks.delta.snapshotPartitions=2",
-  "-Dspark.sql.shuffle.partitions=5",
-  "-Xmx2g"
+  "-Dspark.sql.shuffle.partitions=5"
 )
 
 /***************************
