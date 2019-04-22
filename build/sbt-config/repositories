@@ -9,3 +9,4 @@
   sbt-plugin-releases: https://repo.scala-sbt.org/scalasbt/sbt-plugin-releases/, [organization]/[module]/(scala_[scalaVersion]/)(sbt_[sbtVersion]/)[revision]/[type]s/[artifact](-[classifier]).[ext]
   bintray-spark-packages: https://dl.bintray.com/spark-packages/maven/
   typesafe-releases: http://repo.typesafe.com/typesafe/releases/
+  apache-spark-242-rc1: https://repository.apache.org/content/repositories/orgapachespark-1322/

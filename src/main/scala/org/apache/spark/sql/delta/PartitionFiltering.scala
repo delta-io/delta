@@ -30,10 +30,14 @@ trait PartitionFiltering {
       keepStats: Boolean = false): DeltaScan = {
     implicit val enc = SingleAction.addFileEncoder
 
+    val partitionFilters = filters.flatMap { filter =>
+      DeltaTableUtils.splitMetadataAndDataPredicates(filter, metadata.partitionColumns, spark)._1
+    }
+
     val files = DeltaLog.filterFileList(
       metadata.partitionColumns,
       allFiles.toDF(),
-      filters).as[AddFile].collect()
+      partitionFilters).as[AddFile].collect()
 
     DeltaScan(version = version, files, null, null, null)(null, null, null, null)
   }

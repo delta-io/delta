@@ -22,7 +22,7 @@ scalaVersion := "2.11.12"
 
 crossScalaVersions := Seq("2.12.8", "2.11.12")
 
-sparkVersion := "2.4.1"
+sparkVersion := "2.4.2"
 
 libraryDependencies ++= Seq(
   // Adding test classifier seems to break transitive resolution of the core dependencies
@@ -38,6 +38,8 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests"
 )
 
+resolvers += "Apache Spark 2.4.2-rc1 Repo" at
+  "https://repository.apache.org/content/repositories/orgapachespark-1322"
 
 testOptions in Test += Tests.Argument("-oF")
 
