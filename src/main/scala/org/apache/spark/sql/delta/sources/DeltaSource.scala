@@ -151,10 +151,10 @@ case class DeltaSource(
       fromIndex: Long,
       isStartingVersion: Boolean): Iterator[IndexedFile] = {
 
-    var changes = getChanges(fromVersion, fromIndex, isStartingVersion)
+    val changes = getChanges(fromVersion, fromIndex, isStartingVersion)
 
 
-    changes
+    changes.take(maxFilesPerTrigger.getOrElse(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION_DEFAULT))
   }
 
   private def getStartingOffset(): Option[Offset] = {

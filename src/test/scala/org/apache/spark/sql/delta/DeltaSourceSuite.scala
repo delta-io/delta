@@ -41,25 +41,10 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
 
   import testImplicits._
 
-  protected override def sparkConf = {
-    super.sparkConf.set(
-      DatabricksSQLConf.SPARK_SERVICE_CHECK_SERIALIZATION_PASSTHROUGH_UDFS.key, "true")
-  }
-
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    switchToPrivilegedAclUser()
-  }
-
-  override def afterAll(): Unit = {
-    switchToSuper()
-    super.afterAll()
-  }
-
   object AddToReservoir {
     def apply(path: File, data: DataFrame): AssertOnQuery =
       AssertOnQuery { _ =>
-        data.write.format("tahoe").mode("append").save(path.getAbsolutePath)
+        data.write.format("delta").mode("append").save(path.getAbsolutePath)
         true
       }
   }
@@ -79,7 +64,7 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
       new File(inputDir, "_delta_log").mkdir()
       val e = intercept[AnalysisException] {
         spark.readStream
-          .format("tahoe")
+          .format("delta")
           .load(inputDir.getCanonicalPath)
       }
       for (msg <- Seq("Table schema is not set", "CREATE TABLE")) {
@@ -94,7 +79,7 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
       val e = intercept[AnalysisException] {
         spark.readStream
           .schema(StructType.fromDDL("a INT, b STRING"))
-          .format("tahoe")
+          .format("delta")
           .load(inputDir.getCanonicalPath)
       }
       for (msg <- Seq("Delta does not support specifying the schema at read time")) {
@@ -103,7 +88,7 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
     }
   }
 
-  private def withMetadata(
+  protected def withMetadata(
       deltaLog: DeltaLog,
       schema: StructType,
       format: String = "parquet"): Unit = {
@@ -120,79 +105,22 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
       withMetadata(deltaLog, StructType.fromDDL("value STRING"))
 
       val df = spark.readStream
-        .format("tahoe")
+        .format("delta")
         .load(inputDir.getCanonicalPath)
         .filter($"value" contains "keep")
 
       testStream(df)(
         AddToReservoir(inputDir, Seq("keep1", "keep2", "drop3").toDF),
-        ProcessAllAvailable(),
+        AssertOnQuery { q => q.processAllAvailable(); true },
         CheckAnswer("keep1", "keep2"),
         StopStream,
         AddToReservoir(inputDir, Seq("drop4", "keep5", "keep6").toDF),
         StartStream(),
-        ProcessAllAvailable(),
+        AssertOnQuery { q => q.processAllAvailable(); true },
         CheckAnswer("keep1", "keep2", "keep5", "keep6"),
         AddToReservoir(inputDir, Seq("keep7", "drop8", "keep9").toDF),
-        ProcessAllAvailable(),
+        AssertOnQuery { q => q.processAllAvailable(); true },
         CheckAnswer("keep1", "keep2", "keep5", "keep6", "keep7", "keep9")
-      )
-    }
-  }
-
-  test("allow to delete files before staring a streaming query") {
-    withTempDir { inputDir =>
-      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
-      (0 until 5).foreach { i =>
-        val v = Seq(i.toString).toDF
-        v.write.mode("append").format("tahoe").save(deltaLog.dataPath.toString)
-      }
-      sql(s"DELETE FROM tahoe.`$inputDir`")
-      (5 until 10).foreach { i =>
-        val v = Seq(i.toString).toDF
-        v.write.mode("append").format("tahoe").save(deltaLog.dataPath.toString)
-      }
-      deltaLog.checkpoint()
-      assert(deltaLog.lastCheckpoint.nonEmpty, "this test requires a checkpoint")
-
-      val df = spark.readStream
-        .format("tahoe")
-        .load(inputDir.getCanonicalPath)
-
-      testStream(df)(
-        AssertOnQuery { q =>
-          q.processAllAvailable()
-          true
-        },
-        CheckAnswer((5 until 10).map(_.toString): _*)
-      )
-    }
-  }
-
-  test("allow to delete files before staring a streaming query without checkpoint") {
-    withTempDir { inputDir =>
-      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
-      (0 until 5).foreach { i =>
-        val v = Seq(i.toString).toDF
-        v.write.mode("append").format("tahoe").save(deltaLog.dataPath.toString)
-      }
-      sql(s"DELETE FROM tahoe.`$inputDir`")
-      (5 until 7).foreach { i =>
-        val v = Seq(i.toString).toDF
-        v.write.mode("append").format("tahoe").save(deltaLog.dataPath.toString)
-      }
-      assert(deltaLog.lastCheckpoint.isEmpty, "this test requires no checkpoint")
-
-      val df = spark.readStream
-        .format("tahoe")
-        .load(inputDir.getCanonicalPath)
-
-      testStream(df)(
-        AssertOnQuery { q =>
-          q.processAllAvailable()
-          true
-        },
-        CheckAnswer((5 until 7).map(_.toString): _*)
       )
     }
   }
@@ -202,25 +130,25 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
       (0 until 5).foreach { i =>
         val v = Seq(i.toString).toDF("id")
-        v.write.mode("append").format("tahoe").save(deltaLog.dataPath.toString)
+        v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
       withMetadata(deltaLog, StructType.fromDDL("id STRING, value STRING"))
 
       (5 until 10).foreach { i =>
         val v = Seq(i.toString -> i.toString).toDF("id", "value")
-        v.write.mode("append").format("tahoe").save(deltaLog.dataPath.toString)
+        v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
       val df = spark.readStream
-        .format("tahoe")
+        .format("delta")
         .load(inputDir.getCanonicalPath)
 
       val expected = (
           (0 until 5).map(_.toString -> null) ++ (5 until 10).map(_.toString).map(x => x -> x)
         ).toDF("id", "value").collect()
       testStream(df)(
-        ProcessAllAvailable(),
+        AssertOnQuery { q => q.processAllAvailable(); true },
         CheckAnswer(expected: _*)
       )
     }
@@ -231,15 +159,15 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
       (0 until 5).foreach { i =>
         val v = Seq(i.toString).toDF
-        v.write.mode("append").format("tahoe").save(deltaLog.dataPath.toString)
+        v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
       val df = spark.readStream
-        .format("tahoe")
+        .format("delta")
         .load(inputDir.getCanonicalPath)
 
       testStream(df)(
-        ProcessAllAvailable(),
+        AssertOnQuery { q => q.processAllAvailable(); true },
         CheckAnswer((0 until 5).map(_.toString): _*),
         AssertOnQuery { q =>
           withMetadata(deltaLog, StructType.fromDDL("id LONG, value STRING"))
@@ -256,11 +184,11 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
       (0 until 5).foreach { i =>
         val v = Seq(i.toString).toDF
-        v.write.mode("append").format("tahoe").save(deltaLog.dataPath.toString)
+        v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
       val q = spark.readStream
-        .format("tahoe")
+        .format("delta")
         .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
         .load(inputDir.getCanonicalPath)
         .writeStream
@@ -286,11 +214,11 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
       (0 until 20).foreach { i =>
         val v = Seq(i.toString).toDF
-        v.write.mode("append").format("tahoe").save(deltaLog.dataPath.toString)
+        v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
       val q = spark.readStream
-        .format("tahoe")
+        .format("delta")
         .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
         .load(inputDir.getCanonicalPath)
         .writeStream
@@ -311,119 +239,20 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
     }
   }
 
-  test("maxFilesPerTrigger: data checkpoint before starting query") {
-    withTempDir { inputDir =>
-      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
-      (0 until 5).foreach { i =>
-        val v = Seq(i.toString).toDF
-        v.write.mode("append").format("tahoe").save(deltaLog.dataPath.toString)
-      }
-      sql(s"OPTIMIZE '$inputDir'")
-
-      val q = spark.readStream
-        .format("tahoe")
-        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
-        .load(inputDir.getCanonicalPath)
-        .writeStream
-        .format("memory")
-        .queryName("maxFilesPerTriggerTest")
-        .start()
-      try {
-        q.processAllAvailable()
-        val progress = q.recentProgress.filter(_.numInputRows != 0)
-        // The query starts after data checkpoint. It reads the compacted file.
-        assert(progress.length === 1)
-        progress.foreach { p =>
-          assert(p.numInputRows === 5)
-        }
-        checkAnswer(sql("SELECT * from maxFilesPerTriggerTest"), (0 until 5).map(_.toString).toDF)
-      } finally {
-        q.stop()
-      }
-    }
-  }
-
-  test("maxFilesPerTrigger: data checkpoint after starting query") {
-    withTempDir { inputDir =>
-      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
-      (0 until 5).foreach { i =>
-        val v = Seq(i.toString).toDF
-        v.write.mode("append").format("tahoe").save(deltaLog.dataPath.toString)
-      }
-
-      val q = spark.readStream
-        .format("tahoe")
-        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
-        .load(inputDir.getCanonicalPath)
-        .writeStream
-        .format("memory")
-        .queryName("maxFilesPerTriggerTest")
-        .start()
-      try {
-        q.processAllAvailable()
-        sql(s"OPTIMIZE '$inputDir'")
-        q.processAllAvailable()
-
-        // The query starts before data checkpoint, so it just ignores it.
-        val progress = q.recentProgress.filter(_.numInputRows != 0)
-        assert(progress.length === 5)
-        progress.foreach { p =>
-          assert(p.numInputRows === 1)
-        }
-        checkAnswer(sql("SELECT * from maxFilesPerTriggerTest"), (0 until 5).map(_.toString).toDF)
-      } finally {
-        q.stop()
-      }
-    }
-  }
-
-  test("maxFilesPerTrigger: metadata checkpoint + data checkpoint") {
-    withTempDir { inputDir =>
-      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
-      (0 until 5).foreach { i =>
-        val v = Seq(i.toString).toDF
-        v.write.mode("append").format("tahoe").save(deltaLog.dataPath.toString)
-      }
-      sql(s"OPTIMIZE '$inputDir'")
-      (5 until 20).foreach { i =>
-        val v = Seq(i.toString).toDF
-        v.write.mode("append").format("tahoe").save(deltaLog.dataPath.toString)
-      }
-
-      val q = spark.readStream
-        .format("tahoe")
-        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
-        .load(inputDir.getCanonicalPath)
-        .writeStream
-        .format("memory")
-        .queryName("maxFilesPerTriggerTest")
-        .start()
-      try {
-        q.processAllAvailable()
-        // We don't check the number of batches because it depends on how data checkpoint is
-        // implemented.
-        assert(q.recentProgress.map(_.numInputRows).sum === 20)
-        checkAnswer(sql("SELECT * from maxFilesPerTriggerTest"), (0 until 20).map(_.toString).toDF)
-      } finally {
-        q.stop()
-      }
-    }
-  }
-
   test("maxFilesPerTrigger: change and restart") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
       (0 until 10).foreach { i =>
         val v = Seq(i.toString).toDF()
-        v.write.mode("append").format("tahoe").save(deltaLog.dataPath.toString)
+        v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
       val q = spark.readStream
-        .format("tahoe")
+        .format("delta")
         .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
         .load(inputDir.getCanonicalPath)
         .writeStream
-        .format("tahoe")
+        .format("delta")
         .option("checkpointLocation", checkpointDir.getCanonicalPath)
         .start(outputDir.getCanonicalPath)
       try {
@@ -434,7 +263,7 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
           assert(p.numInputRows === 1)
         }
         checkAnswer(
-          spark.read.format("tahoe").load(outputDir.getAbsolutePath),
+          spark.read.format("delta").load(outputDir.getAbsolutePath),
           (0 until 10).map(_.toString).toDF())
       } finally {
         q.stop()
@@ -442,15 +271,15 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
 
       (10 until 20).foreach { i =>
         val v = Seq(i.toString).toDF()
-        v.write.mode("append").format("tahoe").save(deltaLog.dataPath.toString)
+        v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
       val q2 = spark.readStream
-        .format("tahoe")
+        .format("delta")
         .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "2")
         .load(inputDir.getCanonicalPath)
         .writeStream
-        .format("tahoe")
+        .format("delta")
         .option("checkpointLocation", checkpointDir.getCanonicalPath)
         .start(outputDir.getCanonicalPath)
       try {
@@ -462,7 +291,7 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
         }
 
         checkAnswer(
-          spark.read.format("tahoe").load(outputDir.getAbsolutePath),
+          spark.read.format("delta").load(outputDir.getAbsolutePath),
           (0 until 20).map(_.toString).toDF())
       } finally {
         q2.stop()
@@ -478,7 +307,7 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
       Seq(0, -1, "string").foreach { invalidMaxFilesPerTrigger =>
         val e = intercept[StreamingQueryException] {
           spark.readStream
-            .format("tahoe")
+            .format("delta")
             .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, invalidMaxFilesPerTrigger.toString)
             .load(inputDir.getCanonicalPath)
             .writeStream
@@ -490,33 +319,6 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
         for (msg <- Seq("Invalid", DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "positive")) {
           assert(e.getCause.getMessage.contains(msg))
         }
-      }
-    }
-  }
-
-  test("maxFilesPerTrigger: ignored when using Trigger.Once") {
-    withTempDir { inputDir =>
-      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
-      (0 until 5).foreach { i =>
-        val v = Seq(i.toString).toDF
-        v.write.mode("append").format("tahoe").save(deltaLog.dataPath.toString)
-      }
-
-      val q = spark.readStream
-        .format("tahoe")
-        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
-        .load(inputDir.getCanonicalPath)
-        .writeStream
-        .format("memory")
-        .trigger(Trigger.Once)
-        .queryName("triggerOnceTest")
-        .start()
-      try {
-        assert(q.awaitTermination(streamingTimeout.toMillis))
-        assert(q.recentProgress.count(_.numInputRows != 0) == 1) // only one trigger was run
-        checkAnswer(sql("SELECT * from triggerOnceTest"), (0 until 5).map(_.toString).toDF)
-      } finally {
-        q.stop()
       }
     }
   }
@@ -597,13 +399,13 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
       withMetadata(deltaLog, StructType.fromDDL("value STRING"))
 
       val df = spark.readStream
-        .format("tahoe")
+        .format("delta")
         .load(inputDir.getCanonicalPath)
         .filter($"value" contains "keep")
 
       testStream(df)(
         AddToReservoir(inputDir, Seq("keep1", "keep2", "drop3").toDF),
-        ProcessAllAvailable(),
+        AssertOnQuery { q => q.processAllAvailable(); true },
         CheckAnswer("keep1", "keep2"),
         StopStream,
         AssertOnQuery { q =>
@@ -622,33 +424,13 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
     }
   }
 
-  test("parse DBR 3.1 ReservoirSourceOffset json") {
-    val reservoirId = UUID.randomUUID().toString
-    val json =
-      s"""
-         |{
-         |  "reservoirId": "$reservoirId",
-         |  "sourceVersion": 1,
-         |  "reservoirVersion": 1,
-         |  "index": 1,
-         |  "isStartingVersion": true
-         |}
-      """.stripMargin
-    val offset = DeltaSourceOffset(reservoirId, SerializedOffset(json))
-    assert(offset.reservoirId === reservoirId)
-    assert(offset.sourceVersion === 1L)
-    assert(offset.reservoirVersion === 1L)
-    assert(offset.index === 1L)
-    assert(offset.isStartingVersion === true)
-  }
-
-  test("excludeRegex works and doesn't mess up offsets across restarts") {
+  test("excludeRegex works and doesn't mess up offsets across restarts - parquet version") {
     withTempDir { inputDir =>
       val chk = new File(inputDir, "_checkpoint").toString
 
       def excludeReTest(s: Option[String], expected: String*): Unit = {
         val dfr = spark.readStream
-          .format("tahoe")
+          .format("delta")
         s.foreach(regex => dfr.option(DeltaOptions.EXCLUDE_REGEX_OPTION, regex))
         val df = dfr.load(inputDir.getCanonicalPath).groupBy('value).count
         testStream(df, OutputMode.Complete())(
@@ -660,7 +442,6 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
       }
 
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
-      withMetadata(deltaLog, new StructType().add("value", StringType), "text")
 
       def writeFile(name: String, content: String): AddFile = {
         FileUtils.write(new File(inputDir, name), content)
@@ -671,23 +452,12 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
         deltaLog.startTransaction().commit(files, DeltaOperations.ManualUpdate)
       }
 
+      Seq("abc", "def").toDF().write.format("delta").save(inputDir.getAbsolutePath)
       commitFiles(
-        writeFile("batch1-file1", "abc"),
-        writeFile("batch1-ignore-file2", "def")
+        writeFile("batch1-ignore-file1", "ghi"),
+        writeFile("batch1-ignore-file2", "jkl")
       )
-      excludeReTest(None, "abc", "def")
-
-      commitFiles(
-        writeFile("batch2-file1", "ghi"),
-        writeFile("batch2-ignore-file2", "jkl")
-      )
-      excludeReTest(Some("ignore"), "abc", "def", "ghi") // ignores jkl
-
-      commitFiles(
-        writeFile("batch3-file1", "mno"),
-        writeFile("batch3-ignore-file2", "pqr")
-      )
-      excludeReTest(None, "abc", "def", "ghi", "mno", "pqr")
+      excludeReTest(Some("ignore"), "abc", "def")
     }
   }
 
@@ -698,7 +468,7 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
 
       val e = intercept[StreamingQueryException] {
         spark.readStream
-          .format("tahoe")
+          .format("delta")
           .option(DeltaOptions.EXCLUDE_REGEX_OPTION, "[abc")
           .load(inputDir.getCanonicalPath)
           .writeStream
@@ -711,231 +481,6 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
     }
   }
 
-  test("filterPushdown - partition filters") {
-    withTempDir { inputDir =>
-      val deltaLog = DeltaLog.forTable(spark, inputDir)
-
-      (1 to 5).foreach { i =>
-        spark.range(10).withColumn("part", lit(1)).write
-          .format("tahoe").partitionByHack("part").mode("append").save(deltaLog.dataPath.toString)
-      }
-      // Create a snapshot
-      deltaLog.checkpoint()
-
-      val numFiles = deltaLog.snapshot.allFiles.count()
-      // Choose a number that's less than existing numFiles so that we do actually see filtering
-      // based on partition information
-      val maxFilesPerTrigger = numFiles - 1
-
-      // Write to a separate partition
-      spark.range(2).withColumn("part", lit(2)).write
-        .format("tahoe").partitionByHack("part").mode("append").save(deltaLog.dataPath.toString)
-
-      val df = spark.readStream
-        .format("tahoe")
-        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, maxFilesPerTrigger)
-        .load(inputDir.getCanonicalPath)
-        .where('part >= 2)
-
-      testStream(df)(
-        StartStream(Trigger.ProcessingTime("10 seconds"), new StreamManualClock),
-        AdvanceManualClock(10 * 1000L),
-        CheckLastBatch((0, 2), (1, 2))
-      )
-    }
-  }
-
-  test("filterPushdown - partition and data filters") {
-    import MonotonicallyIncreasingTimestampFS._
-
-    withSQLConf(
-      s"fs.${scheme}.impl" -> classOf[MonotonicallyIncreasingTimestampFS].getName) {
-      withTempDir { inputDir =>
-        val deltaLog = DeltaLog.forTable(
-          spark,
-          new Path(new URI(s"$scheme://${inputDir.toURI.getRawPath}")))
-
-        val fs = deltaLog.dataPath.getFileSystem(spark.sessionState.newHadoopConf())
-        assert(fs.getClass.getName === classOf[MonotonicallyIncreasingTimestampFS].getName)
-
-        (1 to 5).foreach { i =>
-          spark.range(10).withColumn("part", lit(1)).write
-            .format("tahoe").partitionByHack("part").mode("append").save(deltaLog.dataPath.toString)
-        }
-
-        // Write to a separate partition
-        spark.range(20, 22).withColumn("part", lit(2)).coalesce(1).write
-          .format("tahoe").partitionByHack("part").mode("append").save(deltaLog.dataPath.toString)
-
-        spark.range(22, 25).withColumn("part", lit(2)).coalesce(1).write
-          .format("tahoe").partitionByHack("part").mode("append").save(deltaLog.dataPath.toString)
-
-        // Create a snapshot
-        deltaLog.checkpoint()
-
-        val df = spark.readStream
-          .format("tahoe")
-          .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, 1)
-          .load(inputDir.getCanonicalPath)
-          .where('part >= 2 && 'id >= 22L)
-
-        testStream(df)(
-          StartStream(Trigger.ProcessingTime("10 seconds"), new StreamManualClock),
-          AdvanceManualClock(10 * 1000L),
-          CheckLastBatch(), // first file is read
-          AdvanceManualClock(10 * 1000L),
-          CheckLastBatch((22, 2), (23, 2), (24, 2))
-        )
-      }
-    }
-  }
-
-  private def ignoreOperationsTest(
-      inputDir: String,
-      sourceOptions: Seq[(String, String)],
-      sqlCommand: String)(expectations: StreamAction*): Unit = {
-    (0 until 5).foreach { i =>
-      val v = Seq(i.toString).toDF().write.format("tahoe").mode("append").save(inputDir)
-    }
-
-    val df = spark.readStream.format("tahoe").options(sourceOptions.toMap).load(inputDir)
-
-    val base = Seq(
-      AssertOnQuery { q =>
-        q.processAllAvailable()
-        true
-      },
-      CheckAnswer((0 until 5).map(_.toString): _*),
-      AssertOnQuery { q =>
-        sql(sqlCommand)
-        true
-      })
-
-    testStream(df)((base ++ expectations): _*)
-  }
-
-
-  testQuietly("deleting files fails query if ignoreDeletes = false") {
-    withTempDir { inputDir =>
-      ignoreOperationsTest(
-        inputDir.getAbsolutePath,
-        Nil,
-        s"DELETE FROM tahoe.`$inputDir`")(
-        ExpectFailure[UnsupportedOperationException] { e =>
-          for (msg <- Seq("Detected deleted data", "not supported", "ignoreDeletes", "true")) {
-            assert(e.getMessage.contains(msg))
-          }
-        }
-      )
-    }
-  }
-
-  Seq("ignoreFileDeletion", "ignoreDeletes").foreach { ignoreDeletes =>
-    testQuietly(
-      s"allow to delete files after staring a streaming query when $ignoreDeletes is true") {
-      withTempDir { inputDir =>
-        ignoreOperationsTest(
-          inputDir.getAbsolutePath,
-          Seq(ignoreDeletes -> "true"),
-          s"DELETE FROM tahoe.`$inputDir`")(
-          AssertOnQuery { q =>
-            Seq("5").toDF().write.format("tahoe").mode("append").save(inputDir.getAbsolutePath)
-            q.processAllAvailable()
-            true
-          },
-          CheckAnswer((0 until 6).map(_.toString): _*)
-        )
-      }
-    }
-  }
-
-  testQuietly("updating the source table causes failure when ignoreChanges = false") {
-    withTempDir { inputDir =>
-      ignoreOperationsTest(
-        inputDir.getAbsolutePath,
-        Nil,
-        s"UPDATE tahoe.`$inputDir` SET value = '10' WHERE value = '3'")(
-        ExpectFailure[UnsupportedOperationException] { e =>
-          for (msg <- Seq("data update", "not supported", "ignoreChanges", "true")) {
-            assert(e.getMessage.contains(msg))
-          }
-        }
-      )
-    }
-  }
-
-  testQuietly("allow to update the source table when ignoreChanges = true") {
-    withTempDir { inputDir =>
-      ignoreOperationsTest(
-        inputDir.getAbsolutePath,
-        Seq(DeltaOptions.IGNORE_CHANGES_OPTION -> "true"),
-        s"UPDATE tahoe.`$inputDir` SET value = '10' WHERE value = '3'")(
-        AssertOnQuery { q =>
-          Seq("5").toDF().write.format("tahoe").mode("append").save(inputDir.getAbsolutePath)
-          q.processAllAvailable()
-          true
-        },
-        CheckAnswer("0", "1", "2", "3", "4", "5", "10")
-      )
-    }
-  }
-
-  testQuietly("deleting files when ignoreChanges = true doesn't fail the query") {
-    withTempDir { inputDir =>
-      ignoreOperationsTest(
-        inputDir.getAbsolutePath,
-        Seq(DeltaOptions.IGNORE_CHANGES_OPTION -> "true"),
-        s"DELETE FROM tahoe.`$inputDir`")(
-        AssertOnQuery { q =>
-          Seq("5").toDF().write.format("tahoe").mode("append").save(inputDir.getAbsolutePath)
-          q.processAllAvailable()
-          true
-        },
-        CheckAnswer((0 until 6).map(_.toString): _*)
-      )
-    }
-  }
-
-  testQuietly("updating source table when ignoreDeletes = true fails the query") {
-    withTempDir { inputDir =>
-      ignoreOperationsTest(
-        inputDir.getAbsolutePath,
-        Seq("ignoreDeletes" -> "true"),
-        s"UPDATE tahoe.`$inputDir` SET value = '10' WHERE value = '3'")(
-        ExpectFailure[UnsupportedOperationException] { e =>
-          for (msg <- Seq("data update", "not supported", "ignoreChanges", "true")) {
-            assert(e.getMessage.contains(msg))
-          }
-        }
-      )
-    }
-  }
-
-  testQuietly("transactions must be processed as a whole in order to figure out ignore errors") {
-    withTempDir { inputDir =>
-      ignoreOperationsTest(
-        inputDir.getAbsolutePath,
-        Seq(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "1"),
-        s"DELETE FROM tahoe.`$inputDir` where value > '5'")( // does nothing
-        AssertOnQuery { q =>
-          Seq("5", "6").toDF().write.format("tahoe").mode("append").save(inputDir.getAbsolutePath)
-          q.processAllAvailable()
-          true
-        },
-        AssertOnQuery { q =>
-          sql(s"UPDATE tahoe.`$inputDir` set value = '4' where value > '5'")
-          try {
-            q.processAllAvailable()
-            false
-          } catch {
-            case e: StreamingQueryException =>
-              e.cause.isInstanceOf[UnsupportedOperationException]
-          }
-        }
-      )
-    }
-  }
-
   test("a fast writer should not starve a Delta source") {
     val deltaPath = Utils.createTempDir().getCanonicalPath
     val checkpointPath = Utils.createTempDir().getCanonicalPath
@@ -943,17 +488,17 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
       .format("rate")
       .load()
       .writeStream
-      .format("tahoe")
+      .format("delta")
       .option("checkpointLocation", checkpointPath)
       .start(deltaPath)
     try {
       eventually(timeout(streamingTimeout)) {
-        assert(sql(s"select * from tahoe.`$deltaPath`").count() > 0)
+        assert(spark.read.format("delta").load(deltaPath).count() > 0)
       }
       val testTableName = "delta_source_test"
       withTable(testTableName) {
         val reader = spark.readStream
-          .format("tahoe")
+          .format("delta")
           .load(deltaPath)
           .writeStream
           .format("memory")
@@ -976,112 +521,26 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
     withTempDir { inputDir =>
       val path = inputDir.getAbsolutePath
       for (i <- 1 to 5) {
-        Seq(i).toDF("id").write.mode("append").format("tahoe").save(path)
+        Seq(i).toDF("id").write.mode("append").format("delta").save(path)
       }
       val deltaLog = DeltaLog.forTable(spark, path)
       withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "1") {
         deltaLog.checkpoint()
       }
-      Seq(6).toDF("id").write.mode("append").format("tahoe").save(path)
+      Seq(6).toDF("id").write.mode("append").format("delta").save(path)
       val checkpoints = new File(deltaLog.logPath.toUri).listFiles()
         .filter(f => FileNames.isCheckpointFile(new Path(f.getAbsolutePath)))
-      assert(checkpoints.length == 5)
       checkpoints.last.delete()
 
       val df = spark.readStream
-        .format("tahoe")
+        .format("delta")
         .load(inputDir.getCanonicalPath)
 
       testStream(df)(
-        ProcessAllAvailable(),
+        AssertOnQuery { q => q.processAllAvailable(); true },
         CheckAnswer(1, 2, 3, 4, 5, 6),
         StopStream
       )
-    }
-  }
-
-  testQuietly(
-      "SC-11438: better error message when a stream query cannot construct full Delta history") {
-    withTempDir { inputDir =>
-      withTable("delta_test") {
-        val path = inputDir.getAbsolutePath
-        sql(s"CREATE TABLE delta_test (id INT) USING tahoe LOCATION '$path'")
-        DeltaLog.clearCache()
-        val clock = new ManualClock(System.currentTimeMillis())
-        val deltaLog = DeltaLog.forTable(spark, path, clock)
-        // Tune the table properties to reproduce this issue fast.
-        sql(
-          """
-            |ALTER TABLE delta_test
-            |SET TBLPROPERTIES (
-            |  'delta.checkpointRetentionDuration' = '1 millisecond',
-            |  'delta.logRetentionDuration' = '1 millisecond',
-            |  'delta.checkpointInterval' = '1'
-            |)""".stripMargin)
-        Seq(1).toDF("id").write.format("tahoe").mode("append").saveAsTable("delta_test")
-        val df = spark.readStream
-          .format("tahoe")
-          .option("maxFilesPerTrigger", "1")
-          .load(path)
-        val checkpointPath = Utils.createTempDir().getCanonicalPath
-
-        val q = df.writeStream
-          .option("checkpointLocation", checkpointPath)
-          .foreach(new ForeachWriter[Row] {
-            override def open(partitionId: Long, version: Long): Boolean = {
-              // Block to avoid moving forward. We just need to materialize the offset
-              Thread.sleep(10000)
-              true
-            }
-
-            override def process(value: Row): Unit = {}
-
-            override def close(errorOrNull: Throwable): Unit = {}
-          }).start()
-        try {
-          // Make sure the offset log has been written
-          eventually(timeout(streamingTimeout)) {
-            assert(q.asInstanceOf[StreamingQueryWrapper].streamingQuery.lastExecution != null)
-          }
-        } finally {
-          q.stop()
-        }
-
-        deltaLog.update()
-        val deltaCheckpointFileUsedByStreamQuery =
-          new File(FileNames.checkpointFileSingular(
-            deltaLog.logPath,
-            deltaLog.snapshot.version).toUri)
-
-        // Make sure the clean up task will delete "deltaCheckpointFileUsedByStreamQuery"
-        eventually(timeout(streamingTimeout)) {
-          assert(
-            deltaCheckpointFileUsedByStreamQuery.lastModified() + 1 < System.currentTimeMillis())
-        }
-
-        clock.advance(CalendarInterval.fromString("interval 1 day").milliseconds())
-        // Write a commit file to delete "deltaCheckpointFileUsedByStreamQuery"
-        Seq(1).toDF("id").write.format("tahoe")
-          .mode("append").saveAsTable("delta_test")
-
-        // Make sure "deltaCheckpointFileUsedByStreamQuery" has been deleted
-        eventually(timeout(streamingTimeout)) {
-          assert(!deltaCheckpointFileUsedByStreamQuery.exists)
-        }
-
-        // Restarting the query should complaint that it cannot find version 0.
-        val q2 = df.writeStream.format("console")
-          .option("checkpointLocation", checkpointPath).start()
-        try {
-          val e = intercept[StreamingQueryException] {
-            q2.processAllAvailable()
-          }
-          assert(e.getCause.isInstanceOf[FileNotFoundException])
-          assert(e.getMessage.contains("delta.checkpointRetentionDuratio"))
-        } finally {
-          q2.stop()
-        }
-      }
     }
   }
 
@@ -1090,32 +549,32 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
       withMetadata(deltaLog, StructType.fromDDL("value STRING"))
 
-      val df = spark.readStream.format("tahoe").load(inputDir.getCanonicalPath)
+      val df = spark.readStream.format("delta").load(inputDir.getCanonicalPath)
 
       // clear the cache so that the writer creates its own DeltaLog instead of reusing the reader's
       DeltaLog.clearCache()
       (0 until 3).foreach { i =>
         Seq(i.toString).toDF("value")
-          .write.mode("append").format("tahoe").save(deltaLog.dataPath.toString)
+          .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
       // check that reader consumed new data without updating its DeltaLog
       testStream(df)(
-        ProcessAllAvailable(),
+        AssertOnQuery { q => q.processAllAvailable(); true },
         CheckAnswer("0", "1", "2")
       )
       assert(deltaLog.snapshot.version == 0)
 
       (3 until 5).foreach { i =>
         Seq(i.toString).toDF("value")
-          .write.mode("append").format("tahoe").save(deltaLog.dataPath.toString)
+          .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
       // check that reader consumed new data without update despite checkpoint
       val writersLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
       writersLog.checkpoint()
       testStream(df)(
-        ProcessAllAvailable(),
+        AssertOnQuery { q => q.processAllAvailable(); true },
         CheckAnswer("0", "1", "2", "3", "4")
       )
       assert(deltaLog.snapshot.version == 0)
@@ -1127,7 +586,7 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
       withMetadata(deltaLog, StructType.fromDDL("value STRING"))
 
-      val df = spark.readStream.format("tahoe").load(inputDir.getCanonicalPath)
+      val df = spark.readStream.format("delta").load(inputDir.getCanonicalPath)
 
       // clear the cache so that the writer creates its own DeltaLog instead of reusing the reader's
       DeltaLog.clearCache()
@@ -1135,7 +594,7 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
       val writersLog = DeltaLog.forTable(spark, new Path(inputDir.toURI), clock)
       (0 until 3).foreach { i =>
         Seq(i.toString).toDF("value")
-          .write.mode("append").format("tahoe").save(inputDir.getCanonicalPath)
+          .write.mode("append").format("delta").save(inputDir.getCanonicalPath)
       }
 
       // Create a checkpoint so that logs before checkpoint can be expired and deleted
@@ -1164,7 +623,7 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
         Assert {
           (3 until 5).foreach { i =>
             Seq(i.toString).toDF("value")
-              .write.mode("append").format("tahoe").save(inputDir.getCanonicalPath)
+              .write.mode("append").format("delta").save(inputDir.getCanonicalPath)
           }
           true
         },
@@ -1174,53 +633,6 @@ class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
         CheckLastBatch("3", "4")
       )
       assert(deltaLog.snapshot.version == 0)
-    }
-  }
-
-  testQuietly("SC-13258: Multiple schema changes shouldn't break a stream") {
-    withTempDir { inputDir =>
-      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
-      withMetadata(deltaLog, StructType.fromDDL("value STRING"))
-
-      // Since the schema of the source table is going to change, we need to re-plan the
-      // DataFrame
-      def getDf: DataFrame = {
-        spark.readStream
-          .format("tahoe")
-          .load(inputDir.getCanonicalPath)
-          .filter($"value" contains "keep")
-      }
-
-      val chkpoint = new File(inputDir, "_checkpoint").getCanonicalPath
-      testStream(getDf)(
-        StartStream(checkpointLocation = chkpoint),
-        AddToReservoir(inputDir, Seq("keep1", "keep2", "drop3").toDF),
-        ProcessAllAvailable(),
-        CheckAnswer("keep1", "keep2"),
-        // Shouldn't fail stream
-        AssertOnQuery { _ =>
-          sql(s"ALTER TABLE tahoe.`${inputDir.getCanonicalPath}` CHANGE COLUMN value value " +
-            "STRING COMMENT 'this is the value of the row'")
-          true
-        },
-        AddToReservoir(inputDir, Seq("keep3", "drop4").toDF),
-        ProcessAllAvailable(),
-        CheckAnswer("keep1", "keep2", "keep3"),
-        AssertOnQuery { _ =>
-          sql(s"ALTER TABLE tahoe.`${inputDir.getCanonicalPath}` ADD COLUMNS (id STRING)")
-          sql(s"ALTER TABLE tahoe.`${inputDir.getCanonicalPath}` CHANGE COLUMN id id STRING" +
-            " COMMENT 'this is the id of the row'")
-          true
-        },
-        AddToReservoir(inputDir, Seq("keep4" -> "4").toDF("value", "id")),
-        ExpectFailure[IllegalStateException]()
-      )
-
-      testStream(getDf)(
-        StartStream(checkpointLocation = chkpoint),
-        ProcessAllAvailable(),
-        CheckAnswer[(String, String)]("keep4" -> "4")
-      )
     }
   }
 }
