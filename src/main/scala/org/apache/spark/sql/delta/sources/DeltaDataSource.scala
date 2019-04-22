@@ -60,6 +60,12 @@ class DeltaDataSource
    */
   val TIME_TRAVEL_VERSION_KEY = "versionAsOf"
 
+  SparkSession.getActiveSession.foreach { spark =>
+    // Enable "passPartitionByAsOptions" to support "write.partitionBy(...)"
+    // TODO Remove this when upgrading to Spark 3.0.0
+    spark.conf.set("spark.sql.legacy.sources.write.passPartitionByAsOptions", "true")
+  }
+
   override def sourceSchema(
       sqlContext: SQLContext,
       schema: Option[StructType],
