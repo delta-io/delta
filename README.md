@@ -25,7 +25,7 @@ Scala 2.12:
 
     <dependency>
       <groupId>io.delta</groupId>
-      <artifactId>delta-core-2.12</artifactId>
+      <artifactId>delta-core_2.12</artifactId>
       <version>0.1.0</version>
     </dependency>
 
@@ -33,7 +33,7 @@ Scala 2.11:
 
     <dependency>
       <groupId>io.delta</groupId>
-      <artifactId>delta-core-2.11</artifactId>
+      <artifactId>delta-core_2.11</artifactId>
       <version>0.1.0</version>
     </dependency>
     
@@ -43,11 +43,7 @@ You can add in the same dependency in an SBT project by adding the corresponding
 
 Scala 2.12:
     
-    libraryDependencies += "io.delta" % "delta-core-2.12" % "0.1.0"
-    
-Scala 2.11:
-    
-    libraryDependencies += "io.delta" % "delta-core-2.11" % "0.1.0"
+    libraryDependencies += "io.delta" %% "delta-core" % "0.1.0"
     
 ### PySpark
 
@@ -57,7 +53,7 @@ To use Delta Lake with Python, first install or upgrade PySpark to version 2.4.2
 
 You can then run PySpark with the argument
 
-    --packages io.delta:delta-core-2.12:0.1.0
+    --packages io.delta:delta-core_2.12:0.1.0
 
 ## Reading and Write to Delta Lake tables from using Apache Spark
 
