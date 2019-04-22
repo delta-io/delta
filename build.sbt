@@ -87,10 +87,10 @@ licenses += ("Apache-2.0", url("http://www.apache.org/licenses/LICENSE-2.0"))
 releasePublishArtifactsAction := PgpKeys.publishSigned.value
 
 pomExtra :=
-  <url>https://github.com/databricks/delta-core</url>
+  <url>https://delta.io/</url>
     <scm>
-      <url>git@github.com:databricks/delta-core.git</url>
-      <connection>scm:git:git@github.com:databricks/delta-core.git</connection>
+      <url>git@github.com:delta-io/delta.git</url>
+      <connection>scm:git:git@github.com:delta-io/delta.git</connection>
     </scm>
     <developers>
       <developer>
