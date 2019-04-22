@@ -48,7 +48,7 @@ parallelExecution in Test := false
 
 scalacOptions ++= Seq("-target:jvm-1.8")
 
-javaOptions += "-Xmx3g"
+javaOptions += "-Xmx2g"
 
 fork in Test := true
 
