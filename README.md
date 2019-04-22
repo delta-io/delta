@@ -18,8 +18,16 @@ See the [Delta Lake Documentation](https://docs.delta.io) for more details.
 ## Linking
 To use Delta Lake, you will have to create a new project with Maven Delta Lake's Maven coordinates.
 
-    groupId: com.databricks.delta
-    artifactId: delta-core
+Scala 2.11:
+
+    groupId: io.delta
+    artifactId: delta-core-2.11
+    version: 0.1.0
+
+Scala 2.12
+
+    groupId: io.delta
+    artifactId: delta-core-2.12
     version: 0.1.0
 
 ## Reading and Write to Delta Lake tables from using Apache Spark
@@ -47,7 +55,7 @@ You can write a to Delta Lake tables using standard Apache Spark DataFrame APIs.
     streamingDataFrame.writeStream
       .format("delta")
       .start("pathToDeltaTable")
-       
+
     // Writing to a Delta lake table from a streaming job
     val streamingDataFrame = spark.readStream
       .format("delta")
@@ -68,7 +76,7 @@ You can write a to Delta Lake tables using standard Apache Spark DataFrame APIs.
       .save("pathToDeltaTable");
 
     // Reading from a Delta Lake table in a batch job 
-     Dataset<Row> dataframe = spark.read()
+    Dataset<Row> dataframe = spark.read()
       .format("delta")
       .load("pathToDeltaTable");
 
@@ -76,9 +84,9 @@ You can write a to Delta Lake tables using standard Apache Spark DataFrame APIs.
     streamingDataFrame.writeStream()
       .format("delta")
       .start("pathToDeltaTable");
-       
+
     // Writing to a Delta lake table from a streaming job
-    Dataset<Row>  streamingDataFrame = spark.readStream()
+    Dataset<Row> streamingDataFrame = spark.readStream()
       .format("delta")
       .load("pathToDeltaTable");
 
@@ -104,7 +112,7 @@ You can write a to Delta Lake tables using standard Apache Spark DataFrame APIs.
     streamingDataFrame.writeStream  \
       .format("delta") \
       .start("pathToDeltaTable")
-       
+
     # Writing to a Delta lake table from a streaming job
     streamingDataFrame = spark.readStream \
       .format("delta") \
@@ -112,7 +120,7 @@ You can write a to Delta Lake tables using standard Apache Spark DataFrame APIs.
 
 ## Compatibility
 
-This section states the compatibilty guarantees provided by the current version of Delta Lake. 
+This section states the compatibility guarantees provided by the current version of Delta Lake.
 
 ### Compatibility with Spark Versions
 
@@ -141,15 +149,15 @@ Delta Lake Core is compiled using [SBT](https://www.scala-sbt.org/1.x/docs/Comma
 
 To compile, run
 
-    bin/sbt compile
+    build/sbt compile
 
 To generate artifacts, run
 
-    bin/sbt package
+    build/sbt package
 
 To execute tests, run
   
-    bin/sbt test
+    build/sbt test
 
 Refer to [SBT docs](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.html) for more commands.
 

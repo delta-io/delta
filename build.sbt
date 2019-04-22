@@ -129,3 +129,7 @@ pomExtra :=
     </developers>
 
 bintrayReleaseOnPublish in ThisBuild := false
+
+bintrayOrganization := Some("delta-io")
+
+bintrayRepository := "delta"
