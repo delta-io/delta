@@ -15,20 +15,49 @@ See the [Delta Lake Documentation](https://docs.delta.io) for more details.
 
 # Usage Guide
 
-## Linking
-To use Delta Lake, you will have to create a new project with Maven Delta Lake's Maven coordinates.
+## Latest Binaries
+
+### Maven
+
+Delta Lake is published to Maven Central Repository and can be used by adding a dependency in your POM file. If you are using Java, either version can be used.
+
+Scala 2.12:
+
+    <dependency>
+      <groupId>io.delta</groupId>
+      <artifactId>delta-core-2.12</artifactId>
+      <version>0.1.0</version>
+    </dependency>
 
 Scala 2.11:
 
-    groupId: io.delta
-    artifactId: delta-core-2.11
-    version: 0.1.0
+    <dependency>
+      <groupId>io.delta</groupId>
+      <artifactId>delta-core-2.11</artifactId>
+      <version>0.1.0</version>
+    </dependency>
+    
+### SBT
 
-Scala 2.12
+You can add in the same dependency in an SBT project by adding the corresponding line to your build.sbt file:
 
-    groupId: io.delta
-    artifactId: delta-core-2.12
-    version: 0.1.0
+Scala 2.12:
+    
+    libraryDependencies += "io.delta" % "delta-core-2.12" % "0.1.0"
+    
+Scala 2.11:
+    
+    libraryDependencies += "io.delta" % "delta-core-2.11" % "0.1.0"
+    
+### PySpark
+
+To use Delta Lake with Python, first install or upgrade PySpark to version 2.4.2 or later:
+
+    pip install pyspark
+
+You can then run PySpark with the argument
+
+    --packages io.delta:delta-core-2.12:0.1.0
 
 ## Reading and Write to Delta Lake tables from using Apache Spark
 
