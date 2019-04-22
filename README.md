@@ -1,38 +1,14 @@
-# Delta Lake Core
+<img src="https://docs.delta.io/latest/_static/delta-lake-white.png" width="400" alt="Delta Lake Logo"></img>
 
-Delta Lake is a next-generation engine built on top of Apache Spark. Delta Lake provides ACID transactions, optimized layouts and indexes, and execution engine improvements for building data pipelines to support big data use cases: batch and streaming ingests, fast interactive queries, and machine learning. Specifically, Delta offers:
+[![CircleCI](https://circleci.com/gh/delta-io/delta/tree/master.svg?style=svg)](https://circleci.com/gh/delta-io/delta/tree/master)
 
-- ACID transactions: Serializable isolation levels ensure that readers never see inconsistent data.
-- Efficient upserts: Fine-grained updates easily handle late coming data and changing records.
-- High throughput streaming ingestion: Ingest high volume data directly into query tables.
-- Optimized data layout: Choose a data layout that suits your query patterns; Delta Lake automatically manages the layout to reduce query latency.
-- Schema enforcement and evolution: Automatically handles schema variations to clean bad records during ingestion.
-- Data versioning and time travel: Automatically versions your data for easy rollback and lets you time travel to query earlier versions.
-- Execution engine optimizations: Optimizes operations with nested data types, higher order functions, range and data skew joins.
+Delta Lake is a storage layer that brings scalable, ACID transactions to [Apache Spark](https://spark.apache.org) and other big-data engines.
 
-See the [Delta Lake Documentation](https://docs.delta.io) for more details.
+See the [Delta Lake Documentation](https://docs.delta.io) for more details on how to get started in Scala, Java or Python.
 
-# Build
+# Latest Binaries
 
-Status of `master`: [![CircleCI](https://circleci.com/gh/delta-io/delta/tree/master.svg?style=svg)](https://circleci.com/gh/delta-io/delta/tree/master)
-
-# Usage Guide
-
-## Latest Binaries
-
-### Maven
-
-Delta Lake is published to Maven Central Repository and can be used by adding a dependency in your POM file. If you are using Java, either version can be used.
-
-Scala 2.12:
-
-    <dependency>
-      <groupId>io.delta</groupId>
-      <artifactId>delta-core_2.12</artifactId>
-      <version>0.1.0</version>
-    </dependency>
-
-Scala 2.11:
+Delta Lake is published to Maven Central Repository and can be used by adding a dependency in your POM file.
 
     <dependency>
       <groupId>io.delta</groupId>
@@ -40,34 +16,23 @@ Scala 2.11:
       <version>0.1.0</version>
     </dependency>
 
-## Reading and Write to Delta Lake tables from using Apache Spark
-
-See the [Quick Start Guide](https://docs.delta.io).
-
 ## Compatibility
 
-This section states the compatibility guarantees provided by the current version of Delta Lake.
+### Compatibility with Apache Spark Versions
 
-### Compatibility with Spark Versions
-
-Current version of Delta Lake depends on SNAPSHOT build of Apache Spark 2.4 (nightly snapshot after XXXX). This is because Delta Lake requires the changes made by [SPARK-27453](https://issues.apache.org/jira/browse/SPARK-27453) for table partitioning to work and these changes are not yet available in an official Apache release. There will be new release of Delta Lake that depends on an official Spark version as soon as there is an Apache Spark release.
-
-### Compatibility with storage systems
-
-Delta Lake stores the transaction log of a table in the same storage system as the table. Hence, Delta Lake's ACID guarantees are predicated on the atomicity and durability guarantees of the storage system. Specifically, it requires the storage system to provide the following. 
-
-1. Atomic visibility of files: There must a way for a file to visible in its entirely or not visible at all. 
-2. Consistent listing: Once a file has been written in a directory, all future listings for that directory must return that file.
-
-Open source Delta Lake currently supports all these guarantees only on HDFS. It is possible to make it work with other storage systems by plugging in custom implementations of the [LogStore API](XXX). However, [Managed Delta Lake](XXX) support AWS S3 and Azure Blob Stores.
+Delta Lake currently requires Apache Spark 2.4.2. Earlier versions are missing [SPARK-27453](https://issues.apache.org/jira/browse/SPARK-27453), which breaks the `partitionBy` clause of the `DataFrameWriter`.
 
 ### API Compatibility
 
-Delta Lake guarantees compatibility with the Apache Spark DataFrameReader/Writer APIs, that is, `df.read`, `df.write`, `df.readStream` and `df.writeStream`. The interfaces of the implementation are currently considered internal and may change across minor versions.
+The only stable, public APIs currently provided by Delta Lake are through the `DataFrameReader`/`Writer` (i.e. `spark.read`, `df.write`, `spark.readStream` and `df.writeStream`). Options to these APIs will remain stable within a major release of Delta Lake (e.g. 1.x.x).
 
-### Data Compatibility
+All other interfaces in the this library are considered internal, and are subject to change across minor / patch releases.
 
-Delta Lake guarantees backward compatibility for all Delta Lake tables, that is, newer versions of Delta Lake will always be able to read tables written by older versions of Delta Lake. However, we reserve the right to break future compatibility, that is, older versions of Delta Lake may not be able to read tables written by newer version of Delta Lake. This is because we may add features that are usable only in newer versions. Users attempting to read new version tables from old version of Delta Lake should get a clear error message when forward compatibility is broken.
+### Data Storage Compatibility
+
+Delta Lake guarantees backward compatibility for all Delta Lake tables (i.e. newer versions of Delta Lake will always be able to read tables written by older versions of Delta Lake). However, we reserve the right to break forwards compatibilty as new features are introduced to the transaction protocol (i.e. an older version of Delta Lake may not be able to read a table produced by a newer version.
+
+Breaking changes in the protocol are indicated by incrementing the minumum reader/writer version in the `Protocol` [action](https://github.com/delta-io/delta/blob/master/src/main/scala/org/apache/spark/sql/delta/actions/actions.scala).
 
 # Building
 
@@ -87,15 +52,37 @@ To execute tests, run
 
 Refer to [SBT docs](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.html) for more commands.
 
+# Transaction Protocol
+
+Delta lake works by storing a transaction log along side the actual data files in a table.  Entries in the log, called _delta files_, are stored as atomic collections of [actions](https://github.com/delta-io/delta/blob/master/src/main/scala/org/apache/spark/sql/delta/actions/actions.scala) in the `_delta_log` directory, at the root of a table. Entries in the log encoded using JSON and are named as zero-padded contigious integers.
+
+    /table/_delta_log/00000000000000000000.json
+    /table/_delta_log/00000000000000000001.json
+    /table/_delta_log/00000000000000000002.json
+
+To avoid needing to read the entire transaction log everytime a table is loaded, Delta Lake will also occasionally create a _checkpoint_, which contains the entire state of the table at the given version. Checkpoints are encoded using parquet and must only be written after the accompanying delta files has been written.
+
+## Requirements for Underlying Storage Systems
+
+Delta Lake's ACID guarantees are predicated on the atomicity and durability guarantees of the storage system. Specifically, we require the storage system to provide the following. 
+
+1. **Atomic visibility**: There must a way for a file to visible in its entirely or not visible at all. 
+2. **Mutual exclusion**: Only one writer must be able to create (or rename) a file at the final destination.
+3. **Consistent listing**: Once a file has been written in a directory, all future listings for that directory must return that file.
+
+Open source Delta Lake currently supports all these guarantees only on HDFS. It is possible to make it work with other storage systems by plugging in custom implementations of the [LogStore API](https://github.com/delta-io/delta/blob/master/src/main/scala/org/apache/spark/sql/delta/storage/LogStore.scala).
+
+As an optimization, storage systems can also allow _partial listing of a directory, given a start marker_. Delta can use this ability to efficiently discover the latest version of a table, without listing all of the files in the transaction log.
+
 # Reporting issues
-We use [Github Issues](/../../issues/) to track community reported issues. You can also [contact](#community) the community for getting answers.
+We use [Github Issues](https://github.com/delta-io/delta/issues) to track community reported issues. You can also [contact](#community) the community for getting answers.
 
 # Contributing 
-We happily welcome contributions to Delta Lake. We use [Github Pull Requests ](/../../pulls/) for accepting changes.
+We welcome contributions to Delta Lake. We use [Github Pull Requests ](https://github.com/delta-io/delta/pulls) for accepting changes. You will be propted to sign a contributor license agreement before you change can be accepted.
 
 # Community
 
-There are two mediums of communication withing the Delta Lake community. 
+There are two mediums of communication within the Delta Lake community. 
 
 - Public Slack Channel
   - [Register here](https://join.slack.com/t/delta-users/shared_invite/enQtNTY1NDg0ODcxOTI1LWE3YjMxOTM4MmM0YWNhNjE2YmI2OGI4N2Y3MTRhOWQ1YzE3MTMyYTM5YzRiZWZlYzMwYzk0M2JiZmJhY2Q4NWI)
