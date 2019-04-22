@@ -48,7 +48,7 @@ parallelExecution in Test := false
 
 scalacOptions ++= Seq("-target:jvm-1.8")
 
-javaOptions += "-Xmx1g"
+javaOptions += "-Xmx3g"
 
 fork in Test := true
 
@@ -57,7 +57,8 @@ javaOptions in Test ++= Seq(
   "-Dspark.ui.enabled=false",
   "-Dspark.ui.showConsoleProgress=false",
   "-Dspark.databricks.delta.snapshotPartitions=2",
-  "-Dspark.sql.shuffle.partitions=5"
+  "-Dspark.sql.shuffle.partitions=5",
+  "-Xmx2g"
 )
 
 /***************************
