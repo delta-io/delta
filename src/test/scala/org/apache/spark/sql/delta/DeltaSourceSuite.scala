@@ -37,7 +37,7 @@ import org.apache.spark.sql.types.{StringType, StructType}
 import org.apache.spark.unsafe.types.CalendarInterval
 import org.apache.spark.util.{ManualClock, Utils}
 
-class DeltaSourceSuite extends StreamTest with DeltaOSSTestUtils {
+class DeltaSourceSuite extends StreamTest {
 
   import testImplicits._
 
