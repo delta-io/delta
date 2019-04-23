@@ -16,12 +16,14 @@
 
 package org.apache.spark.sql.delta
 
+
+
 import org.apache.spark.sql._
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.test.SharedSQLContext
 import org.apache.spark.util.Utils
 
-class DeltaSuiteOSS extends QueryTest with SharedSQLContext with DeltaOSSTestUtils {
+class DeltaSuiteOSS extends QueryTest with SharedSQLContext {
   import testImplicits._
 
   test("append then read") {
