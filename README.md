@@ -4,7 +4,7 @@
 
 Delta Lake is a storage layer that brings scalable, ACID transactions to [Apache Spark](https://spark.apache.org) and other big-data engines.
 
-See the [Delta Lake Documentation](https://docs.delta.io) for more details on how to get started in Scala, Java or Python.
+See the [Delta Lake Documentation](https://docs.delta.io) for details on how to get started in Scala, Java, or Python.
 
 # Latest Binaries
 
@@ -30,9 +30,9 @@ All other interfaces in the this library are considered internal, and are subjec
 
 ### Data Storage Compatibility
 
-Delta Lake guarantees backward compatibility for all Delta Lake tables (i.e. newer versions of Delta Lake will always be able to read tables written by older versions of Delta Lake). However, we reserve the right to break forwards compatibilty as new features are introduced to the transaction protocol (i.e. an older version of Delta Lake may not be able to read a table produced by a newer version.
+Delta Lake guarantees backward compatibility for all Delta Lake tables (i.e. newer versions of Delta Lake will always be able to read tables written by older versions of Delta Lake). However, we reserve the right to break forwards compatibility as new features are introduced to the transaction protocol (i.e. an older version of Delta Lake may not be able to read a table produced by a newer version).
 
-Breaking changes in the protocol are indicated by incrementing the minumum reader/writer version in the `Protocol` [action](https://github.com/delta-io/delta/blob/master/src/main/scala/org/apache/spark/sql/delta/actions/actions.scala).
+Breaking changes in the protocol are indicated by incrementing the minimum reader/writer version in the `Protocol` [action](https://github.com/delta-io/delta/blob/master/src/main/scala/org/apache/spark/sql/delta/actions/actions.scala).
 
 # Building
 
@@ -54,31 +54,31 @@ Refer to [SBT docs](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.ht
 
 # Transaction Protocol
 
-Delta lake works by storing a transaction log along side the actual data files in a table.  Entries in the log, called _delta files_, are stored as atomic collections of [actions](https://github.com/delta-io/delta/blob/master/src/main/scala/org/apache/spark/sql/delta/actions/actions.scala) in the `_delta_log` directory, at the root of a table. Entries in the log encoded using JSON and are named as zero-padded contigious integers.
+Delta Lake works by storing a transaction log along side the data files in a table.  Entries in the log, called _delta files_, are stored as atomic collections of [actions](https://github.com/delta-io/delta/blob/master/src/main/scala/org/apache/spark/sql/delta/actions/actions.scala) in the `_delta_log` directory, at the root of a table. Entries in the log encoded using JSON and are named as zero-padded contigious integers.
 
     /table/_delta_log/00000000000000000000.json
     /table/_delta_log/00000000000000000001.json
     /table/_delta_log/00000000000000000002.json
 
-To avoid needing to read the entire transaction log everytime a table is loaded, Delta Lake will also occasionally create a _checkpoint_, which contains the entire state of the table at the given version. Checkpoints are encoded using parquet and must only be written after the accompanying delta files has been written.
+To avoid needing to read the entire transaction log every time a table is loaded, Delta Lake also occasionally creates a _checkpoint_, which contains the entire state of the table at the given version. Checkpoints are encoded using Parquet and must only be written after the accompanying Delta Lake files have been written.
 
 ## Requirements for Underlying Storage Systems
 
-Delta Lake's ACID guarantees are predicated on the atomicity and durability guarantees of the storage system. Specifically, we require the storage system to provide the following. 
+Delta Lake ACID guarantees are predicated on the atomicity and durability guarantees of the storage system. Specifically, we require the storage system to provide the following. 
 
 1. **Atomic visibility**: There must a way for a file to visible in its entirely or not visible at all. 
 2. **Mutual exclusion**: Only one writer must be able to create (or rename) a file at the final destination.
 3. **Consistent listing**: Once a file has been written in a directory, all future listings for that directory must return that file.
 
-Open source Delta Lake currently supports all these guarantees only on HDFS. It is possible to make it work with other storage systems by plugging in custom implementations of the [LogStore API](https://github.com/delta-io/delta/blob/master/src/main/scala/org/apache/spark/sql/delta/storage/LogStore.scala).
+Delta Lake supports all these guarantees only on HDFS. It is possible to make it work with other storage systems by plugging in custom implementations of the [LogStore API](https://github.com/delta-io/delta/blob/master/src/main/scala/org/apache/spark/sql/delta/storage/LogStore.scala).
 
-As an optimization, storage systems can also allow _partial listing of a directory, given a start marker_. Delta can use this ability to efficiently discover the latest version of a table, without listing all of the files in the transaction log.
+As an optimization, storage systems can also allow _partial listing of a directory, given a start marker_. Delta Lake can use this ability to efficiently discover the latest version of a table, without listing all of the files in the transaction log.
 
 # Reporting issues
-We use [Github Issues](https://github.com/delta-io/delta/issues) to track community reported issues. You can also [contact](#community) the community for getting answers.
+We use [GitHub Issues](https://github.com/delta-io/delta/issues) to track community reported issues. You can also [contact](#community) the community for getting answers.
 
 # Contributing 
-We welcome contributions to Delta Lake. We use [Github Pull Requests ](https://github.com/delta-io/delta/pulls) for accepting changes. You will be propted to sign a contributor license agreement before you change can be accepted.
+We welcome contributions to Delta Lake. We use [GitHub Pull Requests ](https://github.com/delta-io/delta/pulls) for accepting changes. You will be prompted to sign a contributor license agreement before your change can be accepted.
 
 # Community
 
@@ -89,4 +89,3 @@ There are two mediums of communication within the Delta Lake community.
   - [Login here](https://delta-users.slack.com/)
 
 - Public [Mailing list](https://groups.google.com/forum/#!forum/delta-users)
-
