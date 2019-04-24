@@ -337,14 +337,4 @@ object DeltaSQLConf {
       .longConf
       .createWithDefault(10000L)
 
-  // EDGE ONLY
-
-  val DELTA_SAMPLE_SIZE =
-    buildConf("sampling.sampleSize")
-      .internal()
-      .doc("The number of records to collect when sampling a Delta table.")
-      .longConf
-      .createWithDefault(10000)
-
-  // END EDGE ONLY
 }

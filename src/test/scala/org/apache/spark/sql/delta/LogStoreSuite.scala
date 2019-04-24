@@ -111,7 +111,6 @@ object FakeFileSystem {
   val uri = URI.create(s"$scheme:///")
 }
 
-// BEGIN-END
 /**
  * A fake AbstractFileSystem to test whether session Hadoop configuration will be picked up.
  * This is a wrapper around [[FakeFileSystem]].
@@ -132,4 +131,3 @@ class FakeAbstractFileSystem(uri: URI, conf: org.apache.hadoop.conf.Configuratio
   override def getServerDefaults(): FsServerDefaults = LocalConfigKeys.getServerDefaults()
   override def isValidName(src: String): Boolean = true
 }
-// END-EDGE

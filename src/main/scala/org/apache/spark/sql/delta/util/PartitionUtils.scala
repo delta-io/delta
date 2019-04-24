@@ -60,7 +60,6 @@ import org.apache.spark.sql.types._
  * This file is forked from [[org.apache.spark.sql.execution.datasources.PartitioningUtils]].
  */
 
-// EDGE TODO: We should tighten up visibility of the classes here once we clean up Hive coupling.
 
 // In open-source Apache Spark, PartitionPath is defined as
 //
