@@ -38,9 +38,6 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests"
 )
 
-resolvers += "Apache Spark 2.4.2-rc1 Repo" at
-  "https://repository.apache.org/content/repositories/orgapachespark-1322"
-
 testOptions in Test += Tests.Argument("-oF")
 
 // Don't execute in parallel since we can't have multiple Sparks in the same JVM
@@ -136,3 +133,17 @@ bintrayReleaseOnPublish in ThisBuild := false
 bintrayOrganization := Some("delta-io")
 
 bintrayRepository := "delta"
+
+import ReleaseTransformations._
+
+releaseProcess := Seq[ReleaseStep](
+  checkSnapshotDependencies,
+  inquireVersions,
+  runTest,
+  setReleaseVersion,
+  commitReleaseVersion,
+  tagRelease,
+  publishArtifacts,
+  setNextVersion,
+  commitNextVersion
+)
