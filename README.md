@@ -4,7 +4,9 @@
 
 Delta Lake is a storage layer that brings scalable, ACID transactions to [Apache Spark](https://spark.apache.org) and other big-data engines.
 
-See the [Delta Lake Documentation](https://docs.delta.io) for details on how to get started in Scala, Java, or Python.
+See the [Delta Lake Documentation](https://docs.delta.io) for details.
+
+See the [Quick Start Guide](https://docs.delta.io/latest/quick-start.html) to get started with Scala, Java and Python.
 
 # Latest Binaries
 
