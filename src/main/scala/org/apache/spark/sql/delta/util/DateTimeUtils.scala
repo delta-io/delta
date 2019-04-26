@@ -37,7 +37,7 @@
  */
 package org.apache.spark.sql.delta.util
 
-import java.sql.{Date, Timestamp}
+import java.sql.Timestamp
 import java.time._
 import java.util.TimeZone
 import java.util.concurrent.TimeUnit._

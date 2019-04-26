@@ -22,7 +22,7 @@ import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.streaming.OutputMode
-import org.apache.spark.sql.types.{DataType, Metadata => MetadataType, StructField, StructType}
+import org.apache.spark.sql.types.{StructField, StructType}
 
 /**
  * Exhaustive list of operations that can be performed on a Delta table. These operations are
