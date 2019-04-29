@@ -29,7 +29,6 @@ import org.apache.spark.util.Utils
 class LogStoreSuite
   extends QueryTest
   with LogStoreProvider
-  
   with SharedSQLContext {
 
   test("read / write") {

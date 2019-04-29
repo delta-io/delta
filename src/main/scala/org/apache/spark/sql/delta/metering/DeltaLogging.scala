@@ -48,7 +48,6 @@ import org.apache.spark.sql.delta.util.JsonUtils
  */
 trait DeltaLogging
   extends DeltaProgressReporter
-  
   with DatabricksLogging {
 
   /**

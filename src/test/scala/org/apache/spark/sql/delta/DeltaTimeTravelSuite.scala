@@ -24,7 +24,6 @@ import java.util.{Calendar, Date, TimeZone}
 import scala.concurrent.duration._
 import scala.language.implicitConversions
 
-
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.util.FileNames

@@ -41,7 +41,6 @@ trait DeltaOptionParser {
 
 trait DeltaWriteOptions
   extends DeltaWriteOptionsImpl
-  
   with DeltaOptionParser {
 
   import DeltaOptions._

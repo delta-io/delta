@@ -64,9 +64,7 @@ class Snapshot(
     val lineageLength: Int = 1)
   extends StateCache
   with PartitionFiltering
-  
   with DeltaFileFormat
-  
   with DeltaLogging {
 
   import Snapshot._
