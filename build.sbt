@@ -58,6 +58,15 @@ javaOptions in Test ++= Seq(
   "-Xmx2g"
 )
 
+scalastyleConfig := baseDirectory.value / "scalastyle-config.xml"
+
+// Create a default Scala style task to run with tests
+lazy val testScalastyle = taskKey[Unit]("testScalastyle")
+
+testScalastyle := scalastyle.in(Test).toTask("").value
+
+(test in Test) := ((test in Test) dependsOn testScalastyle).value
+
 /***************************
  * Spark Packages settings *
  ***************************/
