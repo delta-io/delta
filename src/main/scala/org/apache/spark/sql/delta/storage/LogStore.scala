@@ -33,7 +33,10 @@ import org.apache.spark.util.Utils
  * 1. Atomic visibility of files: Any file written through this store must
  *    be made visible atomically. In other words, this should not generate partial files.
  *
- * 2. Consistent listing: Once a file has been written in a directory, all future listings for
+ * 2. Mutual exclusion: Only one writer must be able to create (or rename) a file at the final
+ *    destination.
+ *
+ * 3. Consistent listing: Once a file has been written in a directory, all future listings for
  *    that directory must return that file.
  */
 trait LogStore {
