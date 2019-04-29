@@ -61,13 +61,8 @@ class DeltaLog private(
     val dataPath: Path,
     val clock: Clock)
   extends Checkpoints
-  
-  
   with MetadataCleanup
-  
   with LogStoreProvider
-  
-  
   with VerifyChecksum {
 
   import org.apache.spark.sql.delta.util.FileNames._

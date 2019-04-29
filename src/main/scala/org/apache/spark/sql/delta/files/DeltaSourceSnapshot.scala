@@ -37,7 +37,6 @@ class DeltaSourceSnapshot(
     val snapshot: Snapshot,
     val filters: Seq[Expression])
   extends SnapshotIterator
-  
   with StateCache {
 
   protected val version = snapshot.version

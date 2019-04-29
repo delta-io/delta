@@ -68,7 +68,6 @@ object DeltaFullTable {
 }
 
 object DeltaTableUtils extends PredicateHelper
-  
   with DeltaLogging {
 
   /** Check whether this table is a Delta table based on information from the Catalog. */

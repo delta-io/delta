@@ -16,8 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-
-
 import org.apache.spark.sql._
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.test.SharedSQLContext

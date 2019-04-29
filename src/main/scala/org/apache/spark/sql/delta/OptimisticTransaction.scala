@@ -67,7 +67,6 @@ class OptimisticTransaction
     (override val deltaLog: DeltaLog, override val snapshot: Snapshot)
     (implicit override val clock: Clock)
   extends OptimisticTransactionImpl
-  
   with DeltaLogging {
 
   /** Creates a new OptimisticTransaction.

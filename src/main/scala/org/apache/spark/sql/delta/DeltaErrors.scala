@@ -46,7 +46,6 @@ trait DocsPath {
  */
 object DeltaErrors
     extends DocsPath
-    
     with DeltaLogging {
 
   def baseDocsPath(spark: SparkSession): String = baseDocsPath(spark.sparkContext.getConf)

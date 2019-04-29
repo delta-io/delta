@@ -53,7 +53,6 @@ case class WriteIntoDelta(
     data: DataFrame)
   extends RunnableCommand
   with ImplicitMetadataOperation
-  
   with DeltaCommand {
 
   override protected val canMergeSchema: Boolean = options.canMergeSchema

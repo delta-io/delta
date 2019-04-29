@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.util.Locale
 
-
 import org.scalatest.time.SpanSugar._
 
 import org.apache.spark.sql._
