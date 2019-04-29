@@ -51,31 +51,43 @@ class ActionSerializerSuite extends QueryTest with SharedSQLContext {
         tags = Map("key1" -> "val1", "key2" -> "val2"))
     val json1 =
       """{
+        |  "txn": null,
         |  "add": {
         |    "path": "a",
         |    "partitionValues": {},
         |    "size": 1,
         |    "modificationTime": 2,
         |    "dataChange": false,
+        |    "stats": null,
         |    "tags": {
         |      "key1": "val1",
         |      "key2": "val2"
         |    }
-        |  }
+        |  },
+        |  "remove": null,
+        |  "metaData": null,
+        |  "protocol": null,
+        |  "commitInfo": null
         |}""".stripMargin
     assert(action1 === Action.fromJson(json1))
     assert(action1.json === json1.replaceAll("\\s", ""))
 
     val json2 =
       """{
+        |  "txn": null,
         |  "add": {
         |    "path": "a",
         |    "partitionValues": {},
         |    "size": 1,
         |    "modificationTime": 2,
         |    "dataChange": false,
+        |    "stats": null,
         |    "tags": {}
-        |  }
+        |  },
+        |  "remove": null,
+        |  "metaData": null,
+        |  "protocol": null,
+        |  "commitInfo": null
         |}""".stripMargin
     val action2 =
       AddFile(
