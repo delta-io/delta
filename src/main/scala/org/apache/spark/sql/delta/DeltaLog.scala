@@ -557,8 +557,9 @@ class DeltaLog private(
   def createDataFrame(
       snapshot: Snapshot,
       addFiles: Seq[AddFile],
-      isStreaming: Boolean = false): DataFrame = {
-    val actionType = if (isStreaming) "streaming" else "batch"
+      isStreaming: Boolean = false,
+      actionTypeOpt: Option[String] = None): DataFrame = {
+    val actionType = actionTypeOpt.getOrElse(if (isStreaming) "streaming" else "batch")
     val fileIndex = new TahoeBatchFileIndex(spark, actionType, addFiles, this, dataPath, snapshot)
 
     val relation = HadoopFsRelation(
