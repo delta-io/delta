@@ -60,7 +60,12 @@ javaOptions in Test ++= Seq(
 
 scalastyleConfig := baseDirectory.value / "scalastyle-config.xml"
 
-// Create a default Scala style task to run with tests
+lazy val compileScalastyle = taskKey[Unit]("compileScalastyle")
+
+compileScalastyle := scalastyle.in(Compile).toTask("").value
+
+(compile in Compile) := ((compile in Compile) dependsOn compileScalastyle).value
+
 lazy val testScalastyle = taskKey[Unit]("testScalastyle")
 
 testScalastyle := scalastyle.in(Test).toTask("").value
