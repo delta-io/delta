@@ -24,7 +24,6 @@ import com.databricks.spark.util.MetricDefinitions.{EVENT_LOGGING_FAILURE, EVENT
 import com.databricks.spark.util.TagDefinitions.{TAG_OP_TYPE, TAG_TAHOE_ID, TAG_TAHOE_PATH}
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.util.DeltaProgressReporter
-
 import org.apache.spark.sql.delta.util.JsonUtils
 
 /**

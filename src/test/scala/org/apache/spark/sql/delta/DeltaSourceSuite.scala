@@ -20,7 +20,6 @@ import java.io.{File, FileNotFoundException}
 import java.net.URI
 import java.util.UUID
 
-
 import org.apache.spark.sql.delta.actions.{AddFile, Format}
 import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaSQLConf}
 import org.apache.spark.sql.delta.util.FileNames

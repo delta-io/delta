@@ -22,7 +22,6 @@ import java.sql.Timestamp
 
 import scala.collection.mutable
 
-
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, CommitMarker}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.LogStore
@@ -71,7 +70,7 @@ class DeltaHistoryManager(
    * Get the commit information of the Delta table from commit `[start, end)`. If `end` is `None`,
    * we return all commits from start to now.
    */
-  def getHistory(start: Long, end: Option[Long]): Seq[CommitInfo] =  {
+  def getHistory(start: Long, end: Option[Long]): Seq[CommitInfo] = {
     val _spark = spark
     import _spark.implicits._
     val conf = getSerializableHadoopConf
@@ -155,7 +154,7 @@ class DeltaHistoryManager(
   private def parallelSearch(
       time: Long,
       start: Long,
-      end: Long): Commit =  {
+      end: Long): Commit = {
     parallelSearch0(
       spark,
       getSerializableHadoopConf,
