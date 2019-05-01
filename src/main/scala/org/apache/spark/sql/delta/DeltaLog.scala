@@ -481,13 +481,18 @@ class DeltaLog private(
    * ------------------- */
 
   /** Get the snapshot at `version`. */
-  def getSnapshotAt(version: Long, commitTimestamp: Option[Long] = None): Snapshot = {
+  def getSnapshotAt(
+      version: Long,
+      commitTimestamp: Option[Long] = None,
+      lastCheckpointHint: Option[CheckpointInstance] = None): Snapshot = {
     val current = snapshot
     if (current.version == version) {
       return current
     }
 
-    val lastCheckpoint = findLastCompleteCheckpoint(CheckpointInstance(version, None))
+    // Do not use the hint if the version we're asking for is smaller than the last checkpoint hint
+    val lastCheckpoint = lastCheckpointHint.collect { case ci if ci.version <= version => ci }
+      .orElse(findLastCompleteCheckpoint(CheckpointInstance(version, None)))
     val lastCheckpointFiles = lastCheckpoint.map { c =>
       c.getCorrespondingFiles(logPath)
     }.toSeq.flatten
@@ -540,7 +545,6 @@ class DeltaLog private(
       }
     }
   }
-
 
   /* ------------  *
    |  Integration  |
