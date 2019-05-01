@@ -19,13 +19,10 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.net.URI
 
-
-
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-
 import org.apache.spark.sql.delta.util.StateCache
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
@@ -77,7 +74,7 @@ class Snapshot(
   // Reconstruct the state by applying deltas in order to the checkpoint.
   // We partition by path as it is likely the bulk of the data is add/remove.
   // Non-path based actions will be collocated to a single partition.
-  private val stateReconstruction =  {
+  private val stateReconstruction = {
     val implicits = spark.implicits
     import implicits._
 
@@ -122,7 +119,7 @@ class Snapshot(
   // Force materialization of the cache and collect the basics to the driver for fast access.
   // Here we need to bypass the ACL checks for SELECT anonymous function permissions.
   val State(protocol, metadata, setTransactions, sizeInBytes, numOfFiles, numOfMetadata,
-      numOfProtocol, numOfRemoves, numOfSetTransactions) =  {
+      numOfProtocol, numOfRemoves, numOfSetTransactions) = {
     val implicits = spark.implicits
     import implicits._
     state.select(
@@ -144,14 +141,14 @@ class Snapshot(
 
   // Here we need to bypass the ACL checks for SELECT anonymous function permissions.
   /** All of the files present in this [[Snapshot]]. */
-  def allFiles: Dataset[AddFile] =  {
+  def allFiles: Dataset[AddFile] = {
     val implicits = spark.implicits
     import implicits._
     state.where("add IS NOT NULL").select($"add".as[AddFile])
   }
 
   /** All unexpired tombstones. */
-  def tombstones: Dataset[RemoveFile] =  {
+  def tombstones: Dataset[RemoveFile] = {
     val implicits = spark.implicits
     import implicits._
     state.where("remove IS NOT NULL").select($"remove".as[RemoveFile])
@@ -173,7 +170,7 @@ class Snapshot(
    * Here we are reading the transaction log, and we need to bypass the ACL checks
    * for SELECT any file permissions.
    */
-  private def load(paths: Seq[Path]): Dataset[SingleAction] =  {
+  private def load(paths: Seq[Path]): Dataset[SingleAction] = {
     val pathAndFormats = paths.map(_.toString).map(path => path -> path.split("\\.").last)
     pathAndFormats.groupBy(_._2).map { case (format, paths) =>
       spark.read.format(format).schema(logSchema).load(paths.map(_._1): _*).as[SingleAction]

@@ -25,7 +25,7 @@ import com.fasterxml.jackson.module.scala.experimental.ScalaObjectMapper
 object JsonUtils {
   /** Used to convert between classes and JSON. */
   val mapper = new ObjectMapper with ScalaObjectMapper
-  mapper.setSerializationInclusion(Include.ALWAYS)
+  mapper.setSerializationInclusion(Include.NON_NULL)
   mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
   mapper.registerModule(DefaultScalaModule)
 
