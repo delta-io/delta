@@ -34,17 +34,25 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
 import org.apache.spark.util.{Clock, Utils}
 
-/** Record metrics about successful commits. */
+/** Record metrics about a successful commit. */
 case class CommitStats(
-  readVersion: Long,
+  /** The version read by the txn when it starts. */
+  startVersion: Long,
+  /** The version committed by the txn. */
   commitVersion: Long,
+  /** The version read by the txn right after it commits. It usually equals to commitVersion,
+   * but can be larger than commitVersion when there are concurrent commits. */
+  readVersion: Long,
   txnDurationMs: Long,
   commitDurationMs: Long,
   numAdd: Int,
   numRemove: Int,
   bytesNew: Long,
+  /** The number of files in the table as of version `readVersion`. */
   numFilesTotal: Long,
+  /** The table size in bytes as of version `readVersion`. */
   sizeInBytesTotal: Long,
+  /** The protocol as of version `readVersion`. */
   protocol: Protocol,
   info: CommitInfo,
   newMetadata: Option[Metadata],
@@ -319,11 +327,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
         deltaFile(deltaLog.logPath, attemptVersion),
         actions.map(_.json).toIterator)
       val commitTime = System.nanoTime()
-      val snapshot = deltaLog.update()
-      if (snapshot.version < attemptVersion) {
+      val postCommitSnapshot = deltaLog.update()
+      if (postCommitSnapshot.version < attemptVersion) {
         throw new IllegalStateException(
           s"The committed version is $attemptVersion " +
-            s"but the current version is ${snapshot.version}.")
+            s"but the current version is ${postCommitSnapshot.version}.")
       }
 
       // Post stats
@@ -338,16 +346,17 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
           a
       }
       val stats = CommitStats(
-        readVersion = snapshot.version,
+        startVersion = snapshot.version,
         commitVersion = attemptVersion,
+        readVersion = postCommitSnapshot.version,
         txnDurationMs = NANOSECONDS.toMillis(commitTime - txnStartNano),
         commitDurationMs = NANOSECONDS.toMillis(commitTime - commitStartNano),
         numAdd = adds.size,
         numRemove = actions.collect { case r: RemoveFile => r }.size,
         bytesNew = adds.filter(_.dataChange).map(_.size).sum,
-        numFilesTotal = snapshot.numOfFiles,
-        sizeInBytesTotal = snapshot.sizeInBytes,
-        protocol = snapshot.protocol,
+        numFilesTotal = postCommitSnapshot.numOfFiles,
+        sizeInBytesTotal = postCommitSnapshot.sizeInBytes,
+        protocol = postCommitSnapshot.protocol,
         info = Option(commitInfo).map(_.copy(readVersion = None, isolationLevel = None)).orNull,
         newMetadata = newMetadata,
         numAbsolutePaths,
