@@ -101,8 +101,15 @@ trait VerifyChecksum extends DeltaLogging {
   protected def validateChecksum(snapshot: Snapshot): Unit = {
     val version = snapshot.version
     val checksumFile = FileNames.checksumFile(logPath, version)
+
+    var exception: Option[String] = None
     val content = try Some(store.read(checksumFile)) catch {
-      case _: FileNotFoundException =>
+      case NonFatal(e) =>
+        // We expect FileNotFoundException; if it's another kind of exception, we still catch them
+        // here but we log them in the checksum error event below.
+        if (!e.isInstanceOf[FileNotFoundException]) {
+          exception = Some(Utils.exceptionString(e))
+        }
         None
     }
 
@@ -114,7 +121,7 @@ trait VerifyChecksum extends DeltaLogging {
       recordDeltaEvent(
         this,
         "delta.checksum.error.missing",
-        data = Map("version" -> version))
+        data = Map("version" -> version) ++ exception.map(("exception" -> _)))
 
       return
     }
