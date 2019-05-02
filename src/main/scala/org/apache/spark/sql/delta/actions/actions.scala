@@ -20,7 +20,7 @@ import java.net.URI
 import java.sql.Timestamp
 
 import org.apache.spark.sql.delta.util.JsonUtils
-import com.fasterxml.jackson.annotation.JsonIgnore
+import com.fasterxml.jackson.annotation.{JsonIgnore, JsonInclude}
 import com.fasterxml.jackson.core.JsonGenerator
 import com.fasterxml.jackson.databind.{JsonSerializer, SerializerProvider}
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
@@ -107,6 +107,7 @@ sealed trait FileAction extends Action {
  */
 case class AddFile(
     path: String,
+    @JsonInclude(JsonInclude.Include.ALWAYS)
     partitionValues: Map[String, String],
     size: Long,
     modificationTime: Long,
