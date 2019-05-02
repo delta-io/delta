@@ -134,21 +134,17 @@ trait Checkpoints extends DeltaLogging {
 
   /** Loads the checkpoint metadata from the _last_checkpoint file. */
   private def loadMetadataFromFile(tries: Int): Option[CheckpointMetaData] = {
-    val checkpointMetaData = try {
-      store.read(LAST_CHECKPOINT)
-    } catch {
-      case _: FileNotFoundException =>
-        return None
-    }
-
     try {
+      val checkpointMetaData = store.read(LAST_CHECKPOINT)
       val checkpointMetadata =
         JsonUtils.mapper.readValue[CheckpointMetaData](checkpointMetaData.head)
       Some(checkpointMetadata)
     } catch {
+      case _: FileNotFoundException =>
+        return None
       case NonFatal(e) if tries < 3 =>
-        logWarning(s"Failed to parse $LAST_CHECKPOINT. This may happen if a file " +
-          s"appears to be partial. Sleeping and trying again.", e)
+        logWarning(s"Failed to parse $LAST_CHECKPOINT. This may happen if there was an error " +
+          "during read operation, or a file appears to be partial. Sleeping and trying again.", e)
         Thread.sleep(1000)
         loadMetadataFromFile(tries + 1)
       case NonFatal(e) =>
