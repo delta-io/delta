@@ -111,7 +111,7 @@ object DeltaSQLConf {
         "to prevent writing files that will be continuously considered for compaction.")
       .longConf
       .checkValue(_ >= 0, "minFileSize has to be positive")
-      .createWithDefault(1024 * 1024 * 1024 / 4 * 5) // .8 * max
+      .createWithDefault(1024 * 1024 * 1024 * 4L / 5) // .8 * max
 
   val DELTA_OPTIMIZE_MAX_FILE_SIZE =
     buildConf("optimize.maxFileSize")
