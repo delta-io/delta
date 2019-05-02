@@ -221,6 +221,7 @@ object DeltaSQLConf {
       .checkValue(_ >= 0, "maxFileSize has to be positive")
       .createWithDefault(128 * 1024 * 1024)
 
+
   val DELTA_AUTO_OPTIMIZE_CAPACITY =
     buildConf("autoOptimize.capacity")
       .internal()
