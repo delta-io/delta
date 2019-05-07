@@ -147,6 +147,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
   protected val txnStartNano = System.nanoTime()
   protected var commitStartNano = -1L
   protected var commitInfo: CommitInfo = _
+  protected var dependsOnFiles: Boolean = false
 
   /** The version that this transaction is reading from. */
   def readVersion: Long = snapshot.version
@@ -200,10 +201,17 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
   def filterFiles(filters: Seq[Expression]): Seq[AddFile] = {
     implicit val enc = SingleAction.addFileEncoder
 
+    dependsOnFiles = true
+
     DeltaLog.filterFileList(
       metadata.partitionColumns,
       snapshot.allFiles.toDF(),
       filters).as[AddFile].collect()
+  }
+
+  /** Mark the entire table as tainted by this transaction. */
+  def readWholeTable(): Unit = {
+    dependsOnFiles = true
   }
 
   /**
@@ -227,13 +235,20 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
       // Try to commit at the next version.
       var finalActions = prepareCommit(actions, op)
 
+      val isBlindAppend = {
+        val onlyAddFiles =
+          finalActions.collect { case f: FileAction => f }.forall(_.isInstanceOf[AddFile])
+        onlyAddFiles && !dependsOnFiles
+      }
+
       commitInfo = CommitInfo(
         clock.getTimeMillis(),
         op.name,
         op.jsonEncodedValues,
         Map.empty,
         Some(readVersion).filter(_ >= 0),
-        None)
+        None,
+        Some(isBlindAppend))
       finalActions = commitInfo +: finalActions
 
       val commitVersion = doCommit(snapshot.version + 1, finalActions)

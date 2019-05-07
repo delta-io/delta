@@ -255,7 +255,9 @@ case class CommitInfo(
     clusterId: Option[String],
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     readVersion: Option[Long],
-    isolationLevel: Option[String]) extends Action with CommitMarker {
+    isolationLevel: Option[String],
+    /** Whether this commit has blindly appended without caring about existing files */
+    isBlindAppend: Option[Boolean]) extends Action with CommitMarker {
   override def wrap: SingleAction = SingleAction(commitInfo = this)
 
   override def withTimestamp(timestamp: Long): CommitInfo = {
@@ -297,13 +299,18 @@ object NotebookInfo {
 }
 
 object CommitInfo {
+  def empty(version: Option[Long] = None): CommitInfo = {
+    CommitInfo(version, null, None, None, null, null, None, None, None, None, None, None)
+  }
+
   def apply(
       time: Long,
       operation: String,
       operationParameters: Map[String, String],
       commandContext: Map[String, String],
       readVersion: Option[Long],
-      isolationLevel: Option[String]): CommitInfo = {
+      isolationLevel: Option[String],
+      isBlindAppend: Option[Boolean]): CommitInfo = {
     val getUserName = commandContext.get("user").flatMap {
       case "unknown" => None
       case other => Option(other)
@@ -320,7 +327,8 @@ object CommitInfo {
       NotebookInfo.fromContext(commandContext),
       commandContext.get("clusterId"),
       readVersion,
-      isolationLevel
+      isolationLevel,
+      isBlindAppend
     )
   }
 }

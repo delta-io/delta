@@ -624,9 +624,10 @@ class ProtocolChangedException(
 /** Thrown when files are added that would have been read by the current transaction. */
 class ConcurrentAppendException(
     conflictingCommit: Option[CommitInfo],
-    partition: String) extends DeltaConcurrentModificationException(
+    partition: String,
+    customRetryMsg: Option[String] = None) extends DeltaConcurrentModificationException(
   s"Files were added to $partition by a concurrent update. " +
-    "Please try the operation again.", conflictingCommit)
+    customRetryMsg.getOrElse("Please try the operation again."), conflictingCommit)
 
 /** Thrown when the current transaction reads data that was deleted by a concurrent transaction. */
 class ConcurrentDeleteReadException(
