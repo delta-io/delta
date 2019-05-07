@@ -72,8 +72,6 @@ Delta Lake ACID guarantees are predicated on the atomicity and durability guaran
 2. **Mutual exclusion**: Only one writer must be able to create (or rename) a file at the final destination.
 3. **Consistent listing**: Once a file has been written in a directory, all future listings for that directory must return that file.
 
-Delta Lake supports all these guarantees only on HDFS. It is possible to make it work with other storage systems by plugging in custom implementations of the [LogStore API](https://github.com/delta-io/delta/blob/master/src/main/scala/org/apache/spark/sql/delta/storage/LogStore.scala).
-
 As an optimization, storage systems can also allow _partial listing of a directory, given a start marker_. Delta Lake can use this ability to efficiently discover the latest version of a table, without listing all of the files in the transaction log.
 
 # Reporting issues
