@@ -350,7 +350,7 @@ class DeltaLog private(
   }
 
   /**
-   * Execute a piece of code within a new OptimisiticTransaction. Reads/write sets will
+   * Execute a piece of code within a new [[OptimisticTransaction]]. Reads/write sets will
    * be recorded for this table, and all other tables will be read
    * at a snapshot that is pinned on the first access.
    *

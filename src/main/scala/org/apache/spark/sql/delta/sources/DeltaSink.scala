@@ -16,14 +16,13 @@
 
 package org.apache.spark.sql.delta.sources
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, DeltaOptions}
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.SetTransaction
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaUtils}
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.SparkException
-import org.apache.spark.sql.{AnalysisException, DataFrame, SQLContext}
+import org.apache.spark.sql._
 import org.apache.spark.sql.execution.streaming.{Sink, StreamExecution}
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.NullType
@@ -48,7 +47,7 @@ class DeltaSink(
 
   override protected val canMergeSchema: Boolean = options.canMergeSchema
 
-  override def addBatch(batchId: Long, data: DataFrame): Unit = {
+  override def addBatch(batchId: Long, data: DataFrame): Unit = deltaLog.withNewTransaction { txn =>
     val queryId = sqlContext.sparkContext.getLocalProperty(StreamExecution.QUERY_ID_KEY)
     assert(queryId != null)
 
@@ -56,7 +55,18 @@ class DeltaSink(
       throw DeltaErrors.streamWriteNullTypeException
     }
 
-    val txn = deltaLog.startTransaction()
+    // If the batch reads the same Delta table as this sink is going to write to, then this
+    // write has dependencies. Then make sure that this commit set hasDependencies to true
+    // by injecting a read on the whole table. This needs to be done explicitly because
+    // MicroBatchExecution has already enforced all the data skipping (by forcing the generation
+    // of the executed plan) even before the transaction was started.
+    val selfScan = data.queryExecution.analyzed.collectFirst {
+      case DeltaTable(index) if index.deltaLog.isSameLogAs(txn.deltaLog) => true
+    }.nonEmpty
+    if (selfScan) {
+      txn.readWholeTable()
+    }
+
     // Streaming sinks can't blindly overwrite schema. See Schema Management design doc for details
     updateMetadata(
       txn,

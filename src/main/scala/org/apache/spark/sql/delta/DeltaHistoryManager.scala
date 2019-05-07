@@ -235,7 +235,7 @@ object DeltaHistoryManager extends DeltaLogging {
       .map(Action.fromJson)
       .collectFirst { case c: CommitInfo => c }
     if (info.isEmpty) {
-      new CommitInfo(Some(version), null, None, None, null, null, None, None, None, None, None)
+      CommitInfo.empty(Some(version))
     } else {
       info.head.copy(version = Some(version))
     }
