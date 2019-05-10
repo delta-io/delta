@@ -331,11 +331,4 @@ object DeltaConfigs extends DeltaLogging {
     a => a >= -1,
     "needs to be larger than or equal to -1.")
 
-
-  val HIVE_MANIFEST_ENABLED = buildConfig[Boolean](
-    "compatibility.hiveManifest.enabled",
-    "false",
-    _.toBoolean,
-    _ => true,
-    "needs to be a boolean.")
 }
