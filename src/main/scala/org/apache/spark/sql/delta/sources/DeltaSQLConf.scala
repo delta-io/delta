@@ -107,17 +107,15 @@ object DeltaSQLConf {
     buildConf("optimize.minFileSize")
       .internal()
       .doc("Files which are smaller than this threshold (in bytes) will be grouped together and " +
-        "rewritten as larger files by the OPTIMIZE command. The min should be less than the max " +
-        "to prevent writing files that will be continuously considered for compaction.")
+        "rewritten as larger files by the OPTIMIZE command.")
       .longConf
       .checkValue(_ >= 0, "minFileSize has to be positive")
-      .createWithDefault(1024 * 1024 * 1024 / 4 * 5) // .8 * max
+      .createWithDefault(1024 * 1024 * 1024)
 
   val DELTA_OPTIMIZE_MAX_FILE_SIZE =
     buildConf("optimize.maxFileSize")
       .internal()
-      .doc(s"Target file size produced by the OPTIMIZE command. This should be strictly larger " +
-        s"than ${DELTA_OPTIMIZE_MIN_FILE_SIZE.key}")
+      .doc("Target file size produced by the OPTIMIZE command.")
       .longConf
       .checkValue(_ >= 0, "maxFileSize has to be positive")
       .createWithDefault(1024 * 1024 * 1024)
@@ -194,17 +192,6 @@ object DeltaSQLConf {
       .longConf
       .checkValue(_ >= 0, "the threshold must be >= 0")
       .createWithDefault(100 * DELTA_OPTIMIZE_MAX_FILE_SIZE.defaultValue.get)
-
-  val DELTA_OPTIMIZE_ZORDER_TARGET_CUBE_SIZE =
-    buildConf("optimize.zorder.mergeStrategy.minCubeSize.targetCubeSize")
-      .internal()
-      .doc(s"When '${DELTA_OPTIMIZE_ZORDER_MERGE_STRATEGY.key} = minCubeSize' this is the " +
-        "target size of the Z-cubes we will create. This is not a hard max; we will continue " +
-        "adding files to a Z-cube until their combined size exceeds this value. This value " +
-        s"must be greater than or equal to ${DELTA_OPTIMIZE_ZORDER_MIN_CUBE_SIZE.key}.")
-      .longConf
-      .checkValue(_ >= 0, "the target must be >= 0")
-      .createWithDefault((DELTA_OPTIMIZE_ZORDER_MIN_CUBE_SIZE.defaultValue.get * 1.2).toLong)
 
   val DELTA_OPTIMIZE_ZORDER_METRICS =
     buildConf("optimize.zorder.metrics")
