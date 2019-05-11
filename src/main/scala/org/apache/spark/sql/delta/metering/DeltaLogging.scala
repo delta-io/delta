@@ -50,7 +50,7 @@ trait DeltaLogging
   with DatabricksLogging {
 
   /**
-   * Used to record the occurence of a single event or report detailed, operation specific
+   * Used to record the occurrence of a single event or report detailed, operation specific
    * statistics.
    */
   protected def recordDeltaEvent(
