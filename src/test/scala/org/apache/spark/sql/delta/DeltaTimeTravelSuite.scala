@@ -34,7 +34,8 @@ import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.test.SharedSQLContext
 import org.apache.spark.util.ManualClock
 
-class DeltaTimeTravelSuite extends QueryTest with SharedSQLContext {
+class DeltaTimeTravelSuite extends QueryTest
+  with SharedSQLContext {
 
   import testImplicits._
 
