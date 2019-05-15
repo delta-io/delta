@@ -49,7 +49,7 @@ case class DeltaSourceOffset(
     index: Long,
     isStartingVersion: Boolean) extends Offset {
 
-  override val json = JsonUtils.toJson(this)
+  override def json: String = JsonUtils.toJson(this)
 }
 
 object DeltaSourceOffset {
