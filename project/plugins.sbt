@@ -21,8 +21,6 @@ resolvers += "bintray-spark-packages" at "https://dl.bintray.com/spark-packages/
 
 resolvers += "Typesafe Repository" at "http://repo.typesafe.com/typesafe/releases/"
 
-addSbtPlugin("com.jsuereth" % "sbt-pgp" % "1.0.0")
-
 addSbtPlugin("org.spark-packages" % "sbt-spark-package" % "0.2.6")
 
 addSbtPlugin("me.lessis" % "bintray-sbt" % "0.3.0")

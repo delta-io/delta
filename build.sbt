@@ -96,8 +96,6 @@ releaseCrossBuild := true
 
 licenses += ("Apache-2.0", url("http://www.apache.org/licenses/LICENSE-2.0"))
 
-releasePublishArtifactsAction := PgpKeys.publishSigned.value
-
 pomExtra :=
   <url>https://delta.io/</url>
     <scm>
@@ -141,8 +139,6 @@ pomExtra :=
         <url>https://github.com/zsxwing</url>
       </developer>
     </developers>
-
-bintrayReleaseOnPublish in ThisBuild := false
 
 bintrayOrganization := Some("delta-io")
 
