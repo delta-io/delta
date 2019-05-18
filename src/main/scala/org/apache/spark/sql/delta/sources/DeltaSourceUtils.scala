@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.sources
 import java.util.Locale
 
 object DeltaSourceUtils {
-  val NAME = "tahoe"
+  val NAME = "delta"
   val ALT_NAME = "delta"
 
   // Batch relations don't pass partitioning columns to `CreatableRelationProvider`s, therefore
