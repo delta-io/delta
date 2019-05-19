@@ -1,0 +1,4 @@
+{"protocol":{"minReaderVersion":1,"minWriterVersion":1}}
+{"metaData":{"id":"2edf2c02-bb63-44e9-a84c-517fad0db296","format":{"provider":"parquet","options":{}},"schemaString":"{\"type\":\"struct\",\"fields\":[{\"name\":\"id\",\"type\":\"integer\",\"nullable\":true,\"metadata\":{}},{\"name\":\"value\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]}","partitionColumns":[],"configuration":{}}}
+{"add":{"path":"part-00000-f4aeebd0-a689-4e1b-bc7a-bbb0ec59dce5-c000.snappy.parquet","partitionValues":{},"size":525,"modificationTime":1501109075000,"dataChange":true}}
+{"add":{"path":"part-00001-f1cb1cf9-7a73-439c-b0ea-dcba5c2280a6-c000.snappy.parquet","partitionValues":{},"size":534,"modificationTime":1501109075000,"dataChange":true}}

@@ -1,0 +1,3 @@
+{"txn":{"appId":"txnId","version":0}}
+{"add":{"path":"part-00000-348d7f43-38f6-4778-88c7-45f379471c49-c000.snappy.parquet","partitionValues":{},"size":525,"modificationTime":1501109075000,"dataChange":true}}
+{"add":{"path":"part-00001-6d252218-2632-416e-9e46-f32316ec314a-c000.snappy.parquet","partitionValues":{},"size":534,"modificationTime":1501109075000,"dataChange":true}}
