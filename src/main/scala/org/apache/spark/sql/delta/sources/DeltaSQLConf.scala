@@ -193,6 +193,7 @@ object DeltaSQLConf {
       .checkValue(_ >= 0, "the threshold must be >= 0")
       .createWithDefault(100 * DELTA_OPTIMIZE_MAX_FILE_SIZE.defaultValue.get)
 
+
   val DELTA_OPTIMIZE_ZORDER_METRICS =
     buildConf("optimize.zorder.metrics")
       .internal()
