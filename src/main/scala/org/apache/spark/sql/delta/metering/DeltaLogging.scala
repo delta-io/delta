@@ -43,7 +43,7 @@ import org.apache.spark.sql.delta.util.JsonUtils
  *    that match "delta.ddl.%".
  *
  *  Underneath these functions use the standard usage log reporting defined in
- *  [[com.databricks.spark.util.UsageLogging]].
+ *  [[com.databricks.spark.util.DatabricksLogging]].
  */
 trait DeltaLogging
   extends DeltaProgressReporter
