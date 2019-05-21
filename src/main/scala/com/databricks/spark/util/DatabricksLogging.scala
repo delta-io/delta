@@ -43,7 +43,7 @@ object MetricDefinitions {
 trait DatabricksLogging {
   // scalastyle:off println
   def logConsole(line: String): Unit = println(line)
-  // scalastyle:off on
+  // scalastyle:on println
 
   def recordUsage(
       metric: MetricDefinition,
