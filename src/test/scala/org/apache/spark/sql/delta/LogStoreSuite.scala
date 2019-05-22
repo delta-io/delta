@@ -22,14 +22,13 @@ import java.net.URI
 import org.apache.spark.sql.delta.storage._
 import org.apache.hadoop.fs.{Path, RawLocalFileSystem}
 
-import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.test.SharedSQLContext
 import org.apache.spark.util.Utils
 
-class LogStoreSuite
-  extends QueryTest
-  with LogStoreProvider
-  with SharedSQLContext {
+abstract class LogStoreSuiteBase extends QueryTest with SharedSQLContext {
+
+  def createLogStore(spark: SparkSession): LogStore
 
   test("read / write") {
     val tempDir = Utils.createTempDir()
@@ -75,28 +74,44 @@ class LogStoreSuite
     assert(store.listFrom(deltas(4)).map(_.getPath.getName).toArray === Nil)
   }
 
-  test("should pick up the session Hadoop configuration") {
-    val tempDir = Utils.createTempDir()
-    val path = new Path(new URI(s"fake://${tempDir.toURI.getRawPath}/1.json"))
+  protected def testHadoopConf(expectedErrMsg: String, fsImplConfs: (String, String)*): Unit = {
+    test("should pick up fs impl conf from session Hadoop configuration") {
+      withTempDir { tempDir =>
+        val path = new Path(new URI(s"fake://${tempDir.toURI.getRawPath}/1.json"))
 
-    val (fsImplConf, fsImplClass, errMsg) = {
-        (
-          "fs.AbstractFileSystem.fake.impl",
-          classOf[FakeAbstractFileSystem],
-          "No AbstractFileSystem for scheme: fake"
-        )
-    }
+        // Make sure it will fail without FakeFileSystem
+        val e = intercept[IOException] {
+          createLogStore(spark).listFrom(path)
+        }
+        assert(e.getMessage.contains(expectedErrMsg))
 
-    // Make sure it will fail without FakeFileSystem
-    val e = intercept[IOException] {
-      createLogStore(spark).listFrom(path)
-    }
-    assert(e.getMessage.contains(errMsg))
-
-    withSQLConf(fsImplConf -> fsImplClass.getName) {
-      createLogStore(spark).listFrom(path)
+        withSQLConf(fsImplConfs: _*) {
+          createLogStore(spark).listFrom(path)
+        }
+      }
     }
   }
+}
+
+class AzureLogStoreSuite extends LogStoreSuiteBase {
+  override def createLogStore(spark: SparkSession): LogStore = {
+    new AzureLogStore(spark.sparkContext.getConf, spark.sessionState.newHadoopConf())
+  }
+
+  testHadoopConf(
+    "No FileSystem for scheme: fake",
+    "fs.fake.impl" -> classOf[FakeFileSystem].getName,
+    "fs.fake.impl.disable.cache" -> "true")
+}
+
+class HDFSLogStoreImplSuite extends LogStoreSuiteBase {
+  override def createLogStore(spark: SparkSession): LogStore = {
+    new HDFSLogStoreImpl(spark.sparkContext.getConf, spark.sessionState.newHadoopConf())
+  }
+
+  testHadoopConf(
+    "No AbstractFileSystem",
+    "fs.AbstractFileSystem.fake.impl" -> classOf[FakeAbstractFileSystem].getName)
 }
 
 /** A fake file system to test whether session Hadoop configuration will be picked up. */
