@@ -66,6 +66,30 @@ case class DeltaConfig[T](
 object DeltaConfigs extends DeltaLogging {
 
   /**
+   * Convert a string to [[CalendarInterval]]. This method is case-insensitive and will throw
+   * [[IllegalArgumentException]] when the input string is not a valid interval.
+   *
+   * TODO Remove this method and use `CalendarInterval.fromCaseInsensitiveString` instead when
+   * upgrading Spark. This is a fork version of `CalendarInterval.fromCaseInsensitiveString` which
+   * will be available in the next Spark release (See SPARK-27735).
+   *
+   * @throws IllegalArgumentException if the string is not a valid internal.
+   */
+  def parseCalendarInterval(s: String): CalendarInterval = {
+    if (s == null || s.trim.isEmpty) {
+      throw new IllegalArgumentException("Interval cannot be null or blank.")
+    }
+    val sInLowerCase = s.trim.toLowerCase(Locale.ROOT)
+    val interval =
+      if (sInLowerCase.startsWith("interval ")) sInLowerCase else "interval " + sInLowerCase
+    val cal = CalendarInterval.fromString(interval)
+    if (cal == null) {
+      throw new IllegalArgumentException("Invalid interval: " + s)
+    }
+    cal
+  }
+
+  /**
    * A global default value set as a SQLConf will overwrite the default value of a DeltaConfig.
    * For example, user can run:
    *   set spark.databricks.delta.properties.defaults.randomPrefixLength = 5
@@ -195,7 +219,7 @@ object DeltaConfigs extends DeltaLogging {
   val LOG_RETENTION = buildConfig[CalendarInterval](
     "logRetentionDuration",
     "interval 30 days",
-    s => CalendarInterval.fromString("interval " + s.replaceFirst("interval", "").trim),
+    parseCalendarInterval,
     i => i.microseconds > 0 && i.months == 0,
     "needs to be provided as a calendar interval such as '2 weeks'. Months " +
     "and years are not accepted. You may specify '365 days' for a year instead.")
@@ -206,7 +230,7 @@ object DeltaConfigs extends DeltaLogging {
   val SAMPLE_RETENTION = buildConfig[CalendarInterval](
     "sampleRetentionDuration",
     "interval 7 days",
-    s => CalendarInterval.fromString("interval " + s.replaceFirst("interval", "").trim),
+    parseCalendarInterval,
     i => i.microseconds > 0 && i.months == 0,
     "needs to be provided as a calendar interval such as '2 weeks'. Months " +
       "and years are not accepted. You may specify '365 days' for a year instead.")
@@ -219,7 +243,7 @@ object DeltaConfigs extends DeltaLogging {
   val CHECKPOINT_RETENTION_DURATION = buildConfig[CalendarInterval](
     "checkpointRetentionDuration",
     "interval 2 days",
-    s => CalendarInterval.fromString("interval " + s.replaceFirst("interval", "").trim),
+    parseCalendarInterval,
     i => i.microseconds > 0 && i.months == 0,
     "needs to be provided as a calendar interval such as '2 weeks'. Months " +
       "and years are not accepted. You may specify '365 days' for a year instead.")
@@ -269,7 +293,7 @@ object DeltaConfigs extends DeltaLogging {
   val TOMBSTONE_RETENTION = buildConfig[CalendarInterval](
     "deletedFileRetentionDuration",
     "interval 1 week",
-    s => CalendarInterval.fromString("interval " + s.replaceFirst("interval", "").trim),
+    parseCalendarInterval,
     i => i.microseconds > 0 && i.months == 0,
     "needs to be provided as a calendar interval such as '2 weeks'. Months " +
     "and years are not accepted. You may specify '365 days' for a year instead.")
