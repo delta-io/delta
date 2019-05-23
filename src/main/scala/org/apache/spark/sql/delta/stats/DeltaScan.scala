@@ -16,20 +16,10 @@
 
 package org.apache.spark.sql.delta.stats
 
-import org.apache.spark.sql.delta.actions.{AddFile, Metadata, SingleAction}
-import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.StateCache
+import org.apache.spark.sql.delta.actions.AddFile
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
-import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{DataFrame, _}
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
-import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
-import org.apache.spark.sql.functions._
-import org.apache.spark.sql.types.{DateType, NumericType, StringType, StructType, TimestampType}
-import org.apache.spark.unsafe.types.UTF8String
 
 /**
  * Note: Please don't add any new constructor to this class. `jackson-module-scala` always picks up

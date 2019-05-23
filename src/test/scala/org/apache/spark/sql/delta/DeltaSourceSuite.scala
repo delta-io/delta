@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import java.io.{File, FileInputStream, FileNotFoundException, OutputStream}
+import java.io.{File, FileInputStream, OutputStream}
 import java.net.URI
 import java.util.UUID
 
@@ -26,12 +26,12 @@ import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
 
-import org.apache.spark.sql.{AnalysisException, DataFrame, ForeachWriter, Row}
+import org.apache.spark.sql.{AnalysisException, DataFrame}
 import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.streaming.{OutputMode, StreamingQueryException, StreamTest, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock
-import org.apache.spark.sql.types.{StringType, StructType}
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.unsafe.types.CalendarInterval
 import org.apache.spark.util.{ManualClock, Utils}
 
