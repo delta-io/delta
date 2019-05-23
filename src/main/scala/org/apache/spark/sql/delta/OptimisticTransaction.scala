@@ -314,7 +314,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
   }
 
   /** Perform post-commit operations */
-  protected def postCommit(commitVersion: Long, committActions: Seq[Action]): Unit = {
+  protected def postCommit(commitVersion: Long, commitActions: Seq[Action]): Unit = {
     committed = true
     if (commitVersion != 0 && commitVersion % deltaLog.checkpointInterval == 0) {
       try {
