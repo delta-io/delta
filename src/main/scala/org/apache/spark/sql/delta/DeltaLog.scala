@@ -205,7 +205,7 @@ class DeltaLog private(
     } else {
       if (asyncUpdateTask == null || asyncUpdateTask.isCompleted) {
         val jobGroup = spark.sparkContext.getLocalProperty(SparkContext.SPARK_JOB_GROUP_ID)
-          asyncUpdateTask = Future[Unit] {
+        asyncUpdateTask = Future[Unit] {
           spark.sparkContext.setLocalProperty("spark.scheduler.pool", "deltaStateUpdatePool")
           spark.sparkContext.setJobGroup(
             jobGroup,
@@ -466,7 +466,7 @@ class DeltaLog private(
         "delta.protocol.failure.write",
         data = Map(
           "clientVersion" -> Action.writerVersion,
-          "minReaderVersion" -> currentSnapshot.protocol.minWriterVersion))
+          "minWriterVersion" -> currentSnapshot.protocol.minWriterVersion))
       throw new InvalidProtocolVersionException
     }
 
