@@ -65,7 +65,7 @@ sealed trait Action {
 /**
  * Used to block older clients from reading or writing the log when backwards
  * incompatible changes are made to the protocol. Readers and writers are
- * responsible for checking that the meet the minimum versions before performing
+ * responsible for checking that they meet the minimum versions before performing
  * any other operations.
  *
  * Since this action allows us to explicitly block older clients in the case of a
