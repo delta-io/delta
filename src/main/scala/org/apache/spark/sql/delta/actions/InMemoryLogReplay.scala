@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta.actions
 import java.net.URI
 
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileSystem, Path}
 
 /**
  * Replays a history of action, resolving them to produce the current state
