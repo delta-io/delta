@@ -26,13 +26,13 @@ Delta Lake currently requires Apache Spark 2.4.2. Earlier versions are missing [
 
 ### API Compatibility
 
-The only stable, public APIs currently provided by Delta Lake are through the `DataFrameReader`/`Writer` (i.e. `spark.read`, `df.write`, `spark.readStream` and `df.writeStream`). Options to these APIs will remain stable within a major release of Delta Lake (e.g. 1.x.x).
+The only stable, public APIs currently provided by Delta Lake are through the `DataFrameReader`/`Writer` (i.e. `spark.read`, `df.write`, `spark.readStream` and `df.writeStream`). Options to these APIs will remain stable within a major release of Delta Lake (e.g., 1.x.x).
 
-All other interfaces in the this library are considered internal, and are subject to change across minor / patch releases.
+All other interfaces in the this library are considered internal, and they are subject to change across minor / patch releases.
 
 ### Data Storage Compatibility
 
-Delta Lake guarantees backward compatibility for all Delta Lake tables (i.e. newer versions of Delta Lake will always be able to read tables written by older versions of Delta Lake). However, we reserve the right to break forwards compatibility as new features are introduced to the transaction protocol (i.e. an older version of Delta Lake may not be able to read a table produced by a newer version).
+Delta Lake guarantees backward compatibility for all Delta Lake tables (i.e., newer versions of Delta Lake will always be able to read tables written by older versions of Delta Lake). However, we reserve the right to break forwards compatibility as new features are introduced to the transaction protocol (i.e., an older version of Delta Lake may not be able to read a table produced by a newer version).
 
 Breaking changes in the protocol are indicated by incrementing the minimum reader/writer version in the `Protocol` [action](https://github.com/delta-io/delta/blob/master/src/main/scala/org/apache/spark/sql/delta/actions/actions.scala).
 
@@ -68,7 +68,7 @@ To avoid needing to read the entire transaction log every time a table is loaded
 
 Delta Lake ACID guarantees are predicated on the atomicity and durability guarantees of the storage system. Specifically, we require the storage system to provide the following. 
 
-1. **Atomic visibility**: There must a way for a file to visible in its entirely or not visible at all. 
+1. **Atomic visibility**: There must a way for a file to be visible in its entirety or not visible at all. 
 2. **Mutual exclusion**: Only one writer must be able to create (or rename) a file at the final destination.
 3. **Consistent listing**: Once a file has been written in a directory, all future listings for that directory must return that file.
 
