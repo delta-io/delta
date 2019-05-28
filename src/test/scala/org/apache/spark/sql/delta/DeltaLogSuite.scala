@@ -204,4 +204,29 @@ class DeltaLogSuite extends QueryTest
       assert(committedRemove.head.path === s"file://$path")
     }
   }
+
+  test("delete and re-add the same file in different transactions") {
+    withTempDir { dir =>
+      val log = DeltaLog.forTable(spark, dir)
+      assert(new File(log.logPath.toUri).mkdirs())
+
+      val add1 = AddFile("foo", Map.empty, 1L, System.currentTimeMillis(), dataChange = true)
+      log.startTransaction().commit(add1 :: Nil, DeltaOperations.ManualUpdate)
+
+      val rm = add1.remove
+      log.startTransaction().commit(rm :: Nil, DeltaOperations.ManualUpdate)
+
+      val add2 = AddFile("foo", Map.empty, 1L, System.currentTimeMillis(), dataChange = true)
+      log.startTransaction().commit(add2 :: Nil, DeltaOperations.ManualUpdate)
+
+      // Add a new transaction to replay logs using the previous snapshot. If it contained
+      // AddFile("foo") and RemoveFile("foo"), "foo" would get removed and fail this test.
+      val otherAdd = AddFile("bar", Map.empty, 1L, System.currentTimeMillis(), dataChange = true)
+      log.startTransaction().commit(otherAdd :: Nil, DeltaOperations.ManualUpdate)
+
+      assert(log.update().allFiles.collect().find(_.path == "foo")
+        // `dataChange` is set to `false` after replaying logs.
+        === Some(add2.copy(dataChange = false)))
+    }
+  }
 }
