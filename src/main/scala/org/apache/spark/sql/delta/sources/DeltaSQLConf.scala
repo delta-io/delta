@@ -30,7 +30,7 @@ object DeltaSQLConf {
 
 
   val RESOLVE_TIME_TRAVEL_ON_IDENTIFIER =
-    buildConf("spark.databricks.timeTravel.resolveOnIdentifier.enabled")
+    buildConf("timeTravel.resolveOnIdentifier.enabled")
       .internal()
       .doc("When true, we will try to resolve patterns as `@v123` in identifiers as time " +
         "travel nodes.")
