@@ -261,7 +261,6 @@ case class CommitInfo(
     this.copy(timestamp = new Timestamp(timestamp))
   }
 
-  @JsonIgnore
   override def getTimestamp: Long = timestamp.getTime
   @JsonIgnore
   override def getVersion: Long = version.get
