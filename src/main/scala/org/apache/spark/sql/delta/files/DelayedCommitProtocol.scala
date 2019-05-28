@@ -86,7 +86,7 @@ class DelayedCommitProtocol(
         .parsePartition(
           new Path(dir),
           typeInference = false,
-          Set(),
+          Set.empty,
           Map.empty,
           validatePartitionColumns = false,
           java.util.TimeZone.getDefault,
