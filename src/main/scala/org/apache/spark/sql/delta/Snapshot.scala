@@ -104,7 +104,7 @@ class Snapshot(
       .sortWithinPartitions("file")
       .as[SingleAction]
       .mapPartitions { iter =>
-        val state = new InMemoryLogReplay(time, hadoopConf.value)
+        val state = new InMemoryLogReplay(time)
         state.append(0, iter.map(_.unwrap))
         state.checkpoint.map(_.wrap)
       }

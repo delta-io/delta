@@ -18,8 +18,6 @@ package org.apache.spark.sql.delta.actions
 
 import java.net.URI
 
-import org.apache.hadoop.conf.Configuration
-
 /**
  * Replays a history of action, resolving them to produce the current state
  * of the table. The protocol for resolution is as follows:
@@ -28,21 +26,19 @@ import org.apache.hadoop.conf.Configuration
  *    tombstone until `minFileRetentionTimestamp` has passed.
  *  - The most recent version for any `appId` in a [[SetTransaction]] wins.
  *  - The most recent [[Metadata]] wins.
- *  = The most recent [[Protocol]] version wins.
+ *  - The most recent [[Protocol]] version wins.
+ *  - For each path, this class should always output only one [[FileAction]] (either [[AddFile]] or
+ *    [[RemoveFile]])
  *
  * This class is not thread safe.
  */
-class InMemoryLogReplay(minFileRetentionTimestamp: Long, hadoopConf: Configuration) {
+class InMemoryLogReplay(minFileRetentionTimestamp: Long) {
   var currentProtocolVersion: Protocol = null
   var currentVersion: Long = -1
   var currentMetaData: Metadata = null
   val transactions = new scala.collection.mutable.HashMap[String, SetTransaction]()
   val activeFiles = new scala.collection.mutable.HashMap[URI, AddFile]()
   private val tombstones = new scala.collection.mutable.HashMap[URI, RemoveFile]()
-
-  def stateSize: Long = {
-    activeFiles.size + getTombstones.size
-  }
 
   def append(version: Long, actions: Iterator[Action]): Unit = {
     assert(currentVersion == -1 || version == currentVersion + 1,
@@ -57,6 +53,8 @@ class InMemoryLogReplay(minFileRetentionTimestamp: Long, hadoopConf: Configurati
         currentProtocolVersion = a
       case add: AddFile =>
         activeFiles(add.pathAsUri) = add.copy(dataChange = false)
+        // Remove the tombstone to make sure we only output one `FileAction`.
+        tombstones.remove(add.pathAsUri)
       case remove: RemoveFile =>
         activeFiles.remove(remove.pathAsUri)
         tombstones(remove.pathAsUri) = remove.copy(dataChange = false)
