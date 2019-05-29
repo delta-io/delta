@@ -82,6 +82,15 @@ trait LogStore {
   def resolvePathOnPhysicalStorage(path: Path): Path = {
     throw new UnsupportedOperationException()
   }
+
+  /**
+   * Whether a partial write is visible when writing to `path`.
+   *
+   * As this depends on the underlying file system implementations, we require the input of `path`
+   * here in order to identify the underlying file system, even though in most cases a log store
+   * only deals with one file system.
+   */
+  def isPartialWriteVisible(path: Path): Boolean = false
 }
 
 object LogStore extends Logging {

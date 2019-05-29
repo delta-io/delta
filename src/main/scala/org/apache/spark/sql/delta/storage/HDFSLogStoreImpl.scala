@@ -132,4 +132,6 @@ class HDFSLogStoreImpl(sparkConf: SparkConf, defaultHadoopConf: Configuration) e
   override def resolvePathOnPhysicalStorage(path: Path): Path = {
     getFileContext(path).makeQualified(path)
   }
+
+  override def isPartialWriteVisible(path: Path): Boolean = true
 }

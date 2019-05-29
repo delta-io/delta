@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta
 import java.io.{File, IOException}
 import java.net.URI
 
+import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate}
+import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.storage._
 import org.apache.hadoop.fs.{Path, RawLocalFileSystem}
 
@@ -29,6 +31,8 @@ import org.apache.spark.util.Utils
 abstract class LogStoreSuiteBase extends QueryTest with SharedSQLContext {
 
   def createLogStore(spark: SparkSession): LogStore
+
+  def logStoreName: String = this.getClass.getSimpleName.replace("Suite", "")
 
   test("read / write") {
     val tempDir = Utils.createTempDir()
@@ -74,6 +78,24 @@ abstract class LogStoreSuiteBase extends QueryTest with SharedSQLContext {
     assert(store.listFrom(deltas(4)).map(_.getPath.getName).toArray === Nil)
   }
 
+  test("simple log store test") {
+    val tempDir = Utils.createTempDir()
+    val log1 = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+    assert(log1.store.getClass.getSimpleName == logStoreName)
+
+    val txn = log1.startTransaction()
+    val file = AddFile("1", Map.empty, 1, 1, true) :: Nil
+    txn.commit(file, ManualUpdate)
+    log1.checkpoint()
+
+    DeltaLog.clearCache()
+    val log2 = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+    assert(log2.store.getClass.getSimpleName == logStoreName)
+
+    assert(log2.lastCheckpoint.map(_.version) === Some(0L))
+    assert(log2.snapshot.allFiles.count == 1)
+  }
+
   protected def testHadoopConf(expectedErrMsg: String, fsImplConfs: (String, String)*): Unit = {
     test("should pick up fs impl conf from session Hadoop configuration") {
       withTempDir { tempDir =>
@@ -94,6 +116,11 @@ abstract class LogStoreSuiteBase extends QueryTest with SharedSQLContext {
 }
 
 class AzureLogStoreSuite extends LogStoreSuiteBase {
+  protected override def sparkConf = {
+    super.sparkConf.set(
+      "spark.databricks.tahoe.logStore.class", classOf[AzureLogStore].getName)
+  }
+
   override def createLogStore(spark: SparkSession): LogStore = {
     new AzureLogStore(spark.sparkContext.getConf, spark.sessionState.newHadoopConf())
   }
@@ -105,6 +132,11 @@ class AzureLogStoreSuite extends LogStoreSuiteBase {
 }
 
 class HDFSLogStoreImplSuite extends LogStoreSuiteBase {
+  protected override def sparkConf = {
+    super.sparkConf.set(
+      "spark.databricks.tahoe.logStore.class", classOf[HDFSLogStoreImpl].getName)
+  }
+
   override def createLogStore(spark: SparkSession): LogStore = {
     new HDFSLogStoreImpl(spark.sparkContext.getConf, spark.sessionState.newHadoopConf())
   }
