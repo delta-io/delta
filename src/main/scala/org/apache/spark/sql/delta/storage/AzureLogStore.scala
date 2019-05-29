@@ -96,4 +96,6 @@ class AzureLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
   protected def createTempPath(path: Path): Path = {
     new Path(path.getParent, s".${path.getName}.${UUID.randomUUID}.tmp")
   }
+
+  override def isPartialWriteVisible(path: Path): Boolean = true
 }

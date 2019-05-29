@@ -202,8 +202,6 @@ trait Checkpoints extends DeltaLogging {
 }
 
 object Checkpoints {
-
-  import org.apache.spark.sql.delta.storage.HDFSLogStoreImpl
   /**
    * Writes out the contents of a [[Snapshot]] into a checkpoint file that
    * can be used to short-circuit future replays of the log.
@@ -224,8 +222,9 @@ object Checkpoints {
         new SerializableConfiguration(job.getConfiguration))
     }
 
-    // If HDFSLogStore then use rename, otherwise write directly
-    val useRename = deltaLog.store.isInstanceOf[HDFSLogStoreImpl]
+    // The writing of checkpoints doesn't go through log store, so we need to check with the
+    // log store and decide whether to use rename.
+    val useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath)
 
     val checkpointSize = spark.sparkContext.longAccumulator("checkpointSize")
     val numOfFiles = spark.sparkContext.longAccumulator("numOfFiles")
