@@ -141,7 +141,7 @@ trait Checkpoints extends DeltaLogging {
       Some(checkpointMetadata)
     } catch {
       case _: FileNotFoundException =>
-        return None
+        None
       case NonFatal(e) if tries < 3 =>
         logWarning(s"Failed to parse $LAST_CHECKPOINT. This may happen if there was an error " +
           "during read operation, or a file appears to be partial. Sleeping and trying again.", e)
