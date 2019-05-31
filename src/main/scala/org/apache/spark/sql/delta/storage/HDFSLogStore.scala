@@ -93,7 +93,7 @@ class HDFSLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration) exten
       tempPath, EnumSet.of(CREATE), CreateOpts.checksumParam(ChecksumOpt.createDisabled()))
 
     try {
-      actions.map(_ + "\n").map(_.getBytes("utf-8")).foreach(stream.write)
+      actions.map(_ + "\n").map(_.getBytes(UTF_8)).foreach(stream.write)
       stream.close()
       streamClosed = true
       try {
