@@ -20,7 +20,6 @@ import java.io.FileNotFoundException
 import java.util.UUID
 
 import scala.util.control.NonFatal
-
 import org.apache.spark.sql.delta.actions.{Action, Metadata, SingleAction}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.LogStore
@@ -28,8 +27,7 @@ import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
-import org.apache.hadoop.mapreduce.Job
-
+import org.apache.hadoop.mapreduce.{Job, TaskType}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.util.SerializableConfiguration
@@ -219,7 +217,7 @@ object Checkpoints {
 
     val (factory, serConf) = {
       val format = new ParquetFileFormat()
-      val job = new Job
+      val job = Job.getInstance()
       (format.prepareWrite(spark, job, Map.empty, Action.logSchema),
         new SerializableConfiguration(job.getConfiguration))
     }
@@ -258,7 +256,7 @@ object Checkpoints {
           Action.logSchema,
           new TaskAttemptContextImpl(
             new JobConf(serConf.value),
-            new TaskAttemptID("", 0, false, 0, 0)))
+            new TaskAttemptID("", 0, TaskType.REDUCE, 0, 0)))
 
         iter.foreach { row =>
           checkpointSize.add(1)
