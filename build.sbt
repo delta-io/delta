@@ -38,7 +38,7 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests"
 )
 
-testOptions in Test += Tests.Argument("-oF")
+testOptions in Test += Tests.Argument("-oDF")
 
 // Don't execute in parallel since we can't have multiple Sparks in the same JVM
 parallelExecution in Test := false
