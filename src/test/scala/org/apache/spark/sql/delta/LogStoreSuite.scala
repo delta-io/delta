@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.{File, IOException}
 import java.net.URI
 
-import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate}
+import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.storage._
 import org.apache.hadoop.fs.{Path, RawLocalFileSystem}
@@ -28,7 +28,8 @@ import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.test.SharedSQLContext
 import org.apache.spark.util.Utils
 
-abstract class LogStoreSuiteBase extends QueryTest with SharedSQLContext {
+abstract class LogStoreSuiteBase extends QueryTest
+  with SharedSQLContext {
 
   def createLogStore(spark: SparkSession): LogStore
 
