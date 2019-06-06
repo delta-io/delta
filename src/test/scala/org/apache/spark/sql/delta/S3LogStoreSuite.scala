@@ -26,14 +26,7 @@ import org.apache.spark.sql.SparkSession
 
 class S3LogStoreSuite extends LogStoreSuiteBase {
 
-  protected override def sparkConf = {
-    super.sparkConf.set(
-      "spark.databricks.tahoe.logStore.class", classOf[S3LogStore].getName)
-  }
-
-  override def createLogStore(spark: SparkSession): LogStore = {
-    new S3LogStore(spark.sparkContext.getConf, spark.sessionState.newHadoopConf())
-  }
+  override val logStoreClassName: String = classOf[S3LogStore].getName
 
   private def checkLogStoreList(store: LogStore, path: Path, expectedVersions: Seq[Int]): Unit = {
     assert(

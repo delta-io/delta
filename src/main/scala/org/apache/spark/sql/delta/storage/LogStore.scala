@@ -93,29 +93,32 @@ trait LogStore {
   def isPartialWriteVisible(path: Path): Boolean = false
 }
 
-object LogStore extends Logging {
-
-  val DEFAULT_LOGSTORE_CLASS = {
-      classOf[HDFSLogStoreImpl].getName
-  }
+object LogStore extends LogStoreProvider
+  with Logging {
 
   def apply(sc: SparkContext): LogStore = {
     apply(sc.getConf, sc.hadoopConfiguration)
   }
 
   def apply(sparkConf: SparkConf, hadoopConf: Configuration): LogStore = {
-    val logStoreClass = Utils.classForName(sparkConf.get(
-      "spark.databricks.tahoe.logStore.class",
-      DEFAULT_LOGSTORE_CLASS))
-    logInfo("LogStore class: " + logStoreClass)
-    logStoreClass.getConstructor(classOf[SparkConf], classOf[Configuration])
-      .newInstance(sparkConf, hadoopConf).asInstanceOf[LogStore]
+    createLogStore(sparkConf, hadoopConf)
   }
 }
 
 trait LogStoreProvider {
+  val logStoreClassConfKey: String = "delta.logStore.class"
+  val defaultLogStoreClass: String = classOf[HDFSLogStoreImpl].getName
+
   def createLogStore(spark: SparkSession): LogStore = {
-    LogStore(spark.sparkContext)
+    val sc = spark.sparkContext
+    createLogStore(sc.getConf, sc.hadoopConfiguration)
+  }
+
+  def createLogStore(sparkConf: SparkConf, hadoopConf: Configuration): LogStore = {
+    val logStoreClassName = sparkConf.get(logStoreClassConfKey, defaultLogStoreClass)
+    val logStoreClass = Utils.classForName(logStoreClassName)
+    logStoreClass.getConstructor(classOf[SparkConf], classOf[Configuration])
+      .newInstance(sparkConf, hadoopConf).asInstanceOf[LogStore]
   }
 }
 

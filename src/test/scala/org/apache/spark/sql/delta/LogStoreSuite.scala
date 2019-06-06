@@ -29,11 +29,19 @@ import org.apache.spark.sql.test.SharedSQLContext
 import org.apache.spark.util.Utils
 
 abstract class LogStoreSuiteBase extends QueryTest
+  with LogStoreProvider
   with SharedSQLContext {
 
-  def createLogStore(spark: SparkSession): LogStore
+  def logStoreClassName: String
 
-  def logStoreName: String = this.getClass.getSimpleName.replace("Suite", "")
+  protected override def sparkConf = {
+    super.sparkConf.set(logStoreClassConfKey, logStoreClassName)
+  }
+
+  test("instantiation through SparkConf") {
+    assert(spark.sparkContext.getConf.get(logStoreClassConfKey) == logStoreClassName)
+    assert(LogStore(spark.sparkContext).getClass.getName == logStoreClassName)
+  }
 
   test("read / write") {
     val tempDir = Utils.createTempDir()
@@ -82,7 +90,7 @@ abstract class LogStoreSuiteBase extends QueryTest
   test("simple log store test") {
     val tempDir = Utils.createTempDir()
     val log1 = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
-    assert(log1.store.getClass.getSimpleName == logStoreName)
+    assert(log1.store.getClass.getName == logStoreClassName)
 
     val txn = log1.startTransaction()
     val file = AddFile("1", Map.empty, 1, 1, true) :: Nil
@@ -91,7 +99,7 @@ abstract class LogStoreSuiteBase extends QueryTest
 
     DeltaLog.clearCache()
     val log2 = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
-    assert(log2.store.getClass.getSimpleName == logStoreName)
+    assert(log2.store.getClass.getName == logStoreClassName)
 
     assert(log2.lastCheckpoint.map(_.version) === Some(0L))
     assert(log2.snapshot.allFiles.count == 1)
@@ -117,33 +125,23 @@ abstract class LogStoreSuiteBase extends QueryTest
 }
 
 class AzureLogStoreSuite extends LogStoreSuiteBase {
-  protected override def sparkConf = {
-    super.sparkConf.set(
-      "spark.databricks.tahoe.logStore.class", classOf[AzureLogStore].getName)
-  }
 
-  override def createLogStore(spark: SparkSession): LogStore = {
-    new AzureLogStore(spark.sparkContext.getConf, spark.sessionState.newHadoopConf())
-  }
+  override val logStoreClassName: String = classOf[AzureLogStore].getName
 
   testHadoopConf(
-    "No FileSystem for scheme: fake",
+    expectedErrMsg = "No FileSystem for scheme: fake",
     "fs.fake.impl" -> classOf[FakeFileSystem].getName,
     "fs.fake.impl.disable.cache" -> "true")
 }
 
 class HDFSLogStoreImplSuite extends LogStoreSuiteBase {
-  protected override def sparkConf = {
-    super.sparkConf.set(
-      "spark.databricks.tahoe.logStore.class", classOf[HDFSLogStoreImpl].getName)
-  }
 
-  override def createLogStore(spark: SparkSession): LogStore = {
-    new HDFSLogStoreImpl(spark.sparkContext.getConf, spark.sessionState.newHadoopConf())
-  }
+  override val logStoreClassName: String = classOf[HDFSLogStoreImpl].getName
 
+  // HDFSLogStoreImpl is based on FileContext APIs and hence requires AbstractFileSystem-based
+  // implementations.
   testHadoopConf(
-    "No AbstractFileSystem",
+    expectedErrMsg = "No AbstractFileSystem",
     "fs.AbstractFileSystem.fake.impl" -> classOf[FakeAbstractFileSystem].getName)
 }
 
