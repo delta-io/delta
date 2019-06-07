@@ -201,22 +201,6 @@ object DeltaSQLConf {
       .booleanConf
       .createWithDefault(true)
 
-  val DELTA_AUTO_OPTIMIZE_MAX_FILE_SIZE =
-    buildConf("autoOptimize.maxFileSize")
-      .internal()
-      .doc("Target file size produced by the auto optimize command.")
-      .longConf
-      .checkValue(_ >= 0, "maxFileSize has to be positive")
-      .createWithDefault(128 * 1024 * 1024)
-
-
-  val DELTA_AUTO_OPTIMIZE_CAPACITY =
-    buildConf("autoOptimize.capacity")
-      .internal()
-      .doc("Available capacity for auto optimize. By default we will attempt to use" +
-        "all available cores of the machine and we will create optimize tasks accordingly.")
-      .intConf
-      .createOptional
 
   val DELTA_OPTIMIZE_WRITE_ENABLED =
     buildConf("optimizeWrite.enabled")
