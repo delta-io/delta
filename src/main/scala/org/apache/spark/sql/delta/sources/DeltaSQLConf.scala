@@ -103,79 +103,6 @@ object DeltaSQLConf {
       .intConf
       .createWithDefault(2000)
 
-  val DELTA_OPTIMIZE_MIN_FILE_SIZE =
-    buildConf("optimize.minFileSize")
-      .internal()
-      .doc("Files which are smaller than this threshold (in bytes) will be grouped together and " +
-        "rewritten as larger files by the OPTIMIZE command.")
-      .longConf
-      .checkValue(_ >= 0, "minFileSize has to be positive")
-      .createWithDefault(1024 * 1024 * 1024)
-
-  val DELTA_OPTIMIZE_MAX_FILE_SIZE =
-    buildConf("optimize.maxFileSize")
-      .internal()
-      .doc("Target file size produced by the OPTIMIZE command.")
-      .longConf
-      .checkValue(_ >= 0, "maxFileSize has to be positive")
-      .createWithDefault(1024 * 1024 * 1024)
-
-  val DELTA_OPTIMIZE_NUM_FILES_THRESHOLD =
-    buildConf("optimize.numFilesThreshold")
-      .internal()
-      .doc("The maximum number of files to compact in a Spark task when running the 'optimize' " +
-        "command. If the number of files exceeds this value in a bin, 'optimize' will use " +
-        "'repartition(1)' to speed up file reading.")
-      .longConf
-      .checkValue(_ > 0, "'optimize.numFilesThreshold' must be positive.")
-      .createWithDefault(1000)
-
-  val DELTA_OPTIMIZE_TASKS_PER_COMMIT =
-    buildConf("optimize.tasksPerCommit")
-      .internal()
-      .doc("The maximum number of optimize tasks (each resulting in one output file) to include " +
-        "in a single commit when running the 'optimize' command. For large tables, the operation " +
-        "is split into separate commits rather than trying to write one massive commit.")
-      .intConf
-      .checkValue(_ > 0, "'optimize.tasksPerCommit' must be positive.")
-      .createWithDefault(400)
-
-  val DELTA_OPTIMIZE_MAX_THREADS =
-    buildConf("optimize.maxThreads")
-      .internal()
-      .doc("The number of threads in the thread pool used by an optimize task.")
-      .intConf
-      .checkValue(_ > 0, "'optimize.maxThreads' must be positive.")
-      .createWithDefault(15)
-
-  val DELTA_OPTIMIZE_INCREMENTAL =
-    buildConf("optimize.incremental")
-      .doc("Controls whether the OPTIMIZE command shall operate on \"unoptimized\" data only " +
-        "or just blindly rewrite all data files (matching the given predicate, if any). " +
-        "When enabled, the command's runtime should generally be proportional to the amount of " +
-        "data added since last time the command was run, but this is not a strong guarantee. " +
-        "Also note that this option takes effect no matter if the ZORDER BY clause is specified " +
-        "or not.")
-      .booleanConf
-      .createWithDefault(true)
-
-  val DELTA_OPTIMIZE_ZORDER_MERGE_STRATEGY =
-    buildConf("optimize.zorder.mergeStrategy")
-      .internal()
-      .doc("Strategy for choosing which files to rewrite when OPTIMIZE ZORDER BY is run.\n" +
-        " - \"all\" means all files in the table / selected partition(s) are always rewritten\n" +
-        " - \"new\" means only new files since last time the command was run are rewritten\n" +
-        " - \"minCubeSize\" means all new files are merged together with preexisting Z-cubes " +
-        "of size smaller than " +
-        "'optimize.zorder.mergeStrategy.minCubeSize.threshold'.\n" +
-        "Note: This only takes effect if ${DELTA_OPTIMIZE_INCREMENTAL.key} = true.")
-      // Must keep in sync with org.apache.spark.sql.delta.zorder.ZCubeMergeStrategy
-      .stringConf
-      .checkValue(Seq("all", "new", "minCubeSize").contains(_),
-        "\"optimize.zorder.mergeStrategy\" must be one of: " +
-          "(\"all\", \"new\", \"minCubeSize\"))")
-      .createWithDefault("minCubeSize")
-
   val DELTA_SNAPSHOT_ISOLATION =
     buildConf("snapshotIsolation.enabled")
       .internal()
@@ -183,45 +110,6 @@ object DeltaSQLConf {
         "snapshot isolation.")
       .booleanConf
       .createWithDefault(true)
-
-  val DELTA_OPTIMIZE_ZORDER_MIN_CUBE_SIZE =
-    buildConf("optimize.zorder.mergeStrategy.minCubeSize.threshold")
-      .internal()
-      .doc(s"Z-cube size for '${DELTA_OPTIMIZE_ZORDER_MERGE_STRATEGY.key} = minCubeSize' at " +
-        "which new data will no longer be merged with it during incremental OPTIMIZE.")
-      .longConf
-      .checkValue(_ >= 0, "the threshold must be >= 0")
-      .createWithDefault(100 * DELTA_OPTIMIZE_MAX_FILE_SIZE.defaultValue.get)
-
-
-  val DELTA_OPTIMIZE_ZORDER_METRICS =
-    buildConf("optimize.zorder.metrics")
-      .internal()
-      .doc(s"When enabled OPTIMIZE ZORDERBY reports detailed cube files statistics.")
-      .booleanConf
-      .createWithDefault(true)
-
-
-  val DELTA_OPTIMIZE_WRITE_ENABLED =
-    buildConf("optimizeWrite.enabled")
-      .doc("Whether to optimize writes made into Delta tables from this session.")
-      .booleanConf
-      .createOptional
-
-  val DELTA_OPTIMIZE_WRITE_SHUFFLE_BLOCKS =
-    buildConf("optimizeWrite.numShuffleBlocks")
-      .internal()
-      .doc("Maximum number of shuffle blocks to target for the adaptive shuffle " +
-        "in optimized writes.")
-      .intConf
-      .createWithDefault(50000)
-
-  val DELTA_OPTIMIZE_WRITE_BIN_SIZE =
-    buildConf("optimizeWrite.binSize")
-      .internal()
-      .doc("Bin size for the adaptive shuffle in optimized writes in bytes.")
-      .bytesConf(ByteUnit.MiB)
-      .createWithDefault(128)
 
 
   val DELTA_MAX_SNAPSHOT_LINEAGE_LENGTH =
