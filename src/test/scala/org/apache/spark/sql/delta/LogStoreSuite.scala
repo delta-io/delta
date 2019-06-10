@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.storage._
 import org.apache.hadoop.fs.{Path, RawLocalFileSystem}
 
-import org.apache.spark.sql.{QueryTest, SparkSession}
+import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSQLContext
 import org.apache.spark.util.Utils
 
@@ -134,15 +134,24 @@ class AzureLogStoreSuite extends LogStoreSuiteBase {
     "fs.fake.impl.disable.cache" -> "true")
 }
 
-class HDFSLogStoreImplSuite extends LogStoreSuiteBase {
+class HDFSLogStoreSuite extends LogStoreSuiteBase {
 
-  override val logStoreClassName: String = classOf[HDFSLogStoreImpl].getName
-
-  // HDFSLogStoreImpl is based on FileContext APIs and hence requires AbstractFileSystem-based
+  override val logStoreClassName: String = classOf[HDFSLogStore].getName
+  // HDFSLogStore is based on FileContext APIs and hence requires AbstractFileSystem-based
   // implementations.
   testHadoopConf(
     expectedErrMsg = "No AbstractFileSystem",
     "fs.AbstractFileSystem.fake.impl" -> classOf[FakeAbstractFileSystem].getName)
+}
+
+class LocalLogStoreSuite extends LogStoreSuiteBase {
+
+  override val logStoreClassName: String = classOf[LocalLogStore].getName
+
+  testHadoopConf(
+    expectedErrMsg = "No FileSystem for scheme: fake",
+    "fs.fake.impl" -> classOf[FakeFileSystem].getName,
+    "fs.fake.impl.disable.cache" -> "true")
 }
 
 /** A fake file system to test whether session Hadoop configuration will be picked up. */

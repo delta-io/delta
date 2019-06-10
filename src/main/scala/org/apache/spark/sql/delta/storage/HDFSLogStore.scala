@@ -33,14 +33,14 @@ import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.sql.SparkSession
 
 /**
- * Default implementation of [[LogStore]] that correctly works with HDFS with the necessary
- * atomic and durability guarantees.
+ * The [[LogStore]] implementation for HDFS, which uses Hadoop [[FileContext]] API's to
+ * provide the necessary atomic and durability guarantees:
  *
  * 1. Atomic visibility of files: `FileContext.rename` is used write files which is atomic for HDFS.
  *
  * 2. Consistent file listing: HDFS file listing is consistent.
  */
-class HDFSLogStoreImpl(sparkConf: SparkConf, defaultHadoopConf: Configuration) extends LogStore {
+class HDFSLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration) extends LogStore {
 
   def this(sc: SparkContext) = this(sc.getConf, sc.hadoopConfiguration)
 

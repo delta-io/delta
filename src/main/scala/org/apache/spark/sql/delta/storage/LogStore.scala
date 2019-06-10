@@ -89,8 +89,11 @@ trait LogStore {
    * As this depends on the underlying file system implementations, we require the input of `path`
    * here in order to identify the underlying file system, even though in most cases a log store
    * only deals with one file system.
+   *
+   * The default value is only provided here for legacy reasons, which will be removed.
+   * Any LogStore implementation should override this instead of relying on the default.
    */
-  def isPartialWriteVisible(path: Path): Boolean = false
+  def isPartialWriteVisible(path: Path): Boolean = true
 }
 
 object LogStore extends LogStoreProvider
@@ -107,7 +110,7 @@ object LogStore extends LogStoreProvider
 
 trait LogStoreProvider {
   val logStoreClassConfKey: String = "delta.logStore.class"
-  val defaultLogStoreClass: String = classOf[HDFSLogStoreImpl].getName
+  val defaultLogStoreClass: String = classOf[HDFSLogStore].getName
 
   def createLogStore(spark: SparkSession): LogStore = {
     val sc = spark.sparkContext
@@ -121,4 +124,3 @@ trait LogStoreProvider {
       .newInstance(sparkConf, hadoopConf).asInstanceOf[LogStore]
   }
 }
-

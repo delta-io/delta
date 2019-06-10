@@ -17,14 +17,16 @@
 package org.apache.spark.sql.delta.storage
 
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileSystem, Path}
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 
 /**
- * LogStore implementation for Azure.
+ * Default [[LogStore]] implementation (should be used for testing only!).
  *
- * We assume the following from Azure's [[FileSystem]] implementations:
+ * Production users should specify the appropriate [[[LogStore]] implementation in Spark properties.
+ *
+ * We assume the following from [[org.apache.hadoop.fs.FileSystem]] implementations:
  * - Rename without overwrite is atomic.
  * - List-after-write is consistent.
  *
@@ -34,10 +36,18 @@ import org.apache.spark.SparkConf
  * - Uses create-with-overwrite when overwrite is true. This does not make the file atomically
  *   visible and therefore the caller must handle partial files.
  */
-class AzureLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
-  extends HadoopFileSystemLogStore(sparkConf, hadoopConf) {
+class LocalLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
+    extends HadoopFileSystemLogStore(sparkConf: SparkConf, hadoopConf: Configuration) {
+
+  /**
+   * This write implementation needs to wraps `writeWithRename` with `synchronized` as the rename()
+   * for [[org.apache.hadoop.fs.RawLocalFileSystem]] doesn't throw an exception when the target file
+   * exists. Hence we must make sure `exists + rename` in `writeWithRename` is atomic in our tests.
+   */
   override def write(path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit = {
-    writeWithRename(path, actions, overwrite)
+    synchronized {
+      writeWithRename(path, actions, overwrite)
+    }
   }
 
   override def invalidateCache(): Unit = {}
