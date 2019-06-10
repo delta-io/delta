@@ -32,7 +32,7 @@ import org.apache.hadoop.fs._
 import org.apache.spark.SparkConf
 
 /**
- * Single driver/JVM LogStore implementation for S3.
+ * Single Spark-driver/JVM LogStore implementation for S3.
  *
  * We assume the following from S3's [[FileSystem]] implementations:
  * - File writing on S3 is all-or-nothing, whether overwrite or not.
@@ -45,10 +45,10 @@ import org.apache.spark.SparkConf
  * Regarding directory listing, this implementation:
  * - returns a list by merging the files listed from S3 and recently-written files from the cache.
  */
-class S3LogStore(
+class S3SingleDriverLogStore(
     sparkConf: SparkConf,
-    hadoopConf: Configuration) extends FileSystemLogStore(sparkConf, hadoopConf) {
-  import S3LogStore._
+    hadoopConf: Configuration) extends HadoopFileSystemLogStore(sparkConf, hadoopConf) {
+  import S3SingleDriverLogStore._
 
   private def resolved(path: Path): (FileSystem, Path) = {
     val fs = path.getFileSystem(getHadoopConfiguration)
@@ -193,12 +193,14 @@ class S3LogStore(
     }
   }
 
+  override def isPartialWriteVisible(path: Path): Boolean = false
+
   override def invalidateCache(): Unit = {
     writtenPathCache.invalidateAll()
   }
 }
 
-object S3LogStore {
+object S3SingleDriverLogStore {
   /**
    * A global path lock to ensure that no concurrent writers writing to the same path in the same
    * JVM.
