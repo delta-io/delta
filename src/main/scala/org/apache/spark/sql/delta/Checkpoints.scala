@@ -135,9 +135,9 @@ trait Checkpoints extends DeltaLogging {
   /** Loads the checkpoint metadata from the _last_checkpoint file. */
   private def loadMetadataFromFile(tries: Int): Option[CheckpointMetaData] = {
     try {
-      val checkpointMetaData = store.read(LAST_CHECKPOINT)
+      val checkpointMetadataJson = store.read(LAST_CHECKPOINT)
       val checkpointMetadata =
-        JsonUtils.mapper.readValue[CheckpointMetaData](checkpointMetaData.head)
+        JsonUtils.mapper.readValue[CheckpointMetaData](checkpointMetadataJson.head)
       Some(checkpointMetadata)
     } catch {
       case _: FileNotFoundException =>
