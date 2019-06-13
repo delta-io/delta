@@ -83,7 +83,7 @@ abstract class HadoopFileSystemLogStore(
     if (overwrite) {
       val stream = fs.create(path, true)
       try {
-        actions.map(_ + "\n").map(_.getBytes("utf-8")).foreach(stream.write)
+        actions.map(_ + "\n").map(_.getBytes(UTF_8)).foreach(stream.write)
       } finally {
         stream.close()
       }
@@ -96,7 +96,7 @@ abstract class HadoopFileSystemLogStore(
       var renameDone = false // This flag is to save the delete operation in most of cases.
       val stream = fs.create(tempPath)
       try {
-        actions.map(_ + "\n").map(_.getBytes("utf-8")).foreach(stream.write)
+        actions.map(_ + "\n").map(_.getBytes(UTF_8)).foreach(stream.write)
         stream.close()
         streamClosed = true
         try {
