@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
-import org.apache.hadoop.mapreduce.Job
+import org.apache.hadoop.mapreduce.{Job, TaskType}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
@@ -141,7 +141,7 @@ trait Checkpoints extends DeltaLogging {
       Some(checkpointMetadata)
     } catch {
       case _: FileNotFoundException =>
-        return None
+        None
       case NonFatal(e) if tries < 3 =>
         logWarning(s"Failed to parse $LAST_CHECKPOINT. This may happen if there was an error " +
           "during read operation, or a file appears to be partial. Sleeping and trying again.", e)
@@ -217,7 +217,7 @@ object Checkpoints {
 
     val (factory, serConf) = {
       val format = new ParquetFileFormat()
-      val job = new Job
+      val job = Job.getInstance()
       (format.prepareWrite(spark, job, Map.empty, Action.logSchema),
         new SerializableConfiguration(job.getConfiguration))
     }
@@ -257,7 +257,7 @@ object Checkpoints {
           Action.logSchema,
           new TaskAttemptContextImpl(
             new JobConf(serConf.value),
-            new TaskAttemptID("", 0, false, 0, 0)))
+            new TaskAttemptID("", 0, TaskType.REDUCE, 0, 0)))
 
         iter.foreach { row =>
           checkpointSize.add(1)
