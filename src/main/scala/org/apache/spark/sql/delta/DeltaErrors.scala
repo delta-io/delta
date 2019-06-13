@@ -92,6 +92,7 @@ object DeltaErrors
       " currently not supported during inserts")
   }
 
+
   def operationNotSupportedException(
       operation: String, tableIdentifier: TableIdentifier): Throwable = {
     new AnalysisException(
