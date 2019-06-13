@@ -109,7 +109,7 @@ object LogStore extends LogStoreProvider
 }
 
 trait LogStoreProvider {
-  val logStoreClassConfKey: String = "delta.logStore.class"
+  val logStoreClassConfKey: String = "spark.delta.logStore.class"
   val defaultLogStoreClass: String = classOf[HDFSLogStore].getName
 
   def createLogStore(spark: SparkSession): LogStore = {
