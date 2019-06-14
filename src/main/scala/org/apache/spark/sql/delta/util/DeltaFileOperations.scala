@@ -18,12 +18,18 @@ package org.apache.spark.sql.delta.util
 
 import java.net.URI
 
+import scala.util.control.NonFatal
+
+import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
+
+import org.apache.spark.TaskContext
 
 /**
  * Some utility methods on files, directories, and paths.
  */
-object DeltaFileOperations {
+object DeltaFileOperations extends DeltaLogging {
   /**
    * Create an absolute path from `child` using the `basePath` if the child is a relative path.
    * Return `child` if it is an absolute path.
@@ -82,6 +88,26 @@ object DeltaFileOperations {
       }
     } else {
       child
+    }
+  }
+
+  /** Register a task failure listener to delete a temp file in our best effort. */
+  def registerTempFileDeletionTaskFailureListener(
+      conf: Configuration,
+      tempPath: Path): Unit = {
+    val tc = TaskContext.get
+    if (tc == null) {
+      throw new IllegalStateException("Not running on a Spark task thread")
+    }
+    tc.addTaskFailureListener { (_, _) =>
+      // Best effort to delete the temp file
+      try {
+        tempPath.getFileSystem(conf).delete(tempPath, false /* = recursive */)
+      } catch {
+        case NonFatal(e) =>
+          logError(s"Failed to delete $tempPath", e)
+      }
+      () // Make the compiler happy
     }
   }
 }
