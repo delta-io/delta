@@ -76,6 +76,12 @@ Given that storage systems do not necessarily provide all of these guarantees ou
 
 As an optimization, storage systems can also allow _partial listing of a directory, given a start marker_. Delta Lake can use this ability to efficiently discover the latest version of a table, without listing all of the files in the transaction log.
 
+## Concurrency Level
+
+Delta Lake supports concurrent reads. Right now it only supports concurrent _append-only_ writes. To be considered as _append-only_, a writer must be blindly adding new data and does not read or modify existing data of the table in any way.
+
+Note that concurrent reads and appends are allowed even when they are operated on the same Delta Lake table partition.
+
 # Reporting issues
 We use [GitHub Issues](https://github.com/delta-io/delta/issues) to track community reported issues. You can also [contact](#community) the community for getting answers.
 
