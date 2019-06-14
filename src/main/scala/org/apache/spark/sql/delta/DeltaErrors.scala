@@ -605,6 +605,15 @@ abstract class DeltaConcurrentModificationException(message: String)
 }
 
 /**
+ * Thrown when a concurrent transaction has written data after the current transaction read the
+ * table.
+ */
+class ConcurrentWriteException(
+    conflictingCommit: Option[CommitInfo]) extends DeltaConcurrentModificationException(
+  s"A concurrent transaction has written new data since the current transaction " +
+    s"read the table. Please try the operation again.", conflictingCommit)
+
+/**
  * Thrown when the metadata of the Delta table has changed between the time of read
  * and the time of commit.
  */
