@@ -78,9 +78,7 @@ As an optimization, storage systems can also allow _partial listing of a directo
 
 ## Concurrency Level
 
-Delta Lake supports concurrent reads and only support concurrent writes if these writes are _append-only_. To be considered as _append-only_, a writer must be only adding new data and not reading or modifying existing data in any way.
-
-Note that concurrent reads and appends are allowed even when they operate on the same Delta Lake table partition.
+Delta Lake currently supports concurrent reads and _append-only_ writes. To be considered as _append-only_, a writer must be only adding new data without reading or modifying existing data in any way. Note that concurrent reads and appends are allowed and get snapshot isolation even when they operate on the same Delta Lake table partition. More concurrent operations will be added in future versions.
 
 # Reporting issues
 We use [GitHub Issues](https://github.com/delta-io/delta/issues) to track community reported issues. You can also [contact](#community) the community for getting answers.
