@@ -213,10 +213,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
 
     dependsOnFiles = true
 
-    DeltaLog.filterFileList(
-      metadata.partitionColumns,
-      snapshot.allFiles.toDF(),
-      filters).as[AddFile].collect()
+    snapshot.filesForScan(Nil, filters).files
   }
 
   /** Mark the entire table as tainted by this transaction. */
