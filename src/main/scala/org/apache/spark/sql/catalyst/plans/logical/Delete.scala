@@ -27,6 +27,6 @@ import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 case class Delete(
     child: LogicalPlan,
     condition: Option[Expression])
-    extends UnaryNode {
+  extends UnaryNode {
   override def output: Seq[Attribute] = Seq.empty
 }
