@@ -1,0 +1,54 @@
+/*
+ * Copyright 2019 Databricks, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package io.delta
+
+import java.util.Locale
+
+
+import org.apache.spark.sql.{AnalysisException, QueryTest}
+import org.apache.spark.sql.test.SharedSQLContext
+
+class DeltaTableSuite extends QueryTest
+  with SharedSQLContext {
+
+  test("forPath") {
+    withTempDir { dir =>
+      testData.write.format("delta").save(dir.getAbsolutePath)
+      checkAnswer(
+        DeltaTable.forPath(spark, dir.getAbsolutePath).toDF,
+        testData.collect().toSeq)
+      checkAnswer(
+        DeltaTable.forPath(dir.getAbsolutePath).toDF,
+        testData.collect().toSeq)
+    }
+  }
+
+
+  test("as") {
+    withTempDir { dir =>
+      testData.write.format("delta").save(dir.getAbsolutePath)
+      checkAnswer(
+        DeltaTable.forPath(dir.getAbsolutePath).as("tbl").toDF.select("tbl.value"),
+        testData.select("value").collect().toSeq)
+    }
+  }
+
+  def testError(expectegMsg: String)(thunk: => Unit): Unit = {
+    val e = intercept[AnalysisException] { thunk }
+    assert(e.getMessage.toLowerCase(Locale.ROOT).contains(expectegMsg.toLowerCase(Locale.ROOT)))
+  }
+}

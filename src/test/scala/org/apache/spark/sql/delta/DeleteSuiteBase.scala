@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta
 import java.io.File
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import io.delta.DeltaTable
 import org.apache.hadoop.fs.Path
 import org.scalatest.BeforeAndAfterEach
 
@@ -90,7 +89,7 @@ abstract class DeleteSuiteBase extends QueryTest
 
   Seq(true, false).foreach { isPartitioned =>
     test(s"basic case - delete from a Delta table - Partition=$isPartitioned") {
-      withTable("delta_table") {
+      withTable("deltaTable") {
         val partitions = if (isPartitioned) "key" :: Nil else Nil
         val input = Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value")
         append(input, partitions)

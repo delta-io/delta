@@ -25,8 +25,8 @@ import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
  * @param condition: Only rows that match the condition will be deleted.
  */
 case class Delete(
-  child: LogicalPlan,
-  condition: Option[Expression])
-  extends UnaryNode {
+    child: LogicalPlan,
+    condition: Option[Expression])
+    extends UnaryNode {
   override def output: Seq[Attribute] = Seq.empty
 }

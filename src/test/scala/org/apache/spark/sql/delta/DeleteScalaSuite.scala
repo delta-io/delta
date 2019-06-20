@@ -16,8 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-import java.util.Locale
-
 import io.delta.DeltaTable
 
 class DeleteScalaSuite
@@ -36,11 +34,6 @@ class DeleteScalaSuite
           } else {
             tableName -> Some(alias)
           }
-        case list if list.size >= 3 && list(list.size - 2).toLowerCase(Locale.ROOT) == "as" =>
-          // tabl SPACE ename as alias
-          list.dropRight(2).mkString(" ").trim() -> Some(list.last)
-        case list if list.size >= 2 =>
-          list.dropRight(1).mkString(" ").trim() -> Some(list.last)
         case _ =>
           fail(s"Could not build parse '$tableNameWithAlias' for table and optional alias")
       }
@@ -54,9 +47,6 @@ class DeleteScalaSuite
         val path = tableNameOrPath.stripPrefix("delta.")
         t = io.delta.DeltaTable.forPath(spark, path.substring(1, path.length-1))
       } else {
-        // scalastyle:off println
-        println(tableNameOrPath)
-        // scalastyle:on println
         t = new DeltaTable(spark.table(tableNameOrPath))
       }
       optionalAlias.foreach { alias => t = t.as(alias) }
