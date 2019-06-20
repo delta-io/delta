@@ -78,7 +78,7 @@ As an optimization, storage systems can also allow _partial listing of a directo
 
 ## Concurrency Control
 
-Delta Lake ensures _Serializability_ for concurrent reads and writes. Please see [Delta Lake Concurrency Control](https://docs.delta.io/latest/delta-concurrency.html) for more details.
+Delta Lake ensures _serializability_ for concurrent reads and writes. Please see [Delta Lake Concurrency Control](https://docs.delta.io/latest/delta-concurrency.html) for more details.
 
 # Reporting issues
 We use [GitHub Issues](https://github.com/delta-io/delta/issues) to track community reported issues. You can also [contact](#community) the community for getting answers.
