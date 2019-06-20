@@ -42,7 +42,6 @@ abstract class DeleteSuiteBase extends QueryTest
     spark.read.format("delta").load(path)
   }
 
-  protected def getDeltaFileStmt(path: String) = s"SELECT key, value FROM delta.`$path`"
 
   override def beforeEach() {
     super.beforeEach()
