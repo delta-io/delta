@@ -15,7 +15,7 @@ Delta Lake is published to Maven Central Repository and can be used by adding a 
     <dependency>
       <groupId>io.delta</groupId>
       <artifactId>delta-core_2.11</artifactId>
-      <version>0.1.0</version>
+      <version>0.2.0</version>
     </dependency>
 
 ## Compatibility
@@ -72,13 +72,13 @@ Delta Lake ACID guarantees are predicated on the atomicity and durability guaran
 2. **Mutual exclusion**: Only one writer must be able to create (or rename) a file at the final destination.
 3. **Consistent listing**: Once a file has been written in a directory, all future listings for that directory must return that file.
 
-Given that storage systems do not necessarily provide all of these guarantees out-of-the-box, Delta Lake transactional operations typically go through the [LogStore API](https://github.com/delta-io/delta/blob/master/src/main/scala/org/apache/spark/sql/delta/storage/LogStore.scala) instead of accessing the storage system directly. We can plug in custom `LogStore` implementations in order to provide the above guarantees for different storage systems. Delta Lake has built-in `LogStore` implementations for HDFS, Amazon S3 and Azure storage services. If you are interested in adding a custom `LogStore` implementation for your storage system, you can start discussions in the community mailing group.
+Given that storage systems do not necessarily provide all of these guarantees out-of-the-box, Delta Lake transactional operations typically go through the [LogStore API](https://github.com/delta-io/delta/blob/master/src/main/scala/org/apache/spark/sql/delta/storage/LogStore.scala) instead of accessing the storage system directly. We can plug in custom `LogStore` implementations in order to provide the above guarantees for different storage systems. Delta Lake has built-in `LogStore` implementations for HDFS, Amazon S3 and Azure storage services. Please see [Delta Lake Storage Configuration](https://docs.delta.io/latest/delta-storage.html) for more details. If you are interested in adding a custom `LogStore` implementation for your storage system, you can start discussions in the community mailing group.
 
 As an optimization, storage systems can also allow _partial listing of a directory, given a start marker_. Delta Lake can use this ability to efficiently discover the latest version of a table, without listing all of the files in the transaction log.
 
-## Concurrency Level
+## Concurrency Control
 
-Delta Lake currently supports concurrent reads and _append-only_ writes. To be considered as _append-only_, a writer must be only adding new data without reading or modifying existing data in any way. Note that concurrent reads and appends are allowed and get snapshot isolation even when they operate on the same Delta Lake table partition. More concurrent operations will be added in future versions.
+Delta Lake ensures _serializability_ for concurrent reads and writes. Please see [Delta Lake Concurrency Control](https://docs.delta.io/latest/delta-concurrency.html) for more details.
 
 # Reporting issues
 We use [GitHub Issues](https://github.com/delta-io/delta/issues) to track community reported issues. You can also [contact](#community) the community for getting answers.
