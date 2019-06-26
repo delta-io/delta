@@ -32,10 +32,10 @@ import org.apache.spark.sql.types.BooleanType
  * Performs a Delete based on the search condition
  *
  * Algorithm:
- *   1) Scan all the files (after column pruning and filter pushdown) and determine which files have
- *      the rows that needs to be deleted.
- *   2) Traverse the affected files (after column pruning) and rebuild the touched files.
- *   3) Use the Tahoe protocol to atomically write the remaining rows to new files and remove
+ *   1) Scan all the files and determine which files have
+ *      the rows that need to be deleted.
+ *   2) Traverse the affected files and rebuild the touched files.
+ *   3) Use the Delta protocol to atomically write the remaining rows to new files and remove
  *      the affected files that are identified in step 1.
  */
 case class DeleteCommand(
