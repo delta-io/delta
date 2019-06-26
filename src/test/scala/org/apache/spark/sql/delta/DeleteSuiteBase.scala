@@ -72,8 +72,7 @@ abstract class DeleteSuiteBase extends QueryTest
       condition: Option[String],
       expectedResults: Seq[Row],
       tableName: Option[String] = None): Unit = {
-    spark.read.format("delta").load(tempPath).createOrReplaceTempView("deltaTable")
-    executeDelete(target = "deltaTable", where = condition.orNull)
+    executeDelete(target = tableName.getOrElse(s"delta.`$tempPath`"), where = condition.orNull)
     checkAnswer(readDeltaTable(tempPath), expectedResults)
   }
 
@@ -174,12 +173,12 @@ abstract class DeleteSuiteBase extends QueryTest
   }
 
   test("Negative case - non-Delta target") {
-    withTable("nondeltaTab") {
+    withTable("nonDeltaTable") {
       Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value")
-        .write.format("parquet").saveAsTable("nonDeltaTab")
+        .write.format("parquet").saveAsTable("nonDeltaTable")
 
       val e = intercept[AnalysisException] {
-        executeDelete("nonDeltaTab")
+        executeDelete("nonDeltaTable")
       }.getMessage
       assert(e.contains("DELETE destination only supports Delta sources"))
     }
@@ -188,10 +187,27 @@ abstract class DeleteSuiteBase extends QueryTest
   test("Negative case - non-deterministic condition") {
     append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
     val e = intercept[AnalysisException] {
-      spark.read.format("delta").load(tempPath).createOrReplaceTempView("deltaTable")
-      executeDelete(target = "deltaTable", where = "rand() > 0.5")
+      executeDelete(target = s"delta.`$tempPath`", where = "rand() > 0.5")
     }.getMessage
     assert(e.contains("nondeterministic expressions are only allowed in"))
+  }
+
+  test("delete cached table") {
+//    Seq((2, 2), (1, 4)).toDF("key", "value")
+//      .write.mode("overwrite").format("delta").save(tempPath)
+//    spark.read.format("delta").load(tempPath).cache()
+//    spark.read.format("delta").load(tempPath).collect()
+//    executeDelete(s"delta.`$tempPath`", where = "key = 2")
+//    checkAnswer(spark.read.format("delta").load(tempPath), Row(1, 4) :: Nil)
+    withTable("cachedDeltaTable") {
+      Seq((2, 2), (1, 4)).toDF("key", "value")
+        .write.format("delta").saveAsTable("cachedDeltaTable")
+
+      spark.table("cachedDeltaTable").cache()
+      spark.table("cachedDeltaTable").collect()
+      executeDelete(target = "cachedDeltaTable", where = "key = 2")
+      checkAnswer(spark.table("cachedDeltaTable"), Row(1, 4) :: Nil)
+    }
   }
 
   Seq(true, false).foreach { isPartitioned =>

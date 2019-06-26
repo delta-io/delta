@@ -21,7 +21,8 @@ import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.sql.delta.Snapshot
 
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.{Dataset, SparkSession}
+import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
+import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.LogicalRDD
 import org.apache.spark.storage.StorageLevel
 
@@ -39,25 +40,52 @@ trait StateCache {
   /** A list of RDDs that we need to uncache when we are done with this snapshot. */
   private val cached = ArrayBuffer[RDD[_]]()
 
-  implicit class CacheableDS[A](ds: Dataset[A]) {
-    def rddCache(name: String): Dataset[A] = cached.synchronized {
+  class CachedDS[A](ds: Dataset[A], name: String) {
+    private val rddCache = cached.synchronized {
       if (isCached) {
-        implicit val enc = ds.exprEnc
-        val stateRDD = ds.queryExecution.toRdd.map(_.copy())
-        stateRDD.setName(name)
-        stateRDD.persist(StorageLevel.MEMORY_AND_DISK_SER)
-        cached += stateRDD
+        val rdd = ds.queryExecution.toRdd.map(_.copy())
+        rdd.setName(name)
+        rdd.persist(StorageLevel.MEMORY_AND_DISK_SER)
+        cached += rdd
+        Some(rdd)
+      } else {
+        None
+      }
+    }
 
+    /**
+     * Get the DS from the cache.
+     *
+     * If a RDD cache is available, we reconstruct the DS from the RDD cache;
+     * otherwise, we return the original DF but replace its spark session with the current active
+     * spark session.
+     *
+     * As a cached DeltaLog can be accessed from multiple Spark sessions, this method prevents the
+     * original Spark session from polluting other Spark sessions in which the DeltaLog is accessed.
+     */
+    def getDS: Dataset[A] = {
+      implicit val enc = ds.exprEnc
+      if (cached.synchronized(isCached) && rddCache.isDefined) {
         Dataset.ofRows(
           spark,
           LogicalRDD(
             ds.queryExecution.analyzed.output,
-            stateRDD)(
+            rddCache.get)(
             spark)).as[A]
       } else {
-        ds
+        Dataset.ofRows(
+          spark,
+          ds.queryExecution.logical
+        ).as[A]
       }
     }
+  }
+
+  /**
+   * Create a CachedDS instance for the given Dataset and the name.
+   */
+  def cacheDS[A](ds: Dataset[A], name: String): CachedDS[A] = {
+    new CachedDS[A](ds, name)
   }
 
   /** Drop any cached data for this [[Snapshot]]. */

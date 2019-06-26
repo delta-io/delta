@@ -130,14 +130,6 @@ object DeltaSQLConf {
       .intConf
       .createWithDefault(1000)
 
-  val DELTA_OPTIMIZE_METADATA_QUERY_ENABLED =
-    buildConf("optimizeMetadataQuery.enabled")
-      .internal()
-      .doc("Whether we can use the metadata in the DeltaLog to optimize queries that can be " +
-        "run purely on metadata.")
-      .booleanConf
-      .createWithDefault(false)
-
   val DELTA_VACUUM_RETENTION_CHECK_ENABLED =
     buildConf("retentionDurationCheck.enabled")
       .doc("Adds a check preventing users from running vacuum with a very short retention " +

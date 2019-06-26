@@ -18,8 +18,7 @@ package org.apache.spark.sql.delta
 
 import io.delta.DeltaTable
 
-class DeleteScalaSuite
-  extends DeleteSuiteBase
+class DeleteScalaSuite extends DeleteSuiteBase
 {
 
   override protected def executeDelete(target: String, where: String = null): Unit = {
@@ -41,16 +40,14 @@ class DeleteScalaSuite
 
     val deltaTable: io.delta.DeltaTable = {
       val (tableNameOrPath, optionalAlias) = parse(target)
-      var isPath: Boolean = tableNameOrPath.startsWith("delta.")
-      var t: io.delta.DeltaTable = null
-      if(isPath) {
-        val path = tableNameOrPath.stripPrefix("delta.")
-        t = io.delta.DeltaTable.forPath(spark, path.substring(1, path.length-1))
+      val isPath: Boolean = tableNameOrPath.startsWith("delta.")
+      val table = if (isPath) {
+        val path = tableNameOrPath.stripPrefix("delta.`").stripSuffix("`")
+        io.delta.DeltaTable.forPath(spark, path)
       } else {
-        t = new DeltaTable(spark.table(tableNameOrPath))
+        new DeltaTable(spark.table(tableNameOrPath))
       }
-      optionalAlias.foreach { alias => t = t.as(alias) }
-      t
+      optionalAlias.map(table.as(_)).getOrElse(table)
     }
 
     if (where != null) {

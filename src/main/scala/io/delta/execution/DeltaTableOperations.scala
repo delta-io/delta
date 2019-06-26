@@ -55,7 +55,7 @@ trait DeltaTableOperations { self: DeltaTable =>
   }
 
   protected def executeDelete(condition: Option[Expression]): Unit = {
-    val sparkSession = SparkSession.getActiveSession.getOrElse(self.toDF.sparkSession)
+    val sparkSession = self.toDF.sparkSession
     val delete = Delete(self.toDF.queryExecution.analyzed, condition)
     val qe = sparkSession.sessionState.executePlan(delete)
     val resolvedDelete = qe.analyzed.asInstanceOf[Delete]

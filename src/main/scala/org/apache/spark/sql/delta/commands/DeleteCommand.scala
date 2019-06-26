@@ -171,8 +171,7 @@ case class DeleteCommand(
 }
 
 object DeleteCommand {
-  def apply(plan: LogicalPlan): DeleteCommand = {
-    val delete = plan.asInstanceOf[Delete]
+  def apply(delete: Delete): DeleteCommand = {
     val index = EliminateSubqueryAliases(delete.child) match {
       case DeltaFullTable(tahoeFileIndex) =>
         tahoeFileIndex
