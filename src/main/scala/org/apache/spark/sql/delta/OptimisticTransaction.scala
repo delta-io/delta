@@ -209,14 +209,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
 
   /** Returns files matching the given predicates. */
   def filterFiles(filters: Seq[Expression]): Seq[AddFile] = {
-    implicit val enc = SingleAction.addFileEncoder
-
     dependsOnFiles = true
-
-    DeltaLog.filterFileList(
-      metadata.partitionColumns,
-      snapshot.allFiles.toDF(),
-      filters).as[AddFile].collect()
+    snapshot.filesForScan(Nil, filters).files
   }
 
   /** Mark the entire table as tainted by this transaction. */
