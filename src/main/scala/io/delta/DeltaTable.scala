@@ -66,7 +66,7 @@ object DeltaTable {
     if (DeltaTableUtils.isDeltaTable(sparkSession, new Path(path))) {
       new DeltaTable(sparkSession.read.format("delta").load(path))
     } else {
-      throw DeltaErrors.notADeltaTableException(new DeltaTableIdentifier(path = Some(path)))
+      throw DeltaErrors.notADeltaTableException(DeltaTableIdentifier(path = Some(path)))
     }
   }
 

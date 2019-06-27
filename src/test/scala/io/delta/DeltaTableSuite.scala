@@ -37,19 +37,13 @@ class DeltaTableSuite extends QueryTest
     }
   }
 
-  test("forPath should not create a DeltaTable based on Non-Delta-Path") {
+  test("forPath should not create a DeltaTable if a non-Delta path is provided") {
     withTempDir { dir =>
       testData.write.format("parquet").mode("overwrite").save(dir.getAbsolutePath)
-
-      val e1 = intercept[AnalysisException] {
-        DeltaTable.forPath(spark, dir.getAbsolutePath)
-      }.getMessage
-      assert(e1.contains(s"`${dir.getAbsolutePath}` is not a Delta table"))
-
-      val e2 = intercept[AnalysisException] {
+      val e = intercept[AnalysisException] {
         DeltaTable.forPath(dir.getAbsolutePath)
       }.getMessage
-      assert(e2.contains(s"`${dir.getAbsolutePath}` is not a Delta table"))
+      assert(e.contains(s"`${dir.getAbsolutePath}` is not a Delta table"))
     }
   }
 
