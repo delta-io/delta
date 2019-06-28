@@ -22,6 +22,7 @@ import java.util.concurrent.{Callable, TimeUnit}
 import java.util.concurrent.locks.ReentrantLock
 
 import scala.concurrent.{ExecutionContext, Future}
+import scala.util.Try
 import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinitions._
@@ -632,8 +633,8 @@ object DeltaLog extends DeltaLogging {
    * We create only a single [[DeltaLog]] for any given path to avoid wasted work
    * in reconstructing the log.
    */
-  private val deltaLogCache =
-    CacheBuilder.newBuilder()
+  private val deltaLogCache = {
+    val builder = CacheBuilder.newBuilder()
       .expireAfterAccess(60, TimeUnit.MINUTES)
       .removalListener(new RemovalListener[Path, DeltaLog] {
         override def onRemoval(removalNotification: RemovalNotification[Path, DeltaLog]) = {
@@ -644,7 +645,11 @@ object DeltaLog extends DeltaLogging {
           }
         }
       })
-      .build[Path, DeltaLog]()
+    sys.props.get("delta.log.cacheSize")
+      .flatMap(v => Try(v.toLong).toOption)
+      .foreach(builder.maximumSize)
+    builder.build[Path, DeltaLog]()
+  }
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: String): DeltaLog = {
