@@ -18,7 +18,32 @@ package org.apache.spark.sql.delta
 
 import io.delta.DeltaTable
 
+import org.apache.spark.sql.{functions, Row}
+
 class DeleteScalaSuite extends DeleteSuiteBase {
+
+  import testImplicits._
+
+  test("delete usage test - without condition") {
+    append(Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value"))
+    val table = io.delta.DeltaTable.forPath(tempPath)
+    table.delete()
+    checkAnswer(readDeltaTable(tempPath), Nil)
+  }
+
+  test("delete usage test - with condition") {
+    append(Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value"))
+    val table = io.delta.DeltaTable.forPath(tempPath)
+    table.delete("key = 1 or key = 2")
+    checkAnswer(readDeltaTable(tempPath), Row(3, 30) :: Row(4, 40) :: Nil)
+  }
+
+  test("delete usage test - with Column condition") {
+    append(Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value"))
+    val table = io.delta.DeltaTable.forPath(tempPath)
+    table.delete(functions.expr("key = 1 or key = 2"))
+    checkAnswer(readDeltaTable(tempPath), Row(3, 30) :: Row(4, 40) :: Nil)
+  }
 
   override protected def executeDelete(target: String, where: String = null): Unit = {
 

@@ -30,8 +30,7 @@ import org.apache.spark.sql._
  * }}}
  *
  */
-class DeltaTable (df: Dataset[Row]) extends DeltaTableOperations
-{
+class DeltaTable (df: Dataset[Row]) extends DeltaTableOperations {
 
   /**
    * Apply an alias to the DeltaTable. This is similar to `Dataset.as(alias)` or

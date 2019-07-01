@@ -178,11 +178,6 @@ object DeleteCommand {
       case o =>
         throw DeltaErrors.notADeltaSourceException("DELETE", Some(o))
     }
-    delete.condition match {
-      case Some(cond) if SubqueryExpression.hasSubquery(cond) =>
-        throw DeltaErrors.subqueryNotSupportedException("DELETE", cond)
-      case _ =>
-    }
     DeleteCommand(index, delete.child, delete.condition)
   }
 

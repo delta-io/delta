@@ -271,9 +271,35 @@ abstract class DeleteSuiteBase extends QueryTest
   test("do not support subquery test") {
     append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
     Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("c", "d").createOrReplaceTempView("source")
-    val e = intercept[AnalysisException] {
+
+    // basic subquery
+    val e0 = intercept[AnalysisException] {
       executeDelete(target = s"delta.`$tempPath`", "key < (SELECT max(c) FROM source)")
     }.getMessage
-    assert(e.contains("Subqueries are not supported"))
+    assert(e0.contains("Subqueries are not supported"))
+
+    // subquery with EXISTS
+    val e1 = intercept[AnalysisException] {
+      executeDelete(target = s"delta.`$tempPath`", "EXISTS (SELECT max(c) FROM source)")
+    }.getMessage
+    assert(e1.contains("Subqueries are not supported"))
+
+    // subquery with NOT EXISTS
+    val e2 = intercept[AnalysisException] {
+      executeDelete(target = s"delta.`$tempPath`", "NOT EXISTS (SELECT max(c) FROM source)")
+    }.getMessage
+    assert(e2.contains("Subqueries are not supported"))
+
+    // subquery with IN
+    val e3 = intercept[AnalysisException] {
+      executeDelete(target = s"delta.`$tempPath`", "key IN (SELECT max(c) FROM source)")
+    }.getMessage
+    assert(e3.contains("Subqueries are not supported"))
+
+    // subquery with NOT IN
+    val e4 = intercept[AnalysisException] {
+      executeDelete(target = s"delta.`$tempPath`", "key NOT IN (SELECT max(c) FROM source)")
+    }.getMessage
+    assert(e4.contains("Subqueries are not supported"))
   }
 }

@@ -16,11 +16,12 @@
 
 package io.delta.execution
 
+import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.commands.DeleteCommand
 import io.delta.DeltaTable
 
 import org.apache.spark.sql.{functions, Column, SparkSession}
-import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.plans.logical._
 
 /**
@@ -57,6 +58,11 @@ trait DeltaTableOperations { self: DeltaTable =>
   protected def executeDelete(condition: Option[Expression]): Unit = {
     val sparkSession = self.toDF.sparkSession
     val delete = Delete(self.toDF.queryExecution.analyzed, condition)
+    delete.condition match {
+      case Some(cond) if SubqueryExpression.hasSubquery(cond) =>
+        throw DeltaErrors.subqueryNotSupportedException("DELETE", cond)
+      case _ =>
+    }
     val qe = sparkSession.sessionState.executePlan(delete)
     val resolvedDelete = qe.analyzed.asInstanceOf[Delete]
     val deleteCommand = DeleteCommand(resolvedDelete)
