@@ -27,8 +27,7 @@ import org.apache.spark.sql.test.SharedSQLContext
 import org.apache.spark.util.Utils
 
 abstract class DeleteSuiteBase extends QueryTest
-  with SharedSQLContext
-  with BeforeAndAfterEach {
+  with SharedSQLContext with BeforeAndAfterEach {
 
   import testImplicits._
 
@@ -173,15 +172,13 @@ abstract class DeleteSuiteBase extends QueryTest
   }
 
   test("Negative case - non-Delta target") {
-    withTable("nonDeltaTable") {
-      Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value")
-        .write.format("parquet").saveAsTable("nonDeltaTable")
-
-      val e = intercept[AnalysisException] {
-        executeDelete("nonDeltaTable")
-      }.getMessage
-      assert(e.contains("DELETE destination only supports Delta sources"))
-    }
+    Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value")
+      .write.format("parquet").mode("append").save(tempPath)
+    val e = intercept[AnalysisException] {
+      executeDelete(target = s"delta.`$tempPath`")
+    }.getMessage
+    assert(e.contains("DELETE destination only supports Delta sources") ||
+      e.contains("is not a Delta table") || e.contains("Incompatible format"))
   }
 
   test("Negative case - non-deterministic condition") {
@@ -193,21 +190,12 @@ abstract class DeleteSuiteBase extends QueryTest
   }
 
   test("delete cached table") {
-//    Seq((2, 2), (1, 4)).toDF("key", "value")
-//      .write.mode("overwrite").format("delta").save(tempPath)
-//    spark.read.format("delta").load(tempPath).cache()
-//    spark.read.format("delta").load(tempPath).collect()
-//    executeDelete(s"delta.`$tempPath`", where = "key = 2")
-//    checkAnswer(spark.read.format("delta").load(tempPath), Row(1, 4) :: Nil)
-    withTable("cachedDeltaTable") {
-      Seq((2, 2), (1, 4)).toDF("key", "value")
-        .write.format("delta").saveAsTable("cachedDeltaTable")
-
-      spark.table("cachedDeltaTable").cache()
-      spark.table("cachedDeltaTable").collect()
-      executeDelete(target = "cachedDeltaTable", where = "key = 2")
-      checkAnswer(spark.table("cachedDeltaTable"), Row(1, 4) :: Nil)
-    }
+    Seq((2, 2), (1, 4)).toDF("key", "value")
+      .write.mode("overwrite").format("delta").save(tempPath)
+    spark.read.format("delta").load(tempPath).cache()
+    spark.read.format("delta").load(tempPath).collect()
+    executeDelete(s"delta.`$tempPath`", where = "key = 2")
+    checkAnswer(spark.read.format("delta").load(tempPath), Row(1, 4) :: Nil)
   }
 
   Seq(true, false).foreach { isPartitioned =>
@@ -278,5 +266,14 @@ abstract class DeleteSuiteBase extends QueryTest
     // when value is null, this expression evaluates to true
     checkDelete(Some("value <=> null"),
       Row("c", "v") :: Row("d", "vv") :: Nil)
+  }
+
+  test("do not support subquery test") {
+    append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
+    Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("c", "d").createOrReplaceTempView("source")
+    val e = intercept[AnalysisException] {
+      executeDelete(target = s"delta.`$tempPath`", "key < (SELECT max(c) FROM source)")
+    }.getMessage
+    assert(e.contains("Subqueries are not supported"))
   }
 }

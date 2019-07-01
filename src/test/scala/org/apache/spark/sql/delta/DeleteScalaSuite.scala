@@ -18,8 +18,7 @@ package org.apache.spark.sql.delta
 
 import io.delta.DeltaTable
 
-class DeleteScalaSuite extends DeleteSuiteBase
-{
+class DeleteScalaSuite extends DeleteSuiteBase {
 
   override protected def executeDelete(target: String, where: String = null): Unit = {
 

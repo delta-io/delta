@@ -18,6 +18,7 @@ package io.delta
 
 import org.apache.spark.sql.delta._
 import io.delta.execution._
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql._
 
@@ -64,7 +65,11 @@ object DeltaTable {
    * read the data.
    */
   def forPath(sparkSession: SparkSession, path: String): DeltaTable = {
-    new DeltaTable(sparkSession.read.format("delta").load(path))
+    if (DeltaTableUtils.isDeltaTable(sparkSession, new Path(path))) {
+      new DeltaTable(sparkSession.read.format("delta").load(path))
+    } else {
+      throw DeltaErrors.notADeltaTableException(DeltaTableIdentifier(path = Some(path)))
+    }
   }
 
 }

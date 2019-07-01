@@ -209,10 +209,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
 
   /** Returns files matching the given predicates. */
   def filterFiles(filters: Seq[Expression]): Seq[AddFile] = {
-    implicit val enc = SingleAction.addFileEncoder
-
     dependsOnFiles = true
-
     snapshot.filesForScan(Nil, filters).files
   }
 
