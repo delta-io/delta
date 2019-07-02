@@ -17,6 +17,7 @@
 package io.delta
 
 import org.apache.spark.sql.delta._
+import io.delta.execution._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql._
@@ -29,7 +30,7 @@ import org.apache.spark.sql._
  * }}}
  *
  */
-class DeltaTable private(df: Dataset[Row]) {
+class DeltaTable (df: Dataset[Row]) extends DeltaTableOperations {
 
   /**
    * Apply an alias to the DeltaTable. This is similar to `Dataset.as(alias)` or
