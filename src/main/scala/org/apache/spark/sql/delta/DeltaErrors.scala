@@ -22,6 +22,7 @@ import java.util.ConcurrentModificationException
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{Invariant, InvariantViolationException}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 
