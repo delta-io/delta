@@ -16,9 +16,10 @@
 
 package org.apache.spark.sql.delta.schema
 
+import java.util.Locale
+
 import scala.collection.mutable
 import scala.util.control.NonFatal
-
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
@@ -157,7 +158,7 @@ object SchemaUtils {
   def checkColumnNameDuplication(schema: StructType, colType: String): Unit = {
     val columnNames = explodeNestedFieldNames(schema)
     // scalastyle:off caselocale
-    val names = columnNames.map(_.toLowerCase)
+    val names = columnNames.map(_.toLowerCase(Locale.ROOT))
     // scalastyle:on caselocale
     if (names.distinct.length != names.length) {
       val duplicateColumns = names.groupBy(identity).collect {
@@ -216,10 +217,10 @@ object SchemaUtils {
   def isReadCompatible(existingSchema: StructType, readSchema: StructType): Boolean = {
     val existing = toFieldMap(existingSchema)
     // scalastyle:off caselocale
-    val existingFieldNames = existingSchema.fieldNames.map(_.toLowerCase).toSet
+    val existingFieldNames = existingSchema.fieldNames.map(_.toLowerCase(Locale.ROOT)).toSet
     assert(existingFieldNames.size == existingSchema.length,
       "Delta tables don't allow field names that only differ by case")
-    val newFields = readSchema.fieldNames.map(_.toLowerCase).toSet
+    val newFields = readSchema.fieldNames.map(_.toLowerCase(Locale.ROOT)).toSet
     assert(newFields.size == readSchema.length,
       "Delta tables don't allow field names that only differ by case")
     // scalastyle:on caselocale
@@ -644,11 +645,11 @@ object SchemaUtils {
       input: Seq[(Seq[String], E)])(
       tf: (Seq[String], StructField, Seq[(Seq[String], E)]) => StructField): StructType = {
     // scalastyle:off caselocale
-    val inputLookup = input.groupBy(_._1.map(_.toLowerCase))
+    val inputLookup = input.groupBy(_._1.map(_.toLowerCase(Locale.ROOT)))
     SchemaUtils.transformColumns(schema) { (path, field, resolver) =>
       // Find the parameters that match this field name.
       val fullPath = path :+ field.name
-      val normalizedFullPath = fullPath.map(_.toLowerCase)
+      val normalizedFullPath = fullPath.map(_.toLowerCase(Locale.ROOT))
       val matches = inputLookup.get(normalizedFullPath).toSeq.flatMap {
         // Keep only the input name(s) that actually match the field name(s). Note
         // that the Map guarantees that the zipped sequences have the same size.
