@@ -206,12 +206,12 @@ object Snapshot extends DeltaLogging {
   private def assertLogBelongsToTable(logBasePath: URI): UserDefinedFunction = {
     udf((filePath: String) => {
       if (filePath.isEmpty || new Path(new URI(filePath)).getParent == new Path(logBasePath)) {
-        filePath
+        filePath // scalastyle:ignore throwerror
       } else {
-        // scalastyle:off throwerror
-        throw new AssertionError(s"File ($filePath) doesn't belong in the " +
-          s"transaction log at $logBasePath. Please contact Databricks Support.")
-        // scalastyle:on throwerror
+        val msg = s"File ($filePath) doesn't belong in the " +
+          s"transaction log at $logBasePath. Please contact Databricks Support."
+        throw new AssertionError(msg) // scalastyle:ignore throwerror
+
       }
     })
   }
