@@ -16,7 +16,7 @@
 
 package io.delta.execution
 
-import org.apache.spark.sql.execution.PreprocessTableUpdate
+import org.apache.spark.sql.delta.PreprocessTableUpdate
 import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.commands.DeleteCommand
 import io.delta.DeltaTable
