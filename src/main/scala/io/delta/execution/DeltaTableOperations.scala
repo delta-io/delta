@@ -166,6 +166,11 @@ trait DeltaTableOperations { self: DeltaTable =>
     val updateColumns = setColumns.map { x => UnresolvedAttribute.quotedString(x._1) }
     val updateExpressions = setColumns.map{ x => x._2.expr }
     val condition = onCondition.map {_.expr}
+    condition match {
+      case Some(cond) if SubqueryExpression.hasSubquery(cond) =>
+        throw DeltaErrors.subqueryNotSupportedException("UPDATE", cond)
+      case _ =>
+    }
     new UpdateTable(
       target.toDF.queryExecution.analyzed, updateColumns, updateExpressions, condition)
   }

@@ -280,4 +280,51 @@ abstract class UpdateSuiteBase extends QueryTest
       checkAnswer(spark.read.format("delta").load(tempPath), Row(3, 2) :: Row(3, 4) :: Nil)
     }
   }
+
+  test("do not support subquery test") {
+    append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
+    Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("c", "d").createOrReplaceTempView("source")
+
+    // basic subquery
+    val e0 = intercept[AnalysisException] {
+      executeUpdate(
+        target = s"delta.`$tempPath`",
+        set = "key = 1",
+        where = "key < (SELECT max(c) FROM source)")
+    }.getMessage
+    assert(e0.contains("Subqueries are not supported"))
+
+    // subquery with EXISTS
+    val e1 = intercept[AnalysisException] {
+      executeUpdate(
+        target = s"delta.`$tempPath`",
+        set = "key = 1",
+        where = "EXISTS (SELECT max(c) FROM source)")
+    }.getMessage
+    assert(e1.contains("Subqueries are not supported"))
+
+    // subquery with NOT EXISTS
+    val e2 = intercept[AnalysisException] {
+      executeUpdate(target = s"delta.`$tempPath`",
+        set = "key = 1",
+        where = "NOT EXISTS (SELECT max(c) FROM source)")
+    }.getMessage
+    assert(e2.contains("Subqueries are not supported"))
+
+    // subquery with IN
+    val e3 = intercept[AnalysisException] {
+      executeUpdate(target = s"delta.`$tempPath`",
+        set = "key = 1",
+        where = "key IN (SELECT max(c) FROM source)")
+    }.getMessage
+    assert(e3.contains("Subqueries are not supported"))
+
+    // subquery with NOT IN
+    val e4 = intercept[AnalysisException] {
+      executeUpdate(target = s"delta.`$tempPath`",
+        set = "key = 1",
+        where = "key NOT IN (SELECT max(c) FROM source)")
+    }.getMessage
+    assert(e4.contains("Subqueries are not supported"))
+  }
 }
