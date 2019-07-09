@@ -41,42 +41,59 @@ trait StateCache {
   private val cached = ArrayBuffer[RDD[_]]()
 
   class CachedDS[A](ds: Dataset[A], name: String) {
-    private val rddCache = cached.synchronized {
+    // While `rddCache` can be reused by different spark sessions, `dsCache` can only be reused
+    // by the session that created this cachedDS; so it's an optimization only for single-session
+    // scenarios.
+    private val (rddCache, dsCache) = cached.synchronized {
       if (isCached) {
         val rdd = ds.queryExecution.toRdd.map(_.copy())
         rdd.setName(name)
         rdd.persist(StorageLevel.MEMORY_AND_DISK_SER)
         cached += rdd
-        Some(rdd)
+        val cachedDs = Dataset.ofRows(
+          spark,
+          LogicalRDD(
+            ds.queryExecution.analyzed.output,
+            rdd)(
+            spark)).as[A](ds.exprEnc)
+
+        (Some(rdd), Some(cachedDs))
       } else {
-        None
+        (None, None)
       }
     }
 
     /**
      * Get the DS from the cache.
      *
-     * If a RDD cache is available, we reconstruct the DS from the RDD cache;
-     * otherwise, we return the original DF but replace its spark session with the current active
-     * spark session.
+     * If a RDD cache is available,
+     * - return the cached DS if called from the same session in which the cached DS is created, or
+     * - reconstruct the DS using the RDD cache if called from a different session.
      *
-     * As a cached DeltaLog can be accessed from multiple Spark sessions, this method prevents the
-     * original Spark session from polluting other Spark sessions in which the DeltaLog is accessed.
+     * If no RDD cache is available,
+     * - return a copy of the original DS with updated spark session.
+     *
+     * Since a cached DeltaLog can be accessed from multiple Spark sessions, this interface makes
+     * sure that the original Spark session in the cached DS does not leak into the current active
+     * sessions.
      */
     def getDS: Dataset[A] = {
-      implicit val enc = ds.exprEnc
       if (cached.synchronized(isCached) && rddCache.isDefined) {
-        Dataset.ofRows(
-          spark,
-          LogicalRDD(
-            ds.queryExecution.analyzed.output,
-            rddCache.get)(
-            spark)).as[A]
+        if (dsCache.exists(_.sparkSession eq spark)) {
+          dsCache.get
+        } else {
+          Dataset.ofRows(
+            spark,
+            LogicalRDD(
+              ds.queryExecution.analyzed.output,
+              rddCache.get)(
+              spark)).as[A](ds.exprEnc)
+        }
       } else {
         Dataset.ofRows(
           spark,
           ds.queryExecution.logical
-        ).as[A]
+        ).as[A](ds.exprEnc)
       }
     }
   }

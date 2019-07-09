@@ -913,4 +913,12 @@ class DeltaSuite extends QueryTest
       }
     }
   }
+
+  test("SC-15200: SaveAsTable on empty dataframe should create table") {
+    withTable("sc15200test") {
+      spark.range(0).selectExpr("id", "id as id2")
+        .write.format("delta").partitionBy("id").saveAsTable("sc15200test")
+      checkAnswer(spark.table("sc15200test"), Seq.empty)
+    }
+  }
 }
