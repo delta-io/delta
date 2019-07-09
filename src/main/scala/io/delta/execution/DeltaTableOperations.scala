@@ -16,6 +16,9 @@
 
 package io.delta.execution
 
+import scala.collection.JavaConverters._
+import scala.collection.Map
+
 import org.apache.spark.sql.delta.PreprocessTableUpdate
 import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.commands.DeleteCommand
@@ -37,7 +40,7 @@ trait DeltaTableOperations { self: DeltaTable =>
 
   /**
    * Delete data from the table that match the given `condition`.
-   * @param condition
+   * @param condition delete operations will be performed if rows hold true for this condition.
    */
   def delete(condition: String): Unit = {
     delete(functions.expr(condition))
@@ -45,7 +48,7 @@ trait DeltaTableOperations { self: DeltaTable =>
 
   /**
    * Delete data from the table that match the given `condition`.
-   * @param condition
+   * @param condition delete operations will be performed if rows hold true for this condition.
    */
   def delete(condition: Column): Unit = {
     executeDelete(Some(condition.expr))
@@ -77,121 +80,82 @@ trait DeltaTableOperations { self: DeltaTable =>
 
   /**
    * Update data from the table, which performs the rules defined by `set`.
-   * @param set
+   * @param set specifies the rules for how to update a row.
    */
   def update(set: Map[String, Column]): Unit = {
-    val setColumns = getSetColumnsForColumn(set)
-    executeUpdate(setColumns, None)
+    executeUpdate(set, None)
   }
 
   /**
    * Update data from the table, which performs the rules defined by `set`.
    * Java friendly API.
-   * @param set
+   * @param set specifies the rules for how to update a row.
    */
   def update(set: java.util.Map[String, Column]): Unit = {
-    val setColumns = getSetColumnsForJavaColumn(set)
-    executeUpdate(setColumns, None)
+    executeUpdate(set.asScala, None)
   }
 
   /**
    * Update data from the table on the rows that match the given `condition`,
    * which performs the rules defined by `set`.
-   * @param condition
-   * @param set
+   * @param condition update operations will be performed if rows hold true for this condition.
+   * @param set specifies the rules for how to update a row.
    */
   def update(condition: Column, set: Map[String, Column]): Unit = {
-    val setColumns = getSetColumnsForColumn(set)
-    executeUpdate(setColumns, Some(condition))
+    executeUpdate(set, Some(condition))
   }
 
   /**
    * Update data from the table on the rows that match the given `condition`,
    * which performs the rules defined by `set`.
    * Java friendly API.
-   * @param condition
-   * @param set
+   * @param condition update operations will be performed if rows hold true for this condition.
+   * @param set specifies the rules for how to update a row.
    */
   def update(condition: Column, set: java.util.Map[String, Column]): Unit = {
-    val setColumns = getSetColumnsForJavaColumn(set)
-    executeUpdate(setColumns, Some(condition))
+    executeUpdate(set.asScala, Some(condition))
   }
 
   /**
    * Update data from the table, which performs the rules defined by `set`.
-   * @param set
+   * @param set specifies the rules for how to update a row.
    */
   def updateExpr(set: Map[String, String]): Unit = {
-    val setColumns = getSetColumns(set)
-    executeUpdate(setColumns, None)
+    executeUpdate(toStrColumnMap(set), None)
   }
 
   /**
    * Update data from the table, which performs the rules defined by `set`.
    * Java friendly API.
-   * @param set
+   * @param set specifies the rules for how to update a row.
    */
   def updateExpr(set: java.util.Map[String, String]): Unit = {
-    val setColumns = getSetColumnsForJava(set)
-    executeUpdate(setColumns, None)
+    executeUpdate(toStrColumnMap(set.asScala), None)
   }
 
   /**
    * Update data from the table on the rows that match the given `condition`,
    * which performs the rules defined by `set`.
-   * @param condition
-   * @param set
+   * @param condition update operations will be performed if rows hold true for this condition.
+   * @param set specifies the rules for how to update a row.
    */
   def updateExpr(condition: String, set: Map[String, String]): Unit = {
-    val setColumns = getSetColumns(set)
-    executeUpdate(setColumns, Some(functions.expr(condition)))
+    executeUpdate(toStrColumnMap(set), Some(functions.expr(condition)))
   }
 
   /**
    * Update data from the table on the rows that match the given `condition`,
    * which performs the rules defined by `set`.
    * Java friendly API.
-   * @param condition
-   * @param set
+   * @param condition update operations will be performed if rows hold true for this condition.
+   * @param set specifies the rules for how to update a row.
    */
   def updateExpr(condition: String, set: java.util.Map[String, String]): Unit = {
-    val setColumns = getSetColumnsForJava(set)
-    executeUpdate(setColumns, Some(functions.expr(condition)))
+    executeUpdate(toStrColumnMap(set.asScala), Some(functions.expr(condition)))
   }
 
-  protected def getSetColumns(set: Map[String, String]): Seq[(String, Column)] = {
-    var setColumns: Seq[(String, Column)] = Seq()
-    for ((col, expr) <- set) {
-      setColumns = setColumns :+ ((col, functions.expr(expr)))
-    }
-    setColumns
-  }
-
-  protected def getSetColumnsForColumn(set: Map[String, Column]): Seq[(String, Column)] = {
-    var setColumns: Seq[(String, Column)] = Seq()
-    for ((col, expr) <- set) {
-      setColumns = setColumns :+ ((col, expr))
-    }
-    setColumns
-  }
-
-  protected def getSetColumnsForJava(set: java.util.Map[String, String]): Seq[(String, Column)] = {
-    import scala.collection.JavaConverters._
-    var setColumns: Seq[(String, Column)] = Seq()
-    for ((col, expr) <- set.asScala) {
-      setColumns = setColumns :+ ((col, functions.expr(expr)))
-    }
-    setColumns
-  }
-
-  protected def getSetColumnsForJavaColumn(
-      set: java.util.Map[String, Column]): Seq[(String, Column)] = {
-    import scala.collection.JavaConverters._
-    var setColumns: Seq[(String, Column)] = Seq()
-    for ((col, expr) <- set.asScala) {
-      setColumns = setColumns :+ ((col, expr))
-    }
-    setColumns
+  protected def toStrColumnMap(map: Map[String, String]): Map[String, Column] = {
+    map.toSeq.map { case (k, v) => k -> functions.expr(v) }.toMap
   }
 
   protected def makeUpdateTable(
@@ -201,25 +165,15 @@ trait DeltaTableOperations { self: DeltaTable =>
       setColumns: Seq[(String, Column)]): UpdateTable = {
     val updateColumns = setColumns.map { x => UnresolvedAttribute.quotedString(x._1) }
     val updateExpressions = setColumns.map{ x => x._2.expr }
-    onCondition match {
-      case Some(c) =>
-        new UpdateTable(
-          target.toDF.queryExecution.analyzed,
-          updateColumns,
-          updateExpressions,
-          Some(c.expr))
-      case None =>
-        new UpdateTable(
-          target.toDF.queryExecution.analyzed,
-          updateColumns,
-          updateExpressions,
-          None)
-    }
+    val condition = onCondition.map {_.expr}
+    new UpdateTable(
+      target.toDF.queryExecution.analyzed, updateColumns, updateExpressions, condition)
   }
 
   protected def executeUpdate(
-      setColumns: Seq[(String, Column)],
+      set: Map[String, Column],
       condition: Option[Column]): Unit = {
+    val setColumns = set.map{ case (col, expr) => (col, expr) }.toSeq
     val sparkSession = self.toDF.sparkSession
     val updateTable = makeUpdateTable(sparkSession, self, condition, setColumns)
     val qe = sparkSession.sessionState.executePlan(updateTable)

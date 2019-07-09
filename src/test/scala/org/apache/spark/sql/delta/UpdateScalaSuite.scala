@@ -34,7 +34,7 @@ class UpdateScalaSuite extends UpdateSuiteBase {
       Row(100, 10) :: Row(100, 20) :: Row(100, 30) :: Row(100, 40) :: Nil)
   }
 
-  test("update usage test - without condition, Column") {
+  test("update usage test - without condition, using Column") {
     append(Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value"))
     val table = io.delta.DeltaTable.forPath(tempPath)
     table.update(Map("key" -> functions.expr("100")))
@@ -50,7 +50,7 @@ class UpdateScalaSuite extends UpdateSuiteBase {
       Row(100, 10) :: Row(100, 20) :: Row(3, 30) :: Row(4, 40) :: Nil)
   }
 
-  test("update usage test - with condition, Column") {
+  test("update usage test - with condition, using Column") {
     append(Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value"))
     val table = io.delta.DeltaTable.forPath(tempPath)
     table.update(functions.expr("key = 1 or key = 2"),
@@ -67,7 +67,7 @@ class UpdateScalaSuite extends UpdateSuiteBase {
     def parse(tableNameWithAlias: String): (String, Option[String]) = {
       tableNameWithAlias.split(" ").toList match {
         case tableName :: Nil => tableName -> None
-        case tableName :: alias :: Nil => // for test case SC-13255
+        case tableName :: alias :: Nil =>
           val ordinary = (('a' to 'z') ++ ('A' to 'Z') ++ ('0' to '9')).toSet
           if (alias.forall(ordinary.contains(_))) {
             tableName -> Some(alias)
@@ -91,23 +91,17 @@ class UpdateScalaSuite extends UpdateSuiteBase {
         val path = tableNameOrPath.stripPrefix("delta.")
         t = io.delta.DeltaTable.forPath(spark, path.substring(1, path.length-1))
       } else {
-        t = new DeltaTable(spark.table(tableNameOrPath)) // for test case non-delta target
+        t = new DeltaTable(spark.table(tableNameOrPath))
       }
       optionalAlias.foreach { alias => t = t.as(alias) }
       t
     }
 
-    var setColumns: Seq[(String, String)] = Seq()
-    val setAssigns = set.split(", ")
-    for (assign <- setAssigns) {
-      val splited_assign = assign.split(" = ")
-      setColumns = setColumns :+ ((splited_assign.apply(0), splited_assign.apply(1)))
-    }
+    val setColumns =
+      set.split(", ").map {assign =>
+        (assign.split(" = ").apply(0), assign.split(" = ").apply(1))}
+    val setCols = setColumns.map {case (col, expr) => col -> expr}.toMap
 
-    var setCols = Map[String, String]()
-    for ((col, expr) <- setColumns) {
-      setCols += (col -> expr)
-    }
     if (where == null) {
       deltaTable.updateExpr(setCols)
     } else {
