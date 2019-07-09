@@ -139,4 +139,15 @@ trait UpdateExpressionsSupport extends CastSupport {
       }
     }
   }
+
+  protected def generateUpdateExpressions(
+      targetCols: Seq[NamedExpression],
+      nameParts: Seq[Seq[String]],
+      updateExprs: Seq[Expression],
+      resolver: Resolver): Seq[Expression] = {
+    val updateOps = nameParts.zip(updateExprs).map {
+      case (nameParts, expr) => UpdateOperation(nameParts, expr)
+    }
+    generateUpdateExpressions(targetCols, updateOps, resolver)
+  }
 }

@@ -75,8 +75,7 @@ abstract class UpdateSuiteBase extends QueryTest
       setClauses: String,
       expectedResults: Seq[Row],
       tableName: Option[String] = None): Unit = {
-    spark.read.format("delta").load(tempPath).createOrReplaceTempView("deltaTable")
-    executeUpdate("deltaTable", setClauses, where = condition.orNull)
+    executeUpdate(tableName.getOrElse(s"delta.`$tempPath`"), setClauses, where = condition.orNull)
     checkAnswer(readDeltaTable(tempPath), expectedResults)
   }
 
@@ -95,8 +94,7 @@ abstract class UpdateSuiteBase extends QueryTest
         checkUpdate(
           condition = Some("key >= 1"),
           setClauses = "value = key + value, key = key + 1",
-          expectedResults = Row(0, 3) :: Row(2, 5) :: Row(2, 2) :: Row(3, 4) :: Nil,
-          tableName = Some("deltaTable"))
+          expectedResults = Row(0, 3) :: Row(2, 5) :: Row(2, 2) :: Row(3, 4) :: Nil)
       }
     }
   }
@@ -273,13 +271,13 @@ abstract class UpdateSuiteBase extends QueryTest
   test("update cached table") {
     withTable("cached_deltaTable") {
       Seq((2, 2), (1, 4)).toDF("key", "value")
-        .write.format("delta").saveAsTable("cached_deltaTable")
+        .write.mode("overwrite").format("delta").save(tempPath)
 
-      spark.table("cached_deltaTable").cache()
-      spark.table("cached_deltaTable").collect()
+      spark.read.format("delta").load(tempPath).cache()
+      spark.read.format("delta").load(tempPath).collect()
 
-      executeUpdate(target = "cached_deltaTable", set = "key = 3")
-      checkAnswer(spark.table("cached_deltaTable"), Row(3, 2) :: Row(3, 4) :: Nil)
+      executeUpdate(s"delta.`$tempPath`", set = "key = 3")
+      checkAnswer(spark.read.format("delta").load(tempPath), Row(3, 2) :: Row(3, 4) :: Nil)
     }
   }
 }

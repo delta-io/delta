@@ -32,13 +32,12 @@ case class PreprocessTableUpdate(conf: SQLConf) extends UpdateExpressionsSupport
       case o =>
         throw DeltaErrors.notADeltaSourceException("UPDATE", Some(o))
     }
+
     val targetColNameParts =
       update.updateColumns.map{col => new UnresolvedAttribute(col.name.split("\\.")).nameParts}
-    val updateOps = targetColNameParts.zip(update.updateExpressions).map {
-      case (nameParts, expr) => UpdateOperation(nameParts, expr)
-    }
-    val alignedUpdateExprs =
-      generateUpdateExpressions(update.child.output, updateOps, conf.resolver)
+
+    val alignedUpdateExprs = generateUpdateExpressions(
+      update.child.output, targetColNameParts, update.updateExpressions, conf.resolver)
     UpdateCommand(index, update.child, alignedUpdateExprs, update.condition)
   }
 }
