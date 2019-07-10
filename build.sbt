@@ -73,6 +73,32 @@ testScalastyle := scalastyle.in(Test).toTask("").value
 
 (test in Test) := ((test in Test) dependsOn testScalastyle).value
 
+
+/*******************
+ * Unidoc settings *
+ *******************/
+
+enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin)
+
+scalacOptions in(ScalaUnidoc, unidoc) ++= Seq("-skip-packages", "org:com:io.delta.execution")
+
+def ignoreUndocumentedPackages(packages: Seq[Seq[java.io.File]]): Seq[Seq[java.io.File]] = {
+  packages
+    .map(_.filterNot(_.getName.contains("$")))
+    .map(_.filterNot(_.getCanonicalPath.contains("io/delta/execution")))
+    .map(_.filterNot(_.getCanonicalPath.contains("spark")))
+}
+
+unidocAllSources in(JavaUnidoc, unidoc) := ignoreUndocumentedPackages((unidocAllSources in(JavaUnidoc, unidoc)).value)
+
+javacOptions in(JavaUnidoc, unidoc) := Seq(
+  "-windowtitle", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
+  "-public",
+  "-noqualifier", "java.lang",
+  "-exclude", "org:com:io.delta.execution"
+)
+
+
 /***************************
  * Spark Packages settings *
  ***************************/
