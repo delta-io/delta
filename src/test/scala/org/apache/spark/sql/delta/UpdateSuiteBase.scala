@@ -279,14 +279,28 @@ abstract class UpdateSuiteBase extends QueryTest
     checkAnswer(spark.read.format("delta").load(tempPath), Row(3, 2) :: Row(3, 4) :: Nil)
   }
 
+  test("different variations of column references") {
+    append(Seq((99, 2), (100, 4), (101, 3), (102, 5)).toDF("key", "value"))
+
+    spark.read.format("delta").load(tempPath).createOrReplaceTempView("tblName")
+
+    checkUpdate(condition = Some("key = 99"), setClauses = "value = -1",
+      Row(99, -1) :: Row(100, 4) :: Row(101, 3) :: Row(102, 5) :: Nil)
+    checkUpdate(condition = Some("`key` = 100"), setClauses = "`value` = -1",
+      Row(99, -1) :: Row(100, -1) :: Row(101, 3) :: Row(102, 5) :: Nil)
+    checkUpdate(condition = Some("tblName.key = 101"), setClauses = "tblName.value = -1",
+      Row(99, -1) :: Row(100, -1) :: Row(101, -1) :: Row(102, 5) :: Nil, Some("tblName"))
+    checkUpdate(condition = Some("`tblName`.`key` = 102"), setClauses = "`tblName`.`value` = -1",
+      Row(99, -1) :: Row(100, -1) :: Row(101, -1) :: Row(102, -1) :: Nil, Some("tblName"))
+  }
+
   test("do not support subquery test") {
     append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
     Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("c", "d").createOrReplaceTempView("source")
 
     // basic subquery
     val e0 = intercept[AnalysisException] {
-      executeUpdate(
-        target = s"delta.`$tempPath`",
+      executeUpdate(target = s"delta.`$tempPath`",
         set = "key = 1",
         where = "key < (SELECT max(c) FROM source)")
     }.getMessage
@@ -294,8 +308,7 @@ abstract class UpdateSuiteBase extends QueryTest
 
     // subquery with EXISTS
     val e1 = intercept[AnalysisException] {
-      executeUpdate(
-        target = s"delta.`$tempPath`",
+      executeUpdate(target = s"delta.`$tempPath`",
         set = "key = 1",
         where = "EXISTS (SELECT max(c) FROM source)")
     }.getMessage
