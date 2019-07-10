@@ -259,26 +259,24 @@ abstract class UpdateSuiteBase extends QueryTest
   }
 
   test("Negative case - non-delta target") {
-    withTable("nondeltaTable") {
-      Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value").write.saveAsTable("nondeltaTable")
-      val e = intercept[AnalysisException] {
-        executeUpdate(target = "nondeltaTable", set = "key1 = 3")
-      }.getMessage
-      assert(e.contains("UPDATE destination only supports Delta sources"))
-    }
+    Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value")
+      .write.mode("overwrite").format("parquet").save(tempPath)
+    val e = intercept[AnalysisException] {
+      executeUpdate(target = s"delta.`$tempPath`", set = "key1 = 3")
+    }.getMessage
+    assert(e.contains("UPDATE destination only supports Delta sources") ||
+      e.contains("is not a Delta table") || e.contains("Incompatible format"))
   }
 
   test("update cached table") {
-    withTable("cached_deltaTable") {
-      Seq((2, 2), (1, 4)).toDF("key", "value")
-        .write.mode("overwrite").format("delta").save(tempPath)
+    Seq((2, 2), (1, 4)).toDF("key", "value")
+      .write.mode("overwrite").format("delta").save(tempPath)
 
-      spark.read.format("delta").load(tempPath).cache()
-      spark.read.format("delta").load(tempPath).collect()
+    spark.read.format("delta").load(tempPath).cache()
+    spark.read.format("delta").load(tempPath).collect()
 
-      executeUpdate(s"delta.`$tempPath`", set = "key = 3")
-      checkAnswer(spark.read.format("delta").load(tempPath), Row(3, 2) :: Row(3, 4) :: Nil)
-    }
+    executeUpdate(s"delta.`$tempPath`", set = "key = 3")
+    checkAnswer(spark.read.format("delta").load(tempPath), Row(3, 2) :: Row(3, 4) :: Nil)
   }
 
   test("do not support subquery test") {

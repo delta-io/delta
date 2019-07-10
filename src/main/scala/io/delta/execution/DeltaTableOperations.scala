@@ -159,7 +159,7 @@ trait DeltaTableOperations { self: DeltaTable =>
       target: DeltaTable,
       onCondition: Option[Column],
       setColumns: Seq[(String, Column)]): UpdateTable = {
-    val updateColumns = setColumns.map { x => UnresolvedAttribute.quotedString(x._1) }
+    val updateColumns = setColumns.map { x => UnresolvedAttribute(x._1) }
     val updateExpressions = setColumns.map{ x => x._2.expr }
     val condition = onCondition.map {_.expr}
     UpdateTable(
