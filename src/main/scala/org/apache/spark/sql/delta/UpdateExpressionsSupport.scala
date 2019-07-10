@@ -145,6 +145,7 @@ trait UpdateExpressionsSupport extends CastSupport {
       nameParts: Seq[Seq[String]],
       updateExprs: Seq[Expression],
       resolver: Resolver): Seq[Expression] = {
+    assert(nameParts.size == updateExprs.size)
     val updateOps = nameParts.zip(updateExprs).map {
       case (nameParts, expr) => UpdateOperation(nameParts, expr)
     }

@@ -31,13 +31,12 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.BooleanType
 
 /**
- * Performs an Update using UPDATE EXPRESSION based on the search condition
+ * Performs an Update using `updateExpression` on the rows that match `condition`
  *
  * Algorithm:
- *   1) Scan all the files and determine which files have
- *      the rows that needs to be updated.
- *   2) Traverse the affected files and rebuild the touched files.
- *   3) Use the Delta protocol to atomically write the remaining rows to new files and remove
+ *   1) Identify the affected files, i.e., the files that may have the rows to be updated.
+ *   2) Scan affected files, apply the updates, and generate a new DF with updated rows.
+ *   3) Use the Delta protocol to atomically write the new DF as new files and remove
  *      the affected files that are identified in step 1.
  */
 case class UpdateCommand(
@@ -144,7 +143,7 @@ case class UpdateCommand(
     }
 
     if (actions.nonEmpty) {
-      txn.commit(actions, DeltaOperations.Update(condition.map(_.simpleString(5).toString)))
+      txn.commit(actions, DeltaOperations.Update(condition.map(_.toString)))
     }
 
     recordDeltaEvent(

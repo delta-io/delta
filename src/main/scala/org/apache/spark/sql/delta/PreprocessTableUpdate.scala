@@ -24,8 +24,7 @@ import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UpdateTable}
 import org.apache.spark.sql.internal.SQLConf
 
 case class PreprocessTableUpdate(conf: SQLConf) extends UpdateExpressionsSupport {
-  def apply(plan: LogicalPlan): LogicalPlan = {
-    val update = plan.asInstanceOf[UpdateTable]
+  def apply(update: UpdateTable): UpdateCommand = {
     val index = EliminateSubqueryAliases(update.child) match {
       case DeltaFullTable(tahoeFileIndex) =>
         tahoeFileIndex
