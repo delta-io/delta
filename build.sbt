@@ -80,8 +80,12 @@ testScalastyle := scalastyle.in(Test).toTask("").value
 
 enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin)
 
-scalacOptions in(ScalaUnidoc, unidoc) ++= Seq("-skip-packages", "org:com:io.delta.execution")
+scalacOptions in(ScalaUnidoc, unidoc) ++= Seq(
+  "-skip-packages", "org:com:io.delta.execution",
+  "-doc-title", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " ScalaDoc"
+)
 
+// Explicitly remove source files by package because these docs are not formatted correctly
 def ignoreUndocumentedPackages(packages: Seq[Seq[java.io.File]]): Seq[Seq[java.io.File]] = {
   packages
     .map(_.filterNot(_.getName.contains("$")))
@@ -92,10 +96,10 @@ def ignoreUndocumentedPackages(packages: Seq[Seq[java.io.File]]): Seq[Seq[java.i
 unidocAllSources in(JavaUnidoc, unidoc) := ignoreUndocumentedPackages((unidocAllSources in(JavaUnidoc, unidoc)).value)
 
 javacOptions in(JavaUnidoc, unidoc) := Seq(
-  "-windowtitle", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
   "-public",
-  "-noqualifier", "java.lang",
-  "-exclude", "org:com:io.delta.execution"
+  "-exclude", "org:com:io.delta.execution",
+  "-windowtitle", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
+  "-noqualifier", "java.lang"
 )
 
 
