@@ -22,7 +22,7 @@ import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 
 import org.apache.spark.sql.{Column, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
-import org.apache.spark.sql.catalyst.expressions.{EqualNullSafe, Expression, InputFileName, Literal, Not, SubqueryExpression}
+import org.apache.spark.sql.catalyst.expressions.{EqualNullSafe, Expression, InputFileName, Literal, Not}
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.{Delete, LogicalPlan}
 import org.apache.spark.sql.execution.command.RunnableCommand
