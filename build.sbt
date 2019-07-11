@@ -18,9 +18,9 @@ name := "delta-core"
 
 organization := "io.delta"
 
-scalaVersion := "2.11.12"
-
 crossScalaVersions := Seq("2.12.8", "2.11.12")
+
+scalaVersion := crossScalaVersions.value.head
 
 sparkVersion := "2.4.2"
 

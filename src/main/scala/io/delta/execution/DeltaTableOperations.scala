@@ -20,7 +20,7 @@ import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.commands.DeleteCommand
 import io.delta.DeltaTable
 
-import org.apache.spark.sql.{functions, Column, SparkSession}
+import org.apache.spark.sql.{functions, Column}
 import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.plans.logical._
 
