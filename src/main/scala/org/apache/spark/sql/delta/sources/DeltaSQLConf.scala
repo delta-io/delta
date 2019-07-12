@@ -16,10 +16,10 @@
 
 package org.apache.spark.sql.delta.sources
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.util.concurrent.TimeUnit
 
 import org.apache.spark.internal.config.ConfigBuilder
-import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.internal.SQLConf
 
 /**

@@ -21,8 +21,7 @@ import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.sql.delta.Snapshot
 
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
-import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.execution.LogicalRDD
 import org.apache.spark.storage.StorageLevel
 

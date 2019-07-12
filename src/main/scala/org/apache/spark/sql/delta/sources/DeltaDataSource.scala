@@ -27,8 +27,8 @@ import org.json4s.NoTypeHints
 import org.json4s.jackson.Serialization
 
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.dsl.expressions._
-import org.apache.spark.sql.catalyst.expressions.Literal
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.expressions.{EqualTo, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.SubqueryAlias
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.execution.streaming.{Sink, Source}
@@ -189,7 +189,9 @@ class DeltaDataSource
         throw DeltaErrors.partitionPathInvolvesNonPartitionColumnException(badColumns, fragment)
       }
 
-      val filters = partitions.map { case (key, value) => key.attr === value.expr }
+      val filters = partitions.map { case (key, value) =>
+        EqualTo(UnresolvedAttribute(key), Literal(value))
+      }
       val files = DeltaLog.filterFileList(
         metadata.partitionColumns, snapshot.allFiles.toDF(), filters)
       if (files.count() == 0) {

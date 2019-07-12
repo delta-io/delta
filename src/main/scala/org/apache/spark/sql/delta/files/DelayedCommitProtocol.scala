@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.files
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.net.URI
 import java.util.UUID
 
@@ -31,8 +32,6 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.internal.io.FileCommitProtocol
 import org.apache.spark.internal.io.FileCommitProtocol.TaskCommitMessage
 import org.apache.spark.sql.catalyst.expressions.Cast
-import org.apache.spark.sql.execution.streaming.SinkFileStatus
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StringType
 
 /**
@@ -145,7 +144,7 @@ class DelayedCommitProtocol(
 
       new TaskCommitMessage(statuses)
     } else {
-      new TaskCommitMessage(Seq.empty[SinkFileStatus])
+      new TaskCommitMessage(Nil)
     }
   }
 
