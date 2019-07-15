@@ -35,29 +35,13 @@ function addBadges(allAnnotations, name, tag, html) {
   });
 
   // Add badges to all containers
-  tags.prevAll("h4.signature")
+  tags
+    // Scala 2.11 docs require these
+    .prevAll("h4.signature")
     .add(annotations.closest("div.fullcommenttop"))
     .add(annotations.closest("div.fullcomment").prevAll("h4.signature"))
+    // Scala 2.12 docs require this
+    .add(tags.prevAll("span.symbol"))
+    .add(annotations.closest("div.fullcomment").prevAll("span.symbol"))
     .prepend(html);
 }
-
-$(document).ready(function() {
-  var script = document.createElement('script');
-  script.type = 'text/javascript';
-  script.async = true;
-  script.onload = function(){
-    MathJax.Hub.Config({
-      displayAlign: "left",
-      tex2jax: {
-        inlineMath: [ ["$", "$"], ["\\(","\\)"] ],
-        displayMath: [ ["$$","$$"], ["\\[", "\\]"] ],
-        processEscapes: true,
-        skipTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'a']
-      }
-    });
-  };
-  script.src = ('https:' == document.location.protocol ? 'https://' : 'http://') +
-                'cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js' +
-                '?config=TeX-AMS-MML_HTMLorMML';
-  document.getElementsByTagName('head')[0].appendChild(script);
-});

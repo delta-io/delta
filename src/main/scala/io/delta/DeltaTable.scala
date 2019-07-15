@@ -34,7 +34,7 @@ import org.apache.spark.sql._
  *
  * @since 0.3.0
  */
-class DeltaTable(df: Dataset[Row]) extends DeltaTableOperations {
+class DeltaTable (df: Dataset[Row]) extends DeltaTableOperations {
 
   /**
    * :: Evolving ::
@@ -44,9 +44,12 @@ class DeltaTable(df: Dataset[Row]) extends DeltaTableOperations {
    *
    * @since 0.3.0
    */
+  @Evolving
   def as(alias: String): DeltaTable = new DeltaTable(df.as(alias))
 
   /**
+   * :: Evolving ::
+   *
    * Get a DataFrame (that is, Dataset[Row]) representation of this Delta table.
    *
    * @since 0.3.0

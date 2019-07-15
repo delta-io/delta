@@ -27,7 +27,7 @@ import argparse
 def main():
     # Parse arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("--verbose", default=False)
+    parser.add_argument("-v", "--verbose", default=False, action='store_true')
     args = parser.parse_args()
     global verbose
     verbose = args.verbose
@@ -45,9 +45,6 @@ def main():
     print "## Generating ScalaDoc and JavaDoc ..."
     with WorkingDirectory(repo_root_dir):
         run_cmd(["build/sbt", ";clean;unidoc"], stream_output=verbose)
-    log("Recreating API doc directory %s" % all_api_docs_final_dir)
-    run_cmd(["rm", "-rf", all_api_docs_final_dir])
-    run_cmd(["mkdir", "-p", all_api_docs_final_dir])
 
     # Update Scala docs
     print "## Patching ScalaDoc ..."
@@ -55,9 +52,6 @@ def main():
         # Patch the js and css files
         append(docs_root_dir + "/api-docs.js", "./lib/template.js")  # append new js functions
         append(docs_root_dir + "/api-docs.css", "./lib/template.css")  # append new styles
-
-    # Copy to final location
-    run_cmd(["cp", "-r", scaladoc_gen_dir, scala_api_docs_final_dir])
 
     # Update Java docs
     print "## Patching JavaDoc ..."
@@ -96,6 +90,10 @@ def main():
         append(docs_root_dir + "/api-javadocs.css", "./stylesheet.css")  # append new styles
 
     # Copy to final location
+    log("Copying to API doc directory %s" % all_api_docs_final_dir)
+    run_cmd(["rm", "-rf", all_api_docs_final_dir])
+    run_cmd(["mkdir", "-p", all_api_docs_final_dir])
+    run_cmd(["cp", "-r", scaladoc_gen_dir, scala_api_docs_final_dir])
     run_cmd(["cp", "-r", javadoc_gen_dir, java_api_docs_final_dir])
 
     print "## API docs generated in " + all_api_docs_final_dir
