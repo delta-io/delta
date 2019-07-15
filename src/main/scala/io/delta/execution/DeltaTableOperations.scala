@@ -20,7 +20,6 @@ import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.commands.DeleteCommand
 import io.delta.DeltaTable
 
-import org.apache.spark.sql.{functions, Column}
 import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.plans.logical._
 
@@ -31,30 +30,6 @@ import org.apache.spark.sql.catalyst.plans.logical._
  *    MergeInto:
  */
 trait DeltaTableOperations { self: DeltaTable =>
-
-  /**
-   * Delete data from the table that match the given `condition`.
-   * @param condition
-   */
-  def delete(condition: String): Unit = {
-    delete(functions.expr(condition))
-  }
-
-  /**
-   * Delete data from the table that match the given `condition`.
-   * @param condition
-   */
-  def delete(condition: Column): Unit = {
-    executeDelete(Some(condition.expr))
-  }
-
-  /**
-   * Delete data from the table.
-   */
-  def delete(): Unit = {
-    executeDelete(None)
-  }
-
   protected def executeDelete(condition: Option[Expression]): Unit = {
     val sparkSession = self.toDF.sparkSession
     val delete = Delete(self.toDF.queryExecution.analyzed, condition)
