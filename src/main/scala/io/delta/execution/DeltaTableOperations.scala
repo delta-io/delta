@@ -38,27 +38,6 @@ import org.apache.spark.sql.execution.command.RunnableCommand
  */
 trait DeltaTableOperations { self: DeltaTable =>
 
-  /**
-   * Delete data from the table that match the given `condition`.
-   */
-  def delete(condition: String): Unit = {
-    delete(functions.expr(condition))
-  }
-
-  /**
-   * Delete data from the table that match the given `condition`.
-   */
-  def delete(condition: Column): Unit = {
-    executeDelete(Some(condition.expr))
-  }
-
-  /**
-   * Delete data from the table.
-   */
-  def delete(): Unit = {
-    executeDelete(None)
-  }
-
   protected def executeDelete(condition: Option[Expression]): Unit = {
     val sparkSession = self.toDF.sparkSession
     val delete = Delete(self.toDF.queryExecution.analyzed, condition)

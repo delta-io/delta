@@ -95,7 +95,8 @@ javacOptions in(JavaUnidoc, unidoc) := Seq(
   "-public",
   "-exclude", "org:com:io.delta.execution",
   "-windowtitle", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
-  "-noqualifier", "java.lang"
+  "-noqualifier", "java.lang",
+  "-tag", "return:X"
 )
 
 // Explicitly remove source files by package because these docs are not formatted correctly for Javadocs
