@@ -17,6 +17,7 @@
 package org.apache.spark.sql.catalyst.plans.logical
 
 import org.apache.spark.sql.AnalysisException
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, Expression, ExtractValue, GetStructField}
 
 /**
@@ -34,12 +35,35 @@ case class UpdateTable(
     condition: Option[Expression])
   extends UnaryNode {
 
-  override def output: Seq[Attribute] = Seq.empty
-
   assert(updateColumns.size == updateExpressions.size)
+
+  override def output: Seq[Attribute] = Seq.empty
 }
 
 object UpdateTable {
+
+  /** Resolve all the references of target columns and condition using the given `resolver` */
+  def resolveReferences(update: UpdateTable, resolver: Expression => Expression): UpdateTable = {
+    if (update.resolved) return update
+    assert(update.child.resolved)
+
+    val UpdateTable(child, updateColumns, updateExpressions, condition) = update
+
+    val cleanedUpAttributes = updateColumns.map { unresolvedExpr =>
+      // Keep them unresolved but use the cleaned-up name parts from the resolved
+      val errMsg = s"Failed to resolve ${unresolvedExpr.sql} given columns " +
+        s"[${child.output.map(_.qualifiedName).mkString(", ")}]."
+      val resolveNameParts =
+        UpdateTable.getNameParts(resolver(unresolvedExpr), errMsg, update)
+      UnresolvedAttribute(resolveNameParts)
+    }
+
+    update.copy(
+      updateColumns = cleanedUpAttributes,
+      updateExpressions = updateExpressions.map(resolver),
+      condition = condition.map(resolver))
+  }
+
   /**
    * Extracts name parts from a resolved expression referring to a nested or non-nested column
    * - For non-nested column, the resolved expression will be like `AttributeReference(...)`.
@@ -59,7 +83,9 @@ object UpdateTable {
    *          ->  [a, b, c]
    */
   def getNameParts(
-    resolvedTargetCol: Expression, errMsg: String, errNode: LogicalPlan): Seq[String] = {
+      resolvedTargetCol: Expression,
+      errMsg: String,
+      errNode: LogicalPlan): Seq[String] = {
 
     def fail(extraMsg: String): Nothing = {
       throw new AnalysisException(
@@ -73,7 +99,7 @@ object UpdateTable {
 
       case GetStructField(c, _, Some(name)) => extractRecursively(c) :+ name
 
-      case extract: ExtractValue =>
+      case _: ExtractValue =>
         fail("Updating nested fields is only supported for StructType.")
 
       case other =>
