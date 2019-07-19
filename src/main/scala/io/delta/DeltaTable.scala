@@ -65,7 +65,7 @@ class DeltaTable (df: Dataset[Row]) extends DeltaTableOperations {
    * maintaining older versions up to the given retention threshold. Specifying `dryRun` to be true
    * will return a list of files that would be deleted.
    *
-   * @note You will lose the ability to time travel to versions older than the retention threshold.
+   * note: You will lose the ability to time travel to versions older than the retention threshold.
    *
    * @param dryRun Whether to actually delete the files. If true,
    *               then it instead of deleting, it will print out the list of files.
@@ -102,7 +102,7 @@ class DeltaTable (df: Dataset[Row]) extends DeltaTableOperations {
    * Recursively delete files and directories in the table that are not needed by the table for
    * maintaining older versions up to the given retention threshold.
    *
-   * @note This will use the default retention period of 7 hours.
+   * note: This will use the default retention period of 7 hours.
    *
    * @since 0.3.0
    */
