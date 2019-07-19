@@ -23,11 +23,11 @@ import org.apache.spark.sql.delta.PreprocessTableUpdate
 import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.commands.DeleteCommand
 import org.apache.spark.sql.delta.util.AnalysisHelper
-import io.delta.DeltaTable
+import io.delta.{DeltaMergeBuilder, DeltaTable}
 
-import org.apache.spark.sql.{functions, Column, SparkSession}
+import org.apache.spark.sql.{functions, Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.plans.logical._
 
 /**
@@ -157,7 +157,7 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
 
     val update = makeUpdateTable(self, condition, setColumns)
     val resolvedUpdate =
-      UpdateTable.resolveReferences(update, tryResolveReferences(_, update.children))
+      UpdateTable.resolveReferences(update, tryResolveReferences(sparkSession)(_, update))
     val updateCommand = PreprocessTableUpdate(sparkSession.sessionState.conf)(resolvedUpdate)
     updateCommand.run(sparkSession)
   }
@@ -170,6 +170,5 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
     }
   }
 
-  override protected lazy val sparkSession: SparkSession = self.toDF.sparkSession
+  protected lazy val sparkSession: SparkSession = self.toDF.sparkSession
 }
-
