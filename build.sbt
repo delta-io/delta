@@ -24,7 +24,7 @@ scalaVersion := crossScalaVersions.value.head
 
 sparkVersion := "2.4.2"
 
-crossPaths := false
+//crossPaths := false
 
 libraryDependencies ++= Seq(
   // Adding test classifier seems to break transitive resolution of the core dependencies
