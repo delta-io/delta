@@ -17,6 +17,9 @@
 package org.apache.spark.sql.delta
 
 import java.io.File
+import java.util.Locale
+
+import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
@@ -24,9 +27,11 @@ import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.test.SharedSQLContext
+import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
-abstract class UpdateSuiteBase extends QueryTest
+abstract class UpdateSuiteBase
+  extends QueryTest
   with SharedSQLContext
   with BeforeAndAfterEach {
   import testImplicits._
@@ -54,6 +59,10 @@ abstract class UpdateSuiteBase extends QueryTest
     } finally {
       super.afterEach()
     }
+  }
+
+  protected def executeUpdate(target: String, set: Seq[String], where: String): Unit = {
+    executeUpdate(target, set.mkString(", "), where)
   }
 
   protected def executeUpdate(target: String, set: String, where: String = null): Unit
@@ -337,5 +346,201 @@ abstract class UpdateSuiteBase extends QueryTest
         where = "key NOT IN (SELECT max(c) FROM source)")
     }.getMessage
     assert(e4.contains("Subqueries are not supported"))
+  }
+
+  test("nested data support") {
+    // set a nested field
+    checkUpdateJson(target = """
+        {"a": {"c": {"d": 'random', "e": 'str'}, "g": 1}, "z": 10}
+        {"a": {"c": {"d": 'random2', "e": 'str2'}, "g": 2}, "z": 20}""",
+      updateWhere = "z = 10",
+      set = "a.c.d = 'RANDOM'" :: Nil,
+      expected = """
+        {"a": {"c": {"d": 'RANDOM', "e": 'str'}, "g": 1}, "z": 10}
+        {"a": {"c": {"d": 'random2', "e": 'str2'}, "g": 2}, "z": 20}""")
+
+    // do nothing as condition has no match
+    val unchanged = """
+        {"a": {"c": {"d": 'RANDOM', "e": 'str'}, "g": 1}, "z": 10}
+        {"a": {"c": {"d": 'random2', "e": 'str2'}, "g": 2}, "z": 20}"""
+    checkUpdateJson(target = unchanged,
+      updateWhere = "z = 30",
+      set = "a.c.d = 'RANDOMMMMM'" :: Nil,
+      expected = unchanged)
+
+    // set multiple nested fields at different levels
+    checkUpdateJson(
+      target = """
+          {"a": {"c": {"d": 'RANDOM', "e": 'str'}, "g": 1}, "z": 10}
+          {"a": {"c": {"d": 'random2', "e": 'str2'}, "g": 2}, "z": 20}""",
+      updateWhere = "z = 20",
+      set = "a.c.d = 'RANDOM2'" :: "a.c.e = 'STR2'" :: "a.g = -2" :: "z = -20" :: Nil,
+      expected = """
+          {"a": {"c": {"d": 'RANDOM', "e": 'str'}, "g": 1}, "z": 10}
+          {"a": {"c": {"d": 'RANDOM2', "e": 'STR2'}, "g": -2}, "z": -20}""")
+
+    // set nested fields to null
+    checkUpdateJson(
+      target = """
+          {"a": {"c": {"d": 'RANDOM', "e": 'str'}, "g": 1}, "z": 10}
+          {"a": {"c": {"d": 'random2', "e": 'str2'}, "g": 2}, "z": 20}""",
+      updateWhere = "a.c.d = 'random2'",
+      set = "a.c = null" :: "a.g = null" :: Nil,
+      expected = """
+          {"a": {"c": {"d": 'RANDOM', "e": 'str'}, "g": 1}, "z": 10}
+          {"a": {"c": null, "g": null}, "z": 20}""")
+
+    // set a top struct type column to null
+    checkUpdateJson(
+      target = """
+          {"a": {"c": {"d": 'RANDOM', "e": 'str'}, "g": 1}, "z": 10}
+          {"a": {"c": {"d": 'random2', "e": 'str2'}, "g": 2}, "z": 20}""",
+      updateWhere = "a.c.d = 'random2'",
+      set = "a = null" :: Nil,
+      expected = """
+          {"a": {"c": {"d": 'RANDOM', "e": 'str'}, "g": 1}, "z": 10}
+          {"a": null, "z": 20}""")
+
+    // set a nested field using named_struct
+    checkUpdateJson(
+      target = """
+          {"a": {"c": {"d": 'RANDOM', "e": 'str'}, "g": 1}, "z": 10}
+          {"a": {"c": {"d": 'random2', "e": 'str2'}, "g": 2}, "z": 20}""",
+      updateWhere = "a.g = 2",
+      set = "a.c = named_struct('d', 'RANDOM2', 'e', 'STR2')" :: Nil,
+      expected = """
+          {"a": {"c": {"d": 'RANDOM', "e": 'str'}, "g": 1}, "z": 10}
+          {"a": {"c": {"d": 'RANDOM2', "e": 'STR2'}, "g": 2}, "z": 20}""")
+
+    // set an integer nested field with a string that can be casted into an integer
+    checkUpdateJson(
+      target = """
+        {"a": {"c": {"d": 'random', "e": 'str'}, "g": 1}, "z": 10}
+        {"a": {"c": {"d": 'random2', "e": 'str2'}, "g": 2}, "z": 20}""",
+      updateWhere = "z = 10",
+      set = "a.g = '-1'" :: "z = '30'" :: Nil,
+      expected = """
+        {"a": {"c": {"d": 'random', "e": 'str'}, "g": -1}, "z": 30}
+        {"a": {"c": {"d": 'random2', "e": 'str2'}, "g": 2}, "z": 20}""")
+
+    // set the nested data that has an Array field
+    checkUpdateJson(
+      target = """
+          {"a": {"c": {"d": 'random', "e": [1, 11]}, "g": 1}, "z": 10}
+          {"a": {"c": {"d": 'RANDOM2', "e": [2, 22]}, "g": 2}, "z": 20}""",
+      updateWhere = "z = 20",
+      set = "a.c.d = 'RANDOM22'" :: "a.g = -2" :: Nil,
+      expected = """
+          {"a": {"c": {"d": 'random', "e": [1, 11]}, "g": 1}, "z": 10}
+          {"a": {"c": {"d": 'RANDOM22', "e": [2, 22]}, "g": -2}, "z": 20}""")
+
+    // set an array field
+    checkUpdateJson(
+      target = """
+          {"a": {"c": {"d": 'random', "e": [1, 11]}, "g": 1}, "z": 10}
+          {"a": {"c": {"d": 'RANDOM22', "e": [2, 22]}, "g": -2}, "z": 20}""",
+      updateWhere = "z = 10",
+      set = "a.c.e = array(-1, -11)" ::  "a.g = -1" :: Nil,
+      expected = """
+          {"a": {"c": {"d": 'random', "e": [-1, -11]}, "g": -1}, "z": 10}
+          {"a": {"c": {"d": 'RANDOM22', "e": [2, 22]}, "g": -2}, "z": 20}""")
+
+    // set an array field as a top-level attribute
+    checkUpdateJson(
+      target = """
+          {"a": [1, 11], "b": 'Z'}
+          {"a": [2, 22], "b": 'Y'}""",
+      updateWhere = "b = 'Z'",
+      set = "a = array(-1, -11, -111)" :: Nil,
+      expected = """
+          {"a": [-1, -11, -111], "b": 'Z'}
+          {"a": [2, 22], "b": 'Y'}""")
+  }
+
+
+  testQuietly("nested data - negative case") {
+    val targetDF = spark.read.json("""
+        {"a": {"c": {"d": 'random', "e": 'str'}, "g": 1}, "z": 10}
+        {"a": {"c": {"d": 'random2', "e": 'str2'}, "g": 2}, "z": 20}"""
+      .split("\n").toSeq.toDS())
+
+    testAnalysisException(
+      targetDF,
+      set = "a.c = 'RANDOM2'" :: Nil,
+      where = "z = 10",
+      errMsgs = "data type mismatch" :: Nil)
+
+    testAnalysisException(
+      targetDF,
+      set = "a.c.z = 'RANDOM2'" :: Nil,
+      errMsgs = "No such struct field" :: Nil)
+
+    testAnalysisException(
+      targetDF,
+      set = "a.c = named_struct('d', 'rand', 'e', 'str')" :: "a.c.d = 'RANDOM2'" :: Nil,
+      errMsgs = "There is a conflict from these SET columns" :: Nil)
+
+    testAnalysisException(
+      targetDF,
+      set =
+        Seq("a = named_struct('c', named_struct('d', 'rand', 'e', 'str'))", "a.c.d = 'RANDOM2'"),
+      errMsgs = "There is a conflict from these SET columns" :: Nil)
+
+    val schema = new StructType().add("a", MapType(StringType, IntegerType))
+    val mapData = spark.read.schema(schema).json(Seq("""{"a": {"b": 1}}""").toDS())
+    testAnalysisException(
+      mapData,
+      set = "a.b = -1" :: Nil,
+      errMsgs = "Updating nested fields is only supported for StructType" :: Nil)
+
+    // Updating an ArrayStruct is not supported
+    val arrayStructData = spark.read.json(Seq("""{"a": [{"b": 1}, {"b": 2}]}""").toDS())
+    testAnalysisException(
+      arrayStructData,
+      set = "a.b = -1" :: Nil,
+      errMsgs = "Updating nested fields is only supported for StructType" :: Nil)
+
+    // Updating an Array is not supported
+    val arrayData = spark.read.json(Seq("""{"a": [1, 2]}""").toDS())
+    testAnalysisException(
+      arrayData,
+      set = "a.b = -1" :: Nil,
+      errMsgs = "Updating nested fields is only supported for StructType" :: Nil)
+  }
+
+
+  protected def checkUpdateJson(
+      target: Seq[String],
+      source: Seq[String] = Nil,
+      updateWhere: String,
+      set: Seq[String],
+      expected: Seq[String]): Unit = {
+    withTempDir { dir =>
+      withTempView("source") {
+        def toDF(jsonStrs: Seq[String]) = spark.read.json(jsonStrs.toDS)
+        toDF(target).write.format("delta").mode("overwrite").save(dir.toString)
+        if (source.nonEmpty) {
+          toDF(source).createOrReplaceTempView("source")
+        }
+        executeUpdate(s"delta.`$dir`", set, updateWhere)
+        checkAnswer(readDeltaTable(dir.toString), toDF(expected))
+      }
+    }
+  }
+
+  protected def testAnalysisException(
+      targetDF: DataFrame,
+      set: Seq[String],
+      where: String = null,
+      errMsgs: Seq[String] = Nil) = {
+    withTempDir { dir =>
+      targetDF.write.format("delta").save(dir.toString)
+      val e = intercept[AnalysisException] {
+        executeUpdate(target = s"delta.`$dir`", set, where)
+      }
+      errMsgs.foreach { msg =>
+        assert(e.getMessage.toLowerCase(Locale.ROOT).contains(msg.toLowerCase(Locale.ROOT)))
+      }
+    }
   }
 }

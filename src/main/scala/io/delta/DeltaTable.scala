@@ -20,38 +20,108 @@ import org.apache.spark.sql.delta._
 import io.delta.execution._
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.annotation.InterfaceStability._
 import org.apache.spark.sql._
 
 /**
+ * :: Evolving ::
+ *
  * Main class for programmatically interacting with Delta tables.
  * You can create DeltaTable instances using the static methods.
  * {{{
- *   DeltaTable.forPath(pathToTheDeltaTable)
+ *   DeltaTable.forPath(sparkSession, pathToTheDeltaTable)
  * }}}
  *
+ * @since 0.3.0
  */
 class DeltaTable (df: Dataset[Row]) extends DeltaTableOperations {
 
   /**
+   * :: Evolving ::
+   *
    * Apply an alias to the DeltaTable. This is similar to `Dataset.as(alias)` or
    * SQL `tableName AS alias`.
+   *
+   * @since 0.3.0
    */
+  @Evolving
   def as(alias: String): DeltaTable = new DeltaTable(df.as(alias))
 
   /**
+   * :: Evolving ::
+   *
    * Get a DataFrame (that is, Dataset[Row]) representation of this Delta table.
+   *
+   * @since 0.3.0
    */
+  @Evolving
   def toDF: Dataset[Row] = df
+
+  /**
+   * :: Evolving ::
+   *
+   * Delete data from the table that match the given `condition`.
+   *
+   * @param condition Boolean SQL expression
+   *
+   * @since 0.3.0
+   */
+  @Evolving
+  def delete(condition: String): Unit = {
+    delete(functions.expr(condition))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Delete data from the table that match the given `condition`.
+   *
+   * @param condition Boolean SQL expression
+   *
+   * @since 0.3.0
+   */
+  @Evolving
+  def delete(condition: Column): Unit = {
+    executeDelete(Some(condition.expr))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Delete data from the table.
+   *
+   * @since 0.3.0
+   */
+  @Evolving
+  def delete(): Unit = {
+    executeDelete(None)
+  }
 }
 
+/**
+ * :: Evolving ::
+ *
+ * Companion object to create DeltaTable instances.
+ *
+ * {{{
+ *   DeltaTable.forPath(sparkSession, pathToTheDeltaTable)
+ * }}}
+ *
+ * @since 0.3.0
+ */
 object DeltaTable {
   /**
+   * :: Evolving ::
+   *
    * Create a DeltaTable for the data at the given `path`.
    *
    * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
    * this throws error if active SparkSession has not been set, that is,
    * `SparkSession.getActiveSession()` is empty.
+   *
+   * @since 0.3.0
    */
+  @Evolving
   def forPath(path: String): DeltaTable = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
       throw new IllegalArgumentException("Could not find active SparkSession")
@@ -60,9 +130,14 @@ object DeltaTable {
   }
 
   /**
+   * :: Evolving ::
+   *
    * Create a DeltaTable for the data at the given `path` using the given SparkSession to
    * read the data.
+   *
+   * @since 0.3.0
    */
+  @Evolving
   def forPath(sparkSession: SparkSession, path: String): DeltaTable = {
     if (DeltaTableUtils.isDeltaTable(sparkSession, new Path(path))) {
       new DeltaTable(sparkSession.read.format("delta").load(path))
