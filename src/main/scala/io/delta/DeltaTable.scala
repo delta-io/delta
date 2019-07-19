@@ -96,6 +96,37 @@ class DeltaTable (df: Dataset[Row]) extends DeltaTableOperations {
   def delete(): Unit = {
     executeDelete(None)
   }
+
+  /**
+   * :: Evolving ::
+   *
+   * Merge the `source` table that match the given `condition`
+   *
+   * @param source source Dataframe to be merged.
+   * @param condition Boolean SQL expression
+   * @return
+   *
+   * @since 0.3.0
+   */
+  @Evolving
+  def merge(source: DataFrame, condition: String): DeltaMergeBuilder = {
+    merge(source, functions.expr(condition))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Merge the `source` table that match the given `condition`
+   *
+   * @param source source Dataframe to be merged.
+   * @param condition Boolean SQL expression
+   *
+   * @since 0.3.0
+   */
+  @Evolving
+  def merge(source: DataFrame, condition: Column): DeltaMergeBuilder = {
+    DeltaMergeBuilder(this, source, condition, Nil)
+  }
 }
 
 /**
