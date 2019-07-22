@@ -41,6 +41,7 @@ libraryDependencies ++= Seq(
 )
 
 testOptions in Test += Tests.Argument("-oDF")
+
 testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
 
 javaHome.in(Compile) := {
