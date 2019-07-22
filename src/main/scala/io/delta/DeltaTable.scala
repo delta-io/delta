@@ -100,7 +100,7 @@ class DeltaTable (df: Dataset[Row]) extends DeltaTableOperations {
   /**
    * :: Evolving ::
    *
-   * Merge the `source` table that match the given `condition`
+   * Merge data from the `source` table that match the given `condition`
    *
    * @param source source Dataframe to be merged.
    * @param condition Boolean SQL expression
@@ -116,7 +116,7 @@ class DeltaTable (df: Dataset[Row]) extends DeltaTableOperations {
   /**
    * :: Evolving ::
    *
-   * Merge the `source` table that match the given `condition`
+   * Merge data from the `source` table that match the given `condition`
    *
    * @param source source Dataframe to be merged.
    * @param condition Boolean SQL expression

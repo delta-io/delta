@@ -206,7 +206,7 @@ object MergeInto {
     if (updateClauses.length >= 2 ||
       deleteClauses.length >= 2 ||
       insertClauses.length >= 2) {
-      throw new AnalysisException("INSERT, UPDATE and DELETE can not appears twice in " +
+      throw new AnalysisException("INSERT, UPDATE and DELETE cannot appear twice in " +
         "one MERGE query")
     }
 

@@ -111,19 +111,22 @@ case class DeltaMergeMatchedActionBuilder private[delta](
   }
 
   private def updateExpression(set: Map[String, Column]): DeltaMergeBuilder = {
-    val setActions = set.toSeq
-    val updateActions = MergeIntoClause.toActions(
-      colNames = setActions.map(x => UnresolvedAttribute.quotedString(x._1)),
-      exprs = setActions.map(x => x._2.expr))
-    val updateClause = MergeIntoUpdateClause(matchCondition.map(_.expr), updateActions)
-    mergeBuilder.copy(whenClauses = mergeBuilder.whenClauses :+ updateClause)
+    if (set.isEmpty) {
+      mergeBuilder.copy()
+    } else {
+      val setActions = set.toSeq
+      val updateActions = MergeIntoClause.toActions(
+        colNames = setActions.map(x => UnresolvedAttribute.quotedString(x._1)),
+        exprs = setActions.map(x => x._2.expr))
+      val updateClause = MergeIntoUpdateClause(matchCondition.map(_.expr), updateActions)
+      mergeBuilder.copy(whenClauses = mergeBuilder.whenClauses :+ updateClause)
+    }
   }
 
   private def toStrColumnMap(map: Map[String, String]): Map[String, Column] = {
     map.toSeq.map { case (k, v) => k -> functions.expr(v) }.toMap
   }
 }
-
 
 case class DeltaMergeNotMatchedActionBuilder private[delta](
     private val mergeBuilder: DeltaMergeBuilder,
@@ -153,12 +156,17 @@ case class DeltaMergeNotMatchedActionBuilder private[delta](
   }
 
   private def insertExpression(setValues: Map[String, Column]): DeltaMergeBuilder = {
-    val values = setValues.toSeq
-    val insertActions = MergeIntoClause.toActions(
-      colNames = values.map(x => UnresolvedAttribute.quotedString(x._1)),
-      exprs = values.map(x => x._2.expr))
-    val insertClause = MergeIntoInsertClause(matchCondition.map(_.expr), insertActions)
-    mergeBuilder.copy(whenClauses = mergeBuilder.whenClauses :+ insertClause)
+    if (setValues.isEmpty) {
+      throw DeltaErrors.analysisException(
+        "There must be at least one field in INSERT clause in a MERGE statement", None)
+    } else {
+      val values = setValues.toSeq
+      val insertActions = MergeIntoClause.toActions(
+        colNames = values.map(x => UnresolvedAttribute.quotedString(x._1)),
+        exprs = values.map(x => x._2.expr))
+      val insertClause = MergeIntoInsertClause(matchCondition.map(_.expr), insertActions)
+      mergeBuilder.copy(whenClauses = mergeBuilder.whenClauses :+ insertClause)
+    }
   }
 
   private def toStrColumnMap(map: Map[String, String]): Map[String, Column] = {

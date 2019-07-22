@@ -92,20 +92,40 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
     }
   }
 
+  test("empty update clause should do nothing quietly") {
+    withTable("source") {
+      append(Seq((1, 10), (2, 20)).toDF("trgKey", "trgValue"), Nil) // target
+      val source = Seq((1, 100), (3, 30)).toDF("srcKey", "srcValue") // source
+      io.delta.DeltaTable.forPath(spark, tempPath)
+        .merge(source, "srcKey = trgKey")
+        .whenMatched().updateExpr(Map[String, String]())
+        .whenNotMatched().insertExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
+        .execute()
+
+      checkAnswer(
+        readDeltaTable(tempPath),
+        Row(1, 10) ::    // Update
+          Row(2, 20) ::     // No change
+          Row(3, 30) ::     // Insert
+          Nil)
+    }
+  }
+
   test("check invalid merge API calls") {
     withTable("source") {
       append(Seq((1, 10), (2, 20)).toDF("trgKey", "trgValue"), Nil) // target
       val source = Seq((1, 100), (3, 30)).toDF("srcKey", "srcValue") // source
 
-      // There must be at least one field in UPDATE clause in a MERGE statement
+      // There must be at least one field in INSERT clause in a MERGE statement
       var e = intercept[AnalysisException] {
         io.delta.DeltaTable.forPath(spark, tempPath)
           .merge(source, "srcKey = trgKey")
-          .whenMatched().updateExpr(Map[String, String]())
-          .whenNotMatched().insertExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
+          .whenMatched().updateExpr(Map("trgValue" -> "srcValue"))
+          .whenNotMatched().insertExpr(Map[String, String]())
           .execute()
       }
-      errorContains(e.getMessage, "cannot resolve `trgKey` in UPDATE clause")
+      errorContains(e.getMessage,
+        "There must be at least one field in INSERT clause in a MERGE statement")
 
       // There must be at least one and at most two WHEN clauses in a MERGE statement
       e = intercept[AnalysisException] {
@@ -149,7 +169,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
           .execute()
       }
       errorContains(e.getMessage,
-        "INSERT, UPDATE and DELETE can not appears twice in one MERGE query")
+        "INSERT, UPDATE and DELETE cannot appear twice in one MERGE query")
 
       // UPDATE and DELETE can appear at most once in MATCHED clauses in a MERGE statement
       e = intercept[AnalysisException] {
@@ -162,7 +182,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
           .execute()
       }
       errorContains(e.getMessage,
-        "INSERT, UPDATE and DELETE can not appears twice in one MERGE query")
+        "INSERT, UPDATE and DELETE cannot appear twice in one MERGE query")
 
       // UPDATE and DELETE can appear at most once in MATCHED clauses in a MERGE statement
       e = intercept[AnalysisException] {
@@ -174,7 +194,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
           .execute()
       }
       errorContains(e.getMessage,
-        "INSERT, UPDATE and DELETE can not appears twice in one MERGE query")
+        "INSERT, UPDATE and DELETE cannot appear twice in one MERGE query")
 
       e = intercept[AnalysisException] {
         io.delta.DeltaTable.forPath(spark, tempPath)
