@@ -55,7 +55,7 @@ javaOptions in Test ++= Seq(
   "-Dspark.ui.showConsoleProgress=false",
   "-Dspark.databricks.delta.snapshotPartitions=2",
   "-Dspark.sql.shuffle.partitions=5",
-  "-Ddelta.log.cacheSize=10",
+  "-Ddelta.log.cacheSize=3",
   "-Xmx2g"
 )
 

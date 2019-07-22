@@ -111,11 +111,6 @@ class DeltaTable (df: Dataset[Row]) extends DeltaTableOperations {
     executeVacuum(deltaLog, dryRun = false, None)
   }
 
-  protected lazy val deltaLog = (EliminateSubqueryAliases(df.queryExecution.analyzed) match {
-    case DeltaFullTable(tahoeFileIndex) =>
-      tahoeFileIndex
-  }).deltaLog
-
   /**
    * :: Evolving ::
    *

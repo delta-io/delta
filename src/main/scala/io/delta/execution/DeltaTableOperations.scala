@@ -20,13 +20,13 @@ import scala.collection.JavaConverters._
 import scala.collection.Map
 
 import org.apache.spark.sql.delta.PreprocessTableUpdate
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaFullTable, DeltaLog}
 import org.apache.spark.sql.delta.commands.{DeleteCommand, VacuumCommand}
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import io.delta.DeltaTable
 
 import org.apache.spark.sql.{functions, Column, DataFrame, SparkSession}
-import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.analysis.{EliminateSubqueryAliases, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.plans.logical._
 
@@ -183,5 +183,10 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
     }
   }
   override protected lazy val sparkSession: SparkSession = self.toDF.sparkSession
+
+  protected lazy val deltaLog = (EliminateSubqueryAliases(self.toDF.queryExecution.analyzed) match {
+    case DeltaFullTable(tahoeFileIndex) =>
+      tahoeFileIndex
+  }).deltaLog
 }
 
