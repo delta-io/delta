@@ -33,8 +33,8 @@ libraryDependencies ++= Seq(
 
   // Test deps
   "org.scalatest" %% "scalatest" % "3.0.5" % "test",
-//  "junit" % "junit" % "4.12" % "test",
-//  "com.novocode" % "junit-interface" % "0.11" % "test",
+  "junit" % "junit" % "4.12" % "test",
+  "com.novocode" % "junit-interface" % "0.11" % "test",
   "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
   "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
   "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests"
@@ -42,7 +42,7 @@ libraryDependencies ++= Seq(
 
 testOptions in Test += Tests.Argument("-oDF")
 
-// testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
+testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
 
 javaHome.in(Compile) := {
   Some(file(sys.props("java.home")).getParentFile)
