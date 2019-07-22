@@ -44,13 +44,13 @@ testOptions in Test += Tests.Argument("-oDF")
 
 testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
 
-javaHome.in(Compile) := {
-  Some(file(sys.props("java.home")).getParentFile)
-}
-
-javaHome.in(Test) := {
-  Some(file(sys.props("java.home")).getParentFile)
-}
+// javaHome.in(Compile) := {
+//  Some(file(sys.props("java.home")).getParentFile)
+// }
+//
+// javaHome.in(Test) := {
+//  Some(file(sys.props("java.home")).getParentFile)
+// }
 
 // Don't execute in parallel since we can't have multiple Sparks in the same JVM
 parallelExecution in Test := false
@@ -124,7 +124,7 @@ unidocAllSources in(JavaUnidoc, unidoc) := {
 }
 
 // Ensure unidoc is run with tests
-// (test in Test) := ((test in Test) dependsOn unidoc.in(Compile)).value
+(test in Test) := ((test in Test) dependsOn unidoc.in(Compile)).value
 
 
 /***************************
