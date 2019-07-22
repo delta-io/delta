@@ -24,8 +24,6 @@ scalaVersion := crossScalaVersions.value.head
 
 sparkVersion := "2.4.2"
 
-crossPaths := false
-
 libraryDependencies ++= Seq(
   // Adding test classifier seems to break transitive resolution of the core dependencies
   "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
@@ -46,6 +44,10 @@ testOptions in Test += Tests.Argument("-oDF")
 testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
 
 javaHome.in(Compile) := {
+  Some(file(sys.props("java.home")).getParentFile)
+}
+
+javaHome.in(Test) := {
   Some(file(sys.props("java.home")).getParentFile)
 }
 
