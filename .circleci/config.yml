@@ -7,17 +7,5 @@ jobs:
     steps:
       - checkout
       - run:
-          name: Learn javaHome
-          command: echo $JAVA_HOME
-      - run:
-          name: Learn javaHome
-          command: echo $JAVA_HOME
-      - run:
-          name: See javac
-          command: which javac | xargs ls -al 
-      - run:
-          name: See javaHome
-          command: ls /usr/lib/jvm
-      - run:
           name: Run tests
           command: build/sbt test  # make it +test to cross-scala compile
