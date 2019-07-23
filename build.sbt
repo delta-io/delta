@@ -85,39 +85,38 @@ testScalastyle := scalastyle.in(Test).toTask("").value
 /*******************
  * Unidoc settings *
  *******************/
-//
-//  enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin)
-//
-//  // Configure Scala unidoc
-//  scalacOptions in(ScalaUnidoc, unidoc) ++= Seq(
-//    "-skip-packages", "org:com:io.delta.execution",
-//    "-doc-title", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " ScalaDoc"
-//  )
-//
-//  // Configure Java unidoc
-//  javacOptions in(JavaUnidoc, unidoc) := Seq(
-//    "-public",
-//    "-exclude", "org:com:io.delta.execution",
-//    "-windowtitle", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
-//    "-noqualifier", "java.lang",
-//    "-tag", "return:X"
-//  )
-//
-// Explicitly remove source files by package because these
-// docs are not formatted correctly for Javadocs
-//  def ignoreUndocumentedPackages(packages: Seq[Seq[java.io.File]]): Seq[Seq[java.io.File]] = {
-//    packages
-//      .map(_.filterNot(_.getName.contains("$")))
-//      .map(_.filterNot(_.getCanonicalPath.contains("io/delta/execution")))
-//      .map(_.filterNot(_.getCanonicalPath.contains("spark")))
-//  }
-//
-//  unidocAllSources in(JavaUnidoc, unidoc) := {
-//    ignoreUndocumentedPackages((unidocAllSources in(JavaUnidoc, unidoc)).value)
-//  }
-//
-//  // Ensure unidoc is run with tests
-//  (test in Test) := ((test in Test) dependsOn unidoc.in(Compile)).value
+
+enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin)
+
+// Configure Scala unidoc
+scalacOptions in(ScalaUnidoc, unidoc) ++= Seq(
+  "-skip-packages", "org:com:io.delta.execution",
+  "-doc-title", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " ScalaDoc"
+)
+
+// Configure Java unidoc
+javacOptions in(JavaUnidoc, unidoc) := Seq(
+  "-public",
+  "-exclude", "org:com:io.delta.execution",
+  "-windowtitle", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
+  "-noqualifier", "java.lang",
+  "-tag", "return:X"
+)
+
+// Explicitly remove source files by package because these docs are not formatted correctly for Javadocs
+def ignoreUndocumentedPackages(packages: Seq[Seq[java.io.File]]): Seq[Seq[java.io.File]] = {
+  packages
+    .map(_.filterNot(_.getName.contains("$")))
+    .map(_.filterNot(_.getCanonicalPath.contains("io/delta/execution")))
+    .map(_.filterNot(_.getCanonicalPath.contains("spark")))
+}
+
+unidocAllSources in(JavaUnidoc, unidoc) := {
+  ignoreUndocumentedPackages((unidocAllSources in(JavaUnidoc, unidoc)).value)
+}
+
+// Ensure unidoc is run with tests
+(test in Test) := ((test in Test) dependsOn unidoc.in(Compile)).value
 
 
 /***************************
