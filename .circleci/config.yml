@@ -7,8 +7,11 @@ jobs:
     steps:
       - checkout
       - run:
+          name: See javaHome
+          command: ls $JAVA_HOME
+      - run:
           name: See javac
-          command: ls $JAVA_HOME | xargs ls
+          command: which javac | xargs ls -al 
       - run:
           name: Run tests
           command: build/sbt test  # make it +test to cross-scala compile
