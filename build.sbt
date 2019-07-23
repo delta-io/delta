@@ -44,10 +44,6 @@ testOptions in Test += Tests.Argument("-oDF")
 
 testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
 
-javaHome in Test := {
-  Some(file(sys.props("java.home")).getParentFile)
-}
-
 // Don't execute in parallel since we can't have multiple Sparks in the same JVM
 parallelExecution in Test := false
 
