@@ -20,7 +20,7 @@ jobs:
           command: ls /usr/lib/jvm
       - run:
           name: Link javac
-          run: ln -s `which javac` $JAVA_HOME/bin/javac
+          command: ln -s `which javac` $JAVA_HOME/bin/javac
       - run:
           name: Run tests
           command: build/sbt test  # make it +test to cross-scala compile
