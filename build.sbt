@@ -44,6 +44,8 @@ testOptions in Test += Tests.Argument("-oDF")
 
 testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
 
+javaHome := Some("/docker-java-home")
+
 // Don't execute in parallel since we can't have multiple Sparks in the same JVM
 parallelExecution in Test := false
 
