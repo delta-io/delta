@@ -124,7 +124,7 @@ unidocAllSources in(JavaUnidoc, unidoc) := {
 }
 
 // Ensure unidoc is run with tests
-(test in Test) := ((test in Test) dependsOn unidoc.in(Compile)).value
+// (test in Test) := ((test in Test) dependsOn unidoc.in(Compile)).value
 
 
 /***************************
