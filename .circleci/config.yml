@@ -8,7 +8,7 @@ jobs:
       - checkout
       - run:
           name: See javac
-          command: ls -l /usr/bin/javac
+          command: sudo update-alternatives; sudo update-alternatives; echo 'export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64' >> ~/.circlerc
       - run:
           name: Run tests
           command: build/sbt test  # make it +test to cross-scala compile
