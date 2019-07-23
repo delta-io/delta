@@ -662,6 +662,24 @@ abstract class MergeIntoSuiteBase
     }
   }
 
+  test("Negative case - update assignments conflict because " +
+    "same column with different references") {
+    withTable("source") {
+      Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value").createOrReplaceTempView("source")
+      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
+      val e = intercept[AnalysisException] {
+        executeMerge(
+          target = s"delta.`$tempPath` as t",
+          source = "source s",
+          condition = "s.key1 = t.key2",
+          update = "key2 = key1, t.key2 = key1",
+          insert = "(key2, value) VALUES (3, 4)")
+      }.getMessage
+
+      errorContains(e, "there is a conflict from these set columns")
+    }
+  }
+
   test("Negative case - more operations between merge and delta target") {
     withTempView("source", "target") {
       Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value").createOrReplaceTempView("source")
@@ -873,7 +891,6 @@ abstract class MergeIntoSuiteBase
   }
 
   test("merge into cached table") {
-    // Merge with a cached target only works in the join-based implementation right now
     withTable("source") {
       append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
       Seq((1, 1), (0, 3), (3, 3)).toDF("key1", "value").createOrReplaceTempView("source")

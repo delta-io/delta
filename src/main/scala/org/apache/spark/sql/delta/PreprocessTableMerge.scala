@@ -33,7 +33,6 @@ case class PreprocessTableMerge(conf: SQLConf) extends UpdateExpressionsSupport 
   def apply(mergeInto: MergeInto): MergeIntoCommand = {
     val MergeInto(target, source, condition, matched, notMatched) = mergeInto
 
-    // Check whether a condition is deterministic and does not contain any aggregate expressions
     def checkCondition(cond: Expression, conditionName: String): Unit = {
       if (!cond.deterministic) {
         throw DeltaErrors.nonDeterministicNotSupportedException(

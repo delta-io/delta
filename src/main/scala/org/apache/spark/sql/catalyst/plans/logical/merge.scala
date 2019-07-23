@@ -92,14 +92,17 @@ object MergeIntoClause {
   /**
    * Convert the parsed columns names and expressions into action for MergeInto. Note:
    * - Size of column names and expressions must be the same.
-   * - If the sizes are zeros, this function assumes that query had `*` as an action, and therefore
-   *   generates a single action with `UnresolvedStar`. This will be expanded later during
-   *   analysis.
+   * - If the sizes are zeros and `emptySeqIsStar` is true, this function assumes
+   *   that query had `*` as an action, and therefore generates a single action
+   *   with `UnresolvedStar`. This will be expanded later during analysis.
    * - Otherwise, this will convert the names and expressions to MergeActions.
    */
-  def toActions(colNames: Seq[UnresolvedAttribute], exprs: Seq[Expression]): Seq[Expression] = {
+  def toActions(
+      colNames: Seq[UnresolvedAttribute],
+      exprs: Seq[Expression],
+      isEmptySeqEqualToStar: Boolean = true): Seq[Expression] = {
     assert(colNames.size == exprs.size)
-    if (colNames.isEmpty) {
+    if (colNames.isEmpty && isEmptySeqEqualToStar) {
       Seq[Expression](UnresolvedStar(None))
     } else {
       colNames.zip(exprs).map { case (col, expr) => MergeAction(col.nameParts, expr) }

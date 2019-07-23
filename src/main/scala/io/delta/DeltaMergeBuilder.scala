@@ -85,19 +85,19 @@ case class DeltaMergeMatchedActionBuilder private[delta](
     private val matchCondition: Option[Column]) {
 
   def update(set: Map[String, Column]): DeltaMergeBuilder = {
-    updateExpression(set)
+    addUpdateClause(set)
   }
 
   def updateExpr(set: Map[String, String]): DeltaMergeBuilder = {
-    updateExpression(toStrColumnMap(set))
+    addUpdateClause(toStrColumnMap(set))
   }
 
   def update(set: java.util.Map[String, Column]): DeltaMergeBuilder = {
-    updateExpression(set.asScala)
+    addUpdateClause(set.asScala)
   }
 
   def updateExpr(set: java.util.Map[String, String]): DeltaMergeBuilder = {
-    updateExpression(toStrColumnMap(set.asScala))
+    addUpdateClause(toStrColumnMap(set.asScala))
   }
 
   def updateAll(): DeltaMergeBuilder = {
@@ -112,14 +112,16 @@ case class DeltaMergeMatchedActionBuilder private[delta](
     mergeBuilder.copy(whenClauses = mergeBuilder.whenClauses :+ deleteClause)
   }
 
-  private def updateExpression(set: Map[String, Column]): DeltaMergeBuilder = {
-    if (set.isEmpty) {
-      mergeBuilder.copy()
+  private def addUpdateClause(set: Map[String, Column]): DeltaMergeBuilder = {
+    if (set.isEmpty && matchCondition.isEmpty) {
+      // Nothing to update = no need to add an update clause
+      mergeBuilder
     } else {
       val setActions = set.toSeq
       val updateActions = MergeIntoClause.toActions(
         colNames = setActions.map(x => UnresolvedAttribute.quotedString(x._1)),
-        exprs = setActions.map(x => x._2.expr))
+        exprs = setActions.map(x => x._2.expr),
+        isEmptySeqEqualToStar = false)
       val updateClause = MergeIntoUpdateClause(matchCondition.map(_.expr), updateActions)
       mergeBuilder.copy(whenClauses = mergeBuilder.whenClauses :+ updateClause)
     }
@@ -135,19 +137,19 @@ case class DeltaMergeNotMatchedActionBuilder private[delta](
     private val matchCondition: Option[Column]) {
 
   def insert(values: Map[String, Column]): DeltaMergeBuilder = {
-    insertExpression(values)
+    addInsertClause(values)
   }
 
   def insertExpr(values: Map[String, String]): DeltaMergeBuilder = {
-    insertExpression(toStrColumnMap(values))
+    addInsertClause(toStrColumnMap(values))
   }
 
   def insert(values: java.util.Map[String, Column]): DeltaMergeBuilder = {
-    insertExpression(values.asScala)
+    addInsertClause(values.asScala)
   }
 
   def insertExpr(values: java.util.Map[String, String]): DeltaMergeBuilder = {
-    insertExpression(toStrColumnMap(values.asScala))
+    addInsertClause(toStrColumnMap(values.asScala))
   }
 
   def insertAll(): DeltaMergeBuilder = {
@@ -157,18 +159,14 @@ case class DeltaMergeNotMatchedActionBuilder private[delta](
     mergeBuilder.copy(whenClauses = mergeBuilder.whenClauses :+ insertClause)
   }
 
-  private def insertExpression(setValues: Map[String, Column]): DeltaMergeBuilder = {
-    if (setValues.isEmpty) {
-      throw DeltaErrors.analysisException(
-        "There must be at least one field in INSERT clause in a MERGE statement", None)
-    } else {
-      val values = setValues.toSeq
-      val insertActions = MergeIntoClause.toActions(
-        colNames = values.map(x => UnresolvedAttribute.quotedString(x._1)),
-        exprs = values.map(x => x._2.expr))
-      val insertClause = MergeIntoInsertClause(matchCondition.map(_.expr), insertActions)
-      mergeBuilder.copy(whenClauses = mergeBuilder.whenClauses :+ insertClause)
-    }
+  private def addInsertClause(setValues: Map[String, Column]): DeltaMergeBuilder = {
+    val values = setValues.toSeq
+    val insertActions = MergeIntoClause.toActions(
+      colNames = values.map(x => UnresolvedAttribute.quotedString(x._1)),
+      exprs = values.map(x => x._2.expr),
+      isEmptySeqEqualToStar = false)
+    val insertClause = MergeIntoInsertClause(matchCondition.map(_.expr), insertActions)
+    mergeBuilder.copy(whenClauses = mergeBuilder.whenClauses :+ insertClause)
   }
 
   private def toStrColumnMap(map: Map[String, String]): Map[String, Column] = {
