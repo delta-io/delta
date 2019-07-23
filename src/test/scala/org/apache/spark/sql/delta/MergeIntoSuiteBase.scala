@@ -1038,7 +1038,6 @@ abstract class MergeIntoSuiteBase
     update = "value.c = 'UPDATED'" :: Nil,
     errorStrs = "No such struct field" :: Nil)
 
-  // failing.
   testNestedDataSupport("assigning simple type to struct field")(
     source = """{ "key": "A", "value": { "a": { "x": 1 } } }""",
     target = """{ "key": "A", "value": { "a": { "x": 1 } } }""",

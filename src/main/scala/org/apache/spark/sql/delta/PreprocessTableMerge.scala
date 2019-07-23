@@ -60,7 +60,7 @@ case class PreprocessTableMerge(conf: SQLConf) extends UpdateExpressionsSupport 
           // Use the helper methods for in UpdateExpressionsSupport to generate expressions such
           // that nested fields can be updated.
           val updateOps =
-          m.resolvedActions.map { a => UpdateOperation(a.targetColNameParts, a.expr) }
+            m.resolvedActions.map { a => UpdateOperation(a.targetColNameParts, a.expr) }
           generateUpdateExpressions(target.output, updateOps, conf.resolver)
         }
         val alignedActions: Seq[MergeAction] = alignedUpdateExprs.zip(target.output).map {

@@ -65,7 +65,9 @@ case class DeltaMergeBuilder private[delta](
     if (!resolvedMergeInto.resolved) {
       throw DeltaErrors.analysisException("Failed to resolve\n", Some(resolvedMergeInto))
     }
+    // Preprocess the actions and verify
     val mergeIntoCommand = PreprocessTableMerge(sparkSession.sessionState.conf)(resolvedMergeInto)
+    sparkSession.sessionState.analyzer.checkAnalysis(mergeIntoCommand)
     mergeIntoCommand.run(sparkSession)
   }
 

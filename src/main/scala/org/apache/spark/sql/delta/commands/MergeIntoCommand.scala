@@ -282,10 +282,6 @@ case class MergeIntoCommand(
       val exprs = clause match {
         case u: MergeIntoUpdateClause =>
           // Generate update expressions and set ROW_DELETED_COL = false
-          if (!u.actions.forall(_.resolved)) {
-            throw new AnalysisException(
-              "update actions are not resolved because of data type mismatch")
-          }
           u.resolvedActions.map(_.expr) :+ Literal(false) :+ incrUpdatedCountExpr
         case _: MergeIntoDeleteClause =>
           // Generate expressions to set the ROW_DELETED_COL = true
