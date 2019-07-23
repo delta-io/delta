@@ -21,6 +21,8 @@ import java.net.URI
 import java.util.Date
 import java.util.concurrent.TimeUnit
 
+import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{FileAction, RemoveFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -118,8 +120,8 @@ object VacuumCommand extends VacuumCommandImpl {
       val hadoopConf = spark.sparkContext.broadcast(
         new SerializableConfiguration(sessionHadoopConf))
       val basePath = fs.makeQualified(path).toString
+      var isBloomFiltered = false
 
-      val schema = snapshot.metadata.schema
       val validFiles = snapshot.state
         .mapPartitions { actions =>
           val reservoirBase = new Path(basePath)
@@ -145,7 +147,7 @@ object VacuumCommand extends VacuumCommandImpl {
                 }
                 validFileOpt.toSeq.flatMap { f =>
                   // paths are relative so provide '/' as the basePath.
-                  allValidFiles(f, schema).flatMap { file =>
+                  allValidFiles(f, isBloomFiltered).flatMap { file =>
                     val dirs = getAllSubdirs("/", file, fs)
                     dirs ++ Iterator(file)
                   }
@@ -247,6 +249,10 @@ object VacuumCommand extends VacuumCommandImpl {
 
 trait VacuumCommandImpl extends DeltaCommand {
 
+  /**
+   * Attempts to relativize the `path` with respect to the `reservoirBase` and converts the path to
+   * a string.
+   */
   protected def relativize(
       path: Path,
       fs: FileSystem,
@@ -255,25 +261,27 @@ trait VacuumCommandImpl extends DeltaCommand {
     pathToString(DeltaFileOperations.tryRelativizePath(fs, reservoirBase, path))
   }
 
+  /**
+   * Wrapper function for DeltaFileOperations.getAllSubDirectories
+   * returns all subdirectories that `file` has with respect to `base`.
+   */
   protected def getAllSubdirs(base: String, file: String, fs: FileSystem): Iterator[String] = {
     DeltaFileOperations.getAllSubDirectories(base, file)._1
   }
 
+  /**
+   * Attempts to delete the list of candidate files. Returns the number of files deleted.
+   */
   protected def delete(diff: Dataset[String], fs: FileSystem): Long = {
-    val fileResultSet = diff.collect()
-    val numFilesDeleted = {
-      fileResultSet.map(p => stringToPath(p)).count(f => tryDeleteNonRecursive(fs, f))
-    }
-    numFilesDeleted
+    val fileResultSet = diff.toLocalIterator().asScala
+    fileResultSet.map(p => stringToPath(p)).count(f => tryDeleteNonRecursive(fs, f))
   }
 
   protected def stringToPath(path: String): Path = new Path(new URI(path))
 
   protected def pathToString(path: Path): String = path.toUri.toString
 
-  protected def allValidFiles(file: String, schema: StructType): Seq[String] = {
-    Seq(file)
-  }
+  protected def allValidFiles(file: String, isBloomFiltered: Boolean): Seq[String] = Seq(file)
 }
 
 case class DeltaVacuumStats(

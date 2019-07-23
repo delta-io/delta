@@ -258,15 +258,15 @@ trait DeltaVacuumSuiteBase extends QueryTest with SharedSQLContext with GivenWhe
       gcTest(deltaLog, clock)(
         CreateFile("file1.txt", commitToActionLog = true),
         CreateFile("file2.txt", commitToActionLog = false),
-        GC_SCALA(expectedDf = Seq()),
+        GCScalaApi(expectedDf = Seq()),
         CheckFiles(Seq("file1.txt")),
-        GC_SCALA(expectedDf = Seq(), retentionHours = Some(0)),
+        GCScalaApi(expectedDf = Seq(), retentionHours = Some(0)),
         CheckFiles(Seq("file2.txt"), exist = false),
         CreateFile("file2.txt", commitToActionLog = false),
-        GC_SCALA(dryRun = Some(true), expectedDf = Seq(new File(tempDir, "file2.txt")),
+        GCScalaApi(dryRun = Some(true), expectedDf = Seq(new File(tempDir, "file2.txt")),
           retentionHours = Some(0)),
         CheckFiles(Seq("file2.txt")),
-        GC_SCALA(dryRun = Some(false), expectedDf = Seq(), retentionHours = Some(0)),
+        GCScalaApi(dryRun = Some(false), expectedDf = Seq(), retentionHours = Some(0)),
         CheckFiles(Seq("file2.txt"), exist = false)
       )
     }
@@ -308,7 +308,7 @@ trait DeltaVacuumSuiteBase extends QueryTest with SharedSQLContext with GivenWhe
       expectedDf: Seq[String],
       retentionHours: Option[Double] = None) extends Action
   /** Garbage collect the reservoir. */
-  case class GC_SCALA(
+  case class GCScalaApi(
       dryRun: Option[Boolean] = None,
       expectedDf: Seq[String],
       retentionHours: Option[Double] = None) extends Action
@@ -380,7 +380,7 @@ trait DeltaVacuumSuiteBase extends QueryTest with SharedSQLContext with GivenWhe
         val result = VacuumCommand.gc(spark, deltaLog, dryRun, retention, clock = clock)
         val qualified = expectedDf.map(p => fs.makeQualified(new Path(p)).toString)
         checkDatasetUnorderly(result.as[String], qualified: _*)
-      case GC_SCALA(dryRun, expectedDf, retention) =>
+      case GCScalaApi(dryRun, expectedDf, retention) =>
         Given("*** Garbage collecting Reservoir using Scala")
         val deltaTable = io.delta.DeltaTable.forPath(spark, deltaLog.dataPath.toString)
         val result = if (retention.isDefined && dryRun.isDefined) {
@@ -411,6 +411,4 @@ trait DeltaVacuumSuiteBase extends QueryTest with SharedSQLContext with GivenWhe
   }
 }
 
-class DeltaVacuumSuite extends DeltaVacuumSuiteBase {
-
-}
+class DeltaVacuumSuite extends DeltaVacuumSuiteBase

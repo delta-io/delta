@@ -22,7 +22,6 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.annotation.InterfaceStability._
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
 
 /**
  * :: Evolving ::

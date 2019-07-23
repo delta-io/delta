@@ -45,7 +45,7 @@ parallelExecution in Test := false
 
 scalacOptions ++= Seq("-target:jvm-1.8")
 
-javaOptions += "-Xmx1536m"
+javaOptions += "-Xmx1024m"
 
 fork in Test := true
 
@@ -56,7 +56,7 @@ javaOptions in Test ++= Seq(
   "-Dspark.databricks.delta.snapshotPartitions=2",
   "-Dspark.sql.shuffle.partitions=5",
   "-Ddelta.log.cacheSize=3",
-  "-Xmx1536m"
+  "-Xmx1024m"
 )
 
 /** ********************
