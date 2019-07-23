@@ -42,20 +42,12 @@ libraryDependencies ++= Seq(
 
 testOptions in Test += Tests.Argument("-oDF")
 
- testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
-
-// javaHome.in(Compile) := {
-//  Some(file(sys.props("java.home")).getParentFile)
-// }
-//
-// javaHome.in(Test) := {
-//  Some(file(sys.props("java.home")).getParentFile)
-// }
+testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
 
 // Don't execute in parallel since we can't have multiple Sparks in the same JVM
 parallelExecution in Test := false
 
-// scalacOptions ++= Seq("-target:jvm-1.8")
+scalacOptions ++= Seq("-target:jvm-1.8")
 
 javaOptions += "-Xmx3g"
 
