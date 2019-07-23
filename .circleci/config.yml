@@ -3,7 +3,7 @@ jobs:
   build:
     docker:
       - image: circleci/openjdk:9.0.4-jdk # java 9
-      - image: circleci/openjdk:8u181-jdk # java 8
+      - image: circleci/openjdk:8u171-jdk # java 8
     steps:
       - checkout
       - run:
