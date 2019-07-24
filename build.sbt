@@ -24,6 +24,8 @@ scalaVersion := crossScalaVersions.value.head
 
 sparkVersion := "2.4.2"
 
+javaHome := Some(file("/usr/lib/jvm/java-8-openjdk-amd64"))
+
 libraryDependencies ++= Seq(
   // Adding test classifier seems to break transitive resolution of the core dependencies
   "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
