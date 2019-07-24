@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.util.AnalysisHelper
 import io.delta.{DeltaMergeBuilder, DeltaTable}
 
 import org.apache.spark.sql.{functions, Column, DataFrame, SparkSession}
-import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
+import org.apache.spark.sql.catalyst.analysis.{EliminateSubqueryAliases, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.plans.logical._
 
