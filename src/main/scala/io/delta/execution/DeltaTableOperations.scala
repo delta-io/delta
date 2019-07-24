@@ -23,12 +23,11 @@ import org.apache.spark.sql.delta.PreprocessTableUpdate
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaFullTable, DeltaLog}
 import org.apache.spark.sql.delta.commands.{DeleteCommand, VacuumCommand}
 import org.apache.spark.sql.delta.util.AnalysisHelper
-import io.delta.DeltaTable
+import io.delta.{DeltaMergeBuilder, DeltaTable}
 
 import org.apache.spark.sql.{functions, Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
-import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.plans.logical._
 
 /**
@@ -171,6 +170,7 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
     }
   }
 
+<<<<<<< HEAD
   protected def executeVacuum(
       deltaLog: DeltaLog,
       retentionHours: Option[Double]): DataFrame = {
@@ -184,5 +184,7 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
       tahoeFileIndex
   }).deltaLog
 
+=======
+>>>>>>> 526982101e2aeade3e9e98968312403d42bbdc12
   protected lazy val sparkSession: SparkSession = self.toDF.sparkSession
 }
