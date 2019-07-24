@@ -170,7 +170,6 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
     }
   }
 
-<<<<<<< HEAD
   protected def executeVacuum(
       deltaLog: DeltaLog,
       retentionHours: Option[Double]): DataFrame = {
@@ -184,7 +183,5 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
       tahoeFileIndex
   }).deltaLog
 
-=======
->>>>>>> 526982101e2aeade3e9e98968312403d42bbdc12
   protected lazy val sparkSession: SparkSession = self.toDF.sparkSession
 }
