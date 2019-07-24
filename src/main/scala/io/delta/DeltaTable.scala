@@ -61,27 +61,6 @@ class DeltaTable (df: Dataset[Row]) extends DeltaTableOperations {
    * :: Evolving ::
    *
    * Recursively delete files and directories in the table that are not needed by the table for
-   * maintaining older versions up to the given retention threshold. Specifying `dryRun` to be true
-   * will return a list of files that would be deleted.
-   *
-   * note: You will lose the ability to time travel to versions older than the retention threshold.
-   *
-   * @param dryRun Whether to actually delete the files. If true,
-   *               then it instead of deleting, it will print out the list of files.
-   * @param retentionHours The retention threshold in hours. Files required by the table for
-   *                       reading versions earlier than this will be preserved and the
-   *                       rest of them will be deleted.
-   * @since 0.3.0
-   */
-  @Evolving
-  def vacuum(retentionHours: Double, dryRun: Boolean): DataFrame = {
-    executeVacuum(deltaLog, dryRun, Some(retentionHours))
-  }
-
-  /**
-   * :: Evolving ::
-   *
-   * Recursively delete files and directories in the table that are not needed by the table for
    * maintaining older versions up to the given retention threshold.
    *
    *
@@ -92,7 +71,7 @@ class DeltaTable (df: Dataset[Row]) extends DeltaTableOperations {
    */
   @Evolving
   def vacuum(retentionHours: Double): DataFrame = {
-    executeVacuum(deltaLog, dryRun = false, Some(retentionHours))
+    executeVacuum(deltaLog, Some(retentionHours))
   }
 
   /**
@@ -107,7 +86,7 @@ class DeltaTable (df: Dataset[Row]) extends DeltaTableOperations {
    */
   @Evolving
   def vacuum(): DataFrame = {
-    executeVacuum(deltaLog, dryRun = false, None)
+    executeVacuum(deltaLog, None)
   }
 
   /**
@@ -148,6 +127,37 @@ class DeltaTable (df: Dataset[Row]) extends DeltaTableOperations {
   @Evolving
   def delete(): Unit = {
     executeDelete(None)
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Merge data from the `source` table that match the given `condition`
+   *
+   * @param source source Dataframe to be merged.
+   * @param condition Boolean SQL expression
+   * @return
+   *
+   * @since 0.3.0
+   */
+  @Evolving
+  def merge(source: DataFrame, condition: String): DeltaMergeBuilder = {
+    merge(source, functions.expr(condition))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Merge data from the `source` table that match the given `condition`
+   *
+   * @param source source Dataframe to be merged.
+   * @param condition Boolean SQL expression
+   *
+   * @since 0.3.0
+   */
+  @Evolving
+  def merge(source: DataFrame, condition: Column): DeltaMergeBuilder = {
+    DeltaMergeBuilder(this, source, condition, Nil)
   }
 }
 

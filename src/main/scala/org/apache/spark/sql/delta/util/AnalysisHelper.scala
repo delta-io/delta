@@ -25,19 +25,19 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 trait AnalysisHelper {
   import AnalysisHelper._
 
-  protected def sparkSession: SparkSession
-
   protected def tryResolveReferences(
+      sparkSession: SparkSession)(
       expr: Expression,
-      plansToResolveOn: Seq[LogicalPlan]): Expression = {
-    val newPlan = FakeLogicalPlan(expr, plansToResolveOn)
+      planContainingExpr: LogicalPlan): Expression = {
+    val newPlan = FakeLogicalPlan(expr, planContainingExpr.children)
     sparkSession.sessionState.analyzer.execute(newPlan) match {
       case FakeLogicalPlan(resolvedExpr, _) =>
         // Return even if it did not successfully resolve
         return resolvedExpr
       case _ =>
         // This is unexpected
-        throw DeltaErrors.analysisException(s"Could not resolve expression $expr", Option(newPlan))
+        throw DeltaErrors.analysisException(
+          s"Could not resolve expression $expr", Option(planContainingExpr))
     }
   }
 }

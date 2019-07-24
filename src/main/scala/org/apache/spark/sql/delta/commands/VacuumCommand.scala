@@ -190,7 +190,7 @@ object VacuumCommand extends VacuumCommandImpl {
               } else {
                 val dirs = getAllSubdirs(basePath, fileStatus.path, fs)
                 val dirsWithSlash = dirs.map { p =>
-                  relativize(new Path(p), fs, reservoirBase, true)
+                  relativize(new Path(p), fs, reservoirBase, isDir = true)
                 }
                 dirsWithSlash ++ Iterator(
                   relativize(new Path(fileStatus.path), fs, reservoirBase, isDir = false))

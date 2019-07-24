@@ -184,6 +184,28 @@ trait DeltaVacuumSuiteBase extends QueryTest with SharedSQLContext with GivenWhe
     }
   }
 
+  test("retention duration must be greater than 0") {
+    withEnvironment { (tempDir, clock) =>
+      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath, clock)
+      gcTest(deltaLog, clock)(
+        CreateFile("file1.txt", commitToActionLog = true),
+        CheckFiles(Seq("file1.txt")),
+        ExpectFailure(
+          GC(false, Seq(tempDir), Some(-2)),
+          classOf[IllegalArgumentException],
+          Seq("Retention", "less than", "0"))
+      )
+      gcTest(deltaLog, clock)(
+        CreateFile("file1.txt", commitToActionLog = true),
+        CheckFiles(Seq("file1.txt")),
+        ExpectFailure(
+          GCScalaApi(Seq(), Some(-2)),
+          classOf[IllegalArgumentException],
+          Seq("Retention", "less than", "0"))
+      )
+    }
+  }
+
   test("deleting directories") {
     withEnvironment { (tempDir, clock) =>
       val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath, clock)
@@ -212,20 +234,6 @@ trait DeltaVacuumSuiteBase extends QueryTest with SharedSQLContext with GivenWhe
         GC(dryRun = false, Seq(tempDir)),
         CheckFiles(Seq("abc def/#1", "abc def/#1/file1.txt")),
         CheckFiles(Seq("abc def/#1/file2.txt"), exist = false)
-      )
-    }
-  }
-
-  test("retention duration must be greater than 0") {
-    withEnvironment { (tempDir, clock) =>
-      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath, clock)
-        gcTest(deltaLog, clock)(
-        CreateFile("file1.txt", commitToActionLog = true),
-        CheckFiles(Seq("file1.txt")),
-        ExpectFailure(
-          GC(false, Seq(tempDir), Some(-2)),
-          classOf[IllegalArgumentException],
-          Seq("Retention", "less than", "0"))
       )
     }
   }
@@ -263,10 +271,8 @@ trait DeltaVacuumSuiteBase extends QueryTest with SharedSQLContext with GivenWhe
         GCScalaApi(expectedDf = Seq(), retentionHours = Some(0)),
         CheckFiles(Seq("file2.txt"), exist = false),
         CreateFile("file2.txt", commitToActionLog = false),
-        GCScalaApi(dryRun = Some(true), expectedDf = Seq(new File(tempDir, "file2.txt")),
-          retentionHours = Some(0)),
         CheckFiles(Seq("file2.txt")),
-        GCScalaApi(dryRun = Some(false), expectedDf = Seq(), retentionHours = Some(0)),
+        GCScalaApi(expectedDf = Seq(), retentionHours = Some(0)),
         CheckFiles(Seq("file2.txt"), exist = false)
       )
     }
@@ -309,7 +315,6 @@ trait DeltaVacuumSuiteBase extends QueryTest with SharedSQLContext with GivenWhe
       retentionHours: Option[Double] = None) extends Action
   /** Garbage collect the reservoir. */
   case class GCScalaApi(
-      dryRun: Option[Boolean] = None,
       expectedDf: Seq[String],
       retentionHours: Option[Double] = None) extends Action
   /** Advance the time. */
@@ -380,12 +385,10 @@ trait DeltaVacuumSuiteBase extends QueryTest with SharedSQLContext with GivenWhe
         val result = VacuumCommand.gc(spark, deltaLog, dryRun, retention, clock = clock)
         val qualified = expectedDf.map(p => fs.makeQualified(new Path(p)).toString)
         checkDatasetUnorderly(result.as[String], qualified: _*)
-      case GCScalaApi(dryRun, expectedDf, retention) =>
+      case GCScalaApi(expectedDf, retention) =>
         Given("*** Garbage collecting Reservoir using Scala")
         val deltaTable = io.delta.DeltaTable.forPath(spark, deltaLog.dataPath.toString)
-        val result = if (retention.isDefined && dryRun.isDefined) {
-          deltaTable.vacuum(retention.get, dryRun.get)
-        } else if (retention.isDefined) {
+        val result = if (retention.isDefined) {
           deltaTable.vacuum(retention.get)
         } else {
           deltaTable.vacuum()
@@ -411,4 +414,5 @@ trait DeltaVacuumSuiteBase extends QueryTest with SharedSQLContext with GivenWhe
   }
 }
 
-class DeltaVacuumSuite extends DeltaVacuumSuiteBase
+class DeltaVacuumSuite
+  extends DeltaVacuumSuiteBase
