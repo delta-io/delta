@@ -6,8 +6,5 @@ jobs:
     steps:
       - checkout
       - run:
-            name: See javaHome
-            command: ls /usr/lib/jvm
-      - run:
           name: Run tests
           command: build/sbt test  # make it +test to cross-scala compile
