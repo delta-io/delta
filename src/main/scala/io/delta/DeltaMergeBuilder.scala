@@ -33,8 +33,8 @@ import org.apache.spark.sql.functions.expr
  * :: Evolving ::
  *
  * Builder to specify how to merge data from source DataFrame into the target Delta table.
- * You can specify 1, 2 or 3 `when` clauses of which at most 2 can be `whenMatched` clauses,
- * and at most 1 can be `whenNotMatched` clause. Here are the constraints on these clauses.
+ * You can specify 1, 2 or 3 `when` clauses of which there can be at most 2 `whenMatched` clauses
+ * and at most 1 `whenNotMatched` clause. Here are the constraints on these clauses.
  *
  *   - `whenMatched` clauses:
  *
