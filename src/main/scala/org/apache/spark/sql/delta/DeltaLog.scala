@@ -134,17 +134,25 @@ class DeltaLog private(
     val checkpointFiles = c.parts
       .map(p => checkpointFileWithParts(logPath, c.version, p))
       .getOrElse(Seq(checkpointFileSingular(logPath, c.version)))
+    val deltas = store.listFrom(deltaFile(logPath, c.version + 1))
+      .filter(f => isDeltaFile(f.getPath))
+      .toArray
+    val deltaVersions = deltas.map(f => deltaVersion(f.getPath))
+    verifyDeltaVersions(deltaVersions)
+    val newVersion = deltaVersions.lastOption.getOrElse(c.version)
+    val deltaFiles = ((c.version + 1) to newVersion).map(deltaFile(logPath, _))
+    logInfo(s"Loading version $newVersion starting from checkpoint ${c.version}")
     try {
       val snapshot = new Snapshot(
         logPath,
-        c.version,
+        newVersion,
         None,
-        checkpointFiles,
+        checkpointFiles ++ deltaFiles,
         minFileRetentionTimestamp,
         this,
-        // we don't want to make an additional RPC here to get commit timestamps. The update method
-        // will take care of that if there are delta files.
-        -1L)
+        // we don't want to make an additional RPC here to get commit timestamps when "deltas" is
+        // empty. The next "update" call will take care of that if there are delta files.
+        deltas.lastOption.map(_.getModificationTime).getOrElse(-1L))
 
       validateChecksum(snapshot)
       snapshot
@@ -157,8 +165,24 @@ class DeltaLog private(
     new Snapshot(logPath, -1, None, Nil, minFileRetentionTimestamp, this, -1L)
   }
 
-  // Load any deltas that have arrived since the checkpoint we initialized with.
-  update()
+  if (currentSnapshot.version == -1) {
+    // No checkpoint exists. Call "update" to load delta files.
+    update()
+  } else {
+    protocolRead()
+  }
+
+  /**
+   * Verify the versions are contiguous.
+   */
+  private def verifyDeltaVersions(versions: Array[Long]): Unit = {
+    // Turn this to a vector so that we can compare it with a range.
+    val deltaVersions = versions.toVector
+    if (deltaVersions.nonEmpty &&
+      (deltaVersions.head to deltaVersions.last) != deltaVersions) {
+      throw new IllegalStateException(s"versions ($deltaVersions) are not contiguous")
+    }
+  }
 
   /** Returns the current snapshot. Note this does not automatically `update()`. */
   def snapshot: Snapshot = currentSnapshot
@@ -259,11 +283,8 @@ class DeltaLog private(
           return currentSnapshot
         }
 
-        // Turn this to a vector so that we can compare it with a range.
-        val deltaVersions = deltas.map(f => deltaVersion(f.getPath)).toVector
-        if ((deltaVersions.head to deltaVersions.last) != deltaVersions) {
-          throw new IllegalStateException(s"versions (${deltaVersions}) are not contiguous")
-        }
+        val deltaVersions = deltas.map(f => deltaVersion(f.getPath))
+        verifyDeltaVersions(deltaVersions)
         val lastChkpoint = lastCheckpoint.map(CheckpointInstance.apply)
             .getOrElse(CheckpointInstance.MaxValue)
         val checkpointFiles = checkpoints.map(f => CheckpointInstance(f.getPath))

@@ -51,6 +51,7 @@ class DeltaLogSuite extends QueryTest
 
     DeltaLog.clearCache()
     val log2 = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+    assert(log2.snapshot.version == log1.snapshot.version)
     assert(log2.snapshot.allFiles.count == 1)
   }
 
