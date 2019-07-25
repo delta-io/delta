@@ -22,6 +22,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.annotation.InterfaceStability._
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
 
 /**
  * :: Evolving ::
@@ -132,6 +133,35 @@ class DeltaTable (df: Dataset[Row]) extends DeltaTableOperations {
   /**
    * :: Evolving ::
    *
+   * Get the history of operations on the table.
+   *
+   * @param limit The number of previous commands to get history for
+   * @return DataFrame that contains History of the table upto `limit` operations in chronological
+   *         order.
+   *
+   * @since 0.3.0
+   */
+  @Evolving
+  def history(limit: Int): DataFrame = {
+    executeHistory(Some(limit))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Get the history of operations on the table.
+   * @return DataFrame that contains History of the table in reverse chronological order.
+   *
+   * @since 0.3.0
+   */
+  @Evolving
+  def history(): DataFrame = {
+    executeHistory(None)
+  }
+
+  /**
+   * :: Evolving ::
+   *
    * Merge data from the `source` table that match the given `condition`
    *
    * @param source source Dataframe to be merged.
@@ -155,7 +185,6 @@ class DeltaTable (df: Dataset[Row]) extends DeltaTableOperations {
    *
    * @since 0.3.0
    */
-  @Evolving
   def merge(source: DataFrame, condition: Column): DeltaMergeBuilder = {
     DeltaMergeBuilder(this, source, condition, Nil)
   }

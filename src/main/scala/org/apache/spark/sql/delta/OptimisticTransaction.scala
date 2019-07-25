@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
@@ -248,15 +249,17 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
         onlyAddFiles && !dependsOnFiles
       }
 
-      commitInfo = CommitInfo(
-        clock.getTimeMillis(),
-        op.name,
-        op.jsonEncodedValues,
-        Map.empty,
-        Some(readVersion).filter(_ >= 0),
-        None,
-        Some(isBlindAppend))
-      finalActions = commitInfo +: finalActions
+      if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED)) {
+        commitInfo = CommitInfo(
+          clock.getTimeMillis(),
+          op.name,
+          op.jsonEncodedValues,
+          Map.empty,
+          Some(readVersion).filter(_ >= 0),
+          None,
+          Some(isBlindAppend))
+        finalActions = commitInfo +: finalActions
+      }
 
       val commitVersion = doCommit(snapshot.version + 1, finalActions, 0)
       logInfo(s"Committed delta #$commitVersion to ${deltaLog.logPath}")

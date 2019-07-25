@@ -37,7 +37,7 @@ trait AnalysisHelper {
       case _ =>
         // This is unexpected
         throw DeltaErrors.analysisException(
-          s"Could not resolve expression $expr", plan = Option(planContainingExpr))
+          s"Could not resolve expression $expr", Option(planContainingExpr))
     }
   }
 }
