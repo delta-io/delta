@@ -232,3 +232,4 @@ trait DescribeDeltaHistorySuiteBase
 
 class DescribeDeltaHistorySuite
   extends DescribeDeltaHistorySuiteBase
+
