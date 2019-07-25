@@ -200,3 +200,4 @@ releaseProcess := Seq[ReleaseStep](
   setNextVersion,
   commitNextVersion
 )
+
