@@ -81,11 +81,12 @@ object DeltaErrors
 
   def formatSchema(schema: StructType): String = schema.treeString
 
-  def analysisException(msg: String,
-                        line: Option[Int] = None,
-                        startPosition: Option[Int] = None,
-                        plan: Option[LogicalPlan] = None,
-                        cause: Option[Throwable] = None): AnalysisException = {
+  def analysisException(
+                         msg: String,
+                         line: Option[Int] = None,
+                         startPosition: Option[Int] = None,
+                         plan: Option[LogicalPlan] = None,
+                         cause: Option[Throwable] = None): AnalysisException = {
     new AnalysisException(msg, line, startPosition, plan, cause)
   }
 
