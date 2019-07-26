@@ -16,15 +16,22 @@
 
 package org.apache.spark.sql.delta.util
 
+import java.io.{FileNotFoundException, IOException}
 import java.net.URI
+import java.util.Locale
 
+import scala.util.Random
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 
-import org.apache.spark.TaskContext
+import org.apache.spark.{SparkEnv, TaskContext}
+import org.apache.spark.broadcast.Broadcast
+import org.apache.spark.sql.{Dataset, SparkSession}
+import org.apache.spark.util.SerializableConfiguration
 
 /**
  * Some utility methods on files, directories, and paths.
@@ -89,6 +96,143 @@ object DeltaFileOperations extends DeltaLogging {
     } else {
       child
     }
+  }
+
+  /** Check if the thrown exception is a throttling error. */
+  private def isThrottlingError(t: Throwable): Boolean = {
+    Option(t.getMessage).exists(_.toLowerCase(Locale.ROOT).contains("slow down"))
+  }
+
+  private def randomBackoff(
+      opName: String,
+      t: Throwable,
+      base: Int = 100,
+      jitter: Int = 1000): Unit = {
+    val sleepTime = Random.nextInt(jitter) + base
+    logWarning(s"Sleeping for $sleepTime ms to rate limit $opName", t)
+    Thread.sleep(sleepTime)
+  }
+
+  /** Iterate through the contents of directories. */
+  private def listUsingLogStore(
+      logStore: LogStore,
+      subDirs: Iterator[String],
+      recurse: Boolean,
+      hiddenFileNameFilter: String => Boolean): Iterator[SerializableFileStatus] = {
+
+    def list(dir: String, tries: Int): Iterator[SerializableFileStatus] = {
+      logInfo(s"Listing $dir")
+      try {
+        logStore.listFrom(new Path(dir, "\u0000"))
+          .filterNot(f => hiddenFileNameFilter(f.getPath.getName))
+          .map(SerializableFileStatus.fromStatus)
+      } catch {
+        case NonFatal(e) if isThrottlingError(e) && tries > 0 =>
+          randomBackoff("listing", e)
+          list(dir, tries - 1)
+        case e: FileNotFoundException =>
+          // Can happen when multiple GCs are running concurrently or due to eventual consistency
+          Iterator.empty
+      }
+    }
+
+    val filesAndDirs = subDirs.flatMap { dir =>
+      list(dir, tries = 10)
+    }
+
+    if (recurse) {
+      recurseDirectories(logStore, filesAndDirs, hiddenFileNameFilter)
+    } else {
+      filesAndDirs
+    }
+  }
+
+  /** Given an iterator of files and directories, recurse directories with its contents. */
+  private def recurseDirectories(
+      logStore: LogStore,
+      filesAndDirs: Iterator[SerializableFileStatus],
+      hiddenFileNameFilter: String => Boolean): Iterator[SerializableFileStatus] = {
+    filesAndDirs.flatMap {
+      case dir: SerializableFileStatus if dir.isDir =>
+        Iterator.single(dir) ++ listUsingLogStore(
+          logStore, Iterator.single(dir.path), recurse = true, hiddenFileNameFilter)
+      case file =>
+        Iterator.single(file)
+    }
+  }
+
+  /**
+   * The default filter for hidden files. Files names beginning with _ or . are considered hidden.
+   * @param fileName
+   * @return true if the file is hidden
+   */
+  def defaultHiddenFileFilter(fileName: String): Boolean = {
+    fileName.startsWith("_") || fileName.startsWith(".")
+  }
+
+  /**
+   * Recursively lists all the files and directories for the given `subDirs` in a scalable manner.
+   *
+   * @param spark The SparkSession
+   * @param subDirs Absolute path of the subdirectories to list
+   * @param hadoopConf The Hadoop Configuration to get a FileSystem instance
+   * @param hiddenFileNameFilter A function that returns true when the file should be considered
+   *                             hidden and excluded from results. Defaults to checking for prefixes
+   *                             of "." or "_".
+   */
+  def recursiveListDirs(
+      spark: SparkSession,
+      subDirs: Seq[String],
+      hadoopConf: Broadcast[SerializableConfiguration],
+      hiddenFileNameFilter: String => Boolean = defaultHiddenFileFilter,
+      fileListingParallelism: Option[Int] = None): Dataset[SerializableFileStatus] = {
+    import spark.implicits._
+    if (subDirs.isEmpty) return spark.emptyDataset[SerializableFileStatus]
+    val listParallelism = fileListingParallelism.getOrElse(spark.sparkContext.defaultParallelism)
+    val dirsAndFiles = spark.sparkContext.parallelize(subDirs).mapPartitions { dirs =>
+      val logStore = LogStore(SparkEnv.get.conf, hadoopConf.value.value)
+      listUsingLogStore(logStore, dirs, recurse = false, hiddenFileNameFilter)
+    }.repartition(listParallelism) // Initial list of subDirs may be small
+
+    val allDirsAndFiles = dirsAndFiles.mapPartitions { firstLevelDirsAndFiles =>
+      val logStore = LogStore(SparkEnv.get.conf, hadoopConf.value.value)
+      recurseDirectories(logStore, firstLevelDirsAndFiles, hiddenFileNameFilter)
+    }
+    spark.createDataset(allDirsAndFiles)
+  }
+
+  /**
+   * Tries deleting a file or directory non-recursively. If the file/folder doesn't exist,
+   * that's fine, a separate operation may be deleting files/folders. If a directory is non-empty,
+   * we shouldn't delete it. FileSystem implementations throw an `IOException` in those cases,
+   * which we return as a "we failed to delete".
+   *
+   * Listing on S3 is not consistent after deletes, therefore in case the `delete` returns `false`,
+   * because the file didn't exist, then we still return `true`. Retries on S3 rate limits up to 3
+   * times.
+   */
+  def tryDeleteNonRecursive(fs: FileSystem, path: Path, tries: Int = 3): Boolean = {
+    try fs.delete(path, false) catch {
+      case _: FileNotFoundException => true
+      case _: IOException => false
+      case NonFatal(e) if isThrottlingError(e) && tries > 0 =>
+        randomBackoff("deletes", e)
+        tryDeleteNonRecursive(fs, path, tries - 1)
+    }
+  }
+
+  /**
+   * Returns all the levels of sub directories that `path` has with respect to `base`. For example:
+   * getAllSubDirectories("/base", "/base/a/b/c") =>
+   *   (Iterator("/base/a", "/base/a/b"), "/base/a/b/c")
+   */
+  def getAllSubDirectories(base: String, path: String): (Iterator[String], String) = {
+    val baseSplits = base.split(Path.SEPARATOR)
+    val pathSplits = path.split(Path.SEPARATOR).drop(baseSplits.length)
+    val it = Iterator.tabulate(pathSplits.length - 1) { i =>
+      (baseSplits ++ pathSplits.take(i + 1)).mkString(Path.SEPARATOR)
+    }
+    (it, path)
   }
 
   /** Register a task failure listener to delete a temp file in our best effort. */

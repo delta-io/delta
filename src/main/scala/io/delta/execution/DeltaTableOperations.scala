@@ -21,11 +21,14 @@ import scala.collection.Map
 import io.delta.DeltaTable
 
 import org.apache.spark.sql._
+import org.apache.spark.sql.{functions, Column, DataFrame, SparkSession}
+import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.plans.logical._
-import org.apache.spark.sql.delta.{DeltaErrors, PreprocessTableUpdate}
-import org.apache.spark.sql.delta.commands.DeleteCommand
+import org.apache.spark.sql.delta.PreprocessTableUpdate
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaFullTable, DeltaLog}
+import org.apache.spark.sql.delta.commands.{DeleteCommand, VacuumCommand}
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
 /**
@@ -88,6 +91,19 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
       case _ =>
     }
   }
+
+  protected def executeVacuum(
+      deltaLog: DeltaLog,
+      retentionHours: Option[Double]): DataFrame = {
+    val sparkSession = self.toDF.sparkSession
+    VacuumCommand.gc(sparkSession, deltaLog, false, retentionHours)
+    sparkSession.emptyDataFrame
+  }
+
+  protected lazy val deltaLog = (EliminateSubqueryAliases(self.toDF.queryExecution.analyzed) match {
+    case DeltaFullTable(tahoeFileIndex) =>
+      tahoeFileIndex
+  }).deltaLog
 
   protected lazy val sparkSession: SparkSession = self.toDF.sparkSession
 }
