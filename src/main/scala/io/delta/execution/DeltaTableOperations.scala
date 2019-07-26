@@ -18,18 +18,17 @@ package io.delta.execution
 
 import scala.collection.Map
 
+import org.apache.spark.sql.delta.PreprocessTableUpdate
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaFullTable, DeltaLog}
+import org.apache.spark.sql.delta.commands.{DeleteCommand, VacuumCommand}
+import org.apache.spark.sql.delta.util.AnalysisHelper
 import io.delta.DeltaTable
 
-import org.apache.spark.sql._
 import org.apache.spark.sql.{functions, Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.plans.logical._
-import org.apache.spark.sql.delta.PreprocessTableUpdate
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaFullTable, DeltaLog}
-import org.apache.spark.sql.delta.commands.{DeleteCommand, VacuumCommand}
-import org.apache.spark.sql.delta.util.AnalysisHelper
 
 /**
  * Interface to provide the actual implementations of DeltaTable operations.
