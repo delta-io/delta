@@ -38,7 +38,7 @@ import org.apache.spark.util.{Clock, SerializableConfiguration, SystemClock}
 /**
  * Vacuums the table by clearing all untracked files and folders within this table.
  * First lists all the files and directories in the table, and gets the relative paths with
- * respect to the base of thetable. Then it gets the list of all tracked files for this table,
+ * respect to the base of the table. Then it gets the list of all tracked files for this table,
  * which may or may not be within the table base path, and gets the relative paths of
  * all the tracked files with respect to the base of the table. Files outside of the table path
  * will be ignored. Then we take a diff of the files and delete directories that were already empty,
@@ -281,6 +281,9 @@ trait VacuumCommandImpl extends DeltaCommand {
 
   protected def pathToString(path: Path): String = path.toUri.toString
 
+  /**
+   * This is used to create the list of files we want to retain during GC.
+   */
   protected def allValidFiles(file: String, isBloomFiltered: Boolean): Seq[String] = Seq(file)
 }
 

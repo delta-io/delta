@@ -34,12 +34,16 @@ libraryDependencies ++= Seq(
 
   // Test deps
   "org.scalatest" %% "scalatest" % "3.0.5" % "test",
+  "junit" % "junit" % "4.12" % "test",
+  "com.novocode" % "junit-interface" % "0.11" % "test",
   "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
   "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
   "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests"
 )
 
 testOptions in Test += Tests.Argument("-oDF")
+
+testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
 
 // Don't execute in parallel since we can't have multiple Sparks in the same JVM
 parallelExecution in Test := false
