@@ -16,12 +16,21 @@
 
 package com.databricks.spark.util
 
+import org.apache.spark.{SparkConf, SparkEnv}
+import org.apache.spark.internal.Logging
+import org.apache.spark.sql.delta.metering.EventLoggingProvider
+import org.apache.spark.sql.delta.util.JsonUtils
+
 /**
  * This file contains stub implementation for logging that exists in Databricks.
  */
 
 
-class TagDefinition
+class TagDefinition {
+  def getSimpleClassName: String = {
+    getClass.getSimpleName.replaceAll("\\$", "")
+  }
+}
 
 object TagDefinitions {
   object TAG_TAHOE_PATH extends TagDefinition
@@ -31,7 +40,7 @@ object TagDefinitions {
   object TAG_OP_TYPE extends TagDefinition
 }
 
-class OpType(typeName: String, description: String)
+case class OpType(typeName: String, description: String)
 
 class MetricDefinition
 
@@ -41,6 +50,9 @@ object MetricDefinitions {
 }
 
 trait DatabricksLogging {
+
+  val eventLogging = EventLogging()
+
   // scalastyle:off println
   def logConsole(line: String): Unit = println(line)
   // scalastyle:on println
@@ -53,6 +65,16 @@ trait DatabricksLogging {
       forceSample: Boolean = false,
       trimBlob: Boolean = true,
       silent: Boolean = false): Unit = {
+    val event = Map(
+      "metric" -> metric,
+      "quantity" -> quantity,
+      "additionalTags" -> additionalTags.map(kv => (kv._1.getSimpleClassName, kv._2)),
+      "blob" -> blob,
+      "forceSample" -> forceSample,
+      "trimBlob" -> trimBlob
+    )
+    val jsonString = JsonUtils.toJson(event)
+    eventLogging.logEvent(jsonString)
 
   }
 
@@ -74,6 +96,40 @@ trait DatabricksLogging {
       killJvmIfStuck: Boolean = false,
       outputMetric: MetricDefinition = null,
       silent: Boolean = true)(thunk: => S): S = {
+    val event = Map(
+      "opType" -> opType,
+      "opTarget" -> opTarget,
+      "extraTags" -> extraTags.map(kv => (kv._1.getSimpleClassName, kv._2)),
+      "isSynchronous" -> isSynchronous,
+      "alwaysRecordStats" -> alwaysRecordStats,
+      "allowAuthTags" -> allowAuthTags,
+      "killJvmIfStuck" -> killJvmIfStuck,
+      "outputMetric" -> outputMetric,
+      "silent" -> silent
+    )
+    val jsonString = JsonUtils.toJson(event)
+    eventLogging.logEvent(jsonString)
     thunk
+  }
+}
+
+/**
+ * event logging that logs delta metrics to custom metrics system.
+ * default implementation is [[DefaultConsoleEventLogging]].
+ */
+trait EventLogging {
+  def logEvent(json: String)
+}
+
+object EventLogging extends EventLoggingProvider {
+  def apply(): EventLogging = createEventLogging(SparkEnv.get.conf)
+}
+
+/**
+ * Console event logging implementation.
+ */
+class DefaultConsoleEventLogging(conf: SparkConf) extends EventLogging with Logging {
+  def logEvent(json: String): Unit = {
+    logInfo(json)
   }
 }

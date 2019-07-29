@@ -19,12 +19,14 @@ package org.apache.spark.sql.delta.metering
 import scala.util.Try
 import scala.util.control.NonFatal
 
-import com.databricks.spark.util.{DatabricksLogging, OpType, TagDefinition}
+import com.databricks.spark.util.{DatabricksLogging, DefaultConsoleEventLogging, EventLogging, OpType, TagDefinition}
 import com.databricks.spark.util.MetricDefinitions.{EVENT_LOGGING_FAILURE, EVENT_TAHOE}
 import com.databricks.spark.util.TagDefinitions.{TAG_OP_TYPE, TAG_TAHOE_ID, TAG_TAHOE_PATH}
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.util.DeltaProgressReporter
 import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.util.Utils
 
 /**
  * Convenience wrappers for logging that include delta specific options and
@@ -101,5 +103,17 @@ trait DeltaLogging
     recordOperation(
       new OpType(opType, ""),
       extraTags = tableTags ++ tags) {thunk}
+  }
+}
+
+trait EventLoggingProvider {
+  val eventLogggingClassConfKey: String = "spark.delta.eventLogging.class"
+  val defaultEventLoggingClass: String = classOf[DefaultConsoleEventLogging].getName
+
+  def createEventLogging(conf: SparkConf): EventLogging = {
+    val loggingClassName = conf.get(eventLogggingClassConfKey, defaultEventLoggingClass)
+    val loggingClass = Utils.classForName(loggingClassName)
+    loggingClass.getConstructor(classOf[SparkConf])
+      .newInstance(conf).asInstanceOf[EventLogging]
   }
 }
