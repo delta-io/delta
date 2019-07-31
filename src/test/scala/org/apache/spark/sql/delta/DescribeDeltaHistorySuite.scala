@@ -60,7 +60,7 @@ trait DescribeDeltaHistorySuiteBase
     }
   }
 
-  test("logging and limit") {
+  testWithFlag("logging and limit") {
     val tempDir = Utils.createTempDir().toString
     Seq(1, 2, 3).toDF().write.format("delta").save(tempDir)
     Seq(4, 5, 6).toDF().write.format("delta").mode("overwrite").save(tempDir)
@@ -168,7 +168,7 @@ trait DescribeDeltaHistorySuiteBase
       Seq($"operation", $"operationParameters.predicate"))
   }
 
-  test("old and new writers") {
+  testWithFlag("old and new writers") {
     val tempDir = Utils.createTempDir().toString
     withSQLConf(DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "false") {
       Seq(1, 2, 3).toDF().write.format("delta").save(tempDir.toString)
@@ -183,7 +183,7 @@ trait DescribeDeltaHistorySuiteBase
     checkLastOperation(tempDir, Seq("WRITE", "Append"))
   }
 
-  test("order history by version") {
+  testWithFlag("order history by version") {
     val tempDir = Utils.createTempDir().toString
 
     withSQLConf(DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "false") {

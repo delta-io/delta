@@ -24,7 +24,6 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.annotation.InterfaceStability._
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
 
 /**
  * :: Evolving ::
@@ -38,7 +37,7 @@ import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
  * @since 0.3.0
  */
 @Evolving
-class DeltaTable private(df: Dataset[Row])
+class DeltaTable private(df: Dataset[Row], deltaLog: DeltaLog)
   extends DeltaTableOperations {
 
   /**
@@ -50,7 +49,7 @@ class DeltaTable private(df: Dataset[Row])
    * @since 0.3.0
    */
   @Evolving
-  def as(alias: String): DeltaTable = new DeltaTable(df.as(alias))
+  def as(alias: String): DeltaTable = new DeltaTable(df.as(alias), deltaLog)
 
   /**
    * :: Evolving ::
@@ -107,7 +106,7 @@ class DeltaTable private(df: Dataset[Row])
    */
   @Evolving
   def history(limit: Int): DataFrame = {
-    executeHistory(Some(limit))
+    executeHistory(deltaLog, Some(limit))
   }
 
   /**
@@ -120,7 +119,7 @@ class DeltaTable private(df: Dataset[Row])
    */
   @Evolving
   def history(): DataFrame = {
-    executeHistory(None)
+    executeHistory(deltaLog, None)
   }
 
   /**
@@ -492,7 +491,7 @@ object DeltaTable {
    * Private method for internal usage only. Do not call this directly.
    */
   @Unstable
-  def apply(df: DataFrame): DeltaTable = new DeltaTable(df)
+  def apply(df: DataFrame, deltaLog: DeltaLog): DeltaTable = new DeltaTable(df, deltaLog)
 
   /**
    * :: Evolving ::
@@ -524,7 +523,8 @@ object DeltaTable {
   @Evolving
   def forPath(sparkSession: SparkSession, path: String): DeltaTable = {
     if (DeltaTableUtils.isDeltaTable(sparkSession, new Path(path))) {
-      new DeltaTable(sparkSession.read.format("delta").load(path))
+      new DeltaTable(sparkSession.read.format("delta").load(path),
+        DeltaLog.forTable(sparkSession, path))
     } else {
       throw DeltaErrors.notADeltaTableException(DeltaTableIdentifier(path = Some(path)))
     }
