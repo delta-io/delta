@@ -20,7 +20,7 @@ import java.io.{File, FileInputStream, OutputStream}
 import java.net.URI
 import java.util.UUID
 
-import org.apache.spark.sql.delta.actions.{AddFile, Format}
+import org.apache.spark.sql.delta.actions.{AddFile, Format, InvalidProtocolVersionException, Protocol}
 import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaSQLConf}
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.commons.io.FileUtils
@@ -28,7 +28,6 @@ import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
 
 import org.apache.spark.sql.{AnalysisException, DataFrame}
 import org.apache.spark.sql.execution.streaming._
-import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.streaming.{OutputMode, StreamingQueryException, StreamTest, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock
 import org.apache.spark.sql.types.StructType
@@ -662,6 +661,34 @@ class DeltaSourceSuite extends StreamTest {
       }
 
       stream.stop()
+    }
+  }
+
+  testQuietly("Delta sources should verify the protocol reader version") {
+    withTempDir { tempDir =>
+      spark.range(0).write.format("delta").save(tempDir.getCanonicalPath)
+
+      val df = spark.readStream.format("delta").load(tempDir.getCanonicalPath)
+      val stream = df.writeStream
+        .format("console")
+        .start()
+      try {
+        stream.processAllAvailable()
+
+        val deltaLog = DeltaLog.forTable(spark, tempDir)
+        deltaLog.store.write(
+          FileNames.deltaFile(deltaLog.logPath, deltaLog.snapshot.version + 1),
+          // Write a large reader version to fail the streaming query
+          Iterator(Protocol(minReaderVersion = Int.MaxValue).json))
+
+        // The streaming query should fail because its version is too old
+        val e = intercept[StreamingQueryException] {
+          stream.processAllAvailable()
+        }
+        assert(e.getCause.isInstanceOf[InvalidProtocolVersionException])
+      } finally {
+        stream.stop()
+      }
     }
   }
 }

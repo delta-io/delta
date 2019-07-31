@@ -138,6 +138,8 @@ class Snapshot(
       .as[State](stateEncoder)}
       .first
 
+  deltaLog.protocolRead(protocol)
+
   /** A map to look up transaction version by appId. */
   lazy val transactions = setTransactions.map(t => t.appId -> t.version).toMap
 
