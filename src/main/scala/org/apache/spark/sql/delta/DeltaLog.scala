@@ -67,6 +67,10 @@ class DeltaLog private(
 
   private lazy implicit val _clock = clock
 
+  @volatile private[delta] var asyncUpdateTask: Future[Unit] = _
+  /** The timestamp when the last successful update action is finished. */
+  @volatile private var lastUpdateTimestamp = -1L
+
   protected def spark = SparkSession.active
 
   /** Used to read and write physical log files and checkpoints. */
@@ -155,6 +159,7 @@ class DeltaLog private(
         deltas.lastOption.map(_.getModificationTime).getOrElse(-1L))
 
       validateChecksum(snapshot)
+      lastUpdateTimestamp = clock.getTimeMillis()
       snapshot
     } catch {
       case e: AnalysisException if Option(e.getMessage).exists(_.contains("Path does not exist")) =>
@@ -198,14 +203,12 @@ class DeltaLog private(
     }
   }
 
-  @volatile private[delta] var asyncUpdateTask: Future[Unit] = _
-
   /** Checks if the snapshot of the table has surpassed our allowed staleness. */
   private def isSnapshotStale: Boolean = {
     val stalenessLimit = spark.sessionState.conf.getConf(
       DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT)
-    stalenessLimit == 0L || snapshot.timestamp < 0 ||
-      clock.getTimeMillis() - snapshot.timestamp >= stalenessLimit
+    stalenessLimit == 0L || lastUpdateTimestamp < 0 ||
+      clock.getTimeMillis() - lastUpdateTimestamp >= stalenessLimit
   }
 
   /**
@@ -277,6 +280,7 @@ class DeltaLog private(
 
         val (checkpoints, deltas) = newFiles.partition(f => isCheckpointFile(f.getPath))
         if (deltas.isEmpty) {
+          lastUpdateTimestamp = clock.getTimeMillis()
           return currentSnapshot
         }
 
@@ -343,6 +347,7 @@ class DeltaLog private(
             throw e
           }
       }
+      lastUpdateTimestamp = clock.getTimeMillis()
       currentSnapshot
     }
   }
