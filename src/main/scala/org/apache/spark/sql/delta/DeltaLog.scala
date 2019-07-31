@@ -168,8 +168,6 @@ class DeltaLog private(
   if (currentSnapshot.version == -1) {
     // No checkpoint exists. Call "update" to load delta files.
     update()
-  } else {
-    protocolRead()
   }
 
   /**
@@ -279,7 +277,6 @@ class DeltaLog private(
 
         val (checkpoints, deltas) = newFiles.partition(f => isCheckpointFile(f.getPath))
         if (deltas.isEmpty) {
-          protocolRead()
           return currentSnapshot
         }
 
@@ -334,8 +331,6 @@ class DeltaLog private(
         validateChecksum(newSnapshot)
         currentSnapshot.uncache()
         currentSnapshot = newSnapshot
-
-        protocolRead()
       } catch {
         case f: FileNotFoundException =>
           val message = s"No delta log found for the Delta table at $logPath"
@@ -435,9 +430,9 @@ class DeltaLog private(
    |  Protocol validation  |
    * --------------------- */
 
-  private def oldProtocolMessage =
+  private def oldProtocolMessage(protocol: Protocol): String =
     s"WARNING: The Delta Lake table at $dataPath has version " +
-      s"${currentSnapshot.protocol.simpleString}, but the latest version is " +
+      s"${protocol.simpleString}, but the latest version is " +
       s"${Protocol().simpleString}. To take advantage of the latest features and bug fixes, " +
       "we recommend that you upgrade the table.\n" +
       "First update all clusters that use this table to the latest version of Databricks " +
@@ -447,53 +442,52 @@ class DeltaLog private(
       s"${DeltaErrors.baseDocsPath(spark)}/delta/versioning.html"
 
   /**
-   * If the protocol of the current snapshot is older than that of the client
+   * If the given `protocol` is older than that of the client.
    */
-  private def isCurrentProtocolOld = currentSnapshot.protocol != null &&
-    (Action.readerVersion > currentSnapshot.protocol.minReaderVersion ||
-      Action.writerVersion > currentSnapshot.protocol.minWriterVersion)
+  private def isProtocolOld(protocol: Protocol): Boolean = protocol != null &&
+    (Action.readerVersion > protocol.minReaderVersion ||
+      Action.writerVersion > protocol.minWriterVersion)
 
   /**
    * Asserts that the client is up to date with the protocol and
-   * allowed to read the table.
+   * allowed to read the table that is using the given `protocol`.
    */
-  def protocolRead(): Unit = {
-    if (currentSnapshot.protocol != null &&
-        Action.readerVersion < currentSnapshot.protocol.minReaderVersion) {
+  def protocolRead(protocol: Protocol): Unit = {
+    if (protocol != null &&
+        Action.readerVersion < protocol.minReaderVersion) {
       recordDeltaEvent(
         this,
         "delta.protocol.failure.read",
         data = Map(
           "clientVersion" -> Action.readerVersion,
-          "minReaderVersion" -> currentSnapshot.protocol.minReaderVersion))
+          "minReaderVersion" -> protocol.minReaderVersion))
       throw new InvalidProtocolVersionException
     }
 
-    if (isCurrentProtocolOld) {
+    if (isProtocolOld(protocol)) {
       recordDeltaEvent(this, "delta.protocol.warning")
-      logConsole(oldProtocolMessage)
+      logConsole(oldProtocolMessage(protocol))
     }
   }
 
   /**
    * Asserts that the client is up to date with the protocol and
-   * allowed to write to the table.
+   * allowed to write to the table that is using the given `protocol`.
    */
-  def protocolWrite(logUpgradeMessage: Boolean = true): Unit = {
-    if (currentSnapshot.protocol != null &&
-        Action.writerVersion < currentSnapshot.protocol.minWriterVersion) {
+  def protocolWrite(protocol: Protocol, logUpgradeMessage: Boolean = true): Unit = {
+    if (protocol != null && Action.writerVersion < protocol.minWriterVersion) {
       recordDeltaEvent(
         this,
         "delta.protocol.failure.write",
         data = Map(
           "clientVersion" -> Action.writerVersion,
-          "minWriterVersion" -> currentSnapshot.protocol.minWriterVersion))
+          "minWriterVersion" -> protocol.minWriterVersion))
       throw new InvalidProtocolVersionException
     }
 
-    if (logUpgradeMessage && isCurrentProtocolOld) {
+    if (logUpgradeMessage && isProtocolOld(protocol)) {
       recordDeltaEvent(this, "delta.protocol.warning")
-      logConsole(oldProtocolMessage)
+      logConsole(oldProtocolMessage(protocol))
     }
   }
 

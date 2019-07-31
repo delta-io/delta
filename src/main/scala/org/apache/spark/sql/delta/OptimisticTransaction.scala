@@ -313,6 +313,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
     }
 
     deltaLog.protocolWrite(
+      snapshot.protocol,
       logUpgradeMessage = !actions.headOption.exists(_.isInstanceOf[Protocol]))
 
     // We make sure that this isn't an appendOnly table as we check if we need to delete
@@ -424,8 +425,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
       // If the log protocol version was upgraded, make sure we are still okay.
       // Fail the transaction if we're trying to upgrade protocol ourselves.
       if (protocol.nonEmpty) {
-        deltaLog.protocolRead()
-        deltaLog.protocolWrite()
+        protocol.foreach { p =>
+          deltaLog.protocolRead(p)
+          deltaLog.protocolWrite(p)
+        }
         actions.foreach {
           case Protocol(_, _) => throw new ProtocolChangedException(commitInfo)
           case _ =>
