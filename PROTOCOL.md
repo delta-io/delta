@@ -1,110 +1,94 @@
-* auto-gen TOC:
-{:toc}
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+Delta Transaction Log Protocol
+
+- [Overview](#overview)
+- [Delta Table Specification](#delta-table-specification)
+  - [File Types](#file-types)
+    - [Versions](#versions)
+    - [Checkpoints](#checkpoints)
+    - [Data Files](#data-files)
+  - [Actions](#actions)
+    - [Change Metadata](#change-metadata)
+      - [Format Specification](#format-specification)
+    - [Add File and Remove File](#add-file-and-remove-file)
+    - [Transaction Identifiers](#transaction-identifiers)
+    - [Protocol Evolution](#protocol-evolution)
+    - [Commit Provenance Information](#commit-provenance-information)
+- [Reading a Delta Table](#reading-a-delta-table)
+  - [Last Checkpoint File](#last-checkpoint-file)
+- [Appendix](#appendix)
+  - [Per-file Statistics](#per-file-statistics)
+  - [Schema Serialization Format](#schema-serialization-format)
+    - [Primitive Types](#primitive-types)
+    - [Struct Type](#struct-type)
+    - [Struct Field](#struct-field)
+    - [Array Type](#array-type)
+    - [Map Type](#map-type)
+    - [Example](#example)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 # Overview
-Goals
-- Serializable ACID Transactions
-- Efficient operation on a variety of storage systems
-- Scalability to billions of files / partitions
-- Self describing
-- Support for incremental processing through streaming
-- Evolvable
+This document is a specification for the Delta Transaction Protocol, which brings [ACID](https://en.wikipedia.org/wiki/ACID) properties to large collections of data, stored as files, in a distributed file system or object store. The protocol was designed with the following goals in mind:
 
-# Blob Store Requirements
-The protocol requires the following from the underlying storage system.
-In some cases where the requirements are not met, we can still correctly implement the protocol by running an extra service for that particular cloud.
-For example, while S3 does not provide mutual exclusion, we can satisfy this requirement by using a centralized commit service.
- - Atomic File Creation - The tahoe protocol requires that delta files are created atomically in order to support atomicity of higher level operations. When atomic creation is not available this can also be satisfied by atomic rename.
- - Mutual Exclusion - Two clients must not both succeed at creating a particular delta file, as this would violate our requirement of a single linear history.
- - Partial Listing - We may retain an arbitrarily large number of delta log entries both for provenance information and to allow users to read old snapshots of the table. As such, for good performance, we require the blob store to allow us to list files in lexicographic order starting at a given file name.
+- **Serializable ACID Writes** - multiple writers can concurrently modify a Delta table while maintaining ACID semantics.
+- **Snapshot Isolation for Reads** - readers can read a consistent snapshot of a Delta table, even in the face of concurrent writes.
+- **Scalability to billions of partitions or file** - queries against a delta table can be planned on a single machine or in parallel.
+- **Self describing** - all metadata for a Delta table is stored alongside the data, static tables can be copied or moved using standard tools.
+- **Support for incremental processing** - readers can tail the delta log to determine what data has been added in a given period of time, allowing for efficient streaming.
 
-# Transaction Log Protocol
+Delta supports the above by implementing MVCC using a set of data files (encoded using parquet) along with a transaction log that tracks which files are part of the table at any given version.
 
-## File Layout
-The log for a delta table is stored in directory on DBFS (e.g., /home/michael/data/_delta_log). This would typically be at the same location as the root of the partitioned data files, though that is not a strict requirement.  In order to modify the state of the table, a writer must append a delta file that contains an unordered list of actions.  Delta files are named using consecutive integers and are zero padded to allow for efficient ordered enumeration.
+# Delta Table Specification
+A delta table is comprised of a set of _data files_ along with a _transaction log_ that records the state of the table in a sequence of contiguous, monotonically increasing table _versions_.
 
-```
-dbfs:/mnt/streaming/tahoe/usage/_delta_log/00000000000000000000.json
-dbfs:/mnt/streaming/tahoe/usage/_delta_log/00000000000000000001.json
-dbfs:/mnt/streaming/tahoe/usage/_delta_log/00000000000000000002.json
-```
+The state of a table at a given version is defined by the following properties:
+ - **Version of the Delta log protocol** that is required to correctly read or write from the table.
+ - **Metadata** of the table (e.g., the schema, a unique identifier, partition columns, and other configuration properties)
+ - **Set of files** present in this version of table, along with metadata about those files.
+ - **Set of tombstones** indicating files that were recently deleted.
+ - **Set of applications-specific transaction** that have been successfully committed to the table.
 
-Delta files are named using consecutive numbers and the log store ensure that concurrent writers are unable to successfully write the same delta file, giving us an agreed upon linear history for the table.  The state of the table is defined as the result of replaying all of the actions in the delta log in order.
+## File Types
+Delta tables consist of three types of files: versions, checkpoints, and data files.
 
-- TODO: MVCC
-- TODO: Action ordering within a table version. Invalid to include multiple conflicting actions
-- TODO: Add example files w/ optional partition directories
-- TODO: Add checkpoints
-- TODO: Add last checkpoint
-- TODO: Parquet file naming. should use guids
+### Versions
+Table versions are stored at the root of the table in a directory named `_delta_log`.
+Table versions within this directory are stored as JSON files, named using the version, zero-padded to 20 digits (e.g., `00000000000000000000.json` would contain the first version of the table).
 
-## Table State
-At a high level, the current state of the table is defined as follows:
- - The current metadata, including: the schema of the table, a unique identifier, partition columns, and other configuration properties (i.e., if the table is append only)
- - The files present in the table, along with metadata about those files, including: the size of the file, partition values, statistics.
- - Tombstones, which indicate that file was recently deleted and should remain temporarily to allow for reading of stale snapshots.
- - Applications specific transaction versions, which allow applications such as a structured streaming to make changes to the table in an idempotent manner.
- - Protocol Version
+A version file, `n`, contains an unordered set of [_actions_](#Actions) that should be applied to the previous table state,`n-1`, in order to determine the new state of the table.
+An action changes one property of the table's state, for example, adding or removing a file.
 
-The state of the table is changed by appending a new delta file to the log for a given table. Delta files contain actions, such as adding or removing a file. Most importantly, delta files are the unit of atomicity (i.e., each delta file represents a set of actions that will all happen atomically).
+### Checkpoints
+[Checkpoints](#checkpoints) are also stored in the `_delta_log` directory, and can be created for any version of the table.
+A checkpoint contains all valid actions of the table at that version, allowing readers to short-cut reading the log up-to that point.
+
+By default, the reference implementation creates a checkpoint every 10 commits.
+
+Checkpoint file naming is based on the version of the table the checkpoint contains and can take one of two forms.
+ - A single checkpoint file for version `n` of the table will be named `n.checkpoint.parquet`.
+ - A multi-part checkpoint for version `n` is split into `p` fragments. Part `o` of `p` is named `n.checkpoint.o.p.parquet`. If any parts of the checkpoint are missing the checkpoint is invalid and must be ignored.
+
+Checkpoints must only be written out after the table version has been successfully created to avoid multiple writers from creating inconsistent checkpoints.
+
+<!-- TODO: requirements on partitioning/ordering in checkpoints -->
+
+### Data Files
+Data files can be stored in the root directory of the table or in any non-hidden (i.e. does not start with an `_`) subdirectory. By default, the reference implementation stores delta files in directories that are named based on the partition values for data in that file (i.e. `part1=value1/part2=value2/...`). This format is only used to follow existing conventions and is not required by the protocol. Actual partition values for a file must be read from the transaction log.
 
 ## Actions
-
-### Add File
-
-### Remove File
-
-A file operation adds or removes a path from the table. The AddFile operation also includes information about partition values and statistics such as file size that are useful in query planning.
-
-Files are defined to be unique by the path (and thus the same path may not exist in a table twice).  This restriction means we can update a files metadata by adding it again in a subsequent delta file. In this case, when a duplicate path is observed in a later delta, the metadata of the latest action defines the new state of the table.
-
-Relative paths are assumed to be based at the parent of the _delta_log directory.  This allows the log to work with mount points or external file operations (such as cp or mv) that move the entire collection of data.  Absolute paths are also supported, though we need to decide if this mechanism will be exposed to end users.
-
-Removal of a file also includes a timestamp that indicates when the deletion occurred.  Physical deletion of the file can happen lazily after some user specified time threshold.  This delay allows concurrent readers to continue to execute against a stale snapshot of the data.  This tombstone should be maintained in the state of the table until after the threshold has been crossed.
-
-Since actions within a given delta file are not guaranteed to be applied in order, it is not valid for multiple file operations with the same path to exist in a single delta file.
-
-The `dataChange` flag is used to indicate that an operation only rearranges existing data or adds new statistics, and does not result in a net change in the data present in the table.  This flag is useful if we want to use the transaction log as a source for a streaming query.
-
-Stats contains a json encoded set of statistics about the file.  Clients should always assume that statistics can be missing.
-
-```
-{
-  "add": {
-    "path":"date=2017-12-10/part-000...c000.gz.parquet",
-    "partitionValues":{"date":"2017-12-10"},
-    "size":841454,
-    "modificationTime":1512909768000,
-    "dataChange":true
-    "stats":"{\"numRecords\":1,\"minValues\":{\"val..."
-  }
-}
-
-{
-  "remove":{
-    "path":"part-00001-9…..snappy.parquet",
-    "deletionTimestamp":1515488792485,
-    "dataChange":false
-  }
-}
-```
-
-### Transaction Identifiers
-
-The ability to make the application of a delta file idempotent is a useful primitive.  Examples use cases include both streaming appends and directly allowing users to build fault tolerant data pipelines. These use cases are enabled by tracking a version for a user-specified application id.  For any given application id, the table state tracks the most recent version.  Modifications to this version can be atomically committed along with other actions such as appends to make them idempotent.
-
-Note that the semantics of the version number are the responsibility of the higher layer,  and the log replay should not make an assumption other than last update wins and concurrent modifications should fail. For example, the protocol does not assume monotonicity and it would be valid for the version to decrement, "undoing" a given operation.
-
-```
-{
-  "txn": {
-    "appId":"3ba13872-2d47-4e17-86a0-21afd2a22395",
-    "version":364475
-  }
-}
-```
+Actions modify the state of the table and they are stored both in table version files and in checkpoints.
+This section lists the space of available actions as well as their schema.
 
 ### Change Metadata
+The `metaData` action changes the current metadata of the table.
+The first commit to a table must contain a metadata action.
+Subsequent metadata actions completely overwrite the current metadata of the table.
+
+There must only be one metadata action in a given version of the table.
+
+The schema of the `metaData` is as follows:
 
 Field Name | Data Type | Description
 -|-|-
@@ -115,9 +99,17 @@ format|[Format Struct](#Format-Specification)| Specification of the encoding for
 schemaString|[Schema Struct](#Schema-Specification)| Schema of the table
 partitionColumns|`Array[String]`| An array containing the names of columns that the data should be partitioned by.
 
+#### Format Specification
+Field Name | Data Type | Description
+-|-|-
+provider|`String`|Name of the encoding for files in this table
+options|`Map[String, String]`|A map containing configuration options for the format
 
-The metadata of the table contains information that identifies its contents or controls how the data is read (i.e., should we use json or parquet).  The metadata of the table is defined as the metadata action found in the most recent delta that contains one.
+In the reference implementation, the provider is used to instantiate a Spark SQL [`FileFormat`](https://github.com/apache/spark/blob/master/sql/core/src/main/scala/org/apache/spark/sql/execution/datasources/FileFormat.scala). As of Spark 2.4.3 there is built-in `FileFormat` support for `parquet`, `csv`, `orc`, `json`, and `text`.
 
+As of Delta Lake 0.3.0, user facing APIs only allow the creation of tables where `format = 'parquet'` and `options = {}`. Support for reading other formats remains both for legacy reasons and to enable possible support for other formats in the future (See [#87](https://github.com/delta-io/delta/issues/87)).
+
+The following is an example `metaData` action:
 ```
 {
   "metaData":{
@@ -132,78 +124,117 @@ The metadata of the table contains information that identifies its contents or c
 }
 ```
 
-TODO: Options that are mandatory.
+### Add File and Remove File
+The `add` and `remove` actions are used to modify the data in a table by adding or removing individual data files respectively.
 
-#### Format Specification
+A path to a file is unique within a table.
+When an `add` action is encountered for a file that is already present in the table, statistics and other information from the latest version should replace that from any previous version.
+As such, additional statistics can be added for a file already present in the table by adding it again.
+
+The `remove` action includes a timestamp that indicates when the removal occurred. Physical deletion of the file can happen lazily after some user specified time threshold. This delay allows concurrent readers to continue to execute against a stale snapshot of the data.  This tombstone should be maintained in the state of the table until after the threshold has been crossed.
+
+Since actions within a given delta file are not guaranteed to be applied in order, it is not valid for multiple file operations with the same path to exist in a single version.
+
+The `dataChange` flag on either an `add` or a `remove` can be set to `false` to indicate that an operation only rearranges existing data or adds new statistics, and does not result in a net change of the data present in the table.
+This flag indicates to streaming queries that are tailing the transaction log can skip this action without affecting the results.
+
+The schema of the `add` action is as follows:
+
 Field Name | Data Type | Description
 -|-|-
-provider|`String`|Name of the encoding for files in this table
-options|`Map[String, String]`|A map containing configuration options for the format
+path| String | A relative path, from the root of the table, to a file that should be added to the table.
+partitionValues| Map[String, String] | A map containing the partition values for this file.
+size| Long | The size of this file in bytes.
+modificationTime | Long | The time this file was created as milliseconds since the epoch.
+dataChange | Boolean | When `false` the file must already be present in the table or the records in the added file must be contained in one or more `remove` actions.
+stats | [Statistics Struct](TODO) | Contains statistics (e.g., count, min/max values for columns) about the data in this file.
+tags | Map[String, String] | Map containing metadata about this file.
 
-In the reference implementation the provider is use to instantiate a Spark SQL [`FileFormat`](https://github.com/apache/spark/blob/master/sql/core/src/main/scala/org/apache/spark/sql/execution/datasources/FileFormat.scala). As of Spark 2.4.3 there is built-in `FileFormat` support for `parquet`, `csv`, `orc`, `json`, and `text`.
+The following is an example `add` action:
+```
+{
+  "add": {
+    "path":"date=2017-12-10/part-000...c000.gz.parquet",
+    "partitionValues":{"date":"2017-12-10"},
+    "size":841454,
+    "modificationTime":1512909768000,
+    "dataChange":true
+    "stats":"{\"numRecords\":1,\"minValues\":{\"val..."
+  }
+}
+```
 
-However, currently, user facing APIs only allow users to create tables where `format = 'parquet'` and `options = {}`. Support for reading other formats remains both for legacy reasons and to enable possible support for other formats in the future.
+The schema of the `remove` action is as follows:
 
-#### Schema Specification
+Field Name | Data Type | Description
+-|-|-
+path | String | An absolute or relative path to a file that should be removed from the table.
+deletionTimestamp | Long | The time the deletion occurred, represented as milliseconds since the epoch.
+dataChange | Boolean | When `false` the records in the removed file must be contained in one or more `add` file actions.
 
-##### Primitive Types
-Type Name | Description
--|-
-string| UTF-8 encoded string of characters.
-integer|4-byte signed integer. Range: -2147483648 to 2147483647.
-short| 2-byte signed integer numbers. Range: -32768 to 32767
-byte| 1-byte signed integer number. Range: -128 to 127
-float| 4-byte single-precision floating point numbers
-double| 8-byte double-precision floating point numbers
-boolean| `true` or `false`
-binary| A sequence of binary data.
-date| A calendar date, represented as a year-month-day triple without a timezone.
-timestamp| Microsecond precision timestamp without a timezone.
+The following is an example `remove` action.
+```
+{
+  "remove":{
+    "path":"part-00001-9…..snappy.parquet",
+    "deletionTimestamp":1515488792485,
+    "dataChange":true
+  }
+}
+```
 
-##### Struct Types
+### Transaction Identifiers
+Transaction identifiers allow external systems that are modifying a Delta table to record application-specific metadata regarding the latest `version` for a given `appId` that has committed successfully.
+By recording this information atomically with other the actions in the version, Delta enables these systems to make their transactions _idempotent_.
 
-A struct is used to represent both the top level schema of the table as well as columns that are nested within another column of the table. It is encoded as a JSON object with the following fields.
+For example, the [Delta Sink for Apache Spark's Structured Streaming](https://github.com/delta-io/delta/blob/master/src/main/scala/org/apache/spark/sql/delta/sources/DeltaSink.scala) ensures exactly once semantics when writing a stream into a table using the following process:
+ 1. Record in a write-ahead-log the data that will be written, along with a monotonically increasing identifier for this batch.
+ 1. Check the current version of the transaction with `appId = streamId` in the target table. If this value is greater than or equal to the batch being written, then this has data has already been added and we can skip to the next batch.
+ 1. Write the data optimistically into the table.
+ 1. Attempt to commit the transaction containing both the addition of the data written out and an updated `version.`
 
-Field Name | Description
--|-
-type | Always the string "struct".
-fields | An array of fields.
+The semantics of the version number are left up to the external system, and Delta will only ensures that the last update to a given `appId` is recorded and concurrent modifications of the same `appId` should fail. The protocol does not, for example, assume monotonicity and it would be valid for the version to decrease, possibly representing a "rollback" of an earlier transaction.
 
-A struct field is encoded as follows:
+The schema of the `txn` action is as follows:
+Field Name | Data Type | Description
+-|-|-
+appId | String | A unique identifier for the application performing the transaction.
+version | Long | An application specific numeric identifier for this transaction.
 
-Field Name | Description
--|-
-name| Name of this (possibly nested) column.
-type| A string containing the name of a primitive type, a struct definition, an array definition or a map defintion.
-nullable| Boolean denoting whether this field can be null.
-metadata| A JSON map containing information about this column. Keys prefixed with `delta` are reserved for the implementation. See [TODO](#) for more information on column level metadata that must clients must handle when writing to a table.
+The following is an example `txn` action:
+```
+{
+  "txn": {
+    "appId":"3ba13872-2d47-4e17-86a0-21afd2a22395",
+    "version":364475
+  }
+}
+```
 
-##### Array Types
+### Protocol Evolution
+The `protocol` action is used to set the version of the Delta protocol that is required to read or write a given table.
+Protocol versioning allows a newer client to exclude older readers and/or writers that are missing features required to correctly interpret the transaction log.
+The protocol version must be increased whenever non-forward compatible changes are made to this spec.
+In the case where a client is running an invalid version, an error should be thrown instructing the user to upgrade to a newer version of their Delta client library.
 
-##### Map Types
+Since breaking changes must be accompanied by an increase in the tables protocol version, clients can assume that unrecognized fields or actions are not required to correctly interpret the transaction log.
 
-
-
-### Change Protocol Version
+The schema of the `protocol` action is as follows:
 
 Field Name | Data Type | Description
 -|-|-
 minReaderVersion | Int | The minimum version of the Delta read protocol that a client must implement in order to correctly *read* this table.
 minWriterVersion | Int | The minimum version of the Delta write protocol that a client must implement in order to correctly *write* this table.
 
-
-The protocol versioning action allows for a newer client to exclude older readers and/or writers.  An exclusion should be used whenever non-forward compatible changes are made to the protocol. In the case where a client is running an invalid version, an error should be thrown instructing the user to upgrade to a newer version of DBR.
-
+The current version of the delta protocol is:
 ```
 {
   "protocol":{
     "minReaderVersion":1,
-    "minWriterVersion":1
+    "minWriterVersion":2
   }
 }
 ```
-
-TODO: Discuss ignoring fields
 
 ### Commit Provenance Information
 Commits can optionally contain additional provenance information about what higher level operation was being performed as well as who executed it.  This information can be used both when looking at the history of the table as well as when throwing a concurrent modification exception.
@@ -223,11 +254,227 @@ Commits can optionally contain additional provenance information about what high
 }
 ```
 
-## Checkpoints
-As the number of delta files grows, it becomes increasingly expensive to reconstruct the current state of the table from scratch.  In order to mitigate this problem, Delta will regularly produce a checkpoint file, which contains the current state of up until some delta version. Future readers can start with this file and only read deltas that come afterwards.
+# Reading a Delta Table
+In order to query a delta table, a client must start by constructing the state of the table by doing the following:
+ 1. Locate the most recent checkpoint.
+ 1. Locate any subsequent version files.
+ 1. Apply the actions from all of the above in order to an empty state.
 
-Note that when producing a checkpoint, it is important to first write out the delta file, ensuring that all writers agree on what the contents of the checkpoint should be.  Ensuring that checkpoints are deterministic means that we can relax the requirements on creation.  In particular, there is no need for mutual exclusion when producing a checkpoint.  If multiple writers try and create the same checkpoint, it does not matter which one wins.
+## Last Checkpoint File
+The Delta transaction log can contain many 100,000s of table versions.
+Listing such a large directory can be prohibitively expensive.
+Rather than list the entire directory, readers can locate the most recent checkpoint, and thus a point near the end of the log, by looking at the `_delta_log/_last_checkpoint` file.
+This file is encoded as JSON and contains the following information:
 
-Metadata about the last checkpoint that was written out is stored in a file name _last_checkpoint, and includes its version and its size. This information allows repository to keep a long history of without increasing the cost of loading the current state.  Note that, as this is only an optimization, it does not cause correctness problems if _last_checkpoint is stale due to concurrent writers or eventual consistency.
+Field | Description
+-|-
+version | the version of the table when the last checkpoint was made.
+size | The number of actions that are stored in the checkpoint.
+parts | The number of fragments if the last checkpoint was written in multiple parts.
 
-TODO: Invariants...
+
+<!--
+# Modifying a Delta Table
+A delta table is modfied using the following
+## Creating a New Version
+New versions of table must be added to the log _atomically_ and with _mutual-exclusion_, using mechanisms supported by the underlying file system.
+For example, on HDFS, a new version can be created by:
+ 1. Optimistically write any new data files.
+ 1. Create a temporary file with the desired set of actions.
+ 1. Renaming the temporary file to the next position in the log, setting the flag to fail if the destination already exists.
+
+- TODO: MVCC
+The metadata of the table at any given version must be consistent with the data currently in the table.
+For example, it is not valid to change the partitioning of the table without also removing any files present that are not correctly partitioned.
+- TODO: Action ordering within a table version. Invalid to include multiple conflicting actions
+- TODO: Add example files w/ optional partition directories
+- TODO: Add checkpoints
+- TODO: Add last checkpoint
+- TODO: Parquet file naming. should use guids
+
+## Required Table Options
+## Column Invariants
+-->
+
+# Appendix
+
+## Per-file Statistics
+`add` file actions can optionally contain statistics about the data in the file being added to the table.
+These statistics can be used for eliminating files based on query predicates or as input to query optimization.
+
+Global statistics record information about the entire file.
+The following global statistic is currently supported:
+
+Name | Description
+-|-
+numRecords | The number of records in this file.
+
+Per column statistics record stats for each column in the file and they are encoded mirroring the schema of the actual data.
+For example, given the following data schema:
+```
+|-- a: struct
+|    |-- b: struct
+|    |    |-- c: long
+```
+
+Statistics could be stored with the following schema:
+```
+|-- stats: struct
+|    |-- numRecords: long
+|    |-- minValues: struct
+|    |    |-- a: struct
+|    |    |    |-- b: struct
+|    |    |    |    |-- c: long
+|    |-- maxValues: struct
+|    |    |-- a: struct
+|    |    |    |-- b: struct
+|    |    |    |    |-- c: long
+```
+
+The following per-column statistics are currently supported:
+
+Name | Description
+-|-
+nullCount | The number of null values for this column.
+minValues | A value smaller than all values present in the file for this column.
+maxValues | A value larger than all values present in the file for this colunn.
+
+
+## Schema Serialization Format
+
+Delta uses a subset of Spark SQL's JSON Schema representation to record the schema of a table in the transaction log.
+A reference implementation can be found in [the catalyst package of the Apache Spark repository](https://github.com/apache/spark/tree/master/sql/catalyst/src/main/scala/org/apache/spark/sql/types).
+
+### Primitive Types
+
+Type Name | Description
+-|-
+string| UTF-8 encoded string of characters.
+integer|4-byte signed integer. Range: -2147483648 to 2147483647.
+short| 2-byte signed integer numbers. Range: -32768 to 32767
+byte| 1-byte signed integer number. Range: -128 to 127
+float| 4-byte single-precision floating point numbers
+double| 8-byte double-precision floating point numbers
+boolean| `true` or `false`
+binary| A sequence of binary data.
+date| A calendar date, represented as a year-month-day triple without a timezone.
+timestamp| Microsecond precision timestamp without a timezone.
+
+### Struct Type
+
+A struct is used to represent both the top level schema of the table as well as struct columns that contain nested columns. A struct is encoded as a JSON object with the following fields.
+
+Field Name | Description
+-|-
+type | Always the string "struct".
+fields | An array of fields.
+
+### Struct Field
+
+A struct field represents a top level or nested column.
+
+Field Name | Description
+-|-
+name| Name of this (possibly nested) column.
+type| String containing the name of a primitive type, a struct definition, an array definition or a map definition.
+nullable| Boolean denoting whether this field can be null.
+metadata| A JSON map containing information about this column. Keys prefixed with `delta` are reserved for the implementation. See [TODO](#) for more information on column level metadata that must clients must handle when writing to a table.
+
+### Array Type
+
+An array stores a variable length collection of items of some type.
+
+Field Name | Description
+-|-
+type| Always the string "array".
+elementType| The type of element stored in this array represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition.
+containsNull| Boolean denoting whether this array can contain one or more null values.
+
+### Map Type
+
+A map stores an arbitrary length collection of key-value pairs with a single `keyType` and a single `valueType`.
+
+Field Name | Description
+-|-
+type| Always the string "map".
+keyType| The type of element used for the key of this map, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition.
+valueType| The type of element used for the key of this map, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition.
+
+### Example
+
+Example Table Schema:
+```
+|-- a: integer (nullable = false)
+|-- b: struct (nullable = true)
+|    |-- d: integer (nullable = false)
+|-- c: array (nullable = true)
+|    |-- element: integer (containsNull = false)
+|-- e: array (nullable = true)
+|    |-- element: struct (containsNull = true)
+|    |    |-- d: integer (nullable = false)
+|-- f: map (nullable = true)
+|    |-- key: string
+|    |-- value: string (valueContainsNull = true)
+```
+
+JSON Encoded Table Schema:
+```
+{
+  "type" : "struct",
+  "fields" : [ {
+    "name" : "a",
+    "type" : "integer",
+    "nullable" : false,
+    "metadata" : { }
+  }, {
+    "name" : "b",
+    "type" : {
+      "type" : "struct",
+      "fields" : [ {
+        "name" : "d",
+        "type" : "integer",
+        "nullable" : false,
+        "metadata" : { }
+      } ]
+    },
+    "nullable" : true,
+    "metadata" : { }
+  }, {
+    "name" : "c",
+    "type" : {
+      "type" : "array",
+      "elementType" : "integer",
+      "containsNull" : false
+    },
+    "nullable" : true,
+    "metadata" : { }
+  }, {
+    "name" : "e",
+    "type" : {
+      "type" : "array",
+      "elementType" : {
+        "type" : "struct",
+        "fields" : [ {
+          "name" : "d",
+          "type" : "integer",
+          "nullable" : false,
+          "metadata" : { }
+        } ]
+      },
+      "containsNull" : true
+    },
+    "nullable" : true,
+    "metadata" : { }
+  }, {
+    "name" : "f",
+    "type" : {
+      "type" : "map",
+      "keyType" : "string",
+      "valueType" : "string",
+      "valueContainsNull" : true
+    },
+    "nullable" : true,
+    "metadata" : { }
+  } ]
+}
+```
