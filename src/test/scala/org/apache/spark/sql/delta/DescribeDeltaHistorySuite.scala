@@ -52,7 +52,7 @@ trait DescribeDeltaHistorySuiteBase
 
   def getHistory(path: String, limit: Option[Int] = None): DataFrame = {
     val deltaLog = DeltaLog.forTable(spark, path)
-    val deltaTable = io.delta.DeltaTable.forPath(spark, deltaLog.dataPath.toString)
+    val deltaTable = io.delta.tables.DeltaTable.forPath(spark, deltaLog.dataPath.toString)
     if (limit.isDefined) {
       deltaTable.history(limit.get)
     } else {
@@ -159,7 +159,7 @@ trait DescribeDeltaHistorySuiteBase
     val tempDir = Utils.createTempDir().toString
     Seq((1, "a"), (2, "3")).toDF("id", "data").write.format("delta").partitionBy("id").save(tempDir)
     val deltaLog = DeltaLog.forTable(spark, tempDir)
-    val deltaTable = io.delta.DeltaTable.forPath(spark, deltaLog.dataPath.toString)
+    val deltaTable = io.delta.tables.DeltaTable.forPath(spark, deltaLog.dataPath.toString)
     deltaTable.delete("id = 1")
 
     checkLastOperation(

@@ -22,7 +22,7 @@ import java.util.List;
 
 import scala.Tuple2;
 
-import io.delta.DeltaTable;
+import io.delta.tables.DeltaTable;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Assume;

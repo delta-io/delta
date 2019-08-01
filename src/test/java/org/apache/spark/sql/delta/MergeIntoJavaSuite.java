@@ -24,7 +24,7 @@ import java.util.Map;
 
 import scala.Tuple2;
 
-import io.delta.DeltaTable;
+import io.delta.tables.DeltaTable;
 
 import org.apache.spark.sql.*;
 import org.apache.spark.util.Utils;
