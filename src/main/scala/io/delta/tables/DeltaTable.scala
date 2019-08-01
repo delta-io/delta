@@ -14,12 +14,12 @@
  * limitations under the License.
  */
 
-package io.delta
+package io.delta.tables
 
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
-import io.delta.execution._
+import io.delta.tables.execution._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.annotation.InterfaceStability._

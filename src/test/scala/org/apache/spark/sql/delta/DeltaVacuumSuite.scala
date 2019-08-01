@@ -387,7 +387,7 @@ trait DeltaVacuumSuiteBase extends QueryTest with SharedSQLContext with GivenWhe
         checkDatasetUnorderly(result.as[String], qualified: _*)
       case GCScalaApi(expectedDf, retention) =>
         Given("*** Garbage collecting Reservoir using Scala")
-        val deltaTable = io.delta.DeltaTable.forPath(spark, deltaLog.dataPath.toString)
+        val deltaTable = io.delta.tables.DeltaTable.forPath(spark, deltaLog.dataPath.toString)
         val result = if (retention.isDefined) {
           deltaTable.vacuum(retention.get)
         } else {
