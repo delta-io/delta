@@ -25,7 +25,6 @@ import org.apache.spark.sql.delta.util.AnalysisHelper
 import io.delta.tables.DeltaTable
 
 import org.apache.spark.sql.{functions, Column, DataFrame, SparkSession}
-import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.plans.logical._
@@ -65,15 +64,13 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
       target.toDF.queryExecution.analyzed, updateColumns, updateExpressions, condition)
   }
 
-  protected def executeHistory(limit: Option[Int]): DataFrame = {
+  protected def executeHistory(deltaLog: DeltaLog, limit: Option[Int]): DataFrame = {
     val history = new DeltaHistoryManager(deltaLog)
     val spark = self.toDF.sparkSession
     spark.createDataFrame(history.getHistory(limit))
   }
 
-  protected def executeUpdate(
-      set: Map[String, Column],
-      condition: Option[Column]): Unit = {
+  protected def executeUpdate(set: Map[String, Column], condition: Option[Column]): Unit = {
     val setColumns = set.map{ case (col, expr) => (col, expr) }.toSeq
 
     // Current UPDATE does not support subquery,
@@ -100,15 +97,9 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
   protected def executeVacuum(
       deltaLog: DeltaLog,
       retentionHours: Option[Double]): DataFrame = {
-    val sparkSession = self.toDF.sparkSession
     VacuumCommand.gc(sparkSession, deltaLog, false, retentionHours)
     sparkSession.emptyDataFrame
   }
 
-  protected lazy val deltaLog = (EliminateSubqueryAliases(self.toDF.queryExecution.analyzed) match {
-    case DeltaFullTable(tahoeFileIndex) =>
-      tahoeFileIndex
-  }).deltaLog
-
-  protected lazy val sparkSession: SparkSession = self.toDF.sparkSession
+  protected def sparkSession = self.toDF.sparkSession
 }
