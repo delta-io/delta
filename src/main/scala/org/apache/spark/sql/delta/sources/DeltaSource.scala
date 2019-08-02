@@ -228,7 +228,10 @@ case class DeltaSource(
           throw DeltaErrors.schemaChangedException(schema, m.schema)
         }
         false
-      case _: SetTransaction | _: Protocol | _: CommitInfo =>
+      case protocol: Protocol =>
+        deltaLog.protocolRead(protocol)
+        false
+      case _: SetTransaction | _: CommitInfo =>
         false
       case null => // Some crazy future feature. Ignore
         false

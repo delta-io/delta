@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.util.Locale
 
-import io.delta._
+import io.delta.tables._
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.types.StructType
@@ -33,7 +33,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
       append(Seq((1, 10), (2, 20)).toDF("key1", "value1"), Nil)  // target
       val source = Seq((1, 100), (3, 30)).toDF("key2", "value2")  // source
 
-      io.delta.DeltaTable.forPath(spark, tempPath)
+      io.delta.tables.DeltaTable.forPath(spark, tempPath)
         .merge(source, "key1 = key2")
         .whenMatched().updateExpr(Map("key1" -> "key2", "value1" -> "value2"))
         .whenNotMatched().insertExpr(Map("key1" -> "key2", "value1" -> "value2"))
@@ -53,7 +53,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
       append(Seq((1, 10), (2, 20), (4, 40)).toDF("key1", "value1"), Nil)  // target
       val source = Seq((1, 100), (3, 30), (4, 41)).toDF("key2", "value2")  // source
 
-      io.delta.DeltaTable.forPath(spark, tempPath)
+      io.delta.tables.DeltaTable.forPath(spark, tempPath)
         .merge(source, "key1 = key2")
         .whenMatched("key1 = 4").delete()
         .whenMatched("key2 = 1").updateExpr(Map("key1" -> "key2", "value1" -> "value2"))
@@ -74,7 +74,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
       append(Seq((1, 10), (2, 20), (4, 40)).toDF("key1", "value1"), Nil)  // target
       val source = Seq((1, 100), (3, 30), (4, 41)).toDF("key2", "value2")  // source
 
-      io.delta.DeltaTable.forPath(spark, tempPath)
+      io.delta.tables.DeltaTable.forPath(spark, tempPath)
         .merge(source, functions.expr("key1 = key2"))
         .whenMatched(functions.expr("key1 = 4")).delete()
         .whenMatched(functions.expr("key2 = 1"))
@@ -120,7 +120,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
   test("update with empty map should do nothing") {
     append(Seq((1, 10), (2, 20)).toDF("trgKey", "trgValue"), Nil) // target
     val source = Seq((1, 100), (3, 30)).toDF("srcKey", "srcValue") // source
-    io.delta.DeltaTable.forPath(spark, tempPath)
+    io.delta.tables.DeltaTable.forPath(spark, tempPath)
       .merge(source, "srcKey = trgKey")
       .whenMatched().updateExpr(Map[String, String]())
       .whenNotMatched().insertExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
@@ -134,7 +134,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
       Nil)
 
     // match condition should not be ignored when map is empty
-    io.delta.DeltaTable.forPath(spark, tempPath)
+    io.delta.tables.DeltaTable.forPath(spark, tempPath)
       .merge(source, "srcKey = trgKey")
       .whenMatched("trgKey = 1").updateExpr(Map[String, String]())
       .whenMatched().delete()
@@ -152,7 +152,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
     append(Seq((1, 10), (2, 20)).toDF("trgKey", "trgValue"), Nil) // target
     val source = Seq((1, 100), (3, 30)).toDF("srcKey", "srcValue") // source
     val e = intercept[AnalysisException] {
-      io.delta.DeltaTable.forPath(spark, tempPath)
+      io.delta.tables.DeltaTable.forPath(spark, tempPath)
         .merge(source, "srcKey = trgKey")
         .whenMatched().updateExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
         .whenNotMatched().insertExpr(Map[String, String]())
@@ -169,7 +169,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
 
       // There must be at least one WHEN clause in a MERGE statement
       var e = intercept[AnalysisException] {
-        io.delta.DeltaTable.forPath(spark, tempPath)
+        io.delta.tables.DeltaTable.forPath(spark, tempPath)
           .merge(source, "srcKey = trgKey")
           .execute()
       }
@@ -178,7 +178,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
       // When there are 2 MATCHED clauses in a MERGE statement,
       // the first MATCHED clause must have a condition
       e = intercept[AnalysisException] {
-        io.delta.DeltaTable.forPath(spark, tempPath)
+        io.delta.tables.DeltaTable.forPath(spark, tempPath)
           .merge(source, "srcKey = trgKey")
           .whenMatched().delete()
           .whenMatched("trgKey = 1").updateExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
@@ -189,7 +189,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
 
       // There must be at most two WHEN clauses in a MERGE statement
       e = intercept[AnalysisException] {
-        io.delta.DeltaTable.forPath(spark, tempPath)
+        io.delta.tables.DeltaTable.forPath(spark, tempPath)
           .merge(source, "srcKey = trgKey")
           .whenMatched("trgKey = 1").updateExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
           .whenMatched("trgValue = 3").delete()
@@ -202,7 +202,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
 
       // INSERT can appear at most once in NOT MATCHED clauses in a MERGE statement
       e = intercept[AnalysisException] {
-        io.delta.DeltaTable.forPath(spark, tempPath)
+        io.delta.tables.DeltaTable.forPath(spark, tempPath)
           .merge(source, "srcKey = trgKey")
           .whenNotMatched().insertExpr(Map("trgKey" -> "srcKey + 1", "trgValue" -> "srcValue"))
           .whenNotMatched().insertExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
@@ -213,7 +213,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
 
       // UPDATE can appear at most once in MATCHED clauses in a MERGE statement
       e = intercept[AnalysisException] {
-        io.delta.DeltaTable.forPath(spark, tempPath)
+        io.delta.tables.DeltaTable.forPath(spark, tempPath)
           .merge(source, "srcKey = trgKey")
           .whenMatched("trgKey = 1").updateExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
           .whenMatched("trgValue = 2")
@@ -226,7 +226,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
 
       // DELETE can appear at most once in MATCHED clauses in a MERGE statement
       e = intercept[AnalysisException] {
-        io.delta.DeltaTable.forPath(spark, tempPath)
+        io.delta.tables.DeltaTable.forPath(spark, tempPath)
           .merge(source, "srcKey = trgKey")
           .whenMatched("trgKey = 1").delete()
           .whenMatched("trgValue = 2").delete()
@@ -237,7 +237,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
         "INSERT, UPDATE and DELETE cannot appear twice in one MERGE query")
 
       e = intercept[AnalysisException] {
-        io.delta.DeltaTable.forPath(spark, tempPath)
+        io.delta.tables.DeltaTable.forPath(spark, tempPath)
           .merge(source, "srcKey = trgKey")
           .whenMatched().updateExpr(Map("trgKey" -> "srcKey", "*" -> "*"))
           .whenNotMatched().insertExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
@@ -246,7 +246,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
       errorContains(e.getMessage, "cannot resolve `*`")
 
       e = intercept[AnalysisException] {
-        io.delta.DeltaTable.forPath(spark, tempPath)
+        io.delta.tables.DeltaTable.forPath(spark, tempPath)
           .merge(source, "srcKey = trgKey")
           .whenMatched().updateExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
           .whenNotMatched().insertExpr(Map("*" -> "*"))
@@ -394,13 +394,13 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
     }
   }
 
-  private def makeDeltaTable(nameOrPath: String): io.delta.DeltaTable = {
+  private def makeDeltaTable(nameOrPath: String): DeltaTable = {
     val isPath: Boolean = nameOrPath.startsWith("delta.")
     if (isPath) {
       val path = nameOrPath.stripPrefix("delta.`").stripSuffix("`")
-      io.delta.DeltaTable.forPath(spark, path)
+      io.delta.tables.DeltaTable.forPath(spark, path)
     } else {
-      io.delta.DeltaTable(spark.table(nameOrPath))
+      io.delta.tables.DeltaTable(spark.table(nameOrPath))
     }
   }
 

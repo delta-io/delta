@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta;
+package io.delta.tables;
 
 import java.util.Arrays;
 import java.util.List;

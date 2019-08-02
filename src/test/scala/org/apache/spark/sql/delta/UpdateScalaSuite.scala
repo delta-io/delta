@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.util.Locale
 
-import io.delta.DeltaTable
+import io.delta.tables.DeltaTable
 
 import org.apache.spark.sql.{functions, Row}
 
@@ -28,7 +28,7 @@ class UpdateScalaSuite extends UpdateSuiteBase {
 
   test("update usage test - without condition") {
     append(Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value"))
-    val table = io.delta.DeltaTable.forPath(tempPath)
+    val table = io.delta.tables.DeltaTable.forPath(tempPath)
     table.updateExpr(Map("key" -> "100"))
     checkAnswer(readDeltaTable(tempPath),
       Row(100, 10) :: Row(100, 20) :: Row(100, 30) :: Row(100, 40) :: Nil)
@@ -36,7 +36,7 @@ class UpdateScalaSuite extends UpdateSuiteBase {
 
   test("update usage test - without condition, using Column") {
     append(Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value"))
-    val table = io.delta.DeltaTable.forPath(tempPath)
+    val table = io.delta.tables.DeltaTable.forPath(tempPath)
     table.update(Map("key" -> functions.expr("100")))
     checkAnswer(readDeltaTable(tempPath),
       Row(100, 10) :: Row(100, 20) :: Row(100, 30) :: Row(100, 40) :: Nil)
@@ -44,7 +44,7 @@ class UpdateScalaSuite extends UpdateSuiteBase {
 
   test("update usage test - with condition") {
     append(Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value"))
-    val table = io.delta.DeltaTable.forPath(tempPath)
+    val table = io.delta.tables.DeltaTable.forPath(tempPath)
     table.updateExpr("key = 1 or key = 2", Map("key" -> "100"))
     checkAnswer(readDeltaTable(tempPath),
       Row(100, 10) :: Row(100, 20) :: Row(3, 30) :: Row(4, 40) :: Nil)
@@ -52,7 +52,7 @@ class UpdateScalaSuite extends UpdateSuiteBase {
 
   test("update usage test - with condition, using Column") {
     append(Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value"))
-    val table = io.delta.DeltaTable.forPath(tempPath)
+    val table = io.delta.tables.DeltaTable.forPath(tempPath)
     table.update(functions.expr("key = 1 or key = 2"),
       Map("key" -> functions.expr("100"), "value" -> functions.expr("101")))
     checkAnswer(readDeltaTable(tempPath),
@@ -90,14 +90,14 @@ class UpdateScalaSuite extends UpdateSuiteBase {
       }
     }
 
-    val deltaTable: io.delta.DeltaTable = {
+    val deltaTable: io.delta.tables.DeltaTable = {
       val (tableNameOrPath, optionalAlias) = parse(target)
       val isPath: Boolean = tableNameOrPath.startsWith("delta.")
       val table = if (isPath) {
         val path = tableNameOrPath.stripPrefix("delta.`").stripSuffix("`")
-        io.delta.DeltaTable.forPath(spark, path)
+        io.delta.tables.DeltaTable.forPath(spark, path)
       } else {
-        io.delta.DeltaTable(spark.table(tableNameOrPath))
+        io.delta.tables.DeltaTable(spark.table(tableNameOrPath))
       }
       optionalAlias.map(table.as(_)).getOrElse(table)
     }

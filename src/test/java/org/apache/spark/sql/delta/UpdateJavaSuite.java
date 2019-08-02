@@ -20,7 +20,7 @@ import java.util.*;
 
 import scala.Tuple2;
 
-import io.delta.DeltaTable;
+import io.delta.tables.DeltaTable;
 import org.junit.*;
 
 import org.apache.spark.sql.*;
