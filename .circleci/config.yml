@@ -10,7 +10,7 @@ jobs:
           command: |
             sudo pip install pipenv
             pipenv install
-      -run:
+      - run:
           name: Run Pyhton tests
           command: |
             pipenv shell
