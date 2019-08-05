@@ -31,8 +31,8 @@ from pyspark.sql import Row
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 
-print(os.path.abspath(os.path.dirname(__file__)))
-sys.path.insert(1, '/Users/zhitong.yan/Desktop/contributions/delta/src/main/python')
+current_path = os.path.abspath(os.path.dirname(__file__))
+sys.path.insert(1, current_path.replace("test", "main"))
 
 from tables import DeltaTable
 
