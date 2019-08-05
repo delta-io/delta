@@ -1,0 +1,11 @@
+[[source]]
+url = 'https://pypi.python.org/simple'
+verify_ssl = true
+name = 'pypi'
+[requires]
+python_version = "3.7"
+[packages]
+flake8 = "*"
+pytest-spark = ">=0.4.4"
+pyspark = ">=2.4.2"
+pytest-cov = "*"

@@ -6,5 +6,15 @@ jobs:
     steps:
       - checkout
       - run:
+          name: Prepare Python env
+          command: |
+            sudo pip install pipenv
+            pipenv install
+      -run:
+          name: Run Pyhton tests
+          command: |
+            pipenv shell
+            python src/test/python/testAll.py
+      - run:
           name: Run tests
           command: build/sbt test  # make it +test to cross-scala compile

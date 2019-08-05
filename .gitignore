@@ -99,3 +99,6 @@ spark-warehouse/
 
 # For SBT
 .jvmopts
+
+# For pipenv
+Pipfile.lock
