@@ -15,7 +15,26 @@
 #
 
 
-from pyspark.testing.utils import PySparkTestCase
+import glob
+import os
+import struct
+import sys
+import unittest
+
+from pyspark import SparkContext, SparkConf
+
+
+class PySparkTestCase(unittest.TestCase):
+
+    def setUp(self):
+        self._old_sys_path = list(sys.path)
+        class_name = self.__class__.__name__
+        conf = SparkConf().set("spark.databricks.pyspark.enablePy4JSecurity", "true")
+        self.sc = SparkContext('local[4]', class_name, conf=conf)
+
+    def tearDown(self):
+        self.sc.stop()
+        sys.path = self._old_sys_path
 
 
 class DeltaTableTests(PySparkTestCase):
