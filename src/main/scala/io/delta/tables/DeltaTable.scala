@@ -37,7 +37,7 @@ import org.apache.spark.sql._
  * @since 0.3.0
  */
 @Evolving
-class DeltaTable private(df: Dataset[Row], deltaLog: DeltaLog)
+class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
   extends DeltaTableOperations {
 
   /**
@@ -484,14 +484,6 @@ class DeltaTable private(df: Dataset[Row], deltaLog: DeltaLog)
  * @since 0.3.0
  */
 object DeltaTable {
-
-  /**
-   * :: Unstable ::
-   *
-   * Private method for internal usage only. Do not call this directly.
-   */
-  @Unstable
-  def apply(df: DataFrame, deltaLog: DeltaLog): DeltaTable = new DeltaTable(df, deltaLog)
 
   /**
    * :: Evolving ::
