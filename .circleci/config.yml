@@ -9,8 +9,6 @@ jobs:
       - run:
           name: Prepare Python env
           command: |
-            curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
-            python get-pip.py
             sudo pip install pipenv
             pipenv install
       - run:
