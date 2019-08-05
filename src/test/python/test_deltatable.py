@@ -20,8 +20,21 @@ import os
 import struct
 import sys
 import unittest
+import tempfile
+import shutil
+import logging
 
 from pyspark import SparkContext, SparkConf
+from pyspark.sql import SQLContext
+from pyspark.sql import functions
+from pyspark.sql import Row
+from pyspark.sql import SparkSession
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType
+
+print(os.path.abspath(os.path.dirname(__file__)))
+sys.path.insert(1, '/Users/zhitong.yan/Desktop/contributions/delta/src/main/python')
+
+from tables import DeltaTable
 
 
 class PySparkTestCase(unittest.TestCase):
@@ -38,9 +51,54 @@ class PySparkTestCase(unittest.TestCase):
 
 
 class DeltaTableTests(PySparkTestCase):
-    def helloPySpark(self):
-        print("hello pyspark!")
+    def setUp(self):
+        super(DeltaTableTests, self).setUp()
+        self.sqlContext = SQLContext(self.sc)
+        self.spark = SparkSession(self.sc)
+        self.tempPath = tempfile.mkdtemp()
+        self.tempFile = self.tempPath + "/tempFile"
+
+    def tearDown(self):
+        self.spark.stop()
+        shutil.rmtree(self.tempPath)
+        super(DeltaTableTests, self).tearDown()
+
+    def __checkAnswer(self, df, expectedAnswer):
+        if not expectedAnswer:
+            self.assertEqual(df.count(), 0)
+            return
+        expectedDF = self.spark.createDataFrame(expectedAnswer, ["key", "val"])
+        self.assertEqual(df.count(), expectedDF.count())
+        self.assertEqual(len(df.columns), len(expectedDF.columns))
+        self.assertEqual([], df.subtract(expectedDF).take(1))
+        self.assertEqual([], expectedDF.subtract(df).take(1))
+
+    def __writeDeltaTable(self, datalist, schema):
+        df = self.spark.createDataFrame(datalist, schema)
+        df.write.format("delta").save(self.tempFile)
+
+    def test_forPath_without_session(self):
+        self.__writeDeltaTable(
+            [('Ankit', 25), ('Jalfaizy', 22), ('saurabh', 20), ('Bala', 26)], ["key", "val"])
+        self.__checkAnswer(
+            DeltaTable.forPath(self.tempFile).toDF(),
+            [('Ankit', 25), ('Jalfaizy', 22), ('saurabh', 20), ('Bala', 26)])
+
+    def test_forPath_with_session(self):
+        self.__writeDeltaTable(
+            [('Ankit', 25), ('Jalfaizy', 22), ('saurabh', 20), ('Bala', 26)], ["key", "val"])
+        self.__checkAnswer(
+            DeltaTable.forPath(self.tempFile, self.spark).toDF(),
+            [('Ankit', 25), ('Jalfaizy', 22), ('saurabh', 20), ('Bala', 26)])
 
 
 if __name__ == "__main__":
-    t = DeltaTableTests()
+    if __name__ == "__main__":
+        from test_deltatable import *
+
+    try:
+        import xmlrunner
+        testRunner = xmlrunner.XMLTestRunner(output='target/test-reports', verbosity=4)
+    except ImportError:
+        testRunner = None
+    unittest.main(testRunner=testRunner, verbosity=4)

@@ -19,6 +19,6 @@ from test_deltatable import DeltaTableTests
 
 
 t = DeltaTableTests()
-
-
-t.helloPySpark()
+t.setUp()
+t.test_forPath_without_session()
+t.tearDown()
