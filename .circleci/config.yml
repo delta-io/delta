@@ -6,7 +6,7 @@ jobs:
     steps:
       - checkout
       - run:
-          name: Prepare Python env
+          name: Prepare Python env # install python3.7, python3-pip and pipenv for pyspark.
           command: |
             sudo apt update
             sudo apt install build-essential zlib1g-dev libncurses5-dev libgdbm-dev libnss3-dev libssl-dev libreadline-dev libffi-dev wget
@@ -20,9 +20,9 @@ jobs:
             sudo pip3 install pipenv
             pipenv install
       - run:
-          name: Run Pyhton tests
+          name: Run Pyhton tests # build the Delta Lake and run the python tests
           command: |
-            build/sbt "++2.11.12 package"
+            pipenv run build/sbt "++2.11.12 package"
             pipenv run spark-submit src/test/python/testAll.py --jars target/scala-2.11/delta-core_2.11-0.3.1-SNAPSHOT.jar
       - run:
           name: Run Scala/Java tests
