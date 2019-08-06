@@ -9,16 +9,21 @@ jobs:
           name: Prepare Python env
           command: |
             sudo apt update
-            sudo apt install software-properties-common
-            sudo add-apt-repository --yes ppa:deadsnakes/ppa
-            sudo apt install python3.7
-            sudo apt install python3-pip
-            sudo pip3 install pyspark
+            sudo apt install build-essential zlib1g-dev libncurses5-dev libgdbm-dev libnss3-dev libssl-dev libreadline-dev libffi-dev wget
+            curl -O https://www.python.org/ftp/python/3.7.3/Python-3.7.3.tar.xz
+            tar -xf Python-3.7.3.tar.xz
+            cd Python-3.7.3
+            ./configure --enable-optimizations
+            make -j 8
+            sudo make altinstall
+            cd ..
+            wget http://www.trieuvan.com/apache/spark/spark-2.4.3/spark-2.4.3-bin-hadoop2.7.tgz
+            tar -zxvf spark-2.4.3-bin-hadoop2.7.tgz
       - run:
           name: Run Pyhton tests
           command: |
             build/sbt "++2.11.12 package"
-            spark-submit src/test/python/testAll.py --jars $PWD/target/scala-2.11/delta-core_2.11-0.3.1-SNAPSHOT.jar
+            spark-2.4.3-bin-hadoop2.7/bin/spark-submit src/test/python/testAll.py --jars $PWD/target/scala-2.11/delta-core_2.11-0.3.1-SNAPSHOT.jar
       - run:
           name: Run Scala/Java tests
           command: build/sbt test  # make it +test to cross-scala compile
