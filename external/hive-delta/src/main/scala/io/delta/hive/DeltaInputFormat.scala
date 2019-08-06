@@ -1,11 +1,12 @@
 package io.delta.hive
 
+import java.io.IOException
+
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 import org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat
 import org.apache.hadoop.mapred.FileInputFormat._
 import org.apache.hadoop.mapred.JobConf
 import org.apache.hadoop.mapreduce.security.TokenCache
-import java.io.IOException
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.SparkSession
