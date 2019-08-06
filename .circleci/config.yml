@@ -24,14 +24,9 @@ jobs:
           command: |
             pipenv run python src/test/python/testAll.py
 
-#workflows:  # this is the config for sequential jobs
-#  version: 2
-#  build_and_test:
-#    jobs:
-#      - build
-#      - test:
-#          requires:
-#            - build
-#          filters:
-#            branches:
-#              only: master
+workflows:
+  version: 2
+  build_and_test:
+    jobs:
+      - build
+      - test
