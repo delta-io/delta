@@ -8,6 +8,7 @@ jobs:
       - run:
           name: Prepare Python env
           command: |
+            apt-get install python
             sudo pip install pipenv
             pipenv install
       - run:
