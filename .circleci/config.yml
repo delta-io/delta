@@ -9,7 +9,13 @@ jobs:
           name: Prepare Python env
           command: |
             sudo apt update
-            sudo apt install python3.7
+            sudo apt install build-essential zlib1g-dev libncurses5-dev libgdbm-dev libnss3-dev libssl-dev libreadline-dev libffi-dev wget
+            curl -O https://www.python.org/ftp/python/3.7.3/Python-3.7.3.tar.xz
+            tar -xf Python-3.7.3.tar.xz
+            cd Python-3.7.3
+            ./configure --enable-optimizations
+            make -j 8
+            sudo make altinstall
             sudo apt install python3-pip
             sudo pip install pipenv
             pipenv install
