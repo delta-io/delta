@@ -42,8 +42,7 @@ class PySparkTestCase(unittest.TestCase):
     def setUp(self):
         self._old_sys_path = list(sys.path)
         class_name = self.__class__.__name__
-        conf = SparkConf().set("spark.databricks.pyspark.enablePy4JSecurity", "true")
-        self.sc = SparkContext('local[4]', class_name, conf=conf)
+        self.sc = SparkContext('local[4]', class_name)
 
     def tearDown(self):
         self.sc.stop()
@@ -91,14 +90,9 @@ class DeltaTableTests(PySparkTestCase):
             DeltaTable.forPath(self.tempFile, self.spark).toDF(),
             [('Ankit', 25), ('Jalfaizy', 22), ('saurabh', 20), ('Bala', 26)])
 
-    def runTest(self):
-        self.test_forPath_with_session()
-        self.test_forPath_without_session()
-
 
 if __name__ == "__main__":
-    if __name__ == "__main__":
-        from test_deltatable import *
+    from test_deltatable import *
 
     try:
         import xmlrunner

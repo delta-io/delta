@@ -23,7 +23,7 @@ jobs:
           name: Run Pyhton tests # build the Delta Lake and run the python tests
           command: |
             pipenv run build/sbt "++2.11.12 package"
-            pipenv run spark-submit --jars target/scala-2.11/delta-core_2.11-0.3.1-SNAPSHOT.jar src/test/python/testAll.py
+            pipenv run spark-submit --jars target/scala-2.11/delta-core_2.11-0.3.1-SNAPSHOT.jar src/test/python/test_deltatable.py
       - run:
           name: Run Scala/Java tests
           command: build/sbt test  # make it +test to cross-scala compile

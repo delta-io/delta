@@ -21,13 +21,12 @@ from test_deltatable import DeltaTableTests
 
 
 def testAll():
-    cur_dir = os.path.dirname(os.path.realpath(__file__))
-    proj_dir = cur_dir.replace("/src/test/python", "")
-    os.system("ls ")
-    t = DeltaTableTests()
-    t.setUp()
-    t.test_forPath_without_session()
-    t.tearDown()
+    # Check env conf first, the same as circleci conf.
+    # for now we assume local machine has all of the requirements to run the script.
+
+    # And then, run all of the test under test/python directory, each of them has
+    # main entry point to execute, which is python's unittest testing framework.
+    pass
 
 
 if __name__ == "__main__":
