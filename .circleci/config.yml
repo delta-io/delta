@@ -17,7 +17,7 @@ jobs:
             make -j 8
             sudo make altinstall
             sudo apt install python3-pip
-            sudo pip install pipenv
+            sudo pip3 install pipenv
             pipenv install
       - run:
           name: Run Pyhton tests
