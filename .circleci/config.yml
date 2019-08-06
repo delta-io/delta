@@ -8,7 +8,8 @@ jobs:
       - run:
           name: Prepare Python env # install python3.7, python3-pip and pipenv for pyspark.
           command: |
-            sudo apt install python3-pip
+            sudo apt-get update
+            sudo apt install python3-pip --fix-missing
             sudo pip3 install pipenv
             pipenv install
       - run:
