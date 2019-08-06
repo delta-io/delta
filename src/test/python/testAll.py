@@ -15,10 +15,20 @@
 #
 
 
+import os
+
 from test_deltatable import DeltaTableTests
 
 
-t = DeltaTableTests()
-t.setUp()
-t.test_forPath_without_session()
-t.tearDown()
+def testAll():
+    cur_dir = os.path.dirname(os.path.realpath(__file__))
+    proj_dir = cur_dir.replace("/src/test/python", "")
+    os.system("ls ")
+    t = DeltaTableTests()
+    t.setUp()
+    t.test_forPath_without_session()
+    t.tearDown()
+
+
+if __name__ == "__main__":
+    testAll()

@@ -16,14 +16,14 @@ jobs:
             ./configure --enable-optimizations
             make -j 8
             sudo make altinstall
-            cd ..
-            wget http://www.trieuvan.com/apache/spark/spark-2.4.3/spark-2.4.3-bin-hadoop2.7.tgz
-            tar -zxvf spark-2.4.3-bin-hadoop2.7.tgz
+            sudo apt install python3-pip
+            sudo pip3 install pipenv
+            pipenv install
       - run:
           name: Run Pyhton tests
           command: |
             build/sbt "++2.11.12 package"
-            spark-2.4.3-bin-hadoop2.7/bin/spark-submit src/test/python/testAll.py --jars $PWD/target/scala-2.11/delta-core_2.11-0.3.1-SNAPSHOT.jar
+            pipenv run spark-submit src/test/python/testAll.py --jars target/scala-2.11/delta-core_2.11-0.3.1-SNAPSHOT.jar
       - run:
           name: Run Scala/Java tests
           command: build/sbt test  # make it +test to cross-scala compile
