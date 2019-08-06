@@ -6,27 +6,14 @@ jobs:
     steps:
       - checkout
       - run:
-          name: Run tests
-#          command: build/sbt test  # make it +test to cross-scala compile
-          command: ls
-  test: # this job is for python API tests
-    docker:
-      - image: circleci/python:3.7.4  # python 3.7
-    steps:
-      - checkout
-      - run:
           name: Prepare Python env
           command: |
+            sudo apt install python3.7
             sudo pip install pipenv
             pipenv install
       - run:
           name: Run Pyhton tests
-          command: |
-            pipenv run python src/test/python/testAll.py
-
-workflows:
-  version: 2
-  build_and_test:
-    jobs:
-      - build
-      - test
+          command: pipenv run python src/test/python/testAll.py
+      - run:
+          name: Run Scala/Java tests
+          command: build/sbt test  # make it +test to cross-scala compile
