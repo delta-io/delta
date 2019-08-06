@@ -141,25 +141,11 @@ class DeltaDataSource
     })
 
     // Handle time travel
-    val maybeTimeTravel =
-      DeltaTableUtils.extractIfPathContainsTimeTravel(sqlContext.sparkSession, maybePath)
-    val (path, timeTravelByPath) =
-      maybeTimeTravel.map { case (p, tt) => p -> Some(tt) }.getOrElse(maybePath -> None)
-    val timeTravelByParams = getTimeTravelVersion(parameters)
-
-    if (timeTravelByParams.isDefined && timeTravelByPath.isDefined) {
-      throw DeltaErrors.multipleTimeTravelSyntaxUsed
-    }
+    val (path, timeTravelOpt) =
+      DeltaTableUtils.getTimeTravel(sqlContext.sparkSession, maybePath, parameters)
 
     val hadoopPath = new Path(path)
-    val rootPath = DeltaTableUtils.findDeltaTableRoot(sqlContext.sparkSession, hadoopPath)
-      .getOrElse {
-        val fs = hadoopPath.getFileSystem(sqlContext.sparkSession.sessionState.newHadoopConf())
-        if (!fs.exists(hadoopPath)) {
-          throw DeltaErrors.pathNotExistsException(path)
-        }
-        hadoopPath
-      }
+    val rootPath = DeltaTableUtils.findDeltaTableRoot(sqlContext.sparkSession, Seq(hadoopPath))
 
     val deltaLog = DeltaLog.forTable(sqlContext.sparkSession, rootPath)
 
@@ -174,62 +160,17 @@ class DeltaDataSource
         """.stripMargin)
 
       val fragment = hadoopPath.toString().substring(rootPath.toString().length() + 1)
-      val partitions = try {
-        PartitionUtils.parsePathFragmentAsSeq(fragment)
-      } catch {
-        case _: ArrayIndexOutOfBoundsException =>
-          throw DeltaErrors.partitionPathParseException(fragment)
-      }
 
-      val snapshot = deltaLog.update()
-      val metadata = snapshot.metadata
-
-      val badColumns = partitions.map(_._1).filterNot(metadata.partitionColumns.contains)
-      if (badColumns.nonEmpty) {
-        throw DeltaErrors.partitionPathInvolvesNonPartitionColumnException(badColumns, fragment)
-      }
-
-      val filters = partitions.map { case (key, value) =>
-        EqualTo(UnresolvedAttribute(key), Literal(value))
-      }
-      val files = DeltaLog.filterFileList(
-        metadata.partitionColumns, snapshot.allFiles.toDF(), filters)
-      if (files.count() == 0) {
-        throw DeltaErrors.pathNotExistsException(path)
-      }
-      filters
+      DeltaTableUtils.resolvePathFilters(deltaLog, Seq(fragment))
     } else {
       Nil
     }
 
-    deltaLog.createRelation(partitionFilters, timeTravelByParams.orElse(timeTravelByPath))
+    deltaLog.createRelation(partitionFilters, timeTravelOpt)
   }
 
   override def shortName(): String = {
     DeltaSourceUtils.ALT_NAME
-  }
-
-  /** Extracts whether users provided the option to time travel a relation. */
-  private def getTimeTravelVersion(parameters: Map[String, String]): Option[DeltaTimeTravelSpec] = {
-    val caseInsensitive = CaseInsensitiveMap[String](parameters)
-    val tsOpt = caseInsensitive.get(DeltaDataSource.TIME_TRAVEL_TIMESTAMP_KEY)
-    val versionOpt = caseInsensitive.get(DeltaDataSource.TIME_TRAVEL_VERSION_KEY)
-    val sourceOpt = caseInsensitive.get(DeltaDataSource.TIME_TRAVEL_SOURCE_KEY)
-
-    if (tsOpt.isDefined && versionOpt.isDefined) {
-      throw DeltaErrors.provideOneOfInTimeTravel
-    } else if (tsOpt.isDefined) {
-      Some(DeltaTimeTravelSpec(Some(Literal(tsOpt.get)), None, sourceOpt.orElse(Some("dfReader"))))
-    } else if (versionOpt.isDefined) {
-      val version = Try(versionOpt.get.toLong) match {
-        case Success(v) => v
-        case Failure(t) => throw new IllegalArgumentException(
-          s"${DeltaDataSource.TIME_TRAVEL_VERSION_KEY} needs to be a valid bigint value.", t)
-      }
-      Some(DeltaTimeTravelSpec(None, Some(version), sourceOpt.orElse(Some("dfReader"))))
-    } else {
-      None
-    }
   }
 }
 
