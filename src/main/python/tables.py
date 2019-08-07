@@ -47,6 +47,7 @@ class DeltaTable(object):
     @classmethod
     def forPath(cls, path, spark=None):
         if spark is None:
-            spark = SparkSession.getActiveSession()
+            # spark = SparkSession.getActiveSession()
+            spark = SparkSession.builder.getOrCreate()
         assert spark is not None
         return DeltaTable(spark, spark._sc._jvm.io.delta.tables.DeltaTable.forPath(path))
