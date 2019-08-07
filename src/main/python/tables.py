@@ -50,7 +50,6 @@ class DeltaTable(object):
         return DeltaTable(
             sparkSession, sparkSession._sc._jvm.io.delta.tables.DeltaTable.forPath(path))
 
-
     """
     Delete data that match the given `where`.
     """
@@ -101,6 +100,7 @@ class DeltaTable(object):
 
 
 class DeltaMergeBuilder:
+
     def __init__(self, spark, j_mergebuilder):
         self._spark = spark
         self._j_mergebuilder = j_mergebuilder
@@ -136,6 +136,7 @@ class DeltaMergeBuilder:
 
 
 class DeltaMergeMatchedActionBuilder:
+
     def __init__(self, spark, j_matched_builder):
         self._spark = spark
         self._j_matched_builder = j_matched_builder
@@ -168,6 +169,7 @@ class DeltaMergeMatchedActionBuilder:
 
 
 class DeltaMergeNotMatchedActionBuilder:
+
     def __init__(self, spark, j_notmatched_builder):
         self._spark = spark
         self._j_notmatched_builder = j_notmatched_builder
