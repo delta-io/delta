@@ -12,6 +12,9 @@ jobs:
             sudo apt install python3-pip --fix-missing
             sudo pip3 install pipenv
             curl https://pyenv.run | bash
+            export PATH="/home/circleci/.pyenv/bin:$PATH"
+            eval "$(pyenv init -)"
+            eval "$(pyenv virtualenv-init -)"
             pyenv install 3.7.4
             pyenv global system 3.7.4
             pipenv install
