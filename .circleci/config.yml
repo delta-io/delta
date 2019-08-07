@@ -11,7 +11,9 @@ jobs:
             sudo apt-get update
             sudo apt install python3-pip --fix-missing
             sudo pip3 install pipenv
-            sudo python3.7 -m pip install pip
+            sudo pip3 install pyenv
+            pyenv install 3.7.4
+            pyenv global system 3.7.4
             pipenv install
       - run:
           name: Run Pyhton tests # build the Delta Lake and run the python tests
