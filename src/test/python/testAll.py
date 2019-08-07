@@ -16,6 +16,8 @@
 
 
 import os
+from os import listdir
+from os.path import isfile, join
 
 from test_deltatable import DeltaTableTests
 
@@ -26,7 +28,11 @@ def testAll():
 
     # And then, run all of the test under test/python directory, each of them has
     # main entry point to execute, which is python's unittest testing framework.
-    pass
+    current_path = os.path.abspath(os.path.dirname(__file__))
+    pyfiles = [f for f in listdir(current_path)
+               if isfile(join(current_path, f)) and f.endswith(".py") and f != "__init__.py"]
+    for pyfile in pyfiles:
+        pass
 
 
 if __name__ == "__main__":

@@ -141,7 +141,7 @@ class DeltaTableTests(PySparkTestCase):
             [('Ankit', 25), ('Jalfaizy', 22), ('saurabh', 20), ('Bala', 26)], ["key", "val"])
         deltatable = DeltaTable.forPath(self.tempFile, self.spark)
 
-        deltatable.updateExpr({"val": "1"})
+        deltatable.update({"val": "1"})
         self.__checkAnswer(
             deltatable.toDF(), [('Ankit', 1), ('Jalfaizy', 1), ('saurabh', 1), ('Bala', 1)])
 
@@ -150,7 +150,7 @@ class DeltaTableTests(PySparkTestCase):
             [('Ankit', 25), ('Jalfaizy', 22), ('saurabh', 20), ('Bala', 26)], ["key", "val"])
         deltatable = DeltaTable.forPath(self.tempFile, self.spark)
 
-        deltatable.updateExpr({"val": "1"}, "key = 'Ankit' or key = 'Jalfaizy'")
+        deltatable.update({"val": "1"}, "key = 'Ankit' or key = 'Jalfaizy'")
         self.__checkAnswer(
             deltatable.toDF(), [('Ankit', 1), ('Jalfaizy', 1), ('saurabh', 20), ('Bala', 26)])
 

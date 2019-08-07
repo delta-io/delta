@@ -18,10 +18,7 @@
 import sys
 import tempfile
 from pyspark import SparkContext
-from pyspark.sql import Column
-from pyspark.sql import DataFrame
-from pyspark.sql import SparkSession
-from pyspark.sql import SQLContext
+from pyspark.sql import Column, DataFrame, SparkSession, SQLContext, functions
 from py4j.java_collections import MapConverter
 
 
@@ -45,66 +42,61 @@ class DeltaTable(object):
     Create a DeltaTable based on the delta path and spark session.
     """
     @classmethod
-    def forPath(cls, path, spark=None):
-        if spark is None:
+    def forPath(cls, path, sparkSession=None):
+        if sparkSession is None:
             # pyspark don't have getActiveSession method.
-            spark = SparkSession.builder.getOrCreate()
-        assert spark is not None
-        return DeltaTable(spark, spark._sc._jvm.io.delta.tables.DeltaTable.forPath(path))
+            sparkSession = SparkSession.builder.getOrCreate()
+        assert sparkSession is not None
+        return DeltaTable(
+            sparkSession, sparkSession._sc._jvm.io.delta.tables.DeltaTable.forPath(path))
 
 
     """
-    Delete data that match the given `condition`.
+    Delete data that match the given `where`.
     """
-    def delete(self, condition=None):
-        if condition is None:
+    def delete(self, where=None):
+        if where is None:
             self._j_deltatable.delete()
-        elif type(condition) is Column:
-            self._j_deltatable.delete(condition._jc)
-        elif type(condition) is str:
-            self._j_deltatable.delete(condition)
+        elif type(where) is Column:
+            self._j_deltatable.delete(where._jc)
+        elif type(where) is str:
+            self._j_deltatable.delete(where)
         else:
-            raise Exception("type of condition can only be None, str, Column.")
+            raise Exception("type of 'where' can only be None, str, Column.")
 
     """
-    Update data that match the given `condition` based on the rules defined by `set`. (Column)
+    Update data that match the given `where` based on the rules defined by `set`.
+    
+    Based on the features of Python, `set` can be a dict with type {str: str/Column}, and
+    type of `where` can be either str or Column or None.
     """
-    def update(self, setCol, condition=None):
-        m = self.__convert_dict_to_map(setCol)
-        if condition is None:
+    def update(self, set, where=None):
+        m = self.__convert_dict_to_map(set)
+        if where is None:
             self._j_deltatable.update(m)
-        elif type(condition) is Column:
-            self._j_deltatable.update(condition._jc, m)
+        elif type(where) is Column:
+            self._j_deltatable.update(where._jc, m)
         else:
-            raise Exception("type of condition can only be None, Column.")
-
-    """
-    Update data that match the given `condition` based on the rules defined by `set`. (str)
-    """
-    def updateExpr(self, setStr, condition=None):
-        m = MapConverter().convert(setStr, self._spark._sc._jvm._gateway_client)
-        if condition is None:
-            self._j_deltatable.updateExpr(m)
-        elif type(condition) is str:
-            self._j_deltatable.updateExpr(condition, m)
-        else:
-            raise Exception("type of condition can only be None, str.")
+            self._j_deltatable.update(functions.expr(where)._jc, m)
 
     """
     Merge data from the `source` DataFrame based on the given merge `condition`.
     """
-    def merge(self, source, condition):
-        j_dmb = self._j_deltatable.merge(source._jdf, condition._jc) if type(condition) is Column \
-            else self._j_deltatable.merge(source._jdf, condition)
+    def merge(self, sourceDF, condition):
+        j_dmb = self._j_deltatable.merge(sourceDF._jdf, condition._jc)\
+            if type(condition) is Column else self._j_deltatable.merge(sourceDF._jdf, condition)
         return DeltaMergeBuilder(self._spark, j_dmb)
 
     """
-    convert dict<str, pColumn> to Map<str, jColumn>
+    convert dict<str, pColumn/str> to Map<str, jColumn>
     """
     def __convert_dict_to_map(self, d):
         m = self._spark._sc._jvm.java.util.HashMap()
         for col, expr in d.items():
-            m.put(col, expr._jc)
+            if type(expr) is Column:
+                m.put(col, expr._jc)
+            else:
+                m.put(col, functions.expr(expr)._jc)
         return m
 
 
@@ -163,12 +155,15 @@ class DeltaMergeMatchedActionBuilder:
         return DeltaMergeBuilder(self._spark, self._j_matched_builder.delete())
 
     """
-    convert dict<str, pColumn> to Map<str, jColumn>
+    convert dict<str, pColumn/str> to Map<str, jColumn>
     """
     def __convert_dict_to_map(self, d):
         m = self._spark._sc._jvm.java.util.HashMap()
         for col, expr in d.items():
-            m.put(col, expr._jc)
+            if type(expr) is Column:
+                m.put(col, expr._jc)
+            else:
+                m.put(col, functions.expr(expr)._jc)
         return m
 
 
@@ -189,10 +184,13 @@ class DeltaMergeNotMatchedActionBuilder:
         return DeltaMergeBuilder(self._spark, self._j_notmatched_builder.insertAll())
 
     """
-    convert dict<str, pColumn> to Map<str, jColumn>
+    convert dict<str, pColumn/str> to Map<str, jColumn>
     """
     def __convert_dict_to_map(self, d):
         m = self._spark._sc._jvm.java.util.HashMap()
         for col, expr in d.items():
-            m.put(col, expr._jc)
+            if type(expr) is Column:
+                m.put(col, expr._jc)
+            else:
+                m.put(col, functions.expr(expr)._jc)
         return m
