@@ -43,6 +43,9 @@ class PySparkTestCase(unittest.TestCase):
         self._old_sys_path = list(sys.path)
         class_name = self.__class__.__name__
         self.sc = SparkContext('local[4]', class_name)
+        logger = self.sc._jvm.org.apache.log4j
+        logger.LogManager.getLogger("org"). setLevel( logger.Level.ERROR )
+        logger.LogManager.getLogger("akka").setLevel( logger.Level.ERROR )
 
     def tearDown(self):
         self.sc.stop()
@@ -89,6 +92,115 @@ class DeltaTableTests(PySparkTestCase):
         self.__checkAnswer(
             DeltaTable.forPath(self.tempFile, self.spark).toDF(),
             [('Ankit', 25), ('Jalfaizy', 22), ('saurabh', 20), ('Bala', 26)])
+
+    def test_delete_without_condition(self):
+        self.__writeDeltaTable(
+            [('Ankit', 25), ('Jalfaizy', 22), ('saurabh', 20), ('Bala', 26)], ["key", "val"])
+        deltatable = DeltaTable.forPath(self.tempFile, self.spark)
+
+        deltatable.delete()
+        self.__checkAnswer(deltatable.toDF(), [])
+
+    def test_delete_with_str_condition(self):
+        self.__writeDeltaTable(
+            [('Ankit', 25), ('Jalfaizy', 22), ('saurabh', 20), ('Bala', 26)], ["key", "val"])
+        deltatable = DeltaTable.forPath(self.tempFile, self.spark)
+
+        deltatable.delete("key = 'Ankit'")
+        self.__checkAnswer(deltatable.toDF(), [('Jalfaizy', 22), ('saurabh', 20), ('Bala', 26)])
+
+    def test_delete_with_column_condition(self):
+        self.__writeDeltaTable(
+            [('Ankit', 25), ('Jalfaizy', 22), ('saurabh', 20), ('Bala', 26)], ["key", "val"])
+        deltatable = DeltaTable.forPath(self.tempFile, self.spark)
+
+        deltatable.delete(functions.expr("key = 'Jalfaizy'"))
+        self.__checkAnswer(deltatable.toDF(), [('Ankit', 25), ('saurabh', 20), ('Bala', 26)])
+
+    def test_update_col_map(self):
+        self.__writeDeltaTable(
+            [('Ankit', 25), ('Jalfaizy', 22), ('saurabh', 20), ('Bala', 26)], ["key", "val"])
+        deltatable = DeltaTable.forPath(self.tempFile, self.spark)
+
+        deltatable.update({"val": functions.expr("1")})
+        self.__checkAnswer(
+            deltatable.toDF(), [('Ankit', 1), ('Jalfaizy', 1), ('saurabh', 1), ('Bala', 1)])
+
+    def test_update_col_map_with_condition(self):
+        self.__writeDeltaTable(
+            [('Ankit', 25), ('Jalfaizy', 22), ('saurabh', 20), ('Bala', 26)], ["key", "val"])
+        deltatable = DeltaTable.forPath(self.tempFile, self.spark)
+
+        deltatable.update(
+            {"val": functions.expr("1")}, functions.expr("key = 'Ankit' or key = 'Jalfaizy'"))
+        self.__checkAnswer(
+            deltatable.toDF(), [('Ankit', 1), ('Jalfaizy', 1), ('saurabh', 20), ('Bala', 26)])
+
+    def test_update_str_map(self):
+        self.__writeDeltaTable(
+            [('Ankit', 25), ('Jalfaizy', 22), ('saurabh', 20), ('Bala', 26)], ["key", "val"])
+        deltatable = DeltaTable.forPath(self.tempFile, self.spark)
+
+        deltatable.updateExpr({"val": "1"})
+        self.__checkAnswer(
+            deltatable.toDF(), [('Ankit', 1), ('Jalfaizy', 1), ('saurabh', 1), ('Bala', 1)])
+
+    def test_update_str_map_with_condition(self):
+        self.__writeDeltaTable(
+            [('Ankit', 25), ('Jalfaizy', 22), ('saurabh', 20), ('Bala', 26)], ["key", "val"])
+        deltatable = DeltaTable.forPath(self.tempFile, self.spark)
+
+        deltatable.updateExpr({"val": "1"}, "key = 'Ankit' or key = 'Jalfaizy'")
+        self.__checkAnswer(
+            deltatable.toDF(), [('Ankit', 1), ('Jalfaizy', 1), ('saurabh', 20), ('Bala', 26)])
+
+    def test_basic_merge(self):
+        self.__writeDeltaTable(
+            [('Ankit', 25), ('Jalfaizy', 22), ('saurabh', 20), ('Bala', 26)], ["key", "val"])
+        deltatable = DeltaTable.forPath(self.tempFile, self.spark)
+        source = self.spark.createDataFrame(
+            [('Ankit', 52), ('Jalfaizy', 22), ('newperson', 20), ('Bala', 62)], ["Col1", "Col2"])
+
+        deltatable.merge(source, "key = Col1") \
+            .whenMatched().updateExpr({"val": "Col2"}) \
+            .whenNotMatched().insertExpr({"key": "Col1", "val": "Col2"}).execute()
+        self.__checkAnswer(
+            deltatable.toDF(),
+            [('Ankit', 52), ('Jalfaizy', 22), ('newperson', 20), ('saurabh', 20), ('Bala', 62)])
+
+    def test_extended_merge(self):
+        self.__writeDeltaTable(
+            [('Ankit', 25), ('Jalfaizy', 22), ('saurabh', 20), ('Bala', 26)], ["key", "val"])
+        deltatable = DeltaTable.forPath(self.tempFile, self.spark)
+        source = self.spark.createDataFrame(
+            [('Ankit', 52), ('Jalfaizy', 22), ('newperson', 20), ('Bala', 62)], ["Col1", "Col2"])
+
+        deltatable.merge(source, "key = Col1") \
+            .whenMatched("key = 'Jalfaizy'").delete() \
+            .whenMatched("key = 'Ankit'").updateExpr({"val": "Col2"}) \
+            .whenNotMatched("Col1 = 'newperson'").insertExpr({"key": "Col1", "val": "Col2"}) \
+            .execute()
+        self.__checkAnswer(
+            deltatable.toDF(),
+            [('Ankit', 52), ('newperson', 20), ('saurabh', 20), ('Bala', 26)])
+
+    def test_extended_merge_with_column(self):
+        self.__writeDeltaTable(
+            [('Ankit', 25), ('Jalfaizy', 22), ('saurabh', 20), ('Bala', 26)], ["key", "val"])
+        deltatable = DeltaTable.forPath(self.tempFile, self.spark)
+        source = self.spark.createDataFrame(
+            [('Ankit', 52), ('Jalfaizy', 22), ('newperson', 20), ('Bala', 62)], ["Col1", "Col2"])
+
+        deltatable.merge(source, functions.expr("key = Col1")) \
+            .whenMatched(functions.expr("key = 'Jalfaizy'")).delete() \
+            .whenMatched(functions.expr("key = 'Ankit'")) \
+            .update({"val": functions.expr("Col2")}) \
+            .whenNotMatched(functions.expr("Col1 = 'newperson'")) \
+            .insert({"key": functions.expr("Col1"), "val": functions.expr("Col2")}) \
+            .execute()
+        self.__checkAnswer(
+            deltatable.toDF(),
+            [('Ankit', 52), ('newperson', 20), ('saurabh', 20), ('Bala', 26)])
 
 
 if __name__ == "__main__":
