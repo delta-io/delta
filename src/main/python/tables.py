@@ -105,89 +105,41 @@ class DeltaMergeBuilder:
         self._spark = spark
         self._j_mergebuilder = j_mergebuilder
 
-    def whenMatched(self, condition=None):
-        if condition is None:
-            return DeltaMergeMatchedActionBuilder(
-                self._spark, self._j_mergebuilder.whenMatched())
-        elif type(condition) is str:
-            return DeltaMergeMatchedActionBuilder(
-                self._spark, self._j_mergebuilder.whenMatched(condition))
-        elif type(condition) is Column:
-            return DeltaMergeMatchedActionBuilder(
-                self._spark, self._j_mergebuilder.whenMatched(condition._jc))
-        else:
-            raise Exception("type of condition can only be None, str, Column.")
+    def whenMatchedUpdate(self, set, condition=None):
+        j_matchedbuilder = self.__getMatchedBuilder(condition)
+        m = self.__convert_dict_to_map(set)
+        return DeltaMergeBuilder(self._spark, j_matchedbuilder.update(m))
 
-    def whenNotMatched(self, condition=None):
-        if condition is None:
-            return DeltaMergeNotMatchedActionBuilder(
-                self._spark, self._j_mergebuilder.whenNotMatched())
-        elif type(condition) is str:
-            return DeltaMergeNotMatchedActionBuilder(
-                self._spark, self._j_mergebuilder.whenNotMatched(condition))
-        elif type(condition) is Column:
-            return DeltaMergeNotMatchedActionBuilder(
-                self._spark, self._j_mergebuilder.whenNotMatched(condition._jc))
-        else:
-            raise Exception("type of condition can only be None, str, Column.")
+    def whenMatchedUpdateAll(self, condition=None):
+        j_matchedbuilder = self.__getMatchedBuilder(condition)
+        return DeltaMergeBuilder(self._spark, j_matchedbuilder.updateAll())
+
+    def whenMatchedThenDelete(self, condition=None):
+        j_matchedbuilder = self.__getMatchedBuilder(condition)
+        return DeltaMergeBuilder(self._spark, j_matchedbuilder.delete())
+
+    def whenNotMatchedThenInsert(self, actions, condition=None):
+        j_not_matchedbuilder = self.__getNotMatchedBuilder(condition)
+        m = self.__convert_dict_to_map(actions)
+        return DeltaMergeBuilder(self._spark, j_not_matchedbuilder.insert(m))
+
+    def whenNotMatchedThenInsertAll(self, condition=None):
+        j_not_matchedbuilder = self.__getNotMatchedBuilder(condition)
+        return DeltaMergeBuilder(self._spark, j_not_matchedbuilder.insertAll())
 
     def execute(self):
         self._j_mergebuilder.execute()
 
+    def __getMatchedBuilder(self, condition=None):
+        return self._j_mergebuilder.whenMatched() if condition is None \
+            else self._j_mergebuilder.whenMatched(condition._jc) if type(condition) is Column \
+            else self._j_mergebuilder.whenMatched(condition)
 
-class DeltaMergeMatchedActionBuilder:
+    def __getNotMatchedBuilder(self, condition=None):
+        return self._j_mergebuilder.whenNotMatched() if condition is None \
+            else self._j_mergebuilder.whenNotMatched(condition._jc) if type(condition) is Column \
+            else self._j_mergebuilder.whenNotMatched(condition)
 
-    def __init__(self, spark, j_matched_builder):
-        self._spark = spark
-        self._j_matched_builder = j_matched_builder
-
-    def update(self, setCol):
-        m = self.__convert_dict_to_map(setCol)
-        return DeltaMergeBuilder(self._spark, self._j_matched_builder.update(m))
-
-    def updateExpr(self, setStr):
-        m = MapConverter().convert(setStr, self._spark._sc._jvm._gateway_client)
-        return DeltaMergeBuilder(self._spark, self._j_matched_builder.updateExpr(m))
-
-    def updateAll(self):
-        return DeltaMergeBuilder(self._spark, self._j_matched_builder.updateAll())
-
-    def delete(self):
-        return DeltaMergeBuilder(self._spark, self._j_matched_builder.delete())
-
-    """
-    convert dict<str, pColumn/str> to Map<str, jColumn>
-    """
-    def __convert_dict_to_map(self, d):
-        m = self._spark._sc._jvm.java.util.HashMap()
-        for col, expr in d.items():
-            if type(expr) is Column:
-                m.put(col, expr._jc)
-            else:
-                m.put(col, functions.expr(expr)._jc)
-        return m
-
-
-class DeltaMergeNotMatchedActionBuilder:
-
-    def __init__(self, spark, j_notmatched_builder):
-        self._spark = spark
-        self._j_notmatched_builder = j_notmatched_builder
-
-    def insert(self, values):
-        m = self.__convert_dict_to_map(values)
-        return DeltaMergeBuilder(self._spark, self._j_notmatched_builder.insert(m))
-
-    def insertExpr(self, values):
-        m = MapConverter().convert(values, self._spark._sc._jvm._gateway_client)
-        return DeltaMergeBuilder(self._spark, self._j_notmatched_builder.insertExpr(m))
-
-    def insertAll(self):
-        return DeltaMergeBuilder(self._spark, self._j_notmatched_builder.insertAll())
-
-    """
-    convert dict<str, pColumn/str> to Map<str, jColumn>
-    """
     def __convert_dict_to_map(self, d):
         m = self._spark._sc._jvm.java.util.HashMap()
         for col, expr in d.items():

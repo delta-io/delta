@@ -25,10 +25,7 @@ import shutil
 import logging
 
 from pyspark import SparkContext, SparkConf
-from pyspark.sql import SQLContext
-from pyspark.sql import functions
-from pyspark.sql import Row
-from pyspark.sql import SparkSession
+from pyspark.sql import SQLContext, functions, Row, SparkSession
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 
 current_path = os.path.abspath(os.path.dirname(__file__))
@@ -162,8 +159,8 @@ class DeltaTableTests(PySparkTestCase):
             [('Ankit', 52), ('Jalfaizy', 22), ('newperson', 20), ('Bala', 62)], ["Col1", "Col2"])
 
         deltatable.merge(source, "key = Col1") \
-            .whenMatched().updateExpr({"val": "Col2"}) \
-            .whenNotMatched().insertExpr({"key": "Col1", "val": "Col2"}).execute()
+            .whenMatchedUpdate({"val": "Col2"}) \
+            .whenNotMatchedThenInsert({"key": "Col1", "val": "Col2"}).execute()
         self.__checkAnswer(
             deltatable.toDF(),
             [('Ankit', 52), ('Jalfaizy', 22), ('newperson', 20), ('saurabh', 20), ('Bala', 62)])
@@ -176,9 +173,9 @@ class DeltaTableTests(PySparkTestCase):
             [('Ankit', 52), ('Jalfaizy', 22), ('newperson', 20), ('Bala', 62)], ["Col1", "Col2"])
 
         deltatable.merge(source, "key = Col1") \
-            .whenMatched("key = 'Jalfaizy'").delete() \
-            .whenMatched("key = 'Ankit'").updateExpr({"val": "Col2"}) \
-            .whenNotMatched("Col1 = 'newperson'").insertExpr({"key": "Col1", "val": "Col2"}) \
+            .whenMatchedThenDelete("key = 'Jalfaizy'") \
+            .whenMatchedUpdate({"val": "Col2"}, "key = 'Ankit'") \
+            .whenNotMatchedThenInsert({"key": "Col1", "val": "Col2"}, "Col1 = 'newperson'") \
             .execute()
         self.__checkAnswer(
             deltatable.toDF(),
@@ -192,11 +189,11 @@ class DeltaTableTests(PySparkTestCase):
             [('Ankit', 52), ('Jalfaizy', 22), ('newperson', 20), ('Bala', 62)], ["Col1", "Col2"])
 
         deltatable.merge(source, functions.expr("key = Col1")) \
-            .whenMatched(functions.expr("key = 'Jalfaizy'")).delete() \
-            .whenMatched(functions.expr("key = 'Ankit'")) \
-            .update({"val": functions.expr("Col2")}) \
-            .whenNotMatched(functions.expr("Col1 = 'newperson'")) \
-            .insert({"key": functions.expr("Col1"), "val": functions.expr("Col2")}) \
+            .whenMatchedThenDelete(functions.expr("key = 'Jalfaizy'")) \
+            .whenMatchedUpdate({"val": functions.expr("Col2")}, functions.expr("key = 'Ankit'")) \
+            .whenNotMatchedThenInsert(
+                {"key": functions.expr("Col1"), "val": functions.expr("Col2")},
+                functions.expr("Col1 = 'newperson'")) \
             .execute()
         self.__checkAnswer(
             deltatable.toDF(),
