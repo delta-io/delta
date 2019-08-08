@@ -31,6 +31,10 @@ trait DescribeDeltaHistorySuiteBase
 
   import testImplicits._
 
+  protected val evolvabilityResource = "src/test/resources/delta/history/delta-0.2.0"
+
+  protected val evolvabilityLastOp = Seq("STREAMING UPDATE", null, null)
+
   protected def testWithFlag(name: String, tags: Tag*)(f: => Unit): Unit = {
     test(name, tags: _*) {
       withSQLConf(DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "true") {
@@ -226,6 +230,13 @@ trait DescribeDeltaHistorySuiteBase
     val ans = getHistory(tempDir).as[CommitInfo].collect()
     assert(ans.map(x => x.version.get -> x.readVersion) ===
       Seq(5 -> None, 4 -> Some(1), 3 -> Some(2), 2 -> Some(1), 1 -> Some(0), 0 -> None))
+  }
+
+  testWithFlag("evolvability test") {
+    checkLastOperation(
+      evolvabilityResource,
+      evolvabilityLastOp,
+      Seq($"operation", $"operationParameters.mode", $"operationParameters.partitionBy"))
   }
 }
 
