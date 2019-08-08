@@ -45,7 +45,8 @@ class DeltaTable(object):
     def forPath(cls, path, sparkSession):
         assert sparkSession is not None
         return DeltaTable(
-            sparkSession, sparkSession._sc._jvm.io.delta.tables.DeltaTable.forPath(path))
+            sparkSession, sparkSession._sc._jvm.io.delta.tables.DeltaTable.forPath(
+                sparkSession._jsparkSession, path))
 
     """
     Delete data that match the given `where`.
