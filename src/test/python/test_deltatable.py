@@ -76,13 +76,6 @@ class DeltaTableTests(PySparkTestCase):
         df = self.spark.createDataFrame(datalist, schema)
         df.write.format("delta").save(self.tempFile)
 
-    def test_forPath_without_session(self):
-        self.__writeDeltaTable(
-            [('Ankit', 25), ('Jalfaizy', 22), ('saurabh', 20), ('Bala', 26)], ["key", "val"])
-        self.__checkAnswer(
-            DeltaTable.forPath(self.tempFile).toDF(),
-            [('Ankit', 25), ('Jalfaizy', 22), ('saurabh', 20), ('Bala', 26)])
-
     def test_forPath_with_session(self):
         self.__writeDeltaTable(
             [('Ankit', 25), ('Jalfaizy', 22), ('saurabh', 20), ('Bala', 26)], ["key", "val"])

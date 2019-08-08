@@ -16,6 +16,7 @@
 
 
 import os
+import subprocess
 from os import listdir
 from os.path import isfile, join
 
@@ -29,12 +30,10 @@ def testAll():
     # And then, run all of the test under test/python directory, each of them has
     # main entry point to execute, which is python's unittest testing framework.
     current_path = os.path.abspath(os.path.dirname(__file__))
-    pyfiles = [f for f in listdir(current_path)
-               if isfile(join(current_path, f)) and f.endswith(".py") and f != "__init__.py"]
+    pyfiles = [f for f in listdir(current_path) if isfile(join(current_path, f)) and\
+                f.endswith(".py") and f != "__init__.py" and f != "testAll.py"]
     for pyfile in pyfiles:
-        # TODO: run all of the python test files
-        # call each file just like: `python test_deltatable.py` is OK.
-        pass
+        subprocess.call(["python", "src/test/python/" + pyfile])
 
 
 if __name__ == "__main__":

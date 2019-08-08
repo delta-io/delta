@@ -42,10 +42,7 @@ class DeltaTable(object):
     Create a DeltaTable based on the delta path and spark session.
     """
     @classmethod
-    def forPath(cls, path, sparkSession=None):
-        if sparkSession is None:
-            # pyspark don't have getActiveSession method.
-            sparkSession = SparkSession.builder.getOrCreate()
+    def forPath(cls, path, sparkSession):
         assert sparkSession is not None
         return DeltaTable(
             sparkSession, sparkSession._sc._jvm.io.delta.tables.DeltaTable.forPath(path))
