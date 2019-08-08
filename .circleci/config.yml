@@ -6,6 +6,9 @@ jobs:
     steps:
       - checkout
       - run:
+          name: Run Scala/Java tests
+          command: build/sbt test  # make it +test to cross-scala compile
+      - run:
           name: Prepare Python env # install python3.7, python3-pip and pipenv for pyspark.
           command: |
             sudo apt-get update
@@ -21,10 +24,7 @@ jobs:
             pyenv global system 3.7.4
             pipenv install
       - run:
-          name: Run Pyhton tests # build the Delta Lake and run the python tests
+          name: Run Python tests # build the Delta Lake and run the python tests
           command: |
             build/sbt "++2.11.12 package"
             pipenv run spark-submit --jars target/scala-2.11/delta-core_2.11-*-SNAPSHOT.jar src/test/python/test_deltatable.py
-      - run:
-          name: Run Scala/Java tests
-          command: build/sbt test  # make it +test to cross-scala compile
