@@ -32,6 +32,8 @@ def testAll():
     pyfiles = [f for f in listdir(current_path)
                if isfile(join(current_path, f)) and f.endswith(".py") and f != "__init__.py"]
     for pyfile in pyfiles:
+        # TODO: run all of the python test files
+        # call each file just like: `python test_deltatable.py` is OK.
         pass
 
 
