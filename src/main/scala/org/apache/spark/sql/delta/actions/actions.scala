@@ -28,6 +28,7 @@ import org.codehaus.jackson.annotate.JsonRawValue
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
+import org.apache.spark.sql.execution.datasources.PartitioningUtils
 import org.apache.spark.sql.types.{DataType, StructType}
 
 /** Thrown when the protocol version of a table is greater than supported by this client. */
@@ -98,6 +99,8 @@ sealed trait FileAction extends Action {
   val dataChange: Boolean
   @JsonIgnore
   lazy val pathAsUri: URI = new URI(path)
+
+  def partitionValues: Map[String, String]
 }
 
 /**
@@ -125,7 +128,7 @@ case class AddFile(
       timestamp: Long = System.currentTimeMillis(),
       dataChange: Boolean = true): RemoveFile = {
     // scalastyle:off
-    RemoveFile(path, Some(timestamp), dataChange)
+    RemoveFile(path, Some(timestamp), dataChange, partitionValues)
     // scalastyle:on
   }
 }
@@ -163,7 +166,9 @@ case class RemoveFile(
     path: String,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     deletionTimestamp: Option[Long],
-    dataChange: Boolean = true) extends FileAction {
+    dataChange: Boolean = true,
+    @JsonIgnore
+    partitionValues: Map[String, String] = null) extends FileAction {
   override def wrap: SingleAction = SingleAction(remove = this)
 
   @JsonIgnore

@@ -160,6 +160,17 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
    */
   protected var dependsOnFiles: Boolean = false
 
+  /**
+   * Tracks if we had scan whose expression was not referencing partition columns
+   */
+  protected var fullTableScan: Boolean = false
+
+  /**
+   * Tracks read expressions referencing partition columns. This must be updated if this
+   * transaction reads any data explicitly or implicitly (e.g., delete, update and overwrite).
+   */
+  protected val readFilters = new ArrayBuffer[Seq[Expression]]
+
   /** The version that this transaction is reading from. */
   def readVersion: Long = snapshot.version
 
@@ -211,7 +222,16 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
   /** Returns files matching the given predicates. */
   def filterFiles(filters: Seq[Expression]): Seq[AddFile] = {
     dependsOnFiles = true
+    trackPartitionFilters(filters)
     snapshot.filesForScan(Nil, filters).files
+  }
+
+  private def trackPartitionFilters(filters: Seq[Expression]) : Unit = {
+    val partitionFilters = snapshot.partitionFilters(filters)
+    if (partitionFilters.isEmpty) {
+      fullTableScan = true
+    }
+    readFilters += partitionFilters
   }
 
   /** Mark the entire table as tainted by this transaction. */
@@ -438,9 +458,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
       if (metadataUpdates.nonEmpty) {
         throw new MetadataChangedException(commitInfo)
       }
-      // Fail if the data is different than what the txn read.
+
       if (dependsOnFiles && fileActions.nonEmpty) {
-        throw new ConcurrentWriteException(commitInfo)
+        if (isConcurrentPartitionWriteEnabled) {
+          checkPartitionConflict(actions, fileActions, commitInfo)
+        } else {
+          // Fail if the data is different than what the txn read.
+          throw new ConcurrentWriteException(commitInfo)
+        }
       }
       // Fail if idempotent transactions have conflicted.
       val txnOverlap = txns.map(_.appId).toSet intersect readTxn.toSet
@@ -450,5 +475,40 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
     }
     logInfo(s"No logical conflicts with deltas [$checkVersion, $nextAttempt), retrying.")
     doCommit(nextAttempt, actions, attemptNumber + 1)
+  }
+
+  private def isConcurrentPartitionWriteEnabled: Boolean =
+    DeltaConfigs.ENABLE_CONCURRENT_PARTITIONS_WRITE.fromMetaData(metadata)
+
+  private def checkPartitionConflict(
+      myActions: Seq[Action],
+      theirActions: Seq[FileAction],
+      commitInfo: Option[CommitInfo]): Unit = {
+
+    val partitionExtractor: Action => Option[Map[String, String]] = {
+      case f: FileAction => Some(f.partitionValues)
+      case _ => None
+    }
+
+    if (fullTableScan) {
+      throw new ConcurrentPartitionWriteException(
+        theirActions.flatMap(partitionExtractor(_)).distinct, commitInfo)
+    }
+
+    val theirModifiedPartitions = theirActions.flatMap(partitionExtractor(_)).toSet
+    val partitionsToCheck = myActions.flatMap(partitionExtractor(_)).toSet
+
+    if (partitionsToCheck.exists(theirModifiedPartitions.contains)) {
+      val conflicts = partitionsToCheck.intersect(theirModifiedPartitions)
+      throw new ConcurrentPartitionWriteException(conflicts, commitInfo)
+    }
+    // Check if they modified partitions that we intended to read
+    val conflictingActions = readFilters.flatMap { filter =>
+      snapshot.filterFileActions(theirActions, filter)
+    }
+    if(conflictingActions.nonEmpty) {
+      val conflictingPartitions = conflictingActions.flatMap(partitionExtractor(_)).distinct
+      throw new ConcurrentPartitionWriteException(conflictingPartitions, commitInfo)
+    }
   }
 }
