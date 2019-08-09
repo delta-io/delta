@@ -27,4 +27,4 @@ jobs:
           name: Run Python tests # build the Delta Lake and run the python tests
           command: |
             build/sbt "++2.11.12 package"
-            pipenv run spark-submit --jars target/scala-2.11/delta-core_2.11-*-SNAPSHOT.jar src/test/python/testAll.py
+            pipenv run spark-submit --jars target/scala-2.11/delta-core_2.11-*-SNAPSHOT.jar python/delta/tests/testAll.py

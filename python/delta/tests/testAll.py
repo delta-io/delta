@@ -20,8 +20,6 @@ import subprocess
 from os import listdir
 from os.path import isfile, join
 
-from test_deltatable import DeltaTableTests
-
 
 def testAll():
     # Check env conf first, the same as circleci conf.
@@ -33,7 +31,7 @@ def testAll():
     pyfiles = [f for f in listdir(current_path) if isfile(join(current_path, f)) and\
                 f.endswith(".py") and f != "__init__.py" and f != "testAll.py"]
     for pyfile in pyfiles:
-        subprocess.call(["python", "src/test/python/" + pyfile])
+        subprocess.call(["python", "python/delta/tests/" + pyfile])
 
 
 if __name__ == "__main__":

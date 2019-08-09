@@ -63,7 +63,7 @@ class DeltaTable(object):
 
     """
     Update data that match the given `where` based on the rules defined by `set`.
-    
+
     Based on the features of Python, `set` can be a dict with type {str: str/Column}, and
     type of `where` can be either str or Column or None.
     """

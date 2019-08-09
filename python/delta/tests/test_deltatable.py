@@ -23,15 +23,11 @@ import unittest
 import tempfile
 import shutil
 import logging
-
 from pyspark import SparkContext, SparkConf
 from pyspark.sql import SQLContext, functions, Row, SparkSession
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType
-
-current_path = os.path.abspath(os.path.dirname(__file__))
-sys.path.insert(1, current_path.replace("test", "main"))
-
-from tables import DeltaTable
+sys.path.append(os.path.join(os.path.dirname(__file__), '../../'))
+from delta.tables import DeltaTable
 
 
 class PySparkTestCase(unittest.TestCase):
@@ -195,7 +191,7 @@ class DeltaTableTests(PySparkTestCase):
 
 
 if __name__ == "__main__":
-    from test_deltatable import *
+    from delta.tests.test_deltatable import *
 
     try:
         import xmlrunner
