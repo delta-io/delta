@@ -50,6 +50,7 @@ class PySparkTestCase(unittest.TestCase):
 
 
 class DeltaTableTests(PySparkTestCase):
+
     def setUp(self):
         super(DeltaTableTests, self).setUp()
         self.sqlContext = SQLContext(self.sc)
