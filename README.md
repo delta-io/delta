@@ -68,7 +68,7 @@ To avoid needing to read the entire transaction log every time a table is loaded
 
 Delta Lake ACID guarantees are predicated on the atomicity and durability guarantees of the storage system. Specifically, we require the storage system to provide the following. 
 
-1. **Atomic visibility**: There must a way for a file to visible in its entirely or not visible at all. 
+1. **Atomic visibility**: There must be a way for a file to visible in its entirely or not visible at all. 
 2. **Mutual exclusion**: Only one writer must be able to create (or rename) a file at the final destination.
 3. **Consistent listing**: Once a file has been written in a directory, all future listings for that directory must return that file.
 
