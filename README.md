@@ -15,7 +15,7 @@ Delta Lake is published to Maven Central Repository and can be used by adding a 
     <dependency>
       <groupId>io.delta</groupId>
       <artifactId>delta-core_2.11</artifactId>
-      <version>0.2.0</version>
+      <version>0.3.0</version>
     </dependency>
 
 ## Compatibility
