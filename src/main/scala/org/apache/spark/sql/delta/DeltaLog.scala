@@ -594,9 +594,9 @@ class DeltaLog private(
   }
 
   /**
-   * Returns a [[DataFrame]] that contains all of the data present
-   * in the table . This DataFrame will be continually updated
-   * as files are added or removed from the table. However, new [[DataFrame]]
+   * Returns a [[BaseRelation]] that contains all of the data present
+   * in the table. This relation will be continually updated
+   * as files are added or removed from the table. However, new [[BaseRelation]]
    * must be requested in order to see changes to the schema.
    */
   def createRelation(
