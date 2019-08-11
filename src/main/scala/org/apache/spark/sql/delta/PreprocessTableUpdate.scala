@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaFullTable}
 import org.apache.spark.sql.delta.commands.UpdateCommand
 
 import org.apache.spark.sql.catalyst.analysis.{EliminateSubqueryAliases, UnresolvedAttribute}
