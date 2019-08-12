@@ -39,7 +39,6 @@ class DeltaRetentionSuite extends QueryTest
     // Disable the log cleanup because it runs asynchronously and causes tests flaky
     .set("spark.databricks.delta.properties.defaults.enableExpiredLogCleanup", "false")
 
-
   protected def intervalStringToMillis(str: String): Long = {
     CalendarInterval.fromString(str).milliseconds()
   }
