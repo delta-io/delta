@@ -36,7 +36,7 @@ class DeltaRetentionSuite extends QueryTest
   protected val testOp = Truncate()
 
   protected override def sparkConf: SparkConf = super.sparkConf
-    // Disable the log cleanup because it runs asynchronously and causes tests flaky
+    // Disable the log cleanup because it runs asynchronously and causes test flakiness
     .set("spark.databricks.delta.properties.defaults.enableExpiredLogCleanup", "false")
 
   protected def intervalStringToMillis(str: String): Long = {
