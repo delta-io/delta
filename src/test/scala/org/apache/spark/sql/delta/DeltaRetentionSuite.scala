@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.actions.{Action, AddFile, RemoveFile}
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSQLContext
 import org.apache.spark.unsafe.types.CalendarInterval
@@ -33,6 +34,11 @@ class DeltaRetentionSuite extends QueryTest
   with SharedSQLContext {
 
   protected val testOp = Truncate()
+
+  protected override def sparkConf: SparkConf = super.sparkConf
+    // Disable the log cleanup because it runs asynchronously and causes tests flaky
+    .set("spark.databricks.delta.properties.defaults.enableExpiredLogCleanup", "false")
+
 
   protected def intervalStringToMillis(str: String): Long = {
     CalendarInterval.fromString(str).milliseconds()
