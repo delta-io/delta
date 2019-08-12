@@ -16,8 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.DeltaErrors
-
 import org.apache.spark.sql.catalyst.analysis.{CastSupport, Resolver}
 import org.apache.spark.sql.catalyst.expressions.{Alias, CreateNamedStruct, Expression, GetStructField, Literal, NamedExpression}
 import org.apache.spark.sql.types._
