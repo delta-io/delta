@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta
 
 import java.util.Locale
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaFullTable}
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
 
 import org.apache.spark.sql.AnalysisException
