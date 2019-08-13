@@ -19,8 +19,7 @@ package io.delta.tables
 import scala.collection.JavaConverters._
 import scala.collection.Map
 
-import org.apache.spark.sql.delta.PreprocessTableMerge
-import org.apache.spark.sql.delta.DeltaErrors
+import org.apache.spark.sql.delta.{DeltaErrors, PreprocessTableMerge}
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
 import org.apache.spark.annotation.InterfaceStability._

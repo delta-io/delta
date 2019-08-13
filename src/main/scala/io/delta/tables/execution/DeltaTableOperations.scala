@@ -18,8 +18,7 @@ package io.delta.tables.execution
 
 import scala.collection.Map
 
-import org.apache.spark.sql.delta.PreprocessTableUpdate
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaFullTable, DeltaHistoryManager, DeltaLog}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaFullTable, DeltaHistoryManager, DeltaLog, PreprocessTableUpdate}
 import org.apache.spark.sql.delta.commands.{DeleteCommand, VacuumCommand}
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import io.delta.tables.DeltaTable
