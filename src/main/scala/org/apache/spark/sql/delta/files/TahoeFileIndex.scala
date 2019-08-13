@@ -39,9 +39,6 @@ abstract class TahoeFileIndex(
 
   def tableVersion: Long = deltaLog.snapshot.version
 
-  /** Get a snapshot of the Delta table. */
-  def getSnapshot(stalenessAcceptable: Boolean): Snapshot
-
   override def rootPaths: Seq[Path] = path :: Nil
 
   /**
@@ -125,7 +122,7 @@ case class TahoeLogFileIndex(
   private lazy val historicalSnapshotOpt: Option[Snapshot] =
     versionToUse.map(deltaLog.getSnapshotAt(_))
 
-  override def getSnapshot(stalenessAcceptable: Boolean): Snapshot = {
+  def getSnapshot(stalenessAcceptable: Boolean): Snapshot = {
     historicalSnapshotOpt.getOrElse(deltaLog.update(stalenessAcceptable))
   }
 
@@ -174,10 +171,6 @@ class TahoeBatchFileIndex(
   extends TahoeFileIndex(spark, deltaLog, path) {
 
   override def tableVersion: Long = snapshot.version
-
-  override def getSnapshot(stalenessAcceptable: Boolean): Snapshot = {
-    snapshot
-  }
 
   override def matchingFiles(
       partitionFilters: Seq[Expression],
