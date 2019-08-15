@@ -87,7 +87,16 @@ testScalastyle := scalastyle.in(Test).toTask("").value
  * Unidoc settings *
  *******************/
 
-enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin)
+lazy val Javadoc = config("genjavadoc") extend Compile
+
+lazy val javadocSettings = inConfig(Javadoc)(Defaults.configSettings) ++ Seq(
+  addCompilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.13" cross CrossVersion.full),
+  scalacOptions ++= Seq(s"-P:genjavadoc:out=${target.value}/java", "-P:genjavadoc:strictVisibility=true")
+)
+
+lazy val root = project.in(file(".")).configs(Javadoc).settings(javadocSettings: _*)
+
+enablePlugins(JavaUnidocPlugin, ScalaUnidocPlugin)
 
 // Configure Scala unidoc
 scalacOptions in(ScalaUnidoc, unidoc) ++= Seq(
