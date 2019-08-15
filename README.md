@@ -80,6 +80,17 @@ As an optimization, storage systems can also allow _partial listing of a directo
 
 Delta Lake ensures _serializability_ for concurrent reads and writes. Please see [Delta Lake Concurrency Control](https://docs.delta.io/latest/delta-concurrency.html) for more details.
 
+# Managed Delta Lake on Databricks Features Not Supported
+
+While we are working on open sourcing all of the APIs that Delta has in Databricks, some features are not yet implemented. In general its our goal to have all APIs be open source.
+Go to the [project roadmap](https://github.com/delta-io/delta/milestones) to see if a feature is planned.
+
+This is the list of frequently asked for features that have yet to be implemented in OSS Delta
+*  [Presto and Athena manifest file support](https://docs.databricks.com/delta/presto-compatibility.html#prestoand-compatibility-support-for-delta)
+*  [Automatic Data skipping](https://docs.databricks.com/delta/optimizations.html#data-skipping)
+*  [Auto Optimize](https://docs.databricks.com/delta/auto-optimize.html) (i.e. optimizeWrite and autoCompact)
+*  [Z-Ordering](https://docs.databricks.com/delta/optimizations.html#z-ordering-multi-dimensional-clustering)
+
 # Reporting issues
 We use [GitHub Issues](https://github.com/delta-io/delta/issues) to track community reported issues. You can also [contact](#community) the community for getting answers.
 
