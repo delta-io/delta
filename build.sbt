@@ -47,7 +47,10 @@ testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
 // Don't execute in parallel since we can't have multiple Sparks in the same JVM
 parallelExecution in Test := false
 
-scalacOptions ++= Seq("-target:jvm-1.8")
+scalacOptions ++= Seq(
+  "-target:jvm-1.8",
+  "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
+)
 
 javaOptions += "-Xmx1024m"
 
@@ -87,16 +90,7 @@ testScalastyle := scalastyle.in(Test).toTask("").value
  * Unidoc settings *
  *******************/
 
-lazy val Javadoc = config("genjavadoc") extend Compile
-
-lazy val javadocSettings = inConfig(Javadoc)(Defaults.configSettings) ++ Seq(
-  addCompilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.13" cross CrossVersion.full),
-  scalacOptions ++= Seq(s"-P:genjavadoc:out=${target.value}/java", "-P:genjavadoc:strictVisibility=true")
-)
-
-lazy val root = project.in(file(".")).configs(Javadoc).settings(javadocSettings: _*)
-
-enablePlugins(JavaUnidocPlugin, ScalaUnidocPlugin)
+enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin)
 
 // Configure Scala unidoc
 scalacOptions in(ScalaUnidoc, unidoc) ++= Seq(
