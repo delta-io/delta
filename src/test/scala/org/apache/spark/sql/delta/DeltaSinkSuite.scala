@@ -168,7 +168,7 @@ class DeltaSinkSuite extends StreamTest {
         .start(outputDir.getCanonicalPath)
 
       try {
-        // The output is partitoned by "value", so the value will appear in the file path.
+        // The output is partitioned by "value", so the value will appear in the file path.
         // This is to test if we handle spaces in the path correctly.
         inputData.addData("hello world")
         failAfter(streamingTimeout) {
@@ -208,14 +208,14 @@ class DeltaSinkSuite extends StreamTest {
         assert(outputDf.schema === expectedSchema)
 
         // Verify the correct partitioning schema has been inferred
-        val hadoopdFsRelations = outputDf.queryExecution.analyzed.collect {
+        val hadoopFsRelations = outputDf.queryExecution.analyzed.collect {
           case LogicalRelation(baseRelation, _, _, _) if
               baseRelation.isInstanceOf[HadoopFsRelation] =>
             baseRelation.asInstanceOf[HadoopFsRelation]
         }
-        assert(hadoopdFsRelations.size === 1)
-        assert(hadoopdFsRelations.head.partitionSchema.exists(_.name == "id"))
-        assert(hadoopdFsRelations.head.dataSchema.exists(_.name == "value"))
+        assert(hadoopFsRelations.size === 1)
+        assert(hadoopFsRelations.head.partitionSchema.exists(_.name == "id"))
+        assert(hadoopFsRelations.head.dataSchema.exists(_.name == "value"))
 
         // Verify the data is correctly read
         checkDatasetUnorderly(

@@ -25,7 +25,6 @@ import scala.Tuple2;
 import io.delta.tables.DeltaTable;
 import org.junit.After;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -63,8 +62,8 @@ public class DeleteJavaSuite {
         target.delete();
 
         List<Row> expectedAnswer = new ArrayList<>();
-        String testresult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
-        Assert.assertNull(testresult);
+        String testResult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
+        Assert.assertNull(testResult);
     }
 
     @Test
@@ -79,8 +78,8 @@ public class DeleteJavaSuite {
 
         List<Row> expectedAnswer = createKVDataSet(
             Arrays.asList(tuple2(3, 30), tuple2(4, 40))).collectAsList();
-        String testresult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
-        Assert.assertNull(testresult);
+        String testResult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
+        Assert.assertNull(testResult);
     }
 
     @Test
@@ -95,8 +94,8 @@ public class DeleteJavaSuite {
 
         List<Row> expectedAnswer = createKVDataSet(
             Arrays.asList(tuple2(3, 30), tuple2(4, 40))).collectAsList();
-        String testresult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
-        Assert.assertNull(testresult);
+        String testResult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
+        Assert.assertNull(testResult);
     }
 
     private Dataset<Row> createKVDataSet(
