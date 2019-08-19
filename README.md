@@ -36,6 +36,9 @@ Delta Lake guarantees backward compatibility for all Delta Lake tables (i.e. new
 
 Breaking changes in the protocol are indicated by incrementing the minimum reader/writer version in the `Protocol` [action](https://github.com/delta-io/delta/blob/master/src/main/scala/org/apache/spark/sql/delta/actions/actions.scala).
 
+## Roadmap
+Delta Lake is a recent open source project based on technology developed at Databricks. We plan to open-source all APIs that are required to correctly run Spark programs that read and write Delta tables. For a detailed timeline on this effort see the [project roadmap](https://github.com/delta-io/delta/milestones).
+
 # Building
 
 Delta Lake Core is compiled using [SBT](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.html). 
