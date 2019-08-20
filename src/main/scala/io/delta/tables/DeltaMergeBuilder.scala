@@ -20,6 +20,7 @@ import scala.collection.JavaConverters._
 import scala.collection.Map
 
 import org.apache.spark.sql.delta.{DeltaErrors, PreprocessTableMerge}
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
 import org.apache.spark.annotation.InterfaceStability._
@@ -121,7 +122,9 @@ class DeltaMergeBuilder private(
     private val targetTable: DeltaTable,
     private val source: DataFrame,
     private val onCondition: Column,
-    private val whenClauses: Seq[MergeIntoClause]) extends AnalysisHelper {
+    private val whenClauses: Seq[MergeIntoClause])
+  extends AnalysisHelper
+  with DeltaLogging {
 
   /**
    * :: Evolving ::
