@@ -47,7 +47,10 @@ testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
 // Don't execute in parallel since we can't have multiple Sparks in the same JVM
 parallelExecution in Test := false
 
-scalacOptions ++= Seq("-target:jvm-1.8")
+scalacOptions ++= Seq(
+  "-target:jvm-1.8",
+  "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
+)
 
 javaOptions += "-Xmx1024m"
 
