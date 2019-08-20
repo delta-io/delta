@@ -55,8 +55,7 @@ trait DescribeDeltaHistorySuiteBase
   }
 
   def getHistory(path: String, limit: Option[Int] = None): DataFrame = {
-    val deltaLog = DeltaLog.forTable(spark, path)
-    val deltaTable = io.delta.tables.DeltaTable.forPath(spark, deltaLog.dataPath.toString)
+    val deltaTable = io.delta.tables.DeltaTable.forPath(spark, path)
     if (limit.isDefined) {
       deltaTable.history(limit.get)
     } else {
