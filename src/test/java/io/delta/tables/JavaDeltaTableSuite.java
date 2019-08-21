@@ -25,7 +25,6 @@ import org.apache.spark.sql.*;
 import org.apache.spark.util.Utils;
 import org.junit.After;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 

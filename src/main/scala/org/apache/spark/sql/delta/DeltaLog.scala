@@ -50,7 +50,7 @@ import org.apache.spark.util.{Clock, SystemClock, ThreadUtils}
  * new atomic collections of actions.
  *
  * Internally, this class implements an optimistic concurrency control
- * algorithm to handle multiple readers or writers.  Any single read
+ * algorithm to handle multiple readers or writers. Any single read
  * is guaranteed to see a consistent snapshot of the table.
  */
 class DeltaLog private(
@@ -78,7 +78,7 @@ class DeltaLog private(
   /** Direct access to the underlying storage system. */
   private[delta] val fs = logPath.getFileSystem(spark.sessionState.newHadoopConf)
 
-  /** Use ReentrantLock to allow us to call lockInterruptibly */
+  /** Use ReentrantLock to allow us to call `lockInterruptibly` */
   private val deltaLogLock = new ReentrantLock()
 
   /** Delta History Manager containing version and commit history. */
@@ -191,7 +191,7 @@ class DeltaLog private(
   def snapshot: Snapshot = currentSnapshot
 
   /**
-   * Run `body` inside `deltaLogLock` lock using  `lockInterruptibly` so that the thread can be
+   * Run `body` inside `deltaLogLock` lock using `lockInterruptibly` so that the thread can be
    * interrupted when waiting for the lock.
    */
   def lockInterruptibly[T](body: => T): T = {

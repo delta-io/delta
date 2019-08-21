@@ -56,8 +56,8 @@ class DeltaTableSuite extends QueryTest
     }
   }
 
-  def testError(expectegMsg: String)(thunk: => Unit): Unit = {
+  def testError(expectedMsg: String)(thunk: => Unit): Unit = {
     val e = intercept[AnalysisException] { thunk }
-    assert(e.getMessage.toLowerCase(Locale.ROOT).contains(expectegMsg.toLowerCase(Locale.ROOT)))
+    assert(e.getMessage.toLowerCase(Locale.ROOT).contains(expectedMsg.toLowerCase(Locale.ROOT)))
   }
 }
