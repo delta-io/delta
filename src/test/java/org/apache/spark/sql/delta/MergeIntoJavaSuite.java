@@ -79,8 +79,8 @@ public class MergeIntoJavaSuite implements Serializable {
         List<Row> expectedAnswer = createKVDataSet(
             Arrays.asList(tuple2(1, 100), tuple2(2, 20), tuple2(3, 30))).collectAsList();
 
-        String testresult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
-        Assert.assertNull(testresult);
+        String testResult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
+        Assert.assertNull(testResult);
     }
 
     @Test
@@ -112,8 +112,8 @@ public class MergeIntoJavaSuite implements Serializable {
         List<Row> expectedAnswer = createKVDataSet(
             Arrays.asList(tuple2(1, 100), tuple2(2, 20), tuple2(3, 30))).collectAsList();
 
-        String testresult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
-        Assert.assertNull(testresult);
+        String testResult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
+        Assert.assertNull(testResult);
     }
 
     @Test
@@ -145,8 +145,8 @@ public class MergeIntoJavaSuite implements Serializable {
         List<Row> expectedAnswer = createKVDataSet(
             Arrays.asList(tuple2(1, 100), tuple2(2, 20), tuple2(3, 30))).collectAsList();
 
-        String testresult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
-        Assert.assertNull(testresult);
+        String testResult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
+        Assert.assertNull(testResult);
     }
 
     @Test
@@ -168,8 +168,8 @@ public class MergeIntoJavaSuite implements Serializable {
         List<Row> expectedAnswer = createKVDataSet(Arrays.asList(tuple2(1, 100), tuple2(2, 20),
             tuple2(3, 30), tuple2(4, 41), tuple2(5, 51), tuple2(6, 60))).collectAsList();
 
-        String testresult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
-        Assert.assertNull(testresult);
+        String testResult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
+        Assert.assertNull(testResult);
     }
 
     private Dataset<Row> createKVDataSet(

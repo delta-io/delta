@@ -139,14 +139,14 @@ class DeltaSuite extends QueryTest
     val df = spark.read.format("delta").load(tempDir.toString)
 
     // Verify the correct partitioning schema is picked up
-    val hadoopdFsRelations = df.queryExecution.analyzed.collect {
+    val hadoopFsRelations = df.queryExecution.analyzed.collect {
       case LogicalRelation(baseRelation, _, _, _) if
       baseRelation.isInstanceOf[HadoopFsRelation] =>
         baseRelation.asInstanceOf[HadoopFsRelation]
     }
-    assert(hadoopdFsRelations.size === 1)
-    assert(hadoopdFsRelations.head.partitionSchema.exists(_.name == "is_odd"))
-    assert(hadoopdFsRelations.head.dataSchema.exists(_.name == "value"))
+    assert(hadoopFsRelations.size === 1)
+    assert(hadoopFsRelations.head.partitionSchema.exists(_.name == "is_odd"))
+    assert(hadoopFsRelations.head.dataSchema.exists(_.name == "value"))
 
     checkAnswer(df.where("is_odd = true"), Row(1, true) :: Nil)
     checkAnswer(df.where("is_odd IS NULL"), Row(null, null) :: Nil)

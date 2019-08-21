@@ -40,7 +40,7 @@
 
 $(document).ready(function() {
   var annotations = $("dt:contains('Annotations')").next("dd").children("span.name");
-  addBadges(annotations, "Unsable", ":: Unstable ::", '<span class="unstable badge">Unstable</span>');
+  addBadges(annotations, "Unstable", ":: Unstable ::", '<span class="unstable badge">Unstable</span>');
   addBadges(annotations, "Evolving", ":: Evolving ::", '<span class="evolving badge">Evolving</span>');
 });
 
