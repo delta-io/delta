@@ -22,7 +22,8 @@ import org.apache.spark.sql.delta._
 import io.delta.tables.execution._
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.annotation.InterfaceStability._
+import org.apache.spark.annotation.Evolving
+import org.apache.spark.annotation.Unstable
 import org.apache.spark.sql._
 
 /**

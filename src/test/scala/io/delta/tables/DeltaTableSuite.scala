@@ -20,10 +20,10 @@ import java.util.Locale
 
 
 import org.apache.spark.sql.{AnalysisException, QueryTest}
-import org.apache.spark.sql.test.SharedSQLContext
+import org.apache.spark.sql.test.SharedSparkSession
 
 class DeltaTableSuite extends QueryTest
-  with SharedSQLContext {
+  with SharedSparkSession {
 
   test("forPath") {
     withTempDir { dir =>

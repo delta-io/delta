@@ -22,10 +22,10 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.execution.FileSourceScanExec
-import org.apache.spark.sql.test.SharedSQLContext
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
-class OptimisticTransactionSuite extends QueryTest with SharedSQLContext {
+class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
   private val addA = AddFile("a", Map.empty, 1, 1, dataChange = true)
   private val addB = AddFile("b", Map.empty, 1, 1, dataChange = true)
   private val addC = AddFile("c", Map.empty, 1, 1, dataChange = true)
@@ -140,12 +140,13 @@ class OptimisticTransactionSuite extends QueryTest with SharedSQLContext {
         .save(testPath)
 
       val query = spark.read.format("delta").load(testPath).where("part = 1")
+      checkAnswer(query, Seq(Row(1, 1)))
+
       val fileScans = query.queryExecution.executedPlan.collect {
         case f: FileSourceScanExec => f
       }
       assert(fileScans.size == 1)
-      assert(fileScans.head.metadata.get("PartitionCount").contains("1"))
-      checkAnswer(query, Seq(Row(1, 1)))
+      assert(fileScans.head.metrics("numPartitions").value == 1)
     }
   }
 }

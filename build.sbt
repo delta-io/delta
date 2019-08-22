@@ -22,7 +22,8 @@ crossScalaVersions := Seq("2.12.8", "2.11.12")
 
 scalaVersion := crossScalaVersions.value.head
 
-sparkVersion := "2.4.2"
+resolvers += "Apache Spark snapshot repository" at "https://repository.apache.org/content/repositories/snapshots"
+sparkVersion := "3.0.0-SNAPSHOT"
 
 libraryDependencies ++= Seq(
   // Adding test classifier seems to break transitive resolution of the core dependencies
