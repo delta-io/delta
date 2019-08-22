@@ -20,7 +20,7 @@ import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.scalatest.Tag
 
-import org.apache.spark.sql.{AnalysisException, Column, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.{Column, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.test.SharedSQLContext
 import org.apache.spark.util.Utils
