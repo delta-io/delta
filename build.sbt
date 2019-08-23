@@ -85,6 +85,23 @@ testScalastyle := scalastyle.in(Test).toTask("").value
 
 (test in Test) := ((test in Test) dependsOn testScalastyle).value
 
+/*********************
+ *  MIMA settings    *
+ *********************/
+
+(test in Test) := ((test in Test) dependsOn mimaReportBinaryIssues).value
+
+def getVersion(version: String): String = {
+    version.split("\\.").toList match {
+        case major :: minor :: rest => s"$major.$minor.0" ;
+        case _ => throw new Exception("Could not find previous version")
+    }
+}
+
+// versionString := version.value.replaceAll("-SNAPSHOT", "")
+mimaPreviousArtifacts := Set("io.delta" %% "delta-core" %  getVersion(version.value))
+mimaBinaryIssueFilters ++= MimaExcludes.ignoredABIProblems
+
 
 /*******************
  * Unidoc settings *
