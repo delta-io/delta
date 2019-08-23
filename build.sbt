@@ -98,7 +98,6 @@ def getVersion(version: String): String = {
     }
 }
 
-// versionString := version.value.replaceAll("-SNAPSHOT", "")
 mimaPreviousArtifacts := Set("io.delta" %% "delta-core" %  getVersion(version.value))
 mimaBinaryIssueFilters ++= MimaExcludes.ignoredABIProblems
 
