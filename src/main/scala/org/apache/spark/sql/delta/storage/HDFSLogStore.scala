@@ -102,7 +102,7 @@ class HDFSLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration) exten
         fc.rename(tempPath, path, renameOpt)
         renameDone = true
         // TODO: this is a workaround of HADOOP-16255 - remove this when HADOOP-16255 is resolved
-        mayRemoveCrcFile(fc, tempPath)
+        tryRemoveCrcFile(fc, tempPath)
       } catch {
         case e: org.apache.hadoop.fs.FileAlreadyExistsException =>
           throw new FileAlreadyExistsException(path.toString)
@@ -121,7 +121,7 @@ class HDFSLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration) exten
     new Path(path.getParent, s".${path.getName}.${UUID.randomUUID}.tmp")
   }
 
-  private def mayRemoveCrcFile(fc: FileContext, path: Path): Unit = {
+  private def tryRemoveCrcFile(fc: FileContext, path: Path): Unit = {
     try {
       val checksumFile = new Path(path.getParent, s".${path.getName}.crc")
       if (fc.util.exists(checksumFile)) {
