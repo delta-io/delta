@@ -93,8 +93,8 @@ testScalastyle := scalastyle.in(Test).toTask("").value
 
 def getVersion(version: String): String = {
     version.split("\\.").toList match {
-        case major :: minor :: rest => s"$major.$minor.0" ;
-        case _ => throw new Exception("Could not find previous version")
+        case major :: minor :: rest => s"$major.$minor.0" 
+        case _ => throw new Exception(s"Could not find previous version for $version.")
     }
 }
 
