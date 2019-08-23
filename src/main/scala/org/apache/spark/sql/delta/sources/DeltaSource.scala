@@ -32,7 +32,22 @@ import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.types.StructType
 
-/** A case class to help with `Dataset` operations regarding Offset indexing. */
+/**
+ * A case class to help with `Dataset` operations regarding Offset indexing, representing AddFile
+ * actions in a Delta log. For proper offset tracking (SC-19523), there are also special sentinel
+ * values with index = -1 and add = null.
+ *
+ * This class is not designed to be persisted in offset logs or such.
+ *
+ * @param version The version of the Delta log containing this AddFile.
+ * @param index The index of this AddFile in the Delta log.
+ * @param add The AddFile.
+ * @param isLast A flag to indicate whether this is the last AddFile in the version. This is used
+ *               to resolve an off-by-one issue in the streaming offset interface; once we've read
+ *               to the end of a log version file, we check this flag to advance immediately to the
+ *               next one in the persisted offset. Without this special case we would re-read the
+ *               already completed log file.
+ */
 private[delta] case class IndexedFile(
     version: Long, index: Long, add: AddFile, isLast: Boolean = false)
 
@@ -102,11 +117,11 @@ case class DeltaSource(
     def filterAndIndexDeltaLogs(startVersion: Long): Iterator[IndexedFile] = {
       deltaLog.getChanges(startVersion).flatMap { case (version, actions) =>
         val addFiles = verifyStreamHygieneAndFilterAddFiles(actions)
-        addFiles
+        Iterator.single(IndexedFile(version, -1, null)) ++ addFiles
           .map(_.asInstanceOf[AddFile])
           .zipWithIndex.map { case (action, index) =>
-            IndexedFile(version, index.toLong, action, isLast = index + 1 == addFiles.size)
-          }
+          IndexedFile(version, index.toLong, action, isLast = index + 1 == addFiles.size)
+        }
       }
     }
 
@@ -117,7 +132,7 @@ case class DeltaSource(
     }
 
     iter.filter { case IndexedFile(version, index, _, _) =>
-      version > fromVersion || index > fromIndex
+      version > fromVersion || (index == -1 || index > fromIndex)
     }
   }
 
@@ -153,7 +168,15 @@ case class DeltaSource(
     val changes = getChanges(fromVersion, fromIndex, isStartingVersion)
 
 
-    changes.take(maxFilesPerTrigger.getOrElse(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION_DEFAULT))
+    // Take each change until we've seen the configured number of addFiles. Some changes don't
+    // represent file additions; we retain them for offset tracking, but they don't count towards
+    // the maxFilesPerTrigger conf.
+    var toTake = maxFilesPerTrigger.getOrElse(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION_DEFAULT) + 1
+    changes.takeWhile { file =>
+      if (file.add != null) toTake -= 1
+
+      toTake > 0
+    }
   }
 
   private def getStartingOffset(): Option[Offset] = {
@@ -271,7 +294,7 @@ case class DeltaSource(
     val addFilesIter = changes.takeWhile { case IndexedFile(version, index, _, _) =>
       version < endOffset.reservoirVersion ||
         (version == endOffset.reservoirVersion && index <= endOffset.index)
-    }.map(_.add)
+    }.collect { case i: IndexedFile if i.add != null => i.add }
     val addFiles =
       addFilesIter.filter(a => excludeRegex.forall(_.findFirstIn(a.path).isEmpty)).toSeq
     logDebug(s"start: $start end: $end ${addFiles.toList}")
