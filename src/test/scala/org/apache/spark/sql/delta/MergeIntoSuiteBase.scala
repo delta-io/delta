@@ -25,13 +25,13 @@ import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.SharedSQLContext
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, MapType, StringType, StructType}
 import org.apache.spark.util.Utils
 
 abstract class MergeIntoSuiteBase
     extends QueryTest
-    with SharedSQLContext
+    with SharedSparkSession
     with BeforeAndAfterEach {
 
   import testImplicits._

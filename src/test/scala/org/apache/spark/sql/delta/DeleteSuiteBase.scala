@@ -23,11 +23,11 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
-import org.apache.spark.sql.test.SharedSQLContext
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
 abstract class DeleteSuiteBase extends QueryTest
-  with SharedSQLContext with BeforeAndAfterEach {
+  with SharedSparkSession with BeforeAndAfterEach {
 
   import testImplicits._
 

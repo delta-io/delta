@@ -25,12 +25,12 @@ import org.apache.spark.sql.delta.storage._
 import org.apache.hadoop.fs.{Path, RawLocalFileSystem}
 
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.test.SharedSQLContext
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
 abstract class LogStoreSuiteBase extends QueryTest
   with LogStoreProvider
-  with SharedSQLContext {
+  with SharedSparkSession {
 
   def logStoreClassName: String
 
