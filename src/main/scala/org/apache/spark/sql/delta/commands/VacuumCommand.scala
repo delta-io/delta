@@ -103,11 +103,6 @@ object VacuumCommand extends VacuumCommandImpl {
 
       import spark.implicits._
 
-      val snapshot = deltaLog.update()
-
-      require(snapshot.version >= 0, "No state defined for this table. Is this really " +
-        "a Delta table? Refusing to garbage collect.")
-
       val retentionMillis = retentionHours.map(h => TimeUnit.HOURS.toMillis(math.round(h)))
       checkRetentionPeriodSafety(spark, retentionMillis, deltaLog.tombstoneRetentionMillis)
 
@@ -116,6 +111,11 @@ object VacuumCommand extends VacuumCommandImpl {
       }.getOrElse(deltaLog.minFileRetentionTimestamp)
       logInfo(s"Starting garbage collection (dryRun = $dryRun) of untracked files older than " +
         s"${new Date(deleteBeforeTimestamp).toGMTString} in $path")
+
+      val snapshot = deltaLog.getCurrentSnapshotWithRetentionTimestamp(deleteBeforeTimestamp)
+      require(snapshot.version >= 0, "No state defined for this table. Is this really " +
+        "a Delta table? Refusing to garbage collect.")
+
       val hadoopConf = spark.sparkContext.broadcast(
         new SerializableConfiguration(sessionHadoopConf))
       val basePath = fs.makeQualified(path).toString

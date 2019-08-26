@@ -278,6 +278,60 @@ trait DeltaVacuumSuiteBase extends QueryTest with SharedSQLContext with GivenWhe
     }
   }
 
+  testQuietly("should delete RemoveFiles with vacuum retention period") {
+    withEnvironment { (tempDir, clock) =>
+      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath, clock)
+      // Add file1.txt modifytime 0
+      gcTest(deltaLog, clock)(
+        CreateFile("file1.txt", commitToActionLog = true),
+        CheckFiles(Seq("file1.txt"))
+      )
+      // Version 0 contains FileActions:
+      // AddFile: file1.txt modifyTime --> 0
+      require(deltaLog.getSnapshotAt(0).numOfFiles == 1)
+      require(deltaLog.getSnapshotAt(0).numOfRemoves == 0)
+      var addActions = deltaLog.getSnapshotAt(0).allFiles.collect()
+
+      gcTest(deltaLog, clock)(
+        // Add file2 modifyTime --> 1 * 3600 * 1000 + 1
+        // Remove file1 deleteTime --> 1 * 3600 * 1000 + 1
+        AdvanceClock(1 * 3600 * 1000 + 1),
+        CreateFileAndOverwrite("file2.txt", addActions(0)),
+        CheckFiles(Seq("file2.txt")),
+        CheckFiles(Seq("file1.txt"))
+      )
+
+      // Version 1 contains FileActions:
+      // AddFile: file2.txt modifyTime --> 1 * 3600 * 1000 + 1
+      // RemoveFile: file1.txt deleteTime --> 1 * 3600 * 1000 + 1
+      require(deltaLog.getSnapshotAt(1).numOfFiles == 1)
+      require(deltaLog.getSnapshotAt(1).numOfRemoves == 1)
+      addActions = deltaLog.getSnapshotAt(1).allFiles.collect()
+
+      gcTest(deltaLog, clock)(
+        // Add file3 modifyTime --> defaultTombstoneInterval + 1 * 3600 * 1000 + 1 + 1
+        // Reomve file2 delTime --> defaultTombstoneInterval + 1 * 3600 * 1000 + 1 + 1
+        AdvanceClock(defaultTombstoneInterval + 1),
+        CreateFileAndOverwrite("file3.txt", addActions(0)),
+        CheckFiles(Seq("file3.txt")),
+        CheckFiles(Seq("file2.txt")),
+        CheckFiles(Seq("file1.txt")),
+        // Do gc with retention period defaultTombstoneInterval + 1 * 3600 * 1000
+        // Current time: defaultTombstoneInterval + 1 * 3600 * 1000 + 1 + 1
+        // Gc supposed to delete files older than 2
+        // Current snapshot version 2:
+        // AddFile: file3.txt modifyTime --> defaultTombstoneInterval + 1 * 3600 * 1000 + 1 + 1
+        // RemoveFile: file2.txt deleteTime --> defaultTombstoneInterval + 1 * 3600 * 1000 + 1 + 1
+        // RemoveFile: file1.txt deleteTime --> 1 * 3600 * 1000 + 1
+        // So gc supposed delete nothing.
+        GC(false, Seq(tempDir), Some((defaultTombstoneInterval / (1000 * 3600) + 1).toDouble)),
+        CheckFiles(Seq("file3.txt")),
+        CheckFiles(Seq("file2.txt")),
+        CheckFiles(Seq("file1.txt"))
+      )
+    }
+  }
+
   protected def withEnvironment(f: (File, ManualClock) => Unit): Unit = {
     withTempDir { file =>
       val clock = new ManualClock()
@@ -299,6 +353,13 @@ trait DeltaVacuumSuiteBase extends QueryTest with SharedSQLContext with GivenWhe
    * base path. The file can be committed to the action log to be tracked, or left out for deletion.
    */
   case class CreateFile(path: String, commitToActionLog: Boolean) extends Action
+  /**
+    * Write a file to the given absolute or relative path with file to remove. Could be inside or
+    * outside the Reservoir base path. The file can be committed to the action log to be tracked,
+    * or left out for deletion.
+    * This is use to illustrate the overwrite writing mode.
+    */
+  case class CreateFileAndOverwrite(path: String, toRemove: AddFile) extends Action
   /** Create a directory at the given path. */
   case class CreateDirectory(path: String) extends Action
   /**
@@ -357,6 +418,15 @@ trait DeltaVacuumSuiteBase extends QueryTest with SharedSQLContext with GivenWhe
         } else {
           createFile(basePath, path, file, clock)
         }
+      case CreateFileAndOverwrite(path, toRemove) =>
+        Given(s"*** Writing file to $path with file $toRemove.path removed")
+        val sanitizedPath = new Path(path).toUri.toString
+        val file = new File(
+          fs.makeQualified(DeltaFileOperations.absolutePath(basePath, sanitizedPath)).toUri)
+        val txn = deltaLog.startTransaction()
+        val action = createFile(basePath, sanitizedPath, file, clock)
+        txn.commit(Seq(action, toRemove.removeWithTimestamp(clock.getTimeMillis())),
+          Write(SaveMode.Append))
       case CreateDirectory(path) =>
         Given(s"*** Creating directory at $path")
         val dir = new File(DeltaFileOperations.absolutePath(basePath, path).toUri)
