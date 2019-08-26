@@ -278,6 +278,50 @@ trait DeltaVacuumSuiteBase extends QueryTest with SharedSQLContext with GivenWhe
     }
   }
 
+  testQuietly("should delete RemoveFiles with vacuum retention period") {
+    withEnvironment { (tempDir, clock) =>
+      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath, clock)
+      // Add file1.txt modifytime 0
+      gcTest(deltaLog, clock)(
+        CreateFile("file1.txt", commitToActionLog = true),
+        CheckFiles(Seq("file1.txt"))
+      )
+
+      gcTest(deltaLog, clock)(
+        // Add file2 modifyTime --> 1 * 3600 * 1000 + 1
+        // Remove file1 deleteTime --> 1 * 3600 * 1000 + 1
+        AdvanceClock(1 * 3600 * 1000 + 1),
+        CreateFile("file2.txt", commitToActionLog = true),
+        LogicallyDeleteFile("file1.txt"),
+        CheckFiles(Seq("file2.txt")),
+        CheckFiles(Seq("file1.txt"))
+      )
+
+      gcTest(deltaLog, clock)(
+        // Add file3 modifyTime --> defaultTombstoneInterval + 1 * 3600 * 1000 + 1 + 1
+        // Reomve file2 delTime --> defaultTombstoneInterval + 1 * 3600 * 1000 + 1 + 1
+        AdvanceClock(defaultTombstoneInterval + 1),
+        CreateFile("file3.txt", commitToActionLog = true),
+        LogicallyDeleteFile("file2.txt"),
+        CheckFiles(Seq("file3.txt")),
+        CheckFiles(Seq("file2.txt")),
+        CheckFiles(Seq("file1.txt")),
+        // Do gc with retention period defaultTombstoneInterval + 1 * 3600 * 1000
+        // Current time: defaultTombstoneInterval + 1 * 3600 * 1000 + 1 + 1
+        // Gc supposed to delete files older than 2
+        // Current snapshot:
+        // AddFile: file3.txt modifyTime --> defaultTombstoneInterval + 1 * 3600 * 1000 + 1 + 1
+        // RemoveFile: file2.txt deleteTime --> defaultTombstoneInterval + 1 * 3600 * 1000 + 1 + 1
+        // RemoveFile: file1.txt deleteTime --> 1 * 3600 * 1000 + 1
+        // So gc supposed delete nothing.
+        GC(false, Seq(tempDir), Some((defaultTombstoneInterval / (1000 * 3600) + 1).toDouble)),
+        CheckFiles(Seq("file3.txt")),
+        CheckFiles(Seq("file2.txt")),
+        CheckFiles(Seq("file1.txt"))
+      )
+    }
+  }
+
   protected def withEnvironment(f: (File, ManualClock) => Unit): Unit = {
     withTempDir { file =>
       val clock = new ManualClock()

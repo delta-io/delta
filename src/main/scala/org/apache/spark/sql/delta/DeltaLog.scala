@@ -41,6 +41,7 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Expression, In, InSet, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
+import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.sources.{BaseRelation, InsertableRelation}
 import org.apache.spark.util.{Clock, SystemClock, ThreadUtils}
@@ -536,6 +537,34 @@ class DeltaLog private(
       minFileRetentionTimestamp,
       this,
       commitTimestamp.getOrElse(-1L))
+  }
+
+  def getCurrentSnapshotWithRetentionTimestamp(minFileRetentionTimestamp: Long): Snapshot = {
+    update()
+    val deltaFiles = {
+      if (currentSnapshot.version < 0) {
+        Nil
+      } else {
+        val files = store.listFrom(FileNames.deltaFile(logPath, 0))
+          .filter(f => FileNames.isDeltaFile(f.getPath) || FileNames.isCheckpointFile(f.getPath))
+          .map(_.getPath).toSeq
+        val (checkpoints, deltas) = files.partition(f => isCheckpointFile(f))
+        if (checkpoints.nonEmpty) {
+          val firstCheckpointVersion = checkpointVersion(checkpoints(0))
+          deltas.filter(file => deltaVersion(file) > firstCheckpointVersion) ++ Seq(checkpoints(0))
+        } else {
+          deltas
+        }
+      }
+    }
+    new Snapshot(
+      logPath,
+      currentSnapshot.version,
+      None,
+      deltaFiles,
+      minFileRetentionTimestamp,
+      this,
+      -1)
   }
 
   /* ---------------------------------------- *
