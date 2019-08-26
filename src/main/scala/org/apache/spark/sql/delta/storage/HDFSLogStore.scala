@@ -22,6 +22,7 @@ import java.nio.file.FileAlreadyExistsException
 import java.util.{EnumSet, UUID}
 
 import scala.collection.JavaConverters._
+import scala.util.control.NonFatal
 
 import org.apache.commons.io.IOUtils
 import org.apache.hadoop.conf.Configuration
@@ -100,6 +101,8 @@ class HDFSLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration) exten
         val renameOpt = if (overwrite) Options.Rename.OVERWRITE else Options.Rename.NONE
         fc.rename(tempPath, path, renameOpt)
         renameDone = true
+        // TODO: this is a workaround of HADOOP-16255 - remove this when HADOOP-16255 is resolved
+        tryRemoveCrcFile(fc, tempPath)
       } catch {
         case e: org.apache.hadoop.fs.FileAlreadyExistsException =>
           throw new FileAlreadyExistsException(path.toString)
@@ -116,6 +119,18 @@ class HDFSLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration) exten
 
   private def createTempPath(path: Path): Path = {
     new Path(path.getParent, s".${path.getName}.${UUID.randomUUID}.tmp")
+  }
+
+  private def tryRemoveCrcFile(fc: FileContext, path: Path): Unit = {
+    try {
+      val checksumFile = new Path(path.getParent, s".${path.getName}.crc")
+      if (fc.util.exists(checksumFile)) {
+        // checksum file exists, deleting it
+        fc.delete(checksumFile, true)
+      }
+    } catch {
+      case NonFatal(_) => // ignore, we are removing crc file as "best-effort"
+    }
   }
 
   override def listFrom(path: Path): Iterator[FileStatus] = {
