@@ -233,8 +233,8 @@ The protocol does not, for example, assume appId version monotonicity and it wou
 The schema of the `txn` action is as follows:
 Field Name | Data Type | Description
 -|-|-
-appId | String | A unique identifier for the application performing the transaction.
-version | Long | An application-specific numeric identifier for this transaction.
+appId | String | A unique identifier for the application performing the transaction
+version | Long | An application-specific numeric identifier for this transaction
 
 The following is an example `txn` action:
 ```
@@ -249,17 +249,17 @@ The following is an example `txn` action:
 ### Protocol Evolution
 The `protocol` action is used to set the version of the Delta protocol that is required to read or write a given table.
 Protocol versioning allows a newer client to exclude older readers and/or writers that are missing features required to correctly interpret the transaction log.
-The protocol version will be increased whenever non-forward-compatible changes are made to this specification.
-In the case where a client is running an invalid version, an error should be thrown instructing the user to upgrade to a newer version of their Delta client library.
+The _protocol version_ will be increased whenever non-forward-compatible changes are made to this specification.
+In the case where a client is running an invalid protocol version, an error should be thrown instructing the user to upgrade to a newer protocol version of their Delta client library.
 
-Since breaking changes must be accompanied by an increase in the tables protocol version, clients can assume that unrecognized fields or actions are not required to correctly interpret the transaction log.
+Since breaking changes must be accompanied by an increase in the protocol version recorded in a table, clients can assume that unrecognized fields or actions are never required in order to correctly interpret the transaction log.
 
 The schema of the `protocol` action is as follows:
 
 Field Name | Data Type | Description
 -|-|-
-minReaderVersion | Int | The minimum version of the Delta read protocol that a client must implement in order to correctly *read* this table.
-minWriterVersion | Int | The minimum version of the Delta write protocol that a client must implement in order to correctly *write* this table.
+minReaderVersion | Int | The minimum version of the Delta read protocol that a client must implement in order to correctly *read* this table
+minWriterVersion | Int | The minimum version of the Delta write protocol that a client must implement in order to correctly *write* this table
 
 The current version of the Delta protocol is:
 ```
@@ -272,10 +272,11 @@ The current version of the Delta protocol is:
 ```
 
 ### Commit Provenance Information
-Table versions can optionally contain additional provenance information about what higher level operation was being performed as well as who executed it.
+Table versions can optionally contain additional provenance information about what higher-level operation was being performed as well as who executed it.
 
-Implementations are free to store any valid JSON in the `commitInfo` action.
+Implementations are free to store any valid JSON-formatted data via the `commitInfo` action.
 
+An example of storing provenance information related to an `INSERT` operation:
 ```
 {
   "commitInfo":{
@@ -318,8 +319,8 @@ For example, it is not valid to change the partitioning of the table without als
 # Appendix
 
 ## Per-file Statistics
-`add` file actions can optionally contain statistics about the data in the file being added to the table.
-These statistics can be used for eliminating files based on query predicates or as input to query optimization.
+`add` actions can optionally contain statistics about the data in the file being added to the table.
+These statistics can be used for eliminating files based on query predicates or as inputs to query optimization.
 
 Global statistics record information about the entire file.
 The following global statistic is currently supported:
@@ -328,7 +329,7 @@ Name | Description
 -|-
 numRecords | The number of records in this file.
 
-Per column statistics record stats for each column in the file and they are encoded mirroring the schema of the actual data.
+Per-column statistics record information for each column in the file and they are encoded mirroring the schema of the actual data.
 For example, given the following data schema:
 ```
 |-- a: struct
@@ -354,9 +355,9 @@ The following per-column statistics are currently supported:
 
 Name | Description
 -|-
-nullCount | The number of null values for this column.
-minValues | A value smaller than all values present in the file for this column.
-maxValues | A value larger than all values present in the file for this colunn.
+nullCount | The number of null values for this column
+minValues | A value smaller than all values present in the file for this column
+maxValues | A value larger than all values present in the file for this colunn
 
 
 ## Schema Serialization Format
@@ -368,8 +369,8 @@ A reference implementation can be found in [the catalyst package of the Apache S
 
 Type Name | Description
 -|-
-string| UTF-8 encoded string of characters.
-integer|4-byte signed integer. Range: -2147483648 to 2147483647.
+string| UTF-8 encoded string of characters
+integer|4-byte signed integer. Range: -2147483648 to 2147483647
 short| 2-byte signed integer numbers. Range: -32768 to 32767
 byte| 1-byte signed integer number. Range: -128 to 127
 float| 4-byte single-precision floating point numbers
@@ -381,12 +382,12 @@ timestamp| Microsecond precision timestamp without a timezone.
 
 ### Struct Type
 
-A struct is used to represent both the top level schema of the table as well as struct columns that contain nested columns. A struct is encoded as a JSON object with the following fields.
+A struct is used to represent both the top-level schema of the table as well as struct columns that contain nested columns. A struct is encoded as a JSON object with the following fields:
 
 Field Name | Description
 -|-
-type | Always the string "struct".
-fields | An array of fields.
+type | Always the string "struct"
+fields | An array of fields
 
 ### Struct Field
 
@@ -394,9 +395,9 @@ A struct field represents a top level or nested column.
 
 Field Name | Description
 -|-
-name| Name of this (possibly nested) column.
-type| String containing the name of a primitive type, a struct definition, an array definition or a map definition.
-nullable| Boolean denoting whether this field can be null.
+name| Name of this (possibly nested) column
+type| String containing the name of a primitive type, a struct definition, an array definition or a map definition
+nullable| Boolean denoting whether this field can be null
 metadata| A JSON map containing information about this column. Keys prefixed with `Delta` are reserved for the implementation. See [TODO](#) for more information on column level metadata that must clients must handle when writing to a table.
 
 ### Array Type
@@ -405,9 +406,9 @@ An array stores a variable length collection of items of some type.
 
 Field Name | Description
 -|-
-type| Always the string "array".
-elementType| The type of element stored in this array represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition.
-containsNull| Boolean denoting whether this array can contain one or more null values.
+type| Always the string "array"
+elementType| The type of element stored in this array represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
+containsNull| Boolean denoting whether this array can contain one or more null values
 
 ### Map Type
 
@@ -416,8 +417,8 @@ A map stores an arbitrary length collection of key-value pairs with a single `ke
 Field Name | Description
 -|-
 type| Always the string "map".
-keyType| The type of element used for the key of this map, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition.
-valueType| The type of element used for the key of this map, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition.
+keyType| The type of element used for the key of this map, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
+valueType| The type of element used for the key of this map, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
 
 ### Example
 
