@@ -165,7 +165,7 @@ The `remove` action includes a timestamp that indicates when the removal occurre
 Physical deletion of the file can happen lazily after some user-specified expiration time threshold.
 This delay allows concurrent readers to continue to execute against a stale snapshot of the data.
 A `remove` action should remain in the state of the table as a _tombstone_ until it has expired.
-A tombstone expires when the table version timestamo
+A tombstone expires when the creation timestamp of the table version file exceeds the expiration threshold added to the `remove` action timestamp.
 
 Since actions within a given Delta file are not guaranteed to be applied in order, it is not valid for multiple file operations with the same path to exist in a single version.
 
