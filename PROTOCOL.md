@@ -37,7 +37,7 @@ This document is a specification for the Delta Transaction Protocol, which bring
 - **Self describing** - all metadata for a Delta table is stored alongside the data, static tables can be copied or moved using standard tools.
 - **Support for incremental processing** - readers can tail the Delta log to determine what data has been added in a given period of time, allowing for efficient streaming.
 
-Delta supports the above by implementing MVCC using a set of data files (encoded using parquet) along with a transaction log that tracks which files are part of the table at any given version.
+Delta supports the above by implementing MVCC using a set of data files (encoded using Apache Parquet) along with a transaction log that tracks which files are part of the table at any given version.
 
 # Delta Table Specification
 A Delta table is comprised of a set of _data files_ along with a _transaction log_ that records the state of the table in a sequence of contiguous, monotonically increasing table _versions_.
