@@ -37,7 +37,7 @@ trait DeltaCommand extends DeltaLogging {
    *
    * @throws AnalysisException if a non-partition column is referenced.
    */
-  protected def parsePartitionPredicates(
+  protected def parsePredicates(
       spark: SparkSession,
       predicate: String): Seq[Expression] = {
     try {
