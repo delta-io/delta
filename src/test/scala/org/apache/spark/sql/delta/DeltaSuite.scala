@@ -961,7 +961,8 @@ class DeltaSuite extends QueryTest
         .option(DeltaOptions.ARBITRARY_REPLACE_WHERE_OPTION, "(key = 4 AND value = 20) OR key = 5")
         .save(tempDir.getCanonicalPath)
 
-      checkDatasetUnorderly(data.toDF.as[(Int, Int)], 1 -> 10, 3 -> 10, 4 -> 10, 2 -> 20, 5 -> 20)
+      checkDatasetUnorderly(data.toDF.as[(Int, Int)],
+        1 -> 10, 3 -> 10, 4 -> 10, 2 -> 20, 5 -> 20, 4 -> 30)
     }
   }
 
