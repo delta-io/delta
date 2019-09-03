@@ -22,8 +22,7 @@ import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.hadoop.fs.Path
-
-import org.apache.spark.sql.{AnalysisException, SparkSession}
+import org.apache.spark.sql.{AnalysisException, Column, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.execution.datasources.HadoopFsRelation
@@ -147,5 +146,36 @@ trait DeltaCommand extends DeltaLogging {
       throw new IllegalStateException(s"File ($absolutePath) to be rewritten not found " +
         s"among candidate files:\n${nameToAddFileMap.keys.mkString("\n")}")
     })
+  }
+
+  /**
+   * Create a DataFrame that replace the targets records matching the given predicate with those
+   * from source and any new data partition records from source.
+   *
+   * @param sourceDF DataFrame of data being written to Delta.
+   * @param targetDF DataFrame of data in the latest resolved tahoe index.
+   * @param predicate Condition by which target records need to be replaced.
+   * @param txn Delta Transaction used to get the partition columns of the Delta table.
+   */
+  protected def getRevisedDataFrame(
+      sourceDF: Dataset[Row],
+      targetDF: Dataset[Row],
+      predicate: Expression,
+      txn: OptimisticTransaction): Dataset[Row] = {
+
+    val revisedPartitionsDF = {
+      sourceDF.filter(new Column(predicate))
+        .unionByName(
+          targetDF.filter(!new Column(predicate)))
+    }
+
+    val newPartitionsDF = {
+      sourceDF.join(
+        targetDF.select(txn.metadata.partitionColumns.map(new Column(_)): _*),
+        usingColumns = txn.metadata.partitionColumns,
+        joinType = "left_anti")
+    }
+
+    revisedPartitionsDF.unionByName(newPartitionsDF).distinct()
   }
 }

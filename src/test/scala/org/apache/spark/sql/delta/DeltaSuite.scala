@@ -932,14 +932,15 @@ class DeltaSuite extends QueryTest
         .partitionBy("value")
         .save(tempDir.getCanonicalPath)
 
-      Seq((4, 30), (5, 20)).toDF("key", "value")
+      Seq((4, 30), (5, 20), (6, 70)).toDF("key", "value")
         .write
         .format("delta")
         .mode("overwrite")
         .option(DeltaOptions.ARBITRARY_REPLACE_WHERE_OPTION, "key = 4 OR key = 5")
         .save(tempDir.getCanonicalPath)
 
-      checkDatasetUnorderly(data.toDF.as[(Int, Int)], 1 -> 10, 3 -> 10, 2 -> 20, 5 -> 20, 4 -> 30)
+      checkDatasetUnorderly(data.toDF.as[(Int, Int)],
+        1 -> 10, 3 -> 10, 2 -> 20, 5 -> 20, 4 -> 30, 6 -> 70)
     }
   }
 
