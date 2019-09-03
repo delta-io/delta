@@ -33,8 +33,10 @@ import org.apache.spark.sql.catalyst.plans.logical.SubqueryAlias
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.execution.streaming.{Sink, Source}
 import org.apache.spark.sql.sources._
+import org.apache.spark.sql.sources.v2.{Table, TableProvider}
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /** A DataSource V1 for integrating Delta into Spark SQL batch and Streaming APIs. */
 class DeltaDataSource
@@ -43,12 +45,17 @@ class DeltaDataSource
   with StreamSinkProvider
   with CreatableRelationProvider
   with DataSourceRegister
-  with DeltaLogging {
+  with DeltaLogging
+  with TableProvider {
 
   SparkSession.getActiveSession.foreach { spark =>
     // Enable "passPartitionByAsOptions" to support "write.partitionBy(...)"
     // TODO Remove this when upgrading to Spark 3.0.0
     spark.conf.set("spark.sql.legacy.sources.write.passPartitionByAsOptions", "true")
+  }
+
+  override def getTable(options: CaseInsensitiveStringMap): Table = {
+    throw new IllegalStateException("fake implementation to hook into the catalog")
   }
 
   override def sourceSchema(
