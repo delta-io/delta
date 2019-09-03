@@ -524,31 +524,12 @@ object DeltaTable {
   /**
    * :: Evolving ::
    *
-   * Check if the provided path is the root of a Delta table using the given SparkSession.
+   * Check if the provided `path` is the root of a Delta table using the given SparkSession.
    *
    */
   @Evolving
-  def isDeltaTable(sparkSession: SparkSession, path: Path): Boolean = {
-    DeltaTableUtils.isDeltaTable(sparkSession, path)
-  }
-
-  /**
-   * :: Evolving ::
-   *
-   * Check if the provided path is the root of a Delta table.
-   *
-   * Note: This uses the active SparkSession in the current thread to search for the table. Hence,
-   * this throws error if active SparkSession has not been set, that is,
-   * `SparkSession.getActiveSession()` is empty.
-   *
-   */
-  @Evolving
-  def isDeltaTable(path: Path): Boolean = {
-    val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
-    }
-
-    isDeltaTable(sparkSession, path)
+  def isDeltaTable(sparkSession: SparkSession, path: String): Boolean = {
+    DeltaTableUtils.isDeltaTable(sparkSession, new Path(path))
   }
 
   /**
@@ -566,8 +547,7 @@ object DeltaTable {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
       throw new IllegalArgumentException("Could not find active SparkSession")
     }
-
-    isDeltaTable(sparkSession, new Path(path))
+    isDeltaTable(sparkSession, path)
   }
 
   /**

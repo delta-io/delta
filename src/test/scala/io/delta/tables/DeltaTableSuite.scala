@@ -77,6 +77,7 @@ class DeltaTableSuite extends QueryTest
       assert(!DeltaTable.isDeltaTable(dir.getAbsolutePath))
     }
   }
+
   test("isDeltaTable - with non-Delta table") {
     withTable("table") {
       testData.write.format("parquet").saveAsTable("table")
