@@ -98,9 +98,6 @@ case class WriteIntoDelta(
     if (affectedFiles.isEmpty) {
       // no rows qualify the partition predicates
       Nil
-    } else if (otherPredicates.isEmpty) {
-      // this is the same as "replaceWhere" so just do the normal replaceWhere
-      buildReplaceWhereActions(spark, partitionColumns, Some(metadataPredicates), txn)
     } else {
 
       val affectedFileIndex = new TahoeBatchFileIndex(

@@ -982,7 +982,7 @@ class DeltaSuite extends QueryTest
         .option(DeltaOptions.ARBITRARY_REPLACE_WHERE_OPTION, "value = 20")
         .save(tempDir.getCanonicalPath)
 
-      checkDatasetUnorderly(data.toDF.as[(Int, Int)], 1 -> 10, 3 -> 10, 4 -> 10, 5 -> 20)
+      checkDatasetUnorderly(data.toDF.as[(Int, Int)], 1 -> 10, 3 -> 10, 4 -> 10, 4 -> 30, 5 -> 20)
     }
   }
 
