@@ -56,6 +56,11 @@ class DeltaTimeTravelSuite extends QueryTest
     }
   }
 
+  private def modifyCheckpointTimestamp(deltaLog: DeltaLog, version: Long, ts: Long): Unit = {
+    val file = new File(FileNames.checkpointFileSingular(deltaLog.logPath, version).toUri)
+    file.setLastModified(ts)
+  }
+
   /** Generate commits with the given timestamp in millis. */
   private def generateCommitsCheap(deltaLog: DeltaLog, commits: Long*): Unit = {
     var startVersion = deltaLog.snapshot.version + 1
@@ -195,9 +200,11 @@ class DeltaTimeTravelSuite extends QueryTest
 
       // we need this checkpoint so that we can delete starting with the first version
       deltaLog.checkpoint()
+      modifyCheckpointTimestamp(deltaLog, deltaLog.snapshot.version, time)
       generateCommitsCheap(deltaLog, Seq(5, 10, 7, 8, 14).map(time + _.seconds): _*)
       // We need this checkpoint so that we can delete up to the last version
       deltaLog.checkpoint()
+      modifyCheckpointTimestamp(deltaLog, deltaLog.snapshot.version, time + 14.seconds)
 
       assert(deltaLog.history.getHistory(0, None).map(_.timestamp.getTime).reverse ===
         Seq(time, time + 5.seconds,

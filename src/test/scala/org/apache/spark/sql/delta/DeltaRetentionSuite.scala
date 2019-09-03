@@ -177,4 +177,27 @@ class DeltaRetentionSuite extends QueryTest
       assert(log2.snapshot.allFiles.count() === 6)
     }
   }
+
+  test("the checkpoint file for version 0 should be cleaned") {
+    withTempDir { tempDir =>
+      val clock = new ManualClock(System.currentTimeMillis())
+      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath), clock)
+      log.startTransaction().commit(AddFile("0", Map.empty, 1, 1, true) :: Nil, testOp)
+      log.checkpoint()
+
+      val initialFiles = getLogFiles(tempDir)
+      clock.advance(intervalStringToMillis(DeltaConfigs.LOG_RETENTION.defaultValue) +
+        intervalStringToMillis("interval 1 day"))
+
+      // Create a new checkpoint so that the previous version can be deleted
+      log.startTransaction().commit(AddFile("1", Map.empty, 1, 1, true) :: Nil, testOp)
+      log.checkpoint()
+
+      log.cleanUpExpiredLogs()
+      val afterCleanup = getLogFiles(tempDir)
+      initialFiles.foreach { file =>
+        assert(!afterCleanup.contains(file))
+      }
+    }
+  }
 }
