@@ -943,6 +943,27 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("arbitraryReplaceWhere with nested predicates") {
+    withTempDir { tempDir =>
+      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+      Seq((1, 10), (2, 20), (3, 10), (4, 20), (4, 10)).toDF("key", "value")
+        .write
+        .format("delta")
+        .partitionBy("value")
+        .save(tempDir.getCanonicalPath)
+
+      Seq((4, 30), (5, 20)).toDF("key", "value")
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .option(DeltaOptions.ARBITRARY_REPLACE_WHERE_OPTION, "(key = 4 AND value = 20) OR key = 5")
+        .save(tempDir.getCanonicalPath)
+
+      checkDatasetUnorderly(data.toDF.as[(Int, Int)], 1 -> 10, 3 -> 10, 4 -> 10, 2 -> 20, 5 -> 20)
+    }
+  }
+
   test("arbitraryReplaceWhere with no matching predicates") {
     withTempDir { tempDir =>
       def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
