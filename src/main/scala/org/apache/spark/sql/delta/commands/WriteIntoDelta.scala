@@ -100,7 +100,7 @@ case class WriteIntoDelta(
       Nil
     } else if (otherPredicates.isEmpty) {
       // this is the same as "replaceWhere" so just do the normal replaceWhere
-      replaceWhereActions(spark, partitionColumns, Some(metadataPredicates), txn)
+      buildReplaceWhereActions(spark, partitionColumns, Some(metadataPredicates), txn)
     } else {
 
       val affectedFileIndex = new TahoeBatchFileIndex(
@@ -129,17 +129,11 @@ case class WriteIntoDelta(
         // Keep everything from the resolved target except a new TahoeFileIndex
         // that only involves the affected files instead of all files.
         val newTarget = DeltaTableUtils.replaceFileIndex(targetPlan, baseRelation.location)
-
         val targetDF = Dataset.ofRows(spark, newTarget)
-        val revisedDF = {
-          data.filter(new Column(predicate))
-            .unionByName(
-              targetDF.filter(!new Column(predicate)))
-        }
 
         val rewrittenFiles = withStatusCode(
           "DELTA", s"Rewriting ${filesToRewrite.length} files for arbitraryReplace operation") {
-          txn.writeFiles(revisedDF)
+          txn.writeFiles(getRevisedDataFrame(data, targetDF, predicate, txn))
         }
 
         val operationTimestamp = System.currentTimeMillis()
@@ -151,7 +145,7 @@ case class WriteIntoDelta(
     }
   }
 
-  private def replaceWhereActions(
+  private def buildReplaceWhereActions(
     spark: SparkSession,
     partitionColumns: Seq[String],
     predicates: Option[Seq[Expression]],
@@ -228,7 +222,7 @@ case class WriteIntoDelta(
       arbitraryReplaceWhereActions(
         sparkSession, txn.metadata.partitionColumns, partitionFilters, txn)
     } else {
-      replaceWhereActions(sparkSession, txn.metadata.partitionColumns, partitionFilters, txn)
+      buildReplaceWhereActions(sparkSession, txn.metadata.partitionColumns, partitionFilters, txn)
     }
 
     actions
