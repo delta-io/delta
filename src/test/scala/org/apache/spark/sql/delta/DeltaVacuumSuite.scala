@@ -21,8 +21,8 @@ import java.util.Locale
 
 import org.apache.spark.sql.delta.DeltaOperations.{Delete, Write}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, RemoveFile}
-import org.apache.spark.sql.delta.commands.{DeltaVacuumStats, VacuumCommand}
-import org.apache.spark.sql.delta.util.{DeltaFileOperations, JsonUtils}
+import org.apache.spark.sql.delta.commands.VacuumCommand
+import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 import org.scalatest.GivenWhenThen
