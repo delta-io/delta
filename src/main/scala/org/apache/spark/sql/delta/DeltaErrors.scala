@@ -550,9 +550,9 @@ object DeltaErrors
       s"Please rewrite your target as parquet.`$path` if it's a parquet directory.")
   }
 
-  def convertNonParquetFilesException(path: String, sourceName: String): Throwable = {
-    new AnalysisException("CONVERT TO DELTA only supports parquet files, but you are trying to " +
-      s"convert a $sourceName source: `$sourceName`.`$path`")
+  def convertNonParquetTablesException(ident: TableIdentifier, sourceName: String): Throwable = {
+    new AnalysisException("CONVERT TO DELTA only supports parquet tables, but you are trying to " +
+      s"convert a $sourceName source: $ident")
   }
 
   def unexpectedPartitionColumnFromFileNameException(
