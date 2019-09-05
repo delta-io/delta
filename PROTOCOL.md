@@ -28,13 +28,15 @@
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
+<font color="red">THIS IS AN IN-PROGRESS DRAFT</font>
+
 # Overview
 This document is a specification for the Delta Transaction Protocol, which brings [ACID](https://en.wikipedia.org/wiki/ACID) properties to large collections of data, stored as files, in a distributed file system or object store. The protocol was designed with the following goals in mind:
 
 - **Serializable ACID Writes** - multiple writers can concurrently modify a Delta table while maintaining ACID semantics.
 - **Snapshot Isolation for Reads** - readers can read a consistent snapshot of a Delta table, even in the face of concurrent writes.
 - **Scalability to billions of partitions or file** - queries against a Delta table can be planned on a single machine or in parallel.
-- **Self describing** - all metadata for a Delta table is stored alongside the data, static tables can be copied or moved using standard tools.
+- **Self describing** - all metadata for a Delta table is stored alongside the data. This design eliminates the need to maintain a separate metastore just to read the data and also allows static tables to be copied or moved using standard filesystem tools.
 - **Support for incremental processing** - readers can tail the Delta log to determine what data has been added in a given period of time, allowing for efficient streaming.
 
 Delta's transactions are implemented using multi-version concurrency control (MVCC).
@@ -60,6 +62,16 @@ The state of a table at a given version is called a _snapshot_ and is defined by
 
 ## File Types
 A Delta table is stored within a directory and is composed of four different types of files.
+
+Here is an example of a Delta table with three entries in the commit log, stored in the directory `mytable`.
+```
+/mytable/_delta_log/00000000000000000000.json
+/mytable/_delta_log/00000000000000000001.json
+/mytable/_delta_log/00000000000000000003.json
+/mytable/_delta_log/00000000000000000003.checkpoint.parquet
+/mytable/_delta_log/_last_checkpoint
+/mytable/part-00000-3935a07c-416b-4344-ad97-2a38342ee2fc.c000.snappy.parquet
+```
 
 ### Data Files
 Data files can be stored in the root directory of the table or in any non-hidden subdirectory (i.e., one whose name does not start with an `_`).
@@ -200,7 +212,7 @@ The schema of the `add` action is as follows:
 Field Name | Data Type | Description
 -|-|-
 path| String | A relative path, from the root of the table, to a file that should be added to the table
-partitionValues| Map[String, String] | A map containing the partition values for this file
+partitionValues| Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization)
 size| Long | The size of this file in bytes
 modificationTime | Long | The time this file was created, as milliseconds since the epoch
 dataChange | Boolean | When `false` the file must already be present in the table or the records in the added file must be contained in one or more `remove` actions in the same version
@@ -376,8 +388,20 @@ Name | Description
 -|-
 nullCount | The number of null values for this column
 minValues | A value smaller than all values present in the file for this column
-maxValues | A value larger than all values present in the file for this colunn
+maxValues | A value larger than all values present in the file for this column
 
+## Partition Value Serialization
+
+Partition values are stored as strings, using the following formats. An empty string for any type translates to a `null` partition value.
+
+Type | Serialization Format
+-|-
+string | No translation required
+numeric types | The string representation of the number
+date | Encoded as `{year}-{month}-{day}`. For example, `1970-01-01`
+timestamp | Encoded as `{year}-{month}-{day} {hour}:{minute}:{second}` For example: `1970-01-01 00:00:00`
+boolean | Encoded as the string "true" or "false"
+binary | Encoded as a string of escaped binary values. For example, `"\u0001\u0002\u0003"`
 
 ## Schema Serialization Format
 
