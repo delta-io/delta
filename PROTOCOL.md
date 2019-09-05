@@ -79,8 +79,8 @@ By default, the reference implementation stores data files in directories that a
 This directory format is only used to follow existing conventions and is not required by the protocol.
 Actual partition values for a file must be read from the transaction log.
 
-### Delta files
-Delta files are stored as JSON in a directory at the root of the table named `_delta_log`.
+### Delta Log Entries
+Delta files are stored as JSON in a directory at the root of the table named `_delta_log`, and together make up the log of all changes that have occurred to a table.
 Delta files are the unit of atomicity for a table, and are named using the next available version number, zero-padded to 20 digits.
 
 For example:
@@ -121,8 +121,6 @@ The format of the checkpoint file name can take one of two forms:
 Since it is possible that a writer will fail while writing out one or more parts of a multi-part checkpoint, readers must only use a complete checkpoint, wherein all fragments are present. For performance reasons, readers should search for the most recent earlier checkpoint that is complete.
 
 Checkpoints for a given version must only be created after the associated delta file has been successfully written.
-
-<!-- TODO: requirements on partitioning/ordering in checkpoints -->
 
 ### Last Checkpoint File
 The Delta transaction log will often contain many (e.g. 100,000+) files.
@@ -334,6 +332,36 @@ An example of storing provenance information related to an `INSERT` operation:
 ```
 
 <!--
+# Requirements for Writers
+
+## Consistency Between Table Metadata and Data Files
+
+ - Any column that exists in a data files present in the table must also be present in the metadata of the table.
+ - Values for all partition columns present in the schema must be present for all files in the table.
+
+ - Columns present in the schema of the table may be missing from data files. Readers should fill these missing columns in with `null`.
+
+## Ordering Within Files
+
+### Delta Log Entries
+- A single long entry must not include more than one action that reconcile with each other.
+  - Add / Remove actions with the same `path`
+  - More than one Metadata action
+  - More than one protocol action
+  - More than one SetTransaction with the same `appId`
+
+### Checkpoints
+
+# Data File Naming
+Data files must be globally unique. The reference implementation uses a GUID to ensure this property.
+
+# Table Properties
+
+# Column Invariants
+
+
+
+
 Requirements
 The metadata of the table at any given version must be consistent with the data currently in the table.
 For example, it is not valid to change the partitioning of the table without also removing any files present that are not correctly partitioned.
@@ -342,6 +370,7 @@ For example, it is not valid to change the partitioning of the table without als
 - TODO: Add checkpoints
 - TODO: Add last checkpoint
 - TODO: Parquet file naming. should use guids
+- TODO: Ordering with-in checkpoints
 
 ## Required Table Options
 ## Column Invariants
