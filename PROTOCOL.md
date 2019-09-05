@@ -124,7 +124,7 @@ Since it is possible that a writer will fail while writing out one or more parts
 Checkpoints for a given version must only be created after the associated delta file has been successfully written.
 
 ### Last Checkpoint File
-The Delta transaction log will often contain many (e.g. 100,000+) files.
+The Delta transaction log will often contain many (e.g. 10,000+) files.
 Listing such a large directory can be prohibitively expensive.
 The last checkpoint file can help reduce the cost of constructing the lastest snapshot of the table by providing a pointer to near the end of the log.
 
