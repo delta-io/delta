@@ -1,13 +1,13 @@
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
-# Delta Transaction Log Protocol
+Delta Transaction Log Protocol
 
 - [Overview](#overview)
 - [Delta Table Specification](#delta-table-specification)
   - [File Types](#file-types)
-    - [Versions](#versions)
-    - [Checkpoints](#checkpoints)
     - [Data Files](#data-files)
+    - [Delta Log Entries](#delta-log-entries)
+    - [Checkpoints](#checkpoints)
     - [Last Checkpoint File](#last-checkpoint-file)
   - [Actions](#actions)
     - [Change Metadata](#change-metadata)
@@ -18,6 +18,7 @@
     - [Commit Provenance Information](#commit-provenance-information)
 - [Appendix](#appendix)
   - [Per-file Statistics](#per-file-statistics)
+  - [Partition Value Serialization](#partition-value-serialization)
   - [Schema Serialization Format](#schema-serialization-format)
     - [Primitive Types](#primitive-types)
     - [Struct Type](#struct-type)
