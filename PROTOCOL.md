@@ -38,38 +38,38 @@ This document is a specification for the Delta Transaction Protocol, which bring
 - **Support for incremental processing** - readers can tail the Delta log to determine what data has been added in a given period of time, allowing for efficient streaming.
 
 Delta's transactions are implemented using multi-version concurrency control (MVCC).
-As a table changes, Delta's MVCC algorithm  keeps multiple copies of the data around, rather than immediately replacing files that contains records that are updated or removed.
+As a table changes, Delta's MVCC algorithm  keeps multiple copies of the data around, rather than immediately replacing files that contain records that are being updated or removed.
 
-Readers of the table can use the _transaction log_ to ensure that they only see one consistent _snapshot_ of a table at time by selectively choosing which _data files_ to process.
+Readers of the table ensure that they only see one consistent _snapshot_ of a table at time by using the _transaction log_ to selectively choose which _data files_ to process.
 
 Writers modify the table in two phases:
 First, they optimistically write out new data files or updated copies of existing ones.
 Then, they _commit_, creating the latest _atomic version_ of the table by adding a new entry to the log.
-In this log entry they record which data files files to logically add and remove along with other metadata about the table.
+In this log entry they record which data files to logically add and remove, along with changes to other metadata about the table.
 
-Data files that are no longer present in the latest version of the table can be lazily deleted by the vacuum command, after a user specified retention period (default 7 days).
+Data files that are no longer present in the latest version of the table can be lazily deleted by the vacuum command, after a user-specified retention period (default 7 days).
 
 # Delta Table Specification
-A table has a single serial history of atomic versions, named using contiguous & monotonically-increasing integers.
+A table has a single serial history of atomic versions, which are named using contiguous, monotonically-increasing integers.
 The state of a table at a given version is called a _snapshot_ and is defined by the following properties:
  - **Version of the Delta log protocol** that is required to correctly read or write the table
  - **Metadata** of the table (e.g., the schema, a unique identifier, partition columns, and other configuration properties)
- - **Set of files** present in the table, along with metadata about those files.
- - **Set of tombstones** for files that were recently deleted.
- - **Set of applications-specific transactions** that have been successfully committed to the table.
+ - **Set of files** present in the table, along with metadata about those files
+ - **Set of tombstones** for files that were recently deleted
+ - **Set of applications-specific transactions** that have been successfully committed to the table
 
 ## File Types
 A Delta table is stored within a directory and is composed of four different types of files.
 
 ### Data Files
-Data files can be stored in the root directory of the table or in any non-hidden (i.e., does not start with an `_`) subdirectory.
+Data files can be stored in the root directory of the table or in any non-hidden subdirectory (i.e., one whose name does not start with an `_`).
 By default, the reference implementation stores data files in directories that are named based on the partition values for data in that file (i.e. `part1=value1/part2=value2/...`).
 This directory format is only used to follow existing conventions and is not required by the protocol.
 Actual partition values for a file must be read from the transaction log.
 
 ### Delta files
 Delta files are stored as JSON in a directory at the root of the table named `_delta_log`.
-Delta files are the unit of atomicity for a delta table and are named using the next available version number, zero-padded to 20 digits.
+Delta files are the unit of atomicity for a table, and are named using the next available version number, zero-padded to 20 digits.
 
 For example:
 
@@ -84,8 +84,8 @@ An action changes one aspect of the table's state, for example, adding or removi
 Checkpoints are also stored in the `_delta_log` directory, and can be created for any version of the table.
 
 A checkpoint contains the complete replay of all actions up until this version, with invalid actions removed.
-Invalid actions are those that have been canceled out by a subsequent ones (for example removing a file that has been added), using the [rules for reconcilliation][#Action Reconcilliation]
-Checkpoints allow readers to short-cut the cost of reading the log up-to a given point.
+Invalid actions are those that have been canceled out by a subsequent ones (for example removing a file that has been added), using the [rules for reconciliation](#Action Reconciliation)
+Checkpoints allow readers to short-cut the cost of reading the log up-to a given point in order to reconstruct a snapshot.
 
 By default, the reference implementation creates a checkpoint every 10 commits.
 
@@ -117,10 +117,10 @@ The Delta transaction log will often contain many (e.g. 100,000+) files.
 Listing such a large directory can be prohibitively expensive.
 The last checkpoint file can help reduce the cost of constructing the lastest snapshot of the table by providing a pointer to near the end of the log.
 
-Rather than list the entire directory, readers can locate the most recent checkpoint, by looking at the `_delta_log/_last_checkpoint` file.
-Due to the zero padded encoding of the files int he log, the name of the most recent checkpoint can be used to efficiently enumerate any delta files for only later versions of the table.
+Rather than list the entire directory, readers can locate a recent checkpoint by looking at the `_delta_log/_last_checkpoint` file.
+Due to the zero-padded encoding of the files in the log, the version id of this recent checkpoint can be used on storage systems that support lexigraphically-sorted, paginated directory listing to enumerate any delta files or newer checkpoints that comprise more recent versions of the table.
 
-This file is encoded as JSON and contains the following information:
+This last checkpoint file is encoded as JSON and contains the following information:
 
 Field | Description
 -|-
@@ -241,19 +241,24 @@ The following is an example `remove` action.
 ```
 
 ### Transaction Identifiers
-Transaction identifiers allow external systems that are modifying a Delta table to record application-specific metadata regarding the latest `version` for a given `appId` that has committed successfully.
-By recording this information atomically with other actions in the delta file, Delta enables these systems to make their transactions _idempotent_.
+Incremental processing systems (e.g., streaming systems) that track progress using their own application-specific versions, need to record what progress has been made, in order to avoid duplicating data in the face of failures and retries during a write.
+Transaction identifiers allow this information to be recorded atomically in the transaction log of a delta table along with the other actions that modify the contents of the table.
+
+Transaction identifiers are stored in the form of `appId` `version` pairs, where `appId` is a unique identifier for the process that is modifying the table and `version` is an indication of how much progress has been made by that application.
+The atomic recording of this information along with modifications to the table enables these external system can make their writes into a Delta table _idempotent_.
 
 For example, the [Delta Sink for Apache Spark's Structured Streaming](https://github.com/delta-io/delta/blob/master/src/main/scala/org/apache/spark/sql/delta/sources/DeltaSink.scala) ensures exactly-once semantics when writing a stream into a table using the following process:
  1. Record in a write-ahead-log the data that will be written, along with a monotonically increasing identifier for this batch.
  2. Check the current version of the transaction with `appId = streamId` in the target table. If this value is greater than or equal to the batch being written, then this data has already been added to the table and processing can skip to the next batch.
  3. Write the data optimistically into the table.
- 4. Attempt to commit the transaction containing both the addition of the data written out and an updated appId `version.`
+ 4. Attempt to commit the transaction containing both the addition of the data written out and an updated `appId` `version` pair.
 
-The semantics of the appId version number are left up to the external system, while Delta ensures that the last update to a given `appId` is stored in the table snapshot.
-The protocol does not, for example, assume appId version monotonicity and it would be valid for the appId version to decrease, possibly representing a "rollback" of an earlier transaction.
+The semantics of the application-specific `version` are left up to the external system.
+Delta only ensures that the latest `version` for a given `appId` is available in the table snapshot.
+The Delta transaction protocol does not, for example, assume monotonicity of the `version` and it would be valid for the `version` to decrease, possibly representing a "rollback" of an earlier transaction.
 
 The schema of the `txn` action is as follows:
+
 Field Name | Data Type | Description
 -|-|-
 appId | String | A unique identifier for the application performing the transaction
