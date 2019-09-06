@@ -526,6 +526,7 @@ object DeltaTable {
    *
    * Check if the provided `path` is the root of a Delta table using the given SparkSession.
    *
+   * @since 0.4.0
    */
   @Evolving
   def isDeltaTable(sparkSession: SparkSession, path: String): Boolean = {
@@ -541,6 +542,7 @@ object DeltaTable {
    * this throws error if active SparkSession has not been set, that is,
    * `SparkSession.getActiveSession()` is empty.
    *
+   * @since 0.4.0
    */
   @Evolving
   def isDeltaTable(path: String): Boolean = {
@@ -556,7 +558,7 @@ object DeltaTable {
    * Check whether the provided table name is a Delta table based on information from the
    * Catalog using the given SparkSession.
    *
-   *
+   * @since 0.4.0
    */
   @Evolving
   def isDeltaTable(spark: SparkSession, tableName: TableIdentifier): Boolean = {
