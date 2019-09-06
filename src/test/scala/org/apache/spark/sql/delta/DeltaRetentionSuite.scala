@@ -18,38 +18,21 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 
-import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.actions.{Action, AddFile, RemoveFile}
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.test.SharedSQLContext
-import org.apache.spark.unsafe.types.CalendarInterval
 import org.apache.spark.util.ManualClock
 
 // scalastyle:off: removeFile
-class DeltaRetentionSuite extends QueryTest
-  with SharedSQLContext {
-
-  protected val testOp = Truncate()
+class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase {
 
   protected override def sparkConf: SparkConf = super.sparkConf
-    // Disable the log cleanup because it runs asynchronously and causes test flakiness
-    .set("spark.databricks.delta.properties.defaults.enableExpiredLogCleanup", "false")
 
-  protected def intervalStringToMillis(str: String): Long = {
-    CalendarInterval.fromString(str).milliseconds()
-  }
-
-  protected def getDeltaFiles(dir: File): Seq[File] =
-    dir.listFiles().filter(_.getName.endsWith(".json"))
-
-  protected def getCheckpointFiles(dir: File): Seq[File] =
-    dir.listFiles().filter(f => FileNames.isCheckpointFile(new Path(f.getCanonicalPath)))
-
-  protected def getLogFiles(dir: File): Seq[File] = getDeltaFiles(dir) ++ getCheckpointFiles(dir)
+  override protected def getLogFiles(dir: File): Seq[File] =
+    getDeltaFiles(dir) ++ getCheckpointFiles(dir)
 
   test("delete expired logs") {
     withTempDir { tempDir =>

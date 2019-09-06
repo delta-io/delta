@@ -20,33 +20,23 @@ import java.io.{File, FileInputStream, OutputStream}
 import java.net.URI
 import java.util.UUID
 
-import scala.collection.mutable.ArrayBuffer
-
-import org.apache.spark.sql.delta.actions.{AddFile, Format, InvalidProtocolVersionException, Protocol}
+import org.apache.spark.sql.delta.actions.{AddFile, InvalidProtocolVersionException, Protocol}
 import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaSQLConf}
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
 
-import org.apache.spark.sql.{AnalysisException, DataFrame}
+import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.execution.streaming._
-import org.apache.spark.sql.streaming.{OutputMode, StreamingQueryException, StreamTest, Trigger}
+import org.apache.spark.sql.streaming.{OutputMode, StreamingQueryException, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.unsafe.types.CalendarInterval
 import org.apache.spark.util.{ManualClock, Utils}
 
-class DeltaSourceSuite extends StreamTest {
+class DeltaSourceSuite extends DeltaSourceSuiteBase {
 
   import testImplicits._
-
-  object AddToReservoir {
-    def apply(path: File, data: DataFrame): AssertOnQuery =
-      AssertOnQuery { _ =>
-        data.write.format("delta").mode("append").save(path.getAbsolutePath)
-        true
-      }
-  }
 
   private def withTempDirs(f: (File, File, File) => Unit): Unit = {
     withTempDir { file1 =>
@@ -85,17 +75,6 @@ class DeltaSourceSuite extends StreamTest {
         assert(e.getMessage.contains(msg))
       }
     }
-  }
-
-  protected def withMetadata(
-      deltaLog: DeltaLog,
-      schema: StructType,
-      format: String = "parquet"): Unit = {
-    val txn = deltaLog.startTransaction()
-    txn.commit(txn.metadata.copy(
-      schemaString = schema.json,
-      format = Format(format)
-    ) :: Nil, DeltaOperations.ManualUpdate)
   }
 
   test("basic") {
