@@ -40,6 +40,16 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests"
 )
 
+antlr4Settings
+
+antlr4Version in Antlr4 := "4.7"
+
+antlr4PackageName in Antlr4 := Some("io.delta.sql.parser")
+
+antlr4GenListener in Antlr4 := true
+
+antlr4GenVisitor in Antlr4 := true
+
 testOptions in Test += Tests.Argument("-oDF")
 
 testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
