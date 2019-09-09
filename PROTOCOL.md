@@ -332,50 +332,40 @@ An example of storing provenance information related to an `INSERT` operation:
 }
 ```
 
-<!--
 # Requirements for Writers
+This section documents additional requirements that writers must follow in order to preserve some of the higher level guarantees that Delta provides.
+
+## Creation of New Log Entries
+ - Writers MUST never overwrite an existing log entry. When ever possible they should use atomic primitives of the underlying filesystem to ensure concurrent writers do not overwrite each others entries.
 
 ## Consistency Between Table Metadata and Data Files
+ - Any column that exists in a data files present in the table MUST also be present in the metadata of the table.
+ - Values for all partition columns present in the schema MUST be present for all files in the table.
+ - Columns present in the schema of the table MAY be missing from data files. Readers SHOULD fill these missing columns in with `null`.
 
- - Any column that exists in a data files present in the table must also be present in the metadata of the table.
- - Values for all partition columns present in the schema must be present for all files in the table.
-
- - Columns present in the schema of the table may be missing from data files. Readers should fill these missing columns in with `null`.
-
-## Ordering Within Files
-
-### Delta Log Entries
-- A single long entry must not include more than one action that reconcile with each other.
+## Delta Log Entries
+- A single long entry MUST NOT include more than one action that reconcile with each other.
   - Add / Remove actions with the same `path`
   - More than one Metadata action
   - More than one protocol action
   - More than one SetTransaction with the same `appId`
 
-### Checkpoints
+## Checkpoints
+ - A checkpoint MUST only be written after the corresponding log entry has been completely written.
+ - TODO(marmbrus): Describe partitioning requirements of multi-part checkpoints.
 
-# Data File Naming
-Data files must be globally unique. The reference implementation uses a GUID to ensure this property.
+# Data Files
+ - Data files MUST be uniquely named and MUST NOT be overwritten. The reference implementation uses a GUID in the name to ensure this property.
 
-# Table Properties
+# Append-only Tables
+When the table property `delta.appendOnly` is set to `true`:
+  - New log entries MUST NOT change or remove data from the table.
+  - New log entries may rearrange data (i.e. `add` and `remove` actions where `dataChange=false`).
 
 # Column Invariants
-
-
-
-
-Requirements
-The metadata of the table at any given version must be consistent with the data currently in the table.
-For example, it is not valid to change the partitioning of the table without also removing any files present that are not correctly partitioned.
-- TODO: Action ordering within a table version. Invalid to include multiple conflicting actions
-- TODO: Add example files w/ optional partition directories
-- TODO: Add checkpoints
-- TODO: Add last checkpoint
-- TODO: Parquet file naming. should use guids
-- TODO: Ordering with-in checkpoints
-
-## Required Table Options
-## Column Invariants
--->
+ - The schema for a given column MAY the metadata `delta.invariants`.
+ - This column SHOULD be parsed as a boolean SQL expression.
+ - Writers MUST abort any transaction that adds a row to the table, where a present invariant evaluates to `false` or `null`.
 
 # Appendix
 
