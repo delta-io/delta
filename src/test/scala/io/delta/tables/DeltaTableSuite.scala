@@ -63,25 +63,11 @@ class DeltaTableSuite extends QueryTest
     }
   }
 
-  test("isDeltaTable - table") {
-    withTable("table") {
-      testData.write.format("delta").saveAsTable("table")
-      assert(DeltaTable.isDeltaTable(spark, TableIdentifier("table")))
-    }
-  }
-
   test("isDeltaTable - with non-Delta table path") {
     val msg = "not a delta table"
     withTempDir { dir =>
       testData.write.format("parquet").mode("overwrite").save(dir.getAbsolutePath)
       assert(!DeltaTable.isDeltaTable(dir.getAbsolutePath))
-    }
-  }
-
-  test("isDeltaTable - with non-Delta table") {
-    withTable("table") {
-      testData.write.format("parquet").saveAsTable("table")
-      assert(!DeltaTable.isDeltaTable(spark, TableIdentifier("table")))
     }
   }
 

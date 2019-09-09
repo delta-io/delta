@@ -17,12 +17,13 @@
 package io.delta.tables
 
 import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.delta._
 import io.delta.tables.execution._
 import org.apache.hadoop.fs.Path
+
 import org.apache.spark.annotation.InterfaceStability._
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.TableIdentifier
 
 /**
  * :: Evolving ::
@@ -524,19 +525,21 @@ object DeltaTable {
   /**
    * :: Evolving ::
    *
-   * Check if the provided `path` is the root of a Delta table using the given SparkSession.
+   * Check if the provided `identifier` string, in this case a file path,
+   * is the root of a Delta table using the given SparkSession.
    *
    * @since 0.4.0
    */
   @Evolving
-  def isDeltaTable(sparkSession: SparkSession, path: String): Boolean = {
-    DeltaTableUtils.isDeltaTable(sparkSession, new Path(path))
+  def isDeltaTable(sparkSession: SparkSession, identifier: String): Boolean = {
+    DeltaTableUtils.isDeltaTable(sparkSession, new Path(identifier))
   }
 
   /**
    * :: Evolving ::
    *
-   * Check if the provided `path` string is the root of a Delta table.
+   * Check if the provided `identifier` string, in this case a file path,
+   * is the root of a Delta table.
    *
    * Note: This uses the active SparkSession in the current thread to search for the table. Hence,
    * this throws error if active SparkSession has not been set, that is,
@@ -545,23 +548,10 @@ object DeltaTable {
    * @since 0.4.0
    */
   @Evolving
-  def isDeltaTable(path: String): Boolean = {
+  def isDeltaTable(identifier: String): Boolean = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
       throw new IllegalArgumentException("Could not find active SparkSession")
     }
-    isDeltaTable(sparkSession, path)
-  }
-
-  /**
-   * :: Evolving ::
-   *
-   * Check whether the provided table name is a Delta table based on information from the
-   * Catalog using the given SparkSession.
-   *
-   * @since 0.4.0
-   */
-  @Evolving
-  def isDeltaTable(spark: SparkSession, tableName: TableIdentifier): Boolean = {
-    DeltaTableUtils.isDeltaTable(spark, tableName)
+    isDeltaTable(sparkSession, identifier)
   }
 }

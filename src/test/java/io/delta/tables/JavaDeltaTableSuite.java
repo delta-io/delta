@@ -73,5 +73,8 @@ public class JavaDeltaTableSuite {
     Assert.assertEquals(
         QueryTest$.MODULE$.checkAnswer(table2.as("tbl").toDF().select("tbl.value"), dataRows),
         null);
+
+    // Test DeltaTable.isDeltaTable() is true for a Delta file path.
+    Assert.assertTrue(DeltaTable.isDeltaTable(input));
   }
 }
