@@ -47,8 +47,6 @@ trait DeltaWriteOptions
 
   val replaceWhere: Option[String] = options.get(REPLACE_WHERE_OPTION)
 
-  val arbitraryReplaceWhere: Option[String] = options.get(ARBITRARY_REPLACE_WHERE_OPTION)
-
   /**
    * Whether to add an adaptive shuffle before writing out the files to break skew, and coalesce
    * data into chunkier files.
@@ -121,8 +119,6 @@ object DeltaOptions {
 
   /** An option to overwrite only the data that matches predicates over partition columns. */
   val REPLACE_WHERE_OPTION = "replaceWhere"
-  /** An option to overwrite all data that matches the given predicates. */
-  val ARBITRARY_REPLACE_WHERE_OPTION = "arbitraryReplaceWhere"
   /** An option to allow automatic schema merging during a write operation. */
   val MERGE_SCHEMA_OPTION = "mergeSchema"
   /** An option to allow overwriting schema and partitioning during an overwrite write operation. */

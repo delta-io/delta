@@ -50,7 +50,7 @@ trait DeltaCommand extends DeltaLogging {
   protected def verifyPartitionPredicates(
       spark: SparkSession,
       partitionColumns: Seq[String],
-      predicates: Seq[Expression]): Unit = {
+      predicates: Seq[Expression]): Boolean = {
 
     predicates.foreach { pred =>
       if (SubqueryExpression.hasSubquery(pred)) {
@@ -60,13 +60,12 @@ trait DeltaCommand extends DeltaLogging {
       pred.references.foreach { col =>
         val nameEquality = spark.sessionState.conf.resolver
         partitionColumns.find(f => nameEquality(f, col.name)).getOrElse {
-          throw new AnalysisException(
-            s"Predicate references non-partition column '${col.name}'. " +
-              "Only the partition columns may be referenced: " +
-              s"[${partitionColumns.mkString(", ")}]")
+          return false
         }
       }
     }
+
+    true
   }
 
   /**
