@@ -66,10 +66,15 @@ class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
   override def parsePlan(sqlText: String): LogicalPlan = parse(sqlText) { parser =>
     builder.visit(parser.singleStatement()) match {
       case plan: LogicalPlan => plan
-      case x => delegate.parsePlan(sqlText)
+      case _ => delegate.parsePlan(sqlText)
     }
   }
 
+  /**
+   * Fork from `org.apache.spark.sql.catalyst.parser.AbstractSqlParser#parse(java.lang.String, scala.Function1)`.
+   *
+   * @see https://github.com/apache/spark/blob/v2.4.4/sql/catalyst/src/main/scala/org/apache/spark/sql/catalyst/parser/ParseDriver.scala#L81
+   */
   protected def parse[T](command: String)(toResult: DeltaSqlBaseParser => T): T = {
     val lexer = new DeltaSqlBaseLexer(
       new UpperCaseCharStream(CharStreams.fromString(command)))
@@ -89,8 +94,6 @@ class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
         toResult(parser)
       } catch {
         case e: ParseCancellationException =>
-          e.printStackTrace()
-
           // if we fail, parse with LL mode
           tokenStream.seek(0) // rewind input stream
           parser.reset()
@@ -148,7 +151,11 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   override def visitPassThrough(ctx: PassThroughContext): LogicalPlan = null
 }
 
-/** Fork from `org.apache.spark.sql.catalyst.parser.UpperCaseCharStream` */
+/**
+ * Fork from `org.apache.spark.sql.catalyst.parser.UpperCaseCharStream`.
+ *
+ * @see https://github.com/apache/spark/blob/v2.4.4/sql/catalyst/src/main/scala/org/apache/spark/sql/catalyst/parser/ParseDriver.scala#L157
+ */
 class UpperCaseCharStream(wrapped: CodePointCharStream) extends CharStream {
   override def consume(): Unit = wrapped.consume
   override def getSourceName(): String = wrapped.getSourceName
@@ -178,7 +185,11 @@ class UpperCaseCharStream(wrapped: CodePointCharStream) extends CharStream {
   }
 }
 
-/** Fork from `org.apache.spark.sql.catalyst.parser.PostProcessor`. */
+/**
+ * Fork from `org.apache.spark.sql.catalyst.parser.PostProcessor`.
+ *
+ * @see https://github.com/apache/spark/blob/v2.4.4/sql/catalyst/src/main/scala/org/apache/spark/sql/catalyst/parser/ParseDriver.scala#L248
+ */
 case object PostProcessor extends DeltaSqlBaseBaseListener {
 
   /** Remove the back ticks from an Identifier. */
