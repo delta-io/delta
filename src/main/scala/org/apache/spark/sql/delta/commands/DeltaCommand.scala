@@ -23,7 +23,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{AnalysisException, SparkSession}
+import org.apache.spark.sql.{AnalysisException, Column, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.execution.datasources.HadoopFsRelation
@@ -37,7 +37,7 @@ trait DeltaCommand extends DeltaLogging {
    *
    * @throws AnalysisException if a non-partition column is referenced.
    */
-  protected def parsePartitionPredicates(
+  protected def parsePredicates(
       spark: SparkSession,
       predicate: String): Seq[Expression] = {
     try {
@@ -51,7 +51,7 @@ trait DeltaCommand extends DeltaLogging {
   protected def verifyPartitionPredicates(
       spark: SparkSession,
       partitionColumns: Seq[String],
-      predicates: Seq[Expression]): Unit = {
+      predicates: Seq[Expression]): Boolean = {
 
     predicates.foreach { pred =>
       if (SubqueryExpression.hasSubquery(pred)) {
@@ -61,13 +61,122 @@ trait DeltaCommand extends DeltaLogging {
       pred.references.foreach { col =>
         val nameEquality = spark.sessionState.conf.resolver
         partitionColumns.find(f => nameEquality(f, col.name)).getOrElse {
-          throw new AnalysisException(
-            s"Predicate references non-partition column '${col.name}'. " +
-              "Only the partition columns may be referenced: " +
-              s"[${partitionColumns.mkString(", ")}]")
+          return false
         }
       }
     }
+
+    true
+  }
+
+  /**
+   * Generates a map of file names to add file entries for operations where we will need to
+   * rewrite files such as delete, merge, update. We expect file names to be unique, because
+   * each file contains a UUID.
+   */
+  protected def generateCandidateFileMap(
+      basePath: Path,
+      candidateFiles: Seq[AddFile]): Map[String, AddFile] = {
+    val nameToAddFileMap = candidateFiles.map(add =>
+      DeltaFileOperations.absolutePath(basePath.toString, add.path).toString -> add).toMap
+    assert(nameToAddFileMap.size == candidateFiles.length,
+      s"File name collisions found among:\n${candidateFiles.map(_.path).mkString("\n")}")
+    nameToAddFileMap
+  }
+
+  /**
+   * This method provides the RemoveFile actions that are necessary for files that are touched and
+   * need to be rewritten in methods like Delete, Update, and Merge.
+   *
+   * @param deltaLog The DeltaLog of the table that is being operated on
+   * @param nameToAddFileMap A map generated using `generateCandidateFileMap`.
+   * @param filesToRewrite Absolute paths of the files that were touched. We will search for these
+   *                       in `candidateFiles`. Obtained as the output of the `input_file_name`
+   *                       function.
+   * @param operationTimestamp The timestamp of the operation
+   */
+  protected def removeFilesFromPaths(
+      deltaLog: DeltaLog,
+      nameToAddFileMap: Map[String, AddFile],
+      filesToRewrite: Seq[String],
+      operationTimestamp: Long): Seq[RemoveFile] = {
+    filesToRewrite.map { absolutePath =>
+      val addFile = getTouchedFile(deltaLog.dataPath, absolutePath, nameToAddFileMap)
+      addFile.removeWithTimestamp(operationTimestamp)
+    }
+  }
+
+  /**
+   * Build a base relation of files that need to be rewritten as part of an update/delete/merge
+   * operation.
+   */
+  protected def buildBaseRelation(
+      spark: SparkSession,
+      txn: OptimisticTransaction,
+      actionType: String,
+      rootPath: Path,
+      inputLeafFiles: Seq[String],
+      nameToAddFileMap: Map[String, AddFile]): HadoopFsRelation = {
+    val deltaLog = txn.deltaLog
+    val scannedFiles = inputLeafFiles.map(f => getTouchedFile(rootPath, f, nameToAddFileMap))
+    val fileIndex = new TahoeBatchFileIndex(
+      spark, actionType, scannedFiles, deltaLog, rootPath, txn.snapshot)
+    HadoopFsRelation(
+      fileIndex,
+      partitionSchema = txn.metadata.partitionSchema,
+      dataSchema = txn.metadata.schema,
+      bucketSpec = None,
+      deltaLog.snapshot.fileFormat,
+      txn.metadata.format.options)(spark)
+  }
+
+  /**
+   * Find the AddFile record corresponding to the file that was read as part of a
+   * delete/update/merge operation.
+   *
+   * @param filePath The path to a file. Can be either absolute or relative
+   * @param nameToAddFileMap Map generated through `generateCandidateFileMap()`
+   */
+  protected def getTouchedFile(
+      basePath: Path,
+      filePath: String,
+      nameToAddFileMap: Map[String, AddFile]): AddFile = {
+    val absolutePath = DeltaFileOperations.absolutePath(basePath.toUri.toString, filePath).toString
+    nameToAddFileMap.getOrElse(absolutePath, {
+      throw new IllegalStateException(s"File ($absolutePath) to be rewritten not found " +
+        s"among candidate files:\n${nameToAddFileMap.keys.mkString("\n")}")
+    })
+  }
+
+  /**
+   * Create a DataFrame that replace the targets records matching the given predicate with those
+   * from source and any new data partition records from source.
+   *
+   * @param sourceDF DataFrame of data being written to Delta.
+   * @param targetDF DataFrame of data in the latest resolved tahoe index.
+   * @param predicate Condition by which target records need to be replaced.
+   * @param txn Delta Transaction used to get the partition columns of the Delta table.
+   */
+  protected def getRevisedDataFrame(
+      sourceDF: Dataset[Row],
+      targetDF: Dataset[Row],
+      predicate: Expression,
+      txn: OptimisticTransaction): Dataset[Row] = {
+
+    val revisedPartitionsDF = {
+      sourceDF.filter(new Column(predicate))
+        .unionByName(
+          targetDF.filter(!new Column(predicate)))
+    }
+
+    val newPartitionsDF = {
+      sourceDF.join(
+        targetDF.select(txn.metadata.partitionColumns.map(new Column(_)): _*),
+        usingColumns = txn.metadata.partitionColumns,
+        joinType = "left_anti")
+    }
+
+    revisedPartitionsDF.unionByName(newPartitionsDF).distinct()
   }
 
   /**
