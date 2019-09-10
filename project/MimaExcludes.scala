@@ -23,6 +23,7 @@ import com.typesafe.tools.mima.core.ProblemFilters._
 object MimaExcludes {
   val ignoredABIProblems = Seq(
       ProblemFilters.exclude[Problem]("org.*"),
+      ProblemFilters.exclude[Problem]("io.delta.sql.parser.*"),
       ProblemFilters.exclude[Problem]("io.delta.tables.execution.*"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.apply"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.executeHistory"),

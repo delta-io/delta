@@ -20,6 +20,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.sql.parser.DeltaSqlBaseParser._
 import io.delta.sql.parser._
+import io.delta.tables.execution.VacuumTableCommand
 import org.antlr.v4.runtime._
 import org.antlr.v4.runtime.atn.PredictionMode
 import org.antlr.v4.runtime.misc.{Interval, ParseCancellationException}

@@ -414,6 +414,11 @@ trait DeltaVacuumSuiteBase extends QueryTest with SharedSQLContext with GivenWhe
     }
   }
 
+  /**
+   * A basic vacuum test for different representations of a vacuum command.
+   *
+   * @param f A function to convert the file path to a representation in a vacuum command.
+   */
   def vacuumTest(f: File => String): Unit = {
     withEnvironment { (tempDir, clock) =>
       val retention = defaultTombstoneInterval / 5
@@ -444,7 +449,7 @@ trait DeltaVacuumSuiteBase extends QueryTest with SharedSQLContext with GivenWhe
     vacuumTest(f => s"'${f.toString()}'")
   }
 
-  test("vacuum command with delta table identifier") {
+  testQuietly("vacuum command with delta table identifier") {
     vacuumTest(f => s"delta.`${f.toString()}`")
   }
 

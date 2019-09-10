@@ -127,7 +127,7 @@ scalacOptions in(ScalaUnidoc, unidoc) ++= Seq(
 // Configure Java unidoc
 javacOptions in(JavaUnidoc, unidoc) := Seq(
   "-public",
-  "-exclude", "org:com:io.delta.tables.execution",
+  "-exclude", "org:com:io.delta.sql.parser:io.delta.tables.execution",
   "-windowtitle", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
   "-noqualifier", "java.lang",
   "-tag", "return:X"

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.sql
+package io.delta.tables.execution
 
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{Row, SparkSession}
@@ -39,7 +39,7 @@ case class VacuumTableCommand(
       new Path(if (table.nonEmpty) {
         DeltaTableIdentifier(sparkSession, table.get) match {
           case Some(id) if id.path.isDefined => id.path.get
-          case _ => throw DeltaErrors.vacuumTableNotSupportedException
+          case _ => throw DeltaErrors.tableNotSupportedException("VACUUM")
         }
       } else {
         path.get
