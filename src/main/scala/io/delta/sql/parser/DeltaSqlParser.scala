@@ -128,8 +128,19 @@ class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
   override def parseDataType(sqlText: String): DataType = delegate.parseDataType(sqlText)
 }
 
+/**
+ * Define how to convert an AST generated from `DeltaSqlBase.g4` to a `LogicalPlan`. The parent
+ * class `DeltaSqlBaseBaseVisitor` defines all visitXXX methods generated from `#` instructions in
+ * `DeltaSqlBase.g4` (such as `#vacuumTable`).
+ */
 class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
 
+  /**
+   * Create a [[VacuumTableCommand]] logical plan. Example SQL:
+   * {{{
+   *   VACUUM ('/path/to/dir' | detla.`/path/to/dir`) [RETAIN number HOURS] [DRY RUN];
+   * }}}
+   */
   override def visitVacuumTable(ctx: VacuumTableContext): AnyRef = withOrigin(ctx) {
     VacuumTableCommand(
       Option(ctx.path).map(string),

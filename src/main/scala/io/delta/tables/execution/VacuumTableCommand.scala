@@ -25,6 +25,12 @@ import org.apache.spark.sql.delta.commands.VacuumCommand
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.types.StringType
 
+/**
+ * The `vacuum` command implementation for Spark SQL. Example SQL:
+ * {{{
+ *    VACUUM ('/path/to/dir' | detla.`/path/to/dir`) [RETAIN number HOURS] [DRY RUN];
+ * }}}
+ */
 case class VacuumTableCommand(
     path: Option[String],
     table: Option[TableIdentifier],
