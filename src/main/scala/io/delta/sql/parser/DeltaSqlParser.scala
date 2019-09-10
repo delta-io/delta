@@ -138,7 +138,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   /**
    * Create a [[VacuumTableCommand]] logical plan. Example SQL:
    * {{{
-   *   VACUUM ('/path/to/dir' | detla.`/path/to/dir`) [RETAIN number HOURS] [DRY RUN];
+   *   VACUUM ('/path/to/dir' | delta.`/path/to/dir`) [RETAIN number HOURS] [DRY RUN];
    * }}}
    */
   override def visitVacuumTable(ctx: VacuumTableContext): AnyRef = withOrigin(ctx) {

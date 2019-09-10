@@ -28,7 +28,7 @@ import org.apache.spark.sql.types.StringType
 /**
  * The `vacuum` command implementation for Spark SQL. Example SQL:
  * {{{
- *    VACUUM ('/path/to/dir' | detla.`/path/to/dir`) [RETAIN number HOURS] [DRY RUN];
+ *    VACUUM ('/path/to/dir' | delta.`/path/to/dir`) [RETAIN number HOURS] [DRY RUN];
  * }}}
  */
 case class VacuumTableCommand(
