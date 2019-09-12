@@ -55,11 +55,11 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
   protected def makeUpdateTable(
       target: DeltaTable,
       onCondition: Option[Column],
-      setColumns: Seq[(String, Column)]): UpdateTable = {
+      setColumns: Seq[(String, Column)]): Update = {
     val updateColumns = setColumns.map { x => UnresolvedAttribute.quotedString(x._1) }
     val updateExpressions = setColumns.map{ x => x._2.expr }
     val condition = onCondition.map {_.expr}
-    UpdateTable(
+    Update(
       target.toDF.queryExecution.analyzed, updateColumns, updateExpressions, condition)
   }
 
@@ -80,7 +80,7 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
 
     val update = makeUpdateTable(self, condition, setColumns)
     val resolvedUpdate =
-      UpdateTable.resolveReferences(update, tryResolveReferences(sparkSession)(_, update))
+      Update.resolveReferences(update, tryResolveReferences(sparkSession)(_, update))
     val updateCommand = PreprocessTableUpdate(sparkSession.sessionState.conf)(resolvedUpdate)
     updateCommand.run(sparkSession)
   }

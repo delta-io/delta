@@ -19,11 +19,11 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.commands.UpdateCommand
 
 import org.apache.spark.sql.catalyst.analysis.{EliminateSubqueryAliases, UnresolvedAttribute}
-import org.apache.spark.sql.catalyst.plans.logical.UpdateTable
+import org.apache.spark.sql.catalyst.plans.logical.Update
 import org.apache.spark.sql.internal.SQLConf
 
 case class PreprocessTableUpdate(conf: SQLConf) extends UpdateExpressionsSupport {
-  def apply(update: UpdateTable): UpdateCommand = {
+  def apply(update: Update): UpdateCommand = {
     val index = EliminateSubqueryAliases(update.child) match {
       case DeltaFullTable(tahoeFileIndex) =>
         tahoeFileIndex

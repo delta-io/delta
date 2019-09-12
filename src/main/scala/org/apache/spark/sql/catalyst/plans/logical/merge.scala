@@ -282,7 +282,7 @@ object MergeInto {
             // If clause allows nested field to be target, then this will return the all the
             // parts of the name (e.g., "a.b" -> Seq("a", "b")). Otherwise, this will
             // return only one string.
-            val resolvedNameParts = UpdateTable.getNameParts(
+            val resolvedNameParts = Update.getNameParts(
               resolveOrFail(unresolvedAttrib, fakeTargetPlan, s"$typ clause"),
               resolutionErrorMsg,
               merge)
