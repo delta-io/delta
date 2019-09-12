@@ -101,7 +101,7 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase {
       // delete some files in the middle
       getDeltaFiles(tempDir).sortBy(_.getName).slice(5, 15).foreach(_.delete())
       clock.advance(intervalStringToMillis(DeltaConfigs.LOG_RETENTION.defaultValue) +
-        intervalStringToMillis("interval 1 day"))
+        intervalStringToMillis("interval 2 day"))
       log.cleanUpExpiredLogs()
 
       val minDeltaFile =
