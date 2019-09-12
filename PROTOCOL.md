@@ -1,6 +1,6 @@
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
-Delta Transaction Log Protocol
+# Delta Transaction Log Protocol
 
 - [Overview](#overview)
 - [Delta Table Specification](#delta-table-specification)
@@ -36,12 +36,12 @@ This document is a specification for the Delta Transaction Protocol, which bring
 
 - **Serializable ACID Writes** - multiple writers can concurrently modify a Delta table while maintaining ACID semantics.
 - **Snapshot Isolation for Reads** - readers can read a consistent snapshot of a Delta table, even in the face of concurrent writes.
-- **Scalability to billions of partitions or file** - queries against a Delta table can be planned on a single machine or in parallel.
+- **Scalability to billions of partitions or files** - queries against a Delta table can be planned on a single machine or in parallel.
 - **Self describing** - all metadata for a Delta table is stored alongside the data. This design eliminates the need to maintain a separate metastore just to read the data and also allows static tables to be copied or moved using standard filesystem tools.
 - **Support for incremental processing** - readers can tail the Delta log to determine what data has been added in a given period of time, allowing for efficient streaming.
 
 Delta's transactions are implemented using multi-version concurrency control (MVCC).
-As a table changes, Delta's MVCC algorithm  keeps multiple copies of the data around, rather than immediately replacing files that contain records that are being updated or removed.
+As a table changes, Delta's MVCC algorithm keeps multiple copies of the data around rather than immediately replacing files that contain records that are being updated or removed.
 
 Readers of the table ensure that they only see one consistent _snapshot_ of a table at time by using the _transaction log_ to selectively choose which _data files_ to process.
 
@@ -50,7 +50,7 @@ First, they optimistically write out new data files or updated copies of existin
 Then, they _commit_, creating the latest _atomic version_ of the table by adding a new entry to the log.
 In this log entry they record which data files to logically add and remove, along with changes to other metadata about the table.
 
-Data files that are no longer present in the latest version of the table can be lazily deleted by the vacuum command, after a user-specified retention period (default 7 days).
+Data files that are no longer present in the latest version of the table can be lazily deleted by the vacuum command after a user-specified retention period (default 7 days).
 
 # Delta Table Specification
 A table has a single serial history of atomic versions, which are named using contiguous, monotonically-increasing integers.
@@ -252,7 +252,7 @@ The following is an example `remove` action.
 ```
 
 ### Transaction Identifiers
-Incremental processing systems (e.g., streaming systems) that track progress using their own application-specific versions, need to record what progress has been made, in order to avoid duplicating data in the face of failures and retries during a write.
+Incremental processing systems (e.g., streaming systems) that track progress using their own application-specific versions need to record what progress has been made, in order to avoid duplicating data in the face of failures and retries during a write.
 Transaction identifiers allow this information to be recorded atomically in the transaction log of a delta table along with the other actions that modify the contents of the table.
 
 Transaction identifiers are stored in the form of `appId` `version` pairs, where `appId` is a unique identifier for the process that is modifying the table and `version` is an indication of how much progress has been made by that application.
@@ -339,12 +339,12 @@ This section documents additional requirements that writers must follow in order
  - Writers MUST never overwrite an existing log entry. When ever possible they should use atomic primitives of the underlying filesystem to ensure concurrent writers do not overwrite each others entries.
 
 ## Consistency Between Table Metadata and Data Files
- - Any column that exists in a data files present in the table MUST also be present in the metadata of the table.
+ - Any column that exists in a data file present in the table MUST also be present in the metadata of the table.
  - Values for all partition columns present in the schema MUST be present for all files in the table.
  - Columns present in the schema of the table MAY be missing from data files. Readers SHOULD fill these missing columns in with `null`.
 
 ## Delta Log Entries
-- A single long entry MUST NOT include more than one action that reconcile with each other.
+- A single log entry MUST NOT include more than one action that reconcile with each other.
   - Add / Remove actions with the same `path`
   - More than one Metadata action
   - More than one protocol action
