@@ -24,10 +24,11 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.test.SQLTestUtils
 import org.apache.spark.util.ManualClock
 
 // scalastyle:off: removeFile
-class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase {
+class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQLTestUtils {
 
   protected override def sparkConf: SparkConf = super.sparkConf
 

@@ -28,12 +28,15 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.GivenWhenThen
 
 import org.apache.spark.sql.{QueryTest, SaveMode}
-import org.apache.spark.sql.test.SharedSQLContext
+import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.CalendarInterval
 import org.apache.spark.util.ManualClock
 
-trait DeltaVacuumSuiteBase extends QueryTest with SharedSQLContext with GivenWhenThen {
+trait DeltaVacuumSuiteBase extends QueryTest
+  with SharedSparkSession
+  with GivenWhenThen
+  with SQLTestUtils {
 
   test("don't delete data in a non-reservoir") {
     withEnvironment { (tempDir, clock) =>
