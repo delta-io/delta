@@ -39,8 +39,10 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkContext
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Expression, In, InSet, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
+import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.sources.{BaseRelation, InsertableRelation}
 import org.apache.spark.util.{Clock, SystemClock, ThreadUtils}
@@ -700,7 +702,8 @@ object DeltaLog extends DeltaLogging {
   }
   // TODO: Don't assume the data path here.
   def apply(spark: SparkSession, rawPath: Path, clock: Clock = new SystemClock): DeltaLog = {
-    val fs = rawPath.getFileSystem(spark.sessionState.newHadoopConf())
+    val hadoopConf = spark.sessionState.newHadoopConf()
+    val fs = rawPath.getFileSystem(hadoopConf)
     val path = fs.makeQualified(rawPath)
     // The following cases will still create a new ActionLog even if there is a cached
     // ActionLog using a different format path:

@@ -54,6 +54,17 @@ class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
   /**
    * :: Evolving ::
    *
+   * Apply an alias to the DeltaTable. This is similar to `Dataset.as(alias)` or
+   * SQL `tableName AS alias`.
+   *
+   * @since 0.3.0
+   */
+  @Evolving
+  def alias(alias: String): DeltaTable = as(alias)
+
+  /**
+   * :: Evolving ::
+   *
    * Get a DataFrame (that is, Dataset[Row]) representation of this Delta table.
    *
    * @since 0.3.0
@@ -507,8 +518,7 @@ object DeltaTable {
   /**
    * :: Evolving ::
    *
-   * Create a DeltaTable for the data at the given `path` using the given SparkSession to
-   * read the data.
+   * Create a DeltaTable for the data at the given `path` using the given SparkSession.
    *
    * @since 0.3.0
    */
