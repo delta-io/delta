@@ -17,16 +17,19 @@ package org.apache.spark.sql.delta.catalog
 
 import java.util
 
+import org.apache.spark.sql.catalog.v2.TableChange.{AddColumn, RemoveProperty, SetProperty, UpdateColumnComment, UpdateColumnType}
+
 import scala.collection.JavaConverters._
 import scala.collection.mutable
-
 import org.apache.spark.sql.{AnalysisException, DataFrame, SaveMode, SparkSession}
-import org.apache.spark.sql.catalog.v2.{Identifier, StagingTableCatalog}
+import org.apache.spark.sql.catalog.v2.{Identifier, StagingTableCatalog, TableChange}
 import org.apache.spark.sql.catalog.v2.expressions.{BucketTransform, FieldReference, IdentityTransform, Transform}
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable, CatalogTableType, CatalogUtils, SessionCatalog}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors}
+import org.apache.spark.sql.catalyst.plans.logical.sql.QualifiedColType
+import org.apache.spark.sql.delta.DeltaOperations.{AddColumns, ChangeColumn}
+import org.apache.spark.sql.delta.{AlterTableAddColumnsDeltaCommand, AlterTableChangeColumnDeltaCommand, AlterTableSetLocationDeltaCommand, AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand, DeltaConfigs, DeltaErrors, DeltaLog, DeltaTableIdentifier}
 import org.apache.spark.sql.delta.commands.CreateDeltaTableCommand
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
@@ -37,14 +40,15 @@ import org.apache.spark.sql.sources.InsertableRelation
 import org.apache.spark.sql.sources.v2.{StagedTable, SupportsWrite, Table, TableCapability}
 import org.apache.spark.sql.sources.v2.TableCapability._
 import org.apache.spark.sql.sources.v2.writer.{V1WriteBuilder, WriteBuilder}
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
+
+import scala.util.control.NonFatal
 
 class DeltaCatalog(val spark: SparkSession) extends V2SessionCatalog(spark.sessionState)
     with StagingTableCatalog{
   def this() = {
     this(SparkSession.active)
-    print(s"AAAAAAA instantiated\n")
   }
 
   // copy of the same lazy val from V2SessionCatalog where it's private
@@ -125,11 +129,13 @@ class DeltaCatalog(val spark: SparkSession) extends V2SessionCatalog(spark.sessi
       schema: StructType,
       partitions: Array[Transform],
       properties: util.Map[String, String]): StagedTable = {
-    val provider = properties.getOrDefault("provider", null)
+    // TODO: As discussed, the provider is sometimes not passed here in OSS Spark as of my branch,
+    // but we think PR 25669 fixed it.
+    // val provider = properties.getOrDefault("provider", null)
+    val provider = "delta"
     provider match {
       case "delta" =>
-        val capabilities = Set[TableCapability](V1_BATCH_WRITE).asJava
-        new NoOpStagedTable(ident, schema, partitions, properties, capabilities)
+        new StagedDeltaTableV2(ident, schema, partitions, properties)
       case _ =>
         throw new IllegalStateException("not supported yet")
     }
@@ -204,20 +210,28 @@ class DeltaCatalog(val spark: SparkSession) extends V2SessionCatalog(spark.sessi
     }
   }
 
-  private class NoOpStagedTable(
+  // We keep this as an internal class because it needs to call into some catalog internals for the
+  // eventual table creation.
+  private class StagedDeltaTableV2(
       ident: Identifier,
       override val schema: StructType,
       val partitions: Array[Transform],
-      override val properties: util.Map[String, String],
-      override val capabilities: util.Set[TableCapability]) extends StagedTable with SupportsWrite {
+      override val properties: util.Map[String, String]) extends StagedTable with SupportsWrite {
     override def name(): String = ident.name()
 
     override def abortStagedChanges(): Unit = {}
 
     override def commitStagedChanges(): Unit = {}
 
+    override def capabilities(): util.Set[TableCapability] = Set(
+      ACCEPT_ANY_SCHEMA, BATCH_READ,
+      V1_BATCH_WRITE, BATCH_WRITE, OVERWRITE_BY_FILTER, TRUNCATE
+    ).asJava
+
     override def newWriteBuilder(options: CaseInsensitiveStringMap): V1WriteBuilder = {
-      new DeltaV1WriteBuilder(ident, schema, partitions, properties)
+      // TODO: is this right? What's the appropriate distinction to keep for properties and options
+      val combinedProps = options.asCaseSensitiveMap().asScala ++ properties.asScala
+      new DeltaV1WriteBuilder(ident, schema, partitions, combinedProps.asJava)
     }
   }
 
@@ -240,5 +254,90 @@ class DeltaCatalog(val spark: SparkSession) extends V2SessionCatalog(spark.sessi
         }
       }
     }
+  }
+
+  override def alterTable(ident: Identifier, changes: TableChange*): Table = {
+    val provider = loadTable(ident).properties().get("provider")
+    // if (provider != "delta") return super.alterTable(ident, changes: _*)
+    val deltaIdentifier = DeltaTableIdentifier(spark, ident.asTableIdentifier).getOrElse {
+      throw new IllegalStateException("Provider was delta, but table is not a Delta table")
+    }
+
+    // We group the table changes by their type, since Delta applies each in a separate action.
+    // We also must define an artificial type for SetLocation, since data source V2 considers
+    // location just another property but it's special in Delta.
+    class SetLocation {}
+    val grouped = changes.groupBy {
+      case s: SetProperty if s.property() == "location" => classOf[SetLocation]
+      case c => c.getClass
+    }
+
+    grouped.foreach {
+      case (t, newColumns) if t == classOf[AddColumn] =>
+        AlterTableAddColumnsDeltaCommand(
+          deltaIdentifier,
+          newColumns.asInstanceOf[Seq[AddColumn]].map { col =>
+            QualifiedColType(col.fieldNames(), col.dataType(), Option(col.comment()))
+          }).run(spark)
+
+      case (t, newProperties) if t == classOf[SetProperty] =>
+        AlterTableSetPropertiesDeltaCommand(
+          deltaIdentifier,
+          DeltaConfigs.validateConfigurations(
+            newProperties.asInstanceOf[Seq[SetProperty]].map { prop =>
+              prop.property() -> prop.value()
+            }.toMap)
+        ).run(spark)
+
+      case (t, oldProperties) if t == classOf[RemoveProperty] =>
+        AlterTableUnsetPropertiesDeltaCommand(
+          deltaIdentifier,
+          oldProperties.asInstanceOf[Seq[RemoveProperty]].map(_.property()),
+          // Data source V2 REMOVE PROPERTY is always IF EXISTS.
+          ifExists = true).run(spark)
+
+      case (t, columnChanges) if t == classOf[UpdateColumnComment] =>
+        columnChanges.asInstanceOf[Seq[UpdateColumnComment]].foreach { change =>
+          val existing = DeltaLog.forTable(spark, ident.asTableIdentifier)
+              .snapshot
+              .schema
+              .findNestedField(change.fieldNames(), includeCollections = false).getOrElse {
+            throw new IllegalStateException(
+              s"Can't change comment of non-existing column ${change.fieldNames().mkString(",")}")
+          }
+          AlterTableChangeColumnDeltaCommand(
+            deltaIdentifier,
+            change.fieldNames().dropRight(1),
+            change.fieldNames().last,
+            existing.withComment(change.newComment())).run(spark)
+        }
+
+      case (t, columnChanges) if t == classOf[UpdateColumnType] =>
+        columnChanges.asInstanceOf[Seq[UpdateColumnType]].foreach { change =>
+          val existing = DeltaLog.forTable(spark, ident.asTableIdentifier)
+            .snapshot
+            .schema
+            .findNestedField(change.fieldNames(), includeCollections = false).getOrElse {
+            throw new IllegalStateException(
+              s"Can't change comment of non-existing column ${change.fieldNames().mkString(",")}")
+          }
+          AlterTableChangeColumnDeltaCommand(
+            deltaIdentifier,
+            change.fieldNames().dropRight(1),
+            change.fieldNames().last,
+            existing.copy(dataType = change.newDataType())).run(spark)
+        }
+
+      case (t, locations) if t == classOf[SetLocation] =>
+        if (locations.size != 1) {
+          throw new IllegalArgumentException(s"Can't set location multiple times. Found " +
+            s"${locations.asInstanceOf[Seq[SetProperty]].map(_.value())}")
+        }
+        AlterTableSetLocationDeltaCommand(
+          ident.asTableIdentifier,
+          locations.head.asInstanceOf[SetProperty].value()).run(spark)
+    }
+
+    loadTable(ident)
   }
 }
