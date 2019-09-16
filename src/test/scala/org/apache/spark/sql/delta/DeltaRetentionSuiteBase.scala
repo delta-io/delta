@@ -23,10 +23,12 @@ import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.test.SharedSQLContext
+import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.unsafe.types.CalendarInterval
 
-trait DeltaRetentionSuiteBase extends SharedSQLContext {
+trait DeltaRetentionSuiteBase extends QueryTest
+  with SharedSparkSession {
   protected val testOp = Truncate()
 
   protected override def sparkConf: SparkConf = super.sparkConf

@@ -6,5 +6,23 @@ jobs:
     steps:
       - checkout
       - run:
-          name: Run tests
-          command: build/sbt test  # make it +test to cross-scala compile
+          name: Prepare Python env # install python3.7, python3-pip and pipenv for pyspark.
+          # TODO: Dockerize this process
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python-openssl git
+            sudo apt install libedit-dev
+            sudo apt install python3-pip --fix-missing
+            sudo pip3 install pipenv
+            curl https://pyenv.run | bash
+            export PATH="/home/circleci/.pyenv/bin:$PATH"
+            eval "$(pyenv init -)"
+            eval "$(pyenv virtualenv-init -)"
+            pyenv install 3.7.4
+            pyenv global system 3.7.4
+            pipenv install
+            pipenv run pip install pyspark>=2.4.2
+      - run:
+          name: Run Scala/Java and Python tests
+          command: |
+            pipenv run python run-tests.py

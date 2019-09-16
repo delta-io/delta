@@ -21,9 +21,10 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.functions.typedLit
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.test.SQLTestUtils
 import org.apache.spark.util.Utils
 
-class EvolvabilitySuite extends EvolvabilitySuiteBase {
+class EvolvabilitySuite extends EvolvabilitySuiteBase with SQLTestUtils {
 
   import testImplicits._
 
