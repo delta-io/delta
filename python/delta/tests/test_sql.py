@@ -27,7 +27,7 @@ from delta.testing.utils import PySparkTestCase
 class DeltaSqlTests(PySparkTestCase):
 
     def setUp(self):
-        super(DeltaTableTests, self).setUp()
+        super(DeltaSqlTests, self).setUp()
         spark = SparkSession(self.sc)
         if self.sc.version < "3.":
             # Manually activate "DeltaSparkSessionExtension" in PySpark 2.4 in a cloned session
@@ -43,13 +43,19 @@ class DeltaSqlTests(PySparkTestCase):
     def tearDown(self):
         self.spark.stop()
         shutil.rmtree(self.tempPath)
-        super(DeltaTableTests, self).tearDown()
+        super(DeltaSqlTests, self).tearDown()
 
     def test_vacuum(self):
         df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
         df.write.format("delta").save(self.tempFile)
-        deleted_files = self.spark.sql("VACUUM '%s' RETAIN 0 HOURS" % self.tempFile).collect()
-        self.assertTrue(self.tempFile in deleted_files[0][0])
+        df.write.mode("overwrite").format("delta").save(self.tempFile)
+        self.spark.sql("set spark.databricks.delta.retentionDurationCheck.enabled = false")
+        try:
+            deleted_files = self.spark.sql("VACUUM '%s' RETAIN 0 HOURS" % self.tempFile).collect()
+            # Verify `VACUUM` did delete some data files
+            self.assertTrue(self.tempFile in deleted_files[0][0])
+        finally:
+            self.spark.sql("set spark.databricks.delta.retentionDurationCheck.enabled = true")
 
 if __name__ == "__main__":
     try:
