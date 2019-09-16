@@ -25,7 +25,16 @@ class PySparkTestCase(unittest.TestCase):
     def setUp(self):
         self._old_sys_path = list(sys.path)
         class_name = self.__class__.__name__
-        self.sc = SparkContext('local[4]', class_name)
+        conf = SparkConf() \
+            .setAppName(class_name) \
+            .setMaster('local[4]') \
+            .set("spark.ui.enabled", "false") \
+            .set("spark.databricks.delta.snapshotPartitions", "2") \
+            .set("spark.sql.shuffle.partitions", "5") \
+            .set("delta.log.cacheSize", "3") \
+            .set("spark.sql.sources.parallelPartitionDiscovery.parallelism", "5") \
+            .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+        self.sc = SparkContext(conf=conf)
 
     def tearDown(self):
         self.sc.stop()
