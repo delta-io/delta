@@ -24,6 +24,8 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.annotation.InterfaceStability._
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.types.StructType
 
 /**
  * :: Evolving ::
@@ -495,6 +497,50 @@ class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
  * @since 0.3.0
  */
 object DeltaTable {
+
+  /**
+   * :: Evolving ::
+   *
+   * Create a DeltaTable from the given parquet table and partition schema.
+   * Takes an existing parquet table and constructs a delta transaction log in the base path of
+   * that table.
+   *
+   * Note: Any changes to the table during the conversion process may not result in a consistent
+   * state at the end of the conversion. Users should stop any changes to the table before the
+   * conversion is started.
+   *
+   * @since 0.4.0
+   */
+  @Evolving
+  def convertToDelta(
+      spark: SparkSession,
+      identifier: String,
+      partitionSchema: StructType): DeltaTable = {
+    val tableId: TableIdentifier = spark.sessionState.sqlParser.parseTableIdentifier(identifier)
+    DeltaConvert.executeConvert(spark, tableId, Some(partitionSchema), None)
+    forPath(spark, tableId.table)
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Create a DeltaTable from the given parquet table. Takes an existing parquet table and
+   * constructs a delta transaction log in the base path of the table.
+   *
+   * Note: Any changes to the table during the conversion process may not result in a consistent
+   * state at the end of the conversion. Users should stop any changes to the table before the
+   * conversion is started.
+   *
+   * @since 0.4.0
+   */
+  @Evolving
+  def convertToDelta(
+      spark: SparkSession,
+      identifier: String): DeltaTable = {
+    val tableId: TableIdentifier = spark.sessionState.sqlParser.parseTableIdentifier(identifier)
+    DeltaConvert.executeConvert(spark, tableId, None, None)
+    forPath(spark, tableId.table)
+  }
 
   /**
    * :: Evolving ::
