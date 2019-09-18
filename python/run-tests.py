@@ -35,7 +35,8 @@ def test(root_dir, jar_file):
         try:
             subprocess.check_output(["spark-submit", "--jars", jar_file,
                                      "--py-files", jar_file, test_file])
-        except:
+        except Exception as e:
+            print(e)
             raise Exception("Failed test %s: " % test_file)
 
 

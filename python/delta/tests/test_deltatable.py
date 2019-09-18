@@ -20,6 +20,7 @@ import shutil
 import os
 
 from pyspark.sql import SQLContext, functions, Row, SparkSession
+from pyspark.sql.types import *
 
 from delta.tables import DeltaTable
 from delta.testing.utils import PySparkTestCase
@@ -51,6 +52,56 @@ class DeltaTableTests(PySparkTestCase):
             dt.alias("myTable").select('myTable.key', 'myTable.value'),
             [('a', 1), ('b', 2), ('c', 3)])
 
+    def test_history(self):
+        self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
+        self.__overwriteDeltaTable([('a', 3), ('b', 2), ('c', 1)])
+        dt = DeltaTable.forPath(self.spark, self.tempFile)
+        operations = dt.history().select('operation')
+        self.__checkAnswer(operations,
+                           [Row("WRITE"), Row("WRITE")],
+                           StructType([StructField(
+                               "operation", StringType(), True)]))
+        lastMode = dt.history(1).select('operationParameters.mode')
+        self.__checkAnswer(
+            lastMode,
+            [Row("Overwrite")],
+            StructType([StructField("operationParameters.mode", StringType(), True)]))
+
+    def test_vacuum(self):
+        self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
+        dt = DeltaTable.forPath(self.spark, self.tempFile)
+        self.__createFile('abc.txt', 'abcde')
+        self.__createFile('bac.txt', 'abcdf')
+        self.assertEqual(True, self.__checkFileExists('abc.txt'))
+        dt.vacuum()  # will not delete files as default retention is used.
+        self.assertEqual(True, self.__checkFileExists('bac.txt'))
+        retentionConf = "spark.databricks.delta.retentionDurationCheck.enabled"
+        self.spark.conf.set(retentionConf, "false")
+        dt.vacuum(0.0)
+        self.spark.conf.set(retentionConf, "true")
+        self.assertEqual(False, self.__checkFileExists('bac.txt'))
+        self.assertEqual(False, self.__checkFileExists('abc.txt'))
+
+    def test_convertToDelta(self):
+        df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
+        df.write.format("parquet").save(self.tempFile)
+        self.tempFile2 = self.tempFile + "_"
+        dt = DeltaTable.convertToDelta(self.spark, "parquet.`" + self.tempFile + "`")
+        self.__checkAnswer(
+            self.spark.read.format("delta").load(self.tempFile),
+            [('a', 1), ('b', 2), ('c', 3)])
+        # test if convert to delta with partition columns work
+        df.write.partitionBy("value").format("parquet").save(self.tempFile2)
+        schema = StructType()
+        schema.add("value", IntegerType(), True)
+        dt = DeltaTable.convertToDelta(
+            self.spark,
+            "parquet.`" + self.tempFile2 + "`",
+            schema)
+        self.__checkAnswer(
+            self.spark.read.format("delta").load(self.tempFile2),
+            [('a', 1), ('b', 2), ('c', 3)])
+
     def __checkAnswer(self, df, expectedAnswer, schema=["key", "value"]):
         if not expectedAnswer:
             self.assertEqual(df.count(), 0)
@@ -64,6 +115,18 @@ class DeltaTableTests(PySparkTestCase):
     def __writeDeltaTable(self, datalist):
         df = self.spark.createDataFrame(datalist, ["key", "value"])
         df.write.format("delta").save(self.tempFile)
+
+    def __overwriteDeltaTable(self, datalist):
+        df = self.spark.createDataFrame(datalist, ["key", "value"])
+        df.write.format("delta").mode("overwrite").save(self.tempFile)
+
+    def __createFile(self, fileName, content):
+        with open(os.path.join(self.tempFile, fileName), 'w') as f:
+            f.write(content)
+
+    def __checkFileExists(self, fileName):
+        return os.path.exists(os.path.join(self.tempFile, fileName))
+
 
 if __name__ == "__main__":
     try:
