@@ -68,6 +68,10 @@ class DeltaTableTests(PySparkTestCase):
         dt.delete()
         self.__checkAnswer(dt.toDF(), [])
 
+        # bad args
+        with self.assertRaises(TypeError):
+            dt.delete(where=1)
+
     def test_update(self):
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
         dt = DeltaTable.forPath(self.spark, self.tempFile)
@@ -104,7 +108,9 @@ class DeltaTableTests(PySparkTestCase):
         with self.assertRaises(TypeError):
             dt.update(set=1)
         with self.assertRaises(ValueError):
-            dt.update(where='a')
+            dt.update(where='a', set=None)
+        with self.assertRaises(ValueError):
+            dt.update(where='a')  # set = None by default
         with self.assertRaises(TypeError):
             dt.update(1, {})
 

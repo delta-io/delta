@@ -56,6 +56,8 @@ class DeltaTable(object):
     def delete(self, where=None):
         """
         Delete data that match the given `where`.
+
+        .. note:: Evolving
         """
         if where is None:
             self._jdt.delete()
@@ -64,13 +66,15 @@ class DeltaTable(object):
         elif type(where) is str:
             self._jdt.delete(where)
         else:
-            raise Exception("type of 'where' can only be str or Column.")
+            raise TypeError("Type of 'where' argument can only be str or Column.")
 
     def update(self, where=None, set=None):
         """
         Update data that match the given `where` based on the rules defined by `set`.
         Based on the features of Python, `set` can be a dict with type {str: str/Column}, and
         type of `where` can be either str or Column or None.
+
+        .. note:: Evolving
         """
 
         # Handle the case where this func was called with positional args and only one arg
@@ -79,9 +83,9 @@ class DeltaTable(object):
             where = None
 
         if set is None:
-            raise ValueError("argument 'set' cannot be None")
+            raise ValueError("'set' argument cannot be None")
         elif type(set) is not dict:
-            raise TypeError("type of 'set' must be dict")
+            raise TypeError("Type of 'set' argument must be dict")
 
         jSetMap = self.__convert_dict_to_map(self._spark, set)
 
@@ -92,12 +96,13 @@ class DeltaTable(object):
         elif type(where) is str:
             self._jdt.update(functions.expr(where)._jc, jSetMap)
         else:
-            raise TypeError("type of 'where' can only be str or Column.")
-
+            raise TypeError("Type of 'where' argument can only be str or Column.")
 
     def merge(self, sourceDF, condition):
         """
         Merge data from the `source` DataFrame based on the given merge `condition`.
+
+        .. note:: Evolving
         """
         j_dmb = self._jdt.merge(sourceDF._jdf, condition._jc) \
             if type(condition) is Column else self._jdt.merge(sourceDF._jdf, condition)
@@ -128,7 +133,7 @@ class DeltaTable(object):
             elif type(expr) is str:
                 m.put(col, functions.expr(expr)._jc)
             else:
-                raise Exception("dict can contain only Columns or strs as values")
+                raise TypeError("Dict can contain only Columns or strs as values")
         return m
 
 
