@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.analysis
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.{SparkSession, SparkSessionExtensions}
+import org.apache.spark.sql.{AnalysisException, SparkSession, SparkSessionExtensions}
 import org.apache.spark.sql.catalyst.expressions.{Alias, And, Expression, Literal, UpCast}
 import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical._
@@ -33,11 +33,16 @@ import org.apache.spark.sql.util.SchemaUtils
 
 case object DeltaAnalysis extends Rule[LogicalPlan] {
 
-  private def needsSchemaAdjustment(query: LogicalPlan, schema: StructType): Boolean = {
+  private def needsSchemaAdjustment(
+      tableName: String,
+      query: LogicalPlan,
+      schema: StructType): Boolean = {
     val output = query.output
-    if (output.length != schema.length) {
+    if (output.length > schema.length) {
       // Leave it to WriteToDelta
       return false
+    } else if (output.length < schema.length) {
+      throw new AnalysisException(s"Cannot write to '$tableName', not enough data columns")
     }
     output.map(_.name) != schema.map(_.name) ||
       !DataType.equalsIgnoreCaseAndNullability(output.toStructType, schema)
@@ -49,7 +54,7 @@ case object DeltaAnalysis extends Rule[LogicalPlan] {
 
     // INSERT INTO by ordinal
     case a @ AppendData(DataSourceV2Relation(d: DeltaTableV2, _, _), query, false)
-        if query.resolved && needsSchemaAdjustment(query, d.schema()) =>
+      if query.resolved && needsSchemaAdjustment(d.name(), query, d.schema()) =>
       val projection = normalizeQueryColumns(query, d)
       if (projection != query) {
         a.copy(query = projection)
@@ -57,9 +62,9 @@ case object DeltaAnalysis extends Rule[LogicalPlan] {
         a
       }
 
-    // INSERT INTO by ordinal
+    // INSERT OVERWRITE by ordinal
     case a @ OverwriteByExpression(DataSourceV2Relation(d: DeltaTableV2, _, _), _, query, false)
-      if query.resolved && needsSchemaAdjustment(query, d.schema()) =>
+      if query.resolved && needsSchemaAdjustment(d.name(), query, d.schema()) =>
       val projection = normalizeQueryColumns(query, d)
       if (projection != query) {
         a.copy(query = projection)
