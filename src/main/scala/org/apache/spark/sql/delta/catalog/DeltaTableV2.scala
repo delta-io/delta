@@ -19,17 +19,19 @@ package org.apache.spark.sql.delta.catalog
 import java.util
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable
 
-import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.{DataFrame, SaveMode, SparkSession}
-import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
-import org.apache.spark.sql.delta.commands.WriteIntoDelta
-import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.sources.InsertableRelation
-import org.apache.spark.sql.connector.catalog.{StagedTable, SupportsWrite, Table, TableCapability}
+import org.apache.spark.sql.connector.catalog.{SupportsWrite, Table, TableCapability}
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Transform}
-import org.apache.spark.sql.connector.write.{SupportsTruncate, V1WriteBuilder, WriteBuilder}
+import org.apache.spark.sql.connector.write.{SupportsOverwrite, SupportsTruncate, V1WriteBuilder, WriteBuilder}
+import org.apache.spark.sql.{AnalysisException, DataFrame, SaveMode, SparkSession}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
+import org.apache.spark.sql.delta.commands.WriteIntoDelta
+import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils}
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.sources
+import org.apache.spark.sql.sources.{Filter, InsertableRelation}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
@@ -69,23 +71,31 @@ private class WriteIntoDeltaBuilder(
     writeOptions: CaseInsensitiveStringMap,
     specifiedSchema: Option[StructType] = None,
     specifiedPartitioning: Array[Transform] = Array.empty)
-  extends WriteBuilder with V1WriteBuilder with SupportsTruncate {
+  extends WriteBuilder with V1WriteBuilder with SupportsOverwrite with SupportsTruncate {
 
-  private var overwrite = false
+  private var forceOverwrite = false
+
+  private val options =
+    mutable.HashMap[String, String](writeOptions.asCaseSensitiveMap().asScala.toSeq: _*)
 
   override def truncate(): WriteIntoDeltaBuilder = {
-    overwrite = true
+    forceOverwrite = true
+    this
+  }
+
+  override def overwrite(filters: Array[Filter]): WriteBuilder = {
+    if (writeOptions.containsKey("replaceWhere")) {
+      throw new AnalysisException(
+        "You can't use replaceWhere in conjunction with an overwrite by filter")
+    }
+    options.put("replaceWhere", DeltaSourceUtils.translateFilters(filters).sql)
+    forceOverwrite = true
     this
   }
 
   override def buildForV1Write(): InsertableRelation = {
     new InsertableRelation {
-      override def insert(data: DataFrame, v1OverwriteFlag: Boolean): Unit = {
-        if (v1OverwriteFlag) {
-          throw new IllegalArgumentException(
-            "Overwrite behavior is determined by V1 write fallback APIs; the v1 overwrite flag " +
-              "was set to true, but should always be false in V1 write fallback.")
-        }
+      override def insert(data: DataFrame, overwrite: Boolean): Unit = {
         val specifiedPartitionColumns = specifiedPartitioning.map {
           case IdentityTransform(FieldReference(nameParts)) =>
             if (nameParts.size != 1) {
@@ -97,8 +107,9 @@ private class WriteIntoDeltaBuilder(
         }
         WriteIntoDelta(
           log,
-          if (overwrite) SaveMode.Overwrite else SaveMode.Append,
-          new DeltaOptions(writeOptions.asCaseSensitiveMap().asScala.toMap, SQLConf.get),
+          // TODO: other save modes?
+          if (forceOverwrite) SaveMode.Overwrite else SaveMode.Append,
+          new DeltaOptions(options.toMap, SQLConf.get),
           specifiedPartitionColumns,
           log.snapshot.metadata.configuration,
           data).run(SparkSession.active)

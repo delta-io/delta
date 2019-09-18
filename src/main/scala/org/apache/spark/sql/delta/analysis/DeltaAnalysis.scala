@@ -17,10 +17,11 @@
 package org.apache.spark.sql.delta.analysis
 
 import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.{SparkSession, SparkSessionExtensions}
 import org.apache.spark.sql.catalyst.expressions.{Alias, And, Expression, Literal, UpCast}
 import org.apache.spark.sql.catalyst.planning.PhysicalOperation
-import org.apache.spark.sql.catalyst.plans.logical.{AlterTable, AppendData, Filter, LogicalPlan, Project}
+import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaDataSource
@@ -49,6 +50,16 @@ case object DeltaAnalysis extends Rule[LogicalPlan] {
     // INSERT INTO by ordinal
     case a @ AppendData(DataSourceV2Relation(d: DeltaTableV2, _, _), query, false)
         if query.resolved && needsSchemaAdjustment(query, d.schema()) =>
+      val projection = normalizeQueryColumns(query, d)
+      if (projection != query) {
+        a.copy(query = projection)
+      } else {
+        a
+      }
+
+    // INSERT INTO by ordinal
+    case a @ OverwriteByExpression(DataSourceV2Relation(d: DeltaTableV2, _, _), _, query, false)
+      if query.resolved && needsSchemaAdjustment(query, d.schema()) =>
       val projection = normalizeQueryColumns(query, d)
       if (projection != query) {
         a.copy(query = projection)
