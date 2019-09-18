@@ -20,26 +20,25 @@ import java.util
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
+import org.apache.hadoop.fs.Path
+
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.{AnalysisException, DataFrame, SaveMode, SparkSession}
-import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
-import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable, CatalogTableType, CatalogUtils, SessionCatalog}
+import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException}
+import org.apache.spark.sql.catalyst.catalog._
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.plans.logical.sql.QualifiedColType
-import org.apache.spark.sql.delta.DeltaOperations.{AddColumns, ChangeColumn}
 import org.apache.spark.sql.delta.{AlterTableAddColumnsDeltaCommand, AlterTableChangeColumnDeltaCommand, AlterTableSetLocationDeltaCommand, AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand, DeltaConfigs, DeltaErrors, DeltaLog, DeltaTableIdentifier}
 import org.apache.spark.sql.delta.commands.CreateDeltaTableCommand
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
 import org.apache.spark.sql.execution.datasources.{DataSource, PartitioningUtils}
-import org.apache.spark.sql.execution.datasources.v2.V2SessionCatalog
-import org.apache.spark.sql.internal.SessionState
 import org.apache.spark.sql.sources.InsertableRelation
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
-import org.apache.spark.sql.connector.catalog.TableChange.{AddColumn, RemoveProperty, SetProperty, UpdateColumnComment, UpdateColumnType}
-import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableChange}
+import org.apache.spark.sql.connector.catalog.TableChange._
+import org.apache.spark.sql.connector.catalog._
 import org.apache.spark.sql.connector.expressions.{BucketTransform, FieldReference, IdentityTransform, Transform}
 import org.apache.spark.sql.connector.write.{V1WriteBuilder, WriteBuilder}
 
@@ -92,6 +91,30 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
       withDb, getExistingTableIfExists(tableDesc), SaveMode.ErrorIfExists, sourceQuery).run(spark)
 
     loadTable(ident)
+  }
+
+  private def isPathIdentifier(ident: Identifier): Boolean = {
+    try {
+      ident.namespace().sameElements(Array("delta")) && new Path(ident.name()).isAbsolute
+    } catch {
+      case _: IllegalArgumentException => false
+    }
+  }
+
+  override def loadTable(ident: Identifier): Table = {
+    try {
+      super.loadTable(ident) match {
+        case v1: V1Table if v1.v1Table.provider.contains("delta") =>
+          val deltaLog = DeltaLog.forTable(spark, new Path(v1.catalogTable.location))
+          DeltaTableV2(deltaLog, tableIdentifier = Some(v1.catalogTable.identifier.unquotedString))
+        case o => o
+      }
+    } catch {
+      case _: NoSuchDatabaseException | _: NoSuchNamespaceException | _: NoSuchTableException
+        if isPathIdentifier(ident) =>
+        val deltaLog = DeltaLog.forTable(spark, new Path(ident.name()))
+        DeltaTableV2(deltaLog)
+    }
   }
 
   override def createTable(

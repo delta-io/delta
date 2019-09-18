@@ -20,6 +20,7 @@ import java.util
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.{DataFrame, SaveMode, SparkSession}
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
@@ -42,8 +43,9 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
 case class DeltaTableV2(
     log: DeltaLog,
     specifiedSchema: Option[StructType] = None,
-    specifiedPartitioning: Array[Transform] = Array.empty) extends Table with SupportsWrite {
-  override def name(): String = s"delta.`${log.dataPath}`"
+    specifiedPartitioning: Array[Transform] = Array.empty,
+    tableIdentifier: Option[String] = None) extends Table with SupportsWrite {
+  override def name(): String = tableIdentifier.getOrElse(s"delta.`${log.dataPath}`")
   override def schema(): StructType = log.snapshot.schema
 
   override def partitioning(): Array[Transform] = {
