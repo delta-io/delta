@@ -108,7 +108,6 @@ class DeltaTable(object):
             if type(condition) is Column else self._jdt.merge(sourceDF._jdf, condition)
         return DeltaMergeBuilder(self._spark, j_dmb)
 
-
     def vacuum(self, retentionHours=None):
         """
         Recursively delete files and directories in the table that are not needed by the table for
