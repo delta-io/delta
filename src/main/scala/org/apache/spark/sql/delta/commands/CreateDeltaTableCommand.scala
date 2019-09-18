@@ -173,8 +173,8 @@ case class CreateDeltaTableCommand(
 
 
   private def assertPathEmpty(
-                               sparkSession: SparkSession,
-                               tableWithLocation: CatalogTable): Unit = {
+      sparkSession: SparkSession,
+      tableWithLocation: CatalogTable): Unit = {
     val path = new Path(tableWithLocation.location)
     val fs = path.getFileSystem(sparkSession.sessionState.newHadoopConf())
     // Verify that the table location associated with CREATE TABLE doesn't have any data. Note that
@@ -187,10 +187,10 @@ case class CreateDeltaTableCommand(
   }
 
   private def assertTableSchemaDefined(
-                                        fs: FileSystem,
-                                        path: Path,
-                                        table: CatalogTable,
-                                        sparkSession: SparkSession): Unit = {
+      fs: FileSystem,
+      path: Path,
+      table: CatalogTable,
+      sparkSession: SparkSession): Unit = {
     // Users did not specify the schema. We expect the schema exists in Delta.
     if (table.schema.isEmpty) {
       if (table.tableType == CatalogTableType.EXTERNAL) {
