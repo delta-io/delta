@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.sources
 
 import scala.util.{Failure, Success, Try}
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -24,16 +25,16 @@ import org.apache.spark.sql.delta.util.PartitionUtils
 import org.apache.hadoop.fs.Path
 import org.json4s.NoTypeHints
 import org.json4s.jackson.Serialization
+
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalog.v2.expressions.Transform
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{EqualTo, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.SubqueryAlias
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.connector.catalog.{Table, TableProvider}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.execution.streaming.{Sink, Source}
 import org.apache.spark.sql.sources._
-import org.apache.spark.sql.sources.v2.{Table, TableProvider}
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
@@ -57,14 +58,6 @@ class DeltaDataSource
   override def getTable(options: CaseInsensitiveStringMap): Table = {
     val path = options.get("path")
     DeltaTableV2(DeltaLog.forTable(SparkSession.active, path))
-  }
-
-  override def getTable(
-      options: CaseInsensitiveStringMap,
-      schema: StructType,
-      partitioning: Array[Transform]): Table = {
-    val path = options.get("path")
-    DeltaTableV2(DeltaLog.forTable(SparkSession.active, path), Some(schema), partitioning)
   }
 
   override def sourceSchema(

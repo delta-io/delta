@@ -19,6 +19,10 @@ package io.delta
 import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.delta.analysis.DeltaAnalysis
 
+/**
+ * A [[SparkSessionExtensions]] implementation for Delta. Currently includes only an analysis rule,
+ * but in the future we will also extend the SQL parser to support Delta commands.
+ */
 class DeltaExtensions extends Function1[SparkSessionExtensions, Unit] {
   override def apply(extensions: SparkSessionExtensions): Unit = {
     extensions.injectResolutionRule(_ => DeltaAnalysis)

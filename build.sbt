@@ -22,7 +22,7 @@ crossScalaVersions := Seq("2.12.8", "2.11.12")
 
 scalaVersion := crossScalaVersions.value.head
 
-resolvers += Resolver.mavenLocal
+resolvers += "Apache Spark snapshot repository" at "https://repository.apache.org/content/repositories/snapshots"
 sparkVersion := "3.0.0-SNAPSHOT"
 
 libraryDependencies ++= Seq(

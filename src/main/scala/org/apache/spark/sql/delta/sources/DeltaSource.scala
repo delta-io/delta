@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta.sources
 
-// scalastyle:off import.ordering.noEmptyLine
 import java.io.FileNotFoundException
 
 import scala.util.matching.Regex
@@ -29,9 +28,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.execution.streaming._
-import org.apache.spark.sql.sources.v2.{Table, TableProvider}
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /** A case class to help with `Dataset` operations regarding Offset indexing. */
 private[delta] case class IndexedFile(

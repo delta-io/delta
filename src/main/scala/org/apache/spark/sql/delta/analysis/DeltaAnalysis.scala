@@ -30,7 +30,6 @@ import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.types.{DataType, StructType}
 import org.apache.spark.sql.util.SchemaUtils
 
-// scalastyle:off
 case object DeltaAnalysis extends Rule[LogicalPlan] {
 
   private def needsSchemaAdjustment(query: LogicalPlan, schema: StructType): Boolean = {

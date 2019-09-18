@@ -17,13 +17,11 @@ package org.apache.spark.sql.delta.catalog
 
 import java.util
 
-import org.apache.spark.sql.catalog.v2.TableChange.{AddColumn, RemoveProperty, SetProperty, UpdateColumnComment, UpdateColumnType}
-
 import scala.collection.JavaConverters._
 import scala.collection.mutable
+
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.{AnalysisException, DataFrame, SaveMode, SparkSession}
-import org.apache.spark.sql.catalog.v2.{Identifier, StagingTableCatalog, TableChange}
-import org.apache.spark.sql.catalog.v2.expressions.{BucketTransform, FieldReference, IdentityTransform, Transform}
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable, CatalogTableType, CatalogUtils, SessionCatalog}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -37,16 +35,16 @@ import org.apache.spark.sql.execution.datasources.{DataSource, PartitioningUtils
 import org.apache.spark.sql.execution.datasources.v2.V2SessionCatalog
 import org.apache.spark.sql.internal.SessionState
 import org.apache.spark.sql.sources.InsertableRelation
-import org.apache.spark.sql.sources.v2.{StagedTable, SupportsWrite, Table, TableCapability}
-import org.apache.spark.sql.sources.v2.TableCapability._
-import org.apache.spark.sql.sources.v2.writer.{V1WriteBuilder, WriteBuilder}
+import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
+import org.apache.spark.sql.connector.catalog.TableChange.{AddColumn, RemoveProperty, SetProperty, UpdateColumnComment, UpdateColumnType}
+import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableChange}
+import org.apache.spark.sql.connector.expressions.{BucketTransform, FieldReference, IdentityTransform, Transform}
+import org.apache.spark.sql.connector.write.{V1WriteBuilder, WriteBuilder}
 
-import scala.util.control.NonFatal
-
-class DeltaCatalog(val spark: SparkSession) extends V2SessionCatalog(spark.sessionState)
-    with StagingTableCatalog{
+class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
+    with StagingTableCatalog {
   def this() = {
     this(SparkSession.active)
   }
@@ -76,7 +74,7 @@ class DeltaCatalog(val spark: SparkSession) extends V2SessionCatalog(spark.sessi
       if (location.isDefined) CatalogTableType.EXTERNAL else CatalogTableType.MANAGED
 
     val tableDesc = new CatalogTable(
-      identifier = ident.asTableIdentifier,
+      identifier = TableIdentifier(ident.name()),
       tableType = tableType,
       storage = storage,
       schema = schema,
@@ -259,7 +257,7 @@ class DeltaCatalog(val spark: SparkSession) extends V2SessionCatalog(spark.sessi
   override def alterTable(ident: Identifier, changes: TableChange*): Table = {
     val provider = loadTable(ident).properties().get("provider")
     // if (provider != "delta") return super.alterTable(ident, changes: _*)
-    val deltaIdentifier = DeltaTableIdentifier(spark, ident.asTableIdentifier).getOrElse {
+    val deltaIdentifier = DeltaTableIdentifier(spark, TableIdentifier(ident.name())).getOrElse {
       throw new IllegalStateException("Provider was delta, but table is not a Delta table")
     }
 
@@ -298,10 +296,10 @@ class DeltaCatalog(val spark: SparkSession) extends V2SessionCatalog(spark.sessi
 
       case (t, columnChanges) if t == classOf[UpdateColumnComment] =>
         columnChanges.asInstanceOf[Seq[UpdateColumnComment]].foreach { change =>
-          val existing = DeltaLog.forTable(spark, ident.asTableIdentifier)
+          val existing = DeltaLog.forTable(spark, TableIdentifier(ident.name()))
               .snapshot
               .schema
-              .findNestedField(change.fieldNames(), includeCollections = false).getOrElse {
+              .findNestedField(change.fieldNames()).getOrElse {
             throw new IllegalStateException(
               s"Can't change comment of non-existing column ${change.fieldNames().mkString(",")}")
           }
@@ -314,10 +312,10 @@ class DeltaCatalog(val spark: SparkSession) extends V2SessionCatalog(spark.sessi
 
       case (t, columnChanges) if t == classOf[UpdateColumnType] =>
         columnChanges.asInstanceOf[Seq[UpdateColumnType]].foreach { change =>
-          val existing = DeltaLog.forTable(spark, ident.asTableIdentifier)
+          val existing = DeltaLog.forTable(spark, TableIdentifier(ident.name()))
             .snapshot
             .schema
-            .findNestedField(change.fieldNames(), includeCollections = false).getOrElse {
+            .findNestedField(change.fieldNames()).getOrElse {
             throw new IllegalStateException(
               s"Can't change comment of non-existing column ${change.fieldNames().mkString(",")}")
           }
@@ -334,7 +332,7 @@ class DeltaCatalog(val spark: SparkSession) extends V2SessionCatalog(spark.sessi
             s"${locations.asInstanceOf[Seq[SetProperty]].map(_.value())}")
         }
         AlterTableSetLocationDeltaCommand(
-          ident.asTableIdentifier,
+          TableIdentifier(ident.name()),
           locations.head.asInstanceOf[SetProperty].value()).run(spark)
     }
 

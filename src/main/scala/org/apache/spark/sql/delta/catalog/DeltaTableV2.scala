@@ -19,16 +19,16 @@ package org.apache.spark.sql.delta.catalog
 import java.util
 
 import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.{DataFrame, SaveMode, SparkSession}
-import org.apache.spark.sql.catalog.v2.Identifier
-import org.apache.spark.sql.catalog.v2.expressions.{FieldReference, IdentityTransform, NamedReference, Transform}
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.InsertableRelation
-import org.apache.spark.sql.sources.v2.{StagedTable, SupportsWrite, Table, TableCapability}
-import org.apache.spark.sql.sources.v2.TableCapability._
-import org.apache.spark.sql.sources.v2.writer.{SupportsOverwrite, SupportsTruncate, V1WriteBuilder, WriteBuilder}
+import org.apache.spark.sql.connector.catalog.{StagedTable, SupportsWrite, Table, TableCapability}
+import org.apache.spark.sql.connector.catalog.TableCapability._
+import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Transform}
+import org.apache.spark.sql.connector.write.{SupportsTruncate, V1WriteBuilder, WriteBuilder}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
@@ -69,16 +69,21 @@ private class WriteIntoDeltaBuilder(
     specifiedPartitioning: Array[Transform] = Array.empty)
   extends WriteBuilder with V1WriteBuilder with SupportsTruncate {
 
-  private var forceOverwrite = false
+  private var overwrite = false
 
   override def truncate(): WriteIntoDeltaBuilder = {
-    forceOverwrite = true
+    overwrite = true
     this
   }
 
   override def buildForV1Write(): InsertableRelation = {
     new InsertableRelation {
-      override def insert(data: DataFrame, overwrite: Boolean): Unit = {
+      override def insert(data: DataFrame, v1OverwriteFlag: Boolean): Unit = {
+        if (v1OverwriteFlag) {
+          throw new IllegalArgumentException(
+            "Overwrite behavior is determined by V1 write fallback APIs; the v1 overwrite flag " +
+              "was set to true, but should always be false in V1 write fallback.")
+        }
         val specifiedPartitionColumns = specifiedPartitioning.map {
           case IdentityTransform(FieldReference(nameParts)) =>
             if (nameParts.size != 1) {
@@ -90,8 +95,7 @@ private class WriteIntoDeltaBuilder(
         }
         WriteIntoDelta(
           log,
-          // TODO: other save modes?
-          if (overwrite || forceOverwrite) SaveMode.Overwrite else SaveMode.Append,
+          if (overwrite) SaveMode.Overwrite else SaveMode.Append,
           new DeltaOptions(writeOptions.asCaseSensitiveMap().asScala.toMap, SQLConf.get),
           specifiedPartitionColumns,
           log.snapshot.metadata.configuration,
