@@ -175,6 +175,10 @@ object DeltaErrors
         s" ${formatColumnList(colMatches.map(_.name))}.")
   }
 
+  def tableNotSupportedException(operation: String): Throwable = {
+    new AnalysisException(s"Table is not supported in $operation. Please use a path instead.")
+  }
+
   def vacuumBasePathMissingException(baseDeltaPath: Path): Throwable = {
     new AnalysisException(
       s"Please provide the base path ($baseDeltaPath) when Vacuuming Delta tables. " +
