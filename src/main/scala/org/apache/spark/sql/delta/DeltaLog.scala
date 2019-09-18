@@ -26,6 +26,7 @@ import scala.util.Try
 import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinitions._
+
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
@@ -38,6 +39,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkContext
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Expression, In, InSet, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
@@ -669,35 +671,42 @@ object DeltaLog extends DeltaLogging {
     builder.build[Path, DeltaLog]()
   }
 
-  /** Helper for creating a log when it stored at the root of the data. */
+  /** Helper for creating a log when it is stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: String): DeltaLog = {
     apply(spark, new Path(dataPath, "_delta_log"), new SystemClock)
   }
 
-  /** Helper for creating a log when it stored at the root of the data. */
+  /** Helper for creating a log when it is stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: File): DeltaLog = {
     apply(spark, new Path(dataPath.getAbsolutePath, "_delta_log"), new SystemClock)
   }
 
-  /** Helper for creating a log when it stored at the root of the data. */
+  /** Helper for creating a log when it is stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: Path): DeltaLog = {
     apply(spark, new Path(dataPath, "_delta_log"), new SystemClock)
   }
 
-  /** Helper for creating a log when it stored at the root of the data. */
+  /** Helper for creating a log when it is stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: String, clock: Clock): DeltaLog = {
     apply(spark, new Path(dataPath, "_delta_log"), clock)
   }
 
-  /** Helper for creating a log when it stored at the root of the data. */
+  /** Helper for creating a log when it is stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: File, clock: Clock): DeltaLog = {
     apply(spark, new Path(dataPath.getAbsolutePath, "_delta_log"), clock)
   }
 
-  /** Helper for creating a log when it stored at the root of the data. */
+  /** Helper for creating a log when it is stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: Path, clock: Clock): DeltaLog = {
     apply(spark, new Path(dataPath, "_delta_log"), clock)
   }
+
+  /** Helper for creating a log when it is stored as a catalog table. */
+  def forTable(spark: SparkSession, identifier: TableIdentifier): DeltaLog = {
+    val catalog = spark.sessionState.catalog
+    forTable(spark, new Path(catalog.getTableMetadata(identifier).location))
+  }
+
   // TODO: Don't assume the data path here.
   def apply(spark: SparkSession, rawPath: Path, clock: Clock = new SystemClock): DeltaLog = {
     val fs = rawPath.getFileSystem(spark.sessionState.newHadoopConf())
