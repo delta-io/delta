@@ -98,7 +98,7 @@ class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
    * maintaining older versions up to the given retention threshold. This method will return an
    * empty DataFrame on successful completion.
    *
-   * note: This will use the default retention period of 7 days.
+   * note: This will use the default retention period of 7 hours.
    *
    * @since 0.3.0
    */

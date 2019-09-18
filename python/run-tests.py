@@ -19,7 +19,6 @@
 import os
 import fnmatch
 import subprocess
-import sys
 from os import path
 
 
@@ -37,11 +36,7 @@ def test(root_dir, jar_file):
             subprocess.check_output(["spark-submit", "--jars", jar_file,
                                      "--py-files", jar_file, test_file])
         except:
-            err_msg = ""
-            e = sys.exc_info()[1]
-            if isinstance(e, subprocess.CalledProcessError):
-                err_msg = e.output
-            raise Exception("Failed test %s: %s" % (test_file, err_msg))
+            raise Exception("Failed test %s: " % test_file)
 
 
 def prepare(root_dir):

@@ -40,16 +40,6 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests"
 )
 
-antlr4Settings
-
-antlr4Version in Antlr4 := "4.7"
-
-antlr4PackageName in Antlr4 := Some("io.delta.sql.parser")
-
-antlr4GenListener in Antlr4 := true
-
-antlr4GenVisitor in Antlr4 := true
-
 testOptions in Test += Tests.Argument("-oDF")
 
 testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
@@ -127,7 +117,7 @@ scalacOptions in(ScalaUnidoc, unidoc) ++= Seq(
 // Configure Java unidoc
 javacOptions in(JavaUnidoc, unidoc) := Seq(
   "-public",
-  "-exclude", "org:com:io.delta.sql.parser:io.delta.tables.execution",
+  "-exclude", "org:com:io.delta.tables.execution",
   "-windowtitle", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
   "-noqualifier", "java.lang",
   "-tag", "return:X"
