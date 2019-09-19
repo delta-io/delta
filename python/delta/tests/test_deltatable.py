@@ -177,9 +177,8 @@ class DeltaTableTests(PySparkTestCase):
 
         # No clause conditions and insertAll/updateAll + aliases
         reset_table()
-        dt.alias("t").merge(
-                source.toDF("key", "value").alias("s"),
-                expr("t.key = s.key")) \
+        dt.alias("t") \
+            .merge(source.toDF("key", "value").alias("s"), expr("t.key = s.key")) \
             .whenMatchedUpdateAll() \
             .whenNotMatchedInsertAll() \
             .execute()
@@ -188,9 +187,8 @@ class DeltaTableTests(PySparkTestCase):
 
         # String expressions in all clause conditions and insertAll/updateAll + aliases
         reset_table()
-        dt.alias("t").merge(
-                source.toDF("key", "value").alias("s"),
-                "s.key = t.key") \
+        dt.alias("t") \
+            .merge(source.toDF("key", "value").alias("s"),"s.key = t.key") \
             .whenMatchedUpdateAll("s.key = 'a'") \
             .whenNotMatchedInsertAll("s.key = 'e'") \
             .execute()
@@ -198,9 +196,8 @@ class DeltaTableTests(PySparkTestCase):
 
         # Column expressions in all clause conditions and insertAll/updateAll + aliases
         reset_table()
-        dt.alias("t").merge(
-                source.toDF("key", "value").alias("s"),
-                expr("t.key = s.key")) \
+        dt.alias("t") \
+            .merge(source.toDF("key", "value").alias("s"), expr("t.key = s.key")) \
             .whenMatchedUpdateAll(expr("s.key = 'a'")) \
             .whenNotMatchedInsertAll(expr("s.key = 'e'")) \
             .execute()
