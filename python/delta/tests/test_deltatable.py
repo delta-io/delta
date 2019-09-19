@@ -122,7 +122,7 @@ class DeltaTableTests(PySparkTestCase):
         source = self.spark.createDataFrame([('a', -1), ('e', -5)], ["k", "v"])
         dt.merge(source, "key = k") \
             .whenMatchedUpdate({"value": "v"}) \
-            .whenNotMatchedThenInsert({"key": "k", "value": "v"}) \
+            .whenNotMatchedInsert({"key": "k", "value": "v"}) \
             .execute()
         self.__checkAnswer(dt.toDF(), ([('a', -1), ('b', 2), ('c', 3), ('d', 4), ('e', -5)]))
 
@@ -135,7 +135,7 @@ class DeltaTableTests(PySparkTestCase):
 
         dt.merge(source, "key = Col1") \
             .whenMatchedUpdate({"val": "Col2"}) \
-            .whenNotMatchedThenInsert({"key": "Col1", "val": "Col2"}).execute()
+            .whenNotMatchedInsert({"key": "Col1", "val": "Col2"}).execute()
         self.__checkAnswer(dt.toDF(),
             [('a', 52), ('b', 22), ('newperson', 20), ('c', 20), ('d', 62)])
 
@@ -146,9 +146,9 @@ class DeltaTableTests(PySparkTestCase):
             [('a', 52), ('b', 22), ('newperson', 20), ('d', 62)], ["Col1", "Col2"])
 
         dt.merge(source, "key = Col1") \
-            .whenMatchedThenDelete("key = 'b'") \
+            .whenMatchedDelete("key = 'b'") \
             .whenMatchedUpdate({"val": "Col2"}, "key = 'a'") \
-            .whenNotMatchedThenInsert({"key": "Col1", "val": "Col2"}, "Col1 = 'newperson'") \
+            .whenNotMatchedInsert({"key": "Col1", "val": "Col2"}, "Col1 = 'newperson'") \
             .execute()
         self.__checkAnswer(dt.toDF(),
             [('a', 52), ('newperson', 20), ('c', 20), ('d', 26)])
@@ -160,9 +160,9 @@ class DeltaTableTests(PySparkTestCase):
             [('a', 52), ('b', 22), ('newperson', 20), ('d', 62)], ["Col1", "Col2"])
 
         dt.merge(source, functions.expr("key = Col1")) \
-            .whenMatchedThenDelete(functions.expr("key = 'b'")) \
+            .whenMatchedDelete(functions.expr("key = 'b'")) \
             .whenMatchedUpdate({"val": functions.expr("Col2")}, functions.expr("key = 'a'")) \
-            .whenNotMatchedThenInsert(
+            .whenNotMatchedInsert(
             {"key": functions.expr("Col1"), "val": functions.expr("Col2")},
             functions.expr("Col1 = 'newperson'")) \
             .execute()

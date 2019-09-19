@@ -65,7 +65,7 @@ class DeltaTable(object):
         if condition is None:
             self._jdt.delete()
         else:
-            self._jdt.delete(self.__condition_to_jcolumn(condition))
+            self._jdt.delete(self._condition_to_jcolumn(condition))
 
     def update(self, condition=None, set=None):
         """
@@ -84,11 +84,11 @@ class DeltaTable(object):
             set = condition
             condition = None
 
-        jmap = self.__dict_to_jmap(self._spark, set, "set")
+        jmap = self._dict_to_jmap(self._spark, set, "set")
         if condition is None:
             self._jdt.update(jmap)
         else:
-            self._jdt.update(self.__condition_to_jcolumn(condition), jmap)
+            self._jdt.update(self._condition_to_jcolumn(condition), jmap)
 
     def merge(self, source, condition):
         """
@@ -109,7 +109,7 @@ class DeltaTable(object):
         if condition is None:
             raise ValueError("'condition' argument cannot be None")
 
-        jbuilder = self._jdt.merge(source._jdf, self.__condition_to_jcolumn(condition))
+        jbuilder = self._jdt.merge(source._jdf, self._condition_to_jcolumn(condition))
         return DeltaMergeBuilder(self._spark, jbuilder)
 
     def vacuum(self, retentionHours=None):
@@ -181,7 +181,7 @@ class DeltaTable(object):
         return DeltaTable(sparkSession, jdt)
 
     @classmethod
-    def __dict_to_jmap(cls, sparkSession, pydict, argname):
+    def _dict_to_jmap(cls, sparkSession, pydict, argname):
         """
         convert dict<str, pColumn/str> to Map<str, jColumn>
         """
@@ -204,7 +204,7 @@ class DeltaTable(object):
         return jmap
 
     @classmethod
-    def __condition_to_jcolumn(cls, condition):
+    def _condition_to_jcolumn(cls, condition):
         if condition is None:
             jcondition = None
         elif type(condition) is Column:
@@ -217,7 +217,7 @@ class DeltaTable(object):
         return jcondition
 
 
-class DeltaMergeBuilder:
+class DeltaMergeBuilder(object):
     """
     Builder to specify how to merge data from source DataFrame into the target Delta table. You can
     specify 1, 2 or 3 ``when`` clauses of which there can be at most 2 ``whenMatched`` clauses
@@ -240,7 +240,7 @@ class DeltaMergeBuilder:
 
         - If you want to update all the columns of the target Delta table with the
           corresponding column of the source DataFrame, then you can use the
-          `whenMatchedUpdateAll()`. This is equivalent to
+          ``whenMatchedUpdateAll()``. This is equivalent to
             <pre>
                 whenMatched(...).updateExpr(Map(
                   ("col1", "source.col1"),
@@ -257,7 +257,7 @@ class DeltaMergeBuilder:
 
         - If you want to insert all the columns of the target Delta table with the
           corresponding column of the source DataFrame, then you can use
-          `whenMatched(...).insertAll()`. This is equivalent to
+          ``whenMatchedInsertAll()``. This is equivalent to
           <pre>
             whenMatched(...).insertExpr(Map(
               ("col1", "source.col1"),
@@ -281,9 +281,9 @@ class DeltaMergeBuilder:
             set = condition
             condition = None
 
-        j_matchedbuilder = self.__getMatchedBuilder(condition)
-        jset = DeltaTable.__convert_dict_to_map(self._spark, set, "set")
-        return DeltaMergeBuilder(self._spark, j_matchedbuilder.update(jset))
+        jset = DeltaTable._dict_to_jmap(self._spark, set, "set")
+        new_jbuilder = self.__getMatchedBuilder(condition).update(jset)
+        return DeltaMergeBuilder(self._spark, new_jbuilder)
 
     def whenMatchedUpdateAll(self, condition=None):
         """
@@ -312,7 +312,7 @@ class DeltaMergeBuilder:
             condition = None
 
         j_notmatchedbuilder = self.__getNotMatchedBuilder(condition)
-        jvalues = DeltaTable.__convert_dict_to_map(self._spark, values, "values")
+        jvalues = DeltaTable._dict_to_jmap(self._spark, values, "values")
         return DeltaMergeBuilder(self._spark, j_notmatchedbuilder.insert(jvalues))
 
     def whenNotMatchedInsertAll(self, condition=None):
@@ -335,11 +335,11 @@ class DeltaMergeBuilder:
         if condition is None:
             return self._jbuilder.whenMatched()
         else:
-            return self._jbuilder.whenMatched(DeltaTable.__condition_to_jcolumn(condition))
+            return self._jbuilder.whenMatched(DeltaTable._condition_to_jcolumn(condition))
 
     def __getNotMatchedBuilder(self, condition=None):
         if condition is None:
             return self._jbuilder.whenNotMatched()
         else:
-            return self._jbuilder.whenNotMatched(DeltaTable.__condition_to_jcolumn(condition))
+            return self._jbuilder.whenNotMatched(DeltaTable._condition_to_jcolumn(condition))
 
