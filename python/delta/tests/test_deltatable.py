@@ -188,7 +188,7 @@ class DeltaTableTests(PySparkTestCase):
         # String expressions in all clause conditions and insertAll/updateAll + aliases
         reset_table()
         dt.alias("t") \
-            .merge(source.toDF("key", "value").alias("s"),"s.key = t.key") \
+            .merge(source.toDF("key", "value").alias("s"), "s.key = t.key") \
             .whenMatchedUpdateAll("s.key = 'a'") \
             .whenNotMatchedInsertAll("s.key = 'e'") \
             .execute()
