@@ -224,7 +224,7 @@ class DeltaMergeBuilder(object):
     and at most 1 ```whenNotMatched``` clause. Here are the constraints on these clauses.
 
     - ``whenMatched`` clauses:
-    
+
         - There can be at most one ``update`` action and one ``delete`` action in `whenMatched`
             clauses.
 
@@ -342,4 +342,3 @@ class DeltaMergeBuilder(object):
             return self._jbuilder.whenNotMatched()
         else:
             return self._jbuilder.whenNotMatched(DeltaTable._condition_to_jcolumn(condition))
-
