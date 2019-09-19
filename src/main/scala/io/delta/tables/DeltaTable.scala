@@ -373,11 +373,11 @@ class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
   /**
    * :: Evolving ::
    *
-   * Merge data from the `source` DataFrame based on the given merge `condition`. This class returns
+   * Merge data from the `source` DataFrame based on the given merge `condition`. This returns
    * a [[DeltaMergeBuilder]] object that can be used to specify the update, delete, or insert
    * actions to be performed on rows based on whether the rows matched the condition or not.
    *
-   * See the [[DeltaMergeBuilder]] for a full description of this operation and what combination
+   * See the [[DeltaMergeBuilder]] for a full description of this operation and what combinations of
    * update, delete and insert operations are allowed.
    *
    * Scala example to update a key-value Delta table with new key-values from a source DataFrame:
@@ -430,11 +430,11 @@ class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
   /**
    * :: Evolving ::
    *
-   * Merge data from the `source` DataFrame based on the given merge `condition`. This class returns
+   * Merge data from the `source` DataFrame based on the given merge `condition`. This returns
    * a [[DeltaMergeBuilder]] object that can be used to specify the update, delete, or insert
    * actions to be performed on rows based on whether the rows matched the condition or not.
    *
-   * See the [[DeltaMergeBuilder]] for a full description of this operation and what combination
+   * See the [[DeltaMergeBuilder]] for a full description of this operation and what combinations of
    * update, delete and insert operations are allowed.
    *
    * Scala example to update a key-value Delta table with new key-values from a source DataFrame:

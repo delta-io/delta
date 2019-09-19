@@ -71,14 +71,14 @@ class DeltaTableTests(PySparkTestCase):
 
         # bad args
         with self.assertRaises(TypeError):
-            dt.delete(where=1)
+            dt.delete(condition=1)
 
     def test_update(self):
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
         dt = DeltaTable.forPath(self.spark, self.tempFile)
 
         # positional args: update with condition as str and with set exprs as str
-        dt.update("key = 'a' or key = 'b'", {"value": "1"}, )
+        dt.update("key = 'a' or key = 'b'", {"value": "1"})
         self.__checkAnswer(dt.toDF(), [('a', 1), ('b', 1), ('c', 3), ('d', 4)])
 
         # positional args: update with condition as Column and with set exprs as Columns
@@ -98,22 +98,33 @@ class DeltaTableTests(PySparkTestCase):
         self.__checkAnswer(dt.toDF(), [('a', 200), ('b', 200), ('c', 200), ('d', 200)])
 
         # keyword args: update without condition
-        dt.update(where=None, set={"value": "300"})
+        dt.update(condition=None, set={"value": "300"})
         self.__checkAnswer(dt.toDF(), [('a', 300), ('b', 300), ('c', 300), ('d', 300)])
 
         # keyword args: update with condition
-        dt.update(set={"value": "400"}, where="key = 'a'")
+        dt.update(set={"value": "400"}, condition="key = 'a'")
         self.__checkAnswer(dt.toDF(), [('a', 400), ('b', 300), ('c', 300), ('d', 300)])
 
         # bad args
         with self.assertRaises(TypeError):
             dt.update(set=1)
         with self.assertRaises(ValueError):
-            dt.update(where='a', set=None)
+            dt.update(condition='a', set=None)
         with self.assertRaises(ValueError):
-            dt.update(where='a')  # set = None by default
+            dt.update(condition='a')  # set = None by default
         with self.assertRaises(TypeError):
             dt.update(1, {})
+
+    def test_merge(self):
+        self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
+        dt = DeltaTable.forPath(self.spark, self.tempFile)
+
+        source = self.spark.createDataFrame([('a', -1), ('e', -5)], ["k", "v"])
+        dt.merge(source, "key = k") \
+            .whenMatchedUpdate({"value": "v"}) \
+            .whenNotMatchedThenInsert({"key": "k", "value": "v"}) \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', -1), ('b', 2), ('c', 3), ('d', 4), ('e', -5)]))
 
     '''
     def test_basic_merge(self):
