@@ -59,7 +59,7 @@ class DeltaSqlTests(PySparkTestCase):
             self.spark.sql("set spark.databricks.delta.retentionDurationCheck.enabled = true")
 
     def test_describe_history(self):
-        assert(self.spark.sql("desc history delta.`%s`" % (self.temp_file)) > 0)
+        assert(len(self.spark.sql("desc history delta.`%s`" % (self.temp_file)).collect()) > 0)
 
 
 if __name__ == "__main__":
