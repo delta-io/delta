@@ -117,36 +117,87 @@ class DeltaTableTests(PySparkTestCase):
 
     def test_merge(self):
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
+        source = self.spark.createDataFrame([('a', -1), ('b', 0), ('e', -5), ('f', -6)], ["k", "v"])
+
+        def reset_table():
+            self.__overwriteDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
+
         dt = DeltaTable.forPath(self.spark, self.tempFile)
 
-        # positional args: string expressions in all conditions and dicts
-        source = self.spark.createDataFrame([('a', -1), ('b', 0), ('e', -5), ('f', -6)], ["k", "v"])
+        # ============== Test basic syntax ==============
+
+        # String expressions in merge condition and dicts
+        reset_table()
+        dt.merge(source, "key = k") \
+            .whenMatchedUpdate({"value": "v + 0"}) \
+            .whenNotMatchedInsert({"key": "k", "value": "v + 0"}) \
+            .execute()
+        self.__checkAnswer(dt.toDF(),
+                           ([('a', -1), ('b', 0), ('c', 3), ('d', 4), ('e', -5), ('f', -6)]))
+
+        # Column expressions in merge condition and dicts
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenMatchedUpdate({"value": col("v") + 0}) \
+            .whenNotMatchedInsert({"key": "k", "value": col("v") + 0}) \
+            .execute()
+        self.__checkAnswer(dt.toDF(),
+                           ([('a', -1), ('b', 0), ('c', 3), ('d', 4), ('e', -5), ('f', -6)]))
+
+        # ============== Test clause conditions ==============
+
+        # String expressions in all conditions and dicts
+        reset_table()
         dt.merge(source, "key = k") \
             .whenMatchedUpdate("k = 'a'", {"value": "v + 0"}) \
-            .whenMatchedDelete() \
+            .whenMatchedDelete("k = 'b'") \
             .whenNotMatchedInsert("k = 'e'", {"key": "k", "value": "v + 0"}) \
             .execute()
         self.__checkAnswer(dt.toDF(), ([('a', -1), ('c', 3), ('d', 4), ('e', -5)]))
 
-        # positional args: string expressions in all conditions and insertAll/updateAll + aliases
-        self.__overwriteDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
-        dt.alias("t").merge(source.toDF("key", "value").alias("s"), "s.key = t.key") \
+        # Column expressions in all conditions and dicts
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenMatchedUpdate(expr("k = 'a'"), {"value": col("v") + 0}) \
+            .whenMatchedDelete(expr("k = 'b'")) \
+            .whenNotMatchedInsert(expr("k = 'e'"), {"key": "k", "value": col("v") + 0}) \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', -1), ('c', 3), ('d', 4), ('e', -5)]))
+
+        # Keyword arguments
+        reset_table()
+        dt.merge(source, "key = k") \
+            .whenMatchedUpdate(condition="k = 'a'", set={"value": "v + 0"}) \
+            .whenMatchedDelete(condition="k = 'b'") \
+            .whenNotMatchedInsert(condition="k = 'e'", values={"key": "k", "value": "v + 0"}) \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', -1), ('c', 3), ('d', 4), ('e', -5)]))
+
+        # ============== Test updateAll/insertAll ==============
+
+        # No clause conditions and insertAll/updateAll + aliases
+        reset_table()
+        dt.alias("t").merge(
+                source.toDF("key", "value").alias("s"),
+                expr("t.key = s.key")) \
+            .whenMatchedUpdateAll() \
+            .whenNotMatchedInsertAll() \
+            .execute()
+        self.__checkAnswer(dt.toDF(),
+                           ([('a', -1), ('b', 0), ('c', 3), ('d', 4), ('e', -5), ('f', -6)]))
+
+        # String expressions in all clause conditions and insertAll/updateAll + aliases
+        reset_table()
+        dt.alias("t").merge(
+                source.toDF("key", "value").alias("s"),
+                "s.key = t.key") \
             .whenMatchedUpdateAll("s.key = 'a'") \
             .whenNotMatchedInsertAll("s.key = 'e'") \
             .execute()
         self.__checkAnswer(dt.toDF(), ([('a', -1), ('b', 2), ('c', 3), ('d', 4), ('e', -5)]))
 
-        # positional args: Column expressions in all conditions and dicts
-        self.__overwriteDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
-        dt.merge(source, expr("key = k")) \
-            .whenMatchedUpdate(expr("k = 'a'"), {"value": col("v") + 0}) \
-            .whenMatchedDelete() \
-            .whenNotMatchedInsert(expr("k = 'e'"), {"key": "k", "value": col("v") + 0}) \
-            .execute()
-        self.__checkAnswer(dt.toDF(), ([('a', -1), ('c', 3), ('d', 4), ('e', -5)]))
-
-        # positional args: Column expressions in all conditions and insertAll/updateAll + aliases
-        self.__overwriteDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
+        # Column expressions in all clause conditions and insertAll/updateAll + aliases
+        reset_table()
         dt.alias("t").merge(
                 source.toDF("key", "value").alias("s"),
                 expr("t.key = s.key")) \
@@ -155,26 +206,40 @@ class DeltaTableTests(PySparkTestCase):
             .execute()
         self.__checkAnswer(dt.toDF(), ([('a', -1), ('b', 2), ('c', 3), ('d', 4), ('e', -5)]))
 
-        # positional args: no clause conditions and dicts
-        self.__overwriteDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
-        source = self.spark.createDataFrame([('a', -1), ('e', -5)], ["k", "v"])
-        dt.merge(source, "key = k") \
-            .whenMatchedUpdate({"value": "v + 0"}) \
-            .whenNotMatchedInsert({"key": "k", "value": "v + 0"}) \
-            .execute()
-        self.__checkAnswer(dt.toDF(), ([('a', -1), ('b', 2), ('c', 3), ('d', 4), ('e', -5)]))
+        # ============== Test bad args ==============
+        # bad args in merge()
+        with self.assertRaises(TypeError):
+            dt.merge(1, "key = k")
+        with self.assertRaises(TypeError):
+            dt.merge(source, 1)
 
-        # positional args: no clause conditions and insertAll/updateAll
-        self.__overwriteDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
-        source = self.spark.createDataFrame([('a', -1), ('e', -5)], ["key", "value"])
-        dt.alias("t").merge(
-                source.alias("s"),
-                expr("t.key = s.key")) \
-            .whenMatchedUpdateAll() \
-            .whenNotMatchedInsertAll() \
-            .execute()
-        self.__checkAnswer(dt.toDF(), ([('a', -1), ('b', 2), ('c', 3), ('d', 4), ('e', -5)]))
+        # bad args in whenMatchedUpdate()
+        with self.assertRaises(ValueError):
+            dt.merge(source, "key = k").whenMatchedUpdate(1)
+        with self.assertRaises(TypeError):
+            dt.merge(source, "key = k").whenMatchedUpdate(1, {"value": "v"})
+        with self.assertRaises(TypeError):
+            dt.merge(source, "key = k").whenMatchedUpdate("k = 'a'", 1)
+        with self.assertRaises(ValueError):
+            dt.merge(source, "key = k").whenMatchedUpdate(condition="key = 'a'")
+        with self.assertRaises(TypeError):
+            dt.merge(source, "key = k").whenMatchedUpdate("k = 'a'", {"value": 1})
 
+        # bad args in whenMatchedDelete()
+        with self.assertRaises(TypeError):
+            dt.merge(source, "key = k").whenMatchedDelete(1)
+
+        # bad args in whenNotMatchedInsert()
+        with self.assertRaises(ValueError):
+            dt.merge(source, "key = k").whenNotMatchedInsert(1)
+        with self.assertRaises(TypeError):
+            dt.merge(source, "key = k").whenNotMatchedInsert(1, {"value": "v"})
+        with self.assertRaises(ValueError):
+            dt.merge(source, "key = k").whenNotMatchedInsert(condition="key = 'a'")
+        with self.assertRaises(TypeError):
+            dt.merge(source, "key = k").whenNotMatchedInsert("k = 'a'", 1)
+        with self.assertRaises(TypeError):
+            dt.merge(source, "key = k").whenNotMatchedInsert("k = 'a'", {"value": 1})
 
     def test_history(self):
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
@@ -234,10 +299,17 @@ class DeltaTableTests(PySparkTestCase):
             self.assertEqual(df.count(), 0)
             return
         expectedDF = self.spark.createDataFrame(expectedAnswer, schema)
-        self.assertEqual(df.count(), expectedDF.count())
-        self.assertEqual(len(df.columns), len(expectedDF.columns))
-        self.assertEqual([], df.subtract(expectedDF).take(1))
-        self.assertEqual([], expectedDF.subtract(df).take(1))
+        try:
+            self.assertEqual(df.count(), expectedDF.count())
+            self.assertEqual(len(df.columns), len(expectedDF.columns))
+            self.assertEqual([], df.subtract(expectedDF).take(1))
+            self.assertEqual([], expectedDF.subtract(df).take(1))
+        except AssertionError:
+            print("Expected:")
+            expectedDF.show()
+            print("Found:")
+            df.show()
+            raise
 
     def __writeDeltaTable(self, datalist):
         df = self.spark.createDataFrame(datalist, ["key", "value"])

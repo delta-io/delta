@@ -274,6 +274,9 @@ class DeltaMergeBuilder(object):
 
     def whenMatchedUpdate(self, condition=None, set=None):
         """
+        Update a matched table row based on the rules defined by ``set`` only if the given
+        ``condition`` (if specified) is true for the matched row.
+
         .. note:: Evolving
         """
         # Handle the case where this func was called with positional args and only one arg
@@ -287,22 +290,29 @@ class DeltaMergeBuilder(object):
 
     def whenMatchedUpdateAll(self, condition=None):
         """
+        Update all the columns of the matched table row with the values of the
+        corresponding columns in the source row only if the given
+        ``condition`` (if specified) is true for the matched row.
 
         .. note:: Evolving
         """
-        j_matchedbuilder = self.__getMatchedBuilder(condition)
-        return DeltaMergeBuilder(self._spark, j_matchedbuilder.updateAll())
+        new_jbuilder = self.__getMatchedBuilder(condition).updateAll()
+        return DeltaMergeBuilder(self._spark, new_jbuilder)
 
     def whenMatchedDelete(self, condition=None):
         """
+        Delete a matched row from the table only if the given ``condition`` (if specified) is
+        true for the matched row.
 
         .. note:: Evolving
         """
-        j_matchedbuilder = self.__getMatchedBuilder(condition)
-        return DeltaMergeBuilder(self._spark, j_matchedbuilder.delete())
+        new_jbuilder = self.__getMatchedBuilder(condition).delete()
+        return DeltaMergeBuilder(self._spark, new_jbuilder)
 
     def whenNotMatchedInsert(self, condition=None, values=None):
         """
+        Insert a new row to the target table based on the rules defined by ``values``
+        only if the given ``condition`` (if specified) is true for the new row.
 
         .. note:: Evolving
         """
@@ -311,17 +321,20 @@ class DeltaMergeBuilder(object):
             values = condition
             condition = None
 
-        j_notmatchedbuilder = self.__getNotMatchedBuilder(condition)
         jvalues = DeltaTable._dict_to_jmap(self._spark, values, "values")
-        return DeltaMergeBuilder(self._spark, j_notmatchedbuilder.insert(jvalues))
+        new_jbuilder = self.__getNotMatchedBuilder(condition).insert(jvalues)
+        return DeltaMergeBuilder(self._spark, new_jbuilder)
 
     def whenNotMatchedInsertAll(self, condition=None):
         """
+        Insert a new target Delta table row by assigning the target columns to the values of the
+        corresponding columns in the source row only if the given ``condition`` (if specified)
+        is true for the new row.
 
         .. note:: Evolving
         """
-        j_notmatchedbuilder = self.__getNotMatchedBuilder(condition)
-        return DeltaMergeBuilder(self._spark, j_notmatchedbuilder.insertAll())
+        new_jbuilder = self.__getNotMatchedBuilder(condition).insertAll()
+        return DeltaMergeBuilder(self._spark, new_jbuilder)
 
     def execute(self):
         """
