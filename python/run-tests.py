@@ -24,7 +24,7 @@ import shutil
 from os import path
 
 
-def test(root_dir):
+def test(root_dir, package):
     # Run all of the test under test/python directory, each of them
     # has main entry point to execute, which is python's unittest testing
     # framework.
@@ -34,18 +34,6 @@ def test(root_dir):
                   if os.path.isfile(os.path.join(test_dir, f)) and
                   f.endswith(".py") and not f.startswith("_")]
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    print(extra_class_path)
-
-    # Get Current release which is required to be loaded
-    version = '0.3.0'
-    try:
-        with open(os.path.join(root_dir, "version.sbt")) as fd:
-            version = fd.readline().split('"')[1]
-    except:
-        raise Exception("Could not find current release version" +
-                        "Please check version.sbt")
-
-    package = "io.delta:delta-core_2.11:" + version
 
     for test_file in test_files:
         try:
@@ -67,7 +55,25 @@ def prepare(root_dir):
         print("Deleted ivy2 cache")
     except:
         print("ivy2 cache for delta-core is already absent.")
+
+    try:
+        shutil.rmtree(os.path.expanduser("~/.m2/repository/io/delta/"))
+        print("Deleted m2 cache")
+    except:
+        print("m2 cache for delta-core is already absent.")
     run_cmd([sbt_path, "clean", "++ 2.11.12 publishM2"], stream_output=True)
+
+    # Get current release which is required to be loaded
+    version = '0.0.0'
+    try:
+        with open(os.path.join(root_dir, "version.sbt")) as fd:
+            version = fd.readline().split('"')[1]
+    except:
+        raise Exception("Could not find current release version" +
+                        "Please check version.sbt")
+
+    package = "io.delta:delta-core_2.11:" + version
+    return package
 
 
 def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
@@ -99,5 +105,5 @@ def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
 
 if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    prepare(root_dir)
-    test(root_dir)
+    package = prepare(root_dir)
+    test(root_dir, package)
