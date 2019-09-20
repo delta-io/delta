@@ -58,7 +58,7 @@ case class DeltaTableV2(
 
   override def capabilities(): util.Set[TableCapability] = Set(
     ACCEPT_ANY_SCHEMA, BATCH_READ,
-    V1_BATCH_WRITE, BATCH_WRITE, OVERWRITE_BY_FILTER, TRUNCATE
+    V1_BATCH_WRITE, OVERWRITE_BY_FILTER, TRUNCATE
   ).asJava
 
   override def newWriteBuilder(options: CaseInsensitiveStringMap): WriteBuilder = {
