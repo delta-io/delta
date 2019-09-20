@@ -120,7 +120,7 @@ enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin)
 
 // Configure Scala unidoc
 scalacOptions in(ScalaUnidoc, unidoc) ++= Seq(
-  "-skip-packages", "org:com:io.delta.tables.execution",
+  "-skip-packages", "org:com:io.delta.sql.parser:io.delta.tables.execution",
   "-doc-title", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " ScalaDoc"
 )
 
@@ -139,6 +139,7 @@ javacOptions in(JavaUnidoc, unidoc) := Seq(
 def ignoreUndocumentedPackages(packages: Seq[Seq[java.io.File]]): Seq[Seq[java.io.File]] = {
   packages
     .map(_.filterNot(_.getName.contains("$")))
+    .map(_.filterNot(_.getCanonicalPath.contains("io/delta/sql/parser")))
     .map(_.filterNot(_.getCanonicalPath.contains("io/delta/tables/execution")))
     .map(_.filterNot(_.getCanonicalPath.contains("spark")))
 }
