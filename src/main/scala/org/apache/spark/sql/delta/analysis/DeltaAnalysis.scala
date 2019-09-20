@@ -53,7 +53,7 @@ case object DeltaAnalysis extends Rule[LogicalPlan] {
     case _: AlterTable => return plan
 
     // INSERT INTO by ordinal
-    case a @ AppendData(DataSourceV2Relation(d: DeltaTableV2, _, _), query, false)
+    case a @ AppendData(DataSourceV2Relation(d: DeltaTableV2, _, _), query, _, false)
       if query.resolved && needsSchemaAdjustment(d.name(), query, d.schema()) =>
       val projection = normalizeQueryColumns(query, d)
       if (projection != query) {
@@ -63,7 +63,7 @@ case object DeltaAnalysis extends Rule[LogicalPlan] {
       }
 
     // INSERT OVERWRITE by ordinal
-    case a @ OverwriteByExpression(DataSourceV2Relation(d: DeltaTableV2, _, _), _, query, false)
+    case a @ OverwriteByExpression(DataSourceV2Relation(d: DeltaTableV2, _, _), _, query, _, false)
       if query.resolved && needsSchemaAdjustment(d.name(), query, d.schema()) =>
       val projection = normalizeQueryColumns(query, d)
       if (projection != query) {
