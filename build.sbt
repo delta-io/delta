@@ -130,15 +130,17 @@ javacOptions in(JavaUnidoc, unidoc) := Seq(
   "-exclude", "org:com:io.delta.sql.parser:io.delta.tables.execution",
   "-windowtitle", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
   "-noqualifier", "java.lang",
-  "-tag", "return:X"
+  "-tag", "return:X",
+  // `doclint` is disabled on Circle CI. Need to enable it manually to test our javadoc.
+  "-Xdoclint:all"
 )
 
 // Explicitly remove source files by package because these docs are not formatted correctly for Javadocs
 def ignoreUndocumentedPackages(packages: Seq[Seq[java.io.File]]): Seq[Seq[java.io.File]] = {
   packages
     .map(_.filterNot(_.getName.contains("$")))
-    .map(_.filterNot(_.getCanonicalPath.contains("io/delta/tables/execution")))
     .map(_.filterNot(_.getCanonicalPath.contains("io/delta/sql/parser")))
+    .map(_.filterNot(_.getCanonicalPath.contains("io/delta/tables/execution")))
     .map(_.filterNot(_.getCanonicalPath.contains("spark")))
 }
 
