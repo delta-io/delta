@@ -47,31 +47,25 @@ def test(root_dir, package):
             print("Failed tests in %s" % (test_file))
             raise
 
+
+def delete_if_exists(path):
+    # if path exists, delete it.
+    if os.path.exists(path):
+        shutil.rmtree(path)
+        print("Deleted %s " % path)
+
+
 def prepare(root_dir):
     # Build package with python files in it
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
-    try:
-        shutil.rmtree(os.path.expanduser("~/.ivy2/cache/io.delta"))
-        print("Deleted ivy2 cache")
-    except:
-        print("ivy2 cache for delta-core is already absent.")
-
-    try:
-        shutil.rmtree(os.path.expanduser("~/.m2/repository/io/delta/"))
-        print("Deleted m2 cache")
-    except:
-        print("m2 cache for delta-core is already absent.")
+    delete_if_exists(os.path.expanduser("~/.ivy2/cache/io.delta"))
+    delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
     run_cmd([sbt_path, "clean", "++ 2.11.12 publishM2"], stream_output=True)
 
     # Get current release which is required to be loaded
     version = '0.0.0'
-    try:
-        with open(os.path.join(root_dir, "version.sbt")) as fd:
+    with open(os.path.join(root_dir, "version.sbt")) as fd:
             version = fd.readline().split('"')[1]
-    except:
-        raise Exception("Could not find current release version" +
-                        "Please check version.sbt")
-
     package = "io.delta:delta-core_2.11:" + version
     return package
 
