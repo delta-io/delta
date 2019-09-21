@@ -23,10 +23,10 @@ import org.apache.spark.sql.delta.schema._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.Dataset
-import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.datasources.FileFormatWriter
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{ArrayType, MapType, StructType}
 
 /**
  * Adds the ability to write files out as part of a transaction. Checks
@@ -48,6 +48,16 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
   protected def getCommitter(outputPath: Path): DelayedCommitProtocol =
     new DelayedCommitProtocol("delta", outputPath.toString, None)
 
+  /** Makes the output attributes nullable, so that we don't write unreadable parquet files. */
+  protected def makeOutputNullable(output: Seq[Attribute]): Seq[Attribute] = {
+    output.map {
+      case ref: AttributeReference =>
+        val nullableDataType = SchemaUtils.typeAsNullable(ref.dataType)
+        ref.copy(dataType = nullableDataType, nullable = true)(ref.exprId, ref.qualifier)
+      case attr => attr.withNullability(true)
+    }
+  }
+
   /**
    * Normalize the schema of the query, and return the QueryExecution to execute. The output
    * attributes of the QueryExecution may not match the attributes we return as the output schema.
@@ -67,7 +77,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       // For streaming workloads, we need to use the QueryExecution created from StreamExecution
       data.queryExecution
     }
-    queryExecution -> cleanedData.queryExecution.analyzed.output
+    queryExecution -> makeOutputNullable(cleanedData.queryExecution.analyzed.output)
   }
 
   protected def getPartitioningColumns(

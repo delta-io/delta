@@ -175,6 +175,10 @@ object DeltaErrors
         s" ${formatColumnList(colMatches.map(_.name))}.")
   }
 
+  def tableNotSupportedException(operation: String): Throwable = {
+    new AnalysisException(s"Table is not supported in $operation. Please use a path instead.")
+  }
+
   def vacuumBasePathMissingException(baseDeltaPath: Path): Throwable = {
     new AnalysisException(
       s"Please provide the base path ($baseDeltaPath) when Vacuuming Delta tables. " +
@@ -550,9 +554,9 @@ object DeltaErrors
       s"Please rewrite your target as parquet.`$path` if it's a parquet directory.")
   }
 
-  def convertNonParquetFilesException(path: String, sourceName: String): Throwable = {
-    new AnalysisException("CONVERT TO DELTA only supports parquet files, but you are trying to " +
-      s"convert a $sourceName source: `$sourceName`.`$path`")
+  def convertNonParquetTablesException(ident: TableIdentifier, sourceName: String): Throwable = {
+    new AnalysisException("CONVERT TO DELTA only supports parquet tables, but you are trying to " +
+      s"convert a $sourceName source: $ident")
   }
 
   def unexpectedPartitionColumnFromFileNameException(

@@ -70,6 +70,20 @@ object SchemaUtils {
       f(other)
   }
 
+  /** Turns the data types to nullable in a recursive manner for nested columns. */
+  def typeAsNullable(dt: DataType): DataType = dt match {
+    case s: StructType => s.asNullable
+    case a @ ArrayType(s: StructType, _) => a.copy(s.asNullable, containsNull = true)
+    case a: ArrayType => a.copy(containsNull = true)
+    case m @ MapType(s1: StructType, s2: StructType, _) =>
+      m.copy(s1.asNullable, s2.asNullable, valueContainsNull = true)
+    case m @ MapType(s1: StructType, _, _) =>
+      m.copy(keyType = s1.asNullable, valueContainsNull = true)
+    case m @ MapType(_, s2: StructType, _) =>
+      m.copy(valueType = s2.asNullable, valueContainsNull = true)
+    case other => other
+  }
+
   /**
    * Drops null types from the DataFrame if they exist. We don't have easy ways of generating types
    * such as MapType and ArrayType, therefore if these types contain NullType in their elements,

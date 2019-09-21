@@ -20,6 +20,7 @@ import java.io.File
 import java.util.Locale
 
 import org.apache.spark.sql.delta.actions.CommitInfo
+import org.apache.commons.io.FileUtils
 import org.scalatest.time.SpanSugar._
 
 import org.apache.spark.sql._
@@ -468,6 +469,41 @@ class DeltaSinkSuite extends StreamTest {
       assert(
         !isLastCommitBlindAppend,
         "joining with target table in the query should have isBlindAppend = false")
+    }
+  }
+
+  test("do not trust user nullability, so that parquet files aren't corrupted") {
+    val jsonRec = """{"s": "ss", "b": {"s": "ss"}}"""
+    val schema = new StructType()
+      .add("s", StringType)
+      .add("b", new StructType()
+        .add("s", StringType)
+        .add("i", IntegerType, nullable = false))
+      .add("c", IntegerType, nullable = false)
+
+    withTempDir { base =>
+      val sourceDir = new File(base, "source").getCanonicalPath
+      val tableDir = new File(base, "output").getCanonicalPath
+      val chkDir = new File(base, "checkpoint").getCanonicalPath
+
+      FileUtils.write(new File(sourceDir, "a.json"), jsonRec)
+
+      val q = spark.readStream
+        .format("json")
+        .schema(schema)
+        .load(sourceDir)
+        .withColumn("file", input_file_name()) // Not sure why needs this to reproduce
+        .writeStream
+        .format("delta")
+        .trigger(org.apache.spark.sql.streaming.Trigger.Once)
+        .option("checkpointLocation", chkDir)
+        .start(tableDir)
+
+      q.awaitTermination()
+
+      checkAnswer(
+        spark.read.format("delta").load(tableDir).drop("file"),
+        Seq(Row("ss", Row("ss", null), null)))
     }
   }
 }

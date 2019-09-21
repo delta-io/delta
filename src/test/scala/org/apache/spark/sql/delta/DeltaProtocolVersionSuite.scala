@@ -23,11 +23,11 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
 
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.test.SharedSQLContext
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
 trait DeltaProtocolVersionSuiteBase extends QueryTest
-    with SharedSQLContext {
+    with SharedSparkSession {
 
   private lazy val testTableSchema = spark.range(1).schema
 
