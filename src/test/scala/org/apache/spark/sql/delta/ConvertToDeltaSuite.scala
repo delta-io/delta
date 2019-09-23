@@ -43,7 +43,6 @@ trait ConvertToDeltaSuiteBase extends QueryTest
 
   protected val blockNonDeltaMsg = "A transaction log for Delta Lake was found at"
   protected val parquetOnlyMsg = "CONVERT TO DELTA only supports parquet tables"
-  protected val tableNotFound = " not found in database "
 
   protected def deltaRead(df: DataFrame): Boolean = {
     val analyzed = df.queryExecution.analyzed
@@ -126,7 +125,7 @@ trait ConvertToDeltaSuiteBase extends QueryTest
       val ae = intercept[AnalysisException] {
         convertToDelta(s"`$tempDir`")
       }
-      assert(ae.getMessage.contains(tableNotFound))
+      assert(ae.getMessage.contains(parquetOnlyMsg))
     }
   }
 

@@ -34,13 +34,13 @@ import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, Resolver}
-import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, SessionCatalog}
+import org.apache.spark.sql.catalyst.analysis.Resolver
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, ParquetToSparkSchemaConverter}
 import org.apache.spark.sql.types.{StringType, StructField, StructType}
-import org.apache.spark.util.{SerializableConfiguration, ThreadUtils, Utils}
+import org.apache.spark.util.{SerializableConfiguration, Utils}
 
 /**
  * Convert an existing parquet table to a delta table by creating delta logs based on
@@ -68,50 +68,14 @@ abstract class ConvertToDeltaCommandBase(
     partitionSchema: Option[StructType],
     deltaPath: Option[String]) extends RunnableCommand with DeltaCommand {
 
-  lazy val partitionColNames = partitionSchema.map(_.fieldNames.toSeq).getOrElse(Nil)
-  lazy val partitionFields = partitionSchema.map(_.fields.toSeq).getOrElse(Nil)
-
-  // Checks whether the Convert command is being run on path or table name
-  // We assume it is a path unless the table and database both exist in the catalog
-  def isCatalogTable(catalog: SessionCatalog, tableIdent: TableIdentifier): Boolean = {
-    val dbExists = tableIdent.database.forall(catalog.databaseExists)
-    val dbNameIsAlsoValidFormatName =
-      tableIdent.database.getOrElse("").toLowerCase(Locale.ROOT) == "parquet" ||
-      DeltaSourceUtils.isDeltaDataSourceName(tableIdent.database.getOrElse(""))
-
-    // If db doesnt exist or db is called parquet/delta/tahoe then check if path exists
-    if ((!dbExists || dbNameIsAlsoValidFormatName) && new Path(tableIdent.table).isAbsolute) {
-      return false
-    }
-
-    // check for dbexists otherwise catalog.tableExists may throw NoSuchDatabaseException
-    if ((dbExists || tableIdent.database.isEmpty) && catalog.tableExists(tableIdent)) {
-      true
-    } else {
-      throw new NoSuchTableException(tableIdent.database.getOrElse(""), tableIdent.table)
-    }
-  }
-
+  lazy val partitionColNames : Seq[String] = partitionSchema.map(_.fieldNames.toSeq).getOrElse(Nil)
+  lazy val partitionFields : Seq[StructField] = partitionSchema.map(_.fields.toSeq).getOrElse(Nil)
   val timestampPartitionPattern = "yyyy-MM-dd HH:mm:ss[.S]"
 
   override def run(spark: SparkSession): Seq[Row] = {
-    val sessionCatalog = spark.sessionState.catalog
-    var catalogTable : CatalogTable = null
-    val convertUsingTable = isCatalogTable(sessionCatalog, tableIdentifier)
+    val convertProperties = getConvertProperties(spark, tableIdentifier)
 
-    val (provider, targetDir) = if (convertUsingTable) {
-      catalogTable = sessionCatalog.getTableMetadata(tableIdentifier)
-      if (catalogTable.tableType == CatalogTableType.VIEW) {
-        throw DeltaErrors.operationNotSupportedException(
-          "Converting a view to a Delta table",
-          tableIdentifier)
-      }
-      (catalogTable.provider, catalogTable.location.getPath)
-    } else {
-      (tableIdentifier.database, tableIdentifier.table)
-    }
-
-    provider match {
+    convertProperties.provider match {
       case Some(providerName) => providerName.toLowerCase(Locale.ROOT) match {
         // Make convert to delta idempotent
         case delta if DeltaSourceUtils.isDeltaDataSourceName(delta) =>
@@ -122,46 +86,45 @@ abstract class ConvertToDeltaCommandBase(
         case _ =>
       }
       case None =>
-        throw DeltaErrors.missingProviderForConvertException(targetDir)
+        throw DeltaErrors.missingProviderForConvertException(convertProperties.targetDir)
     }
 
-    val deltaLog = DeltaLog.forTable(spark, deltaPath.getOrElse(targetDir))
+    val deltaLog = DeltaLog.forTable(spark, deltaPath.getOrElse(convertProperties.targetDir))
     deltaLog.update()
     val txn = deltaLog.startTransaction()
     if (txn.readVersion > -1) {
-      // In the case that the table is a delta table but the provider has not been updated we should
-      // update table metadata to reflect that the table is a delta table
-      if (provider.get.toLowerCase(Locale.ROOT) == "parquet" && convertUsingTable) {
-        convertMetadata(catalogTable, sessionCatalog)
-      } else {
-        logConsole("The table you are trying to convert is already a delta table")
-      }
+      handleExistingTransactionLog(spark, txn, convertProperties)
       return Seq.empty[Row]
     }
 
-    performConvert(spark, targetDir, txn)
-    if (convertUsingTable) {
-      convertMetadata(catalogTable, sessionCatalog)
-    }
-
-    Seq.empty[Row]
+    performConvert(spark, txn, convertProperties)
   }
 
-  private def convertMetadata(
-      catalogTable: CatalogTable,
-      sessionCatalog: SessionCatalog): Unit = {
-    val newCatalog = catalogTable.copy(
-      provider = Some("delta")
-    )
-    sessionCatalog.alterTable(newCatalog)
+  protected def getConvertProperties(
+      spark: SparkSession,
+      tableIdentifier: TableIdentifier): ConvertProperties = {
+    ConvertProperties(
+      None,
+      tableIdentifier.database,
+      tableIdentifier.table,
+      Map.empty[String, String])
+  }
+
+  protected def handleExistingTransactionLog(
+      spark: SparkSession,
+      txn: OptimisticTransaction,
+      convertProperties: ConvertProperties): Unit = {
+    logConsole("The table you are trying to convert is already a delta table")
   }
 
   protected def performConvert(
       spark: SparkSession,
-      targetDir: String,
-      txn: OptimisticTransaction): Seq[Row] = {
-    val targetPath = new Path(targetDir)
-    val sessionHadoopConf = spark.sessionState.newHadoopConf
+      txn: OptimisticTransaction,
+      convertProperties: ConvertProperties): Seq[Row] =
+    recordDeltaOperation(txn.deltaLog, "delta.convert") {
+
+    val targetPath = new Path(convertProperties.targetDir)
+    val sessionHadoopConf = spark.sessionState.newHadoopConf()
     val fs = targetPath.getFileSystem(sessionHadoopConf)
     val qualifiedPath = fs.makeQualified(targetPath)
     val qualifiedDir = qualifiedPath.toString
@@ -203,10 +166,9 @@ abstract class ConvertToDeltaCommandBase(
       }
 
       val schema = constructTableSchema(spark, dataSchema, partitionFields)
-      val metadata = new Metadata(schemaString = schema.json, partitionColumns = partitionColNames)
+      val metadata = Metadata(schemaString = schema.json, partitionColumns = partitionColNames)
       txn.updateMetadata(metadata)
 
-      val initialSnapshot = new InitialSnapshot(txn.deltaLog.logPath, txn.deltaLog, txn.metadata)
       val statsBatchSize =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_IMPORT_BATCH_SIZE_STATS_COLLECTION)
 
@@ -219,7 +181,11 @@ abstract class ConvertToDeltaCommandBase(
         spark,
         txn,
         addFilesIter,
-        DeltaOperations.Convert(numFiles, partitionColNames, false))
+        DeltaOperations.Convert(
+          numFiles,
+          partitionColNames,
+          collectStats = false,
+          None))
     } finally {
       fileListResultDf.unpersist()
     }
@@ -301,7 +267,7 @@ abstract class ConvertToDeltaCommandBase(
   protected def constructTableSchema(
       spark: SparkSession,
       dataSchema: StructType,
-      partitionFields: Seq[StructField]) = {
+      partitionFields: Seq[StructField]): StructType = {
 
     def getColName(f: StructField): String = {
       if (spark.sessionState.conf.caseSensitiveAnalysis) {
@@ -322,7 +288,7 @@ abstract class ConvertToDeltaCommandBase(
       partitionFields.filterNot(f => overlappedPartCols.contains(getColName(f))))
   }
 
-  protected def getContext(): Map[String, String] = {
+  protected def getContext: Map[String, String] = {
     Map.empty
   }
 
@@ -340,7 +306,7 @@ abstract class ConvertToDeltaCommandBase(
     try {
       val deltaLog = txn.deltaLog
       val metadata = txn.metadata
-      val context = getContext()
+      val context = getContext
       val commitInfo = CommitInfo(
         time = txn.clock.getTimeMillis(),
         operation = op.name,
@@ -479,6 +445,12 @@ abstract class ConvertToDeltaCommandBase(
       Some(finalSchema)
     }
   }
+
+  protected case class ConvertProperties(
+      catalogTable: Option[CatalogTable],
+      provider: Option[String],
+      targetDir: String,
+      properties: Map[String, String])
 }
 
 case class ConvertToDeltaCommand(

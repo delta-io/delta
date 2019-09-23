@@ -444,6 +444,23 @@ object DeltaErrors
       s"In subquery is not supported in the $operation condition.")
   }
 
+  def convertMetastoreMetadataMismatchException(
+      tableProperties: Map[String, String],
+      deltaConfiguration: Map[String, String]): Throwable = {
+    def prettyMap(m: Map[String, String]): String = {
+      m.map(e => s"${e._1}=${e._2}").mkString("[", ", ", "]")
+    }
+    new AnalysisException(
+      s"""You are trying to convert a table which already has a delta log where the table
+         |properties in the catalog don't match the configuration in the delta log.
+         |Table properties in catalog: ${prettyMap(tableProperties)}
+         |Delta configuration: ${prettyMap{deltaConfiguration}}
+         |If you would like to merge the configurations (update existing fields and insert new
+         |ones), set the SQL configuration
+         |spark.databricks.delta.convert.metadataCheck.enabled to false.
+       """.stripMargin)
+  }
+
   def createExternalTableWithoutLogException(
       path: Path, tableName: String, spark: SparkSession): Throwable = {
     new AnalysisException(

@@ -74,6 +74,8 @@ singleStatement
 statement
     : VACUUM (path=STRING | table=qualifiedName)
         (RETAIN number HOURS)? (DRY RUN)?                               #vacuumTable
+    | (DESC | DESCRIBE) HISTORY (path=STRING | table=qualifiedName)
+        (LIMIT limit=INTEGER_VALUE)?                                    #describeDeltaHistory
     | .*?                                                               #passThrough
     ;
 
