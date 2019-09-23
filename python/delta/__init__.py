@@ -16,4 +16,4 @@
 
 from delta.tables import DeltaTable
 
-__all__ = [ 'DeltaTable' ]
+__all__ = ['DeltaTable']
