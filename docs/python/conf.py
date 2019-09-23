@@ -22,9 +22,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(root_dir,'python')))
 
 # -- Project information -----------------------------------------------------
 
-project = 'delta'
-copyright = '2019, io.delta'
-author = 'io.delta'
+project = 'delta-core'
 
 # The full version, including alpha/beta/rc tags
 release = '0.0.0'
@@ -59,4 +57,8 @@ html_theme = 'nature'
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static']
+
+
+# Fix for doc generation to work on older version of sphinx as well.
+master_doc = 'index'
 
