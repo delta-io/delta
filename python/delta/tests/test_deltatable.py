@@ -19,10 +19,11 @@ import tempfile
 import shutil
 import os
 
-from pyspark.sql import SQLContext, functions, Row, SparkSession
+from pyspark.sql import SQLContext, Row, SparkSession
+from pyspark.sql.functions import *
 from pyspark.sql.types import *
 
-from delta.tables import DeltaTable
+from delta.tables import *
 from delta.testing.utils import PySparkTestCase
 
 
@@ -51,6 +52,219 @@ class DeltaTableTests(PySparkTestCase):
         self.__checkAnswer(
             dt.alias("myTable").select('myTable.key', 'myTable.value'),
             [('a', 1), ('b', 2), ('c', 3)])
+
+    def test_delete(self):
+        self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
+        dt = DeltaTable.forPath(self.spark, self.tempFile)
+
+        # delete with condition as str
+        dt.delete("key = 'a'")
+        self.__checkAnswer(dt.toDF(), [('b', 2), ('c', 3), ('d', 4)])
+
+        # delete with condition as Column
+        dt.delete(col("key") == lit("b"))
+        self.__checkAnswer(dt.toDF(), [('c', 3), ('d', 4)])
+
+        # delete without condition
+        dt.delete()
+        self.__checkAnswer(dt.toDF(), [])
+
+        # bad args
+        with self.assertRaises(TypeError):
+            dt.delete(condition=1)
+
+    def test_update(self):
+        self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
+        dt = DeltaTable.forPath(self.spark, self.tempFile)
+
+        # update with condition as str and with set exprs as str
+        dt.update("key = 'a' or key = 'b'", {"value": "1"})
+        self.__checkAnswer(dt.toDF(), [('a', 1), ('b', 1), ('c', 3), ('d', 4)])
+
+        # update with condition as Column and with set exprs as Columns
+        dt.update(expr("key = 'a' or key = 'b'"), {"value": expr("0")})
+        self.__checkAnswer(dt.toDF(), [('a', 0), ('b', 0), ('c', 3), ('d', 4)])
+
+        # update without condition
+        dt.update(set={"value": "200"})
+        self.__checkAnswer(dt.toDF(), [('a', 200), ('b', 200), ('c', 200), ('d', 200)])
+
+        # bad args
+        with self.assertRaisesRegex(ValueError, "cannot be None"):
+            dt.update({"value": "200"})
+
+        with self.assertRaisesRegex(ValueError, "cannot be None"):
+            dt.update(condition='a')
+
+        with self.assertRaisesRegex(TypeError, "must be a dict"):
+            dt.update(set=1)
+
+        with self.assertRaisesRegex(TypeError, "must be a Spark SQL Column or a string"):
+            dt.update(1, {})
+
+        with self.assertRaisesRegex(TypeError, "Values of dict in .* must contain only"):
+            dt.update(set={"value": 1})
+
+        with self.assertRaisesRegex(TypeError, "Keys of dict in .* must contain only"):
+            dt.update(set={1: ""})
+
+        with self.assertRaises(TypeError):
+            dt.update(set=1)
+
+    def test_merge(self):
+        self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
+        source = self.spark.createDataFrame([('a', -1), ('b', 0), ('e', -5), ('f', -6)], ["k", "v"])
+
+        def reset_table():
+            self.__overwriteDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
+
+        dt = DeltaTable.forPath(self.spark, self.tempFile)
+
+        # ============== Test basic syntax ==============
+
+        # String expressions in merge condition and dicts
+        reset_table()
+        dt.merge(source, "key = k") \
+            .whenMatchedUpdate(set={"value": "v + 0"}) \
+            .whenNotMatchedInsert(values={"key": "k", "value": "v + 0"}) \
+            .execute()
+        self.__checkAnswer(dt.toDF(),
+                           ([('a', -1), ('b', 0), ('c', 3), ('d', 4), ('e', -5), ('f', -6)]))
+
+        # Column expressions in merge condition and dicts
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenMatchedUpdate(set={"value": col("v") + 0}) \
+            .whenNotMatchedInsert(values={"key": "k", "value": col("v") + 0}) \
+            .execute()
+        self.__checkAnswer(dt.toDF(),
+                           ([('a', -1), ('b', 0), ('c', 3), ('d', 4), ('e', -5), ('f', -6)]))
+
+        # ============== Test clause conditions ==============
+
+        # String expressions in all conditions and dicts
+        reset_table()
+        dt.merge(source, "key = k") \
+            .whenMatchedUpdate(condition="k = 'a'", set={"value": "v + 0"}) \
+            .whenMatchedDelete(condition="k = 'b'") \
+            .whenNotMatchedInsert(condition="k = 'e'", values={"key": "k", "value": "v + 0"}) \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', -1), ('c', 3), ('d', 4), ('e', -5)]))
+
+        # Column expressions in all conditions and dicts
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenMatchedUpdate(
+                condition=expr("k = 'a'"),
+                set={"value": col("v") + 0}) \
+            .whenMatchedDelete(condition=expr("k = 'b'")) \
+            .whenNotMatchedInsert(
+                condition=expr("k = 'e'"),
+                values={"key": "k", "value": col("v") + 0}) \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', -1), ('c', 3), ('d', 4), ('e', -5)]))
+
+        # Positional arguments
+        reset_table()
+        dt.merge(source, "key = k") \
+            .whenMatchedUpdate("k = 'a'", {"value": "v + 0"}) \
+            .whenMatchedDelete("k = 'b'") \
+            .whenNotMatchedInsert("k = 'e'", {"key": "k", "value": "v + 0"}) \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', -1), ('c', 3), ('d', 4), ('e', -5)]))
+
+        # ============== Test updateAll/insertAll ==============
+
+        # No clause conditions and insertAll/updateAll + aliases
+        reset_table()
+        dt.alias("t") \
+            .merge(source.toDF("key", "value").alias("s"), expr("t.key = s.key")) \
+            .whenMatchedUpdateAll() \
+            .whenNotMatchedInsertAll() \
+            .execute()
+        self.__checkAnswer(dt.toDF(),
+                           ([('a', -1), ('b', 0), ('c', 3), ('d', 4), ('e', -5), ('f', -6)]))
+
+        # String expressions in all clause conditions and insertAll/updateAll + aliases
+        reset_table()
+        dt.alias("t") \
+            .merge(source.toDF("key", "value").alias("s"), "s.key = t.key") \
+            .whenMatchedUpdateAll("s.key = 'a'") \
+            .whenNotMatchedInsertAll("s.key = 'e'") \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', -1), ('b', 2), ('c', 3), ('d', 4), ('e', -5)]))
+
+        # Column expressions in all clause conditions and insertAll/updateAll + aliases
+        reset_table()
+        dt.alias("t") \
+            .merge(source.toDF("key", "value").alias("s"), expr("t.key = s.key")) \
+            .whenMatchedUpdateAll(expr("s.key = 'a'")) \
+            .whenNotMatchedInsertAll(expr("s.key = 'e'")) \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', -1), ('b', 2), ('c', 3), ('d', 4), ('e', -5)]))
+
+        # ============== Test bad args ==============
+        # ---- bad args in merge()
+        with self.assertRaisesRegex(TypeError, "must be DataFrame"):
+            dt.merge(1, "key = k")
+
+        with self.assertRaisesRegex(TypeError, "must be a Spark SQL Column or a string"):
+            dt.merge(source, 1)
+
+        # ---- bad args in whenMatchedUpdate()
+        with self.assertRaisesRegex(ValueError, "cannot be None"):
+            dt.merge(source, "key = k").whenMatchedUpdate({"value": "v"})
+
+        with self.assertRaisesRegex(ValueError, "cannot be None"):
+            dt.merge(source, "key = k").whenMatchedUpdate(1)
+
+        with self.assertRaisesRegex(ValueError, "cannot be None"):
+            dt.merge(source, "key = k").whenMatchedUpdate(condition="key = 'a'")
+
+        with self.assertRaisesRegex(TypeError, "must be a Spark SQL Column or a string"):
+            dt.merge(source, "key = k").whenMatchedUpdate(1, {"value": "v"})
+
+        with self.assertRaisesRegex(TypeError, "must be a dict"):
+            dt.merge(source, "key = k").whenMatchedUpdate("k = 'a'", 1)
+
+        with self.assertRaisesRegex(TypeError, "Values of dict in .* must contain only"):
+            dt.merge(source, "key = k").whenMatchedUpdate(set={"value": 1})
+
+        with self.assertRaisesRegex(TypeError, "Keys of dict in .* must contain only"):
+            dt.merge(source, "key = k").whenMatchedUpdate(set={1: ""})
+
+        with self.assertRaises(TypeError):
+            dt.merge(source, "key = k").whenMatchedUpdate(set="k = 'a'", condition={"value": 1})
+
+        # bad args in whenMatchedDelete()
+        with self.assertRaisesRegex(TypeError, "must be a Spark SQL Column or a string"):
+            dt.merge(source, "key = k").whenMatchedDelete(1)
+
+        # ---- bad args in whenNotMatchedInsert()
+        with self.assertRaisesRegex(ValueError, "cannot be None"):
+            dt.merge(source, "key = k").whenNotMatchedInsert({"value": "v"})
+
+        with self.assertRaisesRegex(ValueError, "cannot be None"):
+            dt.merge(source, "key = k").whenNotMatchedInsert(1)
+
+        with self.assertRaisesRegex(ValueError, "cannot be None"):
+            dt.merge(source, "key = k").whenNotMatchedInsert(condition="key = 'a'")
+
+        with self.assertRaisesRegex(TypeError, "must be a Spark SQL Column or a string"):
+            dt.merge(source, "key = k").whenNotMatchedInsert(1, {"value": "v"})
+
+        with self.assertRaisesRegex(TypeError, "must be a dict"):
+            dt.merge(source, "key = k").whenNotMatchedInsert("k = 'a'", 1)
+
+        with self.assertRaisesRegex(TypeError, "Values of dict in .* must contain only"):
+            dt.merge(source, "key = k").whenNotMatchedInsert(values={"value": 1})
+
+        with self.assertRaisesRegex(TypeError, "Keys of dict in .* must contain only"):
+            dt.merge(source, "key = k").whenNotMatchedInsert(values={1: "value"})
+
+        with self.assertRaises(TypeError):
+            dt.merge(source, "key = k").whenNotMatchedInsert(
+                values="k = 'a'", condition={"value": 1})
 
     def test_history(self):
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
@@ -110,10 +324,17 @@ class DeltaTableTests(PySparkTestCase):
             self.assertEqual(df.count(), 0)
             return
         expectedDF = self.spark.createDataFrame(expectedAnswer, schema)
-        self.assertEqual(df.count(), expectedDF.count())
-        self.assertEqual(len(df.columns), len(expectedDF.columns))
-        self.assertEqual([], df.subtract(expectedDF).take(1))
-        self.assertEqual([], expectedDF.subtract(df).take(1))
+        try:
+            self.assertEqual(df.count(), expectedDF.count())
+            self.assertEqual(len(df.columns), len(expectedDF.columns))
+            self.assertEqual([], df.subtract(expectedDF).take(1))
+            self.assertEqual([], expectedDF.subtract(df).take(1))
+        except AssertionError:
+            print("Expected:")
+            expectedDF.show()
+            print("Found:")
+            df.show()
+            raise
 
     def __writeDeltaTable(self, datalist):
         df = self.spark.createDataFrame(datalist, ["key", "value"])
