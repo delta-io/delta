@@ -18,14 +18,17 @@ package org.apache.spark.sql.delta
 
 import java.io.{File, FileNotFoundException}
 
+import io.delta.DeltaExtensions
+
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.{FileSystem, Path}
 
-import org.apache.spark.SparkException
+import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions.InSet
 import org.apache.spark.sql.catalyst.plans.logical.Filter
+import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.internal.SQLConf
@@ -37,6 +40,13 @@ class DeltaSuite extends QueryTest
   with SharedSparkSession {
 
   import testImplicits._
+
+  override def sparkConf: SparkConf = {
+    super.sparkConf
+      .set("spark.sql.catalog.session", classOf[DeltaCatalog].getName)
+      .set("spark.databricks.delta.snapshotPartitions", "1")
+      .set("spark.sql.extensions", classOf[DeltaExtensions].getName)
+  }
 
   private def tryDeleteNonRecursive(fs: FileSystem, path: Path): Boolean = {
     try fs.delete(path, false) catch {

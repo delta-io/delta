@@ -148,7 +148,7 @@ class DeltaSinkSuite extends StreamTest {
             .format("delta")
             .start()
         }
-        Seq("path", " not specified").foreach { msg =>
+        Seq("path", "null string").foreach { msg =>
           assert(e.getMessage.toLowerCase(Locale.ROOT).contains(msg))
         }
       }

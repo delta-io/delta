@@ -66,7 +66,7 @@ case class DeltaTableV2(
   }
 }
 
-private class WriteIntoDeltaBuilder(
+private[catalog] class WriteIntoDeltaBuilder(
     log: DeltaLog,
     writeOptions: CaseInsensitiveStringMap,
     specifiedSchema: Option[StructType] = None,

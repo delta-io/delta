@@ -51,12 +51,31 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
   // copy of the same lazy val from V2SessionCatalog where it's private
   private lazy val catalog: SessionCatalog = spark.sessionState.catalog
 
+  private def asTableIdentifier(ident: Identifier): TableIdentifier = {
+    TableIdentifier(ident.name(), ident.namespace().lastOption)
+  }
+
   private def createDeltaTable(
       ident: Identifier,
       schema: StructType,
       partitions: Array[Transform],
       properties: util.Map[String, String],
       sourceQuery: Option[LogicalPlan]): Table = {
+    val tableDesc = createDeltaTableEntry(ident, schema, partitions, properties)
+
+    val withDb = verifyTableAndSolidify(tableDesc, None)
+    ParquetSchemaConverter.checkFieldNames(tableDesc.schema.fieldNames)
+    CreateDeltaTableCommand(
+      withDb, getExistingTableIfExists(tableDesc), SaveMode.ErrorIfExists, sourceQuery).run(spark)
+
+    loadTable(ident)
+  }
+
+  private def createDeltaTableEntry(
+      ident: Identifier,
+      schema: StructType,
+      partitions: Array[Transform],
+      properties: util.Map[String, String]): CatalogTable = {
     // These two keys are properties in data source v2 but not in v1, so we have to filter
     // them out. Otherwise property consistency checks will fail.
     val tableProperties = properties.asScala.filterKeys {
@@ -72,8 +91,8 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
     val tableType =
       if (location.isDefined) CatalogTableType.EXTERNAL else CatalogTableType.MANAGED
 
-    val tableDesc = new CatalogTable(
-      identifier = TableIdentifier(ident.name()),
+    new CatalogTable(
+      identifier = asTableIdentifier(ident),
       tableType = tableType,
       storage = storage,
       schema = schema,
@@ -81,24 +100,25 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
       partitionColumnNames = partitionColumns,
       bucketSpec = maybeBucketSpec,
       properties = tableProperties.toMap,
-      tracksPartitionsInCatalog = spark.sessionState.conf.manageFilesourcePartitions,
+      tracksPartitionsInCatalog = false,
       comment = Option(properties.get("comment")))
     // END: copy-paste from the super method finished.
-
-    val withDb = verifyTableAndSolidify(tableDesc, None)
-    ParquetSchemaConverter.checkFieldNames(tableDesc.schema.fieldNames)
-    CreateDeltaTableCommand(
-      withDb, getExistingTableIfExists(tableDesc), SaveMode.ErrorIfExists, sourceQuery).run(spark)
-
-    loadTable(ident)
   }
 
   private def isPathIdentifier(ident: Identifier): Boolean = {
     try {
-      ident.namespace().sameElements(Array("delta")) && new Path(ident.name()).isAbsolute
+      val deltaIdentifier = ident.namespace().sameElements(Array("delta"))
+      val path = new Path(ident.name())
+      deltaIdentifier && path.isAbsolute && deltaTableExistsAt(path)
     } catch {
       case _: IllegalArgumentException => false
     }
+  }
+
+  private def deltaTableExistsAt(path: Path): Boolean = {
+    val conf = spark.sessionState.newHadoopConf()
+    val fs = path.getFileSystem(conf)
+    fs.exists(new Path(path, "_delta_log"))
   }
 
   override def loadTable(ident: Identifier): Table = {
@@ -134,7 +154,19 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
       schema: StructType,
       partitions: Array[Transform],
       properties: util.Map[String, String]): StagedTable = {
-    throw new IllegalStateException("not supported yet")
+    properties.get("provider") match {
+      case "delta" =>
+        val location = Option(properties.get("location"))
+          .map(CatalogUtils.stringToURI)
+          .getOrElse(spark.sessionState.catalog.defaultTablePath(asTableIdentifier(ident)))
+        val log = DeltaLog.forTable(spark, new Path(location))
+        val commitOp = () => spark.sessionState.catalog.alterTable(
+          createDeltaTableEntry(ident, schema, partitions, properties))
+        new StagedDeltaTableV2(log, ident, schema, partitions, properties, commitOp)
+      case _ =>
+        super.dropTable(ident)
+        OtherFormatsStagedTable(this, ident, schema, partitions, properties)
+    }
   }
 
   override def stageCreateOrReplace(
@@ -142,7 +174,33 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
       schema: StructType,
       partitions: Array[Transform],
       properties: util.Map[String, String]): StagedTable = {
-    throw new IllegalStateException("not supported yet")
+    // scalastyle:off
+    println(properties)
+    properties.get("provider") match {
+      case "delta" =>
+        val location = Option(properties.get("location"))
+          .map(CatalogUtils.stringToURI)
+          .getOrElse(spark.sessionState.catalog.defaultTablePath(asTableIdentifier(ident)))
+        val log = DeltaLog.forTable(spark, new Path(location))
+        val newEntry = createDeltaTableEntry(ident, schema, partitions, properties)
+        val commitOp = () => {
+          if (tableExists(ident)) {
+            spark.sessionState.catalog.alterTable(newEntry)
+          } else {
+            spark.sessionState.catalog.createTable(
+              newEntry,
+              ignoreIfExists = false,
+              validateLocation = false)
+          }
+        }
+        new StagedDeltaTableV2(log, ident, schema, partitions, properties, commitOp)
+      case _ =>
+        try super.dropTable(ident) catch {
+          case _: NoSuchTableException | _: NoSuchDatabaseException | _: NoSuchNamespaceException =>
+            // fine, maybe we're just creating
+        }
+        OtherFormatsStagedTable(this, ident, schema, partitions, properties)
+    }
   }
 
   override def stageCreate(
@@ -150,15 +208,21 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
       schema: StructType,
       partitions: Array[Transform],
       properties: util.Map[String, String]): StagedTable = {
-    // TODO: As discussed, the provider is sometimes not passed here in OSS Spark as of my branch,
-    // but we think PR 25669 fixed it.
-    // val provider = properties.getOrDefault("provider", null)
-    val provider = "delta"
-    provider match {
+    properties.get("provider") match {
       case "delta" =>
-        new StagedDeltaTableV2(ident, schema, partitions, properties)
+        val location = Option(properties.get("location"))
+          .map(CatalogUtils.stringToURI)
+          .getOrElse(spark.sessionState.catalog.defaultTablePath(asTableIdentifier(ident)))
+        val log = DeltaLog.forTable(spark, new Path(location))
+        val commitOp = () => {
+          spark.sessionState.catalog.createTable(
+            createDeltaTableEntry(ident, schema, partitions, properties),
+            ignoreIfExists = false,
+            validateLocation = false)
+        }
+        new StagedDeltaTableV2(log, ident, schema, partitions, properties, commitOp)
       case _ =>
-        throw new IllegalStateException("not supported yet")
+        OtherFormatsStagedTable(this, ident, schema, partitions, properties)
     }
   }
 
@@ -234,54 +298,37 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
   // We keep this as an internal class because it needs to call into some catalog internals for the
   // eventual table creation.
   private class StagedDeltaTableV2(
+      log: DeltaLog,
       ident: Identifier,
       override val schema: StructType,
       val partitions: Array[Transform],
-      override val properties: util.Map[String, String]) extends StagedTable with SupportsWrite {
+      override val properties: util.Map[String, String],
+      commitOp: () => Unit) extends StagedTable with SupportsWrite {
     override def name(): String = ident.name()
 
     override def abortStagedChanges(): Unit = {}
 
-    override def commitStagedChanges(): Unit = {}
+    override def commitStagedChanges(): Unit = {
+      commitOp()
+    }
 
     override def capabilities(): util.Set[TableCapability] = Set(
-      ACCEPT_ANY_SCHEMA, BATCH_READ,
-      V1_BATCH_WRITE, OVERWRITE_BY_FILTER, TRUNCATE
+      ACCEPT_ANY_SCHEMA, BATCH_READ, V1_BATCH_WRITE, OVERWRITE_BY_FILTER, TRUNCATE
     ).asJava
 
     override def newWriteBuilder(options: CaseInsensitiveStringMap): V1WriteBuilder = {
-      // TODO: is this right? What's the appropriate distinction to keep for properties and options
-      val combinedProps = options.asCaseSensitiveMap().asScala ++ properties.asScala
-      new DeltaV1WriteBuilder(ident, schema, partitions, combinedProps.asJava)
-    }
-  }
-
-  /*
-   * We have to do extend both classes. Only extending V1WriteBuilder gives
-   *
-   * Unable to implement a super accessor required by trait V1WriteBuilder unless
-   * org.apache.spark.sql.sources.v2.writer.WriteBuilder is directly extended by class
-   * DeltaCatalog$DeltaV1WriteBuilder.
-   */
-  private class DeltaV1WriteBuilder(
-      ident: Identifier,
-      schema: StructType,
-      partitions: Array[Transform],
-      properties: util.Map[String, String]) extends WriteBuilder with V1WriteBuilder {
-    override def buildForV1Write(): InsertableRelation = {
-      new InsertableRelation {
-        override def insert(data: DataFrame, overwrite: Boolean): Unit = {
-          createDeltaTable(ident, schema, partitions, properties, Some(data.logicalPlan))
-        }
-      }
+      new WriteIntoDeltaBuilder(log, options, Some(schema), partitions)
     }
   }
 
   override def alterTable(ident: Identifier, changes: TableChange*): Table = {
-    val provider = loadTable(ident).properties().get("provider")
-    // if (provider != "delta") return super.alterTable(ident, changes: _*)
-    val deltaIdentifier = DeltaTableIdentifier(spark, TableIdentifier(ident.name())).getOrElse {
-      throw new IllegalStateException("Provider was delta, but table is not a Delta table")
+    val deltaIdentifier = loadTable(ident) match {
+      case _: DeltaTableV2 if isPathIdentifier(ident) =>
+        DeltaTableIdentifier(path = Some(ident.name()))
+      case _: DeltaTableV2 =>
+        DeltaTableIdentifier(table =
+          Some(TableIdentifier(ident.name(), ident.namespace().headOption)))
+      case _ => return super.alterTable(ident, changes: _*)
     }
 
     // We group the table changes by their type, since Delta applies each in a separate action.
@@ -354,11 +401,45 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
           throw new IllegalArgumentException(s"Can't set location multiple times. Found " +
             s"${locations.asInstanceOf[Seq[SetProperty]].map(_.value())}")
         }
+        if (isPathIdentifier(ident)) {
+          // Doesn't make sense to set the location of a path based table
+          throw new AnalysisException("Database 'delta' not found")
+        }
         AlterTableSetLocationDeltaCommand(
           TableIdentifier(ident.name()),
           locations.head.asInstanceOf[SetProperty].value()).run(spark)
     }
 
     loadTable(ident)
+  }
+}
+
+case class OtherFormatsStagedTable(
+    delegateCatalog: TableCatalog,
+    ident: Identifier,
+    schema: StructType,
+    partitions: Array[Transform],
+    override val properties: util.Map[String, String]) extends StagedTable with SupportsWrite {
+
+  private lazy val realTable = delegateCatalog.createTable(ident, schema, partitions, properties)
+
+  override def capabilities(): util.Set[TableCapability] = realTable.capabilities()
+
+  override def name(): String = realTable.name()
+
+  override def commitStagedChanges(): Unit = {}
+
+  override def abortStagedChanges(): Unit = {
+    try delegateCatalog.dropTable(ident) catch {
+      case _: NoSuchTableException | _: NoSuchNamespaceException | _: NoSuchDatabaseException =>
+        // fine
+    }
+  }
+
+  override def newWriteBuilder(caseInsensitiveStringMap: CaseInsensitiveStringMap): WriteBuilder = {
+    realTable match {
+      case writer: SupportsWrite => writer.newWriteBuilder(caseInsensitiveStringMap)
+      case _ => throw new AnalysisException("Table doesn't support writes")
+    }
   }
 }
