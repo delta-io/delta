@@ -77,5 +77,5 @@ html_static_path = ['_static']
 # Fix for doc generation to work on older version of sphinx as well.
 master_doc = 'index'
 
-# Display the classes in the generated in the same order as the classes appear in the source files.
+# Display the classes in the generated in the same order as the classes appear in the source files.`
 autodoc_member_order = 'bysource'

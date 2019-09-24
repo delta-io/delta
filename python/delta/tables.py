@@ -98,7 +98,7 @@ class DeltaTable(object):
         :param condition: Optional condition of the update
         :type condition: str or pyspark.sql.Column
         :param set: Defines the rules of setting the values of columns that need to be updated.
-                    *Note: This param is not Optional.* Default value None is present to allow
+                    *Note: This param is required.* Default value None is present to allow
                     positional args in same order across languages.
         :type set: dict with str as keys and str or pyspark.sql.Column as values
 
@@ -160,8 +160,8 @@ class DeltaTable(object):
                 }
               ).execute()
 
-        :param source: Condition to match
-        :type source: str or pyspark.sql.Column
+        :param source: Source DataFrame
+        :type source: pyspark.sql.DataFrame
         :param condition: Condition to match sources rows with the Delta table rows.
         :type condition: str or pyspark.sql.Column
 
@@ -195,7 +195,8 @@ class DeltaTable(object):
             deltaTable.vacuum(100)  # vacuum files not required by versions more than 100 hours old
 
         :param retentionHours: Optional number of hours retain history. If not specified, then the
-                               default retention period of 7 days will be used.
+                               default retention period of 168 hours (7 days) will be used.
+
         .. note:: Evolving
         """
         jdt = self._jdt
@@ -217,7 +218,7 @@ class DeltaTable(object):
             lastOperationDF = deltaTable.history(1) # get the last operation
 
         :param limit: Optional, number of latest commits to returns in the history.
-        :return: table's commit history
+        :return: Table's commit history. See the online Delta Lake documentation for more details.
         :rtype: pyspark.sql.DataFrame
 
         .. note:: Evolving
@@ -239,6 +240,7 @@ class DeltaTable(object):
         conversion is started.
 
         Example::
+
             # Convert unpartitioned parquet table at path 'path/to/table'
             deltaTable = DeltaTable.convertToDelta(
                 spark, "parquet.`path/to/table`")
@@ -248,7 +250,7 @@ class DeltaTable(object):
             partitionedDeltaTable = DeltaTable.convertToDelta(
                 spark, "parquet.`path/to/table`", "part int")
 
-        :param sparkSession:
+        :param sparkSession: SparkSession to use for the conversion
         :type sparkSession: pyspark.sql.SparkSession
         :param identifier: Parquet table identifier formatted as "parquet.`path`"
         :type identifier: str
@@ -256,6 +258,8 @@ class DeltaTable(object):
         :param partitionSchema: Hive DDL formatted string, or pyspark.sql.types.StructType
         :return: DeltaTable representing the converted Delta table
         :rtype: :py:class:`~delta.tables.DeltaTable`
+
+        .. note:: Evolving
         """
         assert sparkSession is not None
         if partitionSchema is None:
@@ -273,7 +277,9 @@ class DeltaTable(object):
         """
         Create a DeltaTable for the data at the given `path` using the given SparkSession.
 
-        :return: DeltaTable representing the converted Delta table
+        :param sparkSession: SparkSession to use for loading the table
+        :type sparkSession: pyspark.sql.SparkSession
+        :return: loaded Delta table
         :rtype: :py:class:`~delta.tables.DeltaTable`
 
         Example::
@@ -440,7 +446,7 @@ class DeltaMergeBuilder(object):
         :param condition: Optional condition of the update
         :type condition: str or pyspark.sql.Column
         :param set: Defines the rules of setting the values of columns that need to be updated.
-                    *Note: This param is not Optional.* Default value None is present to allow
+                    *Note: This param is required.* Default value None is present to allow
                     positional args in same order across languages.
         :type set: dict with str as keys and str or pyspark.sql.Column as values
         :return: this builder
@@ -497,7 +503,7 @@ class DeltaMergeBuilder(object):
         :param condition: Optional condition of the insert
         :type condition: str or pyspark.sql.Column
         :param values: Defines the rules of setting the values of columns that need to be updated.
-                       *Note: This param is not Optional.* Default value None is present to allow
+                       *Note: This param is required.* Default value None is present to allow
                        positional args in same order across languages.
         :type values: dict with str as keys and str or pyspark.sql.Column as values
         :return: this builder
