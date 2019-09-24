@@ -18,8 +18,10 @@ package org.apache.spark.sql.delta.commands
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.analysis.CannotReplaceMissingTableException
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -42,7 +44,10 @@ case class CreateDeltaTableCommand(
     table: CatalogTable,
     existingTableOpt: Option[CatalogTable],
     mode: SaveMode,
-    query: Option[LogicalPlan]) extends RunnableCommand with DeltaLogging {
+    query: Option[LogicalPlan],
+    operation: TableCreationModes.CreationMode = TableCreationModes.CreateTable)
+  extends RunnableCommand
+  with DeltaLogging {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     assert(table.tableType != CatalogTableType.VIEW)
@@ -115,13 +120,8 @@ case class CreateDeltaTableCommand(
           data = data).write(txn, sparkSession)
         if (actions.isEmpty) return Nil
 
-        if (mode == SaveMode.ErrorIfExists) {
-          txn.commit(actions,
-            DeltaOperations.CreateTable(txn.metadata, isManagedTable, asSelect = true))
-        } else {
-          txn.commit(actions,
-            DeltaOperations.Write(mode, Option(table.partitionColumnNames), options.replaceWhere))
-        }
+        val op = getOperation(txn.readVersion, txn.metadata, isManagedTable, Some(options))
+        txn.commit(actions, op)
       } else {
         // We are defining a table using the Create Table statement.
         assert(!tableExists, "Can't recreate a table when it exists")
@@ -147,7 +147,8 @@ case class CreateDeltaTableCommand(
             schemaString = table.schema.json,
             partitionColumns = table.partitionColumnNames,
             configuration = table.properties)
-          txn.commit(newMetadata :: Nil, DeltaOperations.CreateTable(newMetadata, isManagedTable))
+          val op = getOperation(txn.readVersion, newMetadata, isManagedTable, None)
+          txn.commit(newMetadata :: Nil, op)
         } else {
           verifyTableMetadata(txn, tableWithLocation)
         }
@@ -159,13 +160,12 @@ case class CreateDeltaTableCommand(
       // Note that someone may have dropped and recreated the table in a separate location in the
       // meantime... Unfortunately we can't do anything there at the moment, because Hive sucks.
       val tableWithDefaultOptions = tableWithLocation.copy(
+        schema = new StructType(),
         tracksPartitionsInCatalog =
           tableWithLocation.partitionColumnNames.nonEmpty &&
             sparkSession.sessionState.conf.manageFilesourcePartitions)
 
-      val tableWithoutSchema = tableWithDefaultOptions.copy(schema = new StructType())
-      sparkSession.sessionState.catalog.createTable(tableWithoutSchema, ignoreIfExists = true,
-        validateLocation = false)
+      updateCatalog(sparkSession, tableWithDefaultOptions)
 
       Nil
     }
@@ -266,5 +266,61 @@ case class CreateDeltaTableCommand(
              """.stripMargin)
       }
     }
+  }
+
+  private def getOperation(
+      tableVersion: Long,
+      metadata: Metadata,
+      isManagedTable: Boolean,
+      options: Option[DeltaOptions]): DeltaOperations.Operation = operation match {
+    case TableCreationModes.CreateTable if existingTableOpt.isDefined && query.isDefined =>
+      DeltaOperations.Write(mode, Option(table.partitionColumnNames), options.get.replaceWhere)
+
+    case TableCreationModes.CreateTable =>
+      DeltaOperations.CreateTable(metadata, isManagedTable, query.isDefined)
+
+    case TableCreationModes.ReplaceTable =>
+      DeltaOperations.ReplaceTable(metadata, isManagedTable, orCreate = false, query.isDefined)
+
+    case TableCreationModes.CreateOrReplaceTable if options.exists(_.replaceWhere.isDefined) =>
+      DeltaOperations.Write(mode, Option(table.partitionColumnNames), options.get.replaceWhere)
+
+    case TableCreationModes.CreateOrReplaceTable =>
+      DeltaOperations.ReplaceTable(metadata, isManagedTable, orCreate = true, query.isDefined)
+  }
+
+  private def updateCatalog(spark: SparkSession, table: CatalogTable): Unit = operation match {
+    case TableCreationModes.CreateTable =>
+      spark.sessionState.catalog.createTable(
+        table,
+        ignoreIfExists = existingTableOpt.isDefined,
+        validateLocation = false)
+    case TableCreationModes.ReplaceTable if existingTableOpt.isDefined =>
+      spark.sessionState.catalog.alterTable(table)
+    case TableCreationModes.ReplaceTable =>
+      val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
+      throw new CannotReplaceMissingTableException(ident)
+    case TableCreationModes.CreateOrReplaceTable if existingTableOpt.isDefined =>
+      spark.sessionState.catalog.alterTable(table)
+    case TableCreationModes.CreateOrReplaceTable =>
+      spark.sessionState.catalog.createTable(
+        table,
+        ignoreIfExists = false,
+        validateLocation = false)
+  }
+}
+
+object TableCreationModes {
+  sealed trait CreationMode {
+    def mode: SaveMode
+  }
+  case object CreateTable extends CreationMode {
+    override def mode: SaveMode = SaveMode.ErrorIfExists
+  }
+  case object ReplaceTable extends CreationMode  {
+    override def mode: SaveMode = SaveMode.Overwrite
+  }
+  case object CreateOrReplaceTable extends CreationMode {
+    override def mode: SaveMode = SaveMode.Overwrite
   }
 }
