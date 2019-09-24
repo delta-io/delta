@@ -25,17 +25,23 @@ from py4j.java_collections import MapConverter
 class DeltaTable(object):
     """
         Main class for programmatically interacting with Delta tables.
-        You can create DeltaTable instances using the class methods.
+        You can create DeltaTable instances using the path of the Delta table.::
 
-        e.g DeltaTable.forPath(spark, path)
+            deltaTable = DeltaTable.forPath(spark, "/path/to/table")
+
+        In addition, you can convert an existing Parquet table in place into a Delta table.::
+
+            deltaTable = DeltaTable.convertToDelta(spark, "parquet.`/path/to/table`")
+
+        .. versionadded:: 0.4
 
         .. note:: Evolving
     """
-
     def __init__(self, spark, jdt):
         self._spark = spark
         self._jdt = jdt
 
+    @since(0.4)
     def toDF(self):
         """
         Get a DataFrame representation of this Delta table.
@@ -44,6 +50,7 @@ class DeltaTable(object):
         """
         return DataFrame(self._jdt.toDF(), self._spark._wrapped)
 
+    @since(0.4)
     def alias(self, aliasName):
         """
         Apply an alias to the Delta table.
@@ -53,9 +60,16 @@ class DeltaTable(object):
         jdt = self._jdt.alias(aliasName)
         return DeltaTable(self._spark, jdt)
 
+    @since(0.4)
     def delete(self, condition=None):
         """
         Delete data from the table that match the given ``condition``.
+
+        Example::
+
+            deltaTable.delete("date < '2017-01-01'")        # predicate using SQL formatted string
+
+            deltaTable.delete(col("date") < "2017-01-01")   # predicate using Spark SQL functions
 
         :param condition: condition of the update
         :type condition: str or pyspark.sql.Column
@@ -67,17 +81,26 @@ class DeltaTable(object):
         else:
             self._jdt.delete(self._condition_to_jcolumn(condition))
 
+    @since(0.4)
     def update(self, condition=None, set=None):
         """
         Update data from the table on the rows that match the given ``condition``,
         which performs the rules defined by ``set``.
 
+        Example::
+
+            # condition using SQL formatted string
+            deltaTable.update("eventType = 'clck'", { "eventType": "'click'" } )
+
+            # condition using Spark SQL functions
+            deltaTable.update(col("eventType") == "clck", { "eventType": lit("click") } )
+
         :param condition: Optional condition of the update
-        :type condition: pyspark.sql.Column or str with expressions in SQL syntax
+        :type condition: str or pyspark.sql.Column
         :param set: Defines the rules of setting the values of columns that need to be updated.
                     *Note: This param is not Optional.* Default value None is present to allow
                     positional args in same order across languages.
-        :type set: Dict between str as keys and str or pyspark.sql.Column as values
+        :type set: dict with str as keys and str or pyspark.sql.Column as values
 
         .. note:: Evolving
         """
@@ -88,6 +111,7 @@ class DeltaTable(object):
         else:
             self._jdt.update(jcolumn, jmap)
 
+    @since(0.4)
     def merge(self, source, condition):
         """
         Merge data from the `source` DataFrame based on the given merge `condition`. This returns
@@ -96,7 +120,54 @@ class DeltaTable(object):
         not. See :class:`DeltaMergeBuilder` for a full description of this operation and what
         combinations of update, delete and insert operations are allowed.
 
-        :return: a :py:class:`delta.tables.DeltaMergeBuilder` object
+        Example 1 with conditions and update expressions as SQL formatted string::
+
+            deltaTable.alias("events").merge(
+                source = updatesDF.alias("updates"),
+                condition = "events.eventId = updates.eventId"
+              ).whenMatchedUpdate(set =
+                {
+                  "data": "updates.data",
+                  "count": "events.count + 1"
+                }
+              ).whenNotMatchedInsert(values =
+                {
+                  "date": "updates.date",
+                  "eventId": "updates.eventId",
+                  "data": "updates.data",
+                  "count": "1"
+                }
+              ).execute()
+
+        Example 2 with conditions and update expressions as Spark SQL functions::
+
+            from pyspark.sql.functions import *
+
+            deltaTable.alias("events").merge(
+                source = updatesDF.alias("updates"),
+                condition = expr("events.eventId = updates.eventId")
+              ).whenMatchedUpdate(set =
+                {
+                  "data" : col("updates.data"),
+                  "count": col("events.count") + 1
+                }
+              ).whenNotMatchedInsert(values =
+                {
+                  "date": col("updates.date"),
+                  "eventId": col("updates.eventId"),
+                  "data": col("updates.data"),
+                  "count": lit("1")
+                }
+              ).execute()
+
+        :param source: Condition to match
+        :type source: str or pyspark.sql.Column
+        :param condition: Condition to match sources rows with the Delta table rows.
+        :type condition: str or pyspark.sql.Column
+
+        :return: builder object to specify whether to update, delete or insert rows based on
+                 whether the condition matched or not
+        :rtype: :py:class:`delta.tables.DeltaMergeBuilder`
 
         .. note:: Evolving
         """
@@ -110,15 +181,21 @@ class DeltaTable(object):
         jbuilder = self._jdt.merge(source._jdf, self._condition_to_jcolumn(condition))
         return DeltaMergeBuilder(self._spark, jbuilder)
 
+    @since(0.4)
     def vacuum(self, retentionHours=None):
         """
         Recursively delete files and directories in the table that are not needed by the table for
         maintaining older versions up to the given retention threshold. This method will return an
-        empty DataFrame on successful completion. This uses the default retention period of 7
-        days.
-        :param retentionHours:
-        :return: DataFrame of the history
+        empty DataFrame on successful completion.
 
+        Example::
+
+            deltaTable.vacuum()     # vacuum files not required by versions more than 7 days old
+
+            deltaTable.vacuum(100)  # vacuum files not required by versions more than 100 hours old
+
+        :param retentionHours: Optional number of hours retain history. If not specified, then the
+                               default retention period of 7 days will be used.
         .. note:: Evolving
         """
         jdt = self._jdt
@@ -127,12 +204,21 @@ class DeltaTable(object):
         else:
             return DataFrame(jdt.vacuum(retentionHours), self._spark._wrapped)
 
+    @since(0.4)
     def history(self, limit=None):
         """
         Get the information of the latest `limit` commits on this table as a Spark DataFrame.
         The information is in reverse chronological order.
-        :param limit:
-        :return: DataFrame of the history
+
+        Example::
+
+            fullHistoryDF = deltaTable.history()    # get the full history of the table
+
+            lastOperationDF = deltaTable.history(1) # get the last operation
+
+        :param limit: Optional, number of latest commits to returns in the history.
+        :return: table's commit history
+        :rtype: pyspark.sql.DataFrame
 
         .. note:: Evolving
         """
@@ -143,6 +229,7 @@ class DeltaTable(object):
             return DataFrame(jdt.history(limit), self._spark._wrapped)
 
     @classmethod
+    @since(0.4)
     def convertToDelta(cls, sparkSession, identifier, partitionSchema=None):
         """
         Create a DeltaTable from the given parquet table. Takes an existing parquet table and
@@ -151,10 +238,24 @@ class DeltaTable(object):
         state at the end of the conversion. Users should stop any changes to the table before the
         conversion is started.
 
+        Example::
+            # Convert unpartitioned parquet table at path 'path/to/table'
+            deltaTable = DeltaTable.convertToDelta(
+                spark, "parquet.`path/to/table`")
+
+            # Convert partitioned parquet table at path 'path/to/table' and partitioned by
+            # integer column named 'part'
+            partitionedDeltaTable = DeltaTable.convertToDelta(
+                spark, "parquet.`path/to/table`", "part int")
+
         :param sparkSession:
-        :param identifier:
+        :type sparkSession: pyspark.sql.SparkSession
+        :param identifier: Parquet table identifier formatted as "parquet.`path`"
+        :type identifier: str
         :param partitionSchema:
-        :return: DeltaTable
+        :param partitionSchema: Hive DDL formatted string, or pyspark.sql.types.StructType
+        :return: DeltaTable representing the converted Delta table
+        :rtype: :py:class:`~delta.tables.DeltaTable`
         """
         assert sparkSession is not None
         if partitionSchema is None:
@@ -167,9 +268,17 @@ class DeltaTable(object):
         return jdt
 
     @classmethod
+    @since(0.4)
     def forPath(cls, sparkSession, path):
         """
         Create a DeltaTable for the data at the given `path` using the given SparkSession.
+
+        :return: DeltaTable representing the converted Delta table
+        :rtype: :py:class:`~delta.tables.DeltaTable`
+
+        Example::
+
+            deltaTable = DeltaTable.forPath(spark, "/path/to/table")
 
         .. note:: Evolving
         """
@@ -224,49 +333,95 @@ class DeltaTable(object):
 
 class DeltaMergeBuilder(object):
     """
-    Builder to specify how to merge data from source DataFrame into the target Delta table. You can
-    specify 1, 2 or 3 ``when`` clauses of which there can be at most 2 ``whenMatched`` clauses
-    and at most 1 ```whenNotMatched``` clause. Here are the constraints on these clauses.
+    Builder to specify how to merge data from source DataFrame into the target Delta table.
+    Use :py:meth:`delta.tables.DeltaTable.merge` to create an object of this class.
+    Using this builder, you can specify 1, 2 or 3 ``when`` clauses of which there can be at most
+    2 ``whenMatched`` clauses and at most 1 ``whenNotMatched`` clause.
+    Here are the constraints on these clauses.
 
-    - ``whenMatched`` clauses:
+    - Constraints in the ``whenMatched`` clauses:
 
-        - There can be at most one ``update`` action and one ``delete`` action in `whenMatched`
-            clauses.
+      - There can be at most one ``update`` action and one ``delete`` action in `whenMatched`
+        clauses.
 
-        - Each ``whenMatched`` clause can have an optional condition. However, if there are two
-          ``whenMatched`` clauses, then the first one must have a condition.
+      - Each ``whenMatched`` clause can have an optional condition. However, if there are two
+        ``whenMatched`` clauses, then the first one must have a condition.
 
-        - When there are two ``whenMatched`` clauses and there are conditions (or the lack of)
-          such that a row matches both clauses, then the first clause/action is executed.
-          In other words, the order of the ``whenMatched`` clauses matter.
+      - When there are two ``whenMatched`` clauses and there are conditions (or the lack of)
+        such that a row matches both clauses, then the first clause/action is executed.
+        In other words, the order of the ``whenMatched`` clauses matter.
 
-        - If none of the ``whenMatched`` clauses match a source-target row pair that satisfy
-          the merge condition, then the target rows will not be updated or deleted.
+      - If none of the ``whenMatched`` clauses match a source-target row pair that satisfy
+        the merge condition, then the target rows will not be updated or deleted.
 
-        - If you want to update all the columns of the target Delta table with the
-          corresponding column of the source DataFrame, then you can use the
-          ``whenMatchedUpdateAll()``. This is equivalent to
-            ::
-                whenMatchedUpdate(set = {
-                  "col1": "source.col1",
-                  "col2": "source.col2"
-                })
+      - If you want to update all the columns of the target Delta table with the
+        corresponding column of the source DataFrame, then you can use the
+        ``whenMatchedUpdateAll()``. This is equivalent to::
 
-    - ``whenNotMatched`` clauses:
+            whenMatchedUpdate(set = {
+              "col1": "source.col1",
+              "col2": "source.col2",
+              ...    # for all columns in the delta table
+            })
 
-        - This clause can have only an ``insert`` action, which can have an optional condition.
+    - Constraints in the ``whenNotMatched`` clauses:
 
-        - If ``whenNotMatchedInsert`` is not present or if it is present but the non-matching
-          source row does not satisfy the condition, then the source row is not inserted.
+      - This clause can have only an ``insert`` action, which can have an optional condition.
 
-        - If you want to insert all the columns of the target Delta table with the
-          corresponding column of the source DataFrame, then you can use
-          ``whenNotMatchedInsertAll()``. This is equivalent to
-            ::
-                whenMatchedInsert(values = {
-                  "col1": "source.col1",
-                  "col2": "source.col2"
-                })
+      - If ``whenNotMatchedInsert`` is not present or if it is present but the non-matching
+        source row does not satisfy the condition, then the source row is not inserted.
+
+      - If you want to insert all the columns of the target Delta table with the
+        corresponding column of the source DataFrame, then you can use
+        ``whenNotMatchedInsertAll()``. This is equivalent to::
+
+            whenMatchedInsert(values = {
+              "col1": "source.col1",
+              "col2": "source.col2",
+              ...    # for all columns in the delta table
+            })
+
+    Example 1 with conditions and update expressions as SQL formatted string::
+
+        deltaTable.alias("events").merge(
+            source = updatesDF.alias("updates"),
+            condition = "events.eventId = updates.eventId"
+          ).whenMatchedUpdate(set =
+            {
+              "data": "updates.data",
+              "count": "events.count + 1"
+            }
+          ).whenNotMatchedInsert(values =
+            {
+              "date": "updates.date",
+              "eventId": "updates.eventId",
+              "data": "updates.data",
+              "count": "1"
+            }
+          ).execute()
+
+    Example 2 with conditions and update expressions as Spark SQL functions::
+
+        from pyspark.sql.functions import *
+
+        deltaTable.alias("events").merge(
+            source = updatesDF.alias("updates"),
+            condition = expr("events.eventId = updates.eventId")
+          ).whenMatchedUpdate(set =
+            {
+              "data" : col("updates.data"),
+              "count": col("events.count") + 1
+            }
+          ).whenNotMatchedInsert(values =
+            {
+              "date": col("updates.date"),
+              "eventId": col("updates.eventId"),
+              "data": col("updates.data"),
+              "count": lit("1")
+            }
+          ).execute()
+
+    .. versionadded:: 0.4
 
     .. note:: Evolving
     """
@@ -274,10 +429,21 @@ class DeltaMergeBuilder(object):
         self._spark = spark
         self._jbuilder = jbuilder
 
+    @since(0.4)
     def whenMatchedUpdate(self, condition=None, set=None):
         """
         Update a matched table row based on the rules defined by ``set``.
         If a ``condition`` is specified, then it must evaluate to true for the row to be updated.
+
+        See :py:class:`~delta.tables.DeltaMergeBuilder` for complete usage details.
+
+        :param condition: Optional condition of the update
+        :type condition: str or pyspark.sql.Column
+        :param set: Defines the rules of setting the values of columns that need to be updated.
+                    *Note: This param is not Optional.* Default value None is present to allow
+                    positional args in same order across languages.
+        :type set: dict with str as keys and str or pyspark.sql.Column as values
+        :return: this builder
 
         .. note:: Evolving
         """
@@ -285,31 +451,56 @@ class DeltaMergeBuilder(object):
         new_jbuilder = self.__getMatchedBuilder(condition).update(jset)
         return DeltaMergeBuilder(self._spark, new_jbuilder)
 
+    @since(0.4)
     def whenMatchedUpdateAll(self, condition=None):
         """
         Update all the columns of the matched table row with the values of the  corresponding
         columns in the source row. If a ``condition`` is specified, then it must be
         true for the new row to be updated.
 
+        See :py:class:`~delta.tables.DeltaMergeBuilder` for complete usage details.
+
+        :param condition: Optional condition of the insert
+        :type condition: str or pyspark.sql.Column
+        :return: this builder
+
         .. note:: Evolving
         """
         new_jbuilder = self.__getMatchedBuilder(condition).updateAll()
         return DeltaMergeBuilder(self._spark, new_jbuilder)
 
+    @since(0.4)
     def whenMatchedDelete(self, condition=None):
         """
         Delete a matched row from the table only if the given ``condition`` (if specified) is
         true for the matched row.
+
+        See :py:class:`~delta.tables.DeltaMergeBuilder` for complete usage details.
+
+        :param condition: Optional condition of the delete
+        :type condition: str or pyspark.sql.Column
+        :return: this builder
 
         .. note:: Evolving
         """
         new_jbuilder = self.__getMatchedBuilder(condition).delete()
         return DeltaMergeBuilder(self._spark, new_jbuilder)
 
+    @since(0.4)
     def whenNotMatchedInsert(self, condition=None, values=None):
         """
         Insert a new row to the target table based on the rules defined by ``values``. If a
         ``condition`` is specified, then it must evaluate to true for the new row to be inserted.
+
+        See :py:class:`~delta.tables.DeltaMergeBuilder` for complete usage details.
+
+        :param condition: Optional condition of the insert
+        :type condition: str or pyspark.sql.Column
+        :param values: Defines the rules of setting the values of columns that need to be updated.
+                       *Note: This param is not Optional.* Default value None is present to allow
+                       positional args in same order across languages.
+        :type values: dict with str as keys and str or pyspark.sql.Column as values
+        :return: this builder
 
         .. note:: Evolving
         """
@@ -317,20 +508,30 @@ class DeltaMergeBuilder(object):
         new_jbuilder = self.__getNotMatchedBuilder(condition).insert(jvalues)
         return DeltaMergeBuilder(self._spark, new_jbuilder)
 
+    @since(0.4)
     def whenNotMatchedInsertAll(self, condition=None):
         """
         Insert a new target Delta table row by assigning the target columns to the values of the
         corresponding columns in the source row. If a ``condition`` is specified, then it must
         evaluate to true for the new row to be inserted.
 
+        See :py:class:`~delta.tables.DeltaMergeBuilder` for complete usage details.
+
+        :param condition: Optional condition of the insert
+        :type condition: str or pyspark.sql.Column
+        :return: this builder
+
         .. note:: Evolving
         """
         new_jbuilder = self.__getNotMatchedBuilder(condition).insertAll()
         return DeltaMergeBuilder(self._spark, new_jbuilder)
 
+    @since(0.4)
     def execute(self):
         """
         Execute the merge operation based on the built matched and not matched actions.
+
+        See :py:class:`~delta.tables.DeltaMergeBuilder` for complete usage details.
 
         .. note:: Evolving
         """

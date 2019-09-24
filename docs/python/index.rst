@@ -4,7 +4,7 @@
    contain the root `toctree` directive.
 
 Welcome to Delta Lake's Python documentation page
-==========================================
+=================================================
 
 .. toctree::
    :maxdepth: 2
@@ -16,7 +16,6 @@ DeltaTable
 .. automodule:: delta.tables
    :members:
    :undoc-members:
-   :show-inheritance:
 
 
 Indices and tables
