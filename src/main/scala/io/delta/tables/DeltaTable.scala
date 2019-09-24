@@ -509,6 +509,14 @@ object DeltaTable {
    * state at the end of the conversion. Users should stop any changes to the table before the
    * conversion is started.
    *
+   * An example usage would be
+   * {{{
+   *  io.delta.tables.DeltaTable.convertToDelta(
+   *   spark,
+   *   String.format("parquet.`%s`", path),
+   *   new StructType().add(StructField("key1", LongType)).add(StructField("key2", StringType)))
+   * }}}
+   *
    * @since 0.4.0
    */
   @Evolving
@@ -524,12 +532,50 @@ object DeltaTable {
   /**
    * :: Evolving ::
    *
+   * Create a DeltaTable from the given parquet table and partition schema.
+   * Takes an existing parquet table and constructs a delta transaction log in the base path of
+   * that table.
+   *
+   * Note: Any changes to the table during the conversion process may not result in a consistent
+   * state at the end of the conversion. Users should stop any changes to the table before the
+   * conversion is started.
+   *
+   * An example usage would be
+   * {{{
+   *  io.delta.tables.DeltaTable.convertToDelta(
+   *   spark,
+   *   String.format("parquet.`%s`", path),
+   *   "key1 long, key2 string")
+   * }}}
+   *
+   * @since 0.4.0
+   */
+  @Evolving
+  def convertToDelta(
+      spark: SparkSession,
+      identifier: String,
+      partitionSchema: String): DeltaTable = {
+    val tableId: TableIdentifier = spark.sessionState.sqlParser.parseTableIdentifier(identifier)
+    DeltaConvert.executeConvert(spark, tableId, Some(StructType.fromDDL(partitionSchema)), None)
+    forPath(spark, tableId.table)
+  }
+
+  /**
+   * :: Evolving ::
+   *
    * Create a DeltaTable from the given parquet table. Takes an existing parquet table and
    * constructs a delta transaction log in the base path of the table.
    *
    * Note: Any changes to the table during the conversion process may not result in a consistent
    * state at the end of the conversion. Users should stop any changes to the table before the
    * conversion is started.
+   *
+   * An Example would be
+   * {{{
+   *  io.delta.tables.DeltaTable.convertToDelta(
+   *   spark,
+   *   String.format("parquet.`%s`", path))
+   * }}}
    *
    * @since 0.4.0
    */

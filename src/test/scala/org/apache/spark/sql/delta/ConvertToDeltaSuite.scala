@@ -480,4 +480,58 @@ trait ConvertToDeltaSuiteBase extends QueryTest
       assert(deltaLog.snapshot.metadata.configuration("delta.appendOnly") === "true")
     }
   }
+
+  test("convert to delta with string partition columns") {
+    withTempDir { dir =>
+      val tempDir = dir.getCanonicalPath
+      writeFiles(tempDir, simpleDF, partCols = Seq("key1", "key2"))
+      io.delta.tables.DeltaTable.convertToDelta(
+        spark,
+        identifier = s"parquet.`$tempDir`",
+        partitionSchema = "key1 long, key2 string")
+
+      // reads actually went through Delta
+      assert(deltaRead(spark.read.format("delta").load(tempDir).select("id")))
+
+      // query through Delta is correct
+      checkAnswer(
+        spark.read.format("delta").load(tempDir).where("key1 = 0").select("id"),
+        simpleDF.filter("id % 2 == 0").select("id"))
+
+      // delta writers went through
+      writeFiles(
+        tempDir, simpleDF, format = "delta", partCols = Seq("key1", "key2"), mode = "append")
+
+      checkAnswer(
+        spark.read.format("delta").load(tempDir).where("key1 = 1").select("id"),
+        simpleDF.union(simpleDF).filter("id % 2 == 1").select("id"))
+    }
+  }
+
+  test("convert a delta path falsely claimed as parquet") {
+    withTempDir { dir =>
+      val tempDir = dir.getCanonicalPath
+      writeFiles(tempDir, simpleDF, "delta")
+
+      // Convert to delta
+      convertToDelta(s"parquet.`$tempDir`")
+
+      // Verify that table converted to delta
+      checkAnswer(
+        spark.read.format("delta").load(tempDir).where("key1 = 1").select("id"),
+        simpleDF.filter("id % 2 == 1").select("id"))
+    }
+  }
+
+  test("converting a delta path should not error for idempotency") {
+    withTempDir { dir =>
+      val tempDir = dir.getCanonicalPath
+      writeFiles(tempDir, simpleDF, "delta")
+      convertToDelta(s"delta.`$tempDir`")
+
+      checkAnswer(
+        spark.read.format("delta").load(tempDir).where("key1 = 1").select("id"),
+        simpleDF.filter("id % 2 == 1").select("id"))
+    }
+  }
 }

@@ -161,9 +161,11 @@ class DeltaTable(object):
             jdt = sparkSession._sc._jvm.io.delta.tables.DeltaTable.convertToDelta(
                 sparkSession._jsparkSession, identifier)
         else:
+            if not isinstance(partitionSchema, str):
+                partitionSchema = sparkSession._jsparkSession.parseDataType(partitionSchema.json())
             jdt = sparkSession._sc._jvm.io.delta.tables.DeltaTable.convertToDelta(
                 sparkSession._jsparkSession, identifier,
-                sparkSession._jsparkSession.parseDataType(partitionSchema.json()))
+                partitionSchema)
         return jdt
 
     @classmethod

@@ -301,22 +301,33 @@ class DeltaTableTests(PySparkTestCase):
     def test_convertToDelta(self):
         df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
         df.write.format("parquet").save(self.tempFile)
-        self.tempFile2 = self.tempFile + "_"
-        dt = DeltaTable.convertToDelta(self.spark, "parquet.`" + self.tempFile + "`")
+        dt = DeltaTable.convertToDelta(self.spark, "parquet.`%s`" % self.tempFile)
         self.__checkAnswer(
             self.spark.read.format("delta").load(self.tempFile),
             [('a', 1), ('b', 2), ('c', 3)])
 
         # test if convert to delta with partition columns work
-        df.write.partitionBy("value").format("parquet").save(self.tempFile2)
+        tempFile2 = self.tempFile + "_2"
+        df.write.partitionBy("value").format("parquet").save(tempFile2)
         schema = StructType()
         schema.add("value", IntegerType(), True)
         dt = DeltaTable.convertToDelta(
             self.spark,
-            "parquet.`" + self.tempFile2 + "`",
+            "parquet.`%s`" % tempFile2,
             schema)
         self.__checkAnswer(
-            self.spark.read.format("delta").load(self.tempFile2),
+            self.spark.read.format("delta").load(tempFile2),
+            [('a', 1), ('b', 2), ('c', 3)])
+
+        # convert to delta with partition column provided as a string
+        tempFile3 = self.tempFile + "_3"
+        df.write.partitionBy("value").format("parquet").save(tempFile3)
+        dt = DeltaTable.convertToDelta(
+            self.spark,
+            "parquet.`%s`" % tempFile3,
+            "value int")
+        self.__checkAnswer(
+            self.spark.read.format("delta").load(tempFile3),
             [('a', 1), ('b', 2), ('c', 3)])
 
     def __checkAnswer(self, df, expectedAnswer, schema=["key", "value"]):
