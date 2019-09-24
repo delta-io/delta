@@ -90,10 +90,14 @@ class DeltaTable(object):
         Example::
 
             # condition using SQL formatted string
-            deltaTable.update("eventType = 'clck'", { "eventType": "'click'" } )
+            deltaTable.update(
+                condition = "eventType = 'clck'",
+                set = { "eventType": "'click'" } )
 
             # condition using Spark SQL functions
-            deltaTable.update(col("eventType") == "clck", { "eventType": lit("click") } )
+            deltaTable.update(
+                condition = col("eventType") == "clck",
+                set = { "eventType": lit("click") } )
 
         :param condition: Optional condition of the update
         :type condition: str or pyspark.sql.Column
