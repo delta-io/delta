@@ -47,11 +47,16 @@ case class DeltaTableV2(
     specifiedSchema: Option[StructType] = None,
     specifiedPartitioning: Array[Transform] = Array.empty,
     tableIdentifier: Option[String] = None) extends Table with SupportsWrite {
+
+  private def metadata = log.update().metadata
+
   override def name(): String = tableIdentifier.getOrElse(s"delta.`${log.dataPath}`")
   override def schema(): StructType = log.snapshot.schema
 
+  override def properties(): util.Map[String, String] = metadata.configuration.asJava
+
   override def partitioning(): Array[Transform] = {
-    log.snapshot.metadata.partitionColumns.map { col =>
+    metadata.partitionColumns.map { col =>
       IdentityTransform(FieldReference(Seq(col)))
     }.toArray
   }

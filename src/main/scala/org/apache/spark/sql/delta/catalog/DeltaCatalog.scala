@@ -23,7 +23,7 @@ import scala.collection.mutable
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.{AnalysisException, DataFrame, SaveMode, SparkSession}
+import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException}
 import org.apache.spark.sql.catalyst.catalog._
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -35,11 +35,11 @@ import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
 import org.apache.spark.sql.execution.datasources.{DataSource, PartitioningUtils}
 import org.apache.spark.sql.sources.InsertableRelation
 import org.apache.spark.sql.connector.catalog.TableCapability._
-import org.apache.spark.sql.types.{StructField, StructType}
+import org.apache.spark.sql.types.{StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import org.apache.spark.sql.connector.catalog.TableChange._
 import org.apache.spark.sql.connector.catalog._
-import org.apache.spark.sql.connector.expressions.{BucketTransform, FieldReference, IdentityTransform, Transform}
+import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Transform}
 import org.apache.spark.sql.connector.write.{V1WriteBuilder, WriteBuilder}
 
 class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
@@ -161,8 +161,9 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
       partitions: Array[Transform],
       properties: util.Map[String, String]): StagedTable = {
     properties.get("provider") match {
-      case "delta" => new StagedDeltaTableV2(
-        ident, schema, partitions, properties, TableCreationModes.ReplaceTable)
+      case "delta" =>
+        new StagedDeltaTableV2(
+          ident, schema, partitions, properties, TableCreationModes.ReplaceTable)
       case _ =>
         super.dropTable(ident)
         OtherFormatsStagedTable(this, ident, schema, partitions, properties)
@@ -208,12 +209,9 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
       case IdentityTransform(FieldReference(Seq(col))) =>
         identityCols += col
 
-      case BucketTransform(numBuckets, FieldReference(Seq(col))) =>
-        bucketSpec = Some(BucketSpec(numBuckets, col :: Nil, Nil))
-
       case transform =>
         throw new UnsupportedOperationException(
-          s"SessionCatalog does not support partition transform: $transform")
+          s"Delta tables do not support the partitioning: $transform")
     }
 
     (identityCols, bucketSpec)
@@ -281,13 +279,14 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
     override def abortStagedChanges(): Unit = {}
 
     private var asSelectQuery: Option[DataFrame] = None
+    private var writeOptions: Map[String, String] = properties.asScala.toMap
 
     override def commitStagedChanges(): Unit = {
       createDeltaTable(
         ident,
         schema,
         partitions,
-        properties,
+        writeOptions.asJava,
         asSelectQuery.map(_.logicalPlan),
         operation)
     }
@@ -298,14 +297,11 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
 
     override def newWriteBuilder(options: CaseInsensitiveStringMap): V1WriteBuilder = {
       val combinedProps = options.asCaseSensitiveMap().asScala ++ properties.asScala
-      new DeltaV1WriteBuilder(ident, schema, partitions, combinedProps.asJava)
+      writeOptions = combinedProps.toMap
+      new DeltaV1WriteBuilder
     }
 
-    private class DeltaV1WriteBuilder(
-        ident: Identifier,
-        schema: StructType,
-        partitions: Array[Transform],
-        properties: util.Map[String, String]) extends WriteBuilder with V1WriteBuilder {
+    private class DeltaV1WriteBuilder extends WriteBuilder with V1WriteBuilder {
       override def buildForV1Write(): InsertableRelation = {
         new InsertableRelation {
           override def insert(data: DataFrame, overwrite: Boolean): Unit = {

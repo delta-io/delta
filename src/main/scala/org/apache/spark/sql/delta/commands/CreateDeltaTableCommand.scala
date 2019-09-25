@@ -110,7 +110,7 @@ case class CreateDeltaTableCommand(
 
         val data = Dataset.ofRows(sparkSession, query.get)
 
-        val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
+        val options = new DeltaOptions(table.properties, sparkSession.sessionState.conf)
         val actions = WriteIntoDelta(
           deltaLog = deltaLog,
           mode = mode,
