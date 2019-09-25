@@ -118,19 +118,9 @@ case class CreateDeltaTableCommand(
           partitionColumns = table.partitionColumnNames,
           configuration = table.properties,
           data = data).write(txn, sparkSession)
-        val commitActions = if (actions.isEmpty) {
-          Metadata(
-            description = table.comment.orNull,
-            // This is a user provided schema.
-            // Doesn't come from a query, Follow nullability invariants.
-            schemaString = table.schema.json,
-            partitionColumns = table.partitionColumnNames,
-            configuration = table.properties) :: Nil
-        } else {
-          actions
-        }
+
         val op = getOperation(txn.readVersion, txn.metadata, isManagedTable, Some(options))
-        txn.commit(commitActions, op)
+        txn.commit(actions, op)
       } else {
         // We are defining a table using the Create Table statement.
         assert(!tableExists, "Can't recreate a table when it exists")
