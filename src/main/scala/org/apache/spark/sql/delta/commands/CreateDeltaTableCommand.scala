@@ -110,7 +110,13 @@ case class CreateDeltaTableCommand(
 
         val data = Dataset.ofRows(sparkSession, query.get)
 
-        val options = new DeltaOptions(table.properties, sparkSession.sessionState.conf)
+        val options = operation match {
+          case TableCreationModes.ReplaceTable | TableCreationModes.CreateOrReplaceTable =>
+            val options = table.storage.properties ++ Map("overwriteSchema" -> "true")
+            new DeltaOptions(options, sparkSession.sessionState.conf)
+          case _ =>
+            new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
+        }
         val actions = WriteIntoDelta(
           deltaLog = deltaLog,
           mode = mode,

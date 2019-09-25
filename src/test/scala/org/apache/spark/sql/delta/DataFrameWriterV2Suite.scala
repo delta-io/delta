@@ -342,16 +342,10 @@ trait OpenSourceDataFrameWriterV2Suite
     assert(table.partitioning === Seq(IdentityTransform(FieldReference("id"))))
     assert(table.properties.isEmpty)
 
-    val e = intercept[AnalysisException] {
-      spark.table("source2")
-        .withColumn("even_or_odd", when(($"id" % 2) === 0, "even").otherwise("odd"))
-        .writeTo("session.table_name").using("delta").replace()
-    }
-    assert(e.getMessage.contains("schema mismatch"))
-
     spark.table("source2")
       .withColumn("even_or_odd", when(($"id" % 2) === 0, "even").otherwise("odd"))
-      .writeTo("session.table_name").option("mergeSchema", "true").using("delta").replace()
+      .writeTo("session.table_name").using("delta")
+      .tableProperty("deLta.aPpeNdonly", "true").replace()
 
     checkAnswer(
       spark.table("table_name"),
@@ -365,8 +359,8 @@ trait OpenSourceDataFrameWriterV2Suite
       .add("id", LongType)
       .add("data", StringType)
       .add("even_or_odd", StringType))
-    assert(replaced.partitioning === Seq(IdentityTransform(FieldReference("id"))))
-    assert(replaced.properties.isEmpty)
+    assert(replaced.partitioning.isEmpty)
+    assert(replaced.properties === Map("delta.appendOnly" -> "true").asJava)
   }
 
   test("Replace: partitioned table") {
@@ -385,25 +379,9 @@ trait OpenSourceDataFrameWriterV2Suite
     assert(table.partitioning.isEmpty)
     assert(table.properties.isEmpty)
 
-    val e = intercept[AnalysisException] {
-      spark.table("source2")
-        .withColumn("even_or_odd", when(($"id" % 2) === 0, "even").otherwise("odd"))
-        .writeTo("session.table_name").using("delta").partitionedBy($"id").replace()
-    }
-    assert(e.getMessage.contains("schema mismatch"))
-
-    val e2 = intercept[AnalysisException] {
-      spark.table("source2")
-        .withColumn("even_or_odd", when(($"id" % 2) === 0, "even").otherwise("odd"))
-        .writeTo("session.table_name").using("delta")
-        .option("mergeSchema", "true").partitionedBy($"id").replace()
-    }
-    assert(e2.getMessage.contains("schema mismatch"))
-
     spark.table("source2")
       .withColumn("even_or_odd", when(($"id" % 2) === 0, "even").otherwise("odd"))
       .writeTo("session.table_name").using("delta")
-      .option("overwriteSchema", "true")
       .partitionedBy($"id")
       .replace()
 
@@ -464,17 +442,9 @@ trait OpenSourceDataFrameWriterV2Suite
     assert(table.partitioning === Seq(IdentityTransform(FieldReference("id"))))
     assert(table.properties.isEmpty)
 
-    val e = intercept[AnalysisException] {
-      spark.table("source2")
-        .withColumn("even_or_odd", when(($"id" % 2) === 0, "even").otherwise("odd"))
-        .writeTo("session.table_name").using("delta").createOrReplace()
-    }
-    assert(e.getMessage.contains("schema mismatch"))
-
     spark.table("source2")
       .withColumn("even_or_odd", when(($"id" % 2) === 0, "even").otherwise("odd"))
-      .writeTo("session.table_name").using("delta").option("mergeSchema", "true")
-      .createOrReplace()
+      .writeTo("session.table_name").using("delta").createOrReplace()
 
     checkAnswer(
       spark.table("table_name"),
@@ -488,7 +458,7 @@ trait OpenSourceDataFrameWriterV2Suite
       .add("id", LongType)
       .add("data", StringType)
       .add("even_or_odd", StringType))
-    assert(replaced.partitioning === Seq(IdentityTransform(FieldReference("id"))))
+    assert(replaced.partitioning.isEmpty)
     assert(replaced.properties.isEmpty)
   }
 
