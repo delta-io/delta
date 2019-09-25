@@ -624,4 +624,36 @@ object DeltaTable {
     }
   }
 
+  /**
+   * :: Evolving ::
+   *
+   * Check if the provided `identifier` string, in this case a file path,
+   * is the root of a Delta table using the given SparkSession.
+   *
+   * @since 0.4.0
+   */
+  @Evolving
+  def isDeltaTable(sparkSession: SparkSession, identifier: String): Boolean = {
+    DeltaTableUtils.isDeltaTable(sparkSession, new Path(identifier))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Check if the provided `identifier` string, in this case a file path,
+   * is the root of a Delta table.
+   *
+   * Note: This uses the active SparkSession in the current thread to search for the table. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   *
+   * @since 0.4.0
+   */
+  @Evolving
+  def isDeltaTable(identifier: String): Boolean = {
+    val sparkSession = SparkSession.getActiveSession.getOrElse {
+      throw new IllegalArgumentException("Could not find active SparkSession")
+    }
+    isDeltaTable(sparkSession, identifier)
+  }
 }
