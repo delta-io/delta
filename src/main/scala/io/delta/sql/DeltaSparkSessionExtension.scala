@@ -18,13 +18,12 @@ package io.delta.sql
 
 import io.delta.sql.parser.DeltaSqlParser
 
-import org.apache.spark.annotation.InterfaceStability.Evolving
 import org.apache.spark.sql.SparkSessionExtensions
 
 /**
  * An extension for Spark SQL to activate Delta SQL parser to support Delta SQL grammar.
  *
- * Scala example to create a `SparkSession` with the Delta SQL parser using SQL conf:
+ * Scala example to create a `SparkSession` with the Delta SQL parser:
  * {{{
  *    import org.apache.spark.sql.SparkSession
  *
@@ -36,20 +35,7 @@ import org.apache.spark.sql.SparkSessionExtensions
  *       .getOrCreate()
  * }}}
  *
- * Scala example to create a `SparkSession` with the Delta SQL parser using
- * `SparkSession.Builder.withExtensions`:
- * {{{
- *    import org.apache.spark.sql.SparkSession
- *
- *    val spark = SparkSession
- *       .builder()
- *       .appName("...")
- *       .master("...")
- *       .withExtensions(new io.delta.sql.DeltaSparkSessionExtension)
- *       .getOrCreate()
- * }}}
- *
- * Java example to create a `SparkSession` with the Delta SQL parser using SQL conf:
+ * Java example to create a `SparkSession` with the Delta SQL parser:
  * {{{
  *    import org.apache.spark.sql.SparkSession;
  *
@@ -82,7 +68,6 @@ import org.apache.spark.sql.SparkSessionExtensions
  *
  * @since 0.4.0
  */
-@Evolving
 class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
   override def apply(extensions: SparkSessionExtensions): Unit = {
     extensions.injectParser { (session, parser) =>
