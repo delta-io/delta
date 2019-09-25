@@ -26,6 +26,8 @@ import org.apache.spark.sql.SparkSessionExtensions
  *
  * Scala example to create a `SparkSession` with the Delta SQL parser using SQL conf:
  * {{{
+ *    import org.apache.spark.sql.SparkSession
+ *
  *    val spark = SparkSession
  *       .builder()
  *       .appName("...")
@@ -37,6 +39,8 @@ import org.apache.spark.sql.SparkSessionExtensions
  * Scala example to create a `SparkSession` with the Delta SQL parser using
  * `SparkSession.Builder.withExtensions`:
  * {{{
+ *    import org.apache.spark.sql.SparkSession
+ *
  *    val spark = SparkSession
  *       .builder()
  *       .appName("...")
@@ -47,6 +51,8 @@ import org.apache.spark.sql.SparkSessionExtensions
  *
  * Java example to create a `SparkSession` with the Delta SQL parser using SQL conf:
  * {{{
+ *    import org.apache.spark.sql.SparkSession;
+ *
  *    SparkSession spark = SparkSession
  *                 .builder()
  *                 .appName("...")
