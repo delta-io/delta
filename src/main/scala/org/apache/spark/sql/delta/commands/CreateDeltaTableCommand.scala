@@ -113,6 +113,16 @@ case class CreateDeltaTableCommand(
         val options = operation match {
           case TableCreationModes.ReplaceTable | TableCreationModes.CreateOrReplaceTable =>
             val options = table.storage.properties ++ Map("overwriteSchema" -> "true")
+            if (txn.readVersion > -1L) {
+              // Otherwise the metadata will be updated in WriteIntoDelta
+              txn.updateMetadata(Metadata(
+                description = table.comment.orNull,
+                // This is a user provided schema.
+                // Doesn't come from a query, Follow nullability invariants.
+                schemaString = table.schema.json,
+                partitionColumns = table.partitionColumnNames,
+                configuration = table.properties))
+            }
             new DeltaOptions(options, sparkSession.sessionState.conf)
           case _ =>
             new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
