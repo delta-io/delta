@@ -497,6 +497,59 @@ object DeltaErrors
        """.stripMargin)
   }
 
+  def createTableWithDifferentSchemaException(
+      path: Path,
+      specifiedSchema: StructType,
+      existingSchema: StructType,
+      diffs: Seq[String]): Throwable = {
+    new AnalysisException(
+      s"""The specified schema does not match the existing schema at $path.
+         |
+         |== Specified ==
+         |${specifiedSchema.treeString}
+         |
+         |== Existing ==
+         |${existingSchema.treeString}
+         |
+         |== Differences==
+         |${diffs.map("\n".r.replaceAllIn(_, "\n  ")).mkString("- ", "\n- ", "")}
+         |
+         |If your intention is to keep the existing schema, you can omit the
+         |schema from the create table command. Otherwise please ensure that
+         |the schema matches.
+        """.stripMargin)
+  }
+
+  def createTableWithDifferentPartitioningException(
+      path: Path,
+      specifiedColumns: Seq[String],
+      existingColumns: Seq[String]): Throwable = {
+    new AnalysisException(
+      s"""The specified partitioning does not match the existing partitioning at $path.
+         |
+         |== Specified ==
+         |${specifiedColumns.mkString(", ")}
+         |
+         |== Existing ==
+         |${existingColumns.mkString(", ")}
+        """.stripMargin)
+  }
+
+  def createTableWithDifferentPropertiesException(
+      path: Path,
+      specifiedProperties: Map[String, String],
+      existingProperties: Map[String, String]): Throwable = {
+    new AnalysisException(
+      s"""The specified properties do not match the existing properties at $path.
+         |
+         |== Specified ==
+         |${specifiedProperties.map { case (k, v) => s"$k=$v" }.mkString("\n")}
+         |
+         |== Existing ==
+         |${existingProperties.map { case (k, v) => s"$k=$v" }.mkString("\n")}
+        """.stripMargin)
+  }
+
   def aggsNotSupportedException(op: String, cond: Expression): Throwable = {
     val condStr = s"(condition = ${cond.sql})."
     new AnalysisException(s"Aggregate functions are not supported in the $op $condStr.")
