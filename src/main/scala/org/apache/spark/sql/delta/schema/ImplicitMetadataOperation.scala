@@ -91,13 +91,10 @@ trait ImplicitMetadataOperation extends DeltaLogging {
         partitionColumns = normalizedPartitionCols
       )
       recordDeltaEvent(txn.deltaLog, "delta.ddl.overwriteSchema")
-      // scalastyle:off
-      println("overwriting schema")
       txn.updateMetadata(newMetadata)
     } else if (isNewSchema && canMergeSchema && !isNewPartitioning) {
       logInfo(s"New merged schema: ${mergedSchema.treeString}")
       recordDeltaEvent(txn.deltaLog, "delta.ddl.mergeSchema")
-      println("merging schema")
       txn.updateMetadata(txn.metadata.copy(schemaString = mergedSchema.json))
     } else if (isNewSchema || isNewPartitioning) {
       recordDeltaEvent(txn.deltaLog, "delta.schemaValidation.failure")

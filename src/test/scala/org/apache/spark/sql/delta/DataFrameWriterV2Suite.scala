@@ -282,8 +282,6 @@ trait OpenSourceDataFrameWriterV2Suite
       Seq(Row(1L, "a"), Row(2L, "b"), Row(3L, "c")))
 
     val table = catalog.loadTable(Identifier.of(Array(), "table_name"))
-    // scalastyle:off
-    println(table)
 
     assert(table.name === "default.table_name")
     assert(table.schema === new StructType().add("id", LongType).add("data", StringType))
