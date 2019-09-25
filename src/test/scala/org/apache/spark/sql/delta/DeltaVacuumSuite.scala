@@ -473,6 +473,27 @@ trait DeltaVacuumSuiteBase extends QueryTest
         s"Please provide the base path ($path) when Vacuuming Delta tables."))
     }
   }
+
+  test("vacuum a non-existent path and a non Delta table") {
+    def assertNotADeltaTableException(path: String): Unit = {
+      for (table <- Seq(s"'$path'", s"delta.`$path`")) {
+        val e = intercept[AnalysisException] {
+          sql(s"vacuum $table")
+        }
+        Seq("VACUUM", "only supported for Delta tables").foreach { msg =>
+          assert(e.getMessage.contains(msg))
+        }
+      }
+    }
+    withTempPath { tempDir =>
+      assert(!tempDir.exists())
+      assertNotADeltaTableException(tempDir.getCanonicalPath)
+    }
+    withTempPath { tempDir =>
+      spark.range(1, 10).write.parquet(tempDir.getCanonicalPath)
+      assertNotADeltaTableException(tempDir.getCanonicalPath)
+    }
+  }
 }
 
 class DeltaVacuumSuite

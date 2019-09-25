@@ -37,7 +37,8 @@ case class DescribeDeltaHistoryCommand(
       new Path(if (table.nonEmpty) {
         DeltaTableIdentifier(sparkSession, table.get) match {
           case Some(id) if id.path.isDefined => id.path.get
-          case _ => throw DeltaErrors.tableNotSupportedException("DESCRIBE DETAIL")
+          case Some(id) => throw DeltaErrors.tableNotSupportedException("DESCRIBE HISTORY")
+          case None => throw DeltaErrors.notADeltaTableException("DESCRIBE HISTORY")
         }
       } else {
         path.get
@@ -50,7 +51,9 @@ case class DescribeDeltaHistoryCommand(
 
     val deltaLog = DeltaLog.forTable(sparkSession, basePath)
     if (deltaLog.snapshot.version == -1) {
-      throw DeltaErrors.notADeltaTableException("DESCRIBE HISTORY")
+      throw DeltaErrors.notADeltaTableException(
+        "DESCRIBE HISTORY",
+        DeltaTableIdentifier(path = Some(basePath.toString)))
     }
 
     import sparkSession.implicits._

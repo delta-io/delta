@@ -255,6 +255,27 @@ trait DescribeDeltaHistorySuiteBase
       assert(Seq("supported", "Delta").forall(e.getMessage.contains))
     }
   }
+
+  test("describe history a non-existent path and a non Delta table") {
+    def assertNotADeltaTableException(path: String): Unit = {
+      for (table <- Seq(s"'$path'", s"delta.`$path`")) {
+        val e = intercept[AnalysisException] {
+          sql(s"describe history $table").show()
+        }
+        Seq("DESCRIBE HISTORY", "only supported for Delta tables").foreach { msg =>
+          assert(e.getMessage.contains(msg))
+        }
+      }
+    }
+    withTempPath { tempDir =>
+      assert(!tempDir.exists())
+      assertNotADeltaTableException(tempDir.getCanonicalPath)
+    }
+    withTempPath { tempDir =>
+      spark.range(1, 10).write.parquet(tempDir.getCanonicalPath)
+      assertNotADeltaTableException(tempDir.getCanonicalPath)
+    }
+  }
 }
 
 class DescribeDeltaHistorySuite

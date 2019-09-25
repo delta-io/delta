@@ -45,7 +45,8 @@ case class VacuumTableCommand(
       new Path(if (table.nonEmpty) {
         DeltaTableIdentifier(sparkSession, table.get) match {
           case Some(id) if id.path.isDefined => id.path.get
-          case _ => throw DeltaErrors.tableNotSupportedException("VACUUM")
+          case Some(id) => throw DeltaErrors.tableNotSupportedException("VACUUM")
+          case None => throw DeltaErrors.notADeltaTableException("VACUUM")
         }
       } else {
         path.get
@@ -57,6 +58,11 @@ case class VacuumTableCommand(
       }
     }
     val deltaLog = DeltaLog.forTable(sparkSession, pathToVacuum)
+    if (deltaLog.snapshot.version == -1) {
+      throw DeltaErrors.notADeltaTableException(
+        "VACUUM",
+        DeltaTableIdentifier(path = Some(pathToVacuum.toString)))
+    }
     VacuumCommand.gc(sparkSession, deltaLog, dryRun, horizonHours).collect()
   }
 }
