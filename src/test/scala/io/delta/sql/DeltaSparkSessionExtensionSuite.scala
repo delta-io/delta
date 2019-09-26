@@ -19,14 +19,19 @@ package io.delta.sql
 import java.nio.file.Files
 
 import org.apache.spark.SparkFunSuite
+import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.sql.SparkSession
 
 class DeltaSparkSessionExtensionSuite extends SparkFunSuite {
 
   private def verifyDeltaSQLParserIsActivated(spark: SparkSession): Unit = {
-    val input = Files.createTempDirectory("DeltaSparkSessionExtensionSuite").toFile.getCanonicalPath
-    spark.range(1, 10).write.format("delta").save(input)
-    spark.sql(s"vacuum delta.`$input`")
+    val input = Files.createTempDirectory("DeltaSparkSessionExtensionSuite").toFile
+    try {
+      spark.range(1, 10).write.format("delta").save(input.getCanonicalPath)
+      spark.sql(s"vacuum delta.`${input.getCanonicalPath}`")
+    } finally {
+      JavaUtils.deleteRecursively(input)
+    }
   }
 
   test("activate Delta SQL parser using SQL conf") {
