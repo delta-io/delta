@@ -330,6 +330,14 @@ class DeltaTableTests(PySparkTestCase):
             self.spark.read.format("delta").load(tempFile3),
             [('a', 1), ('b', 2), ('c', 3)])
 
+    def test_isDeltaTable(self):
+        df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
+        df.write.format("parquet").save(self.tempFile)
+        tempFile2 = self.tempFile + '_2'
+        df.write.format("delta").save(tempFile2)
+        self.assertEqual(DeltaTable.isDeltaTable(self.spark, self.tempFile), False)
+        self.assertEqual(DeltaTable.isDeltaTable(self.spark, tempFile2), True)
+
     def __checkAnswer(self, df, expectedAnswer, schema=["key", "value"]):
         if not expectedAnswer:
             self.assertEqual(df.count(), 0)

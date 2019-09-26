@@ -513,7 +513,7 @@ object DeltaTable {
    * {{{
    *  io.delta.tables.DeltaTable.convertToDelta(
    *   spark,
-   *   String.format("parquet.`%s`", path),
+   *   "parquet.`/path`",
    *   new StructType().add(StructField("key1", LongType)).add(StructField("key2", StringType)))
    * }}}
    *
@@ -544,7 +544,7 @@ object DeltaTable {
    * {{{
    *  io.delta.tables.DeltaTable.convertToDelta(
    *   spark,
-   *   String.format("parquet.`%s`", path),
+   *   "parquet.`/path`",
    *   "key1 long, key2 string")
    * }}}
    *
@@ -574,7 +574,7 @@ object DeltaTable {
    * {{{
    *  io.delta.tables.DeltaTable.convertToDelta(
    *   spark,
-   *   String.format("parquet.`%s`", path))
+   *   "parquet.`/path`"
    * }}}
    *
    * @since 0.4.0
@@ -630,6 +630,11 @@ object DeltaTable {
    * Check if the provided `identifier` string, in this case a file path,
    * is the root of a Delta table using the given SparkSession.
    *
+   * An example would be
+   * {{{
+   *   DeltaTable.isDeltaTable(spark, "path/to/table")
+   * }}}
+   *
    * @since 0.4.0
    */
   @Evolving
@@ -646,6 +651,11 @@ object DeltaTable {
    * Note: This uses the active SparkSession in the current thread to search for the table. Hence,
    * this throws error if active SparkSession has not been set, that is,
    * `SparkSession.getActiveSession()` is empty.
+   *
+   * An example would be
+   * {{{
+   *   DeltaTable.isDeltaTable(spark, "/path/to/table")
+   * }}}
    *
    * @since 0.4.0
    */

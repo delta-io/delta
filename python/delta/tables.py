@@ -300,6 +300,28 @@ class DeltaTable(object):
         return DeltaTable(sparkSession, jdt)
 
     @classmethod
+    @since(0.4)
+    def isDeltaTable(cls, sparkSession, identifier):
+        """
+        Check if the provided `identifier` string, in this case a file path,
+        is the root of a Delta table using the given SparkSession.
+
+        :param sparkSession: SparkSession to use to perform the check
+        :param path: location of the table
+        :return: If the table is a delta table or not
+        :rtype: bool
+
+        Example::
+
+            DeltaTable.isDeltaTable(spark, "/path/to/table")
+
+        .. note:: Evolving
+        """
+        assert sparkSession is not None
+        return sparkSession._sc._jvm.io.delta.tables.DeltaTable.isDeltaTable(
+            sparkSession._jsparkSession, identifier)
+
+    @classmethod
     def _dict_to_jmap(cls, sparkSession, pydict, argname):
         """
         convert dict<str, pColumn/str> to Map<str, jColumn>
