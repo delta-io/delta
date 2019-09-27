@@ -166,7 +166,7 @@ spIgnoreProvided := true
 
 packagedArtifacts in publishM2 <<= packagedArtifacts in spPublishLocal
 
-packagedArtifacts in publish <<= packagedArtifacts in spPublishLocal
+packageBin in Compile := spPackage.value
 
 sparkComponents := Seq("sql")
 
