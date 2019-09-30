@@ -289,7 +289,7 @@ class DeltaTableTests(PySparkTestCase):
         self.__createFile('bac.txt', 'abcdf')
         self.assertEqual(True, self.__checkFileExists('abc.txt'))
         dt.vacuum()  # will not delete files as default retention is used.
-        dt.vacuum(100)  # test whether integers work
+        dt.vacuum(1000)  # test whether integers work
 
         self.assertEqual(True, self.__checkFileExists('bac.txt'))
         retentionConf = "spark.databricks.delta.retentionDurationCheck.enabled"
