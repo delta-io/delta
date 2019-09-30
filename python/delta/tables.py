@@ -207,7 +207,7 @@ class DeltaTable(object):
         if retentionHours is None:
             return DataFrame(jdt.vacuum(), self._spark._wrapped)
         else:
-            return DataFrame(jdt.vacuum(retentionHours), self._spark._wrapped)
+            return DataFrame(jdt.vacuum(float(retentionHours)), self._spark._wrapped)
 
     @since(0.4)
     def history(self, limit=None):
