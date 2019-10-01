@@ -47,13 +47,14 @@ import org.antlr.v4.runtime.atn.PredictionMode
 import org.antlr.v4.runtime.misc.{Interval, ParseCancellationException}
 import org.antlr.v4.runtime.tree._
 
-import org.apache.spark.sql.{AnalysisException, SparkSessionExtensions}
+import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
 import org.apache.spark.sql.catalyst.parser.{ParseErrorListener, ParseException, ParserInterface}
 import org.apache.spark.sql.catalyst.parser.ParserUtils.{string, withOrigin}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.trees.Origin
+import org.apache.spark.sql.delta.commands.DescribeDeltaDetailCommandOSS
 import org.apache.spark.sql.types.{DataType, StructType}
 
 /**
@@ -147,6 +148,13 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       Option(ctx.table).map(visitTableIdentifier),
       Option(ctx.number).map(_.getText.toDouble),
       ctx.RUN != null)
+  }
+
+  override def visitDescribeDeltaDetail(
+      ctx: DescribeDeltaDetailContext): LogicalPlan = withOrigin(ctx) {
+    DescribeDeltaDetailCommandOSS(
+      Option(ctx.path).map(string),
+      Option(ctx.table).map(visitTableIdentifier))
   }
 
   override def visitDescribeDeltaHistory(

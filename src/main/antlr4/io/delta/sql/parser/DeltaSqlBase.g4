@@ -74,6 +74,7 @@ singleStatement
 statement
     : VACUUM (path=STRING | table=qualifiedName)
         (RETAIN number HOURS)? (DRY RUN)?                               #vacuumTable
+    | (DESC | DESCRIBE) DETAIL (path=STRING | table=qualifiedName)      #describeDeltaDetail
     | (DESC | DESCRIBE) HISTORY (path=STRING | table=qualifiedName)
         (LIMIT limit=INTEGER_VALUE)?                                    #describeDeltaHistory
     | .*?                                                               #passThrough
@@ -111,7 +112,7 @@ number
 // these tokens
 nonReserved
     : VACUUM | RETAIN | HOURS | DRY | RUN
-    | DESC | DESCRIBE | LIMIT
+    | DESC | DESCRIBE | LIMIT | DETAIL
     ;
 
 // Define how the keywords above should appear in a user's SQL statement.
@@ -123,6 +124,7 @@ RETAIN: 'RETAIN';
 HOURS: 'HOURS';
 DESC: 'DESC';
 DESCRIBE: 'DESCRIBE';
+DETAIL: 'DETAIL';
 HISTORY: 'HISTORY';
 
 PLUS: '+';
