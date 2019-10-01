@@ -229,43 +229,57 @@ object SchemaUtils {
    *   - Any change of datatype
    */
   def isReadCompatible(existingSchema: StructType, readSchema: StructType): Boolean = {
-    val existing = toFieldMap(existingSchema)
-    // scalastyle:off caselocale
-    val existingFieldNames = existingSchema.fieldNames.map(_.toLowerCase).toSet
-    assert(existingFieldNames.size == existingSchema.length,
-      "Delta tables don't allow field names that only differ by case")
-    val newFields = readSchema.fieldNames.map(_.toLowerCase).toSet
-    assert(newFields.size == readSchema.length,
-      "Delta tables don't allow field names that only differ by case")
-    // scalastyle:on caselocale
 
-    if (!existingFieldNames.subsetOf(newFields)) {
-      // Dropped a column that was present in the DataFrame schema
-      return false
-    }
-
-    readSchema.forall { newField =>
-      existing.get(newField.name) match {
-        case Some(existingField) =>
-          val nullabilityConstraintMet = if (!existingField.nullable) {
-            // newField should also be non-nullable
-            !newField.nullable
-          } else {
-            true
-          }
-          val dataTypeMatched = (existingField.dataType, newField.dataType) match {
-            case (e: StructType, n: StructType) =>
-              isReadCompatible(e, n)
-            case (ArrayType(e: StructType, _), ArrayType(n: StructType, _)) =>
-              isReadCompatible(e, n)
-            case (a, b) => a == b
-          }
-          dataTypeMatched && nullabilityConstraintMet
-        case None =>
-          // new fields are fine, they just won't be returned
-          true
+    def isDatatypeReadCompatible(existing: DataType, newtype: DataType): Boolean = {
+      (existing, newtype) match {
+        case (e: StructType, n: StructType) =>
+          isReadCompatible(e, n)
+        case (e: ArrayType, n: ArrayType) =>
+          // if existing elements are non-nullable, so should be the new element
+          (e.containsNull || !n.containsNull) &&
+            isDatatypeReadCompatible(e.elementType, n.elementType)
+        case (e: MapType, n: MapType) =>
+          // if existing value is non-nullable, so should be the new value
+          (e.valueContainsNull || !n.valueContainsNull) &&
+            isDatatypeReadCompatible(e.keyType, n.keyType) &&
+            isDatatypeReadCompatible(e.valueType, n.valueType)
+        case (a, b) => a == b
       }
     }
+
+    def isStructReadCompatible(existing: StructType, newtype: StructType): Boolean = {
+      val existing = toFieldMap(existingSchema)
+      // scalastyle:off caselocale
+      val existingFieldNames = existingSchema.fieldNames.map(_.toLowerCase).toSet
+      assert(existingFieldNames.size == existingSchema.length,
+        "Delta tables don't allow field names that only differ by case")
+      val newFields = readSchema.fieldNames.map(_.toLowerCase).toSet
+      assert(newFields.size == readSchema.length,
+        "Delta tables don't allow field names that only differ by case")
+      // scalastyle:on caselocale
+
+      if (!existingFieldNames.subsetOf(newFields)) {
+        // Dropped a column that was present in the DataFrame schema
+        return false
+      }
+
+      readSchema.forall { newField =>
+        existing.get(newField.name) match {
+          case Some(existingField) =>
+            // we know the name matches modulo case - now verify exact match
+            (existingField.name == newField.name
+              // if existing value is non-nullable, so should be the new value
+              && (existingField.nullable || !newField.nullable)
+              // and the type of the field must be compatible, too
+              && isDatatypeReadCompatible(existingField.dataType, newField.dataType))
+          case None =>
+            // new fields are fine, they just won't be returned
+            true
+        }
+      }
+    }
+
+    isStructReadCompatible(existingSchema, readSchema)
   }
 
   /**
