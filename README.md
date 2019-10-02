@@ -94,7 +94,7 @@ We welcome contributions to Delta Lake. We use [GitHub Pull Requests ](https://g
 There are two mediums of communication within the Delta Lake community. 
 
 - Public Slack Channel
-  - [Register here](https://join.slack.com/t/delta-users/shared_invite/enQtNTY1NDg0ODcxOTI1LWE3YjMxOTM4MmM0YWNhNjE2YmI2OGI4N2Y3MTRhOWQ1YzE3MTMyYTM5YzRiZWZlYzMwYzk0M2JiZmJhY2Q4NWI)
+  - [Register here](https://join.slack.com/t/delta-users/shared_invite/enQtNTY1NDg0ODcxOTI1LWJkZGU3ZmQ3MjkzNmY2ZDM0NjNlYjE4MWIzYjg2OWM1OTBmMWIxZTllMjg3ZmJkNjIwZmE1ZTZkMmQ0OTk5ZjA)
   - [Login here](https://delta-users.slack.com/)
 
 - Public [Mailing list](https://groups.google.com/forum/#!forum/delta-users)
