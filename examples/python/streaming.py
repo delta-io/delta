@@ -6,6 +6,13 @@ from delta.tables import *
 import shutil
 import threading
 
+# Clear previous run delta-tables
+try:
+    shutil.rmtree("/tmp/delta-table2")
+    shutil.rmtree("/tmp/delta-table")
+except:
+    pass
+
 # Create SparkContext
 sc = SparkContext()
 sqlContext = SQLContext(sc)
