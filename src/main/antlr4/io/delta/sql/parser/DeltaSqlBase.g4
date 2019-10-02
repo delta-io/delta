@@ -77,6 +77,8 @@ statement
     | (DESC | DESCRIBE) DETAIL (path=STRING | table=qualifiedName)      #describeDeltaDetail
     | (DESC | DESCRIBE) HISTORY (path=STRING | table=qualifiedName)
         (LIMIT limit=INTEGER_VALUE)?                                    #describeDeltaHistory
+    | CONVERT TO DELTA table=qualifiedName
+        (PARTITIONED BY '(' colTypeList ')')?                           #convert
     | .*?                                                               #passThrough
     ;
 
@@ -94,8 +96,16 @@ quotedIdentifier
     : BACKQUOTED_IDENTIFIER
     ;
 
-identifierSeq
-    : identifier (',' identifier)*
+colTypeList
+    : colType (',' colType)*
+    ;
+
+colType
+    : colName=identifier dataType (NOT NULL)? (COMMENT STRING)?
+    ;
+
+dataType
+    : identifier ('(' INTEGER_VALUE (',' INTEGER_VALUE)* ')')?         #primitiveDataType
     ;
 
 number
@@ -112,27 +122,30 @@ number
 // these tokens
 nonReserved
     : VACUUM | RETAIN | HOURS | DRY | RUN
+    | CONVERT | TO | DELTA | PARTITIONED | BY
     | DESC | DESCRIBE | LIMIT | DETAIL
     ;
 
 // Define how the keywords above should appear in a user's SQL statement.
-LIMIT: 'LIMIT';
-DRY: 'DRY';
-RUN: 'RUN';
-VACUUM: 'VACUUM';
-RETAIN: 'RETAIN';
-HOURS: 'HOURS';
+BY: 'BY';
+COMMENT: 'COMMENT';
+CONVERT: 'CONVERT';
+DELTA: 'DELTA';
 DESC: 'DESC';
 DESCRIBE: 'DESCRIBE';
 DETAIL: 'DETAIL';
+DRY: 'DRY';
 HISTORY: 'HISTORY';
-
-PLUS: '+';
+HOURS: 'HOURS';
+LIMIT: 'LIMIT';
 MINUS: '-';
-
+NOT: 'NOT' | '!';
 NULL: 'NULL';
-TRUE: 'TRUE';
-FALSE: 'FALSE';
+PARTITIONED: 'PARTITIONED';
+RETAIN: 'RETAIN';
+RUN: 'RUN';
+TO: 'TO';
+VACUUM: 'VACUUM';
 
 STRING
     : '\'' ( ~('\''|'\\') | ('\\' .) )* '\''

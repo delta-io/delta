@@ -16,20 +16,20 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.commands.ConvertToDeltaCommand
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
-import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row, SparkSession}
-import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
-class ConvertToDeltaSuite extends ConvertToDeltaSuiteBase
+class ConvertToDeltaSuite
+  extends ConvertToDeltaSuiteBase with org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+
 trait ConvertToDeltaSuiteBase extends QueryTest
     with SharedSparkSession {
 
@@ -123,7 +123,7 @@ trait ConvertToDeltaSuiteBase extends QueryTest
       val tempDir = dir.getCanonicalPath
       writeFiles(tempDir, simpleDF, "parquet", Seq("key1", "key2"))
       val ae = intercept[AnalysisException] {
-        convertToDelta(s"`$tempDir`")
+        convertToDelta(s"`$tempDir`", None)
       }
       assert(ae.getMessage.contains(parquetOnlyMsg))
     }
@@ -343,7 +343,7 @@ trait ConvertToDeltaSuiteBase extends QueryTest
       writeFiles(tempDir, simpleDF)
 
       // wrap parquet with backticks should work
-      convertToDelta(s"`parquet`.`$tempDir`")
+      convertToDelta(s"`parquet`.`$tempDir`", None)
       checkAnswer(spark.read.format("delta").load(tempDir), simpleDF)
 
       // path with no backticks should fail parsing
@@ -485,10 +485,7 @@ trait ConvertToDeltaSuiteBase extends QueryTest
     withTempDir { dir =>
       val tempDir = dir.getCanonicalPath
       writeFiles(tempDir, simpleDF, partCols = Seq("key1", "key2"))
-      io.delta.tables.DeltaTable.convertToDelta(
-        spark,
-        identifier = s"parquet.`$tempDir`",
-        partitionSchema = "key1 long, key2 string")
+      convertToDelta(s"parquet.`$tempDir`", Some("key1 long, key2 string"))
 
       // reads actually went through Delta
       assert(deltaRead(spark.read.format("delta").load(tempDir).select("id")))
