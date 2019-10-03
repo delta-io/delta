@@ -18,6 +18,12 @@ Delta Lake is published to Maven Central Repository and can be used by adding a 
       <version>0.3.0</version>
     </dependency>
 
+## API Documentation
+
+* [Scala API docs](https://docs.delta.io/latest/delta-apidoc.html)
+* [Java API docs](https://docs.delta.io/latest/api/java/index.html)
+* [Python API docs](https://docs.delta.io/latest/api/python/index.html)
+
 ## Compatibility
 
 ### Compatibility with Apache Spark Versions
@@ -37,6 +43,7 @@ Delta Lake guarantees backward compatibility for all Delta Lake tables (i.e., ne
 Breaking changes in the protocol are indicated by incrementing the minimum reader/writer version in the `Protocol` [action](https://github.com/delta-io/delta/blob/master/src/main/scala/org/apache/spark/sql/delta/actions/actions.scala).
 
 ## Roadmap
+
 Delta Lake is a recent open source project based on technology developed at Databricks. We plan to open-source all APIs that are required to correctly run Spark programs that read and write Delta tables. For a detailed timeline on this effort see the [project roadmap](https://github.com/delta-io/delta/milestones).
 
 # Building
@@ -84,9 +91,11 @@ As an optimization, storage systems can also allow _partial listing of a directo
 Delta Lake ensures _serializability_ for concurrent reads and writes. Please see [Delta Lake Concurrency Control](https://docs.delta.io/latest/delta-concurrency.html) for more details.
 
 # Reporting issues
+
 We use [GitHub Issues](https://github.com/delta-io/delta/issues) to track community reported issues. You can also [contact](#community) the community for getting answers.
 
 # Contributing 
+
 We welcome contributions to Delta Lake. We use [GitHub Pull Requests ](https://github.com/delta-io/delta/pulls) for accepting changes. You will be prompted to sign a contributor license agreement before your change can be accepted.
 
 # Community
