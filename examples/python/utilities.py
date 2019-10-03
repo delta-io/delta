@@ -19,9 +19,11 @@ sqlContext = SQLContext(sc)
 # Enable SQL for the current spark session.
 spark = SparkSession \
     .builder \
-    .appName("...") \
-    .master("...") \
+    .appName("utilities") \
+    .master("local[*]") \
+    # config io.delta.sql.DeltaSparkSessionExtension -- to enable custom Delta-specific SQL commands
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+    # config parallelPartitionDiscovery.parallelism -- control the parallelism for vacuum
     .config("spark.sql.sources.parallelPartitionDiscovery.parallelism","8") \
     .getOrCreate()
 

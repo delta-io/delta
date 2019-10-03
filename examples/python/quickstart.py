@@ -19,8 +19,8 @@ sqlContext = SQLContext(sc)
 # Enable SQL for the current spark session.
 spark = SparkSession \
     .builder \
-    .appName("...") \
-    .master("...") \
+    .appName("quickstart") \
+    .master("local[*]") \
     .getOrCreate()
 
 # Create a table
@@ -64,8 +64,9 @@ deltaTable.update(
   set = { "id": expr("id + 100") })
 
 deltaTable.toDF().show()
+
 # Delete every even value
-print("######### delete every even value ##############")
+print("######### Delete every even value ##############")
 deltaTable.delete(condition = expr("id % 2 == 0"))
 deltaTable.toDF().show()
 

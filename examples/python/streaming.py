@@ -20,8 +20,8 @@ sqlContext = SQLContext(sc)
 # Enable SQL for the current spark session.
 spark = SparkSession \
     .builder \
-    .appName("...") \
-    .master("...") \
+    .appName("streaming") \
+    .master("local[*]") \
     .getOrCreate()
 
 # Create a table
