@@ -25,30 +25,27 @@ import random
 import string
 import tempfile
 
-
 # TODO Scala integration tests
-def run_scala_integration_tests(root_dir, package, repo):
+def run_scala_integration_tests(root_dir, package):
     pass
 
 
-def run_python_integration_tests(root_dir, package, repo):
+def run_python_integration_tests(root_dir, package):
     print("##### Running Python tests #####")
     test_dir = path.join(root_dir, path.join("examples", "python"))
-    test_files = [os.path.join(test_dir, f) for f in os.listdir(test_dir)
-                  if os.path.isfile(os.path.join(test_dir, f)) and
+    test_files = [path.join(test_dir, f) for f in os.listdir(test_dir)
+                  if path.isfile(path.join(test_dir, f)) and
                   f.endswith(".py") and not f.startswith("_")]
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    cmd = ["spark-submit",
-           "--driver-class-path=%s" % extra_class_path,
-           "--packages", package]
-    if repo != None:
-        cmd.append("--repositories")
-        cmd.append(repo)
-
+    # bintray repo url
+    repo = 'https://dl.bintray.com/delta-io/delta'
     for test_file in test_files:
         try:
-            cmd.append(test_file)
+            cmd = ["spark-submit",
+                        "--driver-class-path=%s" % extra_class_path, # for less verbose logging
+                        "--packages", package,
+                        "--repositories", repo, test_file]
             print("Running tests in %s\n=============" % test_file)
             print("Command: %s" % str(cmd))
             run_cmd(cmd, stream_output=True)
@@ -88,20 +85,21 @@ if __name__ == "__main__":
     """
         Script to run integration tests which are located in the examples directory.
         call this by running "python run-integration-tests.py"
-        an additional maven repo url can be provided as an argument.
+        additionally the version can be provided as a command line argument.
         "
     """
-    root_dir = os.path.dirname(os.path.dirname(__file__))
+    root_dir = path.dirname(path.dirname(__file__))
     repo = None
-    # check if repo is provided as an argument
+    # check if version is provided as an argument
+    version = '0.0.0'
     if len(sys.argv) >= 2:
-        repo = sys.argv[1]
+        version = sys.argv[1]
 
     # get the version of the package
-    version = '0.0.0'
-    with open(os.path.join(root_dir, "version.sbt")) as fd:
-        version = fd.readline().split('"')[1]
+    if version == '0.0.0':
+        with open(path.join(root_dir, "version.sbt")) as fd:
+            version = fd.readline().split('"')[1]
     package = "io.delta:delta-core_2.11:" + version
 
-    run_scala_integration_tests(root_dir, package, repo)
-    run_python_integration_tests(root_dir, package, repo)
+    run_scala_integration_tests(root_dir, package)
+    run_python_integration_tests(root_dir, package)

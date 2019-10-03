@@ -16,14 +16,14 @@ except:
 sc = SparkContext()
 sqlContext = SQLContext(sc)
 
-# Enable SQL for the current spark session.
+# Enable SQL for the current spark session. we need to set the following configs to enable SQL Commands
+# config io.delta.sql.DeltaSparkSessionExtension -- to enable custom Delta-specific SQL commands
+# config parallelPartitionDiscovery.parallelism -- control the parallelism for vacuum
 spark = SparkSession \
     .builder \
     .appName("utilities") \
     .master("local[*]") \
-    # config io.delta.sql.DeltaSparkSessionExtension -- to enable custom Delta-specific SQL commands
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
-    # config parallelPartitionDiscovery.parallelism -- control the parallelism for vacuum
     .config("spark.sql.sources.parallelPartitionDiscovery.parallelism","8") \
     .getOrCreate()
 

@@ -16,7 +16,6 @@ except:
 sc = SparkContext()
 sqlContext = SQLContext(sc)
 
-# Enable SQL for the current spark session.
 spark = SparkSession \
     .builder \
     .appName("quickstart") \

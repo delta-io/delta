@@ -4,33 +4,31 @@ from pyspark.sql.functions import *
 from py4j.java_collections import MapConverter
 from delta.tables import *
 import shutil
+import random
 import threading
 
 # Clear previous run delta-tables
-try:
-    shutil.rmtree("/tmp/delta-table2")
-    shutil.rmtree("/tmp/delta-table")
-except:
-    pass
+files = ["/tmp/delta-table", "/tmp/delta-table2", "/tmp/delta-table3"]
+for i in files:
+    try:
+        shutil.rmtree(i)
+    except:
+        pass
 
 # Create SparkContext
 sc = SparkContext()
 sqlContext = SQLContext(sc)
 
-# Enable SQL for the current spark session.
 spark = SparkSession \
     .builder \
     .appName("streaming") \
     .master("local[*]") \
     .getOrCreate()
 
-# Create a table
-data = spark.range(0, 5)
+# Create a table(key, value) of some data
+data = spark.range(8)
+data = data.withColumn("value", data.id + random.randint(0, 5000))
 data.write.format("delta").save("/tmp/delta-table")
-
-# Read the table
-df = spark.read.format("delta").load("/tmp/delta-table")
-df.show()
 
 # Stream writes to the table
 print("####### Streaming write ######")
@@ -50,20 +48,16 @@ print("####### Streaming upgrades in update mode ########")
 # Function to upsert microBatchOutputDF into Delta Lake table using merge
 # TODO Make a more meaningful example for streaming aggregates
 def upsertToDelta(microBatchOutputDF, batchId):
-  deltaTable = DeltaTable.forPath(spark, "/tmp/delta-table")
-
-  t = deltaTable.alias("t")
-  s = microBatchOutputDF.selectExpr("value as id").alias("s")
-
-  t.merge(
-      s,
-      "s.id = t.id") \
+  t = deltaTable.alias("t").merge(microBatchOutputDF.alias("s"), "s.id = t.id") \
     .whenMatchedUpdateAll() \
     .whenNotMatchedInsertAll() \
     .execute()
 
-streamingAggregatesDF = spark.readStream.format("rate").load()
+streamingAggregatesDF = spark.readStream.format("rate").load().withColumn("id", col("value") % 10).drop("timestamp")
 # Write the output of a streaming aggregation query into Delta Lake table
+deltaTable = DeltaTable.forPath(spark, "/tmp/delta-table")
+print("#############  Original Delta Table ###############")
+deltaTable.toDF().show()
 stream3 = streamingAggregatesDF.writeStream \
   .format("delta") \
   .foreachBatch(upsertToDelta) \
@@ -71,7 +65,12 @@ stream3 = streamingAggregatesDF.writeStream \
   .start()
 stream3.awaitTermination(10)
 stream3.stop()
+print("########### DeltaTable after streaming upsert #########")
+deltaTable.toDF().show()
 
 # cleanup
-shutil.rmtree("/tmp/delta-table2")
-shutil.rmtree("/tmp/delta-table")
+for i in files:
+    try:
+        shutil.rmtree(i)
+    except:
+        pass
