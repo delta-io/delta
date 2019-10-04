@@ -27,33 +27,41 @@ spark = SparkSession \
 
 # Create a table(key, value) of some data
 data = spark.range(8)
-data = data.withColumn("value", data.id + random.randint(0, 5000))
+data = data.withColumn("key", data.id) \
+           .withColumn("value", data.id + random.randint(0, 5000)) \
+           .drop("id")
 data.write.format("delta").save("/tmp/delta-table")
 
 # Stream writes to the table
 print("####### Streaming write ######")
 streamingDf = spark.readStream.format("rate").load()
-stream = streamingDf.selectExpr("value as id").writeStream.format("delta").option("checkpointLocation", "/tmp/checkpoint").start("/tmp/delta-table2")
+stream = streamingDf.selectExpr("value as id").writeStream \
+            .format("delta") \
+            .option("checkpointLocation", "/tmp/checkpoint") \
+            .start("/tmp/delta-table2")
 stream.awaitTermination(10)
 stream.stop()
 
 # Stream reads from a table
 print("##### Reading from stream ######")
-stream2 = spark.readStream.format("delta").load("/tmp/delta-table2").writeStream.format("console").start()
+stream2 = spark.readStream.format("delta").load("/tmp/delta-table2") \
+            .writeStream \
+            .format("console") \
+            .start()
 stream2.awaitTermination(10)
 stream2.stop()
 
 # Streaming aggregates in Update mode
 print("####### Streaming upgrades in update mode ########")
 # Function to upsert microBatchOutputDF into Delta Lake table using merge
-# TODO Make a more meaningful example for streaming aggregates
 def upsertToDelta(microBatchOutputDF, batchId):
-  t = deltaTable.alias("t").merge(microBatchOutputDF.alias("s"), "s.id = t.id") \
+  t = deltaTable.alias("t") \
+    .merge(microBatchOutputDF.alias("s"), "s.key = t.key") \
     .whenMatchedUpdateAll() \
     .whenNotMatchedInsertAll() \
     .execute()
 
-streamingAggregatesDF = spark.readStream.format("rate").load().withColumn("id", col("value") % 10).drop("timestamp")
+streamingAggregatesDF = spark.readStream.format("rate").load().withColumn("key", col("value") % 10).drop("timestamp")
 # Write the output of a streaming aggregation query into Delta Lake table
 deltaTable = DeltaTable.forPath(spark, "/tmp/delta-table")
 print("#############  Original Delta Table ###############")
