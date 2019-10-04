@@ -66,13 +66,7 @@ Refer to [SBT docs](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.ht
 
 # Transaction Protocol
 
-Delta Lake works by storing a transaction log along side the data files in a table.  Entries in the log, called _delta files_, are stored as atomic collections of [actions](https://github.com/delta-io/delta/blob/master/src/main/scala/org/apache/spark/sql/delta/actions/actions.scala) in the `_delta_log` directory, at the root of a table. Entries in the log encoded using JSON and are named as zero-padded contiguous integers.
-
-    /table/_delta_log/00000000000000000000.json
-    /table/_delta_log/00000000000000000001.json
-    /table/_delta_log/00000000000000000002.json
-
-To avoid needing to read the entire transaction log every time a table is loaded, Delta Lake also occasionally creates a _checkpoint_, which contains the entire state of the table at the given version. Checkpoints are encoded using Parquet and must only be written after the accompanying Delta Lake files have been written.
+[Delta Transaction Log Protocol](PROTOCOL.md) document provides a specification of the transaction protocol.
 
 ## Requirements for Underlying Storage Systems
 
