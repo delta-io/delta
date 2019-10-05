@@ -8,15 +8,27 @@ See the [Delta Lake Documentation](https://docs.delta.io) for details.
 
 See the [Quick Start Guide](https://docs.delta.io/latest/quick-start.html) to get started with Scala, Java and Python.
 
-# Latest Binaries
+## Latest Binaries
 
-Delta Lake is published to Maven Central Repository and can be used by adding a dependency in your POM file.
+### Maven
 
-    <dependency>
-      <groupId>io.delta</groupId>
-      <artifactId>delta-core_2.11</artifactId>
-      <version>0.3.0</version>
-    </dependency>
+You include Delta Lake in your Maven project by adding it as a dependency in your POM file. Delta Lake is cross compiled with Scala versions 2.11 and 2.12; choose the version that matches your project. If you are writing a Java project, you can use either version.
+
+```xml
+<dependency>
+  <groupId>io.delta</groupId>
+  <artifactId>delta-core_2.11</artifactId>
+  <version>0.4.0</version>
+</dependency>
+```
+
+### SBT
+
+You include Delta Lake in your SBT project by adding the following line to your build.sbt file:
+
+```scala
+libraryDependencies += "io.delta" %% "delta-core" % "0.4.0"
+```
 
 ## API Documentation
 
