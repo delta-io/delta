@@ -7,3 +7,4 @@ In this folder there are examples taken from the delta.io quickstart guide and d
 
 ### Instructions
 * To run an example in Python run `spark-submit --packages io.delta:delta-core_2.11:0.4.0 PATH/TO/EXAMPLE`
+* To run the Scala examples, `cd examples/scala` and run `./build/sbt "runMain example.{Example class name}"` e.g. `./build/sbt "runMain example.Quickstart"`

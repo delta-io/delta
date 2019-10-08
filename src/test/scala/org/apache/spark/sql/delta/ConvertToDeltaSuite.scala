@@ -28,7 +28,7 @@ import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
 class ConvertToDeltaSuite
-  extends ConvertToDeltaSuiteBase with org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+  extends ConvertToDeltaSuiteBase  with org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 trait ConvertToDeltaSuiteBase extends QueryTest
     with SharedSparkSession {
