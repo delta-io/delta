@@ -3,7 +3,7 @@
 # Delta Transaction Log Protocol
 
 - [Overview](#overview)
-- [Delta Lake table Specification](#delta-table-specification)
+- [Delta Lake Table Specification](#delta-table-specification)
   - [File Types](#file-types)
     - [Data Files](#data-files)
     - [Delta Log Entries](#delta-log-entries)
