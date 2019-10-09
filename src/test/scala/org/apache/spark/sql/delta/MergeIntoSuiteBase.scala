@@ -108,7 +108,7 @@ abstract class MergeIntoSuiteBase
 
   Seq(true, false).foreach { skippingEnabled =>
     Seq(true, false).foreach { isPartitioned =>
-      test("basic case - merge to Delta table, " +
+      test("basic case - merge to Delta Lake table, " +
           s"isPartitioned: $isPartitioned skippingEnabled: $skippingEnabled") {
         withTable("delta_target", "source") {
           withSQLConf(DeltaSQLConf.DELTA_STATS_SKIPPING.key -> skippingEnabled.toString) {

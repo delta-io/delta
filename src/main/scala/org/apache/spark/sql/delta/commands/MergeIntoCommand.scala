@@ -62,7 +62,7 @@ case class MergeStats(
     targetRowsDeleted: Long)
 
 /**
- * Performs a merge of a source query/table into a Delta table.
+ * Performs a merge of a source query/table into a Delta Lake table.
  *
  * Issues an error message when the ON search_condition of the MERGE statement can match
  * a single row from the target table with multiple rows of the source table-reference.

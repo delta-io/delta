@@ -53,7 +53,7 @@ object Action {
 }
 
 /**
- * Represents a single change to the state of a Delta table. An order sequence
+ * Represents a single change to the state of a Delta Lake table. An order sequence
  * of actions can be replayed using [[InMemoryLogReplay]] to derive the state
  * of the table at a given point in time.
  */

@@ -26,7 +26,7 @@ import org.apache.spark.sql.execution.LogicalRDD
 import org.apache.spark.storage.StorageLevel
 
 /**
- * Machinary that caches the reconstructed state of a Delta table
+ * Machinary that caches the reconstructed state of a Delta Lake table
  * using the RDD cache. The cache is designed so that the first access
  * will materialize the results.  However once uncache is called,
  * all data will be flushed and will not be cached again.

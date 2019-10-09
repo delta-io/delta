@@ -452,7 +452,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
     vacuumTest(f => s"'${f.toString()}'")
   }
 
-  testQuietly("vacuum command with delta table identifier") {
+  testQuietly("vacuum command with Delta Lake table identifier") {
     vacuumTest(f => s"delta.`${f.toString()}`")
   }
 
@@ -470,17 +470,17 @@ trait DeltaVacuumSuiteBase extends QueryTest
         sql(s"vacuum '$path/v2=a' retain 0 hours")
       }
       assert(ex.getMessage.contains(
-        s"Please provide the base path ($path) when Vacuuming Delta tables."))
+        s"Please provide the base path ($path) when Vacuuming Delta Lake tables."))
     }
   }
 
-  test("vacuum a non-existent path and a non Delta table") {
+  test("vacuum a non-existent path and a non Delta Lake table") {
     def assertNotADeltaTableException(path: String): Unit = {
       for (table <- Seq(s"'$path'", s"delta.`$path`")) {
         val e = intercept[AnalysisException] {
           sql(s"vacuum $table")
         }
-        Seq("VACUUM", "only supported for Delta tables").foreach { msg =>
+        Seq("VACUUM", "only supported for Delta Lake tables").foreach { msg =>
           assert(e.getMessage.contains(msg))
         }
       }

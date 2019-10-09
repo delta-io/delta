@@ -238,7 +238,7 @@ trait DescribeDeltaHistorySuiteBase
       Seq($"operation", $"operationParameters.mode", $"operationParameters.partitionBy"))
   }
 
-  testWithFlag("describe history with delta table identifier") {
+  testWithFlag("describe history with Delta Lake table identifier") {
     val tempDir = Utils.createTempDir().toString
     Seq(1, 2, 3).toDF().write.format("delta").save(tempDir)
     Seq(4, 5, 6).toDF().write.format("delta").mode("overwrite").save(tempDir)
@@ -256,13 +256,13 @@ trait DescribeDeltaHistorySuiteBase
     }
   }
 
-  test("describe history a non-existent path and a non Delta table") {
+  test("describe history a non-existent path and a non Delta Lake table") {
     def assertNotADeltaTableException(path: String): Unit = {
       for (table <- Seq(s"'$path'", s"delta.`$path`")) {
         val e = intercept[AnalysisException] {
           sql(s"describe history $table").show()
         }
-        Seq("DESCRIBE HISTORY", "only supported for Delta tables").foreach { msg =>
+        Seq("DESCRIBE HISTORY", "only supported for Delta Lake tables").foreach { msg =>
           assert(e.getMessage.contains(msg))
         }
       }

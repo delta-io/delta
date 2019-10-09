@@ -85,7 +85,7 @@ abstract class DeleteSuiteBase extends QueryTest
   }
 
   Seq(true, false).foreach { isPartitioned =>
-    test(s"basic case - delete from a Delta table - Partition=$isPartitioned") {
+    test(s"basic case - delete from a Delta Lake table - Partition=$isPartitioned") {
       withTable("deltaTable") {
         val partitions = if (isPartitioned) "key" :: Nil else Nil
         val input = Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value")
@@ -178,7 +178,7 @@ abstract class DeleteSuiteBase extends QueryTest
       executeDelete(target = s"delta.`$tempPath`")
     }.getMessage
     assert(e.contains("DELETE destination only supports Delta sources") ||
-      e.contains("is not a Delta table") || e.contains("Incompatible format"))
+      e.contains("is not a Delta Lake table") || e.contains("Incompatible format"))
   }
 
   test("Negative case - non-deterministic condition") {

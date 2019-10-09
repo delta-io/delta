@@ -30,7 +30,7 @@ import org.apache.spark.sql.types.StructType
 /**
  * :: Evolving ::
  *
- * Main class for programmatically interacting with Delta tables.
+ * Main class for programmatically interacting with Delta Lake tables.
  * You can create DeltaTable instances using the static methods.
  * {{{
  *   DeltaTable.forPath(sparkSession, pathToTheDeltaTable)
@@ -67,7 +67,7 @@ class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
   /**
    * :: Evolving ::
    *
-   * Get a DataFrame (that is, Dataset[Row]) representation of this Delta table.
+   * Get a DataFrame (that is, Dataset[Row]) representation of this Delta Lake table.
    *
    * @since 0.3.0
    */
@@ -380,7 +380,7 @@ class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
    * See the [[DeltaMergeBuilder]] for a full description of this operation and what combinations of
    * update, delete and insert operations are allowed.
    *
-   * Scala example to update a key-value Delta table with new key-values from a source DataFrame:
+   * Scala example to update a key-value Delta Lake table with new key-values from a source DataFrame:
    * {{{
    *    deltaTable
    *     .as("target")
@@ -397,7 +397,7 @@ class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
    *     .execute()
    * }}}
    *
-   * Java example to update a key-value Delta table with new key-values from a source DataFrame:
+   * Java example to update a key-value Delta Lake table with new key-values from a source DataFrame:
    * {{{
    *    deltaTable
    *     .as("target")
@@ -437,7 +437,7 @@ class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
    * See the [[DeltaMergeBuilder]] for a full description of this operation and what combinations of
    * update, delete and insert operations are allowed.
    *
-   * Scala example to update a key-value Delta table with new key-values from a source DataFrame:
+   * Scala example to update a key-value Delta Lake table with new key-values from a source DataFrame:
    * {{{
    *    deltaTable
    *     .as("target")
@@ -454,7 +454,7 @@ class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
    *     .execute()
    * }}}
    *
-   * Java example to update a key-value Delta table with new key-values from a source DataFrame:
+   * Java example to update a key-value Delta Lake table with new key-values from a source DataFrame:
    * {{{
    *    deltaTable
    *     .as("target")
@@ -628,7 +628,7 @@ object DeltaTable {
    * :: Evolving ::
    *
    * Check if the provided `identifier` string, in this case a file path,
-   * is the root of a Delta table using the given SparkSession.
+   * is the root of a Delta Lake table using the given SparkSession.
    *
    * An example would be
    * {{{
@@ -646,7 +646,7 @@ object DeltaTable {
    * :: Evolving ::
    *
    * Check if the provided `identifier` string, in this case a file path,
-   * is the root of a Delta table.
+   * is the root of a Delta Lake table.
    *
    * Note: This uses the active SparkSession in the current thread to search for the table. Hence,
    * this throws error if active SparkSession has not been set, that is,

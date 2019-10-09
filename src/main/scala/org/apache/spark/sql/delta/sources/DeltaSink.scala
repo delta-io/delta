@@ -28,7 +28,7 @@ import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.NullType
 
 /**
- * A streaming sink that writes data into a Delta Table.
+ * A streaming sink that writes data into a Delta Lake table.
  */
 class DeltaSink(
     sqlContext: SQLContext,
@@ -55,7 +55,7 @@ class DeltaSink(
       throw DeltaErrors.streamWriteNullTypeException
     }
 
-    // If the batch reads the same Delta table as this sink is going to write to, then this
+    // If the batch reads the same Delta Lake table as this sink is going to write to, then this
     // write has dependencies. Then make sure that this commit set hasDependencies to true
     // by injecting a read on the whole table. This needs to be done explicitly because
     // MicroBatchExecution has already enforced all the data skipping (by forcing the generation

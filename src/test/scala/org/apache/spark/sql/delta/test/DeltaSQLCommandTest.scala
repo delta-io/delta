@@ -24,7 +24,7 @@ import org.apache.spark.sql.test.{TestSparkSession, SharedSparkSession}
 
 /**
  * Because `TestSparkSession` doesn't pick up the conf `spark.sql.extensions` in Spark 2.4.x, we use
- * this class to inject Delta's extension in our tests.
+ * this class to inject Delta Lake's extension in our tests.
  *
  * @see https://issues.apache.org/jira/browse/SPARK-25003
  */
@@ -37,7 +37,7 @@ class DeltaTestSparkSession(sparkConf: SparkConf) extends TestSparkSession(spark
 }
 
 /**
- * A trait for tests that are testing Delta's own SQL commands. This will set up Delta's extension
+ * A trait for tests that are testing Delta Lake's own SQL commands. This will set up Delta Lake's extension
  * for tests running with Spark 2.4.x.
  */
 trait DeltaSQLCommandTest { self: SharedSparkSession =>

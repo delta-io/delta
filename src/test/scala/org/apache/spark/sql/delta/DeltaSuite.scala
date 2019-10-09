@@ -234,7 +234,7 @@ class DeltaSuite extends QueryTest
     assert(e5.contains("Cannot recognize the predicate ''"))
   }
 
-  test("move delta table") {
+  test("move Delta Lake table") {
     val tempDir = Utils.createTempDir()
     Seq(1, 2, 3).toDS().write.format("delta").mode("append").save(tempDir.toString)
 

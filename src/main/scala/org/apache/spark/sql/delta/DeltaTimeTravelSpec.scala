@@ -28,7 +28,7 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{LongType, TimestampType}
 
 /**
- * The specification to time travel a Delta Table to the given `timestamp` or `version`.
+ * The specification to time travel a Delta Lake table to the given `timestamp` or `version`.
  * @param timestamp An expression that can be evaluated into a timestamp. The expression cannot
  *                  be a subquery.
  * @param version The version of the table to time travel to. Must be >= 0.

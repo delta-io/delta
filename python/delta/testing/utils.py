@@ -34,7 +34,7 @@ class PySparkTestCase(unittest.TestCase):
             .set("spark.sql.shuffle.partitions", "5") \
             .set("delta.log.cacheSize", "3") \
             .set("spark.sql.sources.parallelPartitionDiscovery.parallelism", "5")
-        # Enable Delta's SQL syntax for Spark 3.0+. Older versions require a hack to
+        # Enable Delta Lake's SQL syntax for Spark 3.0+. Older versions require a hack to
         # enable it. See "DeltaSqlTests.setUp" for details.
         conf.set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
         self.sc = SparkContext(conf=conf)

@@ -56,7 +56,7 @@ Breaking changes in the protocol are indicated by incrementing the minimum reade
 
 ## Roadmap
 
-Delta Lake is a recent open source project based on technology developed at Databricks. We plan to open-source all APIs that are required to correctly run Spark programs that read and write Delta tables. For a detailed timeline on this effort see the [project roadmap](https://github.com/delta-io/delta/milestones).
+Delta Lake is a recent open source project based on technology developed at Databricks. We plan to open-source all APIs that are required to correctly run Spark programs that read and write Delta Lake tables. For a detailed timeline on this effort see the [project roadmap](https://github.com/delta-io/delta/milestones).
 
 # Building
 

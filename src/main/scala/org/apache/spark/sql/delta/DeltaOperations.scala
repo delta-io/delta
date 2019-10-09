@@ -25,13 +25,13 @@ import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.{StructField, StructType}
 
 /**
- * Exhaustive list of operations that can be performed on a Delta table. These operations are
- * tracked as the first line in delta logs, and power `DESCRIBE HISTORY` for Delta tables.
+ * Exhaustive list of operations that can be performed on a Delta Lake table. These operations are
+ * tracked as the first line in delta logs, and power `DESCRIBE HISTORY` for Delta Lake tables.
  */
 object DeltaOperations {
 
   /**
-   * An operation that can be performed on a Delta table.
+   * An operation that can be performed on a Delta Lake table.
    * @param name The name of the operation.
    */
   sealed abstract class Operation(val name: String) {
@@ -71,7 +71,7 @@ object DeltaOperations {
       "numRemovedFiles" -> numRemovedFiles
     )
   }
-  /** Recorded when converting a table into a Delta table. */
+  /** Recorded when converting a table into a Delta Lake table. */
   case class Convert(
       numFiles: Long,
       partitionBy: Seq[String],

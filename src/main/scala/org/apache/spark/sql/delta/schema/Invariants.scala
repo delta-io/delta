@@ -23,7 +23,7 @@ import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.types.StructType
 
 /**
- * List of invariants that can be defined on a Delta table that will allow us to perform
+ * List of invariants that can be defined on a Delta Lake table that will allow us to perform
  * validation checks during changes to the table.
  */
 object Invariants {

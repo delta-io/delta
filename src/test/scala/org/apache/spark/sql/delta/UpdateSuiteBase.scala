@@ -96,7 +96,7 @@ abstract class UpdateSuiteBase
   }
 
   Seq(true, false).foreach { isPartitioned =>
-    test(s"basic update - delta table - Partition=$isPartitioned") {
+    test(s"basic update - Delta Lake table - Partition=$isPartitioned") {
       withTable("deltaTable") {
         val partitions = if (isPartitioned) "key" :: Nil else Nil
         append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"), partitions)
@@ -275,7 +275,7 @@ abstract class UpdateSuiteBase
       executeUpdate(target = s"delta.`$tempPath`", set = "key1 = 3")
     }.getMessage
     assert(e.contains("UPDATE destination only supports Delta sources") ||
-      e.contains("is not a Delta table") || e.contains("Incompatible format"))
+      e.contains("is not a Delta Lake table") || e.contains("Incompatible format"))
   }
 
   test("update cached table") {

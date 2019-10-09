@@ -54,7 +54,7 @@ object DeltaSQLConf {
   val DELTA_COLLECT_STATS =
     buildConf("stats.collect")
       .internal()
-      .doc("When true, statistics are collected while writing files into a Delta table.")
+      .doc("When true, statistics are collected while writing files into a Delta Lake table.")
       .booleanConf
       .createWithDefault(true)
 
@@ -106,7 +106,7 @@ object DeltaSQLConf {
   val DELTA_SNAPSHOT_ISOLATION =
     buildConf("snapshotIsolation.enabled")
       .internal()
-      .doc("Controls whether queries on Delta tables are guaranteed to have " +
+      .doc("Controls whether queries on Delta Lake tables are guaranteed to have " +
         "snapshot isolation.")
       .booleanConf
       .createWithDefault(true)
@@ -179,8 +179,8 @@ object DeltaSQLConf {
 
   val DELTA_ALTER_LOCATION_BYPASS_SCHEMA_CHECK =
     buildConf("alterLocation.bypassSchemaCheck")
-      .doc("If true, Alter Table Set Location on Delta will go through even if the Delta table " +
-        "in the new location has a different schema from the original Delta table.")
+      .doc("If true, Alter Table Set Location on Delta will go through even if the Delta Lake table " +
+        "in the new location has a different schema from the original Delta Lake table.")
       .booleanConf
       .createWithDefault(false)
 

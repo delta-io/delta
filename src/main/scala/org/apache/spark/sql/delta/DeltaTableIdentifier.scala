@@ -23,7 +23,7 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
 
 /**
- * An identifier for a Delta table containing one of the path or the table identifier.
+ * An identifier for a Delta Lake table containing one of the path or the table identifier.
  */
 case class DeltaTableIdentifier(
     path: Option[String] = None,
@@ -83,7 +83,7 @@ object DeltaTableIdentifier {
   }
 
   /**
-   * Creates a [[DeltaTableIdentifier]] if the specified table identifier represents a Delta table,
+   * Creates a [[DeltaTableIdentifier]] if the specified table identifier represents a Delta Lake table,
    * otherwise returns [[None]].
    */
   def apply(spark: SparkSession, identifier: TableIdentifier): Option[DeltaTableIdentifier] = {

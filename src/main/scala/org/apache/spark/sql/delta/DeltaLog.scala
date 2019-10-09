@@ -234,7 +234,7 @@ class DeltaLog private(
           spark.sparkContext.setLocalProperty("spark.scheduler.pool", "deltaStateUpdatePool")
           spark.sparkContext.setJobGroup(
             jobGroup,
-            s"Updating state of Delta table at ${currentSnapshot.path}",
+            s"Updating state of Delta Lake table at ${currentSnapshot.path}",
             interruptOnCancel = true)
           tryUpdate(isAsync = true)
         }(DeltaLog.deltaLogAsyncUpdateThreadPool)
@@ -265,7 +265,7 @@ class DeltaLog private(
    */
   private def updateInternal(isAsync: Boolean): Snapshot =
     recordDeltaOperation(this, "delta.log.update", Map(TAG_ASYNC -> isAsync.toString)) {
-    withStatusCode("DELTA", "Updating the Delta table's state") {
+    withStatusCode("DELTA", "Updating the Delta Lake table's state") {
       try {
         val newFiles = store
           // List from the current version since we want to get the checkpoint file for the current
@@ -337,7 +337,7 @@ class DeltaLog private(
         currentSnapshot = newSnapshot
       } catch {
         case f: FileNotFoundException =>
-          val message = s"No delta log found for the Delta table at $logPath"
+          val message = s"No delta log found for the Delta Lake table at $logPath"
           logInfo(message)
           // When the state is empty, this is expected. The log will be lazily created when needed.
           // When the state is not empty, it's a real issue and we can't continue to execution.

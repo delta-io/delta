@@ -86,7 +86,7 @@ class DeltaLogSuite extends QueryTest
       }
 
       def collectReservoirStateRDD(rdd: RDD[_]): Seq[RDD[_]] = {
-        if (rdd.name != null && rdd.name.startsWith("Delta Table State")) {
+        if (rdd.name != null && rdd.name.startsWith("Delta Lake table State")) {
           Seq(rdd) ++ rdd.dependencies.flatMap(d => collectReservoirStateRDD(d.rdd))
         } else {
           rdd.dependencies.flatMap(d => collectReservoirStateRDD(d.rdd))

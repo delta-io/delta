@@ -25,7 +25,7 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.execution.command.RunnableCommand
 
 /**
- * Used to write a [[DataFrame]] into a delta table.
+ * Used to write a [[DataFrame]] into a Delta Lake table.
  *
  * New Table Semantics
  *  - The schema of the [[DataFrame]] is used to initialize the table.

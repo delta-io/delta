@@ -35,7 +35,7 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.util.SerializableConfiguration
 
 /**
- * This class keeps tracks of the version of commits and their timestamps for a Delta table to
+ * This class keeps tracks of the version of commits and their timestamps for a Delta Lake table to
  * help with operations like describing the history of a table.
  *
  * @param deltaLog The transaction log of this table
@@ -67,7 +67,7 @@ class DeltaHistoryManager(
   }
 
   /**
-   * Get the commit information of the Delta table from commit `[start, end)`. If `end` is `None`,
+   * Get the commit information of the Delta Lake table from commit `[start, end)`. If `end` is `None`,
    * we return all commits from start to now.
    */
   def getHistory(start: Long, end: Option[Long]): Seq[CommitInfo] = {

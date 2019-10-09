@@ -52,7 +52,7 @@ private[delta] case class IndexedFile(
     version: Long, index: Long, add: AddFile, isLast: Boolean = false)
 
 /**
- * A streaming source for a Delta table.
+ * A streaming source for a Delta Lake table.
  *
  * When a new stream is started, delta starts by constructing a
  * [[org.apache.spark.sql.delta.Snapshot]] at

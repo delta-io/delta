@@ -262,7 +262,7 @@ object DeltaDataSource {
   }
 
   /**
-   * Extract the Delta path if `dataset` is created to load a Delta table. Otherwise returns `None`.
+   * Extract the Delta path if `dataset` is created to load a Delta Lake table. Otherwise returns `None`.
    * Table UI in universe will call this.
    */
   def extractDeltaPath(dataset: Dataset[_]): Option[String] = {

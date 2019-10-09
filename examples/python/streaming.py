@@ -82,7 +82,7 @@ streamingAggregatesDF = spark.readStream.format("rate").load()\
     .drop("timestamp")
 # Write the output of a streaming aggregation query into Delta Lake table
 deltaTable = DeltaTable.forPath(spark, "/tmp/delta-table")
-print("#############  Original Delta Table ###############")
+print("#############  Original Delta Lake table ###############")
 deltaTable.toDF().show()
 stream3 = streamingAggregatesDF.writeStream\
     .format("delta") \

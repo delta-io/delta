@@ -33,7 +33,7 @@ import org.apache.spark.sql.execution.datasources.{FileIndex, HadoopFsRelation, 
 import org.apache.spark.sql.internal.SQLConf
 
 /**
- * Extractor Object for pulling out the table scan of a Delta table. It could be a full scan
+ * Extractor Object for pulling out the table scan of a Delta Lake table. It could be a full scan
  * or a partial scan.
  */
 object DeltaTable {
@@ -46,7 +46,7 @@ object DeltaTable {
 }
 
 /**
- * Extractor Object for pulling out the full table scan of a Delta table.
+ * Extractor Object for pulling out the full table scan of a Delta Lake table.
  */
 object DeltaFullTable {
   def unapply(a: LogicalRelation): Option[TahoeLogFileIndex] = a match {
@@ -69,11 +69,11 @@ object DeltaFullTable {
 object DeltaTableUtils extends PredicateHelper
   with DeltaLogging {
 
-  /** Check whether this table is a Delta table based on information from the Catalog. */
+  /** Check whether this table is a Delta Lake table based on information from the Catalog. */
   def isDeltaTable(table: CatalogTable): Boolean = DeltaSourceUtils.isDeltaTable(table.provider)
 
   /**
-   * Check whether the provided table name is a Delta table based on information from the Catalog.
+   * Check whether the provided table name is a Delta Lake table based on information from the Catalog.
    */
   def isDeltaTable(spark: SparkSession, tableName: TableIdentifier): Boolean = {
     val catalog = spark.sessionState.catalog
@@ -84,12 +84,12 @@ object DeltaTableUtils extends PredicateHelper
     tableIsNotTemporaryTable && tableExists && isDeltaTable(catalog.getTableMetadata(tableName))
   }
 
-  /** Check if the provided path is the root or the children of a Delta table. */
+  /** Check if the provided path is the root or the children of a Delta Lake table. */
   def isDeltaTable(spark: SparkSession, path: Path): Boolean = {
     findDeltaTableRoot(spark, path).isDefined
   }
 
-  /** Find the root of a Delta table from the provided path. */
+  /** Find the root of a Delta Lake table from the provided path. */
   def findDeltaTableRoot(spark: SparkSession, path: Path): Option[Path] = {
     val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
     var currentPath = path
@@ -115,7 +115,7 @@ object DeltaTableUtils extends PredicateHelper
   }
 
   /**
-   * Enrich the metadata received from the catalog on Delta tables with the Delta table metadata.
+   * Enrich the metadata received from the catalog on Delta Lake tables with the Delta Lake table metadata.
    */
   def combineWithCatalogMetadata(sparkSession: SparkSession, table: CatalogTable): CatalogTable = {
     val deltaLog = DeltaLog.forTable(sparkSession, new Path(table.location))

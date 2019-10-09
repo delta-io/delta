@@ -45,7 +45,7 @@ case class DescribeDeltaDetailCommandOSS(
           case Some(id) =>
             throw DeltaErrors.tableNotSupportedException("DESCRIBE DETAIL")
           case None =>
-            // This is not a Delta table.
+            // This is not a Delta Lake table.
             val metadata = spark.sessionState.catalog.getTableMetadata(i)
             new Path(metadata.location) -> Some(metadata)
         }

@@ -3,7 +3,7 @@
 # Delta Transaction Log Protocol
 
 - [Overview](#overview)
-- [Delta Table Specification](#delta-table-specification)
+- [Delta Lake table Specification](#delta-table-specification)
   - [File Types](#file-types)
     - [Data Files](#data-files)
     - [Delta Log Entries](#delta-log-entries)
@@ -32,16 +32,16 @@
 <font color="red">THIS IS AN IN-PROGRESS DRAFT</font>
 
 # Overview
-This document is a specification for the Delta Transaction Protocol, which brings [ACID](https://en.wikipedia.org/wiki/ACID) properties to large collections of data, stored as files, in a distributed file system or object store. The protocol was designed with the following goals in mind:
+This document is a specification for the Delta Lake Transaction Protocol, which brings [ACID](https://en.wikipedia.org/wiki/ACID) properties to large collections of data, stored as files, in a distributed file system or object store. The protocol was designed with the following goals in mind:
 
-- **Serializable ACID Writes** - multiple writers can concurrently modify a Delta table while maintaining ACID semantics.
-- **Snapshot Isolation for Reads** - readers can read a consistent snapshot of a Delta table, even in the face of concurrent writes.
-- **Scalability to billions of partitions or files** - queries against a Delta table can be planned on a single machine or in parallel.
-- **Self describing** - all metadata for a Delta table is stored alongside the data. This design eliminates the need to maintain a separate metastore just to read the data and also allows static tables to be copied or moved using standard filesystem tools.
+- **Serializable ACID Writes** - multiple writers can concurrently modify a Delta Lake table while maintaining ACID semantics.
+- **Snapshot Isolation for Reads** - readers can read a consistent snapshot of a Delta Lake table, even in the face of concurrent writes.
+- **Scalability to billions of partitions or files** - queries against a Delta Lake table can be planned on a single machine or in parallel.
+- **Self describing** - all metadata for a Delta Lake table is stored alongside the data. This design eliminates the need to maintain a separate metastore just to read the data and also allows static tables to be copied or moved using standard filesystem tools.
 - **Support for incremental processing** - readers can tail the Delta log to determine what data has been added in a given period of time, allowing for efficient streaming.
 
-Delta's transactions are implemented using multi-version concurrency control (MVCC).
-As a table changes, Delta's MVCC algorithm keeps multiple copies of the data around rather than immediately replacing files that contain records that are being updated or removed.
+Delta Lake's transactions are implemented using multi-version concurrency control (MVCC).
+As a table changes, Delta Lake's MVCC algorithm keeps multiple copies of the data around rather than immediately replacing files that contain records that are being updated or removed.
 
 Readers of the table ensure that they only see one consistent _snapshot_ of a table at time by using the _transaction log_ to selectively choose which _data files_ to process.
 
@@ -52,7 +52,7 @@ In this log entry they record which data files to logically add and remove, alon
 
 Data files that are no longer present in the latest version of the table can be lazily deleted by the vacuum command after a user-specified retention period (default 7 days).
 
-# Delta Table Specification
+# Delta Lake Table Specification
 A table has a single serial history of atomic versions, which are named using contiguous, monotonically-increasing integers.
 The state of a table at a given version is called a _snapshot_ and is defined by the following properties:
  - **Version of the Delta log protocol** that is required to correctly read or write the table
@@ -62,9 +62,9 @@ The state of a table at a given version is called a _snapshot_ and is defined by
  - **Set of applications-specific transactions** that have been successfully committed to the table
 
 ## File Types
-A Delta table is stored within a directory and is composed of four different types of files.
+A Delta Lake table is stored within a directory and is composed of four different types of files.
 
-Here is an example of a Delta table with three entries in the commit log, stored in the directory `mytable`.
+Here is an example of a Delta Lake table with three entries in the commit log, stored in the directory `mytable`.
 ```
 /mytable/_delta_log/00000000000000000000.json
 /mytable/_delta_log/00000000000000000001.json
@@ -80,9 +80,9 @@ By default, the reference implementation stores data files in directories that a
 This directory format is only used to follow existing conventions and is not required by the protocol.
 Actual partition values for a file must be read from the transaction log.
 
-### Delta Log Entries
-Delta files are stored as JSON in a directory at the root of the table named `_delta_log`, and together make up the log of all changes that have occurred to a table.
-Delta files are the unit of atomicity for a table, and are named using the next available version number, zero-padded to 20 digits.
+### Delta Lake Log Entries
+Delta Lake files are stored as JSON in a directory at the root of the table named `_delta_log`, and together make up the log of all changes that have occurred to a table.
+Delta Lake files are the unit of atomicity for a table, and are named using the next available version number, zero-padded to 20 digits.
 
 For example:
 
@@ -90,7 +90,7 @@ For example:
 ./_delta_log/00000000000000000000.json
 ```
 
-A delta file, `n.json`, contains an atomic set of [_actions_](#Actions) that should be applied to the previous table state, `n-1.json`, in order to the construct `n`th snapshot of the table.
+A Delta Lake file, `n.json`, contains an atomic set of [_actions_](#Actions) that should be applied to the previous table state, `n-1.json`, in order to the construct `n`th snapshot of the table.
 An action changes one aspect of the table's state, for example, adding or removing a file.
 
 ### Checkpoints
@@ -253,10 +253,10 @@ The following is an example `remove` action.
 
 ### Transaction Identifiers
 Incremental processing systems (e.g., streaming systems) that track progress using their own application-specific versions need to record what progress has been made, in order to avoid duplicating data in the face of failures and retries during a write.
-Transaction identifiers allow this information to be recorded atomically in the transaction log of a delta table along with the other actions that modify the contents of the table.
+Transaction identifiers allow this information to be recorded atomically in the transaction log of a Delta Lake table along with the other actions that modify the contents of the table.
 
 Transaction identifiers are stored in the form of `appId` `version` pairs, where `appId` is a unique identifier for the process that is modifying the table and `version` is an indication of how much progress has been made by that application.
-The atomic recording of this information along with modifications to the table enables these external system can make their writes into a Delta table _idempotent_.
+The atomic recording of this information along with modifications to the table enables these external system can make their writes into a Delta Lake table _idempotent_.
 
 For example, the [Delta Sink for Apache Spark's Structured Streaming](https://github.com/delta-io/delta/blob/master/src/main/scala/org/apache/spark/sql/delta/sources/DeltaSink.scala) ensures exactly-once semantics when writing a stream into a table using the following process:
  1. Record in a write-ahead-log the data that will be written, along with a monotonically increasing identifier for this batch.

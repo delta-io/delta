@@ -222,7 +222,7 @@ object SchemaUtils {
 
   /**
    * As the Delta snapshots update, the schema may change as well. This method defines whether the
-   * new schema of a Delta table can be used with a previously analyzed LogicalPlan. Our
+   * new schema of a Delta Lake table can be used with a previously analyzed LogicalPlan. Our
    * rules are to return false if:
    *   - Dropping any column that was present in the DataFrame schema
    *   - Converting nullable=false to nullable=true for any column
@@ -252,10 +252,10 @@ object SchemaUtils {
       // scalastyle:off caselocale
       val existingFieldNames = existingSchema.fieldNames.map(_.toLowerCase).toSet
       assert(existingFieldNames.size == existingSchema.length,
-        "Delta tables don't allow field names that only differ by case")
+        "Delta Lake tables don't allow field names that only differ by case")
       val newFields = readSchema.fieldNames.map(_.toLowerCase).toSet
       assert(newFields.size == readSchema.length,
-        "Delta tables don't allow field names that only differ by case")
+        "Delta Lake tables don't allow field names that only differ by case")
       // scalastyle:on caselocale
 
       if (!existingFieldNames.subsetOf(newFields)) {
@@ -641,7 +641,7 @@ object SchemaUtils {
   }
 
   /**
-   * Check whether we can write to the Delta table, which has `tableSchema`, using a query that has
+   * Check whether we can write to the Delta Lake table, which has `tableSchema`, using a query that has
    * `dataSchema`. Our rules are that:
    *   - `dataSchema` may be missing columns or have additional columns
    *   - We don't trust the nullability in `dataSchema`. Assume fields are nullable.

@@ -43,7 +43,7 @@ import org.apache.spark.sql.types.{StringType, StructField, StructType}
 import org.apache.spark.util.{SerializableConfiguration, Utils}
 
 /**
- * Convert an existing parquet table to a delta table by creating delta logs based on
+ * Convert an existing parquet table to a Delta Lake table by creating delta logs based on
  * existing files. Here are the main components:
  *
  *   - File Listing:      Launch a spark job to list files from a given directory in parallel.
@@ -79,7 +79,7 @@ abstract class ConvertToDeltaCommandBase(
       case Some(providerName) => providerName.toLowerCase(Locale.ROOT) match {
         // Make convert to delta idempotent
         case delta if DeltaSourceUtils.isDeltaDataSourceName(delta) =>
-          logConsole("The table you are trying to convert is already a delta table")
+          logConsole("The table you are trying to convert is already a Delta Lake table")
           return Seq.empty[Row]
         case checkProvider if checkProvider != "parquet" =>
           throw DeltaErrors.convertNonParquetTablesException(tableIdentifier, checkProvider)
@@ -114,7 +114,7 @@ abstract class ConvertToDeltaCommandBase(
       spark: SparkSession,
       txn: OptimisticTransaction,
       convertProperties: ConvertProperties): Unit = {
-    logConsole("The table you are trying to convert is already a delta table")
+    logConsole("The table you are trying to convert is already a Delta Lake table")
   }
 
   protected def performConvert(

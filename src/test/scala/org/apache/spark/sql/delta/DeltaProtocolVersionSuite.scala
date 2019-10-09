@@ -31,7 +31,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
   private lazy val testTableSchema = spark.range(1).schema
 
-  // This is solely a test hook. Users cannot create new Delta tables with protocol lower than
+  // This is solely a test hook. Users cannot create new Delta Lake tables with protocol lower than
   // that of their current version.
   protected def createTableWithProtocol(
       protocol: Protocol,

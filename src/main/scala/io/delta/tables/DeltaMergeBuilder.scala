@@ -32,7 +32,7 @@ import org.apache.spark.sql.functions.expr
 /**
  * :: Evolving ::
  *
- * Builder to specify how to merge data from source DataFrame into the target Delta table.
+ * Builder to specify how to merge data from source DataFrame into the target Delta Lake table.
  * You can specify 1, 2 or 3 `when` clauses of which there can be at most 2 `whenMatched` clauses
  * and at most 1 `whenNotMatched` clause. Here are the constraints on these clauses.
  *
@@ -50,7 +50,7 @@ import org.apache.spark.sql.functions.expr
  *     - If none of the `whenMatched` clauses match a source-target row pair that satisfy
  *       the merge condition, then the target rows will not be updated or deleted.
  *
- *     - If you want to update all the columns of the target Delta table with the
+ *     - If you want to update all the columns of the target Delta Lake table with the
  *       corresponding column of the source DataFrame, then you can use the
  *       `whenMatched(...).updateAll()`. This is equivalent to
  *       <pre>
@@ -67,7 +67,7 @@ import org.apache.spark.sql.functions.expr
  *     - If the `whenNotMatched` clause is not present or if it is present but the non-matching
  *       source row does not satisfy the condition, then the source row is not inserted.
  *
- *     - If you want to insert all the columns of the target Delta table with the
+ *     - If you want to insert all the columns of the target Delta Lake table with the
  *       corresponding column of the source DataFrame, then you can use
  *       `whenMatched(...).insertAll()`. This is equivalent to
  *       <pre>
@@ -77,7 +77,7 @@ import org.apache.spark.sql.functions.expr
  *           ...))
  *       </pre>
  *
- * Scala example to update a key-value Delta table with new key-values from a source DataFrame:
+ * Scala example to update a key-value Delta Lake table with new key-values from a source DataFrame:
  * {{{
  *    deltaTable
  *     .as("target")
@@ -94,7 +94,7 @@ import org.apache.spark.sql.functions.expr
  *     .execute()
  * }}}
  *
- * Java example to update a key-value Delta table with new key-values from a source DataFrame:
+ * Java example to update a key-value Delta Lake table with new key-values from a source DataFrame:
  * {{{
  *    deltaTable
  *     .as("target")
@@ -401,7 +401,7 @@ object DeltaMergeMatchedActionBuilder {
  * :: Evolving ::
  *
  * Builder class to specify the actions to perform when a source row has not matched any target
- * Delta table row based on the merge condition, but has matched the additional condition
+ * Delta Lake table row based on the merge condition, but has matched the additional condition
  * if specified.
  *
  * See [[DeltaMergeBuilder]] for more information.
@@ -473,7 +473,7 @@ class DeltaMergeNotMatchedActionBuilder private(
   /**
    * :: Evolving ::
    *
-   * Insert a new target Delta table row by assigning the target columns to the values of the
+   * Insert a new target Delta Lake table row by assigning the target columns to the values of the
    * corresponding columns in the source row.
    * @since 0.3.0
    */

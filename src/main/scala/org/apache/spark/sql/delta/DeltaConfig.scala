@@ -93,7 +93,7 @@ object DeltaConfigs extends DeltaLogging {
    * A global default value set as a SQLConf will overwrite the default value of a DeltaConfig.
    * For example, user can run:
    *   set spark.databricks.delta.properties.defaults.randomPrefixLength = 5
-   * This setting will be populated to a Delta table during its creation time and overwrites
+   * This setting will be populated to a Delta Lake table during its creation time and overwrites
    * the default value of delta.randomPrefixLength.
    *
    * We accept these SQLConfs as strings and only perform validation in DeltaConfig. All the
@@ -158,7 +158,7 @@ object DeltaConfigs extends DeltaLogging {
           current.minReaderVersion < required.minReaderVersion) {
           throw new AnalysisException(
             s"Setting the Delta config ${config._1} requires a protocol version of $required " +
-            s"or above, but the protocol version of the Delta table is $current. " +
+            s"or above, but the protocol version of the Delta Lake table is $current. " +
             s"Please upgrade the protocol version of the table before setting this config.")
         }
       }
@@ -265,7 +265,7 @@ object DeltaConfigs extends DeltaLogging {
     "needs to be a boolean.")
 
   /**
-   * If true, a delta table can be rolled back to any point within LOG_RETENTION. Leaving this on
+   * If true, a Delta Lake table can be rolled back to any point within LOG_RETENTION. Leaving this on
    * requires converting the oldest delta file we have into a checkpoint, which we do once a day. If
    * doing that operation is too expensive, it can be turned off, but the table can only be rolled
    * back CHECKPOINT_RETENTION_DURATION ago instead of LOG_RETENTION ago.
@@ -321,7 +321,7 @@ object DeltaConfigs extends DeltaLogging {
     "needs to be greater than 0.")
 
   /**
-   * Whether this Delta table is append-only. Files can't be deleted, or values can't be updated.
+   * Whether this Delta Lake table is append-only. Files can't be deleted, or values can't be updated.
    */
   val IS_APPEND_ONLY = buildConfig[Boolean](
     "appendOnly",

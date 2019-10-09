@@ -70,7 +70,7 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
   }
 
   /**
-   * Whether to allow overwriting the schema of a Delta table in an overwrite mode operation. If
+   * Whether to allow overwriting the schema of a Delta Lake table in an overwrite mode operation. If
    * ACLs are enabled, we can't change the schema of an operation through a write, which requires
    * MODIFY permissions, when schema changes require OWN permissions.
    */

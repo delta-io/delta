@@ -63,7 +63,7 @@ object VacuumCommand extends VacuumCommandImpl {
     require(!checkEnabled || retentionSafe,
       s"""Are you sure you would like to vacuum files with such a low retention period? If you have
         |writers that are currently writing to this table, there is a risk that you may corrupt the
-        |state of your Delta table.
+        |state of your Delta Lake table.
         |
         |If you are certain that there are no operations being performed on this table, such as
         |insert/upsert/delete/optimize, then you may turn off this check by setting:
@@ -106,7 +106,7 @@ object VacuumCommand extends VacuumCommandImpl {
       val snapshot = deltaLog.update()
 
       require(snapshot.version >= 0, "No state defined for this table. Is this really " +
-        "a Delta table? Refusing to garbage collect.")
+        "a Delta Lake table? Refusing to garbage collect.")
 
       val retentionMillis = retentionHours.map(h => TimeUnit.HOURS.toMillis(math.round(h)))
       checkRetentionPeriodSafety(spark, retentionMillis, deltaLog.tombstoneRetentionMillis)

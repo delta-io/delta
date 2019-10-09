@@ -23,7 +23,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.commons.lang3.time.DateUtils
 import org.apache.hadoop.fs.{FileStatus, Path}
 
-/** Cleans up expired Delta table metadata. */
+/** Cleans up expired Delta Lake table metadata. */
 trait MetadataCleanup extends DeltaLogging {
   self: DeltaLog =>
 

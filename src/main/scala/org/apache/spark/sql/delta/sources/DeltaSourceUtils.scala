@@ -30,7 +30,7 @@ object DeltaSourceUtils {
     name.toLowerCase(Locale.ROOT) == NAME || name.toLowerCase(Locale.ROOT) == ALT_NAME
   }
 
-  /** Check whether this table is a Delta table based on information from the Catalog. */
+  /** Check whether this table is a Delta Lake table based on information from the Catalog. */
   def isDeltaTable(provider: Option[String]): Boolean = {
     provider match {
       case Some(p) => isDeltaDataSourceName(p)

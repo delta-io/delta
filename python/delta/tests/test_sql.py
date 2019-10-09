@@ -40,7 +40,7 @@ class DeltaSqlTests(PySparkTestCase):
             self.spark = spark
         self.temp_path = tempfile.mkdtemp()
         self.temp_file = os.path.join(self.temp_path, "delta_sql_test_table")
-        # Create a simple Delta table inside the temp directory to test SQL commands.
+        # Create a simple Delta Lake table inside the temp directory to test SQL commands.
         df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
         df.write.format("delta").save(self.temp_file)
         df.write.mode("overwrite").format("delta").save(self.temp_file)
