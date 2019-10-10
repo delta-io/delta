@@ -199,9 +199,9 @@ The `remove` action includes a timestamp that indicates when the removal occurre
 Physical deletion of the file can happen lazily after some user-specified expiration time threshold.
 This delay allows concurrent readers to continue to execute against a stale snapshot of the data.
 A `remove` action should remain in the state of the table as a _tombstone_ until it has expired.
-A tombstone expires when the creation timestamp of the Delta file exceeds the expiration threshold added to the `remove` action timestamp.
+A tombstone expires when the creation timestamp of the delta file exceeds the expiration threshold added to the `remove` action timestamp.
 
-Since actions within a given Delta file are not guaranteed to be applied in order, it is not valid for multiple file operations with the same path to exist in a single version.
+Since actions within a given delta file are not guaranteed to be applied in order, it is not valid for multiple file operations with the same path to exist in a single version.
 
 The `dataChange` flag on either an `add` or a `remove` can be set to `false` to indicate that an action when combined with other actions in the same atomic version only rearranges existing data or adds new statistics.
 For example, streaming queries that are tailing the transaction log can use this flag to skip actions that would not affect the final results.
@@ -311,7 +311,7 @@ The current version of the Delta protocol is:
 ```
 
 ### Commit Provenance Information
-A Delta file can optionally contain additional provenance information about what higher-level operation was being performed as well as who executed it.
+A delta file can optionally contain additional provenance information about what higher-level operation was being performed as well as who executed it.
 
 Implementations are free to store any valid JSON-formatted data via the `commitInfo` action.
 
