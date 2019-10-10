@@ -121,7 +121,7 @@ The format of the checkpoint file name can take one of two forms:
 
 Since it is possible that a writer will fail while writing out one or more parts of a multi-part checkpoint, readers must only use a complete checkpoint, wherein all fragments are present. For performance reasons, readers should search for the most recent earlier checkpoint that is complete.
 
-Checkpoints for a given version must only be created after the associated delta file has been successfully written.
+Checkpoints for a given version must only be created after the associated Delta file has been successfully written.
 
 ### Last Checkpoint File
 The Delta transaction log will often contain many (e.g. 10,000+) files.
@@ -129,7 +129,7 @@ Listing such a large directory can be prohibitively expensive.
 The last checkpoint file can help reduce the cost of constructing the lastest snapshot of the table by providing a pointer to near the end of the log.
 
 Rather than list the entire directory, readers can locate a recent checkpoint by looking at the `_delta_log/_last_checkpoint` file.
-Due to the zero-padded encoding of the files in the log, the version id of this recent checkpoint can be used on storage systems that support lexigraphically-sorted, paginated directory listing to enumerate any delta files or newer checkpoints that comprise more recent versions of the table.
+Due to the zero-padded encoding of the files in the log, the version id of this recent checkpoint can be used on storage systems that support lexigraphically-sorted, paginated directory listing to enumerate any Delta files or newer checkpoints that comprise more recent versions of the table.
 
 This last checkpoint file is encoded as JSON and contains the following information:
 
@@ -140,7 +140,7 @@ size | The number of actions that are stored in the checkpoint.
 parts | The number of fragments if the last checkpoint was written in multiple parts.
 
 ## Actions
-Actions modify the state of the table and they are stored both in delta files and in checkpoints.
+Actions modify the state of the table and they are stored both in Delta files and in checkpoints.
 This section lists the space of available actions as well as their schema.
 
 ### Change Metadata
@@ -199,7 +199,7 @@ The `remove` action includes a timestamp that indicates when the removal occurre
 Physical deletion of the file can happen lazily after some user-specified expiration time threshold.
 This delay allows concurrent readers to continue to execute against a stale snapshot of the data.
 A `remove` action should remain in the state of the table as a _tombstone_ until it has expired.
-A tombstone expires when the creation timestamp of the delta file exceeds the expiration threshold added to the `remove` action timestamp.
+A tombstone expires when the creation timestamp of the Delta file exceeds the expiration threshold added to the `remove` action timestamp.
 
 Since actions within a given Delta file are not guaranteed to be applied in order, it is not valid for multiple file operations with the same path to exist in a single version.
 
@@ -253,7 +253,7 @@ The following is an example `remove` action.
 
 ### Transaction Identifiers
 Incremental processing systems (e.g., streaming systems) that track progress using their own application-specific versions need to record what progress has been made, in order to avoid duplicating data in the face of failures and retries during a write.
-Transaction identifiers allow this information to be recorded atomically in the transaction log of a delta table along with the other actions that modify the contents of the table.
+Transaction identifiers allow this information to be recorded atomically in the transaction log of a Delta table along with the other actions that modify the contents of the table.
 
 Transaction identifiers are stored in the form of `appId` `version` pairs, where `appId` is a unique identifier for the process that is modifying the table and `version` is an indication of how much progress has been made by that application.
 The atomic recording of this information along with modifications to the table enables these external system can make their writes into a Delta table _idempotent_.
@@ -311,7 +311,7 @@ The current version of the Delta protocol is:
 ```
 
 ### Commit Provenance Information
-A delta file can optionally contain additional provenance information about what higher-level operation was being performed as well as who executed it.
+A Delta file can optionally contain additional provenance information about what higher-level operation was being performed as well as who executed it.
 
 Implementations are free to store any valid JSON-formatted data via the `commitInfo` action.
 

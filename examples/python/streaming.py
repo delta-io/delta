@@ -69,7 +69,7 @@ stream2.stop()
 print("####### Streaming upgrades in update mode ########")
 
 
-# Function to upsert microBatchOutputDF into Delta Lake table using merge
+# Function to upsert microBatchOutputDF into Delta table using merge
 def upsertToDelta(microBatchOutputDF, batchId):
     t = deltaTable.alias("t").merge(microBatchOutputDF.alias("s"), "s.id = t.id")\
         .whenMatchedUpdateAll()\
@@ -80,7 +80,7 @@ def upsertToDelta(microBatchOutputDF, batchId):
 streamingAggregatesDF = spark.readStream.format("rate").load()\
     .withColumn("id", col("value") % 10)\
     .drop("timestamp")
-# Write the output of a streaming aggregation query into Delta Lake table
+# Write the output of a streaming aggregation query into Delta table
 deltaTable = DeltaTable.forPath(spark, "/tmp/delta-table")
 print("#############  Original Delta Table ###############")
 deltaTable.toDF().show()
