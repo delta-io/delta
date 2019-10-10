@@ -121,7 +121,7 @@ The format of the checkpoint file name can take one of two forms:
 
 Since it is possible that a writer will fail while writing out one or more parts of a multi-part checkpoint, readers must only use a complete checkpoint, wherein all fragments are present. For performance reasons, readers should search for the most recent earlier checkpoint that is complete.
 
-Checkpoints for a given version must only be created after the associated Delta file has been successfully written.
+Checkpoints for a given version must only be created after the associated delta file has been successfully written.
 
 ### Last Checkpoint File
 The Delta transaction log will often contain many (e.g. 10,000+) files.
@@ -129,7 +129,7 @@ Listing such a large directory can be prohibitively expensive.
 The last checkpoint file can help reduce the cost of constructing the lastest snapshot of the table by providing a pointer to near the end of the log.
 
 Rather than list the entire directory, readers can locate a recent checkpoint by looking at the `_delta_log/_last_checkpoint` file.
-Due to the zero-padded encoding of the files in the log, the version id of this recent checkpoint can be used on storage systems that support lexigraphically-sorted, paginated directory listing to enumerate any Delta files or newer checkpoints that comprise more recent versions of the table.
+Due to the zero-padded encoding of the files in the log, the version id of this recent checkpoint can be used on storage systems that support lexigraphically-sorted, paginated directory listing to enumerate any delta files or newer checkpoints that comprise more recent versions of the table.
 
 This last checkpoint file is encoded as JSON and contains the following information:
 
@@ -140,7 +140,7 @@ size | The number of actions that are stored in the checkpoint.
 parts | The number of fragments if the last checkpoint was written in multiple parts.
 
 ## Actions
-Actions modify the state of the table and they are stored both in Delta files and in checkpoints.
+Actions modify the state of the table and they are stored both in delta files and in checkpoints.
 This section lists the space of available actions as well as their schema.
 
 ### Change Metadata
