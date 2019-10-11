@@ -47,9 +47,6 @@ import scala.util.Try
 import scala.util.control.NonFatal
 
 
-case class BigHackException(smth: String) extends Exception(smth)
-
-
 /**
  * Used to query the current state of the log as well as modify it by adding
  * new atomic collections of actions.
