@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.util.Locale
 
+import io.delta.DeltaLog
 import io.delta.tables.DeltaTableTestUtils
 
 import org.apache.spark.sql.{functions, Row}

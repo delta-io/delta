@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import io.delta.DeltaLog
+
 import java.io.{File, IOException}
 import java.net.URI
 

@@ -18,8 +18,8 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 
+import io.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.Format
-
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.streaming.StreamTest
 import org.apache.spark.sql.types.StructType

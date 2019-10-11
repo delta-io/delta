@@ -19,15 +19,15 @@ package org.apache.spark.sql.delta
 import java.io.FileNotFoundException
 import java.nio.charset.StandardCharsets.UTF_8
 
+import io.delta.DeltaLog
+
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
-
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.streaming.CheckpointFileManager
 import org.apache.spark.util.Utils

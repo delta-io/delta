@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
+import io.delta.DeltaLog
+
 import org.apache.spark.sql.functions.typedLit
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SQLTestUtils

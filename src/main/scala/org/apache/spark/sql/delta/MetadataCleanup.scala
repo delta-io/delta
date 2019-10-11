@@ -16,8 +16,11 @@
 
 package org.apache.spark.sql.delta
 
+import io.delta.DeltaLog
+
 import java.util.{Calendar, TimeZone}
 
+import io.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.commons.lang3.time.DateUtils

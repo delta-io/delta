@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 
+import io.delta.DeltaLog
+
 import org.apache.spark.sql.delta.actions.{Action, FileAction, SingleAction}
 import org.apache.hadoop.fs.Path
 

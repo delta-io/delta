@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.util.Locale
 
+import io.delta.DeltaLog
+
 import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.commons.io.FileUtils
 import org.scalatest.time.SpanSugar._

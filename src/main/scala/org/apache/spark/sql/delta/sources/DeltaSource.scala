@@ -19,14 +19,14 @@ package org.apache.spark.sql.delta.sources
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.FileNotFoundException
 
-import scala.util.matching.Regex
+import io.delta.DeltaLog
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions}
+import scala.util.matching.Regex
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaOptions}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
-
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.execution.streaming._

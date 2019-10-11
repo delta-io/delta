@@ -23,19 +23,19 @@ import java.util.concurrent.TimeUnit.NANOSECONDS
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
-
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
+import io.delta.DeltaLog
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
-import org.apache.spark.util.{Clock, Utils}
+import org.apache.spark.util.{Utils}
+import io.delta.sparkutil.Clock
 
 /** Record metrics about a successful commit. */
 case class CommitStats(
@@ -102,7 +102,7 @@ object OptimisticTransaction {
    * @note This is not meant for being called directly, only from
    *       `OptimisticTransaction.withNewTransaction`. Use that to create and set active txns.
    */
-  private[delta] def setActive(txn: OptimisticTransaction): Unit = {
+  def setActive(txn: OptimisticTransaction): Unit = {
     if (active.get != null) {
       throw new IllegalStateException("Cannot set a new txn as active when one is already active")
     }
@@ -114,7 +114,7 @@ object OptimisticTransaction {
    *
    * @note This is not meant for being called directly, `OptimisticTransaction.withNewTransaction`.
    */
-  private[delta] def clearActive(): Unit = {
+  def clearActive(): Unit = {
     active.set(null)
   }
 }

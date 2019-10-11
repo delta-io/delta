@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import io.delta.DeltaLog
+
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, SetTransaction}
 import org.apache.hadoop.fs.Path

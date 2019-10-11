@@ -16,8 +16,7 @@
 
 package io.delta.tables
 
-import org.apache.spark.sql.delta.DeltaLog
-
+import io.delta.DeltaLog
 import org.apache.spark.sql.DataFrame
 
 object DeltaTableTestUtils {

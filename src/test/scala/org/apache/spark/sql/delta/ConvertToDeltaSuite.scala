@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import io.delta.DeltaLog
+
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path

@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import io.delta.DeltaLog
+
 import io.delta.tables.{DeltaTable, DeltaTableTestUtils}
 
 import org.apache.spark.sql.{functions, Row}

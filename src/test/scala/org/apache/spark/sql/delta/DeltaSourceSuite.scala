@@ -20,6 +20,8 @@ import java.io.{File, FileInputStream, OutputStream}
 import java.net.URI
 import java.util.UUID
 
+import io.delta.DeltaLog
+
 import org.apache.spark.sql.delta.actions.{AddFile, InvalidProtocolVersionException, Protocol}
 import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaSQLConf}
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
@@ -32,7 +34,8 @@ import org.apache.spark.sql.streaming.{OutputMode, StreamingQueryException, Trig
 import org.apache.spark.sql.streaming.util.StreamManualClock
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.unsafe.types.CalendarInterval
-import org.apache.spark.util.{ManualClock, Utils}
+import org.apache.spark.util.Utils
+import io.delta.sparkutil.ManualClock
 
 class DeltaSourceSuite extends DeltaSourceSuiteBase {
 

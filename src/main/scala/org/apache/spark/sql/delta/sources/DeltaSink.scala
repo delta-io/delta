@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.sources
 
+import io.delta.DeltaLog
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.SetTransaction
 import org.apache.spark.sql.delta.metering.DeltaLogging

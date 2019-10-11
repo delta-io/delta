@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import io.delta.DeltaLog
+
 import org.apache.spark.sql.delta.actions.{AddFile, SingleAction}
 import org.apache.spark.sql.delta.stats.DeltaScan
 

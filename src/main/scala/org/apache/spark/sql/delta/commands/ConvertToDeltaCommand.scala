@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
 
+import io.delta.DeltaLog
+
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 

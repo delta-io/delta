@@ -14,17 +14,17 @@
  * limitations under the License.
  */
 
-package io.delta
+package org.apache.spark.sql.delta
 
 import java.io.{File, FileNotFoundException}
 
+import io.delta.DeltaLog
 import org.apache.hadoop.fs.Path
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
-import org.apache.spark.sql.delta.{CheckpointInstance, DeltaOperations}
 import org.apache.spark.sql.test.{SQLTestUtils, SharedSparkSession}
 import org.apache.spark.util.Utils
 

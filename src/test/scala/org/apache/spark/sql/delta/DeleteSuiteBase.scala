@@ -18,10 +18,10 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 
+import io.delta.DeltaLog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 import org.scalatest.BeforeAndAfterEach
-
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils

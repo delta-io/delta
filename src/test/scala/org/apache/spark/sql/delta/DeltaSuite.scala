@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta
 
 import java.io.{File, FileNotFoundException}
 
+import io.delta.DeltaLog
+
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.{FileSystem, Path}

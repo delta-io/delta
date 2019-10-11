@@ -21,18 +21,18 @@ import java.sql.Timestamp
 import java.text.SimpleDateFormat
 import java.util.{Calendar, Date, TimeZone}
 
+import io.delta.DeltaLog
+
 import scala.concurrent.duration._
 import scala.language.implicitConversions
-
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.commons.lang3.time.DateUtils
 import org.apache.hadoop.fs.{FileStatus, Path}
-
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
-import org.apache.spark.util.ManualClock
+import org.apache.spark.sql.test.{SQLTestUtils, SharedSparkSession}
+import io.delta.sparkutil.ManualClock
 
 class DeltaTimeTravelSuite extends QueryTest
   with SharedSparkSession  with SQLTestUtils {

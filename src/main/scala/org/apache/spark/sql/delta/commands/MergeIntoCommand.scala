@@ -16,13 +16,13 @@
 
 package org.apache.spark.sql.delta.commands
 
-import scala.collection.JavaConverters._
+import io.delta.DeltaLog
 
+import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.util.{AnalysisHelper, SetAccumulator}
-
 import org.apache.spark.SparkContext
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.InternalRow

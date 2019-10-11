@@ -22,17 +22,17 @@ import java.util.Date
 import java.util.concurrent.TimeUnit
 
 import scala.collection.JavaConverters._
-
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{FileAction, RemoveFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.DeltaFileOperations.tryDeleteNonRecursive
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
+import io.delta.DeltaLog
 import org.apache.hadoop.fs.{FileSystem, Path}
-
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
-import org.apache.spark.util.{Clock, SerializableConfiguration, SystemClock}
+import io.delta.sparkutil.{Clock, SystemClock}
+import org.apache.spark.util.SerializableConfiguration
 
 /**
  * Vacuums the table by clearing all untracked files and folders within this table.

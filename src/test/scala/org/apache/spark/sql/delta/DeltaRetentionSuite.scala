@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 
+import io.delta.DeltaLog
+
 import org.apache.spark.sql.delta.actions.{Action, AddFile, RemoveFile}
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
@@ -25,7 +27,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SQLTestUtils
-import org.apache.spark.util.ManualClock
+import io.delta.sparkutil.ManualClock
 
 // scalastyle:off: removeFile
 class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQLTestUtils {

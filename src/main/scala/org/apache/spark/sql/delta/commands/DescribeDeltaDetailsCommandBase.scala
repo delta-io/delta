@@ -20,11 +20,11 @@ package org.apache.spark.sql.delta.commands
 import java.io.FileNotFoundException
 import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
+import io.delta.DeltaLog
+import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable

@@ -28,7 +28,7 @@ import org.apache.spark.SparkContext
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Expression, In, InSet, Literal}
-import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
+import org.apache.spark.sql.catalyst.plans.logical.{AnalysisHelper, LogicalPlan}
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
@@ -40,10 +40,15 @@ import org.apache.spark.sql.delta.storage.LogStoreProvider
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.sources.{BaseRelation, InsertableRelation}
 import io.delta.sparkutil.{Clock, SystemClock, ThreadUtils}
+import org.apache.spark.sql.catalyst.encoders.RowEncoder
 
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.Try
 import scala.util.control.NonFatal
+
+
+case class BigHackException(smth: String) extends Exception(smth)
+
 
 /**
  * Used to query the current state of the log as well as modify it by adding
@@ -76,7 +81,7 @@ class DeltaLog private(
   /** Used to read and write physical log files and checkpoints. */
   val store = createLogStore(spark)
   /** Direct access to the underlying storage system. */
-  private[delta] val fs = logPath.getFileSystem(spark.sessionState.newHadoopConf)
+  val fs = logPath.getFileSystem(spark.sessionState.newHadoopConf)
 
   /** Use ReentrantLock to allow us to call `lockInterruptibly` */
   private val deltaLogLock = new ReentrantLock()
@@ -104,7 +109,7 @@ class DeltaLog private(
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_MAX_SNAPSHOT_LINEAGE_LENGTH)
 
   /** How long to keep around logically deleted files before physically deleting them. */
-  private[delta] def tombstoneRetentionMillis: Long =
+  def tombstoneRetentionMillis: Long =
     DeltaConfigs.TOMBSTONE_RETENTION.fromMetaData(metadata).milliseconds()
 
   // TODO: There is a race here where files could get dropped when increasing the
@@ -161,11 +166,12 @@ class DeltaLog private(
       validateChecksum(snapshot)
       lastUpdateTimestamp = clock.getTimeMillis()
       snapshot
-    } catch {
-      case e: AnalysisException if Option(e.getMessage).exists(_.contains("Path does not exist")) =>
-        recordDeltaEvent(this, "delta.checkpoint.error.partial")
-        throw DeltaErrors.missingPartFilesException(c, e)
     }
+//    catch {
+//      case e: AnalysisException if Option(e.getMessage).exists(_.contains("Path does not exist")) =>
+//        recordDeltaEvent(this, "delta.checkpoint.error.partial")
+//        throw DeltaErrors.missingPartFilesException(c, e)
+//    }
   }.getOrElse {
     new Snapshot(logPath, -1, None, Nil, minFileRetentionTimestamp, this, -1L)
   }
@@ -411,11 +417,12 @@ class DeltaLog private(
     val txn = startTransaction()
     try {
       SchemaUtils.checkColumnNameDuplication(txn.metadata.schema, "in the table schema")
-    } catch {
-      case e: AnalysisException =>
-        throw new AnalysisException(
-          e.getMessage + "\nPlease remove duplicate columns before you update your table.")
     }
+//    catch {
+//      case e: AnalysisException =>
+//        throw new AnalysisException(
+//          e.getMessage + "\nPlease remove duplicate columns before you update your table.")
+//    }
     txn.commit(Seq(newVersion), DeltaOperations.UpgradeProtocol(newVersion))
     logConsole(s"Upgraded table at $dataPath to $newVersion.")
   }
@@ -577,6 +584,7 @@ class DeltaLog private(
    * Returns a [[org.apache.spark.sql.DataFrame]] containing the new files within the specified
    * version range.
    */
+  // punting on this one
   def createDataFrame(
       snapshot: Snapshot,
       addFiles: Seq[AddFile],
@@ -593,7 +601,11 @@ class DeltaLog private(
       snapshot.fileFormat,
       snapshot.metadata.format.options)(spark)
 
-    Dataset.ofRows(spark, LogicalRelation(relation, isStreaming = isStreaming))
+    val logicalRelation: LogicalRelation = LogicalRelation(relation, isStreaming = isStreaming)
+
+    snapshot.allFiles.toDF()
+
+//    Dataset.ofRows(spark, LogicalRelation(relation, isStreaming = isStreaming))
   }
 
   /**

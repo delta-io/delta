@@ -16,9 +16,9 @@
 
 package org.apache.spark.sql.delta
 
+import io.delta.DeltaLog
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
 

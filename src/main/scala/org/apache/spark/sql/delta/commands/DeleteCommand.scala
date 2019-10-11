@@ -16,10 +16,10 @@
 
 package org.apache.spark.sql.delta.commands
 
+import io.delta.DeltaLog
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
-
 import org.apache.spark.sql.{Column, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
 import org.apache.spark.sql.catalyst.expressions.{EqualNullSafe, Expression, InputFileName, Literal, Not}
