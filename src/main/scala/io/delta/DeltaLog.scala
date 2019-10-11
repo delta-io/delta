@@ -14,18 +14,22 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta
+package io.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.{File, FileNotFoundException, IOException}
-import java.util.concurrent.{Callable, TimeUnit}
 import java.util.concurrent.locks.ReentrantLock
-
-import scala.concurrent.{ExecutionContext, Future}
-import scala.util.Try
-import scala.util.control.NonFatal
+import java.util.concurrent.{Callable, TimeUnit}
 
 import com.databricks.spark.util.TagDefinitions._
+import com.google.common.cache.{CacheBuilder, RemovalListener, RemovalNotification}
+import org.apache.hadoop.fs.Path
+import org.apache.spark.SparkContext
+import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
+import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Expression, In, InSet, Literal}
+import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
@@ -33,17 +37,13 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStoreProvider
-import com.google.common.cache.{CacheBuilder, RemovalListener, RemovalNotification}
-import org.apache.hadoop.fs.Path
-
-import org.apache.spark.SparkContext
-import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
-import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Expression, In, InSet, Literal}
-import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.sources.{BaseRelation, InsertableRelation}
-import org.apache.spark.util.{Clock, SystemClock, ThreadUtils}
+import io.delta.sparkutil.{Clock, SystemClock, ThreadUtils}
+
+import scala.concurrent.{ExecutionContext, Future}
+import scala.util.Try
+import scala.util.control.NonFatal
 
 /**
  * Used to query the current state of the log as well as modify it by adding
@@ -229,7 +229,10 @@ class DeltaLog private(
       }
     } else {
       if (asyncUpdateTask == null || asyncUpdateTask.isCompleted) {
-        val jobGroup = spark.sparkContext.getLocalProperty(SparkContext.SPARK_JOB_GROUP_ID)
+//        val jobGroup = spark.sparkContext.getLocalProperty(SparkContext.SPARK_JOB_GROUP_ID)
+        // MAJOR HACK alert!
+        // Let's just grab the string from here: https://github.com/apache/spark/blob/master/core/src/main/scala/org/apache/spark/SparkContext.scala#L2613
+        val jobGroup = "spark.jobGroup.id"
         asyncUpdateTask = Future[Unit] {
           spark.sparkContext.setLocalProperty("spark.scheduler.pool", "deltaStateUpdatePool")
           spark.sparkContext.setJobGroup(
