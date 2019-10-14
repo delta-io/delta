@@ -38,6 +38,10 @@ def run_python_tests(root_dir):
     run_cmd(["python", python_test_script], stream_output=True)
 
 
+def run_python_style_checks(root_dir):
+    run_cmd([os.path.join(root_dir, "dev", "lint-python")])
+
+
 def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
     cmd_env = os.environ.copy()
     if env:
@@ -75,5 +79,6 @@ if __name__ == "__main__":
         run_cmd(cmd, stream_output=True)
     else:
         root_dir = os.path.dirname(os.path.dirname(__file__))
+        run_python_style_checks()
         run_sbt_tests(root_dir)
         run_python_tests(root_dir)
