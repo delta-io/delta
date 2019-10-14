@@ -79,6 +79,6 @@ if __name__ == "__main__":
         run_cmd(cmd, stream_output=True)
     else:
         root_dir = os.path.dirname(os.path.dirname(__file__))
-        run_python_style_checks()
+        run_python_style_checks(root_dir)
         run_sbt_tests(root_dir)
         run_python_tests(root_dir)
