@@ -97,7 +97,12 @@ def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
         return (exit_code, stdout, stderr)
 
 
+def run_python_style_checks():
+    run_cmd([os.path.join(SPARK_HOME, "dev", "lint-python")])
+
+
 if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     package = prepare(root_dir)
     test(root_dir, package)
+    run_python_style_checks()
