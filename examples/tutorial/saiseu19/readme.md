@@ -5,7 +5,8 @@
 
 <details>
 <summary style="background-color: #ffffe0;">Expand to view more details about Databricks Community Edition</summary>
-Start by signing up for **Databricks Community Edition** by going to [databricks.com/try](https://databricks.com/try) and choose **Community Edition**.  
+  
+Start by signing up for **Databricks Community Edition** by going to [databricks.com/try](https://databricks.com/try) and choose *Community Edition*.  
 
 ![ ](img/Get-Started-DBCE-01.png)
 
