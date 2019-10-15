@@ -51,7 +51,7 @@ Note, within DBCE, you can only create one cluster at a time.  If one already ex
 </details>
 
 
-### Import Notebook
+### Import and Attach a Notebook
 
 <details>
 <summary style="background-color: #ffffe0;">Expand to view more details about Importing Notebooks</summary>
