@@ -59,12 +59,8 @@ Note, within DBCE, you can only create one cluster at a time.  If one already ex
 &nbsp;<br/>&nbsp;
 For these next steps, we will import the following notebook so keep the following link(s) handy:
 
-| Notebook                       | Notebook Link                                          |
-| ------------------------------ | ------------------------------------------------------ |
-| 01 - Delta Lake Primer         | [https://dbricks.co/dlw-01](https://dbricks.co/dlw-01) |
-| 02 - Delta Lake + ML           | [https://dbricks.co/dlw-02](https://dbricks.co/dlw-02) |
-| 03 - Delta Lake + ML (XGBoost) | [https://dbricks.co/dlw-03](https://dbricks.co/dlw-03) |
-
+* [Scala Tutorial](./SAISEu19%20-%20Delta%20Lake%20Scala%20Tutorial.scala) 
+* [Python Tutorial](./SAISEu19%20-%20Delta%20Lake%20Scala%20Tutorial.py)
 
 
 Start by opening up one of the notebooks in the preceding link.   Click on the **Import Notebook** on the top right of the window. 
