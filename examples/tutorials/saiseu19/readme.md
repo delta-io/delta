@@ -57,29 +57,15 @@ Note, within DBCE, you can only create one cluster at a time.  If one already ex
 <summary style="background-color: #ffffe0;">Expand to view more details about Importing Notebooks</summary>
 
 &nbsp;<br/>&nbsp;
-For these next steps, we will import the following notebook so keep the following link(s) handy:
+For these next steps, we will import the following notebook so keep the following links handy:
 
-| Notebook                       | Notebook Link                                          |
-| ------------------------------ | ------------------------------------------------------ |
-| 01 - Delta Lake Primer         | [https://dbricks.co/dlw-01](https://dbricks.co/dlw-01) |
-| 02 - Delta Lake + ML           | [https://dbricks.co/dlw-02](https://dbricks.co/dlw-02) |
-| 03 - Delta Lake + ML (XGBoost) | [https://dbricks.co/dlw-03](https://dbricks.co/dlw-03) |
+* [Scala Tutorial](./SAISEu19%20-%20Delta%20Lake%20Scala%20Tutorial.scala) 
+* [Python Tutorial](./SAISEu19%20-%20Delta%20Lake%20Python%20Tutorial.py)
 
 
+Start by opening up one of the notebooks in the preceding links *in a new window* and **copy** the URL.
 
-Start by opening up one of the notebooks in the preceding link.   Click on the **Import Notebook** on the top right of the window. 
-
-![](img/Import-Notebook-01.png)
-
-
-
-It will open up the **Import Notebook** dialog similar to the screenshot below.
-
-![](img/Import-Notebook-03.png)
-
-Copy the notebook URL.
-
-Then go back to your workspace, *right click* and then choose **Import**.
+Then go back to your Databricks workspace, *right click* and then choose **Import**.
 
 ![](img/Import-Notebook-04.png)
 
