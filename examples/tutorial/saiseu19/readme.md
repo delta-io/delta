@@ -46,6 +46,8 @@ Click on **Create Cluster** and then your cluster will be up and running.
 
 ![](img/Create-Cluster-04.png) 
 
+Note, within DBCE, you can only create one cluster at a time.  If one already exists, you will need to either use it or create a new one.
+
 </details>
 
 
