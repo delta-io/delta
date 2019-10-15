@@ -1,7 +1,6 @@
 # Delta Lake Tutorial: Spark + AI Summit 2019 EU
-## Tutorial Notes
 
-### Getting Started
+### Sign Up for Databricks Community Edition
 
 <details>
 <summary style="background-color: #ffffe0;">Expand to view more details about Databricks Community Edition</summary>
@@ -76,4 +75,4 @@ Once you have imported the notebook, your screen should similar to the view belo
 
 </details>
 
-
+### Create a cluster with Databricks Runtime 6.1
