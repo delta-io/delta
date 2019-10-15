@@ -83,9 +83,9 @@ Paste the notebook URL you had copied from two screens prior into the *Import No
 
 
 
-Once you have imported the notebook, your screen should similar to the view below.  In the case of the *Delta Lake Primer* notebook, the three errors you are seeing on the right side are *by design*.  
+Once you have imported the notebook, your screen should similar to the view below. 
 
-![](img/Import-Notebook-07.png)
+![](img/Import-Notebook-08.png)
 
 </details>
 
