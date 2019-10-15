@@ -4,7 +4,7 @@
 
 <details>
 <summary style="background-color: #ffffe0;">Expand to view more details about Databricks Community Edition</summary>
-  
+
 Start by signing up for **Databricks Community Edition** by going to [databricks.com/try](https://databricks.com/try) and choose *Community Edition*.  
 
 ![ ](img/Get-Started-DBCE-01.png)
@@ -23,6 +23,30 @@ Once you log in, you will view the Databricks workspace similar to the screensho
 
 ![ ](img/Get-Started-DBCE-04.png)
 </details>
+
+### Create a Cluster with Databricks Runtime 6.1
+
+<details>
+<summary style="background-color: #ffffe0;">Expand to view more details about Creating a Cluster</summary>
+
+Start by clicking the *Create Cluster* on the left pane.
+
+![](img/Create-Cluster-01.png)
+
+This will bring up the *Create Cluster* dialog as noted in the following screenshot.
+
+![](img/Create-Cluster-02.png)
+
+Fill in the **name** of your cluster as well as the *Databricks Runtime Version* - choose the **6.1 Beta** runtime.
+
+![](img/Create-Cluster-03.png) 
+
+Click on **Create Cluster** and then your cluster will be up and running.
+
+![](img/Create-Cluster-04.png) 
+
+</details>
+
 
 ### Import Notebook
 
@@ -75,4 +99,3 @@ Once you have imported the notebook, your screen should similar to the view belo
 
 </details>
 
-### Create a cluster with Databricks Runtime 6.1
