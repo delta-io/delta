@@ -17,22 +17,18 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
-import scala.util.{Failure, Success, Try}
+import scala.util.Try
 
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils}
+import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.catalyst.expressions.{And, EqualTo, Expression, Literal, PredicateHelper, SubqueryExpression}
+import org.apache.spark.sql.catalyst.expressions.{Expression, PredicateHelper, SubqueryExpression}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
-import org.apache.spark.sql.delta.actions.AddFile
-import org.apache.spark.sql.delta.util.PartitionUtils
 import org.apache.spark.sql.execution.datasources.{FileIndex, HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
 
@@ -109,27 +105,6 @@ object DeltaTableUtils extends PredicateHelper
       currentPath = currentPath.getParent()
     }
     None
-  }
-
-  /** Find the root of a Delta table from the provided paths.
-   * Maybe the paths contain several partition's path like:
-   * `Seq("/root/path/fieldOne=1/fieldTwo=2","/root/path/fieldOne=3/fieldTwo=4"`,
-   * and "/root/path" shoule be returned.
-   */
-  def findDeltaTableRoot(spark: SparkSession, paths: Seq[Path]): Path = {
-    val rootPaths = paths.map { p =>
-      DeltaTableUtils.findDeltaTableRoot(spark, p)
-        .getOrElse {
-          val fs = p.getFileSystem(spark.sessionState.newHadoopConf())
-          if (!fs.exists(p)) {
-            throw DeltaErrors.pathNotExistsException(p.getName)
-          }
-          p
-        }
-    }.distinct
-    assert(rootPaths.length <= 1, s"There are more than one delta root paths" +
-      s"${rootPaths.mkString(",")} for ${paths.mkString(",")}")
-    rootPaths.head
   }
 
   /** Whether a path should be hidden for delta-related file operations, such as Vacuum and Fsck. */
@@ -253,82 +228,5 @@ object DeltaTableUtils extends PredicateHelper
       val timestamp = tt.getTimestamp(conf.sessionLocalTimeZone)
       deltaLog.history.getActiveCommitAtTime(timestamp, false).version -> "timestamp"
     }
-  }
-
-  /** Extracts whether users provided the option to time travel a relation. */
-  def getTimeTravelVersion(parameters: Map[String, String]): Option[DeltaTimeTravelSpec] = {
-    val caseInsensitive = CaseInsensitiveMap[String](parameters)
-    val tsOpt = caseInsensitive.get(DeltaDataSource.TIME_TRAVEL_TIMESTAMP_KEY)
-    val versionOpt = caseInsensitive.get(DeltaDataSource.TIME_TRAVEL_VERSION_KEY)
-    val sourceOpt = caseInsensitive.get(DeltaDataSource.TIME_TRAVEL_SOURCE_KEY)
-
-    if (tsOpt.isDefined && versionOpt.isDefined) {
-      throw DeltaErrors.provideOneOfInTimeTravel
-    } else if (tsOpt.isDefined) {
-      Some(DeltaTimeTravelSpec(Some(Literal(tsOpt.get)), None, sourceOpt.orElse(Some("dfReader"))))
-    } else if (versionOpt.isDefined) {
-      val version = Try(versionOpt.get.toLong) match {
-        case Success(v) => v
-        case Failure(t) => throw new IllegalArgumentException(
-          s"${DeltaDataSource.TIME_TRAVEL_VERSION_KEY} needs to be a valid bigint value.", t)
-      }
-      Some(DeltaTimeTravelSpec(None, Some(version), sourceOpt.orElse(Some("dfReader"))))
-    } else {
-      None
-    }
-  }
-
-  /** extract time travel:
-   * First check whether users provided the option to time travel,
-   * if not, then check if the given path contains time travel syntax with the `@`
-   */
-  def getTimeTravel(
-      spark: SparkSession,
-      maybePathWithTimeTravel: String,
-      parameters: Map[String, String])
-    : (String, Option[DeltaTimeTravelSpec]) = {
-    // Handle time travel
-    val maybeTimeTravel =
-      DeltaTableUtils.extractIfPathContainsTimeTravel(spark, maybePathWithTimeTravel)
-    val (realPath, timeTravelByPath) = maybeTimeTravel.map {
-      case (p, tt) => p -> Some(tt)
-    }.getOrElse(maybePathWithTimeTravel -> None)
-    val timeTravelByParams = getTimeTravelVersion(parameters)
-
-    if (timeTravelByParams.isDefined && timeTravelByPath.isDefined) {
-      throw DeltaErrors.multipleTimeTravelSyntaxUsed
-    }
-
-    (realPath, timeTravelByParams.orElse(timeTravelByPath))
-  }
-
-  def resolvePathFilters(deltaLog: DeltaLog, partitionFragments: Seq[String]): Seq[Expression] = {
-    val snapshot = deltaLog.update()
-    val metadata = snapshot.metadata
-    val partitionFilters = partitionFragments.map { fragment =>
-      val partitions = try {
-        PartitionUtils.parsePathFragmentAsSeq(fragment)
-      } catch {
-        case _: ArrayIndexOutOfBoundsException =>
-          throw DeltaErrors.partitionPathParseException(fragment)
-      }
-
-      val badColumns = partitions.map(_._1).filterNot(metadata.partitionColumns.contains)
-      if (badColumns.nonEmpty) {
-        throw DeltaErrors.partitionPathInvolvesNonPartitionColumnException(badColumns, fragment)
-      }
-
-      partitions.map { case (key, value) =>
-        EqualTo(UnresolvedAttribute(key), Literal(value))
-      }.reduce(And)
-    }
-
-    import org.apache.spark.sql.delta.actions.SingleAction._
-    val files = DeltaLog.filterFileList(
-      metadata.partitionColumns, snapshot.allFiles.toDF(), partitionFilters).as[AddFile].collect()
-    if (files.length == 0) {
-      throw DeltaErrors.pathNotExistsException(partitionFragments.mkString(","))
-    }
-    partitionFilters
   }
 }

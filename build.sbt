@@ -24,6 +24,44 @@ scalaVersion := crossScalaVersions.value.head
 
 sparkVersion := "2.4.2"
 
+lazy val hive = (project in file("external/hive-delta")) settings (
+  scalaVersion := "2.11.12",
+
+  libraryDependencies ++= Seq(
+    // Hive 2.3.6 is using Parquet 1.8.1 but Spark 2.4.2 cannot use Parquet 1.8.1 to write.
+    // We lock down the Parquet version to 1.10.1 for now. Note: we need to declare them here,
+    // otherwise, SBT will go through the spark dependency tree and use the first one it found which
+    // is Parquet 1.8.1
+    // TODO: Check if files written by Parquet 1.10.1 can be read by Parquet 1.8.1, or  use
+    //  Hive 3.1.0
+    "org.apache.parquet" % "parquet-common" % "1.10.1" % "provided",
+    "org.apache.parquet" % "parquet-hadoop" % "1.10.1" % "provided",
+    "org.apache.parquet" % "parquet-column" % "1.10.1" % "provided",
+    "org.apache.parquet" % "parquet-format" % "2.4.0" % "provided",
+    "io.delta" %% "delta-core" % "0.4.0", // TODO make it depend on the root project
+    "org.apache.spark" %% "spark-core" % "2.4.2" % "provided",
+    "org.apache.spark" %% "spark-catalyst" % "2.4.2" % "provided",
+    "org.apache.spark" %% "spark-sql" % "2.4.2" % "provided",
+    "org.apache.hive" % "hive-exec" % "2.3.3" % "provided" excludeAll(
+      ExclusionRule(organization = "org.apache.spark"),
+      ExclusionRule(organization = "org.apache.parquet"),
+      ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm")
+    ),
+    "org.apache.hadoop" % "hadoop-common" % "2.7.0" % "test" classifier "tests",
+    "org.apache.hadoop" % "hadoop-mapreduce-client-hs" % "2.7.0" % "test",
+    "org.apache.hadoop" % "hadoop-mapreduce-client-jobclient" % "2.7.0" % "test" classifier "tests",
+    "org.apache.hadoop" % "hadoop-yarn-server-tests" % "2.7.0" % "test" classifier "tests",
+    "org.apache.hive" % "hive-cli" % "2.3.3" % "test" excludeAll(
+      ExclusionRule(organization = "org.apache.spark"),
+      ExclusionRule(organization = "org.apache.parquet"),
+      ExclusionRule("ch.qos.logback", "logback-classic"),
+      ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm")
+    ),
+    "org.apache.spark" %% "spark-core" % "2.4.2" % "test" classifier "tests",
+    "org.scalatest" %% "scalatest" % "3.0.5" % "test"
+  )
+)
+
 libraryDependencies ++= Seq(
   // Adding test classifier seems to break transitive resolution of the core dependencies
   "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
