@@ -89,7 +89,7 @@ Once you have imported the notebook, your screen should similar to the view belo
 
 </details>
 
-### Attaching Notebooks=
+### Attaching Notebooks
 
 <details>
 <summary style="background-color: #ffffe0;">Expand to view more details about Attaching Notebooks</summary>
