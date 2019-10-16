@@ -51,7 +51,7 @@ Note, within DBCE, you can only create one cluster at a time.  If one already ex
 </details>
 
 
-### Import and Attach a Notebook
+### Importing Notebooks
 
 <details>
 <summary style="background-color: #ffffe0;">Expand to view more details about Importing Notebooks</summary>
@@ -89,3 +89,14 @@ Once you have imported the notebook, your screen should similar to the view belo
 
 </details>
 
+### Attaching Notebooks
+
+<details>
+<summary style="background-color: #ffffe0;">Expand to view more details about Attaching Notebooks</summary>
+
+&nbsp;<br/>&nbsp;
+Near the top left, click the *cluster dropdown* and choose the cluster you want to attach the notebook.  
+
+![](img/Attach-Notebook.png)
+
+</details>
