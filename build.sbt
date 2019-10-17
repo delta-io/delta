@@ -40,6 +40,16 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests"
 )
 
+antlr4Settings
+
+antlr4Version in Antlr4 := "4.7"
+
+antlr4PackageName in Antlr4 := Some("io.delta.sql.parser")
+
+antlr4GenListener in Antlr4 := true
+
+antlr4GenVisitor in Antlr4 := true
+
 testOptions in Test += Tests.Argument("-oDF")
 
 testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
@@ -47,7 +57,10 @@ testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
 // Don't execute in parallel since we can't have multiple Sparks in the same JVM
 parallelExecution in Test := false
 
-scalacOptions ++= Seq("-target:jvm-1.8")
+scalacOptions ++= Seq(
+  "-target:jvm-1.8",
+  "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
+)
 
 javaOptions += "-Xmx1024m"
 
@@ -60,6 +73,7 @@ javaOptions in Test ++= Seq(
   "-Dspark.databricks.delta.snapshotPartitions=2",
   "-Dspark.sql.shuffle.partitions=5",
   "-Ddelta.log.cacheSize=3",
+  "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
   "-Xmx1024m"
 )
 
@@ -81,6 +95,22 @@ testScalastyle := scalastyle.in(Test).toTask("").value
 
 (test in Test) := ((test in Test) dependsOn testScalastyle).value
 
+/*********************
+ *  MIMA settings    *
+ *********************/
+
+(test in Test) := ((test in Test) dependsOn mimaReportBinaryIssues).value
+
+def getVersion(version: String): String = {
+    version.split("\\.").toList match {
+        case major :: minor :: rest => s"$major.$minor.0" 
+        case _ => throw new Exception(s"Could not find previous version for $version.")
+    }
+}
+
+mimaPreviousArtifacts := Set("io.delta" %% "delta-core" %  getVersion(version.value))
+mimaBinaryIssueFilters ++= MimaExcludes.ignoredABIProblems
+
 
 /*******************
  * Unidoc settings *
@@ -90,23 +120,26 @@ enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin)
 
 // Configure Scala unidoc
 scalacOptions in(ScalaUnidoc, unidoc) ++= Seq(
-  "-skip-packages", "org:com:io.delta.tables.execution",
+  "-skip-packages", "org:com:io.delta.sql:io.delta.tables.execution",
   "-doc-title", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " ScalaDoc"
 )
 
 // Configure Java unidoc
 javacOptions in(JavaUnidoc, unidoc) := Seq(
   "-public",
-  "-exclude", "org:com:io.delta.tables.execution",
+  "-exclude", "org:com:io.delta.sql:io.delta.tables.execution",
   "-windowtitle", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
   "-noqualifier", "java.lang",
-  "-tag", "return:X"
+  "-tag", "return:X",
+  // `doclint` is disabled on Circle CI. Need to enable it manually to test our javadoc.
+  "-Xdoclint:all"
 )
 
 // Explicitly remove source files by package because these docs are not formatted correctly for Javadocs
 def ignoreUndocumentedPackages(packages: Seq[Seq[java.io.File]]): Seq[Seq[java.io.File]] = {
   packages
     .map(_.filterNot(_.getName.contains("$")))
+    .map(_.filterNot(_.getCanonicalPath.contains("io/delta/sql")))
     .map(_.filterNot(_.getCanonicalPath.contains("io/delta/tables/execution")))
     .map(_.filterNot(_.getCanonicalPath.contains("spark")))
 }
@@ -130,6 +163,10 @@ spAppendScalaVersion := true
 spIncludeMaven := true
 
 spIgnoreProvided := true
+
+packagedArtifacts in publishM2 <<= packagedArtifacts in spPublishLocal
+
+packageBin in Compile := spPackage.value
 
 sparkComponents := Seq("sql")
 

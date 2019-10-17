@@ -26,12 +26,14 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileSystem, Path}
+import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
+import org.apache.parquet.format.converter.ParquetMetadataConverter.SKIP_ROW_GROUPS
+import org.apache.parquet.hadoop.{Footer, ParquetFileReader}
 
 import org.apache.spark.{SparkEnv, TaskContext}
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.{Dataset, SparkSession}
-import org.apache.spark.util.SerializableConfiguration
+import org.apache.spark.util.{SerializableConfiguration, ThreadUtils}
 
 /**
  * Some utility methods on files, directories, and paths.
@@ -253,5 +255,33 @@ object DeltaFileOperations extends DeltaLogging {
       }
       () // Make the compiler happy
     }
+  }
+
+  /**
+   * Reads Parquet footers in multi-threaded manner.
+   * If the config "spark.sql.files.ignoreCorruptFiles" is set to true, we will ignore the corrupted
+   * files when reading footers.
+   */
+  def readParquetFootersInParallel(
+      conf: Configuration,
+      partFiles: Seq[FileStatus],
+      ignoreCorruptFiles: Boolean): Seq[Footer] = {
+    ThreadUtils.parmap(partFiles, "readingParquetFooters", 8) { currentFile =>
+      try {
+        // Skips row group information since we only need the schema.
+        // ParquetFileReader.readFooter throws RuntimeException, instead of IOException,
+        // when it can't read the footer.
+        Some(new Footer(currentFile.getPath(),
+          ParquetFileReader.readFooter(
+            conf, currentFile, SKIP_ROW_GROUPS)))
+      } catch { case e: RuntimeException =>
+        if (ignoreCorruptFiles) {
+          logWarning(s"Skipped the footer in the corrupted file: $currentFile", e)
+          None
+        } else {
+          throw new IOException(s"Could not read footer for file: $currentFile", e)
+        }
+      }
+    }.flatten
   }
 }

@@ -400,7 +400,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
       val path = nameOrPath.stripPrefix("delta.`").stripSuffix("`")
       io.delta.tables.DeltaTable.forPath(spark, path)
     } else {
-      io.delta.tables.DeltaTable(spark.table(nameOrPath))
+      DeltaTableTestUtils.createTable(spark.table(nameOrPath), DeltaLog.forTable(spark, nameOrPath))
     }
   }
 

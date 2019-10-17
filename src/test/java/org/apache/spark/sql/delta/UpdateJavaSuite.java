@@ -60,8 +60,8 @@ public class UpdateJavaSuite {
 
         List<Row> expectedAnswer = createKVDataSet(Arrays.asList(
             tuple2(100, 10), tuple2(100, 20), tuple2(100, 30), tuple2(100, 40))).collectAsList();
-        String testresult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
-        Assert.assertNull(testresult);
+        String testResult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
+        Assert.assertNull(testResult);
     }
 
     @Test
@@ -79,8 +79,8 @@ public class UpdateJavaSuite {
 
         List<Row> expectedAnswer = createKVDataSet(Arrays.asList(
             tuple2(100, 10), tuple2(100, 20), tuple2(100, 30), tuple2(100, 40))).collectAsList();
-        String testresult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
-        Assert.assertNull(testresult);
+        String testResult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
+        Assert.assertNull(testResult);
     }
 
     @Test
@@ -98,8 +98,8 @@ public class UpdateJavaSuite {
 
         List<Row> expectedAnswer = createKVDataSet(Arrays.asList(
             tuple2(100, 10), tuple2(100, 20), tuple2(3, 30), tuple2(4, 40))).collectAsList();
-        String testresult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
-        Assert.assertNull(testresult);
+        String testResult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
+        Assert.assertNull(testResult);
     }
 
     @Test
@@ -117,8 +117,8 @@ public class UpdateJavaSuite {
 
         List<Row> expectedAnswer = createKVDataSet(Arrays.asList(
             tuple2(100, 10), tuple2(100, 20), tuple2(3, 30), tuple2(4, 40))).collectAsList();
-        String testresult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
-        Assert.assertNull(testresult);
+        String testResult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
+        Assert.assertNull(testResult);
     }
 
     private Dataset<Row> createKVDataSet(

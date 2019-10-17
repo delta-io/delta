@@ -25,12 +25,12 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
-import org.apache.spark.sql.test.SharedSQLContext
+import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.util.Utils
 
 // scalastyle:off: removeFile
 class DeltaLogSuite extends QueryTest
-  with SharedSQLContext {
+  with SharedSparkSession  with SQLTestUtils {
 
   protected val testOp = Truncate()
 

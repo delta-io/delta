@@ -16,11 +16,10 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaFullTable}
 import org.apache.spark.sql.delta.commands.UpdateCommand
 
 import org.apache.spark.sql.catalyst.analysis.{EliminateSubqueryAliases, UnresolvedAttribute}
-import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UpdateTable}
+import org.apache.spark.sql.catalyst.plans.logical.UpdateTable
 import org.apache.spark.sql.internal.SQLConf
 
 case class PreprocessTableUpdate(conf: SQLConf) extends UpdateExpressionsSupport {

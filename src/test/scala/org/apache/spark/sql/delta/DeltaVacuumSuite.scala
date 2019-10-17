@@ -18,22 +18,26 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta.DeltaOperations.{Delete, Write}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, RemoveFile}
-import org.apache.spark.sql.delta.commands.{DeltaVacuumStats, VacuumCommand}
-import org.apache.spark.sql.delta.util.{DeltaFileOperations, JsonUtils}
+import org.apache.spark.sql.delta.commands.VacuumCommand
+import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 import org.scalatest.GivenWhenThen
 
-import org.apache.spark.sql.{QueryTest, SaveMode}
-import org.apache.spark.sql.test.SharedSQLContext
+import org.apache.spark.sql.{AnalysisException, QueryTest, SaveMode}
+import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.CalendarInterval
 import org.apache.spark.util.ManualClock
 
-trait DeltaVacuumSuiteBase extends QueryTest with SharedSQLContext with GivenWhenThen {
+trait DeltaVacuumSuiteBase extends QueryTest
+  with SharedSparkSession
+  with GivenWhenThen
+  with SQLTestUtils {
 
   test("don't delete data in a non-reservoir") {
     withEnvironment { (tempDir, clock) =>
@@ -412,7 +416,85 @@ trait DeltaVacuumSuiteBase extends QueryTest with SharedSQLContext with GivenWhe
           e.getMessage + "didn't contain: " + msg.mkString("[", ", ", "]"))
     }
   }
+
+  /**
+   * A basic vacuum test for different representations of a vacuum command.
+   *
+   * @param f A function to convert the file path to a representation in a vacuum command.
+   */
+  def vacuumTest(f: File => String): Unit = {
+    withEnvironment { (tempDir, clock) =>
+      val retention = defaultTombstoneInterval / 5
+      val retentionHours = TimeUnit.MILLISECONDS.toHours(retention)
+      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath, clock)
+      gcTest(deltaLog, clock)(
+        CreateFile("file1.txt", commitToActionLog = true),
+        CheckFiles(Seq("file1.txt")),
+        AdvanceClock(2000),
+        LogicallyDeleteFile("file1.txt"),
+        AdvanceClock(retention + 10000),
+        // shouldn't delete because it's a dry run
+        ExecuteSQL(
+          s"vacuum ${f(tempDir)} retain $retentionHours hours DRY RUN",
+          Seq(new File(tempDir, "file1.txt").toString)),
+        CheckFiles(Seq("file1.txt")),
+        // shouldn't delete because default period hasn't passed
+        ExecuteSQL(s"vacuum ${f(tempDir)}", Seq(tempDir.toString)),
+        CheckFiles(Seq("file1.txt")),
+        ExecuteSQL(s"vacuum ${f(tempDir)} retain $retentionHours hours",
+          Seq(tempDir.toString)),
+        CheckFiles(Seq("file1.txt"), exist = false)
+      )
+    }
+  }
+
+  testQuietly("vacuum command") {
+    vacuumTest(f => s"'${f.toString()}'")
+  }
+
+  testQuietly("vacuum command with delta table identifier") {
+    vacuumTest(f => s"delta.`${f.toString()}`")
+  }
+
+  test("vacuum for a partition path") {
+    withEnvironment { (tempDir, _) =>
+      import testImplicits._
+      val path = tempDir.getCanonicalPath
+      Seq((1, "a"), (2, "b")).toDF("v1", "v2")
+        .write
+        .format("delta")
+        .partitionBy("v2")
+        .save(path)
+
+      val ex = intercept[AnalysisException] {
+        sql(s"vacuum '$path/v2=a' retain 0 hours")
+      }
+      assert(ex.getMessage.contains(
+        s"Please provide the base path ($path) when Vacuuming Delta tables."))
+    }
+  }
+
+  test("vacuum a non-existent path and a non Delta table") {
+    def assertNotADeltaTableException(path: String): Unit = {
+      for (table <- Seq(s"'$path'", s"delta.`$path`")) {
+        val e = intercept[AnalysisException] {
+          sql(s"vacuum $table")
+        }
+        Seq("VACUUM", "only supported for Delta tables").foreach { msg =>
+          assert(e.getMessage.contains(msg))
+        }
+      }
+    }
+    withTempPath { tempDir =>
+      assert(!tempDir.exists())
+      assertNotADeltaTableException(tempDir.getCanonicalPath)
+    }
+    withTempPath { tempDir =>
+      spark.range(1, 10).write.parquet(tempDir.getCanonicalPath)
+      assertNotADeltaTableException(tempDir.getCanonicalPath)
+    }
+  }
 }
 
 class DeltaVacuumSuite
-  extends DeltaVacuumSuiteBase
+  extends DeltaVacuumSuiteBase  with org.apache.spark.sql.delta.test.DeltaSQLCommandTest
