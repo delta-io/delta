@@ -222,7 +222,7 @@ stopAllStreams()
 // MAGIC Schema is not enforced when writing leading to dirty and often corrupted data.
 // MAGIC 
 // MAGIC #### 2. No interoperatbility between batch and streaming workloads
-// MAGIC Apache Spark's Parquet streaming sink does not maintain enough metadata such that batch workload can seamlessly interact with batch workloads.
+// MAGIC Apache Spark's Parquet streaming sink does not maintain enough metadata such that streaming workloads can seamlessly interact with batch workloads.
 
 // COMMAND ----------
 
@@ -425,7 +425,7 @@ display(spark.sql("SELECT COUNT(*) FROM loans_delta WHERE funded_amnt = paid_amn
 
 // COMMAND ----------
 
-// MAGIC %md **Note**: Because we were able to easily `DELETE` the data, the above value should be `null`.
+// MAGIC %md **Note**: Because we were able to easily `DELETE` the data, the above value should be `0`.
 
 // COMMAND ----------
 
