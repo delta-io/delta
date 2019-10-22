@@ -20,10 +20,11 @@ import java.util.Locale
 
 
 import org.apache.spark.sql.{AnalysisException, QueryTest}
-import org.apache.spark.sql.test.SharedSQLContext
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.test.SharedSparkSession
 
 class DeltaTableSuite extends QueryTest
-  with SharedSQLContext {
+  with SharedSparkSession {
 
   test("forPath") {
     withTempDir { dir =>
@@ -56,8 +57,23 @@ class DeltaTableSuite extends QueryTest
     }
   }
 
-  def testError(expectegMsg: String)(thunk: => Unit): Unit = {
+  test("isDeltaTable - path") {
+    withTempDir { dir =>
+      testData.write.format("delta").save(dir.getAbsolutePath)
+      assert(DeltaTable.isDeltaTable(dir.getAbsolutePath))
+    }
+  }
+
+  test("isDeltaTable - with non-Delta table path") {
+    val msg = "not a delta table"
+    withTempDir { dir =>
+      testData.write.format("parquet").mode("overwrite").save(dir.getAbsolutePath)
+      assert(!DeltaTable.isDeltaTable(dir.getAbsolutePath))
+    }
+  }
+
+  def testError(expectedMsg: String)(thunk: => Unit): Unit = {
     val e = intercept[AnalysisException] { thunk }
-    assert(e.getMessage.toLowerCase(Locale.ROOT).contains(expectegMsg.toLowerCase(Locale.ROOT)))
+    assert(e.getMessage.toLowerCase(Locale.ROOT).contains(expectedMsg.toLowerCase(Locale.ROOT)))
   }
 }

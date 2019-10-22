@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.schema
 
+import scala.collection.Set._
 import scala.collection.mutable
 import scala.util.control.NonFatal
 
@@ -27,7 +28,8 @@ import org.apache.spark.sql.types._
 
 object SchemaUtils {
   // We use case insensitive resolution while writing into Delta
-  val DELTA_COL_RESOLVER = org.apache.spark.sql.catalyst.analysis.caseInsensitiveResolution
+  val DELTA_COL_RESOLVER: (String, String) => Boolean =
+    org.apache.spark.sql.catalyst.analysis.caseInsensitiveResolution
 
   /**
    * Finds `StructField`s that match a given check `f`. Returns the path to the column, and the
@@ -68,6 +70,20 @@ object SchemaUtils {
       f(m) || typeExistsRecursively(m.keyType)(f) || typeExistsRecursively(m.valueType)(f)
     case other =>
       f(other)
+  }
+
+  /** Turns the data types to nullable in a recursive manner for nested columns. */
+  def typeAsNullable(dt: DataType): DataType = dt match {
+    case s: StructType => s.asNullable
+    case a @ ArrayType(s: StructType, _) => a.copy(s.asNullable, containsNull = true)
+    case a: ArrayType => a.copy(containsNull = true)
+    case m @ MapType(s1: StructType, s2: StructType, _) =>
+      m.copy(s1.asNullable, s2.asNullable, valueContainsNull = true)
+    case m @ MapType(s1: StructType, _, _) =>
+      m.copy(keyType = s1.asNullable, valueContainsNull = true)
+    case m @ MapType(_, s2: StructType, _) =>
+      m.copy(valueType = s2.asNullable, valueContainsNull = true)
+    case other => other
   }
 
   /**
@@ -191,10 +207,9 @@ object SchemaUtils {
 
       val baseFields = toFieldMap(baseSchema)
       val aliasExpressions = dataSchema.map { field =>
-        val originalCase = baseFields.get(field.name).getOrElse {
+        val originalCase = baseFields.getOrElse(field.name,
           throw new AnalysisException(
-            s"Can't resolve column ${field.name} in ${baseSchema.treeString}")
-        }
+            s"Can't resolve column ${field.name} in ${baseSchema.treeString}"))
         if (originalCase.name != field.name) {
           functions.col(field.name).as(originalCase.name)
         } else {
@@ -214,43 +229,182 @@ object SchemaUtils {
    *   - Any change of datatype
    */
   def isReadCompatible(existingSchema: StructType, readSchema: StructType): Boolean = {
-    val existing = toFieldMap(existingSchema)
-    // scalastyle:off caselocale
-    val existingFieldNames = existingSchema.fieldNames.map(_.toLowerCase).toSet
-    assert(existingFieldNames.size == existingSchema.length,
-      "Delta tables don't allow field names that only differ by case")
-    val newFields = readSchema.fieldNames.map(_.toLowerCase).toSet
-    assert(newFields.size == readSchema.length,
-      "Delta tables don't allow field names that only differ by case")
-    // scalastyle:on caselocale
 
-    if (!existingFieldNames.subsetOf(newFields)) {
-      // Dropped a column that was present in the DataFrame schema
-      return false
-    }
-
-    readSchema.forall { newField =>
-      existing.get(newField.name) match {
-        case Some(existingField) =>
-          val nullabilityConstraintMet = if (!existingField.nullable) {
-            // newField should also be non-nullable
-            !newField.nullable
-          } else {
-            true
-          }
-          val dataTypeMatched = (existingField.dataType, newField.dataType) match {
-            case (e: StructType, n: StructType) =>
-              isReadCompatible(e, n)
-            case (ArrayType(e: StructType, _), ArrayType(n: StructType, _)) =>
-              isReadCompatible(e, n)
-            case (a, b) => a == b
-          }
-          dataTypeMatched && nullabilityConstraintMet
-        case None =>
-          // new fields are fine, they just won't be returned
-          true
+    def isDatatypeReadCompatible(existing: DataType, newtype: DataType): Boolean = {
+      (existing, newtype) match {
+        case (e: StructType, n: StructType) =>
+          isReadCompatible(e, n)
+        case (e: ArrayType, n: ArrayType) =>
+          // if existing elements are non-nullable, so should be the new element
+          (e.containsNull || !n.containsNull) &&
+            isDatatypeReadCompatible(e.elementType, n.elementType)
+        case (e: MapType, n: MapType) =>
+          // if existing value is non-nullable, so should be the new value
+          (e.valueContainsNull || !n.valueContainsNull) &&
+            isDatatypeReadCompatible(e.keyType, n.keyType) &&
+            isDatatypeReadCompatible(e.valueType, n.valueType)
+        case (a, b) => a == b
       }
     }
+
+    def isStructReadCompatible(existing: StructType, newtype: StructType): Boolean = {
+      val existing = toFieldMap(existingSchema)
+      // scalastyle:off caselocale
+      val existingFieldNames = existingSchema.fieldNames.map(_.toLowerCase).toSet
+      assert(existingFieldNames.size == existingSchema.length,
+        "Delta tables don't allow field names that only differ by case")
+      val newFields = readSchema.fieldNames.map(_.toLowerCase).toSet
+      assert(newFields.size == readSchema.length,
+        "Delta tables don't allow field names that only differ by case")
+      // scalastyle:on caselocale
+
+      if (!existingFieldNames.subsetOf(newFields)) {
+        // Dropped a column that was present in the DataFrame schema
+        return false
+      }
+
+      readSchema.forall { newField =>
+        existing.get(newField.name) match {
+          case Some(existingField) =>
+            // we know the name matches modulo case - now verify exact match
+            (existingField.name == newField.name
+              // if existing value is non-nullable, so should be the new value
+              && (existingField.nullable || !newField.nullable)
+              // and the type of the field must be compatible, too
+              && isDatatypeReadCompatible(existingField.dataType, newField.dataType))
+          case None =>
+            // new fields are fine, they just won't be returned
+            true
+        }
+      }
+    }
+
+    isStructReadCompatible(existingSchema, readSchema)
+  }
+
+  /**
+   * Compare an existing schema to a specified new schema and
+   * return a message describing the first difference found, if any:
+   *   - different field name or datatype
+   *   - different metadata
+   */
+  def reportDifferences(existingSchema: StructType, specifiedSchema: StructType): Seq[String] = {
+
+    def canOrNot(can: Boolean) = if (can) "can" else "can not"
+    def isOrNon(b: Boolean) = if (b) "" else "non-"
+
+    def missingFieldsMessage(fields: Set[String]) : String = {
+      s"Specified schema is missing field(s): ${fields.mkString(", ")}"
+    }
+    def additionalFieldsMessage(fields: Set[String]) : String = {
+      s"Specified schema has additional field(s): ${fields.mkString(", ")}"
+    }
+    def fieldNullabilityMessage(field: String, specified: Boolean, existing: Boolean) : String = {
+      s"Field $field is ${isOrNon(specified)}nullable in specified " +
+        s"schema but ${isOrNon(existing)}nullable in existing schema."
+    }
+    def arrayNullabilityMessage(field: String, specified: Boolean, existing: Boolean) : String = {
+      s"Array field $field ${canOrNot(specified)} contain null in specified schema " +
+        s"but ${canOrNot(existing)} in existing schema"
+    }
+    def valueNullabilityMessage(field: String, specified: Boolean, existing: Boolean) : String = {
+      s"Map field $field ${canOrNot(specified)} contain null values in specified schema " +
+        s"but ${canOrNot(existing)} in existing schema"
+    }
+    def metadataDifferentMessage(field: String, specified: Metadata, existing: Metadata)
+      : String = {
+      s"""Specified metadata for field $field is different from existing schema:
+         |Specified: $specified
+         |Existing:  $existing""".stripMargin
+    }
+    def typeDifferenceMessage(field: String, specified: DataType, existing: DataType)
+      : String = {
+      s"""Specified type for $field is different from existing schema:
+         |Specified: ${specified.typeName}
+         |Existing:  ${existing.typeName}""".stripMargin
+    }
+
+    // prefix represents the nested field(s) containing this schema
+    def structDifference(existing: StructType, specified: StructType, prefix: String)
+      : Seq[String] = {
+
+      // 1. ensure set of fields is the same
+      val existingFieldNames = existing.fieldNames.toSet
+      val specifiedFieldNames = specified.fieldNames.toSet
+
+      val missingFields = existingFieldNames diff specifiedFieldNames
+      val missingFieldsDiffs =
+        if (missingFields.isEmpty) Nil
+        else Seq(missingFieldsMessage(missingFields.map(prefix + _)))
+
+      val extraFields = specifiedFieldNames diff existingFieldNames
+      val extraFieldsDiffs =
+        if (extraFields.isEmpty) Nil
+        else Seq(additionalFieldsMessage(extraFields.map(prefix + _)))
+
+      // 2. for each common field, ensure it has the same type and metadata
+      val existingFields = toFieldMap(existing)
+      val specifiedFields = toFieldMap(specified)
+      val fieldsDiffs = (existingFieldNames intersect specifiedFieldNames).flatMap(
+        (name: String) => fieldDifference(existingFields(name), specifiedFields(name), prefix))
+
+      missingFieldsDiffs ++ extraFieldsDiffs ++ fieldsDiffs
+    }
+
+    def fieldDifference(existing: StructField, specified: StructField, prefix: String)
+      : Seq[String] = {
+
+      val name = s"$prefix${existing.name}"
+      val nullabilityDiffs =
+        if (existing.nullable == specified.nullable) Nil
+        else Seq(fieldNullabilityMessage(s"$name", specified.nullable, existing.nullable))
+      val metadataDiffs =
+        if (existing.metadata == specified.metadata) Nil
+        else Seq(metadataDifferentMessage(s"$name", specified.metadata, existing.metadata))
+      val typeDiffs =
+        typeDifference(existing.dataType, specified.dataType, name)
+
+      nullabilityDiffs ++ metadataDiffs ++ typeDiffs
+    }
+
+    def typeDifference(existing: DataType, specified: DataType, field: String)
+      : Seq[String] = {
+
+      (existing, specified) match {
+        case (e: StructType, s: StructType) => structDifference(e, s, s"$field.")
+        case (e: ArrayType, s: ArrayType) => arrayDifference(e, s, s"$field[]")
+        case (e: MapType, s: MapType) => mapDifference(e, s, s"$field")
+        case (e, s) if e != s => Seq(typeDifferenceMessage(field, s, e))
+        case _ => Nil
+      }
+    }
+
+    def arrayDifference(existing: ArrayType, specified: ArrayType, field: String): Seq[String] = {
+
+      val elementDiffs =
+        typeDifference(existing.elementType, specified.elementType, field)
+      val nullabilityDiffs =
+        if (existing.containsNull == specified.containsNull) Nil
+        else Seq(arrayNullabilityMessage(field, specified.containsNull, existing.containsNull))
+
+      elementDiffs ++ nullabilityDiffs
+    }
+
+    def mapDifference(existing: MapType, specified: MapType, field: String) : Seq[String] = {
+
+      val keyDiffs =
+        typeDifference(existing.keyType, specified.keyType, s"$field[key]")
+      val valueDiffs =
+        typeDifference(existing.valueType, specified.valueType, s"$field[value]")
+      val nullabilityDiffs =
+        if (existing.valueContainsNull == specified.valueContainsNull) Nil
+        else Seq(
+          valueNullabilityMessage(field, specified.valueContainsNull, existing.valueContainsNull))
+
+      keyDiffs ++ valueDiffs ++ nullabilityDiffs
+    }
+
+    structDifference(existingSchema, specifiedSchema, "")
   }
 
   /**
@@ -461,10 +615,10 @@ object SchemaUtils {
    */
   def changeDataType(from: DataType, to: DataType, resolver: Resolver): DataType = {
     (from, to) match {
-      case (ArrayType(fromElement, fn), ArrayType(toElement, tn)) =>
+      case (ArrayType(fromElement, fn), ArrayType(toElement, _)) =>
         ArrayType(changeDataType(fromElement, toElement, resolver), fn)
 
-      case (MapType(fromKey, fromValue, fn), MapType(toKey, toValue, tn)) =>
+      case (MapType(fromKey, fromValue, fn), MapType(toKey, toValue, _)) =>
         MapType(
           changeDataType(fromKey, toKey, resolver),
           changeDataType(fromValue, toValue, resolver),
@@ -474,7 +628,7 @@ object SchemaUtils {
         StructType(
           toFields.map { toField =>
             fromFields.find(field => resolver(field.name, toField.name)).map { fromField =>
-              toField.getComment.map(fromField.withComment).getOrElse(fromField)
+              toField.getComment().map(fromField.withComment).getOrElse(fromField)
                 .copy(
                   dataType = changeDataType(fromField.dataType, toField.dataType, resolver),
                   nullable = toField.nullable)

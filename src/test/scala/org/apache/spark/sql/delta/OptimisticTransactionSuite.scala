@@ -22,10 +22,9 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.execution.FileSourceScanExec
-import org.apache.spark.sql.test.SharedSQLContext
-import org.apache.spark.util.Utils
+import org.apache.spark.sql.test.SharedSparkSession
 
-class OptimisticTransactionSuite extends QueryTest with SharedSQLContext {
+class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
   private val addA = AddFile("a", Map.empty, 1, 1, dataChange = true)
   private val addB = AddFile("b", Map.empty, 1, 1, dataChange = true)
   private val addC = AddFile("c", Map.empty, 1, 1, dataChange = true)

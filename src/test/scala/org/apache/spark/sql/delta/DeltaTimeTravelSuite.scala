@@ -31,11 +31,11 @@ import org.apache.commons.lang3.time.DateUtils
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
-import org.apache.spark.sql.test.SharedSQLContext
+import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.util.ManualClock
 
 class DeltaTimeTravelSuite extends QueryTest
-  with SharedSQLContext {
+  with SharedSparkSession  with SQLTestUtils {
 
   import testImplicits._
 
@@ -54,6 +54,11 @@ class DeltaTimeTravelSuite extends QueryTest
     if (crc.exists()) {
       crc.setLastModified(ts)
     }
+  }
+
+  private def modifyCheckpointTimestamp(deltaLog: DeltaLog, version: Long, ts: Long): Unit = {
+    val file = new File(FileNames.checkpointFileSingular(deltaLog.logPath, version).toUri)
+    file.setLastModified(ts)
   }
 
   /** Generate commits with the given timestamp in millis. */
@@ -195,9 +200,11 @@ class DeltaTimeTravelSuite extends QueryTest
 
       // we need this checkpoint so that we can delete starting with the first version
       deltaLog.checkpoint()
+      modifyCheckpointTimestamp(deltaLog, deltaLog.snapshot.version, time)
       generateCommitsCheap(deltaLog, Seq(5, 10, 7, 8, 14).map(time + _.seconds): _*)
       // We need this checkpoint so that we can delete up to the last version
       deltaLog.checkpoint()
+      modifyCheckpointTimestamp(deltaLog, deltaLog.snapshot.version, time + 14.seconds)
 
       assert(deltaLog.history.getHistory(0, None).map(_.timestamp.getTime).reverse ===
         Seq(time, time + 5.seconds,

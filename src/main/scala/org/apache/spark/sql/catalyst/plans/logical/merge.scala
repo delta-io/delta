@@ -20,7 +20,7 @@ import java.util.Locale
 
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.analysis._
-import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, Expression, NamedExpression, UnaryExpression, Unevaluable}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, UnaryExpression, Unevaluable}
 import org.apache.spark.sql.types.DataType
 
 /**

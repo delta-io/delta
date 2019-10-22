@@ -22,14 +22,18 @@ import org.scalatest.Tag
 
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.execution.streaming.MemoryStream
-import org.apache.spark.sql.test.SharedSQLContext
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
 trait DescribeDeltaHistorySuiteBase
   extends QueryTest
-  with SharedSQLContext {
+  with SharedSparkSession {
 
   import testImplicits._
+
+  protected val evolvabilityResource = "src/test/resources/delta/history/delta-0.2.0"
+
+  protected val evolvabilityLastOp = Seq("STREAMING UPDATE", null, null)
 
   protected def testWithFlag(name: String, tags: Tag*)(f: => Unit): Unit = {
     test(name, tags: _*) {
@@ -51,8 +55,7 @@ trait DescribeDeltaHistorySuiteBase
   }
 
   def getHistory(path: String, limit: Option[Int] = None): DataFrame = {
-    val deltaLog = DeltaLog.forTable(spark, path)
-    val deltaTable = io.delta.tables.DeltaTable.forPath(spark, deltaLog.dataPath.toString)
+    val deltaTable = io.delta.tables.DeltaTable.forPath(spark, path)
     if (limit.isDefined) {
       deltaTable.history(limit.get)
     } else {
@@ -60,7 +63,7 @@ trait DescribeDeltaHistorySuiteBase
     }
   }
 
-  test("logging and limit") {
+  testWithFlag("logging and limit") {
     val tempDir = Utils.createTempDir().toString
     Seq(1, 2, 3).toDF().write.format("delta").save(tempDir)
     Seq(4, 5, 6).toDF().write.format("delta").mode("overwrite").save(tempDir)
@@ -168,7 +171,7 @@ trait DescribeDeltaHistorySuiteBase
       Seq($"operation", $"operationParameters.predicate"))
   }
 
-  test("old and new writers") {
+  testWithFlag("old and new writers") {
     val tempDir = Utils.createTempDir().toString
     withSQLConf(DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "false") {
       Seq(1, 2, 3).toDF().write.format("delta").save(tempDir.toString)
@@ -183,7 +186,7 @@ trait DescribeDeltaHistorySuiteBase
     checkLastOperation(tempDir, Seq("WRITE", "Append"))
   }
 
-  test("order history by version") {
+  testWithFlag("order history by version") {
     val tempDir = Utils.createTempDir().toString
 
     withSQLConf(DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "false") {
@@ -227,7 +230,54 @@ trait DescribeDeltaHistorySuiteBase
     assert(ans.map(x => x.version.get -> x.readVersion) ===
       Seq(5 -> None, 4 -> Some(1), 3 -> Some(2), 2 -> Some(1), 1 -> Some(0), 0 -> None))
   }
+
+  testWithFlag("evolvability test") {
+    checkLastOperation(
+      evolvabilityResource,
+      evolvabilityLastOp,
+      Seq($"operation", $"operationParameters.mode", $"operationParameters.partitionBy"))
+  }
+
+  testWithFlag("describe history with delta table identifier") {
+    val tempDir = Utils.createTempDir().toString
+    Seq(1, 2, 3).toDF().write.format("delta").save(tempDir)
+    Seq(4, 5, 6).toDF().write.format("delta").mode("overwrite").save(tempDir)
+    val df = sql(s"DESCRIBE HISTORY delta.`$tempDir` LIMIT 1")
+    checkAnswer(df.select("operation", "operationParameters.mode"),
+      Seq(Row("WRITE", "Overwrite")))
+  }
+
+  test("using on non delta") {
+    withTempDir { basePath =>
+      val e = intercept[AnalysisException] {
+        sql(s"describe history '$basePath'").collect()
+      }
+      assert(Seq("supported", "Delta").forall(e.getMessage.contains))
+    }
+  }
+
+  test("describe history a non-existent path and a non Delta table") {
+    def assertNotADeltaTableException(path: String): Unit = {
+      for (table <- Seq(s"'$path'", s"delta.`$path`")) {
+        val e = intercept[AnalysisException] {
+          sql(s"describe history $table").show()
+        }
+        Seq("DESCRIBE HISTORY", "only supported for Delta tables").foreach { msg =>
+          assert(e.getMessage.contains(msg))
+        }
+      }
+    }
+    withTempPath { tempDir =>
+      assert(!tempDir.exists())
+      assertNotADeltaTableException(tempDir.getCanonicalPath)
+    }
+    withTempPath { tempDir =>
+      spark.range(1, 10).write.parquet(tempDir.getCanonicalPath)
+      assertNotADeltaTableException(tempDir.getCanonicalPath)
+    }
+  }
 }
 
 class DescribeDeltaHistorySuite
-  extends DescribeDeltaHistorySuiteBase
+  extends DescribeDeltaHistorySuiteBase  with org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+

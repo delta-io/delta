@@ -20,31 +20,23 @@ import java.io.{File, FileInputStream, OutputStream}
 import java.net.URI
 import java.util.UUID
 
-import org.apache.spark.sql.delta.actions.{AddFile, Format, InvalidProtocolVersionException, Protocol}
+import org.apache.spark.sql.delta.actions.{AddFile, InvalidProtocolVersionException, Protocol}
 import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaSQLConf}
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
 
-import org.apache.spark.sql.{AnalysisException, DataFrame}
+import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.execution.streaming._
-import org.apache.spark.sql.streaming.{OutputMode, StreamingQueryException, StreamTest, Trigger}
+import org.apache.spark.sql.streaming.{OutputMode, StreamingQueryException, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.unsafe.types.CalendarInterval
 import org.apache.spark.util.{ManualClock, Utils}
 
-class DeltaSourceSuite extends StreamTest {
+class DeltaSourceSuite extends DeltaSourceSuiteBase {
 
   import testImplicits._
-
-  object AddToReservoir {
-    def apply(path: File, data: DataFrame): AssertOnQuery =
-      AssertOnQuery { _ =>
-        data.write.format("delta").mode("append").save(path.getAbsolutePath)
-        true
-      }
-  }
 
   private def withTempDirs(f: (File, File, File) => Unit): Unit = {
     withTempDir { file1 =>
@@ -83,17 +75,6 @@ class DeltaSourceSuite extends StreamTest {
         assert(e.getMessage.contains(msg))
       }
     }
-  }
-
-  protected def withMetadata(
-      deltaLog: DeltaLog,
-      schema: StructType,
-      format: String = "parquet"): Unit = {
-    val txn = deltaLog.startTransaction()
-    txn.commit(txn.metadata.copy(
-      schemaString = schema.json,
-      format = Format(format)
-    ) :: Nil, DeltaOperations.ManualUpdate)
   }
 
   test("basic") {
@@ -661,6 +642,98 @@ class DeltaSourceSuite extends StreamTest {
       }
 
       stream.stop()
+    }
+  }
+
+  test("Delta source advances with non-data inserts") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      Seq(1L, 2L, 3L).toDF("x").write.format("delta").save(inputDir.toString)
+
+      val df = spark.readStream.format("delta").load(inputDir.toString)
+      val stream = df.writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.toString)
+        .start(outputDir.toString)
+      try {
+        stream.processAllAvailable()
+
+        val deltaLog = DeltaLog.forTable(spark, inputDir.toString)
+        for(i <- 1 to 3) {
+          deltaLog.startTransaction().commit(Seq(), DeltaOperations.ManualUpdate)
+          stream.processAllAvailable()
+        }
+
+        val fs = deltaLog.dataPath.getFileSystem(spark.sessionState.newHadoopConf())
+        for (version <- 0 to 3) {
+          val possibleFiles = Seq(
+            f"/$version%020d.checkpoint.parquet",
+            f"/$version%020d.json",
+            f"/$version%020d.crc"
+          ).map { name => new Path(inputDir.toString + "/_delta_log" + name) }
+          for (logFilePath <- possibleFiles) {
+            if (fs.exists(logFilePath)) {
+              // The cleanup logic has an edge case when files for higher versions don't have higher
+              // timestamps, so we set the timestamp to scale with version rather than just being 0.
+              fs.setTimes(logFilePath, version * 1000, 0)
+            }
+          }
+        }
+        deltaLog.cleanUpExpiredLogs()
+        stream.processAllAvailable()
+
+        val lastOffset = DeltaSourceOffset(
+          deltaLog.tableId,
+          SerializedOffset(stream.lastProgress.sources.head.endOffset))
+
+        assert(lastOffset == DeltaSourceOffset(1, deltaLog.tableId, 3, -1, false))
+      } finally {
+        stream.stop()
+      }
+    }
+  }
+
+  test("Rate limited Delta source advances with non-data inserts") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      Seq(1L, 2L, 3L).toDF("x").write.format("delta").save(inputDir.toString)
+
+      val df = spark.readStream.format("delta").load(inputDir.toString)
+      val stream = df.writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.toString)
+        .option("maxFilesPerTrigger", 2)
+        .start(outputDir.toString)
+      try {
+        val deltaLog = DeltaLog.forTable(spark, inputDir.toString)
+        for(i <- 1 to 3) {
+          deltaLog.startTransaction().commit(Seq(), DeltaOperations.ManualUpdate)
+        }
+
+        val fs = deltaLog.dataPath.getFileSystem(spark.sessionState.newHadoopConf())
+        for (version <- 0 to 3) {
+          val possibleFiles = Seq(
+            f"/$version%020d.checkpoint.parquet",
+            f"/$version%020d.json",
+            f"/$version%020d.crc"
+          ).map { name => new Path(inputDir.toString + "/_delta_log" + name) }
+          for (logFilePath <- possibleFiles) {
+            if (fs.exists(logFilePath)) {
+              // The cleanup logic has an edge case when files for higher versions don't have higher
+              // timestamps, so we set the timestamp to scale with version rather than just being 0.
+              fs.setTimes(logFilePath, version * 1000, 0)
+            }
+          }
+        }
+        deltaLog.cleanUpExpiredLogs()
+        stream.processAllAvailable()
+
+        val lastOffset = DeltaSourceOffset(
+          deltaLog.tableId,
+          SerializedOffset(stream.lastProgress.sources.head.endOffset))
+
+        assert(lastOffset == DeltaSourceOffset(1, deltaLog.tableId, 3, -1, false))
+      } finally {
+        stream.stop()
+      }
     }
   }
 

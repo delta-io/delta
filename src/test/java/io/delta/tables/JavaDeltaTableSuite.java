@@ -25,7 +25,6 @@ import org.apache.spark.sql.*;
 import org.apache.spark.util.Utils;
 import org.junit.After;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -74,5 +73,8 @@ public class JavaDeltaTableSuite {
     Assert.assertEquals(
         QueryTest$.MODULE$.checkAnswer(table2.as("tbl").toDF().select("tbl.value"), dataRows),
         null);
+
+    // Test DeltaTable.isDeltaTable() is true for a Delta file path.
+    Assert.assertTrue(DeltaTable.isDeltaTable(input));
   }
 }

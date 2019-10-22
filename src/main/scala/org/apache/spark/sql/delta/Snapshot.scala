@@ -113,7 +113,7 @@ class Snapshot(
     Utils.redact(spark.sessionState.conf.stringRedactionPattern, path.toUri.toString)
 
   private val cachedState =
-    cacheDS(stateReconstruction, "Delta Table State #$version - $redactedPath")
+    cacheDS(stateReconstruction, s"Delta Table State #$version - $redactedPath")
 
   /** The current set of actions in this [[Snapshot]]. */
   def state: Dataset[SingleAction] = cachedState.getDS

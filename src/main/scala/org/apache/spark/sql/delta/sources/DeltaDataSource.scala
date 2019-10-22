@@ -140,6 +140,9 @@ class DeltaDataSource
       throw DeltaErrors.pathNotSpecifiedException
     })
 
+    // Log any invalid options that are being passed in
+    DeltaOptions.verifyOptions(CaseInsensitiveMap(parameters))
+
     // Handle time travel
     val maybeTimeTravel =
       DeltaTableUtils.extractIfPathContainsTimeTravel(sqlContext.sparkSession, maybePath)

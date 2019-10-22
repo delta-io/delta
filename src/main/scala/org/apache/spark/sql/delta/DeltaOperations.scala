@@ -75,11 +75,12 @@ object DeltaOperations {
   case class Convert(
       numFiles: Long,
       partitionBy: Seq[String],
-      collectStats: Boolean) extends Operation("CONVERT") {
+      collectStats: Boolean,
+      catalogTable: Option[String]) extends Operation("CONVERT") {
     override val parameters: Map[String, Any] = Map(
       "numFiles" -> numFiles,
       "partitionedBy" -> JsonUtils.toJson(partitionBy),
-      "collectStats" -> collectStats)
+      "collectStats" -> collectStats) ++ catalogTable.map("catalogTable" -> _)
   }
   /** Recorded when optimizing the table. */
   case class Optimize(

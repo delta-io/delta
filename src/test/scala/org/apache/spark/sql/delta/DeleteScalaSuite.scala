@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import io.delta.tables.DeltaTable
+import io.delta.tables.{DeltaTable, DeltaTableTestUtils}
 
 import org.apache.spark.sql.{functions, Row}
 
@@ -69,7 +69,8 @@ class DeleteScalaSuite extends DeleteSuiteBase {
         val path = tableNameOrPath.stripPrefix("delta.`").stripSuffix("`")
         io.delta.tables.DeltaTable.forPath(spark, path)
       } else {
-        io.delta.tables.DeltaTable(spark.table(tableNameOrPath))
+        DeltaTableTestUtils.createTable(spark.table(tableNameOrPath),
+          DeltaLog.forTable(spark, tableNameOrPath))
       }
       optionalAlias.map(table.as(_)).getOrElse(table)
     }
