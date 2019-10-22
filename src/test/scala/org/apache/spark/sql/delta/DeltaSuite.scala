@@ -921,4 +921,45 @@ class DeltaSuite extends QueryTest
       checkAnswer(spark.table("sc15200test"), Seq.empty)
     }
   }
+
+  test("support for setting dataChange to false") {
+    withTempDir { tempDir =>
+      if (tempDir.exists()) {
+        assert(tempDir.delete())
+      }
+
+      spark.range(100)
+        .repartition(4)
+        .write
+        .format("delta")
+        .save(tempDir.toString)
+
+      val df = spark.read.format("delta").load(tempDir.toString)
+
+      df
+        .repartition(2)
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .option("changeData", "false")
+        .save(tempDir.toString)
+
+      val removesDataChange = spark.read
+        .json(tempDir.toString + "/_delta_log/00000000000000000001.json")
+        .where("remove IS NOT NULL").select($"remove.dataChange")
+        .as[Boolean]
+        .collect()
+        .toSeq
+
+      val addsDataChange = spark.read
+        .json(tempDir.toString + "/_delta_log/00000000000000000001.json")
+        .where("add IS NOT NULL").select($"add.dataChange")
+        .as[Boolean]
+        .collect()
+        .toSeq
+
+      assert(removesDataChange == Seq(true, true, true, true))
+      assert(addsDataChange == Seq(false, false))
+    }
+  }
 }

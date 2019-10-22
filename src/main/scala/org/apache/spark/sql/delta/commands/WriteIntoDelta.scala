@@ -101,7 +101,8 @@ case class WriteIntoDelta(
       deltaLog.fs.mkdirs(deltaLog.logPath)
     }
 
-    val newFiles = txn.writeFiles(data, Some(options))
+    val canChangeData = options.canChangeData
+    val newFiles = txn.writeFiles(data, Some(options)).map(_.copy(dataChange = canChangeData))
     val deletedFiles = (mode, partitionFilters) match {
       case (SaveMode.Overwrite, None) =>
         txn.filterFiles().map(_.remove)
