@@ -22,10 +22,11 @@ crossScalaVersions := Seq("2.12.8", "2.11.12")
 
 scalaVersion := crossScalaVersions.value.head
 
-sparkVersion := "2.4.2"
+sparkVersion in ThisBuild := "2.4.2"
 
 lazy val hive = (project in file("external/hive-delta")) settings (
   scalaVersion := "2.11.12",
+  name := "hive-delta",
 
   libraryDependencies ++= Seq(
     // Hive 2.3.6 is using Parquet 1.8.1 but Spark 2.4.2 cannot use Parquet 1.8.1 to write.
@@ -39,9 +40,9 @@ lazy val hive = (project in file("external/hive-delta")) settings (
     "org.apache.parquet" % "parquet-column" % "1.10.1" % "provided",
     "org.apache.parquet" % "parquet-format" % "2.4.0" % "provided",
     "io.delta" %% "delta-core" % "0.4.0", // TODO make it depend on the root project
-    "org.apache.spark" %% "spark-core" % "2.4.2" % "provided",
-    "org.apache.spark" %% "spark-catalyst" % "2.4.2" % "provided",
-    "org.apache.spark" %% "spark-sql" % "2.4.2" % "provided",
+    "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
+    "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
+    "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
     "org.apache.hive" % "hive-exec" % "2.3.3" % "provided" excludeAll(
       ExclusionRule(organization = "org.apache.spark"),
       ExclusionRule(organization = "org.apache.parquet"),
@@ -57,7 +58,7 @@ lazy val hive = (project in file("external/hive-delta")) settings (
       ExclusionRule("ch.qos.logback", "logback-classic"),
       ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm")
     ),
-    "org.apache.spark" %% "spark-core" % "2.4.2" % "test" classifier "tests",
+    "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
     "org.scalatest" %% "scalatest" % "3.0.5" % "test"
   )
 )
@@ -200,7 +201,7 @@ spAppendScalaVersion := true
 
 spIncludeMaven := true
 
-spIgnoreProvided := true
+spIgnoreProvided in ThisBuild := true
 
 packagedArtifacts in publishM2 <<= packagedArtifacts in spPublishLocal
 
