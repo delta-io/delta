@@ -144,7 +144,7 @@ object DeltaOptions extends DeltaLogging {
   val IGNORE_CHANGES_OPTION = "ignoreChanges"
   val IGNORE_DELETES_OPTION = "ignoreDeletes"
   val OPTIMIZE_WRITE_OPTION = "optimizeWrite"
-  val DATA_CHANGE_OPTION = "changeData"
+  val DATA_CHANGE_OPTION = "dataChange"
 
   val validOptionKeys : Set[String] = Set(
     REPLACE_WHERE_OPTION,
