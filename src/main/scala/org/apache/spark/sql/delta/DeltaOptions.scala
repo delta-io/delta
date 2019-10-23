@@ -79,8 +79,8 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
   }
 
   /**
-    * Whether to write new data to the table
-    * or just rearrange data that is already part of the table
+    * Whether to write new data to the table or just rearrange data that is already part of
+    * the table
     */
   def canChangeData: Boolean = {
     options.get(CHANGE_DATA_OPTION).map(toBoolean(_, CHANGE_DATA_OPTION)).getOrElse(true)
