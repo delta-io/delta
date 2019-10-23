@@ -38,3 +38,6 @@ addSbtPlugin("com.eed3si9n" % "sbt-unidoc" % "0.4.2")
 addSbtPlugin("com.typesafe" % "sbt-mima-plugin" % "0.3.0")
 
 addSbtPlugin("com.simplytyped" % "sbt-antlr4" % "0.7.13")
+
+resolvers += Resolver.url("typesafe sbt-plugins",
+  url("https://dl.bintray.com/typesafe/sbt-plugins"))(Resolver.ivyStylePatterns)
