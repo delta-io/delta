@@ -927,6 +927,7 @@ class DeltaSuite extends QueryTest
       if (tempDir.exists()) {
         assert(tempDir.delete())
       }
+      val deltaLogUrl = DeltaLog.forTable(spark, tempDir).snapshot.path
 
       spark.range(100)
         .repartition(4)
@@ -945,21 +946,20 @@ class DeltaSuite extends QueryTest
         .save(tempDir.toString)
 
       val removesDataChange = spark.read
-        .json(tempDir.toString + "/_delta_log/00000000000000000001.json")
+        .json(deltaLogUrl + "/00000000000000000001.json")
         .where("remove IS NOT NULL").select($"remove.dataChange")
         .as[Boolean]
         .collect()
         .toSeq
 
       val addsDataChange = spark.read
-        .json(tempDir.toString + "/_delta_log/00000000000000000001.json")
+        .json(deltaLogUrl + "/00000000000000000001.json")
         .where("add IS NOT NULL").select($"add.dataChange")
         .as[Boolean]
         .collect()
         .toSeq
 
-      assert(removesDataChange == Seq(true, true, true, true))
-      assert(addsDataChange == Seq(false, false))
+      assert(removesDataChange ++ addsDataChange == Seq(false, false, false, false, false, false))
     }
   }
 }
