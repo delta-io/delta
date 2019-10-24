@@ -26,11 +26,13 @@ import org.apache.spark.SparkException
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions.InSet
 import org.apache.spark.sql.catalyst.plans.logical.Filter
+import org.apache.spark.sql.delta.actions.{Action, FileAction}
+import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.OPTIMIZER_METADATA_ONLY
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.{SQLTestUtils, SharedSparkSession}
 import org.apache.spark.util.Utils
 
 class DeltaSuite extends QueryTest
@@ -927,7 +929,6 @@ class DeltaSuite extends QueryTest
       if (tempDir.exists()) {
         assert(tempDir.delete())
       }
-      val deltaLogUrl = DeltaLog.forTable(spark, tempDir).snapshot.path
 
       spark.range(100)
         .repartition(4)
@@ -942,24 +943,49 @@ class DeltaSuite extends QueryTest
         .write
         .format("delta")
         .mode("overwrite")
-        .option("dataChange", "false")
+        .option("changeData", "false")
         .save(tempDir.toString)
 
-      val removesDataChange = spark.read
-        .json(deltaLogUrl + "/00000000000000000001.json")
-        .where("remove IS NOT NULL").select($"remove.dataChange")
-        .as[Boolean]
-        .collect()
-        .toSeq
+      val deltaLog = DeltaLog.forTable(spark, tempDir)
+      val version = deltaLog.snapshot.version
+      val commitActions = deltaLog.store.read(FileNames.deltaFile(deltaLog.logPath, version))
+        .map(Action.fromJson)
+      val fileActions = commitActions.collect { case a: FileAction => a }
+      val dataChanges = fileActions.map(_.dataChange)
 
-      val addsDataChange = spark.read
-        .json(deltaLogUrl + "/00000000000000000001.json")
-        .where("add IS NOT NULL").select($"add.dataChange")
-        .as[Boolean]
-        .collect()
-        .toSeq
+      assert(dataChanges == Seq(false, false, false, false, false, false))
+    }
+  }
 
-      assert(removesDataChange ++ addsDataChange == Seq(false, false, false, false, false, false))
+  test("dataChange is by default set to true") {
+    withTempDir { tempDir =>
+      if (tempDir.exists()) {
+        assert(tempDir.delete())
+      }
+
+      spark.range(100)
+        .repartition(4)
+        .write
+        .format("delta")
+        .save(tempDir.toString)
+
+      val df = spark.read.format("delta").load(tempDir.toString)
+
+      df
+        .repartition(2)
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .save(tempDir.toString)
+
+      val deltaLog = DeltaLog.forTable(spark, tempDir)
+      val version = deltaLog.snapshot.version
+      val commitActions = deltaLog.store.read(FileNames.deltaFile(deltaLog.logPath, version))
+        .map(Action.fromJson)
+      val fileActions = commitActions.collect { case a: FileAction => a }
+      val dataChanges = fileActions.map(_.dataChange)
+
+      assert(dataChanges == Seq(true, true, true, true, true, true))
     }
   }
 }
