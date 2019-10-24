@@ -122,13 +122,13 @@ case class WriteIntoDelta(
       case _ => Nil
     }
 
-    val canChangeData = options.canChangeData
-    if (canChangeData) {
+    val noDataChange = options.noDataChange
+    if (noDataChange) {
       newFiles ++ deletedFiles
     }
     else {
-      newFiles.map(_.copy(dataChange = canChangeData)) ++
-        deletedFiles.map(_.copy(dataChange = canChangeData))
+      newFiles.map(_.copy(dataChange = noDataChange)) ++
+        deletedFiles.map(_.copy(dataChange = noDataChange))
     }
   }
 }
