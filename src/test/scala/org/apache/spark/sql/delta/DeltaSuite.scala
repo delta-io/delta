@@ -943,7 +943,7 @@ class DeltaSuite extends QueryTest
         .write
         .format("delta")
         .mode("overwrite")
-        .option("changeData", "false")
+        .option("dataChange", "false")
         .save(tempDir.toString)
 
       val deltaLog = DeltaLog.forTable(spark, tempDir)
