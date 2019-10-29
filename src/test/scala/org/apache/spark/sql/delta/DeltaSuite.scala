@@ -928,7 +928,6 @@ class DeltaSuite extends QueryTest
     val tempDir = Utils.createTempDir()
 
     spark.range(100)
-      .repartition(4)
       .write
       .format("delta")
       .save(tempDir.toString)
@@ -936,7 +935,6 @@ class DeltaSuite extends QueryTest
     val df = spark.read.format("delta").load(tempDir.toString)
 
     df
-      .repartition(2)
       .write
       .format("delta")
       .mode("overwrite")
@@ -956,7 +954,6 @@ class DeltaSuite extends QueryTest
     val tempDir = Utils.createTempDir()
 
     spark.range(100)
-      .repartition(4)
       .write
       .format("delta")
       .save(tempDir.toString)
@@ -964,7 +961,6 @@ class DeltaSuite extends QueryTest
     val df = spark.read.format("delta").load(tempDir.toString)
 
     df
-      .repartition(2)
       .write
       .format("delta")
       .mode("overwrite")
