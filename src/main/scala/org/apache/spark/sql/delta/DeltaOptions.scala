@@ -79,13 +79,13 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
   }
 
   /**
-   * Whether to write new data to the table
-   * or just rearrange data that is already part of the table.
-   * This option declares that the data being written by that commit
-    * does not change data in the table
+   * Whether to write new data to the table or just rearrange data that is already
+   * part of the table. This option declares that the data being written by this job
+   * does not change any data in the table and merely rearranges existing data.
+   * This makes sure streaming queries reading from this table will not see any new changes
    */
-  def noDataChange: Boolean = {
-    options.get(DATA_CHANGE_OPTION).map(toBoolean(_, DATA_CHANGE_OPTION)).getOrElse(true)
+  def rearrangeOnly: Boolean = {
+    options.get(DATA_CHANGE_OPTION).map(!toBoolean(_, DATA_CHANGE_OPTION)).getOrElse(false)
   }
 
 }

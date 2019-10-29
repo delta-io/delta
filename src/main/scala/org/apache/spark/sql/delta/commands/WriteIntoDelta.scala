@@ -122,13 +122,13 @@ case class WriteIntoDelta(
       case _ => Nil
     }
 
-    val noDataChange = options.noDataChange
-    if (noDataChange) {
-      newFiles ++ deletedFiles
+    val rearrangeOnly = options.rearrangeOnly
+    if (rearrangeOnly) {
+      newFiles.map(_.copy(dataChange = rearrangeOnly)) ++
+        deletedFiles.map(_.copy(dataChange = rearrangeOnly))
     }
     else {
-      newFiles.map(_.copy(dataChange = noDataChange)) ++
-        deletedFiles.map(_.copy(dataChange = noDataChange))
+      newFiles ++ deletedFiles
     }
   }
 }
