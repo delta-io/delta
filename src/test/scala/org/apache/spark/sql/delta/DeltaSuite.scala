@@ -925,67 +925,57 @@ class DeltaSuite extends QueryTest
   }
 
   test("support for setting dataChange to false") {
-    withTempDir { tempDir =>
-      if (tempDir.exists()) {
-        assert(tempDir.delete())
-      }
+    val tempDir = Utils.createTempDir()
 
-      spark.range(100)
-        .repartition(4)
-        .write
-        .format("delta")
-        .save(tempDir.toString)
+    spark.range(100)
+      .repartition(4)
+      .write
+      .format("delta")
+      .save(tempDir.toString)
 
-      val df = spark.read.format("delta").load(tempDir.toString)
+    val df = spark.read.format("delta").load(tempDir.toString)
 
-      df
-        .repartition(2)
-        .write
-        .format("delta")
-        .mode("overwrite")
-        .option("dataChange", "false")
-        .save(tempDir.toString)
+    df
+      .repartition(2)
+      .write
+      .format("delta")
+      .mode("overwrite")
+      .option("dataChange", "false")
+      .save(tempDir.toString)
 
-      val deltaLog = DeltaLog.forTable(spark, tempDir)
-      val version = deltaLog.snapshot.version
-      val commitActions = deltaLog.store.read(FileNames.deltaFile(deltaLog.logPath, version))
-        .map(Action.fromJson)
-      val fileActions = commitActions.collect { case a: FileAction => a }
-      val dataChanges = fileActions.map(_.dataChange)
+    val deltaLog = DeltaLog.forTable(spark, tempDir)
+    val version = deltaLog.snapshot.version
+    val commitActions = deltaLog.store.read(FileNames.deltaFile(deltaLog.logPath, version))
+      .map(Action.fromJson)
+    val fileActions = commitActions.collect { case a: FileAction => a }
 
-      assert(dataChanges == Seq(false, false, false, false, false, false))
-    }
+     assert(fileActions.forall(!_.dataChange))
   }
 
   test("dataChange is by default set to true") {
-    withTempDir { tempDir =>
-      if (tempDir.exists()) {
-        assert(tempDir.delete())
-      }
+    val tempDir = Utils.createTempDir()
 
-      spark.range(100)
-        .repartition(4)
-        .write
-        .format("delta")
-        .save(tempDir.toString)
+    spark.range(100)
+      .repartition(4)
+      .write
+      .format("delta")
+      .save(tempDir.toString)
 
-      val df = spark.read.format("delta").load(tempDir.toString)
+    val df = spark.read.format("delta").load(tempDir.toString)
 
-      df
-        .repartition(2)
-        .write
-        .format("delta")
-        .mode("overwrite")
-        .save(tempDir.toString)
+    df
+      .repartition(2)
+      .write
+      .format("delta")
+      .mode("overwrite")
+      .save(tempDir.toString)
 
-      val deltaLog = DeltaLog.forTable(spark, tempDir)
-      val version = deltaLog.snapshot.version
-      val commitActions = deltaLog.store.read(FileNames.deltaFile(deltaLog.logPath, version))
-        .map(Action.fromJson)
-      val fileActions = commitActions.collect { case a: FileAction => a }
-      val dataChanges = fileActions.map(_.dataChange)
+    val deltaLog = DeltaLog.forTable(spark, tempDir)
+    val version = deltaLog.snapshot.version
+    val commitActions = deltaLog.store.read(FileNames.deltaFile(deltaLog.logPath, version))
+      .map(Action.fromJson)
+    val fileActions = commitActions.collect { case a: FileAction => a }
 
-      assert(dataChanges == Seq(true, true, true, true, true, true))
-    }
+    assert(fileActions.forall(_.dataChange))
   }
 }
