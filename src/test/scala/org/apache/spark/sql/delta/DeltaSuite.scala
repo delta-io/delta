@@ -18,8 +18,10 @@ package org.apache.spark.sql.delta
 
 import java.io.{File, FileNotFoundException}
 
+import org.apache.spark.sql.delta.actions.{Action, FileAction}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.SparkException
@@ -920,5 +922,56 @@ class DeltaSuite extends QueryTest
         .write.format("delta").partitionBy("id").saveAsTable("sc15200test")
       checkAnswer(spark.table("sc15200test"), Seq.empty)
     }
+  }
+
+  test("support for setting dataChange to false") {
+    val tempDir = Utils.createTempDir()
+
+    spark.range(100)
+      .write
+      .format("delta")
+      .save(tempDir.toString)
+
+    val df = spark.read.format("delta").load(tempDir.toString)
+
+    df
+      .write
+      .format("delta")
+      .mode("overwrite")
+      .option("dataChange", "false")
+      .save(tempDir.toString)
+
+    val deltaLog = DeltaLog.forTable(spark, tempDir)
+    val version = deltaLog.snapshot.version
+    val commitActions = deltaLog.store.read(FileNames.deltaFile(deltaLog.logPath, version))
+      .map(Action.fromJson)
+    val fileActions = commitActions.collect { case a: FileAction => a }
+
+     assert(fileActions.forall(!_.dataChange))
+  }
+
+  test("dataChange is by default set to true") {
+    val tempDir = Utils.createTempDir()
+
+    spark.range(100)
+      .write
+      .format("delta")
+      .save(tempDir.toString)
+
+    val df = spark.read.format("delta").load(tempDir.toString)
+
+    df
+      .write
+      .format("delta")
+      .mode("overwrite")
+      .save(tempDir.toString)
+
+    val deltaLog = DeltaLog.forTable(spark, tempDir)
+    val version = deltaLog.snapshot.version
+    val commitActions = deltaLog.store.read(FileNames.deltaFile(deltaLog.logPath, version))
+      .map(Action.fromJson)
+    val fileActions = commitActions.collect { case a: FileAction => a }
+
+    assert(fileActions.forall(_.dataChange))
   }
 }
