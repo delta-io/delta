@@ -126,8 +126,7 @@ case class WriteIntoDelta(
     if (rearrangeOnly) {
       newFiles.map(_.copy(dataChange = !rearrangeOnly)) ++
         deletedFiles.map(_.copy(dataChange = !rearrangeOnly))
-    }
-    else {
+    } else {
       newFiles ++ deletedFiles
     }
   }
