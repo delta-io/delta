@@ -94,6 +94,18 @@ class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
   /**
    * :: Evolving ::
    *
+   * Writes a manifest containing the list of data files to read for querying a delta table.
+   *
+   * @since 0.4.0
+   */
+  @Evolving
+  def generateManifest(): DataFrame = {
+    generateManifest(deltaLog, None)
+  }
+
+  /**
+   * :: Evolving ::
+   *
    * Recursively delete files and directories in the table that are not needed by the table for
    * maintaining older versions up to the given retention threshold. This method will return an
    * empty DataFrame on successful completion.
@@ -604,6 +616,7 @@ object DeltaTable {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
       throw new IllegalArgumentException("Could not find active SparkSession")
     }
+
     forPath(sparkSession, path)
   }
 
