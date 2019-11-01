@@ -2,7 +2,7 @@
 
 ### Sign Up for Databricks Community Edition
 
-This tutorial goes through many Delta Lake features including schema enforcement and schema evolution, interoperability between batch and streaming workloads, time travel, and DML commands like Delete and Merge. It was originally given at [Spark Summit 2019 Europe](https://databricks.com/sparkaisummit/europe) and is available in both Scala and Python. The instructions on this page explain how to run the examples on Databricks Community Edition, but all the pieces (except some of the Databricks filesystem bits) should work in any **Spark 2.4.2** or higher with **Delta Lake 0.4.0** or higher. If you'd prefer to watch the tutorial, along with some brief background information about the problems Delta Lake tries to solve, in video form, here's the recording from one of the Spark Summit sessions:
+This tutorial goes through many features of Delta Lake features including schema enforcement and schema evolution, interoperability between batch and streaming workloads, time travel, and DML commands like Delete and Merge. It was originally given at [Spark Summit 2019 Europe](https://databricks.com/sparkaisummit/europe) and is available in both Scala and Python. The instructions on this page explain how to run the examples on Databricks Community Edition, but all the pieces (except some of the Databricks filesystem bits) should work in any **Spark 2.4.2** or higher with **Delta Lake 0.4.0** or higher. If you'd prefer to watch the tutorial, along with some brief background information about the problems Delta Lake tries to solve, in video form, here's the recording from one of the Spark Summit sessions:
 [![ ](https://img.youtube.com/vi/cpA3Ni8ZUPI/maxresdefault.jpg)](https://youtu.be/cpA3Ni8ZUPI)
 
 <details>
