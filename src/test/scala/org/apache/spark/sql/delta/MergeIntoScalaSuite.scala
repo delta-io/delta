@@ -30,8 +30,8 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
 
   test("basic scala API") {
     withTable("source") {
-      append(Seq((1, 10), (2, 20)).toDF("key1", "value1"), Nil) // target
-      val source = Seq((1, 100), (3, 30)).toDF("key2", "value2") // source
+      append(Seq((1, 10), (2, 20)).toDF("key1", "value1"), Nil)  // target
+      val source = Seq((1, 100), (3, 30)).toDF("key2", "value2")  // source
 
       io.delta.tables.DeltaTable.forPath(spark, tempPath)
         .merge(source, "key1 = key2")
@@ -41,17 +41,17 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
 
       checkAnswer(
         readDeltaTable(tempPath),
-        Row(1, 100) :: // Update
-          Row(2, 20) :: // No change
-          Row(3, 30) :: // Insert
+        Row(1, 100) ::    // Update
+          Row(2, 20) ::     // No change
+          Row(3, 30) ::     // Insert
           Nil)
     }
   }
 
   test("extended scala API") {
     withTable("source") {
-      append(Seq((1, 10), (2, 20), (4, 40)).toDF("key1", "value1"), Nil) // target
-      val source = Seq((1, 100), (3, 30), (4, 41)).toDF("key2", "value2") // source
+      append(Seq((1, 10), (2, 20), (4, 40)).toDF("key1", "value1"), Nil)  // target
+      val source = Seq((1, 100), (3, 30), (4, 41)).toDF("key2", "value2")  // source
 
       io.delta.tables.DeltaTable.forPath(spark, tempPath)
         .merge(source, "key1 = key2")
@@ -62,17 +62,17 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
 
       checkAnswer(
         readDeltaTable(tempPath),
-        Row(1, 100) :: // Update
-          Row(2, 20) :: // No change
-          Row(3, 30) :: // Insert
+        Row(1, 100) ::    // Update
+          Row(2, 20) ::     // No change
+          Row(3, 30) ::     // Insert
           Nil)
     }
   }
 
   test("extended scala API with Column") {
     withTable("source") {
-      append(Seq((1, 10), (2, 20), (4, 40)).toDF("key1", "value1"), Nil) // target
-      val source = Seq((1, 100), (3, 30), (4, 41)).toDF("key2", "value2") // source
+      append(Seq((1, 10), (2, 20), (4, 40)).toDF("key1", "value1"), Nil)  // target
+      val source = Seq((1, 100), (3, 30), (4, 41)).toDF("key2", "value2")  // source
 
       io.delta.tables.DeltaTable.forPath(spark, tempPath)
         .merge(source, functions.expr("key1 = key2"))
@@ -85,9 +85,9 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
 
       checkAnswer(
         readDeltaTable(tempPath),
-        Row(1, 100) :: // Update
-          Row(2, 20) :: // No change
-          Row(3, 30) :: // Insert
+        Row(1, 100) ::    // Update
+          Row(2, 20) ::     // No change
+          Row(3, 30) ::     // Insert
           Nil)
     }
   }
@@ -107,12 +107,12 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
 
       checkAnswer(
         readDeltaTable(tempPath),
-        Row(1, 100) :: // Update
-          Row(2, 20) :: // No change
-          Row(3, 30) :: // Insert
-          Row(4, 41) :: // Update
-          Row(5, 51) :: // Update
-          Row(6, 60) :: // Insert
+        Row(1, 100) ::    // Update
+          Row(2, 20) ::     // No change
+          Row(3, 30) ::     // Insert
+          Row(4, 41) ::     // Update
+          Row(5, 51) ::     // Update
+          Row(6, 60) ::     // Insert
           Nil)
     }
   }
@@ -151,10 +151,10 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
 
     checkAnswer(
       readDeltaTable(tempPath),
-      Row(1, 10) :: // Not updated since no update clause
-        Row(2, 20) :: // No change due to merge condition
-        Row(3, 30) :: // Not updated since no update clause
-        Nil)
+      Row(1, 10) ::       // Not updated since no update clause
+      Row(2, 20) ::       // No change due to merge condition
+      Row(3, 30) ::       // Not updated since no update clause
+      Nil)
 
     // match condition should not be ignored when map is empty
     io.delta.tables.DeltaTable.forPath(spark, tempPath)
@@ -166,9 +166,9 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
 
     checkAnswer(
       readDeltaTable(tempPath),
-      Row(1, 10) :: // Neither updated, nor deleted (condition is not ignored)
-        Row(2, 20) :: // No change due to merge condition
-        Nil) // Deleted (3, 30)
+      Row(1, 10) ::     // Neither updated, nor deleted (condition is not ignored)
+      Row(2, 20) ::     // No change due to merge condition
+      Nil)              // Deleted (3, 30)
   }
 
   test("insert with empty map throws error") {
@@ -280,11 +280,11 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
   }
 
   override protected def executeMerge(
-                                       target: String,
-                                       source: String,
-                                       condition: String,
-                                       update: String,
-                                       insert: String): Unit = {
+      target: String,
+      source: String,
+      condition: String,
+      update: String,
+      insert: String): Unit = {
 
     executeMerge(
       tgt = target,
@@ -295,10 +295,10 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
   }
 
   override protected def executeMerge(
-                                       tgt: String,
-                                       src: String,
-                                       cond: String,
-                                       clauses: MergeClause*): Unit = {
+      tgt: String,
+      src: String,
+      cond: String,
+      clauses: MergeClause*): Unit = {
 
     def parse(tableNameWithAlias: String): (String, Option[String]) = {
       tableNameWithAlias.split(" ").toList match {
@@ -314,32 +314,32 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
     }
 
     def buildClause(
-                     clause: MergeClause,
-                     mergeBuilder: DeltaMergeBuilder): DeltaMergeBuilder = {
+      clause: MergeClause,
+      mergeBuilder: DeltaMergeBuilder): DeltaMergeBuilder = {
 
       if (clause.isMatched) {
         val actionBuilder: DeltaMergeMatchedActionBuilder =
           if (clause.condition != null) mergeBuilder.whenMatched(clause.condition)
           else mergeBuilder.whenMatched()
-        if (clause.action.startsWith("DELETE")) { // DELETE clause
+        if (clause.action.startsWith("DELETE")) {   // DELETE clause
           actionBuilder.delete()
-        } else { // UPDATE clause
+        } else {                                    // UPDATE clause
           val setColExprStr = clause.action.trim.stripPrefix("UPDATE SET")
-          if (setColExprStr.trim == "*") { // UPDATE SET *
+          if (setColExprStr.trim == "*") {          // UPDATE SET *
             actionBuilder.updateAll()
-          } else { // UPDATE SET x = a, y = b, z = c
+          } else {                                  // UPDATE SET x = a, y = b, z = c
             val setColExprPairs = parseUpdate(setColExprStr.split(","))
             actionBuilder.updateExpr(setColExprPairs)
           }
         }
-      } else { // INSERT clause
+      } else {                                        // INSERT clause
         val actionBuilder: DeltaMergeNotMatchedActionBuilder =
           if (clause.condition != null) mergeBuilder.whenNotMatched(clause.condition)
           else mergeBuilder.whenNotMatched()
         val valueStr = clause.action.trim.stripPrefix("INSERT")
-        if (valueStr.trim == "*") { // INSERT *
+        if (valueStr.trim == "*") {                   // INSERT *
           actionBuilder.insertAll()
-        } else { // INSERT (x, y, z) VALUES (a, b, c)
+        } else {                                      // INSERT (x, y, z) VALUES (a, b, c)
           val valueColExprsPairs = parseInsert(valueStr, Some(clause))
           actionBuilder.insertExpr(valueColExprsPairs)
         }
@@ -370,13 +370,13 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
   }
 
   override def testNestedDataSupport(name: String, namePrefix: String = "nested data support")(
-    source: String,
-    target: String,
-    update: Seq[String],
-    insert: String = null,
-    schema: StructType = null,
-    result: String = null,
-    errorStrs: Seq[String] = null): Unit = {
+      source: String,
+      target: String,
+      update: Seq[String],
+      insert: String = null,
+      schema: StructType = null,
+      result: String = null,
+      errorStrs: Seq[String] = null): Unit = {
 
     require(result == null ^ errorStrs == null, "either set the result or the error strings")
 
@@ -410,9 +410,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
           execMerge()
           checkAnswer(readDeltaTable(pathOrName), spark.read.json(strToJsonSeq(result).toDS))
         } else {
-          val e = intercept[AnalysisException] {
-            execMerge()
-          }
+          val e = intercept[AnalysisException] { execMerge() }
           errorStrs.foreach { s => errorContains(e.getMessage, s) }
         }
       }
@@ -430,9 +428,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
   }
 
   private def parseUpdate(update: Seq[String]): Map[String, String] = {
-    update.map {
-      _.split("=").toList
-    }.map {
+    update.map { _.split("=").toList }.map {
       case setCol :: setExpr :: Nil => setCol.trim -> setExpr.trim
       case _ => fail("error parsing update actions " + update)
     }.toMap
@@ -444,7 +440,6 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
         def parse(str: String): Seq[String] = {
           str.trim.stripPrefix("(").stripSuffix(")").split(",").map(_.trim)
         }
-
         val cols = parse(colsStr)
         val exprs = parse(exprsStr)
         require(cols.size == exprs.size,
