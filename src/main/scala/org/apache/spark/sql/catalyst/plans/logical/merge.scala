@@ -26,21 +26,16 @@ import org.apache.spark.sql.types.DataType
 /**
  * Represents an action in MERGE's UPDATE or INSERT clause where a target columns is assigned the
  * value of an expression
- *
  * @param targetColNameParts The name parts of the target column. This is a sequence to support
  *                           nested fields as targets.
- * @param expr               Expression to generate the value of the target column.
+ * @param expr Expression to generate the value of the target column.
  */
 case class MergeAction(targetColNameParts: Seq[String], expr: Expression)
   extends UnaryExpression with Unevaluable {
   override def child: Expression = expr
-
   override def foldable: Boolean = false
-
   override def dataType: DataType = expr.dataType
-
   override def sql: String = s"${targetColNameParts.mkString("`", "`.`", "`")} = ${expr.sql}"
-
   override def toString: String = s"$prettyName ( $sql )"
 }
 
@@ -80,11 +75,8 @@ sealed trait MergeIntoClause extends Expression with Unevaluable {
   }
 
   override def foldable: Boolean = false
-
   override def nullable: Boolean = false
-
   override def dataType: DataType = null
-
   override def children: Seq[Expression] = condition.toSeq ++ actions
 
   /** Verify whether the expressions in the actions are of the right type */
@@ -101,14 +93,14 @@ object MergeIntoClause {
    * Convert the parsed columns names and expressions into action for MergeInto. Note:
    * - Size of column names and expressions must be the same.
    * - If the sizes are zeros and `emptySeqIsStar` is true, this function assumes
-   * that query had `*` as an action, and therefore generates a single action
-   * with `UnresolvedStar`. This will be expanded later during analysis.
+   *   that query had `*` as an action, and therefore generates a single action
+   *   with `UnresolvedStar`. This will be expanded later during analysis.
    * - Otherwise, this will convert the names and expressions to MergeActions.
    */
   def toActions(
-                 colNames: Seq[UnresolvedAttribute],
-                 exprs: Seq[Expression],
-                 isEmptySeqEqualToStar: Boolean = true): Seq[Expression] = {
+      colNames: Seq[UnresolvedAttribute],
+      exprs: Seq[Expression],
+      isEmptySeqEqualToStar: Boolean = true): Seq[Expression] = {
     assert(colNames.size == exprs.size)
     if (colNames.isEmpty && isEmptySeqEqualToStar) {
       Seq[Expression](UnresolvedStar(None))
@@ -176,25 +168,24 @@ case class MergeIntoInsertClause(condition: Option[Expression], actions: Seq[Exp
  *    - WHEN NOT MATCHED clause can have an optional condition.
  */
 case class MergeInto(
-                      target: LogicalPlan,
-                      source: LogicalPlan,
-                      condition: Expression,
-                      matchedClauses: Seq[MergeIntoMatchedClause],
-                      notMatchedClause: Option[MergeIntoInsertClause]) extends Command {
+    target: LogicalPlan,
+    source: LogicalPlan,
+    condition: Expression,
+    matchedClauses: Seq[MergeIntoMatchedClause],
+    notMatchedClause: Option[MergeIntoInsertClause]) extends Command {
 
   (matchedClauses ++ notMatchedClause).foreach(_.verifyActions())
 
   override def children: Seq[LogicalPlan] = Seq(target, source)
-
   override def output: Seq[Attribute] = Seq.empty
 }
 
 object MergeInto {
   def apply(
-             target: LogicalPlan,
-             source: LogicalPlan,
-             condition: Expression,
-             whenClauses: Seq[MergeIntoClause]): MergeInto = {
+      target: LogicalPlan,
+      source: LogicalPlan,
+      condition: Expression,
+      whenClauses: Seq[MergeIntoClause]): MergeInto = {
     val deleteClauses = whenClauses.collect { case x: MergeIntoDeleteClause => x }
     val updateClauses = whenClauses.collect { case x: MergeIntoUpdateClause => x }
     val insertClauses = whenClauses.collect { case x: MergeIntoInsertClause => x }
@@ -231,7 +222,7 @@ object MergeInto {
   }
 
   def resolveReferences(merge: MergeInto)(
-    resolveExpr: (Expression, LogicalPlan) => Expression): MergeInto = {
+      resolveExpr: (Expression, LogicalPlan) => Expression): MergeInto = {
 
     val MergeInto(target, source, condition, matchedClauses, notMatchedClause) = merge
 
