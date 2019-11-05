@@ -119,7 +119,7 @@ object VacuumCommand extends VacuumCommandImpl {
       val hadoopConf = spark.sparkContext.broadcast(
         new SerializableConfiguration(sessionHadoopConf))
       val basePath = fs.makeQualified(path).toString
-      val isBloomFiltered = false
+      var isBloomFiltered = false
 
       val validFiles = snapshot.state
         .mapPartitions { actions =>
