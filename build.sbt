@@ -1,3 +1,4 @@
+
 /*
  * Copyright 2019 Databricks, Inc.
  *
@@ -23,26 +24,37 @@ lazy val commonSettings = Seq(
 
 lazy val core = (project in file("core"))
   .settings(
-    name := "delta-connector-core",
+    name := "delta-core-shaded",
     libraryDependencies ++= Seq(
       "io.delta" %% "delta-core" % "0.4.0" excludeAll (ExclusionRule("org.apache.hadoop")),
       "org.apache.spark" %% "spark-sql" % "2.4.2" excludeAll (ExclusionRule("org.apache.hadoop")),
       "org.apache.hadoop" % "hadoop-client" % "2.6.5" % "provided"
     ),
+
+    // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
     packageBin in Compile := assembly.value,
+
     commonSettings,
     assemblySettings
   )
 
 lazy val coreTest = (project in file("coreTest"))
   .settings(
-    commonSettings,
-    libraryDependencies += "org.apache.hadoop" % "hadoop-client" % "2.6.5",
+    // Add the uber jar as unmanaged library so that we don't bring in the transitive dependencies
     unmanagedJars in Compile += (packageBin in(core, Compile, packageBin)).value,
+
+    // Only dependency not in the uber jar
+    libraryDependencies += "org.apache.hadoop" % "hadoop-client" % "2.6.5",
+
     autoScalaLibrary := false,
 
-    // Ensures that the connector core jar is compiled before compiling this project
-    (compile in Compile) := ((compile in Compile) dependsOn (packageBin in (core, Compile, packageBin))).value
+    // Ensure that the uber jar is compiled before compiling this project
+    (compile in Compile) := ((compile in Compile) dependsOn (packageBin in (core, Compile, packageBin))).value,
+
+    // Make 'test' invoke 'runMain'
+    test in Test := (runMain in Runtime).toTask(" test.Test").value,
+
+    commonSettings
   )
 
 
