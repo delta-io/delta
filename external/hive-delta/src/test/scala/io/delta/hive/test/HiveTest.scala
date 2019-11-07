@@ -4,7 +4,6 @@ import java.io.File
 import java.nio.file.Files
 
 import scala.collection.JavaConverters._
-
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.hive.cli.CliSessionState
 import org.apache.hadoop.hive.conf.HiveConf
@@ -14,9 +13,10 @@ import org.apache.hadoop.hive.ql.session.SessionState
 import org.apache.hadoop.mapred.{JobConf, MiniMRCluster}
 import org.apache.hadoop.mapreduce.MRJobConfig
 import org.apache.hadoop.yarn.conf.YarnConfiguration
-
-import org.apache.spark.SparkFunSuite
+import org.apache.spark.{SparkConf, SparkFunSuite}
 import org.apache.spark.network.util.JavaUtils
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.delta.DeltaLog
 
 // TODO Yarn is using log4j2. Disable its verbose logs.
 trait HiveTest extends SparkFunSuite {
@@ -71,6 +71,7 @@ trait HiveTest extends SparkFunSuite {
 
   def runQuery(query: String): Seq[String] = {
     val response = driver.run(query)
+
     if (response.getResponseCode != 0) {
       throw new Exception(s"failed to run '$query': ${response.getErrorMessage}")
     }
@@ -79,6 +80,45 @@ trait HiveTest extends SparkFunSuite {
       result.asScala
     } else {
       Nil
+    }
+  }
+
+  /**
+   * Drops table `tableName` after calling `f`.
+   */
+  protected def withTable(tableNames: String*)(f: => Unit): Unit = {
+    try f finally {
+      tableNames.foreach { name =>
+        runQuery(s"DROP TABLE IF EXISTS $name")
+      }
+    }
+  }
+
+  /**
+   * Creates a temporary directory, which is then passed to `f` and will be deleted after `f`
+   * returns.
+   *
+   * @todo Probably this method should be moved to a more general place
+   */
+  protected def withTempDir(f: File => Unit): Unit = {
+    val dir = Files.createTempDirectory("hiveondelta").toFile
+
+    try f(dir) finally {
+      JavaUtils.deleteRecursively(dir)
+    }
+  }
+
+  protected def withSparkSession(f: SparkSession => Unit): Unit = {
+    val conf = new SparkConf()
+    val spark = SparkSession.builder()
+      .appName("HiveConnectorSuite")
+      .master("local[2]")
+      .getOrCreate()
+
+    try f(spark) finally {
+      // Clean up resources so that we can use new DeltaLog and SparkSession
+      spark.stop()
+      DeltaLog.clearCache()
     }
   }
 }

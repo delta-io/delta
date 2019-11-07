@@ -17,7 +17,7 @@
             <groupId>io.delta</groupId>
             <artifactId>delta-core_2.11</artifactId>
             <scope>provided</scope>
-            <version>0.3.1-SNAPSHOT</version>
+            <version>0.4.0</version>
         </dependency>
 
         <dependency>

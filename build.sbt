@@ -48,15 +48,16 @@ lazy val hive = (project in file("external/hive-delta")) settings (
       ExclusionRule(organization = "org.apache.parquet"),
       ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm")
     ),
-    "org.apache.hadoop" % "hadoop-common" % "2.7.0" % "test" classifier "tests",
-    "org.apache.hadoop" % "hadoop-mapreduce-client-hs" % "2.7.0" % "test",
-    "org.apache.hadoop" % "hadoop-mapreduce-client-jobclient" % "2.7.0" % "test" classifier "tests",
-    "org.apache.hadoop" % "hadoop-yarn-server-tests" % "2.7.0" % "test" classifier "tests",
+    "org.apache.hadoop" % "hadoop-common" % "2.7.2" % "test" classifier "tests",
+    "org.apache.hadoop" % "hadoop-mapreduce-client-hs" % "2.7.2" % "test",
+    "org.apache.hadoop" % "hadoop-mapreduce-client-jobclient" % "2.7.2" % "test" classifier "tests",
+    "org.apache.hadoop" % "hadoop-yarn-server-tests" % "2.7.2" % "test" classifier "tests",
     "org.apache.hive" % "hive-cli" % "2.3.3" % "test" excludeAll(
       ExclusionRule(organization = "org.apache.spark"),
       ExclusionRule(organization = "org.apache.parquet"),
       ExclusionRule("ch.qos.logback", "logback-classic"),
-      ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm")
+      ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm"),
+      ExclusionRule(organization = "javax.servlet")
     ),
     "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
     "org.scalatest" %% "scalatest" % "3.0.5" % "test"
