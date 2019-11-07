@@ -10,7 +10,7 @@ import org.apache.hadoop.hive.ql.plan.{ExprNodeColumnDesc, ExprNodeConstantDesc,
 import org.apache.hadoop.hive.ql.udf.generic._
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.expressions.{And, EqualNullSafe, EqualTo, Expression, GreaterThan, GreaterThanOrEqual, InSet, LessThan, LessThanOrEqual, Like, Literal}
+import org.apache.spark.sql.catalyst.expressions.{And, EqualNullSafe, EqualTo, Expression, GreaterThan, GreaterThanOrEqual, InSet, LessThan, LessThanOrEqual, Like, Literal, Not}
 
 object DeltaPushFilter extends Logging {
   lazy val supportedPushDownUDFs = Array(
@@ -46,6 +46,10 @@ object DeltaPushFilter extends Logging {
                 columnDesc.asInstanceOf[ExprNodeColumnDesc].getColumn)
               val constantVal = Literal(constantDesc.asInstanceOf[ExprNodeConstantDesc].getValue)
               nd.asInstanceOf[ExprNodeGenericFuncDesc].getGenericUDF match {
+                case f: GenericUDFOPNotEqual =>
+                  Not(EqualTo(columnAttr, constantVal))
+                case f: GenericUDFOPNotEqualNS =>
+                  Not(EqualNullSafe(columnAttr, constantVal))
                 case f: GenericUDFOPEqualNS =>
                   EqualNullSafe(columnAttr, constantVal)
                 case f: GenericUDFOPEqual =>

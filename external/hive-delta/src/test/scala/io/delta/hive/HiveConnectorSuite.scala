@@ -276,6 +276,11 @@ class HiveConnectorSuite extends HiveTest with BeforeAndAfterEach {
             .map(r => s"${r._1}\t${r._2}\t${r._3}\t${r._4}").sorted)
 
         assert(runQuery(
+          "select city, `date`, name, cnt from deltaPartitionTbl where `date` != '20180520'")
+          .toList.sorted === testData.filter(_._2 != "20180520")
+          .map(r => s"${r._1}\t${r._2}\t${r._3}\t${r._4}").sorted)
+
+        assert(runQuery(
           "select city, `date`, name, cnt from deltaPartitionTbl where `date` > '20180520'")
           .toList.sorted === testData.filter(_._2 > "20180520")
             .map(r => s"${r._1}\t${r._2}\t${r._3}\t${r._4}").sorted)
