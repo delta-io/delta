@@ -37,7 +37,7 @@ public class DeltaInputFormat extends FileInputFormat<NullWritable, ArrayWritabl
                 if (LOG.isDebugEnabled()) {
                     LOG.debug("Using vectorized record reader");
                 }
-                throw new IOException("Current not support Delta VectorizedReader");
+                throw new IOException("Currently not support Delta VectorizedReader");
             } else {
                 if (LOG.isDebugEnabled()) {
                     LOG.debug("Using row-mode record reader");
