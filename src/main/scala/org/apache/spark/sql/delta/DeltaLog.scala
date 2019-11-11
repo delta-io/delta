@@ -42,6 +42,8 @@ import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Expression, In, InSet, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
 import org.apache.spark.sql.execution.datasources._
+import org.apache.spark.sql.execution.datasources.json.JsonFileFormat
+import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.sources.{BaseRelation, InsertableRelation}
 import org.apache.spark.util.{Clock, SystemClock, ThreadUtils}
 
@@ -144,14 +146,15 @@ class DeltaLog private(
     val deltaVersions = deltas.map(f => deltaVersion(f.getPath))
     verifyDeltaVersions(deltaVersions)
     val newVersion = deltaVersions.lastOption.getOrElse(c.version)
-    val deltaFiles = ((c.version + 1) to newVersion).map(deltaFile(logPath, _))
     logInfo(s"Loading version $newVersion starting from checkpoint ${c.version}")
     try {
+      val deltaIndex = DeltaLogFileIndex(DeltaLog.COMMIT_FILE_FORMAT, deltas)
+      val checkpointIndex = DeltaLogFileIndex(DeltaLog.CHECKPOINT_FILE_FORMAT, fs, checkpointFiles)
       val snapshot = new Snapshot(
         logPath,
         newVersion,
         None,
-        checkpointFiles ++ deltaFiles,
+        checkpointIndex :: deltaIndex :: Nil,
         minFileRetentionTimestamp,
         this,
         // we don't want to make an additional RPC here to get commit timestamps when "deltas" is
@@ -162,6 +165,10 @@ class DeltaLog private(
       lastUpdateTimestamp = clock.getTimeMillis()
       snapshot
     } catch {
+      case e: FileNotFoundException
+          if Option(e.getMessage).exists(_.contains("parquet does not exist")) =>
+        recordDeltaEvent(this, "delta.checkpoint.error.partial")
+        throw DeltaErrors.missingPartFilesException(c, e)
       case e: AnalysisException if Option(e.getMessage).exists(_.contains("Path does not exist")) =>
         recordDeltaEvent(this, "delta.checkpoint.error.partial")
         throw DeltaErrors.missingPartFilesException(c, e)
@@ -300,8 +307,10 @@ class DeltaLog private(
           val newCheckpointFiles = newCheckpoint.get.getCorrespondingFiles(logPath)
 
           val newVersion = deltaVersions.last
-          val deltaFiles =
-            ((newCheckpointVersion + 1) to newVersion).map(deltaFile(logPath, _))
+
+          val deltaIndex = DeltaLogFileIndex(DeltaLog.COMMIT_FILE_FORMAT, deltas)
+          val checkpointIndex =
+            DeltaLogFileIndex(DeltaLog.CHECKPOINT_FILE_FORMAT, fs, newCheckpointFiles)
 
           logInfo(s"Loading version $newVersion starting from checkpoint $newCheckpointVersion")
 
@@ -309,7 +318,7 @@ class DeltaLog private(
             logPath,
             newVersion,
             None,
-            newCheckpointFiles ++ deltaFiles,
+            checkpointIndex :: deltaIndex :: Nil,
             minFileRetentionTimestamp,
             this,
             deltas.last.getModificationTime)
@@ -321,11 +330,12 @@ class DeltaLog private(
             // Load Snapshot from scratch to avoid StackOverflowError
             getSnapshotAt(deltaVersions.last, Some(deltas.last.getModificationTime))
           } else {
+            val deltaIndex = DeltaLogFileIndex(DeltaLog.COMMIT_FILE_FORMAT, deltas)
             new Snapshot(
               logPath,
               deltaVersions.last,
               Some(currentSnapshot.state),
-              deltas.map(_.getPath),
+              deltaIndex :: Nil,
               minFileRetentionTimestamp,
               this,
               deltas.last.getModificationTime,
@@ -526,13 +536,31 @@ class DeltaLog private(
         throw DeltaErrors.logFileNotFoundException(versionZeroFile, 0L, metadata)
       }
     }
-    val deltaData =
-      ((checkpointVersion.getOrElse(-1L) + 1) to version).map(deltaFile(logPath, _))
+    val startVersion = checkpointVersion.getOrElse(-1L) + 1
+    // Listing the files may be more efficient than getting the file status for each file
+    val deltaData = store.listFrom(deltaFile(logPath, startVersion))
+      .filter(f => isDeltaFile(f.getPath))
+      .takeWhile(f => deltaVersion(f.getPath) <= version)
+      .toArray
+    val deltaFileVersions = deltaData.map(f => deltaVersion(f.getPath))
+    if (deltaFileVersions.nonEmpty) {
+      // deltaFileVersions can be empty if we're loading a version for which a checkpoint exists
+      verifyDeltaVersions(deltaFileVersions)
+      require(deltaFileVersions.head == startVersion,
+        s"Did not get the first delta file version: $startVersion to compute Snapshot")
+      require(deltaFileVersions.last == version,
+        s"Did not get the last delta file version: $version to compute Snapshot")
+    }
+
+    val deltaIndex = DeltaLogFileIndex(DeltaLog.COMMIT_FILE_FORMAT, deltaData)
+    val checkpointIndex =
+      DeltaLogFileIndex(DeltaLog.CHECKPOINT_FILE_FORMAT, fs, lastCheckpointFiles)
+
     new Snapshot(
       logPath,
       version,
       None,
-      lastCheckpointFiles ++ deltaData,
+      checkpointIndex :: deltaIndex :: Nil,
       minFileRetentionTimestamp,
       this,
       commitTimestamp.getOrElse(-1L))
@@ -797,4 +825,7 @@ object DeltaLog extends DeltaLogging {
       case InSet(a, set) => In(a, set.toSeq.map(Literal(_)))
     })
   }
+
+  private lazy val COMMIT_FILE_FORMAT = new JsonFileFormat
+  private lazy val CHECKPOINT_FILE_FORMAT = new ParquetFileFormat
 }
