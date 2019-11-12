@@ -1185,7 +1185,7 @@ abstract class MergeIntoSuiteBase
     errorStrs = Nil)  // subqueries fail for unresolved reference to `t`
 
 
-  private def testExtendedMerge(
+  protected def testExtendedMerge(
       name: String)(
       source: Seq[(Int, Int)],
       target: Seq[(Int, Int)],
@@ -1319,18 +1319,6 @@ abstract class MergeIntoSuiteBase
       (2, 2),   // (2, 2) not updated as no update clause
       (3, 30)   // (3, 30) inserted
     ))
-
-  test(s"extended syntax - only insert with multiple matches") {
-    withKeyValueData(
-      source = (0, 0) :: (1, 10) :: (1, 100) :: (3, 30) :: (3, 300) :: Nil,
-      target = (1, 1) :: (2, 2) :: Nil
-    ) { case (sourceName, targetName) =>
-      intercept[UnsupportedOperationException] {
-        executeMerge(s"$targetName t", s"$sourceName s", "s.key = t.key",
-          insert(values = "(key, value) VALUES (s.key, s.value)"))
-      }
-    }
-  }
 
   testExtendedMerge("only conditional insert")(
     source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
@@ -1560,4 +1548,54 @@ abstract class MergeIntoSuiteBase
     update(set = "value = someValue"),
     insert(values = "*"))(
     errorStrs = "INSERT clause" :: "value" :: Nil)
+
+  testExtendedMerge("insert only merge")(
+    source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
+    target = (1, 1) :: (2, 2)  :: Nil,
+    mergeOn = "s.key = t.key",
+    insert(values = "*"))(
+    result = Seq(
+      (0, 0), // inserted
+      (1, 1), // existed previously
+      (2, 2), // existed previously
+      (3, 30) // inserted
+    ))
+
+  testExtendedMerge("insert only merge with insert condition on source")(
+    source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
+    target = (1, 1) :: (2, 2)  :: Nil,
+    mergeOn = "s.key = t.key",
+    insert(values = "*", condition = "s.key = s.value"))(
+    result = Seq(
+      (0, 0), // inserted
+      (1, 1), // existed previously
+      (2, 2)  // existed previously
+    ))
+
+  testExtendedMerge("insert only merge with predicate insert")(
+    source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
+    target = (1, 1) :: (2, 2)  :: Nil,
+    mergeOn = "s.key = t.key",
+    insert(values = "(t.key, t.value) VALUES (s.key + 10, s.value + 10)"))(
+    result = Seq(
+      (10, 10), // inserted
+      (1, 1), // existed previously
+      (2, 2), // existed previously
+      (13, 40) // inserted
+    ))
+
+  testExtendedMerge(s"insert only merge with multiple matches") (
+    source = (0, 0) :: (1, 10) :: (1, 100) :: (3, 30) :: (3, 300) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    insert(values = "(key, value) VALUES (s.key, s.value)")) (
+    result = Seq(
+      (0, 0), // inserted
+      (1, 1), // existed previously
+      (2, 2), // existed previously
+      (3, 30), // inserted
+      (3, 300) // key exists but still inserted
+    )
+  )
+
 }
