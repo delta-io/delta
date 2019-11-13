@@ -355,4 +355,11 @@ object DeltaConfigs extends DeltaLogging {
     a => a >= -1,
     "needs to be larger than or equal to -1.")
 
+  val SYMLINK_FORMAT_MANIFEST_ENABLED = buildConfig[Boolean](
+    s"${hooks.GenerateSymlinkManifest.CONFIG_NAME_ROOT}.enabled",
+    "false",
+    _.toBoolean,
+    _ => true,
+    "needs to be a boolean.")
+
 }

@@ -21,6 +21,7 @@ import java.io.FileNotFoundException
 import java.util.ConcurrentModificationException
 
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata}
+import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{Invariant, InvariantViolationException}
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -667,6 +668,19 @@ object DeltaErrors
 
   def describeViewHistory: Throwable = {
     new AnalysisException("Cannot describe the history of a view.")
+  }
+
+  def postCommitHookFailedException(
+      failedHook: PostCommitHook,
+      failedOnCommitVersion: Long,
+      extraErrorMessage: String,
+      error: Throwable): Throwable = {
+    var errorMessage = s"Committing to the Delta table version $failedOnCommitVersion succeeded" +
+      s" but error while executing post-commit hook ${failedHook.name}"
+    if (extraErrorMessage != null && extraErrorMessage.nonEmpty) {
+      errorMessage += s": $extraErrorMessage"
+    }
+    new RuntimeException(errorMessage, error)
   }
 }
 
