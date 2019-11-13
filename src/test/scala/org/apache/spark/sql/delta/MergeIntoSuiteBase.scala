@@ -1185,7 +1185,7 @@ abstract class MergeIntoSuiteBase
     errorStrs = Nil)  // subqueries fail for unresolved reference to `t`
 
 
-  private def testExtendedMerge(
+  protected def testExtendedMerge(
       name: String)(
       source: Seq[(Int, Int)],
       target: Seq[(Int, Int)],

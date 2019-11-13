@@ -331,41 +331,39 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
       return
     }
 
-    withSQLConf("spark.databricks.delta.formatCheck.enabled" -> "false") { // for querying manifests
-      // Validate the expected number of files are present in the manifest
-      val filesInManifest = spark.read.text(manifestPath.toString).select("value").as[String]
-        .map { _.stripPrefix("file:") }.toDF("file")
-      assert(filesInManifest.count() == expectedNumFiles)
+    // Validate the expected number of files are present in the manifest
+    val filesInManifest = spark.read.text(manifestPath.toString).select("value").as[String]
+      .map { _.stripPrefix("file:") }.toDF("file")
+    assert(filesInManifest.count() == expectedNumFiles)
 
-      // Validate that files in the latest version of DeltaLog is same as those in the manifest
-      val filesInLog = deltaSnapshot.allFiles.map { addFile =>
-        // Note: this unescapes the relative path in `addFile`
-        DeltaFileOperations.absolutePath(tablePath.toString, addFile.path).toString
-      }.toDF("file")
-      if (expectSameFiles) {
-        checkAnswer(filesInManifest, filesInLog.toDF())
+    // Validate that files in the latest version of DeltaLog is same as those in the manifest
+    val filesInLog = deltaSnapshot.allFiles.map { addFile =>
+      // Note: this unescapes the relative path in `addFile`
+      DeltaFileOperations.absolutePath(tablePath.toString, addFile.path).toString
+    }.toDF("file")
+    if (expectSameFiles) {
+      checkAnswer(filesInManifest, filesInLog.toDF())
 
-        // Validate that each file in the manifest is actually present in table. This mainly checks
-        // whether the file names in manifest are not escaped and therefore are readable directly
-        // by Hadoop APIs.
-        val fs = new Path(manifestPath.toString).getFileSystem(spark.sessionState.newHadoopConf())
-        spark.read.text(manifestPath.toString).select("value").as[String].collect().foreach { p =>
-          assert(fs.exists(new Path(p)), s"path $p in manifest not found in file system")
-        }
-      } else {
-        assert(filesInManifest.as[String].collect().toSet != filesInLog.as[String].collect().toSet)
+      // Validate that each file in the manifest is actually present in table. This mainly checks
+      // whether the file names in manifest are not escaped and therefore are readable directly
+      // by Hadoop APIs.
+      val fs = new Path(manifestPath.toString).getFileSystem(spark.sessionState.newHadoopConf())
+      spark.read.text(manifestPath.toString).select("value").as[String].collect().foreach { p =>
+        assert(fs.exists(new Path(p)), s"path $p in manifest not found in file system")
       }
+    } else {
+      assert(filesInManifest.as[String].collect().toSet != filesInLog.as[String].collect().toSet)
+    }
 
-      // If there are partitioned files, make sure the partitions values read from them are the
-      // same as those in the table.
-      val partitionCols = deltaSnapshot.metadata.partitionColumns.map(x => s"`$x`")
-      if (partitionCols.nonEmpty && expectSameFiles && expectedNumFiles > 0) {
-        val partitionsInManifest = spark.read.text(manifestPath.toString)
-          .selectExpr(partitionCols: _*).distinct()
-        val partitionsInData = spark.read.format("delta").load(tablePath.toString)
-          .selectExpr(partitionCols: _*).distinct()
-        checkAnswer(partitionsInManifest, partitionsInData)
-      }
+    // If there are partitioned files, make sure the partitions values read from them are the
+    // same as those in the table.
+    val partitionCols = deltaSnapshot.metadata.partitionColumns.map(x => s"`$x`")
+    if (partitionCols.nonEmpty && expectSameFiles && expectedNumFiles > 0) {
+      val partitionsInManifest = spark.read.text(manifestPath.toString)
+        .selectExpr(partitionCols: _*).distinct()
+      val partitionsInData = spark.read.format("delta").load(tablePath.toString)
+        .selectExpr(partitionCols: _*).distinct()
+      checkAnswer(partitionsInManifest, partitionsInData)
     }
   }
 
