@@ -185,6 +185,11 @@ object DeltaErrors
         "Vacuuming specific partitions is currently not supported.")
   }
 
+  def unexpectedDataChangeException(op: String): Throwable = {
+    new AnalysisException(s"Attempting to change metadata when 'dataChange' option is set" +
+      s" to false during $op")
+  }
+
   def unknownConfigurationKeyException(confKey: String): Throwable = {
     new AnalysisException(s"Unknown configuration was specified: $confKey")
   }

@@ -81,7 +81,8 @@ case class WriteIntoDelta(
         deltaLog.assertRemovable()
       }
     }
-    updateMetadata(txn, data, partitionColumns, configuration, isOverwriteOperation)
+    val rearrangeOnly = options.rearrangeOnly
+    updateMetadata(txn, data, partitionColumns, configuration, isOverwriteOperation, rearrangeOnly)
 
     // Validate partition predicates
     val replaceWhere = options.replaceWhere
@@ -122,7 +123,6 @@ case class WriteIntoDelta(
       case _ => Nil
     }
 
-    val rearrangeOnly = options.rearrangeOnly
     if (rearrangeOnly) {
       newFiles.map(_.copy(dataChange = !rearrangeOnly)) ++
         deletedFiles.map(_.copy(dataChange = !rearrangeOnly))

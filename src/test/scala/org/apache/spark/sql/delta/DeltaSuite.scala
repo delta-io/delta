@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.{FileSystem, Path}
 
-import org.apache.spark.SparkException
+import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions.InSet
 import org.apache.spark.sql.catalyst.plans.logical.Filter
@@ -914,56 +914,5 @@ class DeltaSuite extends QueryTest
         assert(tableConfigs.get("delta.dataSkippingNumIndexedCols") == Some("1"))
       }
     }
-  }
-
-  test("support for setting dataChange to false") {
-    val tempDir = Utils.createTempDir()
-
-    spark.range(100)
-      .write
-      .format("delta")
-      .save(tempDir.toString)
-
-    val df = spark.read.format("delta").load(tempDir.toString)
-
-    df
-      .write
-      .format("delta")
-      .mode("overwrite")
-      .option("dataChange", "false")
-      .save(tempDir.toString)
-
-    val deltaLog = DeltaLog.forTable(spark, tempDir)
-    val version = deltaLog.snapshot.version
-    val commitActions = deltaLog.store.read(FileNames.deltaFile(deltaLog.logPath, version))
-      .map(Action.fromJson)
-    val fileActions = commitActions.collect { case a: FileAction => a }
-
-     assert(fileActions.forall(!_.dataChange))
-  }
-
-  test("dataChange is by default set to true") {
-    val tempDir = Utils.createTempDir()
-
-    spark.range(100)
-      .write
-      .format("delta")
-      .save(tempDir.toString)
-
-    val df = spark.read.format("delta").load(tempDir.toString)
-
-    df
-      .write
-      .format("delta")
-      .mode("overwrite")
-      .save(tempDir.toString)
-
-    val deltaLog = DeltaLog.forTable(spark, tempDir)
-    val version = deltaLog.snapshot.version
-    val commitActions = deltaLog.store.read(FileNames.deltaFile(deltaLog.logPath, version))
-      .map(Action.fromJson)
-    val fileActions = commitActions.collect { case a: FileAction => a }
-
-    assert(fileActions.forall(_.dataChange))
   }
 }
