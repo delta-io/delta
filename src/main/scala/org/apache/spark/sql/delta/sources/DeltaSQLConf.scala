@@ -206,4 +206,15 @@ object DeltaSQLConf {
       .longConf
       .createWithDefault(10000L)
 
+  val MERGE_INSERT_ONLY_ENABLED =
+    buildConf("merge.insertOnly.enabled")
+      .internal()
+      .doc(
+        """
+          |If enabled, merge without any matched clause (i.e., insert-only merge) will be optimized
+          |by avoiding rewriting old files and just inserting new files.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
 }

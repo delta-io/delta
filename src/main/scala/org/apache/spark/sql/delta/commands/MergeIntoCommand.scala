@@ -21,6 +21,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.files._
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{AnalysisHelper, SetAccumulator}
 
 import org.apache.spark.SparkContext
@@ -123,7 +124,7 @@ case class MergeIntoCommand(
     spark: SparkSession): Seq[Row] = recordDeltaOperation(targetDeltaLog, "delta.dml.merge") {
     targetDeltaLog.withNewTransaction { deltaTxn =>
       val deltaActions = {
-       if (isInsertOnly) {
+       if (isInsertOnly && spark.conf.get(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED)) {
          writeInsertsOnlyWhenNoMatchedClauses(spark, deltaTxn)
        } else {
          val filesToRewrite =
