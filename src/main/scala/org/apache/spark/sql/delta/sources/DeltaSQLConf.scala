@@ -207,7 +207,7 @@ object DeltaSQLConf {
       .createWithDefault(10000L)
 
   val MERGE_INSERT_ONLY_ENABLED =
-    buildConf("merge.insertOnly.enabled")
+    buildConf("merge.optimizeInsertOnlyMerge.enabled")
       .internal()
       .doc(
         """
