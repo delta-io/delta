@@ -12,14 +12,15 @@ This is the repository for Delta Lake Connectors. It includes a library for quer
 
 The project is compiled using [SBT](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.html). It has the following subprojects.
 
-1. Delta uber jar
+## 1. Delta uber jar
+
 This project generates a single uber jar containing Delta Lake and all it transitive dependencies (except Hadoop and its dependencies).
 - Most of the dependencies are shaded to avoid version conflicts. See the file build.sbt for details on what are not shaded.
 - Hadoop and its dependencies is not included in the jar because they are expected to be present in the deployment environment.
 - To generate the uber jar, run `build/sbt core/compile`
 - To test the uber jar, run `build/sbt coreTest/test`
 
-2. Hive connector (WIP)
+## 2. Hive connector (WIP)
 This project contains all the code needed to make Hive read Delta Lake tables.
 - To compile the project, run `build/sbt hive/compile`
 - To test the project, run `build/sbt hive/test`
