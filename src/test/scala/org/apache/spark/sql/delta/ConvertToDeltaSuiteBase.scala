@@ -27,10 +27,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
-class ConvertToDeltaSuite
-  extends ConvertToDeltaSuiteBase  with org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-
-trait ConvertToDeltaSuiteBase extends QueryTest
+abstract class ConvertToDeltaSuiteBase extends QueryTest
     with SharedSparkSession {
 
   import org.apache.spark.sql.functions._
@@ -77,20 +74,7 @@ trait ConvertToDeltaSuiteBase extends QueryTest
     }
   }
 
-  protected def convertToDelta(identifier: String, partitionSchema: Option[String] = None): Unit = {
-    if (partitionSchema.isDefined) {
-      io.delta.tables.DeltaTable.convertToDelta(
-        spark,
-        identifier,
-        StructType.fromDDL(partitionSchema.get)
-      )
-    } else {
-      io.delta.tables.DeltaTable.convertToDelta(
-        spark,
-        identifier
-      )
-    }
-  }
+  protected def convertToDelta(identifier: String, partitionSchema: Option[String] = None): Unit
 
   test("negative case: convert a non-delta path falsely claimed as parquet") {
     Seq("orc", "json", "csv").foreach { format =>
