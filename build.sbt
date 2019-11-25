@@ -17,6 +17,10 @@
 
 parallelExecution in ThisBuild := false
 
+val sparkVersion = "2.4.3"
+val hadoopVersion = "2.7.2"
+val hiveVersion = "2.3.3"
+
 lazy val commonSettings = Seq(
   version := "0.4.0",
   organization := "io.delta",
@@ -38,9 +42,9 @@ lazy val core = (project in file("core"))
   .settings(
     name := "delta-core-shaded",
     libraryDependencies ++= Seq(
-      "io.delta" %% "delta-core" % "0.4.0" excludeAll (ExclusionRule("org.apache.hadoop")),
-      "org.apache.spark" %% "spark-sql" % "2.4.2" excludeAll (ExclusionRule("org.apache.hadoop")),
-      "org.apache.hadoop" % "hadoop-client" % "2.6.5" % "provided"
+      "io.delta" %% "delta-core" % "0.4.0" excludeAll ExclusionRule("org.apache.hadoop"),
+      "org.apache.spark" %% "spark-sql" % sparkVersion excludeAll ExclusionRule("org.apache.hadoop"),
+      "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided"
     ),
 
     // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
@@ -56,7 +60,8 @@ lazy val coreTest = (project in file("coreTest"))
     unmanagedJars in Compile += (packageBin in(core, Compile, packageBin)).value,
 
     // Only dependency not in the uber jar
-    libraryDependencies += "org.apache.hadoop" % "hadoop-client" % "2.6.5",
+    libraryDependencies += "org.apache.hadoop" % "hadoop-client" % hadoopVersion excludeAll
+      ExclusionRule("org.slf4j", "slf4j-log4j12"),
 
     autoScalaLibrary := false,
 
@@ -68,7 +73,6 @@ lazy val coreTest = (project in file("coreTest"))
 
     commonSettings
   )
-
 
 lazy val assemblySettings = Seq(
   test in assembly := {},
@@ -87,6 +91,8 @@ lazy val assemblySettings = Seq(
       arrow, avro, commons, curator, ivy, jute, log4j, orc, oro, parquet, spark, xbean, zookeeper
     */
 
+    ShadeRule.rename("org.apache.commons.lang3.time.**" -> "shadedelta.@0").inAll,
+
     // Packages to exclude from shading because they are not happy when shaded
     ShadeRule.rename("javax.**" -> "@0").inAll,
     ShadeRule.rename("com.sun.**" -> "@0").inAll,
@@ -94,6 +100,7 @@ lazy val assemblySettings = Seq(
     ShadeRule.rename("org.apache.hadoop.**" -> "@0").inAll, // Do not change any references to hadoop classes as they will be provided
     ShadeRule.rename("org.apache.spark.**" -> "@0").inAll, // Scala package object does not resolve correctly when package changed
     ShadeRule.rename("org.apache.log4j.**" -> "@0").inAll, // Initialization via reflection fails when package changed
+    ShadeRule.rename("org.slf4j.**" -> "@0").inAll, // Initialization via reflection fails when package changed
     ShadeRule.rename("org.apache.commons.**" -> "@0").inAll, // Initialization via reflection fails when package changed
     ShadeRule.rename("org.xerial.snappy.*Native*" -> "@0").inAll, // JNI class fails to resolve native code when package changed
     ShadeRule.rename("com.databricks.**" -> "@0").inAll, // Scala package object does not resolve correctly when package changed
@@ -123,7 +130,6 @@ lazy val assemblySettings = Seq(
 )
 
 lazy val hive = (project in file("hive")) settings (
-  scalaVersion := "2.12.8",
   name := "hive-delta",
   commonSettings,
   unmanagedJars in Compile += (packageBin in(core, Compile, packageBin)).value,
@@ -133,24 +139,25 @@ lazy val hive = (project in file("hive")) settings (
   (compile in Compile) := ((compile in Compile) dependsOn (packageBin in (core, Compile, packageBin))).value,
 
   libraryDependencies ++= Seq(
-    "org.apache.hadoop" % "hadoop-client" % "2.7.0" % "provided",
-    "org.apache.hive" % "hive-exec" % "2.3.3" % "provided" excludeAll(
+    "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided",
+    "org.apache.hive" % "hive-exec" % hiveVersion % "provided" excludeAll(
       ExclusionRule(organization = "org.apache.spark"),
       ExclusionRule(organization = "org.apache.parquet"),
       ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm")
     ),
-    "org.apache.hadoop" % "hadoop-common" % "2.7.0" % "test" classifier "tests",
-    "org.apache.hadoop" % "hadoop-mapreduce-client-hs" % "2.7.0" % "test",
-    "org.apache.hadoop" % "hadoop-mapreduce-client-jobclient" % "2.7.0" % "test" classifier "tests",
-    "org.apache.hadoop" % "hadoop-yarn-server-tests" % "2.7.0" % "test" classifier "tests",
-    "org.apache.hive" % "hive-cli" % "2.3.3" % "test" excludeAll(
+    "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "test" classifier "tests",
+    "org.apache.hadoop" % "hadoop-mapreduce-client-hs" % hadoopVersion % "test",
+    "org.apache.hadoop" % "hadoop-mapreduce-client-jobclient" % hadoopVersion % "test" classifier "tests",
+    "org.apache.hadoop" % "hadoop-yarn-server-tests" % hadoopVersion % "test" classifier "tests",
+    "org.apache.hive" % "hive-cli" % hiveVersion % "test" excludeAll(
       ExclusionRule(organization = "org.apache.spark"),
       ExclusionRule(organization = "org.apache.parquet"),
       ExclusionRule("ch.qos.logback", "logback-classic"),
       ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm")
     ),
     // TODO Figure out how this fixes some bad dependency
-    "org.apache.spark" %% "spark-core" % "2.4.2" % "test" classifier "tests",
-    "org.scalatest" %% "scalatest" % "3.0.5" % "test"
+    "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
+    "org.scalatest" %% "scalatest" % "3.0.5" % "test",
+    "io.delta" %% "delta-core" % "0.4.0" % "test" excludeAll ExclusionRule("org.apache.hadoop")
   )
 )
