@@ -27,7 +27,7 @@ import org.apache.spark.sql.{AnalysisException, DataFrame, SaveMode, SparkSessio
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException}
 import org.apache.spark.sql.catalyst.catalog._
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.catalyst.plans.logical.sql.QualifiedColType
+import org.apache.spark.sql.catalyst.plans.logical.QualifiedColType
 import org.apache.spark.sql.delta.{AlterTableAddColumnsDeltaCommand, AlterTableChangeColumnDeltaCommand, AlterTableSetLocationDeltaCommand, AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand, DeltaConfigs, DeltaErrors, DeltaLog, DeltaTableIdentifier}
 import org.apache.spark.sql.delta.commands.CreateDeltaTableCommand
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils

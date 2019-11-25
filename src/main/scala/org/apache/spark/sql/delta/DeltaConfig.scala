@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 
 import org.apache.spark.sql.AnalysisException
+import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.unsafe.types.CalendarInterval
 
@@ -82,7 +83,7 @@ object DeltaConfigs extends DeltaLogging {
     val sInLowerCase = s.trim.toLowerCase(Locale.ROOT)
     val interval =
       if (sInLowerCase.startsWith("interval ")) sInLowerCase else "interval " + sInLowerCase
-    val cal = CalendarInterval.fromString(interval)
+    val cal = IntervalUtils.fromString(interval)
     if (cal == null) {
       throw new IllegalArgumentException("Invalid interval: " + s)
     }

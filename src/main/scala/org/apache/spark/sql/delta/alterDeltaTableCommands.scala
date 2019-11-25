@@ -23,7 +23,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
 import org.apache.spark.sql.catalyst.plans.logical.IgnoreCachedData
-import org.apache.spark.sql.catalyst.plans.logical.sql.QualifiedColType
+import org.apache.spark.sql.catalyst.plans.logical.QualifiedColType
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.execution.command.{DDLUtils, RunnableCommand}
