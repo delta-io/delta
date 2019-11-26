@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.scalatest.Tag
 
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, QueryTest, Row}
@@ -279,5 +280,5 @@ trait DescribeDeltaHistorySuiteBase
 }
 
 class DescribeDeltaHistorySuite
-  extends DescribeDeltaHistorySuiteBase  with org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+  extends DescribeDeltaHistorySuiteBase with DeltaSQLCommandTest
 

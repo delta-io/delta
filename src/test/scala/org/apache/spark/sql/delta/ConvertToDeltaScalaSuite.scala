@@ -16,19 +16,23 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.types.StructType
 
-class ConvertToDeltaSQLSuite
-  extends ConvertToDeltaSuiteBase  with DeltaSQLCommandTest
-  {
+class ConvertToDeltaScalaSuite extends ConvertToDeltaSuiteBase {
   override protected def convertToDelta(
       identifier: String,
       partitionSchema: Option[String] = None): Unit = {
-    if (partitionSchema.isEmpty) {
-      sql(s"convert to delta $identifier")
+    if (partitionSchema.isDefined) {
+      io.delta.tables.DeltaTable.convertToDelta(
+        spark,
+        identifier,
+        StructType.fromDDL(partitionSchema.get)
+      )
     } else {
-      val stringSchema = partitionSchema.get
-      sql(s"convert to delta $identifier partitioned by ($stringSchema) ")
+      io.delta.tables.DeltaTable.convertToDelta(
+        spark,
+        identifier
+      )
     }
   }
 }
