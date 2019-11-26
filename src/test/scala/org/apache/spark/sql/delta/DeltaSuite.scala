@@ -18,11 +18,13 @@ package org.apache.spark.sql.delta
 
 import java.io.{File, FileNotFoundException}
 
+import org.apache.spark.sql.delta.actions.{Action, FileAction}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.{FileSystem, Path}
 
-import org.apache.spark.SparkException
+import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions.InSet
 import org.apache.spark.sql.catalyst.plans.logical.Filter
@@ -911,14 +913,6 @@ class DeltaSuite extends QueryTest
         val tableConfigs = DeltaLog.forTable(spark, path).update().metadata.configuration
         assert(tableConfigs.get("delta.dataSkippingNumIndexedCols") == Some("1"))
       }
-    }
-  }
-
-  test("SC-15200: SaveAsTable on empty dataframe should create table") {
-    withTable("sc15200test") {
-      spark.range(0).selectExpr("id", "id as id2")
-        .write.format("delta").partitionBy("id").saveAsTable("sc15200test")
-      checkAnswer(spark.table("sc15200test"), Seq.empty)
     }
   }
 }

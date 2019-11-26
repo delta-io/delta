@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.tables
+package io.delta.tables.execution
 
 import org.apache.spark.sql.delta.commands.{ConvertToDeltaCommand, ConvertToDeltaCommandBase}
 

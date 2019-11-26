@@ -18,12 +18,8 @@ package org.apache.spark.sql.catalyst.plans.logical
 
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 
-/**
- * Perform DELETE on a table, in which all the rows are deleted if and only the condition is true
- *
- * @param child the logical plan representing target table
- * @param condition: Only rows that match the condition will be deleted.
- */
+// This only used by Delta which needs to be compatible with DBR 6 and can't use the new class
+// added in the master branch: `DeleteFromTable`.
 case class Delete(
     child: LogicalPlan,
     condition: Option[Expression])

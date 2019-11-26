@@ -19,44 +19,85 @@
 import os
 import fnmatch
 import subprocess
+import sys
+import shutil
 from os import path
 
 
-def test(root_dir, jar_file):
-    # And then, run all of the test under test/python directory, each of them
+def test(root_dir, package):
+    # Run all of the test under test/python directory, each of them
     # has main entry point to execute, which is python's unittest testing
     # framework.
-    test_dir = path.join(root_dir,
-                         path.join("python", path.join("delta", "tests")))
+    python_root_dir = path.join(root_dir, "python")
+    test_dir = path.join(python_root_dir, path.join("delta", "tests"))
     test_files = [os.path.join(test_dir, f) for f in os.listdir(test_dir)
                   if os.path.isfile(os.path.join(test_dir, f)) and
                   f.endswith(".py") and not f.startswith("_")]
+    extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
+
     for test_file in test_files:
         try:
-            subprocess.check_output(["spark-submit", "--jars", jar_file,
-                                     "--py-files", jar_file, test_file])
+            cmd = ["spark-submit",
+                   "--driver-class-path=%s" % extra_class_path,
+                   "--packages", package, test_file]
+            print("Running tests in %s\n=============" % test_file)
+            print("Command: %s" % str(cmd))
+            run_cmd(cmd, stream_output=True)
         except:
-            raise Exception("Failed test %s: " % test_file)
+            print("Failed tests in %s" % (test_file))
+            raise
+
+
+def delete_if_exists(path):
+    # if path exists, delete it.
+    if os.path.exists(path):
+        shutil.rmtree(path)
+        print("Deleted %s " % path)
 
 
 def prepare(root_dir):
     # Build package with python files in it
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
-    subprocess.call([sbt_path, "clean", "++ 2.11.12 spPackage"])
-    target_dir = path.join(root_dir, "target")
-    jar_files = []
-    for root, dirnames, filenames in os.walk(target_dir):
-        for filename in fnmatch.filter(filenames, '*.jar'):
-            jar_files.append(path.join(root, filename))
-    if len(jar_files) > 1:
-        raise Exception("Multiple JAR files found in %s: %s "
-                        % (target_dir, jar_files.join(", ")))
-    elif len(jar_files) == 0:
-        raise Exception("No JAR file found in %s" % target_dir)
-    return jar_files[0]
+    delete_if_exists(os.path.expanduser("~/.ivy2/cache/io.delta"))
+    delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
+    run_cmd([sbt_path, "clean", "++ 2.11.12 publishM2"], stream_output=True)
+
+    # Get current release which is required to be loaded
+    version = '0.0.0'
+    with open(os.path.join(root_dir, "version.sbt")) as fd:
+            version = fd.readline().split('"')[1]
+    package = "io.delta:delta-core_2.11:" + version
+    return package
+
+
+def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
+    cmd_env = os.environ.copy()
+    if env:
+        cmd_env.update(env)
+
+    if stream_output:
+        child = subprocess.Popen(cmd, env=cmd_env, **kwargs)
+        exit_code = child.wait()
+        if throw_on_error and exit_code != 0:
+            raise Exception("Non-zero exitcode: %s" % (exit_code))
+        return exit_code
+    else:
+        child = subprocess.Popen(
+            cmd,
+            env=cmd_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            **kwargs)
+        (stdout, stderr) = child.communicate()
+        exit_code = child.wait()
+        if throw_on_error and exit_code is not 0:
+            raise Exception(
+                "Non-zero exitcode: %s\n\nSTDOUT:\n%s\n\nSTDERR:%s" %
+                (exit_code, stdout, stderr))
+        return (exit_code, stdout, stderr)
 
 
 if __name__ == "__main__":
-    root_dir = os.path.dirname(os.path.dirname(__file__))
-    jar_file = prepare(root_dir)
-    test(root_dir, jar_file)
+    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    package = prepare(root_dir)
+    test(root_dir, package)

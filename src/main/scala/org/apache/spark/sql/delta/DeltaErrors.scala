@@ -21,6 +21,7 @@ import java.io.FileNotFoundException
 import java.util.ConcurrentModificationException
 
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata}
+import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{Invariant, InvariantViolationException}
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -175,10 +176,19 @@ object DeltaErrors
         s" ${formatColumnList(colMatches.map(_.name))}.")
   }
 
+  def tableNotSupportedException(operation: String): Throwable = {
+    new AnalysisException(s"Table is not supported in $operation. Please use a path instead.")
+  }
+
   def vacuumBasePathMissingException(baseDeltaPath: Path): Throwable = {
     new AnalysisException(
       s"Please provide the base path ($baseDeltaPath) when Vacuuming Delta tables. " +
         "Vacuuming specific partitions is currently not supported.")
+  }
+
+  def unexpectedDataChangeException(op: String): Throwable = {
+    new AnalysisException(s"Attempting to change metadata when 'dataChange' option is set" +
+      s" to false during $op")
   }
 
   def unknownConfigurationKeyException(confKey: String): Throwable = {
@@ -306,7 +316,7 @@ object DeltaErrors
         s"(${DeltaConfigs.IS_APPEND_ONLY.key}=false)'.")
   }
 
-  def missingPartFilesException(c: CheckpointMetaData, ae: AnalysisException): Throwable = {
+  def missingPartFilesException(c: CheckpointMetaData, ae: Exception): Throwable = {
     new IllegalStateException(
       s"Couldn't find all part files of the checkpoint version: ${c.version}", ae)
   }
@@ -440,6 +450,23 @@ object DeltaErrors
       s"In subquery is not supported in the $operation condition.")
   }
 
+  def convertMetastoreMetadataMismatchException(
+      tableProperties: Map[String, String],
+      deltaConfiguration: Map[String, String]): Throwable = {
+    def prettyMap(m: Map[String, String]): String = {
+      m.map(e => s"${e._1}=${e._2}").mkString("[", ", ", "]")
+    }
+    new AnalysisException(
+      s"""You are trying to convert a table which already has a delta log where the table
+         |properties in the catalog don't match the configuration in the delta log.
+         |Table properties in catalog: ${prettyMap(tableProperties)}
+         |Delta configuration: ${prettyMap{deltaConfiguration}}
+         |If you would like to merge the configurations (update existing fields and insert new
+         |ones), set the SQL configuration
+         |spark.databricks.delta.convert.metadataCheck.enabled to false.
+       """.stripMargin)
+  }
+
   def createExternalTableWithoutLogException(
       path: Path, tableName: String, spark: SparkSession): Throwable = {
     new AnalysisException(
@@ -474,6 +501,59 @@ object DeltaErrors
          |
          |To learn more about Delta, see ${baseDocsPath(spark)}/delta/index.html
        """.stripMargin)
+  }
+
+  def createTableWithDifferentSchemaException(
+      path: Path,
+      specifiedSchema: StructType,
+      existingSchema: StructType,
+      diffs: Seq[String]): Throwable = {
+    new AnalysisException(
+      s"""The specified schema does not match the existing schema at $path.
+         |
+         |== Specified ==
+         |${specifiedSchema.treeString}
+         |
+         |== Existing ==
+         |${existingSchema.treeString}
+         |
+         |== Differences==
+         |${diffs.map("\n".r.replaceAllIn(_, "\n  ")).mkString("- ", "\n- ", "")}
+         |
+         |If your intention is to keep the existing schema, you can omit the
+         |schema from the create table command. Otherwise please ensure that
+         |the schema matches.
+        """.stripMargin)
+  }
+
+  def createTableWithDifferentPartitioningException(
+      path: Path,
+      specifiedColumns: Seq[String],
+      existingColumns: Seq[String]): Throwable = {
+    new AnalysisException(
+      s"""The specified partitioning does not match the existing partitioning at $path.
+         |
+         |== Specified ==
+         |${specifiedColumns.mkString(", ")}
+         |
+         |== Existing ==
+         |${existingColumns.mkString(", ")}
+        """.stripMargin)
+  }
+
+  def createTableWithDifferentPropertiesException(
+      path: Path,
+      specifiedProperties: Map[String, String],
+      existingProperties: Map[String, String]): Throwable = {
+    new AnalysisException(
+      s"""The specified properties do not match the existing properties at $path.
+         |
+         |== Specified ==
+         |${specifiedProperties.map { case (k, v) => s"$k=$v" }.mkString("\n")}
+         |
+         |== Existing ==
+         |${existingProperties.map { case (k, v) => s"$k=$v" }.mkString("\n")}
+        """.stripMargin)
   }
 
   def aggsNotSupportedException(op: String, cond: Expression): Throwable = {
@@ -593,6 +673,19 @@ object DeltaErrors
 
   def describeViewHistory: Throwable = {
     new AnalysisException("Cannot describe the history of a view.")
+  }
+
+  def postCommitHookFailedException(
+      failedHook: PostCommitHook,
+      failedOnCommitVersion: Long,
+      extraErrorMessage: String,
+      error: Throwable): Throwable = {
+    var errorMessage = s"Committing to the Delta table version $failedOnCommitVersion succeeded" +
+      s" but error while executing post-commit hook ${failedHook.name}"
+    if (extraErrorMessage != null && extraErrorMessage.nonEmpty) {
+      errorMessage += s": $extraErrorMessage"
+    }
+    new RuntimeException(errorMessage, error)
   }
 }
 

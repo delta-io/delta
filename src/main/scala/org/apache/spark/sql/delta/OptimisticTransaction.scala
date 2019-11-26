@@ -27,6 +27,7 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files._
+import org.apache.spark.sql.delta.hooks.{GenerateSymlinkManifest, PostCommitHook}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -183,6 +184,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
     snapshot.metadata
   }
 
+  protected val postCommitHooks = new ArrayBuffer[PostCommitHook]()
+
   /** Returns the metadata at the current point in the log. */
   def metadata: Metadata = newMetadata.getOrElse(snapshotMetadata)
 
@@ -281,6 +284,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
         finalActions = commitInfo +: finalActions
       }
 
+      // Register post-commit hooks if any
+      lazy val hasFileActions = finalActions.collect { case f: FileAction => f }.nonEmpty
+      if (DeltaConfigs.SYMLINK_FORMAT_MANIFEST_ENABLED.fromMetaData(metadata) && hasFileActions) {
+        registerPostCommitHook(GenerateSymlinkManifest)
+      }
+
       val commitVersion = doCommit(snapshot.version + 1, finalActions, 0)
       logInfo(s"Committed delta #$commitVersion to ${deltaLog.logPath}")
       postCommit(commitVersion, finalActions)
@@ -294,6 +303,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
           deltaLog, "delta.commit.failure", data = Map("exception" -> Utils.exceptionString(e)))
         throw e
     }
+
+    runPostCommitHooks(version, actions)
+
     version
   }
 
@@ -509,6 +521,44 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
     if(conflictingActions.nonEmpty) {
       val conflictingPartitions = conflictingActions.flatMap(partitionExtractor(_)).distinct
       throw new ConcurrentPartitionWriteException(conflictingPartitions, commitInfo)
+    }
+  }
+
+  /** Register a hook that will be executed once a commit is successful. */
+  def registerPostCommitHook(hook: PostCommitHook): Unit = {
+    if (!postCommitHooks.contains(hook)) {
+      postCommitHooks.append(hook)
+    }
+  }
+
+  /** Executes the registered post commit hooks. */
+  protected def runPostCommitHooks(
+      version: Long,
+      committedActions: Seq[Action]): Unit = {
+      assert(committed, "Can't call post commit hooks before committing")
+
+    // Keep track of the active txn because hooks may create more txns and overwrite the active one.
+    val activeCommit = OptimisticTransaction.getActive()
+    OptimisticTransaction.clearActive()
+
+    try {
+      postCommitHooks.foreach { hook =>
+        try {
+          hook.run(spark, this, committedActions)
+        } catch {
+          case NonFatal(e) =>
+            logWarning(s"Error when executing post-commit hook ${hook.name} " +
+              s"for commit $version", e)
+            recordDeltaEvent(deltaLog, "delta.commit.hook.failure", data = Map(
+              "hook" -> hook.name,
+              "version" -> version,
+              "exception" -> e.toString
+            ))
+            hook.handleError(e, version)
+        }
+      }
+    } finally {
+      activeCommit.foreach(OptimisticTransaction.setActive)
     }
   }
 }

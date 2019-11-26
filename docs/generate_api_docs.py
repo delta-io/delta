@@ -1,3 +1,4 @@
+# !/usr/bin/env python2
 #
 #  Copyright 2019 Databricks, Inc.
 #  Licensed under the Apache License, Version 2.0 (the "License");
@@ -10,8 +11,6 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-
-# !/usr/bin/env python2
 
 import os
 import subprocess
@@ -34,11 +33,19 @@ def main():
     all_api_docs_final_dir = docs_root_dir + "/_site/api"
     scala_api_docs_final_dir = all_api_docs_final_dir + "/scala"
     java_api_docs_final_dir = all_api_docs_final_dir + "/java"
+    sphinx_gen_dir = repo_root_dir + "/docs/python"
+    sphinx_cp_dir = sphinx_gen_dir + "/_build/html"
+    sphinx_docs_final_dir = all_api_docs_final_dir + "/python"
 
     # Generate Java and Scala docs
     print "## Generating ScalaDoc and JavaDoc ..."
     with WorkingDirectory(repo_root_dir):
         run_cmd(["build/sbt", ";clean;unidoc"], stream_output=verbose)
+
+    # Generate Python docs
+    print '## Generating Python(Sphinx) docs ...'
+    with WorkingDirectory(sphinx_gen_dir):
+        run_cmd(["make", "html"], stream_output=verbose)
 
     # Update Scala docs
     print "## Patching ScalaDoc ..."
@@ -90,6 +97,7 @@ def main():
     run_cmd(["mkdir", "-p", all_api_docs_final_dir])
     run_cmd(["cp", "-r", scaladoc_gen_dir, scala_api_docs_final_dir])
     run_cmd(["cp", "-r", javadoc_gen_dir, java_api_docs_final_dir])
+    run_cmd(["cp", "-r", sphinx_cp_dir, sphinx_docs_final_dir])
 
     print "## API docs generated in " + all_api_docs_final_dir
 

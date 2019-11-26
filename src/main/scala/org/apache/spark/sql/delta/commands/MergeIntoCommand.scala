@@ -21,6 +21,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.files._
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{AnalysisHelper, SetAccumulator}
 
 import org.apache.spark.SparkContext
@@ -100,6 +101,9 @@ case class MergeIntoCommand(
   @transient private lazy val sc: SparkContext = SparkContext.getOrCreate()
   @transient private lazy val targetDeltaLog: DeltaLog = targetFileIndex.deltaLog
 
+  /** Whether this merge statement only inserts new data. */
+  private def isInsertOnly: Boolean = matchedClauses.isEmpty && notMatchedClause.isDefined
+
   lazy val updateClause: Option[MergeIntoUpdateClause] =
     matchedClauses.collectFirst { case u: MergeIntoUpdateClause => u }
   lazy val deleteClause: Option[MergeIntoDeleteClause] =
@@ -120,13 +124,16 @@ case class MergeIntoCommand(
     spark: SparkSession): Seq[Row] = recordDeltaOperation(targetDeltaLog, "delta.dml.merge") {
     targetDeltaLog.withNewTransaction { deltaTxn =>
       val deltaActions = {
-        val filesToRewrite =
-          recordDeltaOperation(targetDeltaLog, "delta.dml.merge.findTouchedFiles") {
-            findTouchedFiles(spark, deltaTxn)
-          }
-
-        val newWrittenFiles = writeAllChanges(spark, deltaTxn, filesToRewrite)
-        filesToRewrite.map(_.remove) ++ newWrittenFiles
+       if (isInsertOnly && spark.conf.get(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED)) {
+         writeInsertsOnlyWhenNoMatchedClauses(spark, deltaTxn)
+       } else {
+         val filesToRewrite =
+           recordDeltaOperation(targetDeltaLog, "delta.dml.merge.findTouchedFiles") {
+             findTouchedFiles(spark, deltaTxn)
+           }
+         val newWrittenFiles = writeAllChanges(spark, deltaTxn, filesToRewrite)
+         filesToRewrite.map(_.remove) ++ newWrittenFiles
+       }
       }
       deltaTxn.commit(
         deltaActions,
@@ -230,6 +237,52 @@ case class MergeIntoCommand(
     metrics("numTargetFilesAfterSkipping") += dataSkippedFiles.size
     metrics("numTargetFilesRemoved") += touchedAddFiles.size
     touchedAddFiles
+  }
+
+  /**
+   * This is an optimization of the case when there is no update clause for the merge.
+   * We perform an left anti join on the source data to find the rows to be inserted.
+   */
+  private def writeInsertsOnlyWhenNoMatchedClauses(
+      spark: SparkSession,
+      deltaTxn: OptimisticTransaction
+    ): Seq[AddFile] = withStatusCode("DELTA", s"Writing new files " +
+    s"for insert-only MERGE operation") {
+
+    // UDFs to update metrics
+    val incrSourceRowCountExpr = makeMetricUpdateUDF("numSourceRows")
+    val incrInsertedCountExpr = makeMetricUpdateUDF("numTargetRowsInserted")
+
+    val outputColNames = target.output.map(_.name)
+    val outputExprs = notMatchedClause.get.resolvedActions.map(_.expr) :+ incrInsertedCountExpr
+    val outputCols = outputExprs.zip(outputColNames).map { case (expr, name) =>
+      new Column(Alias(expr, name)())
+    }
+
+    // source DataFrame
+    val sourceDF = Dataset.ofRows(spark, source)
+      .filter(new Column(incrSourceRowCountExpr))
+      .filter(new Column(notMatchedClause.get.condition.getOrElse(Literal(true))))
+
+    // Skip data based on the merge condition
+    val conjunctivePredicates = splitConjunctivePredicates(condition)
+    val targetOnlyPredicates =
+      conjunctivePredicates.filter(_.references.subsetOf(target.outputSet))
+    val dataSkippedFiles = deltaTxn.filterFiles(targetOnlyPredicates)
+
+    // target DataFrame
+    val targetDF = Dataset.ofRows(
+      spark, buildTargetPlanWithFiles(deltaTxn, dataSkippedFiles))
+
+    val insertDf = sourceDF.join(targetDF, new Column(condition), "leftanti")
+      .select(outputCols: _*)
+
+    val newFiles = deltaTxn.writeFiles(insertDf)
+    metrics("numTargetFilesBeforeSkipping") += deltaTxn.snapshot.numOfFiles
+    metrics("numTargetFilesAfterSkipping") += dataSkippedFiles.size
+    metrics("numTargetFilesRemoved") += 0
+    metrics("numTargetFilesAdded") += newFiles.size
+    newFiles
   }
 
   /**

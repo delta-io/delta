@@ -16,20 +16,20 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.commands.ConvertToDeltaCommand
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
-import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row, SparkSession}
-import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
-class ConvertToDeltaSuite extends ConvertToDeltaSuiteBase
+class ConvertToDeltaSuite
+  extends ConvertToDeltaSuiteBase  with org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+
 trait ConvertToDeltaSuiteBase extends QueryTest
     with SharedSparkSession {
 
@@ -43,7 +43,6 @@ trait ConvertToDeltaSuiteBase extends QueryTest
 
   protected val blockNonDeltaMsg = "A transaction log for Delta Lake was found at"
   protected val parquetOnlyMsg = "CONVERT TO DELTA only supports parquet tables"
-  protected val tableNotFound = " not found in database "
 
   protected def deltaRead(df: DataFrame): Boolean = {
     val analyzed = df.queryExecution.analyzed
@@ -124,9 +123,9 @@ trait ConvertToDeltaSuiteBase extends QueryTest
       val tempDir = dir.getCanonicalPath
       writeFiles(tempDir, simpleDF, "parquet", Seq("key1", "key2"))
       val ae = intercept[AnalysisException] {
-        convertToDelta(s"`$tempDir`")
+        convertToDelta(s"`$tempDir`", None)
       }
-      assert(ae.getMessage.contains(tableNotFound))
+      assert(ae.getMessage.contains(parquetOnlyMsg))
     }
   }
 
@@ -344,7 +343,7 @@ trait ConvertToDeltaSuiteBase extends QueryTest
       writeFiles(tempDir, simpleDF)
 
       // wrap parquet with backticks should work
-      convertToDelta(s"`parquet`.`$tempDir`")
+      convertToDelta(s"`parquet`.`$tempDir`", None)
       checkAnswer(spark.read.format("delta").load(tempDir), simpleDF)
 
       // path with no backticks should fail parsing
@@ -479,6 +478,57 @@ trait ConvertToDeltaSuiteBase extends QueryTest
         convertToDelta(s"parquet.`$path`")
       }
       assert(deltaLog.snapshot.metadata.configuration("delta.appendOnly") === "true")
+    }
+  }
+
+  test("convert to delta with string partition columns") {
+    withTempDir { dir =>
+      val tempDir = dir.getCanonicalPath
+      writeFiles(tempDir, simpleDF, partCols = Seq("key1", "key2"))
+      convertToDelta(s"parquet.`$tempDir`", Some("key1 long, key2 string"))
+
+      // reads actually went through Delta
+      assert(deltaRead(spark.read.format("delta").load(tempDir).select("id")))
+
+      // query through Delta is correct
+      checkAnswer(
+        spark.read.format("delta").load(tempDir).where("key1 = 0").select("id"),
+        simpleDF.filter("id % 2 == 0").select("id"))
+
+      // delta writers went through
+      writeFiles(
+        tempDir, simpleDF, format = "delta", partCols = Seq("key1", "key2"), mode = "append")
+
+      checkAnswer(
+        spark.read.format("delta").load(tempDir).where("key1 = 1").select("id"),
+        simpleDF.union(simpleDF).filter("id % 2 == 1").select("id"))
+    }
+  }
+
+  test("convert a delta path falsely claimed as parquet") {
+    withTempDir { dir =>
+      val tempDir = dir.getCanonicalPath
+      writeFiles(tempDir, simpleDF, "delta")
+
+      // Convert to delta
+      convertToDelta(s"parquet.`$tempDir`")
+
+      // Verify that table converted to delta
+      checkAnswer(
+        spark.read.format("delta").load(tempDir).where("key1 = 1").select("id"),
+        simpleDF.filter("id % 2 == 1").select("id"))
+    }
+  }
+
+  test("converting a delta path should not error for idempotency") {
+    withTempDir { dir =>
+      val tempDir = dir.getCanonicalPath
+      writeFiles(tempDir, simpleDF, "delta")
+      convertToDelta(s"delta.`$tempDir`")
+
+      checkAnswer(
+        spark.read.format("delta").load(tempDir).where("key1 = 1").select("id"),
+        simpleDF.filter("id % 2 == 1").select("id"))
     }
   }
 }

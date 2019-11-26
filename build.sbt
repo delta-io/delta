@@ -40,6 +40,16 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests"
 )
 
+antlr4Settings
+
+antlr4Version in Antlr4 := "4.7"
+
+antlr4PackageName in Antlr4 := Some("io.delta.sql.parser")
+
+antlr4GenListener in Antlr4 := true
+
+antlr4GenVisitor in Antlr4 := true
+
 testOptions in Test += Tests.Argument("-oDF")
 
 testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
@@ -110,23 +120,26 @@ enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin)
 
 // Configure Scala unidoc
 scalacOptions in(ScalaUnidoc, unidoc) ++= Seq(
-  "-skip-packages", "org:com:io.delta.tables.execution",
+  "-skip-packages", "org:com:io.delta.sql:io.delta.tables.execution",
   "-doc-title", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " ScalaDoc"
 )
 
 // Configure Java unidoc
 javacOptions in(JavaUnidoc, unidoc) := Seq(
   "-public",
-  "-exclude", "org:com:io.delta.tables.execution",
+  "-exclude", "org:com:io.delta.sql:io.delta.tables.execution",
   "-windowtitle", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
   "-noqualifier", "java.lang",
-  "-tag", "return:X"
+  "-tag", "return:X",
+  // `doclint` is disabled on Circle CI. Need to enable it manually to test our javadoc.
+  "-Xdoclint:all"
 )
 
 // Explicitly remove source files by package because these docs are not formatted correctly for Javadocs
 def ignoreUndocumentedPackages(packages: Seq[Seq[java.io.File]]): Seq[Seq[java.io.File]] = {
   packages
     .map(_.filterNot(_.getName.contains("$")))
+    .map(_.filterNot(_.getCanonicalPath.contains("io/delta/sql")))
     .map(_.filterNot(_.getCanonicalPath.contains("io/delta/tables/execution")))
     .map(_.filterNot(_.getCanonicalPath.contains("spark")))
 }
@@ -150,6 +163,8 @@ spAppendScalaVersion := true
 spIncludeMaven := true
 
 spIgnoreProvided := true
+
+packageBin in Compile := spPackage.value
 
 sparkComponents := Seq("sql")
 
