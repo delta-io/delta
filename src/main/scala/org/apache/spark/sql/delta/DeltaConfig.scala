@@ -20,6 +20,7 @@ import java.util.{HashMap, Locale}
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.metering.DeltaLogging
+
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.unsafe.types.CalendarInterval
@@ -361,14 +362,4 @@ object DeltaConfigs extends DeltaLogging {
     _ => true,
     "needs to be a boolean.")
 
-  /**
-   * Enables concurrent writes to independent delta partitions.
-   */
-  val ENABLE_CONCURRENT_PARTITIONS_WRITE = buildConfig[Boolean](
-    "enableConcurrentPartitionsWrite",
-    "false",
-    _.toBoolean,
-    _ => true,
-    "needs to be a boolean."
-  )
 }

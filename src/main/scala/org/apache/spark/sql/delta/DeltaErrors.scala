@@ -707,15 +707,6 @@ abstract class DeltaConcurrentModificationException(message: String)
 }
 
 /**
- * Thrown when a concurrent transaction has written data to conflicting partitions
- * after the current transaction read the table.
- */
-class ConcurrentPartitionWriteException(
-        val conflictingPartitions: Iterable[Map[String, String]],
-        conflictingCommit: Option[CommitInfo])
-  extends ConcurrentWriteException(conflictingCommit)
-
-/**
  * Thrown when a concurrent transaction has written data after the current transaction read the
  * table.
  */

@@ -16,8 +16,9 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile, SingleAction}
+import org.apache.spark.sql.delta.actions.{AddFile, SingleAction}
 import org.apache.spark.sql.delta.stats.DeltaScan
+
 import org.apache.spark.sql.catalyst.expressions._
 
 trait PartitionFiltering {
@@ -29,43 +30,15 @@ trait PartitionFiltering {
       keepStats: Boolean = false): DeltaScan = {
     implicit val enc = SingleAction.addFileEncoder
 
+    val partitionFilters = filters.flatMap { filter =>
+      DeltaTableUtils.splitMetadataAndDataPredicates(filter, metadata.partitionColumns, spark)._1
+    }
+
     val files = DeltaLog.filterFileList(
       metadata.partitionColumns,
       allFiles.toDF(),
-      partitionFilters(filters)).as[AddFile].collect()
+      partitionFilters).as[AddFile].collect()
 
     DeltaScan(version = version, files, null, null, null)(null, null, null, null)
-  }
-
-  def partitionFilters(filters: Seq[Expression]): Seq[Expression] = filters.flatMap { filter =>
-    DeltaTableUtils.splitMetadataAndDataPredicates(filter, metadata.partitionColumns, spark)._1
-  }
-
-  def filterFileActions(
-      actions: Seq[FileAction],
-      filters: Seq[Expression]) : Seq[FileAction] = {
-    val implicits = spark.implicits
-    import implicits._
-
-    val addFileDf = actions.flatMap {
-      case a: AddFile => Some(a)
-      case _: RemoveFile => None
-    }.toDF()
-    val addFiles = DeltaLog.filterFileList(
-      metadata.partitionColumns,
-      addFileDf,
-      filters
-    ).as[AddFile].collect()
-
-    val removeFileDf = actions.flatMap {
-      case _: AddFile => None
-      case r: RemoveFile => Some(r)
-    }.toDF()
-    val removeFiles = DeltaLog.filterFileList(
-      metadata.partitionColumns,
-      removeFileDf,
-      filters
-    ).as[RemoveFile].collect()
-    addFiles ++ removeFiles
   }
 }
