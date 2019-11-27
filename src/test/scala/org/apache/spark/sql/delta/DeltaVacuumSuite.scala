@@ -293,7 +293,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
   }
 
   protected def defaultTombstoneInterval: Long = {
-    CalendarInterval.fromString(DeltaConfigs.TOMBSTONE_RETENTION.defaultValue).milliseconds()
+    DeltaConfigs.getMilliSeconds(CalendarInterval.fromString(
+      DeltaConfigs.TOMBSTONE_RETENTION.defaultValue))
   }
 
   implicit def fileToPathString(f: File): String = new Path(f.getAbsolutePath).toString

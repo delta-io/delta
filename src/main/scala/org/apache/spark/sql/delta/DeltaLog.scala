@@ -107,7 +107,7 @@ class DeltaLog private(
 
   /** How long to keep around logically deleted files before physically deleting them. */
   private[delta] def tombstoneRetentionMillis: Long =
-    DeltaConfigs.TOMBSTONE_RETENTION.fromMetaData(metadata).milliseconds()
+    DeltaConfigs.getMilliSeconds(DeltaConfigs.TOMBSTONE_RETENTION.fromMetaData(metadata))
 
   // TODO: There is a race here where files could get dropped when increasing the
   // retention interval...
