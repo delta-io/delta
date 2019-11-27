@@ -20,11 +20,13 @@ This project generates a single uber jar containing Delta Lake and all it transi
 - To generate the uber jar, run `build/sbt core/compile`
 - To test the uber jar, run `build/sbt coreTest/test`
 
-## 2. Hive connector (WIP)
+## 2. Hive connector
 This project contains all the code needed to make Hive read Delta Lake tables.
 - To compile the project, run `build/sbt hive/compile`
 - To test the project, run `build/sbt hive/test`
-- To generate the connector jar run `bulld/sbt hive/package`
+- To generate the connector jar run `build/sbt hive/package`
+
+Config `HIVE_AUX_JARS_PATH` in hive-env.sh with above two jars(uber jar and Hive connector jar)
 
 Refer to [SBT docs](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.html) for more commands.
 
