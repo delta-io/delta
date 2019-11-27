@@ -504,10 +504,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
       }.take(1).toArray
 
       if (predicatesMatchingAddedFiles.nonEmpty) {
-        val isWriteSerializable = commitIsolationLevel match {
-          case WriteSerializable => true
-          case _ => false
-        }
+        val isWriteSerializable = commitIsolationLevel == WriteSerializable
         val onlyAddFiles =
           winningCommitActions.collect { case f: FileAction => f }.forall(_.isInstanceOf[AddFile])
 

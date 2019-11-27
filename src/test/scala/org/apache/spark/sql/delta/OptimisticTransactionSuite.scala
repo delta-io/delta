@@ -18,8 +18,8 @@ package org.apache.spark.sql.delta
 
 import java.util.ConcurrentModificationException
 
-import org.apache.spark.sql.delta.DeltaOperations.Truncate
-import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, SetTransaction}
+import org.apache.spark.sql.delta.DeltaOperations.{Delete, ManualUpdate, Truncate}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, Metadata, RemoveFile, SetTransaction}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{QueryTest, Row}
@@ -37,14 +37,14 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
   test("block append against metadata change") {
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
-      // Initialize the log. Truncate() is just a no-op placeholder.
-      log.startTransaction().commit(Nil, Truncate())
+      // Initialize the log. ManualUpdate is just a no-op placeholder.
+      log.startTransaction().commit(Nil, ManualUpdate)
 
       val txn = log.startTransaction()
       val winningTxn = log.startTransaction()
-      winningTxn.commit(Metadata() :: Nil, Truncate())
+      winningTxn.commit(Metadata() :: Nil, ManualUpdate)
       intercept[MetadataChangedException] {
-        txn.commit(addA :: Nil, Truncate())
+        txn.commit(addA :: Nil, ManualUpdate)
       }
     }
   }
@@ -52,17 +52,17 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
   test("block read+append against append") {
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
-      // Initialize the log. Truncate() is just a no-op placeholder.
-      log.startTransaction().commit(Metadata() :: Nil, Truncate())
+      // Initialize the log. ManualUpdate is just a no-op placeholder.
+      log.startTransaction().commit(Metadata() :: Nil, ManualUpdate)
 
       val txn = log.startTransaction()
       // reads the table
       txn.filterFiles()
       val winningTxn = log.startTransaction()
-      winningTxn.commit(addA :: Nil, Truncate())
+      winningTxn.commit(addA :: Nil, ManualUpdate)
       // TODO: intercept a more specific exception
       intercept[DeltaConcurrentModificationException] {
-        txn.commit(addB :: Nil, Truncate())
+        txn.commit(addB :: Nil, ManualUpdate)
       }
     }
   }
@@ -70,13 +70,13 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
   test("allow blind-append against any data change") {
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
-      // Initialize the log and add data. Truncate() is just a no-op placeholder.
-      log.startTransaction().commit(addA :: Nil, Truncate())
+      // Initialize the log and add data. ManualUpdate is just a no-op placeholder.
+      log.startTransaction().commit(addA :: Nil, ManualUpdate)
 
       val txn = log.startTransaction()
       val winningTxn = log.startTransaction()
-      winningTxn.commit(addA.remove :: addB :: Nil, Truncate())
-      txn.commit(addC :: Nil, Truncate())
+      winningTxn.commit(addA.remove :: addB :: Nil, ManualUpdate)
+      txn.commit(addC :: Nil, ManualUpdate)
       checkAnswer(log.update().allFiles.select("path"), Row("b") :: Row("c") :: Nil)
     }
   }
@@ -84,14 +84,14 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
   test("allow read+append+delete against no data change") {
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
-      // Initialize the log and add data. Truncate() is just a no-op placeholder.
-      log.startTransaction().commit(addA :: Nil, Truncate())
+      // Initialize the log and add data. ManualUpdate is just a no-op placeholder.
+      log.startTransaction().commit(addA :: Nil, ManualUpdate)
 
       val txn = log.startTransaction()
       txn.filterFiles()
       val winningTxn = log.startTransaction()
-      winningTxn.commit(Nil, Truncate())
-      txn.commit(addA.remove :: addB :: Nil, Truncate())
+      winningTxn.commit(Nil, ManualUpdate)
+      txn.commit(addA.remove :: addB :: Nil, ManualUpdate)
       checkAnswer(log.update().allFiles.select("path"), Row("b") :: Nil)
     }
   }
@@ -125,18 +125,15 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
       val tx2 = log.startTransaction()
       tx2.filterFiles()
       // TX2 modifies only P1
-      tx2.commit(addB_P1 :: Nil, Truncate())
+      tx2.commit(addB_P1 :: Nil, ManualUpdate)
 
       // free to commit because P1 modified by TX2 was not read
-      tx1.commit(addC_P2 :: addE_P3.remove :: Nil, Truncate())
+      tx1.commit(addC_P2 :: addE_P3.remove :: Nil, ManualUpdate)
       checkAnswer(
         log.update().allFiles.select("path"),
-        // start (E_P3 was removed by TX1)
-        Row(A_P1) ::
-          // TX2
-          Row(B_P1) ::
-          // TX1
-          Row(C_P2) :: Nil)
+        Row(A_P1) :: // start (E_P3 was removed by TX1)
+        Row(B_P1) :: // TX2
+        Row(C_P2) :: Nil) // TX1
     }
   }
 
@@ -148,22 +145,19 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
 
       val tx2 = log.startTransaction()
       tx2.filterFiles()
-      tx2.commit(addC_P2 :: addD_P2.remove :: Nil, Truncate())
+      tx2.commit(addC_P2 :: addD_P2.remove :: Nil, ManualUpdate)
 
-      tx1.commit(addE_P3 :: addF_P3 :: Nil, Truncate())
+      tx1.commit(addE_P3 :: addF_P3 :: Nil, ManualUpdate)
 
       checkAnswer(
         log.update().allFiles.select("path"),
-        // start
-        Row(A_P1) ::
-          // TX2
-          Row(C_P2) ::
-          // TX1
-          Row(E_P3) :: Row(F_P3) :: Nil)
+        Row(A_P1) :: // start
+        Row(C_P2) :: // TX2
+        Row(E_P3) :: Row(F_P3) :: Nil) // TX1
     }
   }
 
-  test("block concurrent commit when read partition was modified by concurrent write") {
+  test("block concurrent commit when read partition was appended to by concurrent write") {
     withLog(addA_P1 :: addD_P2 :: addE_P3 :: addD_P2.remove :: Nil) { log =>
       val tx1 = log.startTransaction()
       // TX1 reads only P1
@@ -173,11 +167,11 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
       val tx2 = log.startTransaction()
       tx2.filterFiles()
       // TX2 modifies only P1
-      tx2.commit(addB_P1 :: Nil, Truncate())
+      tx2.commit(addB_P1 :: Nil, ManualUpdate)
 
-      intercept[ConcurrentModificationException] {
+      intercept[ConcurrentAppendException] {
         // P1 was modified
-        tx1.commit(addC_P2 :: addE_P3 :: Nil, Truncate())
+        tx1.commit(addC_P2 :: addE_P3 :: Nil, ManualUpdate)
       }
     }
   }
@@ -191,10 +185,10 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
 
       val tx2 = log.startTransaction()
       tx2.filterFiles()
-      tx2.commit(addC_P2 :: addD_P2.remove :: Nil, Truncate())
+      tx2.commit(addC_P2 :: addD_P2.remove :: Nil, ManualUpdate)
 
-      intercept[ConcurrentModificationException] {
-        tx1.commit(addE_P3 :: addF_P3 :: Nil, Truncate())
+      intercept[ConcurrentAppendException] {
+        tx1.commit(addE_P3 :: addF_P3 :: Nil, ManualUpdate)
       }
     }
   }
@@ -227,18 +221,15 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
       val tx2 = log.startTransaction()
       tx2.filterFiles()
       // TX2 reads all partitions and modifies only a=1/b=2
-      tx2.commit(addB_1_2_nested :: Nil, Truncate())
+      tx2.commit(addB_1_2_nested :: Nil, ManualUpdate)
 
       // TX1 reads a=1/b=1 which was not modified by TX2, hence TX1 can write to a=2/b=1
-      tx1.commit(addC_2_1_nested :: Nil, Truncate())
+      tx1.commit(addC_2_1_nested :: Nil, ManualUpdate)
       checkAnswer(
         log.update().allFiles.select("path"),
-        // start
-        Row(A_1_1) ::
-          // TX2
-          Row(B_1_2) ::
-          // TX1
-          Row(C_2_1) :: Nil)
+        Row(A_1_1) :: // start
+        Row(B_1_2) :: // TX2
+        Row(C_2_1) :: Nil) // TX1
     }
   }
 
@@ -252,21 +243,18 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
       val tx2 = log.startTransaction()
       tx2.filterFiles()
       // TX2 modifies a=1/b=2
-      tx2.commit(addB_1_2_nested :: Nil, Truncate())
+      tx2.commit(addB_1_2_nested :: Nil, ManualUpdate)
 
       // TX1 reads a=1/b=1 which was not modified by TX2, hence TX1 can write to a=2/b=1
       val add = AddFile(
         "a=1/b=2/x", Map("a" -> "1", "b" -> "2"),
         1, 1, dataChange = true)
-      tx1.commit(add :: Nil, Truncate())
+      tx1.commit(add :: Nil, ManualUpdate)
       checkAnswer(
         log.update().allFiles.select("path"),
-        // start
-        Row(A_1_1) ::
-          // TX2
-          Row(B_1_2) ::
-          // TX1
-          Row("a=1/b=2/x") :: Nil)
+        Row(A_1_1) :: // start
+        Row(B_1_2) :: // TX2
+        Row("a=1/b=2/x") :: Nil) // TX1
     }
   }
 
@@ -282,22 +270,19 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
       val tx2 = log.startTransaction()
       tx2.filterFiles()
       // TX2 modifies only a=2/b=1
-      tx2.commit(addC_2_1_nested :: Nil, Truncate())
+      tx2.commit(addC_2_1_nested :: Nil, ManualUpdate)
 
       // free to commit a=2/b=1
-      tx1.commit(addD_3_1_nested :: Nil, Truncate())
+      tx1.commit(addD_3_1_nested :: Nil, ManualUpdate)
       checkAnswer(
         log.update().allFiles.select("path"),
-        // start
-        Row(A_1_1) :: Row(B_1_2) ::
-          // TX2
-          Row(C_2_1) ::
-          // TX1
-          Row(D_3_1) :: Nil)
+        Row(A_1_1) :: Row(B_1_2) :: // start
+        Row(C_2_1) ::               // TX2
+        Row(D_3_1) :: Nil)          // TX1
     }
   }
 
-  test("block add when read at lvl1 partition is conflicts with concur. write at lvl2") {
+  test("block commit when read at lvl1 partition reads lvl2 file concur. deleted") {
     withLog(
       addA_1_1_nested :: addB_1_2_nested :: Nil,
       partitionCols = "a" :: "b" :: Nil) { log =>
@@ -310,11 +295,11 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
       val tx2 = log.startTransaction()
       tx2.filterFiles()
       // TX2 modifies a=1/b=1
-      tx2.commit(addA_1_1_nested.remove :: Nil, Truncate())
+      tx2.commit(addA_1_1_nested.remove :: Nil, ManualUpdate)
 
-      intercept[ConcurrentModificationException] {
+      intercept[ConcurrentDeleteReadException] {
         // TX2 modified a=1, which was read by TX1
-        tx1.commit(addD_3_1_nested :: Nil, Truncate())
+        tx1.commit(addD_3_1_nested :: Nil, ManualUpdate)
       }
     }
   }
@@ -328,11 +313,11 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
       val tx2 = log.startTransaction()
       tx2.filterFiles()
       // TX2 modifies only a=1/b=2
-      tx2.commit(addB_1_2_nested :: Nil, Truncate())
+      tx2.commit(addB_1_2_nested :: Nil, ManualUpdate)
 
-      intercept[ConcurrentModificationException] {
+      intercept[ConcurrentAppendException] {
         // TX2 modified table all of which was read by TX1
-        tx1.commit(addC_2_1_nested :: Nil, Truncate())
+        tx1.commit(addC_2_1_nested :: Nil, ManualUpdate)
       }
     }
   }
@@ -350,11 +335,11 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
       val tx2 = log.startTransaction()
       tx2.filterFiles()
       // TX2 modifies a=1/b=2
-      tx2.commit(addB_1_2_nested :: Nil, Truncate())
+      tx2.commit(addB_1_2_nested :: Nil, ManualUpdate)
 
-      intercept[ConcurrentModificationException] {
+      intercept[ConcurrentAppendException] {
         // partition a=1/b=2 conflicts with our read a >= 1 or 'b > 1
-        tx1.commit(addD_3_1_nested :: Nil, Truncate())
+        tx1.commit(addD_3_1_nested :: Nil, ManualUpdate)
       }
     }
   }
@@ -368,63 +353,13 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
       val tx2 = log.startTransaction()
       tx2.filterFiles()
       // TX2 modifies a=1/b=2
-      tx2.commit(addB_1_2_nested.remove :: Nil, Truncate())
+      tx2.commit(addB_1_2_nested.remove :: Nil, ManualUpdate)
 
-      intercept[ConcurrentModificationException] {
+      intercept[ConcurrentDeleteDeleteException] {
         // TX1 read does not conflict with TX2 as disjoint partitions
         // But TX2 removed the same file that TX1 is trying to remove
-        tx1.commit(addB_1_2_nested.remove:: Nil, Truncate())
+        tx1.commit(addB_1_2_nested.remove:: Nil, ManualUpdate)
       }
-    }
-  }
-
-  /*
-  test("block concurrent commit on Delete attempt and Add initially empty") {
-    withConcurrentLog(addC_P2 :: addE_P3 :: Nil) { log =>
-      val tx1 = log.startTransaction()
-      // empty read
-      val tx1Read = tx1.filterFiles(('part === 1).expr :: Nil)
-      assert(tx1Read.isEmpty)
-      // tx2 deletes "part=p1"
-      val tx2 = log.startTransaction()
-      // empty read
-      val tx2Read = tx2.filterFiles(('part === 1).expr :: Nil)
-      assert(tx2Read.isEmpty)
-
-      tx1.commit(addA_P1 :: Nil, Truncate())
-
-      intercept[ConcurrentModificationException] {
-        // tx1 modified P1 which we tried to read and could try to delete
-        tx2.commit(Seq.empty, Truncate())
-      }
-    }
-  }
-  */
-
-  test("allow concurrent commit on Delete and Add disjoint partitions initially empty") {
-    withLog(addC_P2 :: addE_P3 :: Nil) { log =>
-      // tx1 deletes "part=p1"
-      val tx1 = log.startTransaction()
-      // empty read
-      val tx1Read = tx1.filterFiles(('part === 1).expr :: Nil)
-      assert(tx1Read.isEmpty)
-
-      // tx2 deletes "part=p1"
-      val tx2 = log.startTransaction()
-      // empty read
-      val tx2Read = tx2.filterFiles(('part === 1).expr :: Nil)
-      assert(tx2Read.isEmpty)
-
-      tx1.commit(addD_P2 :: Nil, Truncate())
-      // empty delete
-      tx2.commit(Seq.empty, Truncate())
-
-      checkAnswer(
-        log.update().allFiles.select("path"),
-        // start
-        Row(C_P2) :: Row(E_P3) ::
-          // TX1
-          Row(D_P2) :: Nil)
     }
   }
 
@@ -435,11 +370,11 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
 
       val tx2 = log.startTransaction()
       tx2.filterFiles()
-      tx2.commit(addC_P2.remove :: addB_P1 :: Nil, Truncate())
+      tx2.commit(addC_P2.remove :: addB_P1 :: Nil, ManualUpdate)
 
-      intercept[ConcurrentModificationException] {
+      intercept[ConcurrentAppendException] {
         // TX1 read whole table but TX2 concurrently modified partition P2
-        tx1.commit(addD_P2 :: Nil, Truncate())
+        tx1.commit(addD_P2 :: Nil, ManualUpdate)
       }
     }
   }
@@ -451,11 +386,11 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
 
       val tx2 = log.startTransaction()
       tx2.filterFiles()
-      tx2.commit(addA_P1.remove :: Nil, Truncate())
+      tx2.commit(addA_P1.remove :: Nil, ManualUpdate)
 
-      intercept[ConcurrentModificationException] {
+      intercept[ConcurrentDeleteReadException] {
         // TX1 read whole table but TX2 concurrently modified partition P1
-        tx1.commit(addB_P1.remove :: Nil, Truncate())
+        tx1.commit(addB_P1.remove :: Nil, ManualUpdate)
       }
     }
   }
@@ -466,15 +401,16 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
       // replaceWhere (part >= 2) -> empty read
       val tx1Read = tx1.filterFiles(('part >= 2).expr :: Nil)
       assert(tx1Read.isEmpty)
+
       val tx2 = log.startTransaction()
       // replaceWhere (part >= 2) -> empty read
       val tx2Read = tx2.filterFiles(('part >= 2).expr :: Nil)
       assert(tx2Read.isEmpty)
+      tx2.commit(addE_P3 :: Nil, ManualUpdate)
 
-      tx1.commit(addC_P2 :: Nil, Truncate())
-      intercept[ConcurrentModificationException] {
-        // Tx1 have modified P2 which conflicts with our read (part >= 2)
-        tx2.commit(addE_P3 :: Nil, Truncate())
+      intercept[ConcurrentAppendException] {
+        // Tx2 have modified P2 which conflicts with our read (part >= 2)
+        tx1.commit(addC_P2 :: Nil, ManualUpdate)
       }
     }
   }
@@ -491,17 +427,14 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
       val tx2Read = tx2.filterFiles(('part > 3).expr :: Nil)
       assert(tx2Read.isEmpty)
 
-      tx1.commit(addC_P2 :: Nil, Truncate())
+      tx1.commit(addC_P2 :: Nil, ManualUpdate)
       // P2 doesn't conflict with read predicate (part > 3)
-      tx2.commit(addG_P4 :: Nil, Truncate())
+      tx2.commit(addG_P4 :: Nil, ManualUpdate)
       checkAnswer(
         log.update().allFiles.select("path"),
-        // start
-        Row(A_P1) ::
-          // TX1
-          Row(C_P2) ::
-          // TX2
-          Row(G_P4) :: Nil)
+        Row(A_P1) :: // start
+        Row(C_P2) :: // TX1
+        Row(G_P4) :: Nil) // TX2
     }
   }
 
@@ -516,10 +449,10 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
       val tx2Read = tx2.filterFiles(('part >= 2).expr :: Nil)
       assert(tx2Read.map(_.path) == G_P4 :: Nil)
 
-      tx1.commit(addA_P1.remove :: addC_P2 :: Nil, Truncate())
-      intercept[ConcurrentModificationException] {
+      tx1.commit(addA_P1.remove :: addC_P2 :: Nil, ManualUpdate)
+      intercept[ConcurrentAppendException] {
         // Tx1 have modified P2 which conflicts with our read (part >= 2)
-        tx2.commit(addG_P4.remove :: addE_P3 :: Nil, Truncate())
+        tx2.commit(addG_P4.remove :: addE_P3 :: Nil, ManualUpdate)
       }
     }
   }
@@ -534,11 +467,11 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
       // tx2 commits before tx1
       val tx2 = log.startTransaction()
       tx2.filterFiles()
-      tx2.commit(addB_P1 :: Nil, Truncate())
+      tx2.commit(addB_P1 :: Nil, ManualUpdate)
 
-      intercept[ConcurrentModificationException] {
+      intercept[ConcurrentAppendException] {
         // P1 read by TX1 was modified by TX2
-        tx1.commit(addE_P3 :: Nil, Truncate())
+        tx1.commit(addE_P3 :: Nil, ManualUpdate)
       }
     }
   }
@@ -552,11 +485,11 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
       // tx2 commits before tx1
       val tx2 = log.startTransaction()
       tx2.filterFiles()
-      tx2.commit(addA_P1.remove :: Nil, Truncate())
+      tx2.commit(addA_P1.remove :: Nil, ManualUpdate)
 
-      intercept[ConcurrentModificationException] {
+      intercept[ConcurrentDeleteReadException] {
         // P1 read by TX1 was removed by TX2
-        tx1.commit(addE_P3 :: Nil, Truncate())
+        tx1.commit(addE_P3 :: Nil, ManualUpdate)
       }
     }
   }
@@ -572,11 +505,11 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
       tx2.filterFiles(('part === 1).expr :: Nil)
 
       // tx1 commits before tx2
-      tx1.commit(addA_P1.remove :: addB_P1 :: Nil, Truncate())
+      tx1.commit(addA_P1.remove :: addB_P1 :: Nil, ManualUpdate)
 
-      intercept[ConcurrentModificationException] {
+      intercept[ConcurrentAppendException] {
         // P1 read & deleted by TX1 is being modified by TX2
-        tx2.commit(addA_P1.remove :: addC_P1 :: Nil, Truncate())
+        tx2.commit(addA_P1.remove :: addC_P1 :: Nil, ManualUpdate)
       }
     }
   }
@@ -592,29 +525,29 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
       tx2.filterFiles(('part === 3 or 'part === 2).expr :: Nil)
 
       // tx1 commits before tx2
-      tx1.commit(addA_P1.remove :: addE_P3.remove :: addB_P1 :: Nil, Truncate())
+      tx1.commit(addA_P1.remove :: addE_P3.remove :: addB_P1 :: Nil, ManualUpdate)
 
-      intercept[ConcurrentModificationException] {
+      intercept[ConcurrentDeleteReadException] {
         // P3 read & deleted by TX1 is being modified by TX2
-        tx2.commit(addC_P2.remove :: addE_P3.remove :: addD_P2 :: Nil, Truncate())
+        tx2.commit(addC_P2.remove :: addE_P3.remove :: addD_P2 :: Nil, ManualUpdate)
       }
     }
   }
 
-  test("block concurrent full table scan and remove") {
+  test("block concurrent full table scan after concurrent write completes") {
     withLog(addA_P1 :: addC_P2 :: addE_P3 :: Nil) { log =>
       val tx1 = log.startTransaction()
 
       val tx2 = log.startTransaction()
       tx2.filterFiles()
-      tx2.commit(addC_P2 :: Nil, Truncate())
+      tx2.commit(addC_P2 :: Nil, ManualUpdate)
 
       tx1.filterFiles(('part === 1).expr :: Nil)
       // full table scan
       tx1.filterFiles()
 
-      intercept[ConcurrentModificationException] {
-        tx1.commit(addA_P1.remove :: Nil, Truncate())
+      intercept[ConcurrentAppendException] {
+        tx1.commit(addA_P1.remove :: Nil, ManualUpdate)
       }
     }
   }
@@ -625,31 +558,79 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
 
       val tx2 = log.startTransaction()
       tx2.filterFiles()
-      tx2.commit(addC_P2 :: Nil, Truncate())
+      tx2.commit(addC_P2 :: Nil, ManualUpdate)
 
       // actually a full table scan
       tx1.filterFiles(('part === 1 or 'year > 2019).expr :: Nil)
 
-      intercept[ConcurrentModificationException] {
-        tx1.commit(addA_P1.remove :: Nil, Truncate())
+      intercept[ConcurrentAppendException] {
+        tx1.commit(addA_P1.remove :: Nil, ManualUpdate)
       }
     }
   }
 
-  test("block concurrent read (2 scans) and add ") {
+  test("block concurrent read (2 scans) and add when read partition was changed by concur. write") {
     withLog(addA_P1 :: addE_P3 :: Nil) { log =>
       val tx1 = log.startTransaction()
       tx1.filterFiles(('part === 1).expr :: Nil)
 
       val tx2 = log.startTransaction()
       tx2.filterFiles()
-      tx2.commit(addC_P2 :: Nil, Truncate())
+      tx2.commit(addC_P2 :: Nil, ManualUpdate)
 
       tx1.filterFiles(('part > 1 and 'part < 3).expr :: Nil)
 
-      intercept[ConcurrentModificationException] {
+      intercept[ConcurrentAppendException] {
         // P2 added by TX2 conflicts with our read condition 'part > 1 and 'part < 3
-        tx1.commit(addA_P1.remove :: Nil, Truncate())
+        tx1.commit(addA_P1.remove :: Nil, ManualUpdate)
+      }
+    }
+  }
+
+  def setDataChangeFalse(fileActions: Seq[FileAction]): Seq[FileAction] = {
+    fileActions.map {
+      case a: AddFile => a.copy(dataChange = false)
+      case r: RemoveFile => r.copy(dataChange = false)
+    }
+  }
+
+  test("no data change: allow data rearrange when new files concurrently added") {
+    withLog(addA_P1 :: addB_P1 :: Nil) { log =>
+      val tx1 = log.startTransaction()
+      tx1.filterFiles()
+
+      val tx2 = log.startTransaction()
+      tx2.filterFiles()
+      tx2.commit(
+        addE_P3 :: Nil,
+        ManualUpdate)
+
+      // tx1 rearranges files
+      tx1.commit(
+        setDataChangeFalse(addA_P1.remove :: addB_P1.remove :: addC_P1 :: Nil),
+        ManualUpdate)
+
+      checkAnswer(
+        log.update().allFiles.select("path"),
+        Row(C_P1) :: Row(E_P3) ::  Nil)
+    }
+  }
+
+  test("no data change: block data rearrange when concurrently delete removes same file") {
+    withLog(addA_P1 :: addB_P1 :: Nil) { log =>
+      val tx1 = log.startTransaction()
+      tx1.filterFiles()
+
+      // tx2 removes file
+      val tx2 = log.startTransaction()
+      tx2.filterFiles()
+      tx2.commit(addA_P1.remove :: Nil, ManualUpdate)
+
+      intercept[ConcurrentDeleteReadException] {
+        // tx1 reads to rearrange the same file that tx2 deleted
+        tx1.commit(
+          setDataChangeFalse(addA_P1.remove :: addB_P1.remove :: addC_P1 :: Nil),
+          ManualUpdate)
       }
     }
   }
@@ -665,8 +646,8 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
 
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
-      // Initialize the log and add data. Truncate() is just a no-op placeholder.
-      log.startTransaction().commit(actionWithMetaData, Truncate())
+      // Initialize the log and add data. ManualUpdate is just a no-op placeholder.
+      log.startTransaction().commit(actionWithMetaData, ManualUpdate)
       test(log)
     }
   }
@@ -674,14 +655,14 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
   test("allow concurrent set-txns with different app ids") {
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
-      // Initialize the log and add data. Truncate() is just a no-op placeholder.
-      log.startTransaction().commit(Nil, Truncate())
+      // Initialize the log and add data. ManualUpdate is just a no-op placeholder.
+      log.startTransaction().commit(Nil, ManualUpdate)
 
       val txn = log.startTransaction()
       txn.txnVersion("t1")
       val winningTxn = log.startTransaction()
-      winningTxn.commit(SetTransaction("t2", 1, Some(1234L)) :: Nil, Truncate())
-      txn.commit(Nil, Truncate())
+      winningTxn.commit(SetTransaction("t2", 1, Some(1234L)) :: Nil, ManualUpdate)
+      txn.commit(Nil, ManualUpdate)
 
       assert(log.update().transactions === Map("t2" -> 1))
     }
@@ -690,16 +671,16 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
   test("block concurrent set-txns with the same app id") {
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
-      // Initialize the log and add data. Truncate() is just a no-op placeholder.
-      log.startTransaction().commit(Nil, Truncate())
+      // Initialize the log and add data. ManualUpdate is just a no-op placeholder.
+      log.startTransaction().commit(Nil, ManualUpdate)
 
       val txn = log.startTransaction()
       txn.txnVersion("t1")
       val winningTxn = log.startTransaction()
-      winningTxn.commit(SetTransaction("t1", 1, Some(1234L)) :: Nil, Truncate())
+      winningTxn.commit(SetTransaction("t1", 1, Some(1234L)) :: Nil, ManualUpdate)
 
       intercept[ConcurrentTransactionException] {
-        txn.commit(Nil, Truncate())
+        txn.commit(Nil, ManualUpdate)
       }
     }
   }
