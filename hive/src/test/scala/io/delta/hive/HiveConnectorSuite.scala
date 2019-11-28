@@ -19,23 +19,18 @@ class HiveConnectorSuite extends HiveTest with BeforeAndAfterEach {
     DeltaLog.clearCache()
   }
 
-  test("DDL: HiveOnDelta should be a external table ") {
-    withTable("deltaTbl") {
-      withTempDir { dir =>
-        val e = intercept[Exception] {
-          runQuery(
-            s"""
-               |create table deltaTbl(a string, b int)
-               |stored by 'io.delta.hive.DeltaStorageHandler' location '${dir.getCanonicalPath}'
-         """.stripMargin
-          )
-        }.getMessage
-        assert(e.contains("HiveOnDelta should be an external table"))
-      }
+  test("should not allow to create a non external Delta table") {
+    val e = intercept[Exception] {
+      runQuery(
+        s"""
+           |create table deltaTbl(a string, b int)
+           |stored by 'io.delta.hive.DeltaStorageHandler'""".stripMargin
+      )
     }
+    assert(e.getMessage != null && e.getMessage.contains("Only external Delta tables"))
   }
 
-  test("DDL: location should be set when creating table") {
+  test("location should be set when creating table") {
     withTable("deltaTbl") {
       val e = intercept[Exception] {
         runQuery(
@@ -49,24 +44,45 @@ class HiveConnectorSuite extends HiveTest with BeforeAndAfterEach {
     }
   }
 
-  test("DDL: HiveOnDelta should not be a partitioned hive table") {
+  test("should not allow to specify partition columns") {
+    withTempDir { dir =>
+      val e = intercept[Exception] {
+        runQuery(
+          s"""
+             |CREATE EXTERNAL TABLE deltaTbl(a STRING, b INT)
+             |PARTITIONED BY(c STRING)
+             |STORED BY 'io.delta.hive.DeltaStorageHandler'
+             |LOCATION '${dir.getCanonicalPath}' """.stripMargin)
+      }
+      assert(e.getMessage != null && e.getMessage.matches(
+        "(?s).*partition columns.*should not be set manually.*"))
+    }
+  }
+
+  test("should not allow to write to a Delta table") {
     withTable("deltaTbl") {
       withTempDir { dir =>
+        withSparkSession { spark =>
+          import spark.implicits._
+          val testData = (0 until 10).map(x => (x, s"foo${x % 2}"))
+          testData.toDS.toDF("a", "b").write.format("delta").save(dir.getCanonicalPath)
+        }
+
+        runQuery(
+          s"""
+             |CREATE EXTERNAL TABLE deltaTbl(a INT, b STRING)
+             |STORED BY 'io.delta.hive.DeltaStorageHandler'
+             |LOCATION '${dir.getCanonicalPath}'""".stripMargin)
         val e = intercept[Exception] {
-          runQuery(
-            s"""
-               |create external table deltaTbl(a string, b int)
-               |partitioned by(c string)
-               |stored by 'io.delta.hive.DeltaStorageHandler'  location '${dir.getCanonicalPath}'
-         """.stripMargin
-          )
-        }.getMessage
-        assert(e.contains("HiveOnDelta does not support to create a partition hive table"))
+          runQuery("INSERT INTO deltaTbl(a, b) VALUES(123, 'foo')")
+        }
+        assert(e.getMessage != null && e.getMessage.contains(
+          "Writing to a Delta table in Hive is not supported"))
       }
     }
   }
 
-  test("DDL: the delta root path should be existed when create hive table") {
+  test("the delta root path should be existed when create hive table") {
     withTable("deltaTbl") {
       withTempDir { dir =>
         JavaUtils.deleteRecursively(dir)
@@ -84,7 +100,7 @@ class HiveConnectorSuite extends HiveTest with BeforeAndAfterEach {
     }
   }
 
-  test("DDL: when creating hive table on a partitioned delta, " +
+  test("when creating hive table on a partitioned delta, " +
     "the partition columns should be after data columns") {
     withTable("deltaTbl") {
       withTempDir { dir =>
@@ -110,7 +126,7 @@ class HiveConnectorSuite extends HiveTest with BeforeAndAfterEach {
   }
 
   // check column number & column name
-  test("DDL: Hive schema should match delta's schema") {
+  test("Hive schema should match delta's schema") {
     withTable("deltaTbl") {
       withTempDir { dir =>
         val testData = (0 until 10).map(x => (x, s"foo${x % 2}", s"test${x % 3}"))

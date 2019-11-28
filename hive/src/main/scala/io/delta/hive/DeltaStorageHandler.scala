@@ -1,10 +1,7 @@
 package io.delta.hive
 
-import com.google.common.base.Joiner
 import scala.collection.JavaConverters._
 import scala.collection.mutable
-
-import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.hive.metastore.HiveMetaHook
 import org.apache.hadoop.hive.metastore.MetaStoreUtils
@@ -22,9 +19,7 @@ import org.apache.hadoop.hive.ql.plan.TableDesc
 import org.apache.hadoop.hive.serde2.AbstractSerDe
 import org.apache.hadoop.hive.serde2.Deserializer
 import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory
-import org.apache.hadoop.mapred.InputFormat
-import org.apache.hadoop.mapred.JobConf
-import org.apache.hadoop.util.StringUtils
+import org.apache.hadoop.mapred.{InputFormat, JobConf, OutputFormat}
 import org.apache.spark.sql.delta.DeltaHelper
 import org.apache.spark.sql.delta.DeltaPushFilter
 import org.slf4j.LoggerFactory
@@ -35,8 +30,14 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook with H
 
   private val LOG = LoggerFactory.getLogger(classOf[DeltaStorageHandler])
 
-
   override def getInputFormatClass: Class[_ <: InputFormat[_, _]] = classOf[DeltaInputFormat]
+
+  /**
+   * Returns a special [[OutputFormat]] to prevent from writing to a Delta table in Hive before we
+   * support it. We have to give Hive some class when creating a table, hence we have to implement
+   * an [[OutputFormat]] which throws an exception when Hive is using it.
+   */
+  override def getOutputFormatClass: Class[_ <: OutputFormat[_, _]] = classOf[DeltaOutputFormat]
 
   override def getSerDeClass(): Class[_ <: AbstractSerDe] = classOf[ParquetHiveSerDe]
 
@@ -127,12 +128,18 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook with H
   override def getMetaHook: HiveMetaHook = this
 
   override def preCreateTable(tbl: Table): Unit = {
-    val isExternal = MetaStoreUtils.isExternalTable(tbl)
-    if (!isExternal) {
-      throw new MetaException("HiveOnDelta should be an external table.")
-    } else if (tbl.getPartitionKeysSize() > 0) {
-      throw new MetaException("HiveOnDelta does not support to create a partition hive table")
+    if (!MetaStoreUtils.isExternalTable(tbl)) {
+      throw new UnsupportedOperationException(
+        s"The type of table ${tbl.getDbName}:${tbl.getTableName} is ${tbl.getTableType}." +
+          "Only external Delta tables can be read in Hive right now")
     }
+
+    if (tbl.getPartitionKeysSize > 0) {
+      throw new MetaException(
+        s"Found partition columns " +
+          s"(${tbl.getPartitionKeys.asScala.map(_.getName).mkString(",")}) in table " +
+          s"${tbl.getDbName}:${tbl.getTableName}. The partition columns in a Delta table " +
+          s"will be read from its own metadata and should not be set manually.")    }
 
     val deltaRootString = tbl.getSd().getLocation()
     if (deltaRootString == null || deltaRootString.trim().length() == 0) {
@@ -146,6 +153,7 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook with H
         val partitionProps = DeltaHelper.checkHiveColsInDelta(deltaPath, tbl.getSd().getCols())
         tbl.getSd().getSerdeInfo().getParameters().putAll(partitionProps.asJava)
         tbl.getSd().getSerdeInfo().getParameters().put(DELTA_TABLE_PATH, deltaRootString)
+        tbl.getParameters.put("spark.sql.sources.provider", "DELTA")
         LOG.info("write partition cols/types to table properties " +
           partitionProps.map(kv => s"${kv._1}=${kv._2}").mkString(", "))
       }
