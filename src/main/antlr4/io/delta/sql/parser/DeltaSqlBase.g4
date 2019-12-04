@@ -75,6 +75,7 @@ statement
     : VACUUM (path=STRING | table=qualifiedName)
         (RETAIN number HOURS)? (DRY RUN)?                               #vacuumTable
     | (DESC | DESCRIBE) DETAIL (path=STRING | table=qualifiedName)      #describeDeltaDetail
+    | GENERATE modeName=identifier FOR TABLE table=qualifiedName        #generate
     | (DESC | DESCRIBE) HISTORY (path=STRING | table=qualifiedName)
         (LIMIT limit=INTEGER_VALUE)?                                    #describeDeltaHistory
     | CONVERT TO DELTA table=qualifiedName
@@ -124,6 +125,7 @@ nonReserved
     : VACUUM | RETAIN | HOURS | DRY | RUN
     | CONVERT | TO | DELTA | PARTITIONED | BY
     | DESC | DESCRIBE | LIMIT | DETAIL
+    | GENERATE | FOR | TABLE
     ;
 
 // Define how the keywords above should appear in a user's SQL statement.
@@ -134,6 +136,7 @@ DELTA: 'DELTA';
 DESC: 'DESC';
 DESCRIBE: 'DESCRIBE';
 DETAIL: 'DETAIL';
+GENERATE: 'GENERATE';
 DRY: 'DRY';
 HISTORY: 'HISTORY';
 HOURS: 'HOURS';
@@ -141,6 +144,8 @@ LIMIT: 'LIMIT';
 MINUS: '-';
 NOT: 'NOT' | '!';
 NULL: 'NULL';
+FOR: 'FOR';
+TABLE: 'TABLE';
 PARTITIONED: 'PARTITIONED';
 RETAIN: 'RETAIN';
 RUN: 'RUN';
