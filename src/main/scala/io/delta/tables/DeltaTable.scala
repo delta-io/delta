@@ -138,6 +138,24 @@ class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
   /**
    * :: Evolving ::
    *
+   * Generate a manifest for the given Delta Table
+   *
+   * @param mode Specifies the mode for the generation of the manifest.
+   *             The valid modes are as follows (not case sensitive):
+   *              - "symlink_manifest_format" : This will generate manifests in symlink format
+   *                                            for Presto and Athena read support.
+   *             See the online documentation for more information.
+   * @since 0.5.0
+   */
+  @Evolving
+  def generate(mode: String): Unit = {
+    val path = deltaLog.dataPath.toString
+    executeGenerate(s"delta.`$path`", mode)
+  }
+
+  /**
+   * :: Evolving ::
+   *
    * Delete data from the table that match the given `condition`.
    *
    * @param condition Boolean SQL expression

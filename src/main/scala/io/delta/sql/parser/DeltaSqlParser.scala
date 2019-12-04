@@ -42,6 +42,7 @@ import java.util.Locale
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.commands.DeltaGenerateCommand
 import io.delta.sql.parser.DeltaSqlBaseParser._
 import io.delta.tables.execution.{DescribeDeltaHistoryCommand, VacuumTableCommand}
 import org.antlr.v4.runtime._
@@ -166,6 +167,12 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       Option(ctx.path).map(string),
       Option(ctx.table).map(visitTableIdentifier),
       Option(ctx.limit).map(_.getText.toInt))
+  }
+
+  override def visitGenerate(ctx: GenerateContext): LogicalPlan = withOrigin(ctx) {
+    DeltaGenerateCommand(
+      modeName = ctx.modeName.getText,
+      tableId = visitTableIdentifier(ctx.table))
   }
 
   override def visitConvert(ctx: ConvertContext): LogicalPlan = withOrigin(ctx) {

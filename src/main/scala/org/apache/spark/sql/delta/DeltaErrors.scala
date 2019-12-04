@@ -687,6 +687,13 @@ object DeltaErrors
     }
     new RuntimeException(errorMessage, error)
   }
+
+  def unsupportedGenerateModeException(modeName: String): Throwable = {
+    import org.apache.spark.sql.delta.commands.DeltaGenerateCommand
+    val supportedModes = DeltaGenerateCommand.modeNameToGenerationFunc.keys.toSeq.mkString(", ")
+    new IllegalArgumentException(
+      s"Specified mode '$modeName' is not supported. Supported modes are: $supportedModes")
+  }
 }
 
 /** The basic class for all Tahoe commit conflict exceptions. */
