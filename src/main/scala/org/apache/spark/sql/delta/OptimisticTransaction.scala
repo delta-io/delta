@@ -145,7 +145,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
   /** Tracks the appIds that have been seen by this transaction. */
   protected val readTxn = new ArrayBuffer[String]
 
-  /** Tracks the data that could have been seen by this transaction. */
+  /**
+   * Tracks the data that could have been seen by recording the partition
+   * predicates by which files have been queried by by this transaction.
+   */
   protected val readPredicates = new ArrayBuffer[Expression]
 
   /** Tracks specific files that have been seen by this transaction. */

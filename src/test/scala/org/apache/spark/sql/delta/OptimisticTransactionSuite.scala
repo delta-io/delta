@@ -116,7 +116,7 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
   private val addG_P4 = AddFile(G_P4, Map("part" -> "4"), 1, 1, dataChange = true)
 
   test("allow concurrent commit on disjoint partitions") {
-    withLog(addA_P1 :: addD_P2 :: addE_P3 :: addD_P2.remove :: Nil) { log =>
+    withLog(addA_P1 :: addE_P3 :: Nil) { log =>
       val tx1 = log.startTransaction()
       // TX1 reads P3 (but not P1)
       val tx1Read = tx1.filterFiles(('part === 3).expr :: Nil)
@@ -138,7 +138,7 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
   }
 
   test("allow concurrent commit on disjoint partitions reading all partitions") {
-    withLog(addA_P1 :: addD_P2 :: addD_P2.remove :: Nil) { log =>
+    withLog(addA_P1 :: addD_P2 :: Nil) { log =>
       val tx1 = log.startTransaction()
       // TX1 read P1
       tx1.filterFiles(('part isin 1).expr :: Nil)
@@ -158,7 +158,7 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
   }
 
   test("block concurrent commit when read partition was appended to by concurrent write") {
-    withLog(addA_P1 :: addD_P2 :: addE_P3 :: addD_P2.remove :: Nil) { log =>
+    withLog(addA_P1 :: addD_P2 :: addE_P3 :: Nil) { log =>
       val tx1 = log.startTransaction()
       // TX1 reads only P1
       val tx1Read = tx1.filterFiles(('part === 1).expr :: Nil)
@@ -177,7 +177,7 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
   }
 
   test("block concurrent commit on full table scan") {
-    withLog(addA_P1 :: addD_P2 :: addD_P2.remove :: Nil) { log =>
+    withLog(addA_P1 :: addD_P2 :: Nil) { log =>
       val tx1 = log.startTransaction()
       // TX1 full table scan
       tx1.filterFiles()
