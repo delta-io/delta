@@ -57,7 +57,7 @@ import org.apache.spark.sql.catalyst.parser.{ParseErrorListener, ParseException,
 import org.apache.spark.sql.catalyst.parser.ParserUtils.{string, withOrigin}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.trees.Origin
-import org.apache.spark.sql.delta.commands.DescribeDeltaDetailCommandOSS
+import org.apache.spark.sql.delta.commands.DescribeDeltaDetailCommand
 import org.apache.spark.sql.delta.commands.ConvertToDeltaCommand
 import org.apache.spark.sql.types._
 
@@ -156,7 +156,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
 
   override def visitDescribeDeltaDetail(
       ctx: DescribeDeltaDetailContext): LogicalPlan = withOrigin(ctx) {
-    DescribeDeltaDetailCommandOSS(
+    DescribeDeltaDetailCommand(
       Option(ctx.path).map(string),
       Option(ctx.table).map(visitTableIdentifier))
   }
