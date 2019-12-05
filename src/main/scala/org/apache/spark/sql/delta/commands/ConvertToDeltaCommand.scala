@@ -203,8 +203,9 @@ abstract class ConvertToDeltaCommandBase(
     val timestampFormatter =
       TimestampFormatter(timestampPartitionPattern, java.util.TimeZone.getDefault)
     val resolver = conf.resolver
+    val dir = if (file.isDir) file.getPath else file.getPath.getParent
     val (partitionOpt, _) = PartitionUtils.parsePartition(
-      path,
+      dir,
       typeInference = false,
       basePaths = Set.empty,
       userSpecifiedDataTypes = Map.empty,
