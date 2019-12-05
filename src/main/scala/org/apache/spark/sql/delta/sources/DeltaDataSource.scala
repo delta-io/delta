@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.sources
 
 import scala.util.{Failure, Success, Try}
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -50,6 +51,7 @@ class DeltaDataSource
     // TODO Remove this when upgrading to Spark 3.0.0
     spark.conf.set("spark.sql.legacy.sources.write.passPartitionByAsOptions", "true")
   }
+
 
   override def sourceSchema(
       sqlContext: SQLContext,

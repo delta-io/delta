@@ -121,6 +121,20 @@ object DeltaOperations {
       "partitionBy" -> JsonUtils.toJson(metadata.partitionColumns),
       "properties" -> JsonUtils.toJson(metadata.configuration))
   }
+  /** Recorded when the table is replaced. */
+  case class ReplaceTable(
+      metadata: Metadata,
+      isManaged: Boolean,
+      orCreate: Boolean,
+      asSelect: Boolean = false)
+    extends Operation(s"${if (orCreate) "CREATE OR " else ""}REPLACE TABLE" +
+      s"${if (asSelect) " AS SELECT" else ""}") {
+    override val parameters: Map[String, Any] = Map(
+      "isManaged" -> isManaged.toString,
+      "description" -> Option(metadata.description),
+      "partitionBy" -> JsonUtils.toJson(metadata.partitionColumns),
+      "properties" -> JsonUtils.toJson(metadata.configuration))
+  }
   /** Recorded when the table properties are set. */
   case class SetTableProperties(
       properties: Map[String, String]) extends Operation("SET TBLPROPERTIES") {

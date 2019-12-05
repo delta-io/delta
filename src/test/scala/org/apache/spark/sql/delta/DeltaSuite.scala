@@ -561,15 +561,15 @@ class DeltaSuite extends QueryTest
 
   test("metadataOnly query") {
     withSQLConf(OPTIMIZER_METADATA_ONLY.key -> "true") {
-      withTable("tahoe_test") {
+      withTable("delta_test") {
         Seq(1L -> "a").toDF("dataCol", "partCol")
           .write
           .mode(SaveMode.Overwrite)
           .partitionBy("partCol")
           .format("delta")
-          .saveAsTable("tahoe_test")
+          .saveAsTable("delta_test")
         checkAnswer(
-          sql("select count(distinct partCol) FROM tahoe_test"),
+          sql("select count(distinct partCol) FROM delta_test"),
           Row(1))
       }
     }
