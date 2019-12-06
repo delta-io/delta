@@ -39,8 +39,6 @@ class DeltaInputFormat(realInput: ParquetInputFormat[ArrayWritable]) extends Fil
   override def listStatus(job: JobConf): Array[FileStatus] = {
     val deltaRootPath = new Path(job.get(DeltaStorageHandler.DELTA_TABLE_PATH))
     TokenCache.obtainTokensForNamenodes(job.getCredentials(), Array(deltaRootPath), job)
-
-    val filteredDeltaFiles = DeltaHelper.listDeltaFiles(deltaRootPath, job)
-    filteredDeltaFiles.toArray(new Array[FileStatus](filteredDeltaFiles.size))
+    DeltaHelper.listDeltaFiles(deltaRootPath, job)
   }
 }

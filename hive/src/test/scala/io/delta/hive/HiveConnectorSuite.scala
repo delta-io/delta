@@ -408,4 +408,29 @@ class HiveConnectorSuite extends HiveTest with BeforeAndAfterEach {
       }
     }
   }
+
+  test("read a partitioned table that contains special chars in a partition column") {
+    withTable("deltaPartitionTbl") {
+      withTempDir { dir =>
+        val testData = (0 until 10).map(x => (x, s"+ =%${x % 2}"))
+
+        withSparkSession { spark =>
+          import spark.implicits._
+          testData.toDS.toDF("c1", "c2").write.format("delta")
+            .partitionBy("c2").save(dir.getCanonicalPath)
+        }
+
+        runQuery(
+          s"""
+             |create external table deltaPartitionTbl(c1 int, c2 string)
+             |stored by 'io.delta.hive.DeltaStorageHandler' location '${dir.getCanonicalPath}'
+         """.stripMargin
+        )
+
+        // TODO Read partition values from `AddFile.partitionValues` to fix incorrect escaped
+        // partition values.
+        runQuery("select * from deltaPartitionTbl")
+      }
+    }
+  }
 }
