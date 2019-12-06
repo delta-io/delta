@@ -227,6 +227,7 @@ object DeltaOperations {
       "newSchema" -> JsonUtils.toJson(newSchema))
   }
 
+
   private def structFieldToMap(colPath: Seq[String], field: StructField): Map[String, Any] = {
     Map(
       "name" -> UnresolvedAttribute(colPath :+ field.name).name,
