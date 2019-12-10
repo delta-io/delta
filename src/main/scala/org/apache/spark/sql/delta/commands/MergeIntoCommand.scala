@@ -222,7 +222,7 @@ case class MergeIntoCommand(
     // Calculate frequency of matches per source row
     val matchedRowCounts = collectTouchedFiles.groupBy(ROW_ID_COL).agg(sum("one").as("count"))
     if (matchedRowCounts.filter("count > 1").count() != 0) {
-      throw DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException
+      throw DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(spark)
     }
 
     // Get the AddFiles using the touched file names.

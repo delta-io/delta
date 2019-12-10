@@ -422,9 +422,17 @@ object DeltaErrors
         + unknownColumns.mkString(", "))
   }
 
-  def multipleSourceRowMatchingTargetRowInMergeException: Throwable = {
-    new UnsupportedOperationException("Cannot perform MERGE as multiple source rows " +
-        "matched and attempted to update the same target row in the Delta table.")
+  def multipleSourceRowMatchingTargetRowInMergeException(spark: SparkSession): Throwable = {
+    new UnsupportedOperationException(
+      s"""Cannot perform MERGE as multiple source rows matched and attempted to update the same
+         |target row in the Delta table. By SQL semantics of merge, when multiple source rows match
+         |on the same target row, the update operation is ambiguous as it is unclear which source
+         |should be used to update the matching target row.
+         |You can preprocess the source table to eliminate the possibility of multiple matches.
+         |Please refer to
+         |${baseDocsPath(spark)}/delta/delta-update.html#upsert-into-a-table-using-merge
+       """.stripMargin
+    )
   }
 
   def subqueryNotSupportedException(op: String, cond: Expression): Throwable = {
