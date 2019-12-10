@@ -79,6 +79,7 @@ Data files can be stored in the root directory of the table or in any non-hidden
 By default, the reference implementation stores data files in directories that are named based on the partition values for data in that file (i.e. `part1=value1/part2=value2/...`).
 This directory format is only used to follow existing conventions and is not required by the protocol.
 Actual partition values for a file must be read from the transaction log.
+If a partition column name starts with `_` and Delta writes data files to that folder, that folder is not considered a hidden subdirectory.
 
 ### Delta Log Entries
 Delta files are stored as JSON in a directory at the root of the table named `_delta_log`, and together make up the log of all changes that have occurred to a table.
