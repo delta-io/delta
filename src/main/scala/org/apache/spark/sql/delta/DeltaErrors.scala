@@ -150,6 +150,12 @@ object DeltaErrors
       + newColumns)
   }
 
+  def notEnoughColumnsInInsert(table: String, query: Int, target: Int): Throwable = {
+    new AnalysisException(s"Cannot write to '$table', not enough data columns; " +
+        s"target table has ${target} column(s) but the inserted data has " +
+        s"${query} column(s)")
+  }
+
   def alterTableReplaceColumnsException(
       oldSchema: StructType,
       newSchema: StructType,
