@@ -107,8 +107,36 @@ object Streaming {
     println("Delta Table after streaming upsert")
     deltaTable.toDF.show()
 
+    // Streaming append and concurrent repartition using  data change = false
+    // tbl1 is the sink and tbl2 is the source
+    println("############ Streaming appends with concurrent table repartition  ##########")
+    val tbl1 = "/tmp/delta-table4"
+    val tbl2 = "/tmp/delta-table5"
+    val numRows = 10
+    spark.range(numRows).write.mode("overwrite").format("delta").save(tbl1)
+    spark.read.format("delta").load(tbl1).show()
+    spark.range(numRows, numRows * 10).write.mode("overwrite").format("delta").save(tbl2)
+
+    // Start reading tbl2 as a stream and do a streaming write to tbl1
+    // Prior to Delta 0.5.0 this would throw StreamingQueryException: Detected a data update in the source table. This is currently not supported.
+    val stream4 = spark.readStream.format("delta").load(tbl2).writeStream.format("delta")
+      .option("checkpointLocation", new File("/tmp/checkpoint/tbl1").getCanonicalPath)
+      .outputMode("append")
+      .start(tbl1)
+
+    // repartition table while streaming job is running
+    spark.read.format("delta").load(tbl2).repartition(10).write.format("delta").mode("overwrite").option("dataChange", "false").save(tbl2)
+
+    stream4.awaitTermination(10)
+    stream4.stop()
+    println("######### After streaming write #########")
+    spark.read.format("delta").load(tbl1).show()
+
     // Cleanup
     FileUtils.deleteDirectory(new File(path))
+    FileUtils.deleteDirectory(new File(tbl1))
+    FileUtils.deleteDirectory(new File(tbl2))
+    FileUtils.deleteDirectory(new File("/tmp/checkpoint/tbl1"))
     FileUtils.deleteDirectory(new File(tablePath2))
     spark.stop()
   }
