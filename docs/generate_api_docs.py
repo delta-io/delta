@@ -1,4 +1,4 @@
-# !/usr/bin/env python2
+# !/usr/bin/env python
 #
 #  Copyright 2019 Databricks, Inc.
 #  Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,6 +13,7 @@
 #
 
 import os
+import sys
 import subprocess
 import argparse
 
@@ -136,6 +137,10 @@ def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
             stderr=subprocess.PIPE,
             **kwargs)
         (stdout, stderr) = child.communicate()
+        if sys.version_info >= (3, 0):
+            stdout = stdout.decode("UTF-8")
+            stderr = stderr.decode("UTF-8")
+
         exit_code = child.wait()
         if throw_on_error and exit_code is not 0:
             raise Exception(
