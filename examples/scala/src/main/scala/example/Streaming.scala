@@ -36,7 +36,7 @@ object Streaming {
 
     import spark.implicits._
 
-    println("=== Section 1: write and read delta table normally, and for Section 3")
+    println("=== Section 1: write and read delta table using batch queries, and initialize table for later sections")
     // Create a table
     val data = spark.range(0, 5)
     val path = new File("/tmp/delta-table").getAbsolutePath
@@ -47,8 +47,7 @@ object Streaming {
     df.show()
 
 
-    println("=== Section 2: write and read delta stream")
-    println("Streaming write")
+    println("=== Section 2: write and read delta using structured streaming")
     val streamingDf = spark.readStream.format("rate").load()
     val tablePath2 = new File("/tmp/delta-table2").getCanonicalPath
     val checkpointPath = new File("/tmp/checkpoint").getCanonicalPath
@@ -62,7 +61,6 @@ object Streaming {
     stream.awaitTermination(10000)
     stream.stop()
 
-    println("Reading from stream")
     val stream2 = spark
       .readStream
       .format("delta")
@@ -75,9 +73,8 @@ object Streaming {
     stream2.stop()
 
 
-    println("=== Section 3: Streaming upgrades in update mode")
+    println("=== Section 3: Streaming upserts using MERGE")
     // Function to upsert microBatchOutputDF into Delta Lake table using merge
-    println("Streaming upgrades in update mode")
     def upsertToDelta(microBatchOutputDF: DataFrame, batchId: Long) {
       val deltaTable = DeltaTable.forPath(path)
       deltaTable.as("t")
