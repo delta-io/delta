@@ -36,6 +36,7 @@ object Streaming {
 
     import spark.implicits._
 
+    println("=== Section 1: write and read delta table normally, and for Section 3")
     // Create a table
     val data = spark.range(0, 5)
     val path = new File("/tmp/delta-table").getAbsolutePath
@@ -45,14 +46,17 @@ object Streaming {
     val df = spark.read.format("delta").load(path)
     df.show()
 
+
+    println("=== Section 2: write and read delta stream")
     println("Streaming write")
     val streamingDf = spark.readStream.format("rate").load()
     val tablePath2 = new File("/tmp/delta-table2").getCanonicalPath
+    val checkpointPath = new File("/tmp/checkpoint").getCanonicalPath
     val stream = streamingDf
       .select($"value" as "id")
       .writeStream
       .format("delta")
-      .option("checkpointLocation", new File("/tmp/checkpoint").getCanonicalPath)
+      .option("checkpointLocation", checkpointPath)
       .start(tablePath2)
 
     stream.awaitTermination(10000)
@@ -70,6 +74,8 @@ object Streaming {
     stream2.awaitTermination(10000)
     stream2.stop()
 
+
+    println("=== Section 3: Streaming upgrades in update mode")
     // Function to upsert microBatchOutputDF into Delta Lake table using merge
     println("Streaming upgrades in update mode")
     def upsertToDelta(microBatchOutputDF: DataFrame, batchId: Long) {
@@ -101,15 +107,18 @@ object Streaming {
       .outputMode("update")
       .start()
 
-    stream3.awaitTermination(10000)
+    stream3.awaitTermination(20000)
     stream3.stop()
 
     println("Delta Table after streaming upsert")
     deltaTable.toDF.show()
 
+
+    println("=== In the end, clean all paths")
     // Cleanup
     FileUtils.deleteDirectory(new File(path))
     FileUtils.deleteDirectory(new File(tablePath2))
+    FileUtils.deleteDirectory(new File(checkpointPath))
     spark.stop()
   }
 }
