@@ -133,11 +133,9 @@ object Streaming {
     spark.read.format("delta").load(tbl1).show()
 
     // Cleanup
-    FileUtils.deleteDirectory(new File(path))
-    FileUtils.deleteDirectory(new File(tbl1))
-    FileUtils.deleteDirectory(new File(tbl2))
-    FileUtils.deleteDirectory(new File("/tmp/checkpoint/tbl1"))
-    FileUtils.deleteDirectory(new File(tablePath2))
+    Seq(path, tbl1, tbl2, "/tmp/checkpoint/tbl1", tablePath2).foreach { path =>
+    	FileUtils.deleteDirectory(new File(path))
+    }
     spark.stop()
   }
 }
