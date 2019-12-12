@@ -38,19 +38,30 @@ import org.apache.spark.sql.types.{DataType, StructField, StructType}
 
 trait DocsPath {
   /**
-   * The URL for the base path of Delta's docs.
+   * The URL for the base path of Delta's docs. When changing this path, ensure that the new path
+   * works with the error messages below.
    */
-  def baseDocsPath(conf: SparkConf): String = "https://docs.delta.io"
+  protected def baseDocsPath(conf: SparkConf): String = "https://docs.delta.io/latest"
+
+  def generateDocsLink(conf: SparkConf, path: String): String = {
+    baseDocsPath(conf) + path
+  }
 }
 
 /**
  * A holder object for Delta errors.
+ *
+ * IMPORTANT: Any time you add a test that references the docs, add to the Seq defined in
+ * DeltaErrorsSuite so that the doc links that are generated can be verified to work in Azure,
+ * docs.databricks.com and docs.delta.io
  */
 object DeltaErrors
     extends DocsPath
     with DeltaLogging {
 
   def baseDocsPath(spark: SparkSession): String = baseDocsPath(spark.sparkContext.getConf)
+
+  val faqPath = "/delta-intro.html#frequently-asked-questions"
 
   val DeltaSourceIgnoreDeleteErrorMessage =
     "Detected deleted data from streaming source. This is currently not supported. If you'd like " +
@@ -67,12 +78,11 @@ object DeltaErrors
    * Note that we must pass in the docAddress as a string, because the config is not available on
    * executors where this method is called.
    */
-  def deltaFileNotFoundHint(path: String, docAddress: String): String = {
+  def deltaFileNotFoundHint(faqPath: String, path: String): String = {
     recordDeltaEvent(null, "delta.error.fileNotFound", data = path)
-    val faq = docAddress + "/delta/delta-intro.html#frequently-asked-questions"
     "A file referenced in the transaction log cannot be found. This occurs when data has been " +
       "manually deleted from the file system rather than using the table `DELETE` statement. " +
-      s"For more information, see $faq"
+      s"For more information, see $faqPath"
   }
 
   def formatColumn(colName: String): String = s"`$colName`"
@@ -211,7 +221,8 @@ object DeltaErrors
         |using format("delta") and that you are trying to $operation the table base path.
         |
         |To disable this check, SET spark.databricks.delta.formatCheck.enabled=false
-        |To learn more about Delta, see ${baseDocsPath(spark)}/delta/index.html
+        |To learn more about Delta, see ${generateDocsLink(spark.sparkContext.getConf,
+        "/index.html")}
         |""".stripMargin)
   }
 
@@ -229,7 +240,8 @@ object DeltaErrors
         |'format("delta")' when reading and writing to a delta table.
         |
         |To disable this check, SET spark.databricks.delta.formatCheck.enabled=false
-        |To learn more about Delta, see ${baseDocsPath(spark)}/delta/index.html
+        |To learn more about Delta, see
+        |${generateDocsLink(spark.sparkContext.getConf, "/index.html")}
         |""".stripMargin)
   }
 
@@ -490,7 +502,8 @@ object DeltaErrors
          |`$path/_delta_log`. Check the upstream job to make sure that it is writing using
          |format("delta") and that the path is the root of the table.
          |
-         |To learn more about Delta, see ${baseDocsPath(spark)}/delta/index.html
+         |To learn more about Delta, see ${generateDocsLink(spark.sparkContext.getConf,
+        "/index.html")}
        """.stripMargin)
   }
 
@@ -502,7 +515,8 @@ object DeltaErrors
          |from `$path` using Delta Lake, but the schema is not specified when the
          |input path is empty.
          |
-         |To learn more about Delta, see ${baseDocsPath(spark)}/delta/index.html
+         |To learn more about Delta, see ${generateDocsLink(spark.sparkContext.getConf,
+        "/index.html")}
        """.stripMargin)
   }
 
@@ -513,7 +527,8 @@ object DeltaErrors
          |You are trying to create a managed table $tableName
          |using Delta Lake, but the schema is not specified.
          |
-         |To learn more about Delta, see ${baseDocsPath(spark)}/delta/index.html
+         |To learn more about Delta, see ${generateDocsLink(spark.sparkContext.getConf,
+        "/index.html")}
        """.stripMargin)
   }
 
@@ -717,8 +732,9 @@ abstract class DeltaConcurrentModificationException(message: String)
   def this(baseMessage: String, conflictingCommit: Option[CommitInfo]) = this(
     baseMessage +
       conflictingCommit.map(ci => s"\nConflicting commit: ${JsonUtils.toJson(ci)}").getOrElse("") +
-      s"\nRefer to ${DeltaErrors.baseDocsPath(SparkEnv.get.conf)}" +
-      "/delta/isolation-level.html#optimistic-concurrency-control for more details."
+      s"\nRefer to " +
+      s"${DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html")} " +
+      "for more details."
   )
 
   /**
