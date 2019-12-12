@@ -380,6 +380,24 @@ abstract class ConvertToDeltaSuiteBase extends QueryTest
     }
   }
 
+  test("converting tables with dateType partition columns") {
+    withTempDir { dir =>
+      val tempDir = dir.getCanonicalPath
+      val df1 = Seq(0).toDF("id").withColumn("key1", lit("2019-11-22").cast("date"))
+
+      val df2 = Seq(1).toDF("id").withColumn("key1", lit(null))
+
+      writeFiles(tempDir, df1.union(df2), partCols = Seq("key1"))
+      convertToDelta(s"parquet.`$tempDir`", Some("key1 date"))
+      checkAnswer(
+        spark.read.format("delta").load(tempDir).where("key1 is null").select("id"),
+        Row(1))
+      checkAnswer(
+        spark.read.format("delta").load(tempDir).where("key1 = '2019-11-22'").select("id"),
+        Row(0))
+    }
+  }
+
   test("empty string partition value will be read back as null") {
     withTempDir { dir =>
       val tempDir = dir.getCanonicalPath
