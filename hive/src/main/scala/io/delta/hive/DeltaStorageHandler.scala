@@ -18,10 +18,9 @@ import org.apache.hadoop.hive.ql.plan.ExprNodeGenericFuncDesc
 import org.apache.hadoop.hive.ql.plan.TableDesc
 import org.apache.hadoop.hive.serde2.AbstractSerDe
 import org.apache.hadoop.hive.serde2.Deserializer
-import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory
+import org.apache.hadoop.hive.serde2.typeinfo.{StructTypeInfo, TypeInfo, TypeInfoFactory, TypeInfoUtils}
 import org.apache.hadoop.mapred.{InputFormat, JobConf, OutputFormat}
-import org.apache.spark.sql.delta.DeltaHelper
-import org.apache.spark.sql.delta.DeltaPushFilter
+import org.apache.spark.sql.delta.{DeltaHelper, DeltaPushFilter}
 import org.slf4j.LoggerFactory
 
 class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook with HiveStoragePredicateHandler {
@@ -44,8 +43,7 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook with H
   override def configureInputJobProperties(tableDesc: TableDesc, jobProperties: java.util.Map[String, String]): Unit = {
     super.configureInputJobProperties(tableDesc, jobProperties)
     jobProperties.put(DELTA_TABLE_PATH, tableDesc.getProperties().getProperty(DELTA_TABLE_PATH))
-    jobProperties.put(DELTA_PARTITION_COLS_NAMES, tableDesc.getProperties().getProperty(DELTA_PARTITION_COLS_NAMES))
-    jobProperties.put(DELTA_PARTITION_COLS_TYPES, tableDesc.getProperties().getProperty(DELTA_PARTITION_COLS_TYPES))
+    jobProperties.put(DELTA_TABLE_SCHEMA, tableDesc.getProperties().getProperty(DELTA_TABLE_SCHEMA))
   }
 
   override def decomposePredicate(jobConf: JobConf, deserializer: Deserializer, predicate: ExprNodeDesc): DecomposedPredicate = {
@@ -141,48 +139,68 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook with H
           s"${tbl.getDbName}:${tbl.getTableName}. The partition columns in a Delta table " +
           s"will be read from its own metadata and should not be set manually.")    }
 
-    val deltaRootString = tbl.getSd().getLocation()
-    if (deltaRootString == null || deltaRootString.trim().length() == 0) {
-      throw new MetaException("table location should be set when creating table")
-    } else {
-      val deltaPath = new Path(deltaRootString)
-      val fs = deltaPath.getFileSystem(getConf())
-      if (!fs.exists(deltaPath)) {
-        throw new MetaException("delta.table.path(" + deltaRootString + ") does not exist...")
-      } else {
-        val partitionProps = DeltaHelper.checkHiveColsInDelta(deltaPath, tbl.getSd().getCols())
-        tbl.getSd().getSerdeInfo().getParameters().putAll(partitionProps.asJava)
-        tbl.getSd().getSerdeInfo().getParameters().put(DELTA_TABLE_PATH, deltaRootString)
-        tbl.getParameters.put("spark.sql.sources.provider", "DELTA")
-        LOG.info("write partition cols/types to table properties " +
-          partitionProps.map(kv => s"${kv._1}=${kv._2}").mkString(", "))
-      }
+    val deltaRootString = tbl.getSd.getLocation
+    if (deltaRootString == null || deltaRootString.trim.isEmpty) {
+      throw new MetaException("table location should be set when creating a Delta table")
     }
+
+    val snapshot = DeltaHelper.loadDeltaLatestSnapshot(new Path(deltaRootString))
+    if (snapshot.version < 0) {
+      throw new MetaException(s"$deltaRootString does not exist or it's not a Delta table")
+    }
+
+    // Extract the table schema in Hive and put it into the table property. Then we can compare it
+    // with the latest table schema in Delta logs and fail the query if it was changed.
+    // TODO Investigate if we can get the table schema without manually storing it in the table
+    // property.
+    val cols = tbl.getSd.getCols
+    val columnNames = new java.util.ArrayList[String](cols.size)
+    val columnTypes = new java.util.ArrayList[TypeInfo](cols.size)
+    cols.asScala.foreach { col =>
+      columnNames.add(col.getName)
+      columnTypes.add(TypeInfoUtils.getTypeInfoFromTypeString(col.getType))
+    }
+    val hiveSchema = TypeInfoFactory.getStructTypeInfo(columnNames, columnTypes)
+      .asInstanceOf[StructTypeInfo]
+    DeltaHelper.checkTableSchema(snapshot.metadata.schema, hiveSchema)
+    tbl.getParameters.put(DELTA_TABLE_PATH, deltaRootString)
+    tbl.getParameters.put(DELTA_TABLE_SCHEMA, hiveSchema.toString)
+    tbl.getParameters.put("spark.sql.sources.provider", "DELTA")
   }
 
   override def rollbackCreateTable(table: Table): Unit = {
-    // TODO What should we do?
+    // We don't change the Delta table on the file system. Nothing to do
   }
 
   override def commitCreateTable(table: Table): Unit = {
-    // TODO What should we do?
+    // Nothing to do
   }
 
   override def preDropTable(table: Table): Unit = {
-    // TODO What should we do?
+    // Nothing to do
   }
 
   override def rollbackDropTable(table: Table): Unit = {
-    // TODO What should we do?
+    // Nothing to do
   }
 
   override def commitDropTable(table: Table, b: Boolean): Unit = {
-    // TODO What should we do?
+    // Nothing to do
   }
 }
 
 object DeltaStorageHandler {
+  /**
+   * The Delta table path we store in the table properties and it's also passed into `JobConf` so
+   * that `DeltaLog` can be accessed everywhere.
+   */
   val DELTA_TABLE_PATH = "delta.table.path"
-  val DELTA_PARTITION_COLS_NAMES = "delta.partition.columns"
-  val DELTA_PARTITION_COLS_TYPES = "delta.partition.columns.types"
+
+  /**
+   * A config we use to remember the table schema in the table properties.
+   *
+   * TODO Maybe Hive can tell us this in the `configureInputJobProperties` method. Then we don't
+   * need to store this extra information.
+   */
+  val DELTA_TABLE_SCHEMA = "delta.table.schema"
 }

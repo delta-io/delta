@@ -39,8 +39,8 @@ class HiveConnectorSuite extends HiveTest with BeforeAndAfterEach {
              |stored by 'io.delta.hive.DeltaStorageHandler'
          """.stripMargin
         )
-      }.getMessage
-      assert(e.contains("table location should be set when creating table"))
+      }
+      assert(e.getMessage.contains("table location should be set"))
     }
   }
 
@@ -82,50 +82,37 @@ class HiveConnectorSuite extends HiveTest with BeforeAndAfterEach {
     }
   }
 
-  test("the delta root path should be existed when create hive table") {
+  test("the table path should point to a Delta table") {
     withTable("deltaTbl") {
       withTempDir { dir =>
-        JavaUtils.deleteRecursively(dir)
-
-        val e = intercept[Exception] {
+        // path exists but is not a Delta table should fail
+        assert(dir.exists())
+        var e = intercept[Exception] {
           runQuery(
             s"""
                |create external table deltaTbl(a string, b int)
                |stored by 'io.delta.hive.DeltaStorageHandler' location '${dir.getCanonicalPath}'
          """.stripMargin
           )
-        }.getMessage
-        assert(e.contains(s"delta.table.path(${dir.getCanonicalPath}) does not exist..."))
-      }
-    }
-  }
-
-  test("when creating hive table on a partitioned delta, " +
-    "the partition columns should be after data columns") {
-    withTable("deltaTbl") {
-      withTempDir { dir =>
-        val testData = (0 until 10).map(x => (x, s"foo${x % 2}"))
-
-        withSparkSession { spark =>
-          import spark.implicits._
-          testData.toDS.toDF("a", "b").write.format("delta")
-            .partitionBy("b").save(dir.getCanonicalPath)
         }
+        assert(e.getMessage.contains("not a Delta table"))
 
-        val e = intercept[Exception] {
+        // path doesn't exist should fail as well
+        JavaUtils.deleteRecursively(dir)
+        assert(!dir.exists())
+        e = intercept[Exception] {
           runQuery(
             s"""
-               |create external table deltaTbl(b string, a string)
+               |create external table deltaTbl(a string, b int)
                |stored by 'io.delta.hive.DeltaStorageHandler' location '${dir.getCanonicalPath}'
          """.stripMargin
           )
-        }.getMessage
-        assert(e.contains(s"The partition cols of Delta should be after data cols"))
+        }
+        assert(e.getMessage.contains("does not exist"))
       }
     }
   }
 
-  // check column number & column name
   test("Hive schema should match delta's schema") {
     withTable("deltaTbl") {
       withTempDir { dir =>
@@ -133,32 +120,96 @@ class HiveConnectorSuite extends HiveTest with BeforeAndAfterEach {
 
         withSparkSession { spark =>
           import spark.implicits._
-          val x = testData.toDS.toDF("a", "b", "c")
           testData.toDS.toDF("a", "b", "c").write.format("delta")
             .partitionBy("b").save(dir.getCanonicalPath)
         }
 
         // column number mismatch
-        val e1 = intercept[Exception] {
+        var e = intercept[Exception] {
           runQuery(
             s"""
                |create external table deltaTbl(a string, b string)
                |stored by 'io.delta.hive.DeltaStorageHandler' location '${dir.getCanonicalPath}'
          """.stripMargin
           )
-        }.getMessage
-        assert(e1.contains(s"number does not match"))
+        }
+        assert(e.getMessage.contains(s"schema is not the same"))
 
         // column name mismatch
-        val e2 = intercept[Exception] {
+        e = intercept[Exception] {
           runQuery(
             s"""
-               |create external table deltaTbl(e string, c string, b string)
+               |create external table deltaTbl(e int, c string, b string)
                |stored by 'io.delta.hive.DeltaStorageHandler' location '${dir.getCanonicalPath}'
          """.stripMargin
           )
-        }.getMessage
-        assert(e2.contains(s"name does not match"))
+        }
+        assert(e.getMessage.contains(s"schema is not the same"))
+
+        // column order mismatch
+        e = intercept[Exception] {
+          runQuery(
+            s"""
+               |create external table deltaTbl(a int, c string, b string)
+               |stored by 'io.delta.hive.DeltaStorageHandler' location '${dir.getCanonicalPath}'
+         """.stripMargin
+          )
+        }
+        assert(e.getMessage.contains(s"schema is not the same"))
+      }
+    }
+  }
+
+  test("detect schema changes outside Hive") {
+    withTable("deltaTbl") {
+      withTempDir { dir =>
+        val testData = (0 until 10).map(x => (x, s"foo${x % 2}"))
+
+        withSparkSession { spark =>
+          import spark.implicits._
+          testData.toDF("a", "b").write.format("delta").save(dir.getCanonicalPath)
+        }
+
+        runQuery(
+          s"""
+             |CREATE EXTERNAL TABLE deltaTbl(a INT, b STRING)
+             |STORED BY 'io.delta.hive.DeltaStorageHandler'
+             |LOCATION '${dir.getCanonicalPath}'""".stripMargin
+        )
+
+        checkAnswer("SELECT * FROM deltaTbl", testData)
+
+        // Change the underlying Delta table to a different schema
+        val testData2 = testData.map(_.swap)
+
+        withSparkSession { spark =>
+          import spark.implicits._
+          testData2.toDF("a", "b")
+            .write
+            .format("delta")
+            .mode("overwrite")
+            .option("overwriteSchema", "true")
+            .save(dir.getCanonicalPath)
+        }
+
+        // Should detect the underlying schema change and fail the query
+        val e = intercept[Exception] {
+          runQuery("SELECT * FROM deltaTbl")
+        }
+        assert(e.getMessage.contains(s"schema is not the same"))
+
+        // Re-create the table because Hive doesn't allow `ALTER TABLE` on a non-native table.
+        // TODO Investigate whether there is a more convenient way to update the table schema.
+        runQuery("DROP TABLE deltaTbl")
+        runQuery(
+          s"""
+             |CREATE EXTERNAL TABLE deltaTbl(a STRING, b INT)
+             |STORED BY 'io.delta.hive.DeltaStorageHandler'
+             |LOCATION '${dir.getCanonicalPath}'""".stripMargin
+        )
+
+        // After fixing the schema, the query should work again.
+        checkAnswer("SELECT * FROM deltaTbl", testData2)
       }
     }
   }
@@ -181,9 +232,7 @@ class HiveConnectorSuite extends HiveTest with BeforeAndAfterEach {
          """.stripMargin
         )
 
-        assert(runQuery(
-          "select * from deltaNonPartitionTbl").sorted ===
-          testData.map(r => s"${r._1}\t${r._2}").sorted)
+        checkAnswer("select * from deltaNonPartitionTbl", testData)
       }
     }
   }
@@ -207,18 +256,14 @@ class HiveConnectorSuite extends HiveTest with BeforeAndAfterEach {
          """.stripMargin
         )
 
-        assert(runQuery(
-          "select * from deltaPartitionTbl").sorted ===
-          testData.map(r => s"${r._1}\t${r._2}").sorted)
+        checkAnswer("select * from deltaPartitionTbl", testData)
 
         // select partition column order change
-        assert(runQuery(
-          "select c2, c1 from deltaPartitionTbl").sorted ===
-          testData.map(r => s"${r._2}\t${r._1}").sorted)
+        checkAnswer("select c2, c1 from deltaPartitionTbl", testData.map(_.swap))
 
-        assert(runQuery(
-          "select c2, c1, c2 as c3 from deltaPartitionTbl").sorted ===
-          testData.map(r => s"${r._2}\t${r._1}\t${r._2}").sorted)
+        checkAnswer(
+          "select c2, c1, c2 as c3 from deltaPartitionTbl",
+          testData.map(r => (r._2, r._1, r._2)))
       }
     }
   }
@@ -245,9 +290,9 @@ class HiveConnectorSuite extends HiveTest with BeforeAndAfterEach {
         // Delete the partition not needed in the below query to verify the partition pruning works
         JavaUtils.deleteRecursively(new File(dir, "c2=foo1"))
         assert(dir.listFiles.map(_.getName).sorted === Seq("_delta_log", "c2=foo0").sorted)
-        assert(runQuery(
-          "select * from deltaPartitionTbl where c2 = 'foo0'").sorted ===
-          testData.filter(_._2 == "foo0").map(r => s"${r._1}\t${r._2}").sorted)
+        checkAnswer(
+          "select * from deltaPartitionTbl where c2 = 'foo0'",
+          testData.filter(_._2 == "foo0"))
       }
     }
   }
@@ -271,7 +316,7 @@ class HiveConnectorSuite extends HiveTest with BeforeAndAfterEach {
 
         runQuery(
           s"""
-             |create external table deltaPartitionTbl(name string, cnt int, city string, `date` string)
+             |create external table deltaPartitionTbl(city string, `date` string, name string, cnt int)
              |stored by 'io.delta.hive.DeltaStorageHandler' location '${dir.getCanonicalPath}'
          """.stripMargin
         )
@@ -280,87 +325,76 @@ class HiveConnectorSuite extends HiveTest with BeforeAndAfterEach {
         assert(runQuery(
           "explain select city, `date`, name, cnt from deltaPartitionTbl where `date` = '20180520'")
           .mkString(" ").contains("filterExpr: (date = '20180520')"))
-        assert(runQuery(
-          "select city, `date`, name, cnt from deltaPartitionTbl where `date` = '20180520'")
-          .toList.sorted === testData.filter(_._2 == "20180520")
-          .map(r => s"${r._1}\t${r._2}\t${r._3}\t${r._4}").sorted)
+        checkAnswer(
+          "select city, `date`, name, cnt from deltaPartitionTbl where `date` = '20180520'",
+          testData.filter(_._2 == "20180520"))
 
         assert(runQuery(
           "explain select city, `date`, name, cnt from deltaPartitionTbl where `date` != '20180520'")
           .mkString(" ").contains("filterExpr: (date <> '20180520')"))
-        assert(runQuery(
-          "select city, `date`, name, cnt from deltaPartitionTbl where `date` != '20180520'")
-          .toList.sorted === testData.filter(_._2 != "20180520")
-          .map(r => s"${r._1}\t${r._2}\t${r._3}\t${r._4}").sorted)
+        checkAnswer(
+          "select city, `date`, name, cnt from deltaPartitionTbl where `date` != '20180520'",
+          testData.filter(_._2 != "20180520"))
 
         assert(runQuery(
           "explain select city, `date`, name, cnt from deltaPartitionTbl where `date` > '20180520'")
           .mkString(" ").contains("filterExpr: (date > '20180520')"))
-        assert(runQuery(
-          "select city, `date`, name, cnt from deltaPartitionTbl where `date` > '20180520'")
-          .toList.sorted === testData.filter(_._2 > "20180520")
-          .map(r => s"${r._1}\t${r._2}\t${r._3}\t${r._4}").sorted)
+        checkAnswer(
+          "select city, `date`, name, cnt from deltaPartitionTbl where `date` > '20180520'",
+          testData.filter(_._2 > "20180520"))
 
         assert(runQuery(
           "explain select city, `date`, name, cnt from deltaPartitionTbl where `date` >= '20180520'")
           .mkString(" ").contains("filterExpr: (date >= '20180520')"))
-        assert(runQuery(
-          "select city, `date`, name, cnt from deltaPartitionTbl where `date` >= '20180520'")
-          .toList.sorted === testData.filter(_._2 >= "20180520")
-          .map(r => s"${r._1}\t${r._2}\t${r._3}\t${r._4}").sorted)
+        checkAnswer(
+          "select city, `date`, name, cnt from deltaPartitionTbl where `date` >= '20180520'",
+          testData.filter(_._2 >= "20180520"))
 
         assert(runQuery(
           "explain select city, `date`, name, cnt from deltaPartitionTbl where `date` < '20180520'")
           .mkString(" ").contains("filterExpr: (date < '20180520')"))
-        assert(runQuery(
-          "select city, `date`, name, cnt from deltaPartitionTbl where `date` < '20180520'")
-          .toList.sorted === testData.filter(_._2 < "20180520")
-          .map(r => s"${r._1}\t${r._2}\t${r._3}\t${r._4}").sorted)
+        checkAnswer(
+          "select city, `date`, name, cnt from deltaPartitionTbl where `date` < '20180520'",
+          testData.filter(_._2 < "20180520"))
 
         assert(runQuery(
           "explain select city, `date`, name, cnt from deltaPartitionTbl where `date` <= '20180520'")
           .mkString(" ").contains("filterExpr: (date <= '20180520')"))
-        assert(runQuery(
-          "select city, `date`, name, cnt from deltaPartitionTbl where `date` <= '20180520'")
-          .toList.sorted === testData.filter(_._2 <= "20180520")
-          .map(r => s"${r._1}\t${r._2}\t${r._3}\t${r._4}").sorted)
+        checkAnswer(
+          "select city, `date`, name, cnt from deltaPartitionTbl where `date` <= '20180520'",
+          testData.filter(_._2 <= "20180520"))
 
         // expr(like) pushed down
         assert(runQuery(
           "explain select * from deltaPartitionTbl where `date` like '201805%'")
           .mkString(" ").contains("filterExpr: (date like '201805%')"))
-        assert(runQuery(
-          "select * from deltaPartitionTbl where `date` like '201805%'").toList.sorted === testData
-          .filter(_._2.contains("201805")).map(r => s"${r._3}\t${r._4}\t${r._1}\t${r._2}").sorted)
+        checkAnswer(
+          "select * from deltaPartitionTbl where `date` like '201805%'",
+          testData.filter(_._2.contains("201805")))
 
         // expr(in) pushed down
         assert(runQuery(
           "explain select name, `date`, cnt from deltaPartitionTbl where `city` in ('hz', 'sz')")
           .mkString(" ").contains("filterExpr: (city) IN ('hz', 'sz')"))
-        assert(runQuery(
-          "select name, `date`, cnt from deltaPartitionTbl where `city` in ('hz', 'sz')")
-          .toList.sorted === testData.filter(c => Seq("hz", "sz").contains(c._1))
-          .map(r => s"${r._3}\t${r._2}\t${r._4}").sorted)
+        checkAnswer(
+          "select name, `date`, cnt from deltaPartitionTbl where `city` in ('hz', 'sz')",
+          testData.filter(c => Seq("hz", "sz").contains(c._1)).map(r => (r._3, r._2, r._4)))
 
         // two partition column pushed down
         assert(runQuery(
           "explain select * from deltaPartitionTbl where `date` = '20181212' and `city` in ('hz', 'sz')")
           .mkString(" ").contains("filterExpr: ((city) IN ('hz', 'sz') and (date = '20181212'))"))
-        assert(runQuery(
-          "select * from deltaPartitionTbl where `date` = '20181212' and `city` in ('hz', 'sz')")
-          .toList.sorted === testData
-          .filter(c => Seq("hz", "sz").contains(c._1) && c._2 == "20181212")
-          .map(r => s"${r._3}\t${r._4}\t${r._1}\t${r._2}").sorted)
+        checkAnswer(
+          "select * from deltaPartitionTbl where `date` = '20181212' and `city` in ('hz', 'sz')",
+          testData.filter(c => Seq("hz", "sz").contains(c._1) && c._2 == "20181212"))
 
         // data column not be pushed down
         assert(runQuery(
           "explain select * from deltaPartitionTbl where city = 'hz' and name = 'Jim'")
           .mkString(" ").contains("filterExpr: (city = 'hz'"))
-        assert(runQuery(
-          "select * from deltaPartitionTbl where city = 'hz' and name = 'Jim'")
-          .toList.sorted === testData
-          .filter(c => c._1 == "hz" && c._3 == "Jim")
-          .map(r => s"${r._3}\t${r._4}\t${r._1}\t${r._2}").sorted)
+        checkAnswer(
+          "select * from deltaPartitionTbl where city = 'hz' and name = 'Jim'",
+          testData.filter(c => c._1 == "hz" && c._3 == "Jim"))
       }
     }
   }
@@ -380,30 +414,24 @@ class HiveConnectorSuite extends HiveTest with BeforeAndAfterEach {
 
           runQuery(
             s"""
-               |create external table deltaPartitionTbl(name string, cnt int, city string, `date` string)
+               |create external table deltaPartitionTbl(city string, `date` string, name string, cnt int)
                |stored by 'io.delta.hive.DeltaStorageHandler' location '${dir.getCanonicalPath}'
          """.stripMargin
           )
 
-          assert(runQuery(
-            "select * from deltaPartitionTbl").toList.sorted === testData1
-            .map(r => s"${r._3}\t${r._4}\t${r._1}\t${r._2}").sorted)
+          checkAnswer("select * from deltaPartitionTbl", testData1)
 
           // insert another partition data
           val testData2 = Seq(("bj", "20180520", "Trump", 1))
           testData2.toDS.toDF("city", "date", "name", "cnt").write.mode("append").format("delta")
             .partitionBy("date", "city").save(dir.getCanonicalPath)
           val testData = testData1 ++ testData2
-          assert(runQuery(
-            "select * from deltaPartitionTbl").toList.sorted === testData
-            .map(r => s"${r._3}\t${r._4}\t${r._1}\t${r._2}").sorted)
+          checkAnswer("select * from deltaPartitionTbl", testData)
 
           // delete one partition
           val deltaTable = DeltaTable.forPath(spark, dir.getCanonicalPath)
           deltaTable.delete("city='hz'")
-          assert(runQuery(
-            "select * from deltaPartitionTbl").toList.sorted === testData
-            .filterNot(_._1 == "hz").map(r => s"${r._3}\t${r._4}\t${r._1}\t${r._2}").sorted)
+          checkAnswer("select * from deltaPartitionTbl", testData.filterNot(_._1 == "hz"))
         }
       }
     }
@@ -427,10 +455,89 @@ class HiveConnectorSuite extends HiveTest with BeforeAndAfterEach {
          """.stripMargin
         )
 
-        // TODO Read partition values from `AddFile.partitionValues` to fix incorrect escaped
-        // partition values.
-        runQuery("select * from deltaPartitionTbl")
+        checkAnswer("select * from deltaPartitionTbl", testData)
+      }
+    }
+  }
+
+  test("map Spark types to Hive types correctly") {
+    withTable("deltaTbl") {
+      withTempDir { dir =>
+        val testData = Seq(
+          TestClass(
+            97.toByte,
+            Array(98.toByte, 99.toByte),
+            true,
+            4,
+            5L,
+            "foo",
+            6.0f,
+            7.0,
+            8.toShort,
+            new java.sql.Date(60000000L),
+            new java.sql.Timestamp(60000000L),
+            new java.math.BigDecimal(12345.6789),
+            Array("foo", "bar"),
+            Map("foo" -> 123L),
+            TestStruct("foo", 456L)
+          )
+        )
+
+        withSparkSession { spark =>
+          import spark.implicits._
+          testData.toDF.write.format("delta").save(dir.getCanonicalPath)
+        }
+
+        runQuery(
+          s"""
+             |create external table deltaTbl(
+             |c1 tinyint, c2 binary, c3 boolean, c4 int, c5 bigint, c6 string, c7 float, c8 double,
+             |c9 smallint, c10 date, c11 timestamp, c12 decimal(38, 18), c13 array<string>,
+             |c14 map<string, bigint>, c15 struct<f1: string, f2: bigint>)
+             |stored by 'io.delta.hive.DeltaStorageHandler' location '${dir.getCanonicalPath}'
+         """.stripMargin
+        )
+
+        val expected = (
+          "97",
+          "bc",
+          "true",
+          "4",
+          "5",
+          "foo",
+          "6.0",
+          "7.0",
+          "8",
+          "1970-01-01",
+          "1970-01-01 08:40:00",
+          "12345.678900000000794535",
+          """["foo","bar"]""",
+          """{"foo":123}""",
+          """{"f1":"foo","f2":456}"""
+        )
+        checkAnswer("select * from deltaTbl", Seq(expected))
       }
     }
   }
 }
+
+case class TestStruct(f1: String, f2: Long)
+
+/** A special test class that covers all Spark types we support in the Hive connector. */
+case class TestClass(
+  c1: Byte,
+  c2: Array[Byte],
+  c3: Boolean,
+  c4: Int,
+  c5: Long,
+  c6: String,
+  c7: Float,
+  c8: Double,
+  c9: Short,
+  c10: java.sql.Date,
+  c11: java.sql.Timestamp,
+  c12: BigDecimal,
+  c13: Array[String],
+  c14: Map[String, Long],
+  c15: TestStruct
+)

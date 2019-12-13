@@ -2,6 +2,7 @@ package io.delta.hive.test
 
 import java.io.File
 import java.nio.file.Files
+import java.util.{Locale, TimeZone}
 
 import scala.collection.JavaConverters._
 
@@ -26,6 +27,11 @@ trait HiveTest extends FunSuite with BeforeAndAfterAll {
 
   private var driver: Driver = _
   private var mr: MiniMRCluster = _
+
+  // Timezone is fixed to America/Los_Angeles for those timezone sensitive tests (timestamp_*)
+  TimeZone.setDefault(TimeZone.getTimeZone("America/Los_Angeles"))
+  // Add Locale setting
+  Locale.setDefault(Locale.US)
 
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -85,6 +91,29 @@ trait HiveTest extends FunSuite with BeforeAndAfterAll {
       result.asScala
     } else {
       Nil
+    }
+  }
+
+  /** Run the Hive query and check the result with the expected answer. */
+  def checkAnswer[T <: Product](query: String, expected: Seq[T]): Unit = {
+    val actualAnswer = runQuery(query).sorted
+    val expectedAnswer = expected.map(_.productIterator.mkString("\t")).sorted
+    if (actualAnswer != expectedAnswer) {
+      fail(
+        s"""Answers do not match.
+           |Query:
+           |
+           |$query
+           |
+           |Expected:
+           |
+           |${expectedAnswer.mkString("\n")}
+           |
+           |Actual:
+           |
+           |${actualAnswer.mkString("\n")}
+           |
+         """.stripMargin)
     }
   }
 
