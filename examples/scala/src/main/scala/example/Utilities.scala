@@ -65,6 +65,10 @@ object Utilities {
     println("Describe History for the table")
     deltaTable.history().show()
 
+    // Generate manifest
+    println("Generate Manifest files")
+    deltaTable.generate("SYMLINK_FORMAT_MANIFEST")
+
     // SQL utility commands
     println("SQL Vacuum")
     spark.sql(s"VACUUM '$path' RETAIN 169 HOURS")
