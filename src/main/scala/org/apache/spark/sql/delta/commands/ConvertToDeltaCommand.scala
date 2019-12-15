@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.util.SerializableFileStatus
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
 import org.apache.spark.SparkException
+import org.apache.spark.deploy.SparkHadoopUtil
 import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.Resolver
@@ -129,6 +130,15 @@ abstract class ConvertToDeltaCommandBase(
     val fs = targetPath.getFileSystem(sessionHadoopConf)
     val qualifiedPath = fs.makeQualified(targetPath)
     val qualifiedDir = qualifiedPath.toString
+
+    var qualifiedDirs = Seq.empty[String]
+    if (partitionColNames.nonEmpty) {
+      val partitionDirPattern = partitionColNames.map(column => column.concat("=*")).mkString("/")
+      qualifiedDirs = SparkHadoopUtil.get.globPath(fs, Path.mergePaths(new Path(qualifiedDir),
+        new Path("/" + partitionDirPattern))).map(partitionDir => partitionDir.toString)
+    } else {
+      qualifiedDirs = Seq(qualifiedDir)
+    }
     if (!fs.exists(qualifiedPath)) {
       throw DeltaErrors.pathNotExistsException(qualifiedDir)
     }
@@ -139,7 +149,7 @@ abstract class ConvertToDeltaCommandBase(
 
 
     val fileListResultDf = DeltaFileOperations.recursiveListDirs(
-        spark, Seq(qualifiedDir), conf).where("!isDir")
+        spark, qualifiedDirs, conf).where("!isDir")
     fileListResultDf.cache()
     def fileListResult = fileListResultDf.toLocalIterator()
 
