@@ -244,9 +244,13 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
     }
 
     val newManifestPartitionRelativePaths =
-      withRelativePartitionDir(spark, partitionCols, fileNamesForManifest)
-        .select("relativePartitionDir", "path").as[(String, String)]
-        .groupByKey(_._1).mapGroups {
+      if (fileNamesForManifest.isEmpty && partitionCols.isEmpty) {
+        writeSingleManifestFile(manifestRootDirPath, Iterator())
+        Set.empty[String]
+      } else {
+        withRelativePartitionDir(spark, partitionCols, fileNamesForManifest)
+          .select("relativePartitionDir", "path").as[(String, String)]
+          .groupByKey(_._1).mapGroups {
           (relativePartitionDir: String, relativeDataFilePath: Iterator[(String, String)]) =>
             val manifestPartitionDirAbsPath = {
               if (relativePartitionDir == null || relativePartitionDir.isEmpty) manifestRootDirPath
@@ -255,6 +259,7 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
             writeSingleManifestFile(manifestPartitionDirAbsPath, relativeDataFilePath.map(_._2))
             relativePartitionDir
         }.collect().toSet
+      }
 
     logInfo(s"Generated manifest partitions for $deltaLogDataPath " +
       s"[${newManifestPartitionRelativePaths.size}]:\n\t" +
