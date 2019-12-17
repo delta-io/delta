@@ -883,6 +883,23 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("SC-24886: partition columns have correct datatype in metadata scans") {
+    withTempDir { inputDir =>
+      Seq(("foo", 2019)).toDF("name", "y")
+        .write.format("delta").partitionBy("y").mode("overwrite")
+        .save(inputDir.getAbsolutePath)
+
+      // Before the fix, this query would fail because it tried to read strings from the metadata
+      // partition values as the LONG type that the actual partition columns are. This works now
+      // because we added a cast.
+      val df = spark.read.format("delta")
+        .load(inputDir.getAbsolutePath)
+        .where(
+          """cast(format_string("%04d-01-01 12:00:00", y) as timestamp) is not null""".stripMargin)
+      assert(df.collect().length == 1)
+    }
+  }
+
   test("SC-11332: session isolation for cached delta logs") {
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath

@@ -198,7 +198,7 @@ class DeltaDataSource
         EqualTo(UnresolvedAttribute(key), Literal(value))
       }
       val files = DeltaLog.filterFileList(
-        metadata.partitionColumns, snapshot.allFiles.toDF(), filters)
+        metadata.partitionSchema, snapshot.allFiles.toDF(), filters)
       if (files.count() == 0) {
         throw DeltaErrors.pathNotExistsException(path)
       }

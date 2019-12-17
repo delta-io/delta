@@ -500,7 +500,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
       }
       val predicatesMatchingAddedFiles = ExpressionSet(readPredicates).iterator.flatMap { p =>
         val conflictingFile = DeltaLog.filterFileList(
-          metadata.partitionColumns,
+          metadata.partitionSchema,
           addedFilesToCheckForConflicts.toDF(), p :: Nil).as[AddFile].take(1)
 
         conflictingFile.headOption.map(f => getPrettyPartitionMessage(f.partitionValues))

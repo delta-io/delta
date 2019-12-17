@@ -109,7 +109,7 @@ case class WriteIntoDelta(
       case (SaveMode.Overwrite, Some(predicates)) =>
         // Check to make sure the files we wrote out were actually valid.
         val matchingFiles = DeltaLog.filterFileList(
-          txn.metadata.partitionColumns, newFiles.toDF(), predicates).as[AddFile].collect()
+          txn.metadata.partitionSchema, newFiles.toDF(), predicates).as[AddFile].collect()
         val invalidFiles = newFiles.toSet -- matchingFiles
         if (invalidFiles.nonEmpty) {
           val badPartitions = invalidFiles

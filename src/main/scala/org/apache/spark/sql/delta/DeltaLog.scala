@@ -39,12 +39,13 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkContext
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
-import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Expression, In, InSet, Literal}
+import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Cast, Expression, In, InSet, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.execution.datasources.json.JsonFileFormat
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.sources.{BaseRelation, InsertableRelation}
+import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.util.{Clock, SystemClock, ThreadUtils}
 
 /**
@@ -784,12 +785,12 @@ object DeltaLog extends DeltaLogging {
    * @param partitionColumnPrefixes The path to the `partitionValues` column, if it's nested
    */
   def filterFileList(
-      partitionColumns: Seq[String],
+      partitionSchema: StructType,
       files: DataFrame,
       partitionFilters: Seq[Expression],
       partitionColumnPrefixes: Seq[String] = Nil): DataFrame = {
     val rewrittenFilters = rewritePartitionFilters(
-      partitionColumns,
+      partitionSchema,
       files.sparkSession.sessionState.conf.resolver,
       partitionFilters,
       partitionColumnPrefixes)
@@ -807,22 +808,24 @@ object DeltaLog extends DeltaLogging {
    * @param partitionColumnPrefixes The path to the `partitionValues` column, if it's nested
    */
   def rewritePartitionFilters(
-      partitionColumns: Seq[String],
+      partitionSchema: StructType,
       resolver: Resolver,
       partitionFilters: Seq[Expression],
       partitionColumnPrefixes: Seq[String] = Nil): Seq[Expression] = {
-    partitionFilters.map(_.transform {
+    partitionFilters.map(_.transformUp {
       case a: Attribute =>
-        val colName = partitionColumns.find(resolver(_, a.name)).getOrElse(a.name)
-        UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", colName))
-    }.transform {
-      // TODO(SC-10573): This is a temporary fix.
-      // What we really need to do is ensure that the partition filters are evaluated against
-      // the actual partition values. Right now they're evaluated against a String-casted version
-      // of the partition value in AddFile.
-      // As a warmfixable change, we're just transforming the only operator we've seen cause
-      // problems.
-      case InSet(a, set) => In(a, set.toSeq.map(Literal(_)))
+        val partitionCol = partitionSchema.find { field => resolver(field.name, a.name) }
+        partitionCol match {
+          case Some(StructField(name, dataType, _, _)) =>
+            Cast(
+              UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", name)),
+              dataType)
+          case None =>
+            // This should not be able to happen, but the case was present in the original code so
+            // we kept it to be safe.
+            log.error(s"Partition filter referenced column ${a.name} not in the partition schema")
+            UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", a.name))
+        }
     })
   }
 
