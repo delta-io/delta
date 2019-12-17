@@ -700,6 +700,10 @@ object DeltaErrors
         |%sql set spark.databricks.delta.alterLocation.bypassSchemaCheck = true""".stripMargin)
   }
 
+  def setLocationNotSupportedOnPathIdentifiers(): Throwable = {
+    throw new AnalysisException("Cannot change the location of a path based table.")
+  }
+
   def describeViewHistory: Throwable = {
     new AnalysisException("Cannot describe the history of a view.")
   }
