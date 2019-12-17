@@ -1,4 +1,22 @@
+/*
+ * Copyright 2019 Databricks, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package io.delta.hive
+
+import java.util.{ArrayList => JArrayList}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
@@ -23,7 +41,8 @@ import org.apache.hadoop.mapred.{InputFormat, JobConf, OutputFormat}
 import org.apache.spark.sql.delta.{DeltaHelper, DeltaPushFilter}
 import org.slf4j.LoggerFactory
 
-class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook with HiveStoragePredicateHandler {
+class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook
+  with HiveStoragePredicateHandler {
 
   import DeltaStorageHandler._
 
@@ -40,13 +59,18 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook with H
 
   override def getSerDeClass(): Class[_ <: AbstractSerDe] = classOf[ParquetHiveSerDe]
 
-  override def configureInputJobProperties(tableDesc: TableDesc, jobProperties: java.util.Map[String, String]): Unit = {
+  override def configureInputJobProperties(
+      tableDesc: TableDesc,
+      jobProperties: java.util.Map[String, String]): Unit = {
     super.configureInputJobProperties(tableDesc, jobProperties)
     jobProperties.put(DELTA_TABLE_PATH, tableDesc.getProperties().getProperty(DELTA_TABLE_PATH))
     jobProperties.put(DELTA_TABLE_SCHEMA, tableDesc.getProperties().getProperty(DELTA_TABLE_SCHEMA))
   }
 
-  override def decomposePredicate(jobConf: JobConf, deserializer: Deserializer, predicate: ExprNodeDesc): DecomposedPredicate = {
+  override def decomposePredicate(
+      jobConf: JobConf,
+      deserializer: Deserializer,
+      predicate: ExprNodeDesc): DecomposedPredicate = {
     // Get the delta root path
     val deltaRootPath = jobConf.get(DELTA_TABLE_PATH)
     // Get the partitionColumns of Delta
@@ -57,7 +81,8 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook with H
 
     val conditions = new java.util.ArrayList[IndexSearchCondition]()
     var pushedPredicate: ExprNodeGenericFuncDesc = null
-    var residualPredicate = analyzer.analyzePredicate(predicate, conditions).asInstanceOf[ExprNodeGenericFuncDesc]
+    var residualPredicate =
+      analyzer.analyzePredicate(predicate, conditions).asInstanceOf[ExprNodeGenericFuncDesc]
     for (searchConditions <- decompose(conditions).values) {
       // still push back the pushedPredicate to residualPredicate
       residualPredicate =
@@ -66,8 +91,9 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook with H
         extractStorageHandlerCondition(analyzer, searchConditions, pushedPredicate)
     }
 
-    LOG.info("pushedPredicate:" + (if (pushedPredicate == null) "null" else pushedPredicate.getExprString())
-      + ",residualPredicate" + residualPredicate)
+    LOG.info("pushedPredicate:" +
+      (if (pushedPredicate == null) "null" else pushedPredicate.getExprString()) +
+      ",residualPredicate" + residualPredicate)
 
     val decomposedPredicate = new DecomposedPredicate()
     decomposedPredicate.pushedPredicate = pushedPredicate
@@ -84,10 +110,13 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook with H
     analyzer
   }
 
-  private def decompose(searchConditions: java.util.ArrayList[IndexSearchCondition]): Map[String, java.util.ArrayList[IndexSearchCondition]] = {
+  private def decompose(searchConditions: JArrayList[IndexSearchCondition]):
+    Map[String, JArrayList[IndexSearchCondition]] = {
     val result = mutable.Map[String, java.util.ArrayList[IndexSearchCondition]]()
     for (condition <- searchConditions.asScala) {
-      val conditions = result.getOrElseUpdate(condition.getColumnDesc().getColumn(), new java.util.ArrayList[IndexSearchCondition]())
+      val conditions = result.getOrElseUpdate(
+        condition.getColumnDesc().getColumn(),
+        new JArrayList[IndexSearchCondition]())
       conditions.add(condition)
     }
     result.toMap
@@ -100,7 +129,7 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook with H
     if (inputExpr == null) {
       analyzer.translateOriginalConditions(searchConditions)
     } else {
-      val children = new java.util.ArrayList[ExprNodeDesc]
+      val children = new JArrayList[ExprNodeDesc]
       children.add(analyzer.translateOriginalConditions(searchConditions))
       children.add(inputExpr)
       new ExprNodeGenericFuncDesc(TypeInfoFactory.booleanTypeInfo,
@@ -115,7 +144,7 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook with H
     if (inputExpr == null) {
       analyzer.translateSearchConditions(searchConditions)
     } else {
-      val children = new java.util.ArrayList[ExprNodeDesc]
+      val children = new JArrayList[ExprNodeDesc]
       children.add(analyzer.translateSearchConditions(searchConditions))
       children.add(inputExpr)
       new ExprNodeGenericFuncDesc(TypeInfoFactory.booleanTypeInfo,
@@ -154,8 +183,8 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook with H
     // TODO Investigate if we can get the table schema without manually storing it in the table
     // property.
     val cols = tbl.getSd.getCols
-    val columnNames = new java.util.ArrayList[String](cols.size)
-    val columnTypes = new java.util.ArrayList[TypeInfo](cols.size)
+    val columnNames = new JArrayList[String](cols.size)
+    val columnTypes = new JArrayList[TypeInfo](cols.size)
     cols.asScala.foreach { col =>
       columnNames.add(col.getName)
       columnTypes.add(TypeInfoUtils.getTypeInfoFromTypeString(col.getType))

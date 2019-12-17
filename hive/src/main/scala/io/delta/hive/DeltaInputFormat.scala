@@ -1,3 +1,19 @@
+/*
+ * Copyright 2019 Databricks, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package io.delta.hive
 
 import java.io.IOException
@@ -37,7 +53,8 @@ import org.slf4j.LoggerFactory
  * [[Writable]] for all partition values, and insert them to the raw row returned by
  * [[org.apache.parquet.hadoop.ParquetRecordReader]].
  */
-class DeltaInputFormat(realInput: ParquetInputFormat[ArrayWritable]) extends FileInputFormat[NullWritable, ArrayWritable] {
+class DeltaInputFormat(realInput: ParquetInputFormat[ArrayWritable])
+  extends FileInputFormat[NullWritable, ArrayWritable] {
 
   private val LOG = LoggerFactory.getLogger(classOf[DeltaInputFormat])
 
@@ -51,7 +68,10 @@ class DeltaInputFormat(realInput: ParquetInputFormat[ArrayWritable]) extends Fil
     this(new ParquetInputFormat[ArrayWritable](classOf[DataWritableReadSupport]))
   }
 
-  override def getRecordReader(split: InputSplit, job: JobConf, reporter: Reporter): RecordReader[NullWritable, ArrayWritable] = {
+  override def getRecordReader(
+      split: InputSplit,
+      job: JobConf,
+      reporter: Reporter): RecordReader[NullWritable, ArrayWritable] = {
     split match {
       case deltaSplit: DeltaInputSplit =>
         if (Utilities.getUseVectorizedInputFileFormat(job)) {
@@ -88,7 +108,12 @@ class DeltaInputFormat(realInput: ParquetInputFormat[ArrayWritable]) extends Fil
       start: Long,
       length: Long,
       hosts: Array[String]): FileSplit = {
-    new DeltaInputSplit(file, start, length, hosts, fileToPartition.getOrElse(file.toUri, Array.empty))
+    new DeltaInputSplit(
+      file,
+      start,
+      length,
+      hosts,
+      fileToPartition.getOrElse(file.toUri, Array.empty))
   }
 
   override def makeSplit(
@@ -97,7 +122,13 @@ class DeltaInputFormat(realInput: ParquetInputFormat[ArrayWritable]) extends Fil
       length: Long,
       hosts: Array[String],
       inMemoryHosts: Array[String]): FileSplit = {
-    new DeltaInputSplit(file, start, length, hosts, inMemoryHosts, fileToPartition.getOrElse(file.toUri, Array.empty))
+    new DeltaInputSplit(
+      file,
+      start,
+      length,
+      hosts,
+      inMemoryHosts,
+      fileToPartition.getOrElse(file.toUri, Array.empty))
   }
 
   override def getSplits(job: JobConf, numSplits: Int): Array[InputSplit] = {

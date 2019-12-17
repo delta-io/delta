@@ -1,4 +1,3 @@
-
 /*
  * Copyright 2019 Databricks, Inc.
  *
@@ -16,13 +15,18 @@
  */
 
 parallelExecution in ThisBuild := false
+scalastyleConfig in ThisBuild := baseDirectory.value / "scalastyle-config.xml"
+
+lazy val compileScalastyle = taskKey[Unit]("compileScalastyle")
+lazy val testScalastyle = taskKey[Unit]("testScalastyle")
 
 val sparkVersion = "2.4.3"
 val hadoopVersion = "2.7.2"
 val hiveVersion = "2.3.3"
+val deltaVersion = "0.5.0"
 
 lazy val commonSettings = Seq(
-  version := "0.4.0",
+  version := deltaVersion,
   organization := "io.delta",
   scalaVersion := "2.12.8",
   fork := true,
@@ -35,14 +39,18 @@ lazy val commonSettings = Seq(
     "-Ddelta.log.cacheSize=3",
     "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
     "-Xmx1024m"
-  )
+  ),
+  compileScalastyle := scalastyle.in(Compile).toTask("").value,
+  (compile in Compile) := ((compile in Compile) dependsOn compileScalastyle).value,
+  testScalastyle := scalastyle.in(Test).toTask("").value,
+  (test in Test) := ((test in Test) dependsOn testScalastyle).value
 )
 
 lazy val core = (project in file("core"))
   .settings(
     name := "delta-core-shaded",
     libraryDependencies ++= Seq(
-      "io.delta" %% "delta-core" % "0.4.0" excludeAll ExclusionRule("org.apache.hadoop"),
+      "io.delta" %% "delta-core" % deltaVersion excludeAll ExclusionRule("org.apache.hadoop"),
       "org.apache.spark" %% "spark-sql" % sparkVersion excludeAll ExclusionRule("org.apache.hadoop"),
       "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided"
     ),
@@ -158,6 +166,6 @@ lazy val hive = (project in file("hive")) settings (
     // TODO Figure out how this fixes some bad dependency
     "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
     "org.scalatest" %% "scalatest" % "3.0.5" % "test",
-    "io.delta" %% "delta-core" % "0.4.0" % "test" excludeAll ExclusionRule("org.apache.hadoop")
+    "io.delta" %% "delta-core" % deltaVersion % "test" excludeAll ExclusionRule("org.apache.hadoop")
   )
 )

@@ -1,3 +1,19 @@
+/*
+ * Copyright 2019 Databricks, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.spark.sql.delta
 
 import java.net.URI
@@ -15,57 +31,6 @@ import org.apache.spark.sql.delta.actions.{AddFile, SingleAction}
 import org.apache.spark.sql.types._
 
 object DeltaHelper extends Logging {
-
-  def parsePathPartition(path: Path, partitionCols: Seq[String]): Map[String, String] = {
-    val columns = mutable.ArrayBuffer.empty[(String, String)]
-    // Old Hadoop versions don't have `Path.isRoot`
-    var finished = path.getParent == null
-    // currentPath is the current path that we will use to parse partition column value.
-    var currentPath: Path = path
-
-    while (!finished) {
-      // Let's say currentPath is a path of "/table/a=1/", currentPath.getName will give us a=1.
-      // Once we get the string, we try to parse it and find the partition column and value.
-      val fragment = currentPath.getName
-      val maybeColumn =
-        parsePartitionColumn(currentPath.getName)
-
-      maybeColumn.foreach(columns += _)
-
-      finished =
-        (maybeColumn.isEmpty && columns.nonEmpty) || currentPath.getParent == null
-
-      if (!finished) {
-        // For the above example, currentPath will be "/table/".
-        currentPath = currentPath.getParent
-      }
-    }
-
-    assert(columns.map(_._1).zip(partitionCols).forall(c => c._1 == c._2),
-      s"""
-         |partitionCols(${columns.map(_._1).mkString(",")}) parsed from $path
-         |does not match the created table partition(${partitionCols.mkString(",")})
-     """.stripMargin)
-
-    columns.toMap
-  }
-
-  private def parsePartitionColumn(columnSpec: String): Option[(String, String)] = {
-    import org.apache.spark.sql.catalyst.catalog.ExternalCatalogUtils.unescapePathName
-
-    val equalSignIndex = columnSpec.indexOf('=')
-    if (equalSignIndex == -1) {
-      None
-    } else {
-      val columnName = unescapePathName(columnSpec.take(equalSignIndex))
-      assert(columnName.nonEmpty, s"Empty partition column name in '$columnSpec'")
-
-      val rawColumnValue = columnSpec.drop(equalSignIndex + 1)
-      assert(rawColumnValue.nonEmpty, s"Empty partition column value in '$columnSpec'")
-
-      Some(columnName, rawColumnValue)
-    }
-  }
 
   /**
    * List the file paths in the Delta table. The provided `JobConf` may consider pushed partition
@@ -133,7 +98,8 @@ object DeltaHelper extends Logging {
       .collect().map { f =>
         logInfo(s"selected delta file ${f.path} under $rootPath")
         val status = toFileStatus(fs, rootPath, f, blockSize)
-        localFileToPartition += status.getPath.toUri -> partitionColumnWithIndex.map { case (t, index) =>
+        localFileToPartition +=
+          status.getPath.toUri -> partitionColumnWithIndex.map { case (t, index) =>
             // TODO Is `catalogString` always correct? We may need to add our own conversion rather
             // than relying on Spark.
             new PartitionColumnInfo(index, t.dataType.catalogString, f.partitionValues(t.name))
