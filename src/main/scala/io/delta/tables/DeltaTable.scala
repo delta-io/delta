@@ -142,7 +142,7 @@ class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
    *
    * @param mode Specifies the mode for the generation of the manifest.
    *             The valid modes are as follows (not case sensitive):
-   *              - "symlink_manifest_format" : This will generate manifests in symlink format
+   *              - "symlink_format_manifest" : This will generate manifests in symlink format
    *                                            for Presto and Athena read support.
    *             See the online documentation for more information.
    * @since 0.5.0
