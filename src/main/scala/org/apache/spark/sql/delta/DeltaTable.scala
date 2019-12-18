@@ -31,6 +31,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions.{Expression, PredicateHelper, SubqueryExpression}
+import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.datasources.{FileIndex, HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
@@ -52,17 +53,17 @@ object DeltaTable {
  * Extractor Object for pulling out the full table scan of a Delta table.
  */
 object DeltaFullTable {
-  def unapply(a: LogicalRelation): Option[TahoeLogFileIndex] = a match {
-    case LogicalRelation(HadoopFsRelation(index: TahoeLogFileIndex, _, _, _, _, _), _, _, _) =>
-      if (index.partitionFilters.isEmpty && index.versionToUse.isEmpty) {
+  def unapply(a: LogicalPlan): Option[TahoeLogFileIndex] = a match {
+    case PhysicalOperation(_, filters, DeltaTable(index: TahoeLogFileIndex)) =>
+      if (index.partitionFilters.isEmpty && index.versionToUse.isEmpty && filters.isEmpty) {
         Some(index)
       } else if (index.versionToUse.nonEmpty) {
         throw new AnalysisException(
           s"Expect a full scan of the latest version of the Delta source, but found a historical " +
-            s"scan of version ${index.versionToUse.get}")
+          s"scan of version ${index.versionToUse.get}")
       } else {
         throw new AnalysisException(
-          s"Expect a full scan of Delta sources, but found the partial scan. path:${index.path}")
+          s"Expect a full scan of Delta sources, but found a partial scan. path:${index.path}")
       }
     case _ =>
       None

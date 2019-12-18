@@ -696,7 +696,7 @@ abstract class MergeIntoSuiteBase
           update = "key2 = 20 + key1, value = 20 + src.value",
           insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
       }.getMessage
-      errorContains(e, "MERGE destination only supports Delta sources")
+      errorContains(e, "Expect a full scan of Delta sources, but found a partial scan")
     }
   }
 
@@ -713,7 +713,7 @@ abstract class MergeIntoSuiteBase
         update = "key2 = 20 + key1, value = 20 + src.value",
         insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
     }.getMessage
-    errorContains(e, "Expect a full scan of Delta sources, but found the partial scan")
+    errorContains(e, "Expect a full scan of Delta sources, but found a partial scan")
   }
 
   Seq(true, false).foreach { isPartitioned =>

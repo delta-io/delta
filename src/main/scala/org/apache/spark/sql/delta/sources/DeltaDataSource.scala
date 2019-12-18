@@ -195,7 +195,8 @@ class DeltaDataSource
       }
 
       val filters = partitions.map { case (key, value) =>
-        EqualTo(UnresolvedAttribute(key), Literal(value))
+        // Nested fields cannot be partitions, so we pass the key as a identifier
+        EqualTo(UnresolvedAttribute(Seq(key)), Literal(value))
       }
       val files = DeltaLog.filterFileList(
         metadata.partitionSchema, snapshot.allFiles.toDF(), filters)

@@ -814,7 +814,10 @@ object DeltaLog extends DeltaLogging {
       partitionColumnPrefixes: Seq[String] = Nil): Seq[Expression] = {
     partitionFilters.map(_.transformUp {
       case a: Attribute =>
-        val partitionCol = partitionSchema.find { field => resolver(field.name, a.name) }
+        // If we have a special column name, e.g. `a.a`, then an UnresolvedAttribute returns
+        // the column name as '`a.a`' instead of 'a.a', therefore we need to strip the backticks.
+        val unquoted = a.name.stripPrefix("`").stripSuffix("`")
+        val partitionCol = partitionSchema.find { field => resolver(field.name, unquoted) }
         partitionCol match {
           case Some(StructField(name, dataType, _, _)) =>
             Cast(
