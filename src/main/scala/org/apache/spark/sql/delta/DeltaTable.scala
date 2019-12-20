@@ -17,6 +17,8 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.util.Locale
+
 import scala.util.Try
 
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
@@ -26,7 +28,8 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions.{Expression, PredicateHelper, SubqueryExpression}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.datasources.{FileIndex, HadoopFsRelation, LogicalRelation}
@@ -89,9 +92,38 @@ object DeltaTableUtils extends PredicateHelper
     findDeltaTableRoot(spark, path).isDefined
   }
 
+  /**
+   * Checks whether TableIdentifier is a path or a table name
+   * We assume it is a path unless the table and database both exist in the catalog@param catalog
+   *
+   * @param tableIdent the provided table or path
+   * @return true if using table name, false if using path, error otherwise
+   */
+  def isCatalogTable(catalog: SessionCatalog, tableIdent: TableIdentifier): Boolean = {
+    val dbExists = tableIdent.database.forall(catalog.databaseExists)
+    val dbNameIsAlsoValidFormatName =
+      tableIdent.database.getOrElse("").toLowerCase(Locale.ROOT) == "parquet" ||
+        DeltaSourceUtils.isDeltaDataSourceName(tableIdent.database.getOrElse(""))
+
+    // If db doesnt exist or db is called parquet/delta/tahoe then check if path exists
+    if ((!dbExists || dbNameIsAlsoValidFormatName) && new Path(tableIdent.table).isAbsolute) {
+      return false
+    }
+
+    // check for dbexists otherwise catalog.tableExists may throw NoSuchDatabaseException
+    if ((dbExists || tableIdent.database.isEmpty) && catalog.tableExists(tableIdent)) {
+      true
+    } else {
+      throw new NoSuchTableException(tableIdent.database.getOrElse(""), tableIdent.table)
+    }
+  }
+
   /** Find the root of a Delta table from the provided path. */
-  def findDeltaTableRoot(spark: SparkSession, path: Path): Option[Path] = {
-    val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
+  def findDeltaTableRoot(
+      spark: SparkSession,
+      path: Path,
+      options: Map[String, String] = Map.empty): Option[Path] = {
+    val fs = path.getFileSystem(spark.sessionState.newHadoopConfWithOptions(options))
     var currentPath = path
     while (currentPath != null && currentPath.getName != "_delta_log" &&
         currentPath.getName != "_samples") {
@@ -178,12 +210,15 @@ object DeltaTableUtils extends PredicateHelper
    * @param target the logical plan in which we replace the file index
    * @param fileIndex the new file index
    */
-  def replaceFileIndex(target: LogicalPlan, fileIndex: FileIndex): LogicalPlan = {
+  def replaceFileIndex(
+      target: LogicalPlan,
+      fileIndex: FileIndex): LogicalPlan = {
     target transform {
       case l @ LogicalRelation(hfsr: HadoopFsRelation, _, _, _) =>
         l.copy(relation = hfsr.copy(location = fileIndex)(hfsr.sparkSession))
     }
   }
+
 
   /**
    * Check if the given path contains time travel syntax with the `@`. If the path genuinely exists,

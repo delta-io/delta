@@ -22,6 +22,7 @@ import java.nio.file.FileAlreadyExistsException
 import java.util.{EnumSet, UUID}
 
 import scala.collection.JavaConverters._
+import scala.util.control.NonFatal
 
 import org.apache.commons.io.IOUtils
 import org.apache.hadoop.conf.Configuration
@@ -33,14 +34,14 @@ import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.sql.SparkSession
 
 /**
- * Default implementation of [[LogStore]] that correctly works with HDFS with the necessary
- * atomic and durability guarantees.
+ * The [[LogStore]] implementation for HDFS, which uses Hadoop [[FileContext]] API's to
+ * provide the necessary atomic and durability guarantees:
  *
  * 1. Atomic visibility of files: `FileContext.rename` is used write files which is atomic for HDFS.
  *
  * 2. Consistent file listing: HDFS file listing is consistent.
  */
-class HDFSLogStoreImpl(sparkConf: SparkConf, defaultHadoopConf: Configuration) extends LogStore {
+class HDFSLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration) extends LogStore {
 
   def this(sc: SparkContext) = this(sc.getConf, sc.hadoopConfiguration)
 
@@ -93,13 +94,15 @@ class HDFSLogStoreImpl(sparkConf: SparkConf, defaultHadoopConf: Configuration) e
       tempPath, EnumSet.of(CREATE), CreateOpts.checksumParam(ChecksumOpt.createDisabled()))
 
     try {
-      actions.map(_ + "\n").map(_.getBytes("utf-8")).foreach(stream.write)
+      actions.map(_ + "\n").map(_.getBytes(UTF_8)).foreach(stream.write)
       stream.close()
       streamClosed = true
       try {
         val renameOpt = if (overwrite) Options.Rename.OVERWRITE else Options.Rename.NONE
         fc.rename(tempPath, path, renameOpt)
         renameDone = true
+        // TODO: this is a workaround of HADOOP-16255 - remove this when HADOOP-16255 is resolved
+        tryRemoveCrcFile(fc, tempPath)
       } catch {
         case e: org.apache.hadoop.fs.FileAlreadyExistsException =>
           throw new FileAlreadyExistsException(path.toString)
@@ -118,6 +121,18 @@ class HDFSLogStoreImpl(sparkConf: SparkConf, defaultHadoopConf: Configuration) e
     new Path(path.getParent, s".${path.getName}.${UUID.randomUUID}.tmp")
   }
 
+  private def tryRemoveCrcFile(fc: FileContext, path: Path): Unit = {
+    try {
+      val checksumFile = new Path(path.getParent, s".${path.getName}.crc")
+      if (fc.util.exists(checksumFile)) {
+        // checksum file exists, deleting it
+        fc.delete(checksumFile, true)
+      }
+    } catch {
+      case NonFatal(_) => // ignore, we are removing crc file as "best-effort"
+    }
+  }
+
   override def listFrom(path: Path): Iterator[FileStatus] = {
     val fc = getFileContext(path)
     if (!fc.util.exists(path.getParent)) {
@@ -132,4 +147,6 @@ class HDFSLogStoreImpl(sparkConf: SparkConf, defaultHadoopConf: Configuration) e
   override def resolvePathOnPhysicalStorage(path: Path): Path = {
     getFileContext(path).makeQualified(path)
   }
+
+  override def isPartialWriteVisible(path: Path): Boolean = true
 }

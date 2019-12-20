@@ -35,7 +35,7 @@ trait PartitionFiltering {
     }
 
     val files = DeltaLog.filterFileList(
-      metadata.partitionColumns,
+      metadata.partitionSchema,
       allFiles.toDF(),
       partitionFilters).as[AddFile].collect()
 

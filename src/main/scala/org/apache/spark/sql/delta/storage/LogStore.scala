@@ -82,31 +82,45 @@ trait LogStore {
   def resolvePathOnPhysicalStorage(path: Path): Path = {
     throw new UnsupportedOperationException()
   }
+
+  /**
+   * Whether a partial write is visible when writing to `path`.
+   *
+   * As this depends on the underlying file system implementations, we require the input of `path`
+   * here in order to identify the underlying file system, even though in most cases a log store
+   * only deals with one file system.
+   *
+   * The default value is only provided here for legacy reasons, which will be removed.
+   * Any LogStore implementation should override this instead of relying on the default.
+   */
+  def isPartialWriteVisible(path: Path): Boolean = true
 }
 
-object LogStore extends Logging {
-
-  val DEFAULT_LOGSTORE_CLASS = {
-      classOf[HDFSLogStoreImpl].getName
-  }
+object LogStore extends LogStoreProvider
+  with Logging {
 
   def apply(sc: SparkContext): LogStore = {
     apply(sc.getConf, sc.hadoopConfiguration)
   }
 
   def apply(sparkConf: SparkConf, hadoopConf: Configuration): LogStore = {
-    val logStoreClass = Utils.classForName(sparkConf.get(
-      "spark.databricks.tahoe.logStore.class",
-      DEFAULT_LOGSTORE_CLASS))
-    logInfo("LogStore class: " + logStoreClass)
-    logStoreClass.getConstructor(classOf[SparkConf], classOf[Configuration])
-      .newInstance(sparkConf, hadoopConf).asInstanceOf[LogStore]
+    createLogStore(sparkConf, hadoopConf)
   }
 }
 
 trait LogStoreProvider {
+  val logStoreClassConfKey: String = "spark.delta.logStore.class"
+  val defaultLogStoreClass: String = classOf[HDFSLogStore].getName
+
   def createLogStore(spark: SparkSession): LogStore = {
-    LogStore(spark.sparkContext)
+    val sc = spark.sparkContext
+    createLogStore(sc.getConf, sc.hadoopConfiguration)
+  }
+
+  def createLogStore(sparkConf: SparkConf, hadoopConf: Configuration): LogStore = {
+    val logStoreClassName = sparkConf.get(logStoreClassConfKey, defaultLogStoreClass)
+    val logStoreClass = Utils.classForName(logStoreClassName)
+    logStoreClass.getConstructor(classOf[SparkConf], classOf[Configuration])
+      .newInstance(sparkConf, hadoopConf).asInstanceOf[LogStore]
   }
 }
-

@@ -82,7 +82,7 @@ object Invariants {
             ArbitraryExpression(spark, exprString)
           case _ =>
             throw new UnsupportedOperationException(
-              "Uncrecognized invariant. Please upgrade your Spark version.")
+              "Unrecognized invariant. Please upgrade your Spark version.")
         }
         Invariant(parents :+ field.name, invariant)
     }

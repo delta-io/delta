@@ -19,11 +19,11 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.actions._
 
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.test.SharedSQLContext
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
 // scalastyle:off: removeFile
-class ActionSerializerSuite extends QueryTest with SharedSQLContext {
+class ActionSerializerSuite extends QueryTest with SharedSparkSession {
 
   roundTripCompare("Add",
     AddFile("test", Map.empty, 1, 1, dataChange = true))
