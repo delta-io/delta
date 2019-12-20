@@ -60,24 +60,24 @@ class DeltaSuite extends QueryTest
       // partition filter
       checkDatasetUnorderly(
         ds.where("part = 1"),
-        (1 -> 1), (3 -> 1), (5 -> 1), (7 -> 1), (9 -> 1))
+        1 -> 1, 3 -> 1, 5 -> 1, 7 -> 1, 9 -> 1)
       checkDatasetUnorderly(
         ds.where("part = 0"),
-        (0 -> 0), (2 -> 0), (4 -> 0), (6 -> 0), (8 -> 0))
+        0 -> 0, 2 -> 0, 4 -> 0, 6 -> 0, 8 -> 0)
       // data filter
       checkDatasetUnorderly(
         ds.where("value >= 5"),
-        (5 -> 1), (6 -> 0), (7 -> 1), (8 -> 0), (9 -> 1))
+        5 -> 1, 6 -> 0, 7 -> 1, 8 -> 0, 9 -> 1)
       checkDatasetUnorderly(
         ds.where("value < 5"),
-        (0 -> 0), (1 -> 1), (2 -> 0), (3 -> 1), (4 -> 0))
+        0 -> 0, 1 -> 1, 2 -> 0, 3 -> 1, 4 -> 0)
       // partition filter + data filter
       checkDatasetUnorderly(
         ds.where("part = 1 and value >= 5"),
-        (5 -> 1), (7 -> 1), (9 -> 1))
+        5 -> 1, 7 -> 1, 9 -> 1)
       checkDatasetUnorderly(
         ds.where("part = 1 and value < 5"),
-        (1 -> 1), (3 -> 1))
+        1 -> 1, 3 -> 1)
     }
   }
 
@@ -92,7 +92,7 @@ class DeltaSuite extends QueryTest
           .partitionBy(partitionColumn)
           .save(testPath)
         val ds = spark.read.format("delta").load(testPath).as[(Int, String)]
-        checkDatasetUnorderly(ds, (1 -> "a"), (2 -> "b"))
+        checkDatasetUnorderly(ds, 1 -> "a", 2 -> "b")
       }
     }
   }
@@ -707,10 +707,10 @@ class DeltaSuite extends QueryTest
         val inputFiles =
           TahoeLogFileIndex(spark, deltaLog, new Path(tempDir.getCanonicalPath))
             .inputFiles.toSeq
-        assert(inputFiles.length == 5)
+        assert(inputFiles.size == 5)
 
         val filesToDelete = inputFiles.filter(_.split("/").last.startsWith("part-00001"))
-        assert(filesToDelete.length == 1)
+        assert(filesToDelete.size == 1)
         filesToDelete.foreach { f =>
           val deleted = tryDeleteNonRecursive(
             tempDirPath.getFileSystem(spark.sessionState.newHadoopConf()),
@@ -741,10 +741,10 @@ class DeltaSuite extends QueryTest
         val inputFiles =
           TahoeLogFileIndex(spark, deltaLog, new Path(tempDir.getCanonicalPath))
             .inputFiles.toSeq
-        assert(inputFiles.length == 5)
+        assert(inputFiles.size == 5)
 
         val filesToCorrupt = inputFiles.filter(_.split("/").last.startsWith("part-00001"))
-        assert(filesToCorrupt.length == 1)
+        assert(filesToCorrupt.size == 1)
         val fs = tempDirPath.getFileSystem(spark.sessionState.newHadoopConf())
         filesToCorrupt.foreach { f =>
           val filePath = new Path(tempDirPath, f)
