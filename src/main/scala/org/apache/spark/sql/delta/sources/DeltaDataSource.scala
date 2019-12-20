@@ -237,7 +237,7 @@ class DeltaDataSource
       val version = Try(versionOpt.get.toLong) match {
         case Success(v) => v
         case Failure(t) => throw new IllegalArgumentException(
-          s"$TIME_TRAVEL_VERSION_KEY needs to be a valid bigint value.", t)
+          s"${DeltaDataSource.TIME_TRAVEL_VERSION_KEY} needs to be a valid bigint value.", t)
       }
       Some(DeltaTimeTravelSpec(None, Some(version), sourceOpt.orElse(Some("dfReader"))))
     } else {
