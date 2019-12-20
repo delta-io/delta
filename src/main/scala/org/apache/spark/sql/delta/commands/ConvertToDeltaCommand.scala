@@ -319,7 +319,8 @@ abstract class ConvertToDeltaCommandBase(
         context,
         readVersion = None,
         isolationLevel = None,
-        isBlindAppend = None)
+        isBlindAppend = None,
+        None)
 
       val extraActions = Seq(commitInfo, Protocol(), metadata)
       val actions = extraActions.toIterator ++ addFiles

@@ -135,6 +135,7 @@ case class MergeIntoCommand(
          filesToRewrite.map(_.remove) ++ newWrittenFiles
        }
       }
+      deltaTxn.registerSQLMetrics(spark, metrics)
       deltaTxn.commit(
         deltaActions,
         DeltaOperations.Merge(

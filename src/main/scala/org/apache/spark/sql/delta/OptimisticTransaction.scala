@@ -25,6 +25,7 @@ import scala.collection.mutable.{ArrayBuffer, HashSet}
 import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
+import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{GenerateSymlinkManifest, PostCommitHook}
@@ -128,7 +129,7 @@ object OptimisticTransaction {
  *
  * This trait is not thread-safe.
  */
-trait OptimisticTransactionImpl extends TransactionalWrite {
+trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReporting {
 
   import org.apache.spark.sql.delta.util.FileNames._
 
@@ -239,6 +240,17 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
   }
 
   /**
+   * Return the operation metrics for the operation if it is enabled
+   */
+  def getOperationMetrics(op: Operation): Option[Map[String, String]] = {
+    if (spark.conf.get(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED)) {
+      Some(getMetricsForOperation(op))
+    } else {
+      None
+    }
+  }
+
+  /**
    * Modifies the state of the log by adding a new commit that is based on a read at
    * the given `lastVersion`.  In the case of a conflict with a concurrent writer this
    * method will throw an exception.
@@ -280,7 +292,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
           Map.empty,
           Some(readVersion).filter(_ >= 0),
           None,
-          Some(isBlindAppend))
+          Some(isBlindAppend),
+          getOperationMetrics(op))
         finalActions = commitInfo +: finalActions
       }
 

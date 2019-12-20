@@ -38,6 +38,8 @@ object DeltaOperations {
     val parameters: Map[String, Any]
 
     lazy val jsonEncodedValues: Map[String, String] = parameters.mapValues(JsonUtils.toJson(_))
+
+    val metricParameters: Seq[String] = Seq()
   }
 
   /** Recorded during batch inserts. Predicates can be provided for overwrites. */
@@ -48,6 +50,11 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = Map("mode" -> mode.name()) ++
       partitionBy.map("partitionBy" -> JsonUtils.toJson(_)) ++
       predicate.map("predicate" -> _)
+
+    override val metricParameters: Seq[String] = Seq(
+      "numFiles",
+      "numOutputBytes",
+      "numOutputRows")
   }
   /** Recorded during streaming inserts. */
   case class StreamingUpdate(
@@ -107,6 +114,15 @@ object DeltaOperations {
         deletePredicate.map("deletePredicate" -> _).toMap ++
         insertPredicate.map("insertPredicate" -> _).toMap
     }
+    override val metricParameters: Seq[String] = Seq(
+      "numSourceRows",
+      "numTargetRowsInserted",
+      "numTargetRowsUpdated",
+      "numTargetRowsDeleted",
+      "numTargetRowsCopied",
+      "numOutputRows",
+      "numTargetFilesAdded",
+      "numTargetFilesRemoved")
   }
   /** Recorded when an update operation is committed to the table. */
   case class Update(predicate: Option[String]) extends Operation("UPDATE") {
