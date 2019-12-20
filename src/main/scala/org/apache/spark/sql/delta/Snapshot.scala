@@ -29,7 +29,8 @@ import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
-import org.apache.spark.sql.execution.datasources.{DataSource, FileFormat}
+import org.apache.spark.sql.catalyst.plans.logical.Union
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.expressions.UserDefinedFunction
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
@@ -54,7 +55,7 @@ class Snapshot(
     val path: Path,
     val version: Long,
     previousSnapshot: Option[Dataset[SingleAction]],
-    files: Seq[Path],
+    files: Seq[DeltaLogFileIndex],
     val minFileRetentionTimestamp: Long,
     val deltaLog: DeltaLog,
     val timestamp: Long,
@@ -110,11 +111,14 @@ class Snapshot(
       }
   }
 
-  val redactedPath =
+  def redactedPath: String =
     Utils.redact(spark.sessionState.conf.stringRedactionPattern, path.toUri.toString)
 
+  private val cachedState =
+    cacheDS(stateReconstruction, s"Delta Table State #$version - $redactedPath")
+
   /** The current set of actions in this [[Snapshot]]. */
-  val state = stateReconstruction.rddCache(s"Delta Table State #$version - $redactedPath")
+  def state: Dataset[SingleAction] = cachedState.getDS
 
   // Force materialization of the cache and collect the basics to the driver for fast access.
   // Here we need to bypass the ACL checks for SELECT anonymous function permissions.
@@ -135,6 +139,8 @@ class Snapshot(
         count($"txn") as "numOfSetTransactions")
       .as[State](stateEncoder)}
       .first
+
+  deltaLog.protocolRead(protocol)
 
   /** A map to look up transaction version by appId. */
   lazy val transactions = setTransactions.map(t => t.appId -> t.version).toMap
@@ -164,17 +170,28 @@ class Snapshot(
   val numIndexedCols: Int = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(metadata)
 
   /**
-   * Load the transaction logs from paths. The files here may have different file formats and the
-   * file format can be extracted from the file extensions.
-   *
-   * Here we are reading the transaction log, and we need to bypass the ACL checks
-   * for SELECT any file permissions.
+   * Load the transaction logs from file indices. The files here may have different file formats
+   * and the file format can be extracted from the file extensions.
    */
-  private def load(paths: Seq[Path]): Dataset[SingleAction] = {
-    val pathAndFormats = paths.map(_.toString).map(path => path -> path.split("\\.").last)
-    pathAndFormats.groupBy(_._2).map { case (format, paths) =>
-      spark.read.format(format).schema(logSchema).load(paths.map(_._1): _*).as[SingleAction]
-    }.reduceOption(_.union(_)).getOrElse(emptyActions)
+  private def load(
+      files: Seq[DeltaLogFileIndex]): Dataset[SingleAction] = {
+    val relations = files.map { index: DeltaLogFileIndex =>
+      val fsRelation = HadoopFsRelation(
+        index,
+        index.partitionSchema,
+        logSchema,
+        None,
+        index.format,
+        Map.empty[String, String])(spark)
+      LogicalRelation(fsRelation)
+    }
+    if (relations.length == 1) {
+      Dataset[SingleAction](spark, relations.head)
+    } else if (relations.nonEmpty) {
+      Dataset[SingleAction](spark, Union(relations))
+    } else {
+      emptyActions
+    }
   }
 
   private def emptyActions =

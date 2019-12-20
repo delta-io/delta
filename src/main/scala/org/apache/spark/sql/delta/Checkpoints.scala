@@ -24,11 +24,12 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.actions.{Action, Metadata, SingleAction}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.LogStore
+import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
-import org.apache.hadoop.mapreduce.Job
+import org.apache.hadoop.mapreduce.{Job, TaskType}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
@@ -135,12 +136,13 @@ trait Checkpoints extends DeltaLogging {
   /** Loads the checkpoint metadata from the _last_checkpoint file. */
   private def loadMetadataFromFile(tries: Int): Option[CheckpointMetaData] = {
     try {
-      val checkpointMetaData = store.read(LAST_CHECKPOINT)
+      val checkpointMetadataJson = store.read(LAST_CHECKPOINT)
       val checkpointMetadata =
-        JsonUtils.mapper.readValue[CheckpointMetaData](checkpointMetaData.head)
+        JsonUtils.mapper.readValue[CheckpointMetaData](checkpointMetadataJson.head)
       Some(checkpointMetadata)
     } catch {
-      case _: FileNotFoundException => None
+      case _: FileNotFoundException =>
+        None
       case NonFatal(e) if tries < 3 =>
         logWarning(s"Failed to parse $LAST_CHECKPOINT. This may happen if there was an error " +
           "during read operation, or a file appears to be partial. Sleeping and trying again.", e)
@@ -201,8 +203,6 @@ trait Checkpoints extends DeltaLogging {
 }
 
 object Checkpoints {
-
-  import org.apache.spark.sql.delta.storage.HDFSLogStoreImpl
   /**
    * Writes out the contents of a [[Snapshot]] into a checkpoint file that
    * can be used to short-circuit future replays of the log.
@@ -218,13 +218,14 @@ object Checkpoints {
 
     val (factory, serConf) = {
       val format = new ParquetFileFormat()
-      val job = new Job
+      val job = Job.getInstance()
       (format.prepareWrite(spark, job, Map.empty, Action.logSchema),
         new SerializableConfiguration(job.getConfiguration))
     }
 
-    // If HDFSLogStore then use rename, otherwise write directly
-    val useRename = deltaLog.store.isInstanceOf[HDFSLogStoreImpl]
+    // The writing of checkpoints doesn't go through log store, so we need to check with the
+    // log store and decide whether to use rename.
+    val useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath)
 
     val checkpointSize = spark.sparkContext.longAccumulator("checkpointSize")
     val numOfFiles = spark.sparkContext.longAccumulator("numOfFiles")
@@ -248,22 +249,35 @@ object Checkpoints {
             // Two instances of the same task may run at the same time in some cases (e.g.,
             // speculation, stage retry), so generate the temp path here to avoid two tasks
             // using the same path.
-            new Path(p.getParent, s".${p.getName}.${UUID.randomUUID}.tmp").toString
+            val tempPath = new Path(p.getParent, s".${p.getName}.${UUID.randomUUID}.tmp")
+            DeltaFileOperations.registerTempFileDeletionTaskFailureListener(serConf.value, tempPath)
+            tempPath.toString
           } else {
             path
           }
-        val writer = factory.newInstance(
-          writtenPath,
-          Action.logSchema,
-          new TaskAttemptContextImpl(
-            new JobConf(serConf.value),
-            new TaskAttemptID("", 0, false, 0, 0)))
+        try {
+          val writer = factory.newInstance(
+            writtenPath,
+            Action.logSchema,
+            new TaskAttemptContextImpl(
+              new JobConf(serConf.value),
+              new TaskAttemptID("", 0, TaskType.REDUCE, 0, 0)))
 
-        iter.foreach { row =>
-          checkpointSize.add(1)
-          writer.write(row)
+          iter.foreach { row =>
+            checkpointSize.add(1)
+            writer.write(row)
+          }
+          writer.close()
+        } catch {
+          case e: org.apache.hadoop.fs.FileAlreadyExistsException if !useRename =>
+            val p = new Path(writtenPath)
+            if (p.getFileSystem(serConf.value).exists(p)) {
+              // The file has been written by a zombie task. We can just use this checkpoint file
+              // rather than failing a Delta commit.
+            } else {
+              throw e
+            }
         }
-        writer.close()
         Iterator(writtenPath)
       }.collect().head
 

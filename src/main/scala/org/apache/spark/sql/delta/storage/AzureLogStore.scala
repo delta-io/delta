@@ -16,12 +16,8 @@
 
 package org.apache.spark.sql.delta.storage
 
-import java.io.FileNotFoundException
-import java.nio.file.FileAlreadyExistsException
-import java.util.UUID
-
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileSystem, Path, RawLocalFileSystem}
+import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.SparkConf
 
@@ -39,61 +35,12 @@ import org.apache.spark.SparkConf
  *   visible and therefore the caller must handle partial files.
  */
 class AzureLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
-  extends FileSystemLogStore(sparkConf, hadoopConf) {
-
-  def write(path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit = {
-    val fs = path.getFileSystem(getHadoopConfiguration)
-
-    if (!fs.exists(path.getParent)) {
-      throw new FileNotFoundException(s"No such file or directory: ${path.getParent}")
-    }
-    if (overwrite) {
-      val stream = fs.create(path, true)
-      try {
-        actions.map(_ + "\n").map(_.getBytes("utf-8")).foreach(stream.write)
-      } finally {
-        stream.close()
-      }
-    } else {
-      if (fs.exists(path)) {
-        throw new FileAlreadyExistsException(path.toString)
-      }
-      val tempPath = createTempPath(path)
-      var streamClosed = false // This flag is to avoid double close
-      var renameDone = false // This flag is to save the delete operation in most of cases.
-      val stream = fs.create(tempPath)
-      try {
-        actions.map(_ + "\n").map(_.getBytes("utf-8")).foreach(stream.write)
-        stream.close()
-        streamClosed = true
-        try {
-          if (fs.rename(tempPath, path)) {
-            renameDone = true
-          } else {
-            if (fs.exists(path)) {
-              throw new FileAlreadyExistsException(path.toString)
-            } else {
-              throw new IllegalStateException(s"Cannot rename $tempPath to $path")
-            }
-          }
-        } catch {
-          case _: org.apache.hadoop.fs.FileAlreadyExistsException =>
-            throw new FileAlreadyExistsException(path.toString)
-        }
-      } finally {
-        if (!streamClosed) {
-          stream.close()
-        }
-        if (!renameDone) {
-          fs.delete(tempPath, false)
-        }
-      }
-    }
+  extends HadoopFileSystemLogStore(sparkConf, hadoopConf) {
+  override def write(path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit = {
+    writeWithRename(path, actions, overwrite)
   }
 
   override def invalidateCache(): Unit = {}
 
-  protected def createTempPath(path: Path): Path = {
-    new Path(path.getParent, s".${path.getName}.${UUID.randomUUID}.tmp")
-  }
+  override def isPartialWriteVisible(path: Path): Boolean = true
 }

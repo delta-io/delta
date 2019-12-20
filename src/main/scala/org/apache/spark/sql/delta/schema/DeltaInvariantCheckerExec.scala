@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.schema
 
 import org.apache.spark.sql.delta.DeltaErrors
-import org.apache.spark.sql.delta.schema.Invariants.{ArbitraryExpression, NotNull}
+import org.apache.spark.sql.delta.schema.Invariants.NotNull
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
