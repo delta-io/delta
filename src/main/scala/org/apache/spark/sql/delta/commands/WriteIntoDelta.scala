@@ -81,7 +81,8 @@ case class WriteIntoDelta(
         deltaLog.assertRemovable()
       }
     }
-    updateMetadata(txn, data, partitionColumns, configuration, isOverwriteOperation)
+    val rearrangeOnly = options.rearrangeOnly
+    updateMetadata(txn, data, partitionColumns, configuration, isOverwriteOperation, rearrangeOnly)
 
     // Validate partition predicates
     val replaceWhere = options.replaceWhere
@@ -108,7 +109,7 @@ case class WriteIntoDelta(
       case (SaveMode.Overwrite, Some(predicates)) =>
         // Check to make sure the files we wrote out were actually valid.
         val matchingFiles = DeltaLog.filterFileList(
-          txn.metadata.partitionColumns, newFiles.toDF(), predicates).as[AddFile].collect()
+          txn.metadata.partitionSchema, newFiles.toDF(), predicates).as[AddFile].collect()
         val invalidFiles = newFiles.toSet -- matchingFiles
         if (invalidFiles.nonEmpty) {
           val badPartitions = invalidFiles
@@ -122,6 +123,11 @@ case class WriteIntoDelta(
       case _ => Nil
     }
 
-    newFiles ++ deletedFiles
+    if (rearrangeOnly) {
+      newFiles.map(_.copy(dataChange = !rearrangeOnly)) ++
+        deletedFiles.map(_.copy(dataChange = !rearrangeOnly))
+    } else {
+      newFiles ++ deletedFiles
+    }
   }
 }

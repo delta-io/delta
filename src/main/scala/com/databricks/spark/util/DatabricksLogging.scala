@@ -31,7 +31,7 @@ object TagDefinitions {
   object TAG_OP_TYPE extends TagDefinition
 }
 
-class OpType(typeName: String, description: String)
+case class OpType(typeName: String, description: String)
 
 class MetricDefinition
 

@@ -52,7 +52,8 @@ trait ImplicitMetadataOperation extends DeltaLogging {
       data: Dataset[_],
       partitionColumns: Seq[String],
       configuration: Map[String, String],
-      isOverwriteMode: Boolean): Unit = {
+      isOverwriteMode: Boolean,
+      rearrangeOnly: Boolean = false): Unit = {
     val dataSchema = data.schema.asNullable
     val mergedSchema = if (isOverwriteMode && canOverwriteSchema) {
       dataSchema
@@ -79,6 +80,9 @@ trait ImplicitMetadataOperation extends DeltaLogging {
       }
       recordDeltaEvent(txn.deltaLog, "delta.ddl.initializeSchema")
       // If this is the first write, configure the metadata of the table.
+      if (rearrangeOnly) {
+        throw DeltaErrors.unexpectedDataChangeException("Create a Delta table")
+      }
       txn.updateMetadata(
         Metadata(
           schemaString = dataSchema.json,
@@ -91,10 +95,17 @@ trait ImplicitMetadataOperation extends DeltaLogging {
         partitionColumns = normalizedPartitionCols
       )
       recordDeltaEvent(txn.deltaLog, "delta.ddl.overwriteSchema")
+      if (rearrangeOnly) {
+        throw DeltaErrors.unexpectedDataChangeException("Overwrite the Delta table schema or " +
+          "change the partition schema")
+      }
       txn.updateMetadata(newMetadata)
     } else if (isNewSchema && canMergeSchema && !isNewPartitioning) {
       logInfo(s"New merged schema: ${mergedSchema.treeString}")
       recordDeltaEvent(txn.deltaLog, "delta.ddl.mergeSchema")
+      if (rearrangeOnly) {
+        throw DeltaErrors.unexpectedDataChangeException("Change the Delta table schema")
+      }
       txn.updateMetadata(txn.metadata.copy(schemaString = mergedSchema.json))
     } else if (isNewSchema || isNewPartitioning) {
       recordDeltaEvent(txn.deltaLog, "delta.schemaValidation.failure")

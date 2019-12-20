@@ -75,11 +75,12 @@ object DeltaOperations {
   case class Convert(
       numFiles: Long,
       partitionBy: Seq[String],
-      collectStats: Boolean) extends Operation("CONVERT") {
+      collectStats: Boolean,
+      catalogTable: Option[String]) extends Operation("CONVERT") {
     override val parameters: Map[String, Any] = Map(
       "numFiles" -> numFiles,
       "partitionedBy" -> JsonUtils.toJson(partitionBy),
-      "collectStats" -> collectStats)
+      "collectStats" -> collectStats) ++ catalogTable.map("catalogTable" -> _)
   }
   /** Recorded when optimizing the table. */
   case class Optimize(
@@ -114,6 +115,20 @@ object DeltaOperations {
   /** Recorded when the table is created. */
   case class CreateTable(metadata: Metadata, isManaged: Boolean, asSelect: Boolean = false)
       extends Operation("CREATE TABLE" + s"${if (asSelect) " AS SELECT" else ""}") {
+    override val parameters: Map[String, Any] = Map(
+      "isManaged" -> isManaged.toString,
+      "description" -> Option(metadata.description),
+      "partitionBy" -> JsonUtils.toJson(metadata.partitionColumns),
+      "properties" -> JsonUtils.toJson(metadata.configuration))
+  }
+  /** Recorded when the table is replaced. */
+  case class ReplaceTable(
+      metadata: Metadata,
+      isManaged: Boolean,
+      orCreate: Boolean,
+      asSelect: Boolean = false)
+    extends Operation(s"${if (orCreate) "CREATE OR " else ""}REPLACE TABLE" +
+      s"${if (asSelect) " AS SELECT" else ""}") {
     override val parameters: Map[String, Any] = Map(
       "isManaged" -> isManaged.toString,
       "description" -> Option(metadata.description),
@@ -211,6 +226,7 @@ object DeltaOperations {
       "oldSchema" -> JsonUtils.toJson(oldSchema),
       "newSchema" -> JsonUtils.toJson(newSchema))
   }
+
 
   private def structFieldToMap(colPath: Seq[String], field: StructField): Map[String, Any] = {
     Map(
