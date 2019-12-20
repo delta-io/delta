@@ -93,5 +93,5 @@ class DeltaSink(
     txn.commit(setTxn ++ newFiles ++ deletedFiles, info)
   }
 
-  override def toString(): String = s"DeltaSink[$path]"
+  override def toString: String = s"DeltaSink[$path]"
 }

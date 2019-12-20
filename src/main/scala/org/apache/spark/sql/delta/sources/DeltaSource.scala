@@ -79,7 +79,7 @@ case class DeltaSource(
   override val schema: StructType = deltaLog.snapshot.metadata.schema
 
   // This was checked before creating ReservoirSource
-  assert(!schema.isEmpty)
+  assert(schema.nonEmpty)
 
   private val tableId = deltaLog.snapshot.metadata.id
 
@@ -138,11 +138,7 @@ case class DeltaSource(
   }
 
   private def iteratorLast[T](iter: Iterator[T]): Option[T] = {
-    var last: Option[T] = None
-    while (iter.hasNext) {
-      last = Some(iter.next())
-    }
-    last
+    iter.foldLeft(Option.empty[T])((_, a) => Some(a))
   }
 
   private def getChangesWithRateLimit(

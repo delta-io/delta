@@ -140,8 +140,7 @@ trait Checkpoints extends DeltaLogging {
         JsonUtils.mapper.readValue[CheckpointMetaData](checkpointMetaData.head)
       Some(checkpointMetadata)
     } catch {
-      case _: FileNotFoundException =>
-        return None
+      case _: FileNotFoundException => None
       case NonFatal(e) if tries < 3 =>
         logWarning(s"Failed to parse $LAST_CHECKPOINT. This may happen if there was an error " +
           "during read operation, or a file appears to be partial. Sleeping and trying again.", e)
@@ -178,7 +177,7 @@ trait Checkpoints extends DeltaLogging {
           .toArray
       val lastCheckpoint = getLatestCompleteCheckpointFromList(checkpoints, cv)
       if (lastCheckpoint.isDefined) {
-        return lastCheckpoint
+          lastCheckpoint
       } else {
         cur -= 1000
       }

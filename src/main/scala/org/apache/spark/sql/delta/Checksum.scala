@@ -121,9 +121,7 @@ trait VerifyChecksum extends DeltaLogging {
       recordDeltaEvent(
         this,
         "delta.checksum.error.missing",
-        data = Map("version" -> version) ++ exception.map(("exception" -> _)))
-
-      return
+        data = Map("version" -> version) ++ exception.map("exception" -> _))
     }
     val checksumData = content.get
     if (checksumData.isEmpty) {
@@ -131,7 +129,6 @@ trait VerifyChecksum extends DeltaLogging {
         this,
         "delta.checksum.error.empty",
         data = Map("version" -> version))
-      return
     }
     var mismatchStringOpt: Option[String] = None
     try {

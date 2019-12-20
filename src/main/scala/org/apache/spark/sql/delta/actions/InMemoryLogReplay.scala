@@ -33,9 +33,9 @@ import java.net.URI
  * This class is not thread safe.
  */
 class InMemoryLogReplay(minFileRetentionTimestamp: Long) {
-  var currentProtocolVersion: Protocol = null
+  var currentProtocolVersion: Protocol = _
   var currentVersion: Long = -1
-  var currentMetaData: Metadata = null
+  var currentMetaData: Metadata = _
   val transactions = new scala.collection.mutable.HashMap[String, SetTransaction]()
   val activeFiles = new scala.collection.mutable.HashMap[URI, AddFile]()
   private val tombstones = new scala.collection.mutable.HashMap[URI, RemoveFile]()
@@ -58,7 +58,6 @@ class InMemoryLogReplay(minFileRetentionTimestamp: Long) {
       case remove: RemoveFile =>
         activeFiles.remove(remove.pathAsUri)
         tombstones(remove.pathAsUri) = remove.copy(dataChange = false)
-      case ci: CommitInfo => // do nothing
       case null => // Some crazy future feature. Ignore
     }
   }

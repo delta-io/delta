@@ -35,10 +35,10 @@ abstract class LogStoreSuiteBase extends QueryTest with SharedSQLContext {
     val store = createLogStore(spark)
 
     val deltas = Seq(0, 1).map(i => new File(tempDir, i.toString)).map(_.getCanonicalPath)
-    store.write(deltas(0), Iterator("zero", "none"))
+    store.write(deltas.head, Iterator("zero", "none"))
     store.write(deltas(1), Iterator("one"))
 
-    assert(store.read(deltas(0)) == Seq("zero", "none"))
+    assert(store.read(deltas.head) == Seq("zero", "none"))
     assert(store.read(deltas(1)) == Seq("one"))
   }
 
@@ -47,7 +47,7 @@ abstract class LogStoreSuiteBase extends QueryTest with SharedSQLContext {
     val store = createLogStore(spark)
 
     val deltas = Seq(0, 1).map(i => new File(tempDir, i.toString)).map(_.getCanonicalPath)
-    store.write(deltas(0), Iterator("zero"))
+    store.write(deltas.head, Iterator("zero"))
     store.write(deltas(1), Iterator("one"))
 
     intercept[java.nio.file.FileAlreadyExistsException] {
@@ -66,7 +66,7 @@ abstract class LogStoreSuiteBase extends QueryTest with SharedSQLContext {
     store.write(deltas(3), Iterator("two"))
 
     assert(
-      store.listFrom(deltas(0)).map(_.getPath.getName).toArray === Seq(1, 2, 3).map(_.toString))
+      store.listFrom(deltas.head).map(_.getPath.getName).toArray === Seq(1, 2, 3).map(_.toString))
     assert(
       store.listFrom(deltas(1)).map(_.getPath.getName).toArray === Seq(1, 2, 3).map(_.toString))
     assert(store.listFrom(deltas(2)).map(_.getPath.getName).toArray === Seq(2, 3).map(_.toString))
@@ -141,7 +141,7 @@ class FakeAbstractFileSystem(uri: URI, conf: org.apache.hadoop.conf.Configuratio
   import org.apache.hadoop.fs.local.LocalConfigKeys
   import org.apache.hadoop.fs._
 
-  override def getUriDefaultPort(): Int = -1
-  override def getServerDefaults(): FsServerDefaults = LocalConfigKeys.getServerDefaults()
+  override def getUriDefaultPort: Int = -1
+  override def getServerDefaults: FsServerDefaults = LocalConfigKeys.getServerDefaults
   override def isValidName(src: String): Boolean = true
 }

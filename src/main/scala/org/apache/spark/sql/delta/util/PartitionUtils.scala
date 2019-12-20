@@ -118,7 +118,7 @@ private[delta] object PartitionUtils {
 
   case class PartitionValues(columnNames: Seq[String], literals: Seq[Literal])
   {
-    require(columnNames.size == literals.size)
+    require(columnNames.length == literals.length)
   }
 
   import org.apache.spark.sql.catalyst.catalog.ExternalCatalogUtils.{escapePathName, unescapePathName, DEFAULT_PARTITION_NAME}
@@ -215,7 +215,7 @@ private[delta] object PartitionUtils {
       // TODO: Selective case sensitivity.
       val discoveredBasePaths = optDiscoveredBasePaths.flatten.map(_.toString.toLowerCase())
       assert(
-        discoveredBasePaths.distinct.size == 1,
+        discoveredBasePaths.distinct.length == 1,
         "Conflicting directory structures detected. Suspicious paths:\b" +
           discoveredBasePaths.distinct.mkString("\n\t", "\n\t", "\n\n") +
           "If provided paths are partition directories, please set " +
@@ -311,7 +311,7 @@ private[delta] object PartitionUtils {
         //    i.e. currentPath.getParent == null. For the example of "/table/a=1/",
         //    the top level dir is "/table".
         finished =
-          (maybeColumn.isEmpty && !columns.isEmpty) || currentPath.getParent == null
+          (maybeColumn.isEmpty && columns.nonEmpty) || currentPath.getParent == null
 
         if (!finished) {
           // For the above example, currentPath will be "/table/".

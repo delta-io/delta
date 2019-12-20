@@ -51,7 +51,7 @@ case class DeltaTableIdentifier(
 
   def quotedString: String = {
     val replacedId = quoteIdentifier(identifier)
-    val replacedDb = database.map(quoteIdentifier(_))
+    val replacedDb = database.map(quoteIdentifier)
 
     if (replacedDb.isDefined) s"`${replacedDb.get}`.`$replacedId`" else s"`$replacedId`"
   }

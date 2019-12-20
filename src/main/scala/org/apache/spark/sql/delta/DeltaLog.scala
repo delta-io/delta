@@ -262,7 +262,7 @@ class DeltaLog private(
         // Turn this to a vector so that we can compare it with a range.
         val deltaVersions = deltas.map(f => deltaVersion(f.getPath)).toVector
         if ((deltaVersions.head to deltaVersions.last) != deltaVersions) {
-          throw new IllegalStateException(s"versions (${deltaVersions}) are not contiguous")
+          throw new IllegalStateException(s"versions ($deltaVersions) are not contiguous")
         }
         val lastChkpoint = lastCheckpoint.map(CheckpointInstance.apply)
             .getOrElse(CheckpointInstance.MaxValue)
@@ -311,7 +311,7 @@ class DeltaLog private(
           }
         }
         validateChecksum(newSnapshot)
-        currentSnapshot.uncache()
+        currentSnapshot.uncache
         currentSnapshot = newSnapshot
 
         protocolRead()
@@ -323,7 +323,7 @@ class DeltaLog private(
           // When the state is not empty, it's a real issue and we can't continue to execution.
           if (currentSnapshot.version != -1) {
             val e = new FileNotFoundException(message)
-            e.setStackTrace(f.getStackTrace())
+            e.setStackTrace(f.getStackTrace)
             throw e
           }
       }
@@ -522,7 +522,7 @@ class DeltaLog private(
    |  Log Directory Management and Retention  |
    * ---------------------------------------- */
 
-  def isValid(): Boolean = {
+  def isValid: Boolean = {
     val expectedExistingFile = deltaFile(logPath, currentSnapshot.version)
     try {
       store.listFrom(expectedExistingFile)
@@ -637,7 +637,7 @@ object DeltaLog extends DeltaLogging {
       .removalListener(new RemovalListener[Path, DeltaLog] {
         override def onRemoval(removalNotification: RemovalNotification[Path, DeltaLog]) = {
           val log = removalNotification.getValue
-          try log.snapshot.uncache() catch {
+          try log.snapshot.uncache catch {
             case _: java.lang.NullPointerException =>
               // Various layers will throw null pointer if the RDD is already gone.
           }
@@ -730,7 +730,7 @@ object DeltaLog extends DeltaLogging {
 
     // Invalidate the cache if the reference is no longer valid as a result of the
     // log being deleted.
-    if (cached.snapshot.version == -1 || cached.isValid()) {
+    if (cached.snapshot.version == -1 || cached.isValid) {
       cached
     } else {
       deltaLogCache.invalidate(path)

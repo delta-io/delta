@@ -191,10 +191,8 @@ object SchemaUtils {
 
       val baseFields = toFieldMap(baseSchema)
       val aliasExpressions = dataSchema.map { field =>
-        val originalCase = baseFields.get(field.name).getOrElse {
-          throw new AnalysisException(
-            s"Can't resolve column ${field.name} in ${baseSchema.treeString}")
-        }
+        val originalCase = baseFields.getOrElse(field.name, throw new AnalysisException(
+          s"Can't resolve column ${field.name} in ${baseSchema.treeString}"))
         if (originalCase.name != field.name) {
           functions.col(field.name).as(originalCase.name)
         } else {
