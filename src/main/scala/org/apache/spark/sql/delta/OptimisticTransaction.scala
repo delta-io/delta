@@ -91,7 +91,7 @@ object OptimisticTransaction {
   private val active = new ThreadLocal[OptimisticTransaction]
 
   /** Get the active transaction */
-  def getActive: Option[OptimisticTransaction] = Option(active.get())
+  def getActive(): Option[OptimisticTransaction] = Option(active.get())
 
   /**
    * Sets a transaction as the active transaction.

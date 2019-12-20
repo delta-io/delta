@@ -61,7 +61,7 @@ trait StateCache {
   }
 
   /** Drop any cached data for this [[Snapshot]]. */
-  def uncache: Unit = cached.synchronized {
+  def uncache(): Unit = cached.synchronized {
     if (isCached) {
       isCached = false
       cached.foreach(_.unpersist(blocking = false))

@@ -64,7 +64,7 @@ class DeltaSourceSnapshot(
     super.close(unpersistSnapshot)
 
     if (unpersistSnapshot) {
-      snapshot.uncache()
+      snapshot.uncache
     }
   }
 }
