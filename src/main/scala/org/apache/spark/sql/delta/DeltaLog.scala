@@ -293,11 +293,8 @@ class DeltaLog private(
         }
 
 
-        // Turn this to a vector so that we can compare it with a range.
-        val deltaVersions = deltas.map(f => deltaVersion(f.getPath)).toVector
-        if ((deltaVersions.head to deltaVersions.last) != deltaVersions) {
-          throw new IllegalStateException(s"versions ($deltaVersions) are not contiguous")
-        }
+        val deltaVersions = deltas.map(f => deltaVersion(f.getPath))
+        verifyDeltaVersions(deltaVersions)
         val lastChkpoint = lastCheckpoint.map(CheckpointInstance.apply)
             .getOrElse(CheckpointInstance.MaxValue)
         val checkpointFiles = checkpoints.map(f => CheckpointInstance(f.getPath))
