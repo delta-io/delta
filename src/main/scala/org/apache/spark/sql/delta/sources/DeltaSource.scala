@@ -79,7 +79,7 @@ case class DeltaSource(
   override val schema: StructType = deltaLog.snapshot.metadata.schema
 
   // This was checked before creating ReservoirSource
-  assert(!schema.isEmpty)
+  assert(schema.nonEmpty)
 
   private val tableId = deltaLog.snapshot.metadata.id
 

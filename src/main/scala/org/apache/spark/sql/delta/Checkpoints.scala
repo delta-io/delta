@@ -178,7 +178,7 @@ trait Checkpoints extends DeltaLogging {
           .toArray
       val lastCheckpoint = getLatestCompleteCheckpointFromList(checkpoints, cv)
       if (lastCheckpoint.isDefined) {
-        return lastCheckpoint
+        lastCheckpoint
       } else {
         cur -= 1000
       }
