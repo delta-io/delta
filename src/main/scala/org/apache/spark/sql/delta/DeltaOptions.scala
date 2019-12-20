@@ -16,12 +16,14 @@
 
 package org.apache.spark.sql.delta
 
+import java.util.Locale
 import java.util.regex.PatternSyntaxException
 
 import scala.util.Try
 import scala.util.matching.Regex
 
-import org.apache.spark.sql.delta.DeltaOptions.{MERGE_SCHEMA_OPTION, OVERWRITE_SCHEMA_OPTION}
+import org.apache.spark.sql.delta.DeltaOptions.{DATA_CHANGE_OPTION, MERGE_SCHEMA_OPTION, OVERWRITE_SCHEMA_OPTION}
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
@@ -75,6 +77,17 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
   def canOverwriteSchema: Boolean = {
     options.get(OVERWRITE_SCHEMA_OPTION).map(toBoolean(_, OVERWRITE_SCHEMA_OPTION)).getOrElse(false)
   }
+
+  /**
+   * Whether to write new data to the table or just rearrange data that is already
+   * part of the table. This option declares that the data being written by this job
+   * does not change any data in the table and merely rearranges existing data.
+   * This makes sure streaming queries reading from this table will not see any new changes
+   */
+  def rearrangeOnly: Boolean = {
+    options.get(DATA_CHANGE_OPTION).map(!toBoolean(_, DATA_CHANGE_OPTION)).getOrElse(false)
+  }
+
 }
 
 trait DeltaReadOptions extends DeltaOptionParser {
@@ -112,10 +125,12 @@ class DeltaOptions(
     @transient protected val sqlConf: SQLConf)
   extends DeltaWriteOptions with DeltaReadOptions with Serializable {
 
+  DeltaOptions.verifyOptions(options)
+
   def this(options: Map[String, String], conf: SQLConf) = this(CaseInsensitiveMap(options), conf)
 }
 
-object DeltaOptions {
+object DeltaOptions extends DeltaLogging {
 
   /** An option to overwrite only the data that matches predicates over partition columns. */
   val REPLACE_WHERE_OPTION = "replaceWhere"
@@ -131,4 +146,35 @@ object DeltaOptions {
   val IGNORE_CHANGES_OPTION = "ignoreChanges"
   val IGNORE_DELETES_OPTION = "ignoreDeletes"
   val OPTIMIZE_WRITE_OPTION = "optimizeWrite"
+  val DATA_CHANGE_OPTION = "dataChange"
+
+  val validOptionKeys : Set[String] = Set(
+    REPLACE_WHERE_OPTION,
+    MERGE_SCHEMA_OPTION,
+    EXCLUDE_REGEX_OPTION,
+    OVERWRITE_SCHEMA_OPTION,
+    MAX_FILES_PER_TRIGGER_OPTION,
+    IGNORE_FILE_DELETION_OPTION,
+    IGNORE_CHANGES_OPTION,
+    IGNORE_DELETES_OPTION,
+    OPTIMIZE_WRITE_OPTION,
+    DATA_CHANGE_OPTION,
+    "queryName",
+    "checkpointLocation",
+    "path",
+    "timestampAsOf",
+    "versionAsOf"
+  )
+
+  /** Iterates over all user passed options and logs any that are not valid. */
+  def verifyOptions(options: CaseInsensitiveMap[String]): Unit = {
+    val invalidUserOptions = SQLConf.get.redactOptions(options --
+      validOptionKeys.map(_.toLowerCase(Locale.ROOT)))
+    if (invalidUserOptions.nonEmpty) {
+      recordDeltaEvent(null,
+        "delta.option.invalid",
+        data = invalidUserOptions
+      )
+    }
+  }
 }

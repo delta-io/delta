@@ -18,33 +18,22 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 
-import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.actions.{Action, AddFile, RemoveFile}
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.test.SharedSQLContext
-import org.apache.spark.unsafe.types.CalendarInterval
+import org.apache.spark.sql.test.SQLTestUtils
 import org.apache.spark.util.ManualClock
 
 // scalastyle:off: removeFile
-class DeltaRetentionSuite extends QueryTest
-  with SharedSQLContext {
+class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQLTestUtils {
 
-  protected val testOp = Truncate()
+  protected override def sparkConf: SparkConf = super.sparkConf
 
-  protected def intervalStringToMillis(str: String): Long = {
-    CalendarInterval.fromString(str).milliseconds()
-  }
-
-  protected def getDeltaFiles(dir: File): Seq[File] =
-    dir.listFiles().filter(_.getName.endsWith(".json"))
-
-  protected def getCheckpointFiles(dir: File): Seq[File] =
-    dir.listFiles().filter(f => FileNames.isCheckpointFile(new Path(f.getCanonicalPath)))
-
-  protected def getLogFiles(dir: File): Seq[File] = getDeltaFiles(dir) ++ getCheckpointFiles(dir)
+  override protected def getLogFiles(dir: File): Seq[File] =
+    getDeltaFiles(dir) ++ getCheckpointFiles(dir)
 
   test("delete expired logs") {
     withTempDir { tempDir =>
@@ -113,7 +102,7 @@ class DeltaRetentionSuite extends QueryTest
       // delete some files in the middle
       getDeltaFiles(tempDir).sortBy(_.getName).slice(5, 15).foreach(_.delete())
       clock.advance(intervalStringToMillis(DeltaConfigs.LOG_RETENTION.defaultValue) +
-        intervalStringToMillis("interval 1 day"))
+        intervalStringToMillis("interval 2 day"))
       log.cleanUpExpiredLogs()
 
       val minDeltaFile =
@@ -170,6 +159,29 @@ class DeltaRetentionSuite extends QueryTest
       val log2 = DeltaLog(spark, new Path(tempDir.getCanonicalPath), clock)
       assert(log2.snapshot.tombstones.count() === 0)
       assert(log2.snapshot.allFiles.count() === 6)
+    }
+  }
+
+  test("the checkpoint file for version 0 should be cleaned") {
+    withTempDir { tempDir =>
+      val clock = new ManualClock(System.currentTimeMillis())
+      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath), clock)
+      log.startTransaction().commit(AddFile("0", Map.empty, 1, 1, true) :: Nil, testOp)
+      log.checkpoint()
+
+      val initialFiles = getLogFiles(tempDir)
+      clock.advance(intervalStringToMillis(DeltaConfigs.LOG_RETENTION.defaultValue) +
+        intervalStringToMillis("interval 1 day"))
+
+      // Create a new checkpoint so that the previous version can be deleted
+      log.startTransaction().commit(AddFile("1", Map.empty, 1, 1, true) :: Nil, testOp)
+      log.checkpoint()
+
+      log.cleanUpExpiredLogs()
+      val afterCleanup = getLogFiles(tempDir)
+      initialFiles.foreach { file =>
+        assert(!afterCleanup.contains(file))
+      }
     }
   }
 }

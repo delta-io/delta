@@ -19,18 +19,48 @@ package org.apache.spark.sql.delta
 import java.io.{File, IOException}
 import java.net.URI
 
+import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
+import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.storage._
 import org.apache.hadoop.fs.{Path, RawLocalFileSystem}
 
-import org.apache.spark.sql.{QueryTest, SparkSession}
-import org.apache.spark.sql.test.SharedSQLContext
+import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
-abstract class LogStoreSuiteBase extends QueryTest with SharedSQLContext {
+abstract class LogStoreSuiteBase extends QueryTest
+  with LogStoreProvider
+  with SharedSparkSession {
 
-  def createLogStore(spark: SparkSession): LogStore
+  def logStoreClassName: String
+
+  protected override def sparkConf = {
+    super.sparkConf.set(logStoreClassConfKey, logStoreClassName)
+  }
+
+  test("instantiation through SparkConf") {
+    assert(spark.sparkContext.getConf.get(logStoreClassConfKey) == logStoreClassName)
+    assert(LogStore(spark.sparkContext).getClass.getName == logStoreClassName)
+  }
 
   test("read / write") {
+    def assertNoLeakedCrcFiles(dir: File): Unit = {
+      // crc file should not be leaked when origin file doesn't exist.
+      // The implementation of Hadoop filesystem may filter out checksum file, so
+      // listing files from local filesystem.
+      val fileNames = dir.listFiles().toSeq.filter(p => p.isFile).map(p => p.getName)
+      val crcFiles = fileNames.filter(n => n.startsWith(".") && n.endsWith(".crc"))
+      val originFileNamesForExistingCrcFiles = crcFiles.map { name =>
+        // remove first "." and last ".crc"
+        name.substring(1, name.length - 4)
+      }
+
+      // Check all origin files exist for all crc files.
+      assert(originFileNamesForExistingCrcFiles.toSet.subsetOf(fileNames.toSet),
+        s"Some of origin files for crc files don't exist - crc files: $crcFiles / " +
+          s"expected origin files: $originFileNamesForExistingCrcFiles / actual files: $fileNames")
+    }
+
     val tempDir = Utils.createTempDir()
     val store = createLogStore(spark)
 
@@ -40,6 +70,8 @@ abstract class LogStoreSuiteBase extends QueryTest with SharedSQLContext {
 
     assert(store.read(deltas.head) == Seq("zero", "none"))
     assert(store.read(deltas(1)) == Seq("one"))
+
+    assertNoLeakedCrcFiles(tempDir)
   }
 
   test("detects conflict") {
@@ -74,6 +106,24 @@ abstract class LogStoreSuiteBase extends QueryTest with SharedSQLContext {
     assert(store.listFrom(deltas(4)).map(_.getPath.getName).toArray === Nil)
   }
 
+  test("simple log store test") {
+    val tempDir = Utils.createTempDir()
+    val log1 = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+    assert(log1.store.getClass.getName == logStoreClassName)
+
+    val txn = log1.startTransaction()
+    val file = AddFile("1", Map.empty, 1, 1, true) :: Nil
+    txn.commit(file, ManualUpdate)
+    log1.checkpoint()
+
+    DeltaLog.clearCache()
+    val log2 = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+    assert(log2.store.getClass.getName == logStoreClassName)
+
+    assert(log2.lastCheckpoint.map(_.version) === Some(0L))
+    assert(log2.snapshot.allFiles.count == 1)
+  }
+
   protected def testHadoopConf(expectedErrMsg: String, fsImplConfs: (String, String)*): Unit = {
     test("should pick up fs impl conf from session Hadoop configuration") {
       withTempDir { tempDir =>
@@ -94,24 +144,33 @@ abstract class LogStoreSuiteBase extends QueryTest with SharedSQLContext {
 }
 
 class AzureLogStoreSuite extends LogStoreSuiteBase {
-  override def createLogStore(spark: SparkSession): LogStore = {
-    new AzureLogStore(spark.sparkContext.getConf, spark.sessionState.newHadoopConf())
-  }
+
+  override val logStoreClassName: String = classOf[AzureLogStore].getName
 
   testHadoopConf(
-    "No FileSystem for scheme: fake",
+    expectedErrMsg = "No FileSystem for scheme: fake",
     "fs.fake.impl" -> classOf[FakeFileSystem].getName,
     "fs.fake.impl.disable.cache" -> "true")
 }
 
-class HDFSLogStoreImplSuite extends LogStoreSuiteBase {
-  override def createLogStore(spark: SparkSession): LogStore = {
-    new HDFSLogStoreImpl(spark.sparkContext.getConf, spark.sessionState.newHadoopConf())
-  }
+class HDFSLogStoreSuite extends LogStoreSuiteBase {
+
+  override val logStoreClassName: String = classOf[HDFSLogStore].getName
+  // HDFSLogStore is based on FileContext APIs and hence requires AbstractFileSystem-based
+  // implementations.
+  testHadoopConf(
+    expectedErrMsg = "No AbstractFileSystem",
+    "fs.AbstractFileSystem.fake.impl" -> classOf[FakeAbstractFileSystem].getName)
+}
+
+class LocalLogStoreSuite extends LogStoreSuiteBase {
+
+  override val logStoreClassName: String = classOf[LocalLogStore].getName
 
   testHadoopConf(
-    "No AbstractFileSystem",
-    "fs.AbstractFileSystem.fake.impl" -> classOf[FakeAbstractFileSystem].getName)
+    expectedErrMsg = "No FileSystem for scheme: fake",
+    "fs.fake.impl" -> classOf[FakeFileSystem].getName,
+    "fs.fake.impl.disable.cache" -> "true")
 }
 
 /** A fake file system to test whether session Hadoop configuration will be picked up. */

@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta.files
 
-// scalastyle:off import.ordering.noEmptyLine
 import java.net.URI
 
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
@@ -29,7 +28,6 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{Cast, Expression, GenericInternalRow, Literal}
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.util._
 
 /**
  * A [[FileIndex]] that generates the list of files managed by the Tahoe protocol.
@@ -40,9 +38,6 @@ abstract class TahoeFileIndex(
     val path: Path) extends FileIndex {
 
   def tableVersion: Long = deltaLog.snapshot.version
-
-  /** Get a snapshot of the Delta table. */
-  def getSnapshot(stalenessAcceptable: Boolean): Snapshot
 
   override def rootPaths: Seq[Path] = path :: Nil
 
@@ -127,7 +122,7 @@ case class TahoeLogFileIndex(
   private lazy val historicalSnapshotOpt: Option[Snapshot] =
     versionToUse.map(deltaLog.getSnapshotAt(_))
 
-  override def getSnapshot(stalenessAcceptable: Boolean): Snapshot = {
+  def getSnapshot(stalenessAcceptable: Boolean): Snapshot = {
     historicalSnapshotOpt.getOrElse(deltaLog.update(stalenessAcceptable))
   }
 
@@ -177,16 +172,12 @@ class TahoeBatchFileIndex(
 
   override def tableVersion: Long = snapshot.version
 
-  override def getSnapshot(stalenessAcceptable: Boolean): Snapshot = {
-    snapshot
-  }
-
   override def matchingFiles(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression],
       keepStats: Boolean = false): Seq[AddFile] = {
     DeltaLog.filterFileList(
-      snapshot.metadata.partitionColumns,
+      snapshot.metadata.partitionSchema,
       spark.createDataset(addFiles)(addFileEncoder).toDF(), partitionFilters)
       .as[AddFile](addFileEncoder)
       .collect()

@@ -32,3 +32,12 @@ addSbtPlugin("com.eed3si9n" % "sbt-assembly" % "0.14.9")
 addSbtPlugin("io.get-coursier" % "sbt-coursier" % "1.0.3")
 
 addSbtPlugin("org.scalastyle" %% "scalastyle-sbt-plugin" % "1.0.0")
+
+addSbtPlugin("com.eed3si9n" % "sbt-unidoc" % "0.4.2")
+
+addSbtPlugin("com.typesafe" % "sbt-mima-plugin" % "0.3.0")
+
+addSbtPlugin("com.simplytyped" % "sbt-antlr4" % "0.7.13")
+
+resolvers += Resolver.url("typesafe sbt-plugins",
+  url("https://dl.bintray.com/typesafe/sbt-plugins"))(Resolver.ivyStylePatterns)

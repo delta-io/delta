@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.sources
 
 import scala.util.{Failure, Success, Try}
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -27,13 +28,12 @@ import org.json4s.NoTypeHints
 import org.json4s.jackson.Serialization
 
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.dsl.expressions._
-import org.apache.spark.sql.catalyst.expressions.Literal
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.expressions.{EqualTo, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.SubqueryAlias
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.execution.streaming.{Sink, Source}
 import org.apache.spark.sql.sources._
-import org.apache.spark.sql.sources.v2.DataSourceOptions
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.StructType
 
@@ -46,25 +46,12 @@ class DeltaDataSource
   with DataSourceRegister
   with DeltaLogging {
 
-  // TODO: The following keys are duplicated from [[DataSourceOptions]]
-
-  /**
-   * The option key for time traveling using a timestamp. The timestamp should be a valid
-   * timestamp string which can be cast to a timestamp type.
-   */
-  val TIME_TRAVEL_TIMESTAMP_KEY = "timestampAsOf"
-
-  /**
-   * The option key for time traveling using a version of a table. This value should be
-   * castable to a long.
-   */
-  val TIME_TRAVEL_VERSION_KEY = "versionAsOf"
-
   SparkSession.getActiveSession.foreach { spark =>
     // Enable "passPartitionByAsOptions" to support "write.partitionBy(...)"
     // TODO Remove this when upgrading to Spark 3.0.0
     spark.conf.set("spark.sql.legacy.sources.write.passPartitionByAsOptions", "true")
   }
+
 
   override def sourceSchema(
       sqlContext: SQLContext,
@@ -155,6 +142,9 @@ class DeltaDataSource
       throw DeltaErrors.pathNotSpecifiedException
     })
 
+    // Log any invalid options that are being passed in
+    DeltaOptions.verifyOptions(CaseInsensitiveMap(parameters))
+
     // Handle time travel
     val maybeTimeTravel =
       DeltaTableUtils.extractIfPathContainsTimeTravel(sqlContext.sparkSession, maybePath)
@@ -204,9 +194,11 @@ class DeltaDataSource
         throw DeltaErrors.partitionPathInvolvesNonPartitionColumnException(badColumns, fragment)
       }
 
-      val filters = partitions.map { case (key, value) => key.attr === value.expr }
+      val filters = partitions.map { case (key, value) =>
+        EqualTo(UnresolvedAttribute(key), Literal(value))
+      }
       val files = DeltaLog.filterFileList(
-        metadata.partitionColumns, snapshot.allFiles.toDF(), filters)
+        metadata.partitionSchema, snapshot.allFiles.toDF(), filters)
       if (files.count() == 0) {
         throw DeltaErrors.pathNotExistsException(path)
       }
@@ -225,8 +217,8 @@ class DeltaDataSource
   /** Extracts whether users provided the option to time travel a relation. */
   private def getTimeTravelVersion(parameters: Map[String, String]): Option[DeltaTimeTravelSpec] = {
     val caseInsensitive = CaseInsensitiveMap[String](parameters)
-    val tsOpt = caseInsensitive.get(TIME_TRAVEL_TIMESTAMP_KEY)
-    val versionOpt = caseInsensitive.get(TIME_TRAVEL_VERSION_KEY)
+    val tsOpt = caseInsensitive.get(DeltaDataSource.TIME_TRAVEL_TIMESTAMP_KEY)
+    val versionOpt = caseInsensitive.get(DeltaDataSource.TIME_TRAVEL_VERSION_KEY)
     val sourceOpt = caseInsensitive.get(DeltaDataSource.TIME_TRAVEL_SOURCE_KEY)
 
     if (tsOpt.isDefined && versionOpt.isDefined) {
@@ -237,7 +229,7 @@ class DeltaDataSource
       val version = Try(versionOpt.get.toLong) match {
         case Success(v) => v
         case Failure(t) => throw new IllegalArgumentException(
-          s"$TIME_TRAVEL_VERSION_KEY needs to be a valid bigint value.", t)
+          s"${DeltaDataSource.TIME_TRAVEL_VERSION_KEY} needs to be a valid bigint value.", t)
       }
       Some(DeltaTimeTravelSpec(None, Some(version), sourceOpt.orElse(Some("dfReader"))))
     } else {
@@ -250,6 +242,18 @@ object DeltaDataSource {
   private implicit val formats = Serialization.formats(NoTypeHints)
 
   final val TIME_TRAVEL_SOURCE_KEY = "__time_travel_source__"
+
+  /**
+   * The option key for time traveling using a timestamp. The timestamp should be a valid
+   * timestamp string which can be cast to a timestamp type.
+   */
+  final val TIME_TRAVEL_TIMESTAMP_KEY = "timestampAsOf"
+
+  /**
+   * The option key for time traveling using a version of a table. This value should be
+   * castable to a long.
+   */
+  final val TIME_TRAVEL_VERSION_KEY = "versionAsOf"
 
   def encodePartitioningColumns(columns: Seq[String]): String = {
     Serialization.write(columns)

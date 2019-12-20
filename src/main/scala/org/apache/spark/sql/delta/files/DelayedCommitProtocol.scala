@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.files
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.net.URI
 import java.util.UUID
 
@@ -31,7 +32,6 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.internal.io.FileCommitProtocol
 import org.apache.spark.internal.io.FileCommitProtocol.TaskCommitMessage
 import org.apache.spark.sql.catalyst.expressions.Cast
-import org.apache.spark.sql.execution.streaming.SinkFileStatus
 import org.apache.spark.sql.types.StringType
 
 /**
@@ -41,13 +41,15 @@ class DelayedCommitProtocol(
       jobId: String,
       path: String,
       randomPrefixLength: Option[Int])
-    extends FileCommitProtocol with Serializable with Logging {
+  extends FileCommitProtocol
+    with Serializable with Logging {
 
   // Track the list of files added by a task, only used on the executors.
   @transient private var addedFiles: ArrayBuffer[(Map[String, String], String)] = _
   @transient val addedStatuses = new ArrayBuffer[AddFile]
 
   val timestampPartitionPattern = "yyyy-MM-dd HH:mm:ss[.S]"
+
 
   override def setupJob(jobContext: JobContext): Unit = {
 
@@ -135,13 +137,14 @@ class DelayedCommitProtocol(
     if (addedFiles.nonEmpty) {
       val fs = new Path(path, addedFiles.head._2).getFileSystem(taskContext.getConfiguration)
       val statuses: Seq[AddFile] = addedFiles.map { f =>
-        val stat = fs.getFileStatus(new Path(path, new Path(new URI(f._2))))
+        val filePath = new Path(path, new Path(new URI(f._2)))
+        val stat = fs.getFileStatus(filePath)
         AddFile(f._2, f._1, stat.getLen, stat.getModificationTime, true)
       }
 
       new TaskCommitMessage(statuses)
     } else {
-      new TaskCommitMessage(Seq.empty[SinkFileStatus])
+      new TaskCommitMessage(Nil)
     }
   }
 
