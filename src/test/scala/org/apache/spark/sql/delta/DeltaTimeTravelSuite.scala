@@ -473,7 +473,7 @@ class DeltaTimeTravelSuite extends QueryTest
       val ts = getSparkFormattedTimestamps(start, start + 20.minutes)
 
       checkAnswer(
-        spark.read.format("delta").option("timestampAsOf", ts(0)).load(tblLoc).groupBy().count(),
+        spark.read.format("delta").option("timestampAsOf", ts.head).load(tblLoc).groupBy().count(),
         Row(10L)
       )
 
@@ -505,7 +505,7 @@ class DeltaTimeTravelSuite extends QueryTest
       val ts = getSparkFormattedTimestamps(start + 10.minutes)
 
       val e1 = intercept[AnalysisException] {
-        spark.read.format("delta").option("timestampAsOf", ts(0)).load(tblLoc).collect()
+        spark.read.format("delta").option("timestampAsOf", ts.head).load(tblLoc).collect()
       }
       assert(e1.getMessage.contains("VERSION AS OF 0"))
       assert(e1.getMessage.contains("TIMESTAMP AS OF '2018-10-24 14:14:18'"))
@@ -568,7 +568,7 @@ class DeltaTimeTravelSuite extends QueryTest
         start, start + 1.milli, start + 119.seconds, start - 3.seconds)
 
       checkAnswer(
-        spark.read.option("timestampAsOf", ts(0)).format("delta").load(tblLoc).groupBy().count(),
+        spark.read.option("timestampAsOf", ts.head).format("delta").load(tblLoc).groupBy().count(),
         Row(10L)
       )
 

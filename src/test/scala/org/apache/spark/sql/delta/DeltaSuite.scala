@@ -198,7 +198,7 @@ class DeltaSuite extends QueryTest
     }.getMessage
     assert(e2.contains("Data written into Delta needs to contain at least one non-partitioned"))
 
-    var e3 = intercept[AnalysisException] {
+    val e3 = intercept[AnalysisException] {
       Seq(6).toDF()
         .withColumn("is_odd", $"value" % 2 =!= 0)
         .write
@@ -210,7 +210,7 @@ class DeltaSuite extends QueryTest
     assert(e3 == "Predicate references non-partition column 'not_a_column'. Only the " +
       "partition columns may be referenced: [is_odd];")
 
-    var e4 = intercept[AnalysisException] {
+    val e4 = intercept[AnalysisException] {
       Seq(6).toDF()
         .withColumn("is_odd", $"value" % 2 =!= 0)
         .write
@@ -707,10 +707,10 @@ class DeltaSuite extends QueryTest
         val inputFiles =
           TahoeLogFileIndex(spark, deltaLog, new Path(tempDir.getCanonicalPath))
             .inputFiles.toSeq
-        assert(inputFiles.size == 5)
+        assert(inputFiles.length == 5)
 
         val filesToDelete = inputFiles.filter(_.split("/").last.startsWith("part-00001"))
-        assert(filesToDelete.size == 1)
+        assert(filesToDelete.length == 1)
         filesToDelete.foreach { f =>
           val deleted = tryDeleteNonRecursive(
             tempDirPath.getFileSystem(spark.sessionState.newHadoopConf()),
@@ -741,10 +741,10 @@ class DeltaSuite extends QueryTest
         val inputFiles =
           TahoeLogFileIndex(spark, deltaLog, new Path(tempDir.getCanonicalPath))
             .inputFiles.toSeq
-        assert(inputFiles.size == 5)
+        assert(inputFiles.length == 5)
 
         val filesToCorrupt = inputFiles.filter(_.split("/").last.startsWith("part-00001"))
-        assert(filesToCorrupt.size == 1)
+        assert(filesToCorrupt.length == 1)
         val fs = tempDirPath.getFileSystem(spark.sessionState.newHadoopConf())
         filesToCorrupt.foreach { f =>
           val filePath = new Path(tempDirPath, f)
@@ -754,7 +754,7 @@ class DeltaSuite extends QueryTest
         val thrown = intercept[SparkException] {
           data.toDF().count()
         }
-        assert(thrown.getMessage().contains("is not a Parquet file"))
+        assert(thrown.getMessage.contains("is not a Parquet file"))
       }
     }
   }
@@ -813,7 +813,7 @@ class DeltaSuite extends QueryTest
       val thrown = intercept[SparkException] {
         data.toDF().count()
       }
-      assert(thrown.getMessage().contains("FileNotFound"))
+      assert(thrown.getMessage.contains("FileNotFound"))
     }
   }
 

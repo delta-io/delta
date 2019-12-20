@@ -93,13 +93,13 @@ object DeltaTableUtils extends PredicateHelper
   def findDeltaTableRoot(spark: SparkSession, path: Path): Option[Path] = {
     val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
     var currentPath = path
-    while (currentPath != null && currentPath.getName() != "_delta_log" &&
-        currentPath.getName() != "_samples") {
+    while (currentPath != null && currentPath.getName != "_delta_log" &&
+        currentPath.getName != "_samples") {
       val deltaLogPath = new Path(currentPath, "_delta_log")
       if (Try(fs.exists(deltaLogPath)).getOrElse(false)) {
         return Option(currentPath)
       }
-      currentPath = currentPath.getParent()
+      currentPath = currentPath.getParent
     }
     None
   }

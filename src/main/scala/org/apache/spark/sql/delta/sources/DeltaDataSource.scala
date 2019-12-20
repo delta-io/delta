@@ -188,7 +188,7 @@ class DeltaDataSource
           |INCORRECT: spark.read.format("delta").load("/data/part=1")
         """.stripMargin)
 
-      val fragment = hadoopPath.toString().substring(rootPath.toString().length() + 1)
+      val fragment = hadoopPath.toString.substring(rootPath.toString.length + 1)
       val partitions = try {
         PartitionUtils.parsePathFragmentAsSeq(fragment)
       } catch {
@@ -237,7 +237,7 @@ class DeltaDataSource
       val version = Try(versionOpt.get.toLong) match {
         case Success(v) => v
         case Failure(t) => throw new IllegalArgumentException(
-          s"${TIME_TRAVEL_VERSION_KEY} needs to be a valid bigint value.", t)
+          s"$TIME_TRAVEL_VERSION_KEY needs to be a valid bigint value.", t)
       }
       Some(DeltaTimeTravelSpec(None, Some(version), sourceOpt.orElse(Some("dfReader"))))
     } else {
