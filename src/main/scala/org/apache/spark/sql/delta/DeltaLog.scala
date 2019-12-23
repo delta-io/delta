@@ -344,7 +344,7 @@ class DeltaLog private(
           }
         }
         validateChecksum(newSnapshot)
-        currentSnapshot.uncache
+        currentSnapshot.uncache()
         currentSnapshot = newSnapshot
       } catch {
         case f: FileNotFoundException =>
