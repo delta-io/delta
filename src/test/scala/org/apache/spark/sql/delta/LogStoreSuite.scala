@@ -55,7 +55,7 @@ abstract class LogStoreSuiteBase extends QueryTest with SharedSQLContext {
     }
   }
 
-  test("listFrom") {
+  test("iteratorFrom") {
     val tempDir = Utils.createTempDir()
     val store = createLogStore(spark)
 
@@ -66,12 +66,13 @@ abstract class LogStoreSuiteBase extends QueryTest with SharedSQLContext {
     store.write(deltas(3), Iterator("two"))
 
     assert(
-      store.listFrom(deltas(0)).map(_.getPath.getName).toArray === Seq(1, 2, 3).map(_.toString))
+      store.iteratorFrom(deltas(0)).map(_.getPath.getName).toArray === Seq(1, 2, 3).map(_.toString))
     assert(
-      store.listFrom(deltas(1)).map(_.getPath.getName).toArray === Seq(1, 2, 3).map(_.toString))
-    assert(store.listFrom(deltas(2)).map(_.getPath.getName).toArray === Seq(2, 3).map(_.toString))
-    assert(store.listFrom(deltas(3)).map(_.getPath.getName).toArray === Seq(3).map(_.toString))
-    assert(store.listFrom(deltas(4)).map(_.getPath.getName).toArray === Nil)
+      store.iteratorFrom(deltas(1)).map(_.getPath.getName).toArray === Seq(1, 2, 3).map(_.toString))
+    assert(
+      store.iteratorFrom(deltas(2)).map(_.getPath.getName).toArray === Seq(2, 3).map(_.toString))
+    assert(store.iteratorFrom(deltas(3)).map(_.getPath.getName).toArray === Seq(3).map(_.toString))
+    assert(store.iteratorFrom(deltas(4)).map(_.getPath.getName).toArray === Nil)
   }
 
   protected def testHadoopConf(expectedErrMsg: String, fsImplConfs: (String, String)*): Unit = {
@@ -81,12 +82,12 @@ abstract class LogStoreSuiteBase extends QueryTest with SharedSQLContext {
 
         // Make sure it will fail without FakeFileSystem
         val e = intercept[IOException] {
-          createLogStore(spark).listFrom(path)
+          createLogStore(spark).iteratorFrom(path)
         }
         assert(e.getMessage.contains(expectedErrMsg))
 
         withSQLConf(fsImplConfs: _*) {
-          createLogStore(spark).listFrom(path)
+          createLogStore(spark).iteratorFrom(path)
         }
       }
     }

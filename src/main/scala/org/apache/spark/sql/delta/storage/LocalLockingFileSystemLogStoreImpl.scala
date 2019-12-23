@@ -51,15 +51,15 @@ class LocalLockingFileSystemLogStoreImpl(
     new Path(newUri)
   }
 
-  override def listFrom(path: Path): Iterator[FileStatus] = {
+  override def iteratorFrom(path: Path): Iterator[FileStatus] = {
     val (fs, resolvedPath, _) = resolved(path)
-    listFromInternal(fs, resolvedPath)
+    iteratorFromInternal(fs, resolvedPath)
   }
 
   /**
    * Returns `FileStatus`s starting from `resolvedPath` (inclusive).
    */
-  private def listFromInternal(fs: FileSystem, resolvedPath: Path): Iterator[FileStatus] = {
+  private def iteratorFromInternal(fs: FileSystem, resolvedPath: Path): Iterator[FileStatus] = {
     if (!fs.exists(resolvedPath.getParent)) {
       throw new FileNotFoundException(s"No such file or directory: ${resolvedPath.getParent}")
     }
@@ -68,7 +68,7 @@ class LocalLockingFileSystemLogStoreImpl(
   }
 
   private def exists(fs: FileSystem, resolvedPath: Path): Boolean = {
-    listFromInternal(fs, resolvedPath)
+    iteratorFromInternal(fs, resolvedPath)
       .take(1)
       .exists(_.getPath.getName == resolvedPath.getName)
   }

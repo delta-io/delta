@@ -245,7 +245,7 @@ class DeltaLog private(
         val newFiles = store
           // List from the current version since we want to get the checkpoint file for the current
           // version
-          .listFrom(checkpointPrefix(logPath, math.max(currentSnapshot.version, 0L)))
+          .iteratorFrom(checkpointPrefix(logPath, math.max(currentSnapshot.version, 0L)))
           // Pick up checkpoint files not older than the current version and delta files newer than
           // the current version
           .filter { file =>
@@ -401,7 +401,7 @@ class DeltaLog private(
    * return an empty Iterator.
    */
   def getChanges(startVersion: Long): Iterator[(Long, Seq[Action])] = {
-    val deltas = store.listFrom(deltaFile(logPath, startVersion))
+    val deltas = store.iteratorFrom(deltaFile(logPath, startVersion))
       .filter(f => isDeltaFile(f.getPath))
     deltas.map { status =>
       val p = status.getPath
@@ -499,7 +499,7 @@ class DeltaLog private(
     val checkpointVersion = lastCheckpoint.map(_.version)
     if (checkpointVersion.isEmpty) {
       val versionZeroFile = deltaFile(logPath, 0L)
-      val versionZeroFileExists = store.listFrom(versionZeroFile)
+      val versionZeroFileExists = store.iteratorFrom(versionZeroFile)
         .take(1)
         .exists(_.getPath.getName == versionZeroFile.getName)
       if (!versionZeroFileExists) {
@@ -525,7 +525,7 @@ class DeltaLog private(
   def isValid(): Boolean = {
     val expectedExistingFile = deltaFile(logPath, currentSnapshot.version)
     try {
-      store.listFrom(expectedExistingFile)
+      store.iteratorFrom(expectedExistingFile)
         .take(1)
         .exists(_.getPath.getName == expectedExistingFile.getName)
     } catch {

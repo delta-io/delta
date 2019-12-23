@@ -170,7 +170,7 @@ trait Checkpoints extends DeltaLogging {
   protected def findLastCompleteCheckpoint(cv: CheckpointInstance): Option[CheckpointInstance] = {
     var cur = math.max(cv.version, 0L)
     while (cur >= 0) {
-      val checkpoints = store.listFrom(checkpointPrefix(logPath, math.max(0, cur - 1000)))
+      val checkpoints = store.iteratorFrom(checkpointPrefix(logPath, math.max(0, cur - 1000)))
           .map(_.getPath)
           .filter(isCheckpointFile)
           .map(CheckpointInstance(_))

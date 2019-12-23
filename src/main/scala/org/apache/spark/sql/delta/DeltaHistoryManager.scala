@@ -171,7 +171,7 @@ class DeltaHistoryManager(
    * This value must be used as a lower bound.
    */
   private def getEarliestDeltaFile: Long = {
-    val earliestVersionOpt = deltaLog.store.listFrom(FileNames.deltaFile(deltaLog.logPath, 0))
+    val earliestVersionOpt = deltaLog.store.iteratorFrom(FileNames.deltaFile(deltaLog.logPath, 0))
       .filter(f => FileNames.isDeltaFile(f.getPath))
       .take(1).toArray.headOption
     if (earliestVersionOpt.isEmpty) {
@@ -190,7 +190,7 @@ class DeltaHistoryManager(
    * commits are contiguous.
    */
   private def getEarliestReproducibleCommit: Long = {
-    val files = deltaLog.store.listFrom(FileNames.deltaFile(deltaLog.logPath, 0))
+    val files = deltaLog.store.iteratorFrom(FileNames.deltaFile(deltaLog.logPath, 0))
       .filter(f => FileNames.isDeltaFile(f.getPath) || FileNames.isCheckpointFile(f.getPath))
 
     // A map of checkpoint version and number of parts, to number of parts observed
@@ -253,7 +253,7 @@ object DeltaHistoryManager extends DeltaLogging {
       start: Long,
       end: Option[Long] = None): Array[Commit] = {
     val until = end.getOrElse(Long.MaxValue)
-    val commits = logStore.listFrom(deltaFile(logPath, start))
+    val commits = logStore.iteratorFrom(deltaFile(logPath, start))
       .filter(f => isDeltaFile(f.getPath))
       .map { fileStatus =>
         Commit(deltaVersion(fileStatus.getPath), fileStatus.getModificationTime)

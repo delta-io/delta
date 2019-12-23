@@ -43,8 +43,8 @@ object FileNames {
   /**
    * Returns the prefix of all checkpoint files for the given version.
    *
-   * Intended for use with listFrom to get all files from this version onwards. The returned Path
-   * will not exist as a file.
+   * Intended for use with iteratorFrom to get all files from this version onwards. The returned
+   * Path will not exist as a file.
    */
   def checkpointPrefix(path: Path, version: Long): Path =
     new Path(path, f"$version%020d.checkpoint")

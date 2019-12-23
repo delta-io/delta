@@ -67,13 +67,13 @@ trait LogStore {
    * List the paths in the same directory that are lexicographically greater or equal to
    * (UTF-8 sorting) the given `path`. The result should also be sorted by the file name.
    */
-  final def listFrom(path: String): Iterator[FileStatus] = listFrom(new Path(path))
+  final def iteratorFrom(path: String): Iterator[FileStatus] = iteratorFrom(new Path(path))
 
   /**
    * List the paths in the same directory that are lexicographically greater or equal to
    * (UTF-8 sorting) the given `path`. The result should also be sorted by the file name.
    */
-  def listFrom(path: Path): Iterator[FileStatus]
+  def iteratorFrom(path: Path): Iterator[FileStatus]
 
   /** Invalidate any caching that the implementation may be using */
   def invalidateCache(): Unit

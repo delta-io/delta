@@ -52,7 +52,7 @@ abstract class FileSystemLogStore(
     }
   }
 
-  override def listFrom(path: Path): Iterator[FileStatus] = {
+  override def iteratorFrom(path: Path): Iterator[FileStatus] = {
     val fs = path.getFileSystem(getHadoopConfiguration)
     if (!fs.exists(path.getParent)) {
       throw new FileNotFoundException(s"No such file or directory: ${path.getParent}")

@@ -118,7 +118,7 @@ class HDFSLogStoreImpl(sparkConf: SparkConf, defaultHadoopConf: Configuration) e
     new Path(path.getParent, s".${path.getName}.${UUID.randomUUID}.tmp")
   }
 
-  override def listFrom(path: Path): Iterator[FileStatus] = {
+  override def iteratorFrom(path: Path): Iterator[FileStatus] = {
     val fc = getFileContext(path)
     if (!fc.util.exists(path.getParent)) {
       throw new FileNotFoundException(s"No such file or directory: ${path.getParent}")
