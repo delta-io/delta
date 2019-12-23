@@ -168,22 +168,26 @@ trait Checkpoints extends DeltaLogging {
    * @param cv The CheckpointVersion to compare against
    */
   protected def findLastCompleteCheckpoint(cv: CheckpointInstance): Option[CheckpointInstance] = {
-    var cur = math.max(cv.version, 0L)
-    while (cur >= 0) {
-      val checkpoints = store.iteratorFrom(checkpointPrefix(logPath, math.max(0, cur - 1000)))
-          .map(_.getPath)
-          .filter(isCheckpointFile)
-          .map(CheckpointInstance(_))
-          .takeWhile(tv => (cur == 0 || tv.version <= cur) && tv.isEarlierThan(cv))
-          .toArray
-      val lastCheckpoint = getLatestCompleteCheckpointFromList(checkpoints, cv)
-      if (lastCheckpoint.isDefined) {
-        return lastCheckpoint
+    @annotation.tailrec
+    def loop(cur: Long): Option[CheckpointInstance] =
+      if (cur >= 0) {
+        val checkpoints =
+          store
+            .iteratorFrom(checkpointPrefix(logPath, math.max(0, cur - 1000)))
+            .map(_.getPath)
+            .filter(isCheckpointFile)
+            .map(CheckpointInstance(_))
+            .takeWhile(tv => (cur == 0 || tv.version <= cur) && tv.isEarlierThan(cv))
+            .toArray
+
+        getLatestCompleteCheckpointFromList(checkpoints, cv) match {
+          case None => loop(cur - 1000)
+          case result => result
+        }
       } else {
-        cur -= 1000
+        None
       }
-    }
-    None
+    loop(cur = math.max(cv.version, 0L))
   }
 
   /**
