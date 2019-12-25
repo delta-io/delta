@@ -486,6 +486,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       } else {
         changedDataAddedFiles ++= winningCommitActions.collect { case a: AddFile => a }
       }
+      val rearrangeOnly =
+        winningCommitActions.collect { case f: FileAction => f.dataChange }.forall(_ == false)
+      val currentCommitOnlyAddFiles =
+        actions.collect { case f: FileAction => f }.forall(_.isInstanceOf[AddFile])
+
 
       // If the log protocol version was upgraded, make sure we are still okay.
       // Fail the transaction if we're trying to upgrade protocol ourselves.
@@ -505,44 +510,50 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
         throw new MetadataChangedException(commitInfo)
       }
 
-      // Fail if new files have been added that the txn should have read.
-      val addedFilesToCheckForConflicts = commitIsolationLevel match {
-        case Serializable => changedDataAddedFiles ++ blindAppendAddedFiles
-        case WriteSerializable => changedDataAddedFiles // don't conflict with blind appends
-        case SnapshotIsolation => Seq.empty
-      }
-      val predicatesMatchingAddedFiles = ExpressionSet(readPredicates).iterator.flatMap { p =>
-        val conflictingFile = DeltaLog.filterFileList(
-          metadata.partitionSchema,
-          addedFilesToCheckForConflicts.toDF(), p :: Nil).as[AddFile].take(1)
+      if(!(rearrangeOnly && currentCommitOnlyAddFiles)) {
+        // Fail if new files have been added that the txn should have read.
+        val addedFilesToCheckForConflicts = commitIsolationLevel match {
+          case Serializable => changedDataAddedFiles ++ blindAppendAddedFiles
+          case WriteSerializable => changedDataAddedFiles // don't conflict with blind appends
+          case SnapshotIsolation => Seq.empty
+        }
+        val predicatesMatchingAddedFiles = ExpressionSet(readPredicates).iterator.flatMap { p =>
+          val conflictingFile = DeltaLog.filterFileList(
+            metadata.partitionSchema,
+            addedFilesToCheckForConflicts.toDF(), p :: Nil).as[AddFile].take(1)
 
-        conflictingFile.headOption.map(f => getPrettyPartitionMessage(f.partitionValues))
-      }.take(1).toArray
+          conflictingFile.headOption.map(f => getPrettyPartitionMessage(f.partitionValues))
+        }.take(1).toArray
 
-      if (predicatesMatchingAddedFiles.nonEmpty) {
-        val isWriteSerializable = commitIsolationLevel == WriteSerializable
-        val onlyAddFiles =
-          winningCommitActions.collect { case f: FileAction => f }.forall(_.isInstanceOf[AddFile])
+        if (predicatesMatchingAddedFiles.nonEmpty) {
+          val isWriteSerializable = commitIsolationLevel == WriteSerializable
+          val onlyAddFiles =
+            winningCommitActions.collect { case f: FileAction => f }.forall(_.isInstanceOf[AddFile])
 
-        val retryMsg =
-          if (isWriteSerializable && onlyAddFiles && isBlindAppendOption.isEmpty) {
-            // This transaction was made by an older version which did not set `isBlindAppend` flag.
-            // So even if it looks like an append, we don't know for sure if it was a blind append
-            // or not. So we suggest them to upgrade all there workloads to latest version.
-            Some(
-              "Upgrading all your concurrent writers to use the latest Delta Lake may " +
-                "avoid this error. Please upgrade and then retry this operation again.")
-          } else None
-        throw new ConcurrentAppendException(commitInfo, predicatesMatchingAddedFiles.head, retryMsg)
-      }
+          val retryMsg =
+            if (isWriteSerializable && onlyAddFiles && isBlindAppendOption.isEmpty) {
+              // scalastyle:off
+              // This transaction was made by an older version which did not set `isBlindAppend` flag.
+              // So even if it looks like an append, we don't know for sure if it was a blind append
+              // or not. So we suggest them to upgrade all there workloads to latest version.
+              // scalastyle:on
+              Some(
+                "Upgrading all your concurrent writers to use the latest Delta Lake may " +
+                  "avoid this error. Please upgrade and then retry this operation again.")
+            } else None
+          // scalastyle:off
+          throw new ConcurrentAppendException(commitInfo, predicatesMatchingAddedFiles.head, retryMsg)
+          // scalastyle:on
+        }
 
-      // Fail if files have been deleted that the txn read.
-      val readFilePaths = readFiles.map(f => f.path -> f.partitionValues).toMap
-      val deleteReadOverlap = removedFiles.find(r => readFilePaths.contains(r.path))
-      if (deleteReadOverlap.nonEmpty) {
-        val filePath = deleteReadOverlap.get.path
-        val partition = getPrettyPartitionMessage(readFilePaths(filePath))
-        throw new ConcurrentDeleteReadException(commitInfo, s"$filePath in $partition")
+        // Fail if files have been deleted that the txn read.
+        val readFilePaths = readFiles.map(f => f.path -> f.partitionValues).toMap
+        val deleteReadOverlap = removedFiles.find(r => readFilePaths.contains(r.path))
+        if (deleteReadOverlap.nonEmpty) {
+          val filePath = deleteReadOverlap.get.path
+          val partition = getPrettyPartitionMessage(readFilePaths(filePath))
+          throw new ConcurrentDeleteReadException(commitInfo, s"$filePath in $partition")
+        }
       }
 
       // Fail if a file is deleted twice.

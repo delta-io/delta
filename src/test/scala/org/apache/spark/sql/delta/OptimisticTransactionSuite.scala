@@ -635,6 +635,47 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
     }
   }
 
+  test("allow read+append against data rearrange") {
+    withLog(addA_P1 :: addB_P1 :: Nil) { log =>
+      val tx1 = log.startTransaction()
+      tx1.filterFiles()
+
+      val tx2 = log.startTransaction()
+      tx2.filterFiles()
+      // tx2 rearranges files
+      tx2.commit(
+        setDataChangeFalse(addA_P1.remove :: addB_P1.remove :: addC_P1 :: Nil),
+        ManualUpdate)
+
+      tx1.commit(
+        addE_P3 :: Nil,
+        ManualUpdate)
+
+      checkAnswer(
+        log.update().allFiles.select("path"),
+        Row(C_P1) :: Row(E_P3) ::  Nil)
+    }
+  }
+
+  test("bloc delete against data rearrange") {
+    withLog(addA_P1 :: addB_P1 :: Nil) { log =>
+      val tx1 = log.startTransaction()
+      tx1.filterFiles()
+
+      val tx2 = log.startTransaction()
+      tx2.filterFiles()
+      // tx2 rearranges files
+      tx2.commit(
+        setDataChangeFalse(addA_P1.remove :: addB_P1.remove :: addC_P1 :: Nil),
+        ManualUpdate)
+
+      intercept[ConcurrentAppendException] {
+        // tx1 remove a file already removed by tx2 when rearranging data
+        tx1.commit(addA_P1.remove :: Nil, ManualUpdate)
+      }
+    }
+  }
+
   def withLog(
       actions: Seq[Action],
       partitionCols: Seq[String] = "part" :: Nil)(
