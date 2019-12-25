@@ -39,6 +39,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, ParquetToSparkSchemaConverter}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StringType, StructField, StructType}
 import org.apache.spark.util.{SerializableConfiguration, Utils}
 
@@ -173,8 +174,7 @@ abstract class ConvertToDeltaCommandBase(
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_IMPORT_BATCH_SIZE_STATS_COLLECTION)
 
       val addFilesIter = fileListResult.asScala.grouped(statsBatchSize).flatMap { batch =>
-        val resolver = spark.sessionState.conf.resolver
-        val adds = batch.map(createAddFile(_, txn.deltaLog.dataPath, fs, resolver))
+        val adds = batch.map(createAddFile(_, txn.deltaLog.dataPath, fs, spark.sessionState.conf))
         adds.toIterator
       }
       streamWrite(
@@ -193,12 +193,16 @@ abstract class ConvertToDeltaCommandBase(
   }
 
   protected def createAddFile(
-      file: SerializableFileStatus, basePath: Path, fs: FileSystem, resolver: Resolver): AddFile = {
+      file: SerializableFileStatus,
+      basePath: Path,
+      fs: FileSystem,
+      conf: SQLConf): AddFile = {
     val path = file.getPath
     val pathStr = file.getPath.toUri.toString
     val dateFormatter = DateFormatter()
     val timestampFormatter =
       TimestampFormatter(timestampPartitionPattern, java.util.TimeZone.getDefault)
+    val resolver = conf.resolver
     val (partitionOpt, _) = PartitionUtils.parsePartition(
       path,
       typeInference = false,
@@ -215,10 +219,11 @@ abstract class ConvertToDeltaCommandBase(
           pathStr, partValues.columnNames, partitionColNames)
       }
 
+      val tz = Option(conf.sessionLocalTimeZone)
       // Check if the partition value can be casted to the provided type
       partValues.literals.zip(partitionFields).foreach { case (literal, field) =>
-        if (literal.eval() != null && Cast(literal, field.dataType).eval() == null) {
-          val partitionValue = Cast(literal, StringType).eval()
+        if (literal.eval() != null && Cast(literal, field.dataType, tz).eval() == null) {
+          val partitionValue = Cast(literal, StringType, tz).eval()
           val partitionValueStr = Option(partitionValue).map(_.toString).orNull
           throw DeltaErrors.castPartitionValueException(partitionValueStr, field.dataType)
         }
@@ -226,7 +231,7 @@ abstract class ConvertToDeltaCommandBase(
 
       val values = partValues
         .literals
-        .map(l => Cast(l, StringType).eval())
+        .map(l => Cast(l, StringType, tz).eval())
         .map(Option(_).map(_.toString).orNull)
 
       partitionColNames.zip(partValues.columnNames).foreach { case (expected, parsed) =>
@@ -314,7 +319,8 @@ abstract class ConvertToDeltaCommandBase(
         context,
         readVersion = None,
         isolationLevel = None,
-        isBlindAppend = None)
+        isBlindAppend = None,
+        None)
 
       val extraActions = Seq(commitInfo, Protocol(), metadata)
       val actions = extraActions.toIterator ++ addFiles

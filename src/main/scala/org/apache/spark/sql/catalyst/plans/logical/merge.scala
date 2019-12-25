@@ -265,8 +265,9 @@ object MergeInto {
             // expression (i.e. sourceColumnBySameName) needs to be resolved only by the source
             // plan.
             fakeTargetPlan.output.map(_.name).map { tgtColName =>
-              val resolvedExpr =
-                resolveOrFail(UnresolvedAttribute(tgtColName), fakeSourcePlan, s"$typ clause")
+              val resolvedExpr = resolveOrFail(
+                  UnresolvedAttribute.quotedString(s"`$tgtColName`"),
+                  fakeSourcePlan, s"$typ clause")
               MergeAction(Seq(tgtColName), resolvedExpr)
             }
 

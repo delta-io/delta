@@ -27,10 +27,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
-class ConvertToDeltaSuite
-  extends ConvertToDeltaSuiteBase  with org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-
-trait ConvertToDeltaSuiteBase extends QueryTest
+abstract class ConvertToDeltaSuiteBase extends QueryTest
     with SharedSparkSession {
 
   import org.apache.spark.sql.functions._
@@ -77,20 +74,7 @@ trait ConvertToDeltaSuiteBase extends QueryTest
     }
   }
 
-  protected def convertToDelta(identifier: String, partitionSchema: Option[String] = None): Unit = {
-    if (partitionSchema.isDefined) {
-      io.delta.tables.DeltaTable.convertToDelta(
-        spark,
-        identifier,
-        StructType.fromDDL(partitionSchema.get)
-      )
-    } else {
-      io.delta.tables.DeltaTable.convertToDelta(
-        spark,
-        identifier
-      )
-    }
-  }
+  protected def convertToDelta(identifier: String, partitionSchema: Option[String] = None): Unit
 
   test("negative case: convert a non-delta path falsely claimed as parquet") {
     Seq("orc", "json", "csv").foreach { format =>
@@ -393,6 +377,24 @@ trait ConvertToDeltaSuiteBase extends QueryTest
       checkAnswer(
         spark.read.format("delta").load(tempDir).where("key2 = 100")
           .select("id"), Row(1))
+    }
+  }
+
+  test("converting tables with dateType partition columns") {
+    withTempDir { dir =>
+      val tempDir = dir.getCanonicalPath
+      val df1 = Seq(0).toDF("id").withColumn("key1", lit("2019-11-22").cast("date"))
+
+      val df2 = Seq(1).toDF("id").withColumn("key1", lit(null))
+
+      writeFiles(tempDir, df1.union(df2), partCols = Seq("key1"))
+      convertToDelta(s"parquet.`$tempDir`", Some("key1 date"))
+      checkAnswer(
+        spark.read.format("delta").load(tempDir).where("key1 is null").select("id"),
+        Row(1))
+      checkAnswer(
+        spark.read.format("delta").load(tempDir).where("key1 = '2019-11-22'").select("id"),
+        Row(0))
     }
   }
 

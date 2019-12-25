@@ -24,7 +24,8 @@ import random
 import threading
 
 # Clear previous run delta-tables
-files = ["/tmp/delta-table", "/tmp/delta-table2", "/tmp/delta-table3"]
+files = ["/tmp/delta-table", "/tmp/delta-table2", "/tmp/delta-table3", "/tmp/delta-table4",
+         "/tmp/delta-table5", "/tmp/checkpoint/tbl1"]
 for i in files:
     try:
         shutil.rmtree(i)
@@ -94,6 +95,36 @@ stream3.stop()
 print("########### DeltaTable after streaming upsert #########")
 deltaTable.toDF().show()
 
+# Streaming append and concurrent repartition using  data change = false
+# tbl1 is the sink and tbl2 is the source
+print("############ Streaming appends with concurrent table repartition  ##########")
+tbl1 = "/tmp/delta-table4"
+tbl2 = "/tmp/delta-table5"
+numRows = 10
+spark.range(numRows).write.mode("overwrite").format("delta").save(tbl1)
+spark.read.format("delta").load(tbl1).show()
+spark.range(numRows, numRows * 10).write.mode("overwrite").format("delta").save(tbl2)
+
+
+# Start reading tbl2 as a stream and do a streaming write to tbl1
+# Prior to Delta 0.5.0 this would throw StreamingQueryException: Detected a data update in the
+# source table. This is currently not supported.
+stream4 = spark.readStream.format("delta").load(tbl2).writeStream.format("delta")\
+    .option("checkpointLocation", "/tmp/checkpoint/tbl1") \
+    .outputMode("append") \
+    .start(tbl1)
+
+# repartition table while streaming job is running
+spark.read.format("delta").load(tbl2).repartition(10).write\
+    .format("delta")\
+    .mode("overwrite")\
+    .option("dataChange", "false")\
+    .save(tbl2)
+
+stream4.awaitTermination(10)
+stream4.stop()
+print("######### After streaming write #########")
+spark.read.format("delta").load(tbl1).show()
 # cleanup
 for i in files:
     try:

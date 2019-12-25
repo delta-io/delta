@@ -71,6 +71,10 @@ deltaTable.vacuum()
 print("######## Describe history for the table ######")
 deltaTable.history().show()
 
+# Generate manifest
+print("######## Generating manifest ######")
+deltaTable.generate("SYMLINK_FORMAT_MANIFEST")
+
 # SQL Vacuum
 print("####### SQL Vacuum #######")
 spark.sql("VACUUM '%s' RETAIN 169 HOURS" % "/tmp/delta-table").collect()

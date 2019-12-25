@@ -36,6 +36,7 @@ object Streaming {
 
     import spark.implicits._
 
+    println("=== Section 1: write and read delta table using batch queries, and initialize table for later sections")
     // Create a table
     val data = spark.range(0, 5)
     val path = new File("/tmp/delta-table").getAbsolutePath
@@ -45,20 +46,21 @@ object Streaming {
     val df = spark.read.format("delta").load(path)
     df.show()
 
-    println("Streaming write")
+
+    println("=== Section 2: write and read delta using structured streaming")
     val streamingDf = spark.readStream.format("rate").load()
     val tablePath2 = new File("/tmp/delta-table2").getCanonicalPath
+    val checkpointPath = new File("/tmp/checkpoint").getCanonicalPath
     val stream = streamingDf
       .select($"value" as "id")
       .writeStream
       .format("delta")
-      .option("checkpointLocation", new File("/tmp/checkpoint").getCanonicalPath)
+      .option("checkpointLocation", checkpointPath)
       .start(tablePath2)
 
     stream.awaitTermination(10000)
     stream.stop()
 
-    println("Reading from stream")
     val stream2 = spark
       .readStream
       .format("delta")
@@ -70,8 +72,9 @@ object Streaming {
     stream2.awaitTermination(10000)
     stream2.stop()
 
+
+    println("=== Section 3: Streaming upserts using MERGE")
     // Function to upsert microBatchOutputDF into Delta Lake table using merge
-    println("Streaming upgrades in update mode")
     def upsertToDelta(microBatchOutputDF: DataFrame, batchId: Long) {
       val deltaTable = DeltaTable.forPath(path)
       deltaTable.as("t")
@@ -101,15 +104,42 @@ object Streaming {
       .outputMode("update")
       .start()
 
-    stream3.awaitTermination(10000)
+    stream3.awaitTermination(20000)
     stream3.stop()
 
     println("Delta Table after streaming upsert")
     deltaTable.toDF.show()
 
+    // Streaming append and concurrent repartition using  data change = false
+    // tbl1 is the sink and tbl2 is the source
+    println("############ Streaming appends with concurrent table repartition  ##########")
+    val tbl1 = "/tmp/delta-table4"
+    val tbl2 = "/tmp/delta-table5"
+    val numRows = 10
+    spark.range(numRows).write.mode("overwrite").format("delta").save(tbl1)
+    spark.read.format("delta").load(tbl1).show()
+    spark.range(numRows, numRows * 10).write.mode("overwrite").format("delta").save(tbl2)
+
+    // Start reading tbl2 as a stream and do a streaming write to tbl1
+    // Prior to Delta 0.5.0 this would throw StreamingQueryException: Detected a data update in the source table. This is currently not supported.
+    val stream4 = spark.readStream.format("delta").load(tbl2).writeStream.format("delta")
+      .option("checkpointLocation", new File("/tmp/checkpoint/tbl1").getCanonicalPath)
+      .outputMode("append")
+      .start(tbl1)
+
+    // repartition table while streaming job is running
+    spark.read.format("delta").load(tbl2).repartition(10).write.format("delta").mode("overwrite").option("dataChange", "false").save(tbl2)
+
+    stream4.awaitTermination(10)
+    stream4.stop()
+    println("######### After streaming write #########")
+    spark.read.format("delta").load(tbl1).show()
+
+    println("=== In the end, clean all paths")
     // Cleanup
-    FileUtils.deleteDirectory(new File(path))
-    FileUtils.deleteDirectory(new File(tablePath2))
+    Seq(path, tbl1, tbl2, "/tmp/checkpoint/tbl1", tablePath2).foreach { path =>
+    	FileUtils.deleteDirectory(new File(path))
+    }
     spark.stop()
   }
 }

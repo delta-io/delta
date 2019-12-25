@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.sources
 
 import scala.util.{Failure, Success, Try}
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -50,6 +51,7 @@ class DeltaDataSource
     // TODO Remove this when upgrading to Spark 3.0.0
     spark.conf.set("spark.sql.legacy.sources.write.passPartitionByAsOptions", "true")
   }
+
 
   override def sourceSchema(
       sqlContext: SQLContext,
@@ -193,10 +195,11 @@ class DeltaDataSource
       }
 
       val filters = partitions.map { case (key, value) =>
-        EqualTo(UnresolvedAttribute(key), Literal(value))
+        // Nested fields cannot be partitions, so we pass the key as a identifier
+        EqualTo(UnresolvedAttribute(Seq(key)), Literal(value))
       }
       val files = DeltaLog.filterFileList(
-        metadata.partitionColumns, snapshot.allFiles.toDF(), filters)
+        metadata.partitionSchema, snapshot.allFiles.toDF(), filters)
       if (files.count() == 0) {
         throw DeltaErrors.pathNotExistsException(path)
       }

@@ -14,21 +14,11 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta
+package org.apache.spark.sql.delta.commands
 
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.catalyst.TableIdentifier
 
-class ConvertToDeltaSQLSuite
-  extends ConvertToDeltaSuiteBase  with DeltaSQLCommandTest
-  {
-  override protected def convertToDelta(
-      identifier: String,
-      partitionSchema: Option[String] = None): Unit = {
-    if (partitionSchema.isEmpty) {
-      sql(s"convert to delta $identifier")
-    } else {
-      val stringSchema = partitionSchema.get
-      sql(s"convert to delta $identifier partitioned by ($stringSchema) ")
-    }
-  }
-}
+case class DescribeDeltaDetailCommand(
+    override val path: Option[String],
+    override val tableIdentifier: Option[TableIdentifier])
+  extends DescribeDeltaDetailCommandBase

@@ -38,6 +38,8 @@ object DeltaOperations {
     val parameters: Map[String, Any]
 
     lazy val jsonEncodedValues: Map[String, String] = parameters.mapValues(JsonUtils.toJson(_))
+
+    val metricParameters: Seq[String] = Seq()
   }
 
   /** Recorded during batch inserts. Predicates can be provided for overwrites. */
@@ -48,6 +50,11 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = Map("mode" -> mode.name()) ++
       partitionBy.map("partitionBy" -> JsonUtils.toJson(_)) ++
       predicate.map("predicate" -> _)
+
+    override val metricParameters: Seq[String] = Seq(
+      "numFiles",
+      "numOutputBytes",
+      "numOutputRows")
   }
   /** Recorded during streaming inserts. */
   case class StreamingUpdate(
@@ -107,6 +114,15 @@ object DeltaOperations {
         deletePredicate.map("deletePredicate" -> _).toMap ++
         insertPredicate.map("insertPredicate" -> _).toMap
     }
+    override val metricParameters: Seq[String] = Seq(
+      "numSourceRows",
+      "numTargetRowsInserted",
+      "numTargetRowsUpdated",
+      "numTargetRowsDeleted",
+      "numTargetRowsCopied",
+      "numOutputRows",
+      "numTargetFilesAdded",
+      "numTargetFilesRemoved")
   }
   /** Recorded when an update operation is committed to the table. */
   case class Update(predicate: Option[String]) extends Operation("UPDATE") {
@@ -115,6 +131,20 @@ object DeltaOperations {
   /** Recorded when the table is created. */
   case class CreateTable(metadata: Metadata, isManaged: Boolean, asSelect: Boolean = false)
       extends Operation("CREATE TABLE" + s"${if (asSelect) " AS SELECT" else ""}") {
+    override val parameters: Map[String, Any] = Map(
+      "isManaged" -> isManaged.toString,
+      "description" -> Option(metadata.description),
+      "partitionBy" -> JsonUtils.toJson(metadata.partitionColumns),
+      "properties" -> JsonUtils.toJson(metadata.configuration))
+  }
+  /** Recorded when the table is replaced. */
+  case class ReplaceTable(
+      metadata: Metadata,
+      isManaged: Boolean,
+      orCreate: Boolean,
+      asSelect: Boolean = false)
+    extends Operation(s"${if (orCreate) "CREATE OR " else ""}REPLACE TABLE" +
+      s"${if (asSelect) " AS SELECT" else ""}") {
     override val parameters: Map[String, Any] = Map(
       "isManaged" -> isManaged.toString,
       "description" -> Option(metadata.description),
@@ -212,6 +242,7 @@ object DeltaOperations {
       "oldSchema" -> JsonUtils.toJson(oldSchema),
       "newSchema" -> JsonUtils.toJson(newSchema))
   }
+
 
   private def structFieldToMap(colPath: Seq[String], field: StructField): Map[String, Any] = {
     Map(

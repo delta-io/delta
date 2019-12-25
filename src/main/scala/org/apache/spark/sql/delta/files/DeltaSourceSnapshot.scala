@@ -80,7 +80,7 @@ trait SnapshotIterator {
     import spark.implicits._
     if (result == null) {
       result = DeltaLog.filterFileList(
-        snapshot.metadata.partitionColumns,
+        snapshot.metadata.partitionSchema,
         initialFiles.toDF(),
         partitionFilters,
         Seq("add")).as[IndexedFile].collect().toIterable
