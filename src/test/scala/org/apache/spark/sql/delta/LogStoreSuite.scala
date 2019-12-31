@@ -153,6 +153,16 @@ class AzureLogStoreSuite extends LogStoreSuiteBase {
     "fs.fake.impl.disable.cache" -> "true")
 }
 
+class COSLogStoreSuite extends LogStoreSuiteBase {
+
+  override val logStoreClassName: String = classOf[COSLogStore].getName
+
+  testHadoopConf(
+    expectedErrMsg = "No FileSystem for scheme: fake",
+    "fs.fake.impl" -> classOf[FakeFileSystem].getName,
+    "fs.fake.impl.disable.cache" -> "true")
+}
+
 class HDFSLogStoreSuite extends LogStoreSuiteBase {
 
   override val logStoreClassName: String = classOf[HDFSLogStore].getName
