@@ -17,7 +17,6 @@
 package io.delta.sql
 
 import io.delta.sql.parser.DeltaSqlParser
-
 import org.apache.spark.sql.SparkSessionExtensions
 
 /**

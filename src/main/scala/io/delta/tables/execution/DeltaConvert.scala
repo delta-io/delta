@@ -16,11 +16,10 @@
 
 package io.delta.tables.execution
 
-import org.apache.spark.sql.delta.commands.{ConvertToDeltaCommand, ConvertToDeltaCommandBase}
 import io.delta.tables.DeltaTable
-
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.delta.commands.ConvertToDeltaCommand
 import org.apache.spark.sql.types.StructType
 
 trait DeltaConvertBase {

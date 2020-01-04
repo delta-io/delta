@@ -16,11 +16,10 @@
 
 package org.apache.spark.sql.delta.util
 
-import org.apache.spark.sql.delta.DeltaErrors
-
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.delta.DeltaErrors
 
 trait AnalysisHelper {
   import AnalysisHelper._

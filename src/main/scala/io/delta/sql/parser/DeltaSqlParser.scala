@@ -42,23 +42,20 @@ import java.util.Locale
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.commands.DeltaGenerateCommand
 import io.delta.sql.parser.DeltaSqlBaseParser._
 import io.delta.tables.execution.{DescribeDeltaHistoryCommand, VacuumTableCommand}
 import org.antlr.v4.runtime._
 import org.antlr.v4.runtime.atn.PredictionMode
 import org.antlr.v4.runtime.misc.{Interval, ParseCancellationException}
 import org.antlr.v4.runtime.tree._
-
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
-import org.apache.spark.sql.catalyst.parser.{ParseErrorListener, ParseException, ParserInterface}
 import org.apache.spark.sql.catalyst.parser.ParserUtils.{string, withOrigin}
+import org.apache.spark.sql.catalyst.parser.{ParseErrorListener, ParseException, ParserInterface}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.trees.Origin
-import org.apache.spark.sql.delta.commands.DescribeDeltaDetailCommand
-import org.apache.spark.sql.delta.commands.ConvertToDeltaCommand
+import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
+import org.apache.spark.sql.delta.commands.{ConvertToDeltaCommand, DeltaGenerateCommand, DescribeDeltaDetailCommand}
 import org.apache.spark.sql.types._
 
 /**

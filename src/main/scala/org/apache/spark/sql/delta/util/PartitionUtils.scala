@@ -47,7 +47,6 @@ import scala.collection.mutable.ArrayBuffer
 import scala.util.Try
 
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis._
@@ -121,7 +120,7 @@ private[delta] object PartitionUtils {
     require(columnNames.size == literals.size)
   }
 
-  import org.apache.spark.sql.catalyst.catalog.ExternalCatalogUtils.{escapePathName, unescapePathName, DEFAULT_PARTITION_NAME}
+  import org.apache.spark.sql.catalyst.catalog.ExternalCatalogUtils.{DEFAULT_PARTITION_NAME, escapePathName, unescapePathName}
 
   /**
    * Given a group of qualified paths, tries to parse them and returns a partition specification.

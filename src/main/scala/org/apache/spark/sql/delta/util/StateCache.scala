@@ -18,11 +18,10 @@ package org.apache.spark.sql.delta.util
 
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.spark.sql.delta.Snapshot
-
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.{Dataset, SparkSession}
+import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.execution.LogicalRDD
+import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.storage.StorageLevel
 
 /**

@@ -17,12 +17,12 @@
 package io.delta.tables.execution
 
 import org.apache.hadoop.fs.Path
-import org.apache.spark.sql.{Encoders, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
 import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier}
 import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.{Encoders, Row, SparkSession}
 
 case class DescribeDeltaHistoryCommand(
     path: Option[String],
