@@ -16,7 +16,7 @@
 
 package io.delta.tables.execution
 
-import org.apache.spark.sql.delta.commands.{ConvertToDeltaCommand, ConvertToDeltaCommandBase}
+import org.apache.spark.sql.delta.commands.ConvertToDeltaCommand
 import io.delta.tables.DeltaTable
 
 import org.apache.spark.sql.SparkSession
