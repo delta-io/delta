@@ -175,7 +175,7 @@ class DeltaLog private(
         throw DeltaErrors.missingPartFilesException(c, e)
     }
   }.getOrElse {
-    new Snapshot(logPath, -1, None, Nil, minFileRetentionTimestamp, this, -1L)
+    new InitialSnapshot(logPath, this, Metadata())
   }
 
   if (currentSnapshot.version == -1) {

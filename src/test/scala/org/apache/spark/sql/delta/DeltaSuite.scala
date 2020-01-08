@@ -17,14 +17,14 @@
 package org.apache.spark.sql.delta
 
 import java.io.{File, FileNotFoundException}
+import java.util.concurrent.atomic.AtomicInteger
 
-import org.apache.spark.sql.delta.actions.{Action, FileAction}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.{FileSystem, Path}
 
-import org.apache.spark.{SparkConf, SparkException}
+import org.apache.spark.SparkException
+import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions.InSet
 import org.apache.spark.sql.catalyst.plans.logical.Filter
@@ -657,6 +657,7 @@ class DeltaSuite extends QueryTest
 
   test("SC-8727 - default snapshot num partitions") {
     withTempDir { tempDir =>
+      spark.range(10).write.format("delta").save(tempDir.toString)
       val deltaLog = DeltaLog.forTable(spark, tempDir)
       val numParts = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS)
       assert(deltaLog.snapshot.state.rdd.getNumPartitions == numParts)
@@ -676,6 +677,7 @@ class DeltaSuite extends QueryTest
   test("SC-8727 - reconfigure num partitions") {
     withTempDir { tempDir =>
       withSQLConf(("spark.databricks.delta.snapshotPartitions", "410")) {
+        spark.range(10).write.format("delta").save(tempDir.toString)
         val deltaLog = DeltaLog.forTable(spark, tempDir)
         assert(deltaLog.snapshot.state.rdd.getNumPartitions == 410)
       }
@@ -930,6 +932,37 @@ class DeltaSuite extends QueryTest
         val tableConfigs = DeltaLog.forTable(spark, path).update().metadata.configuration
         assert(tableConfigs.get("delta.dataSkippingNumIndexedCols") == Some("1"))
       }
+    }
+  }
+
+  test("SC-24982 - initial snapshot has zero partitions") {
+    withTempDir { tempDir =>
+      val deltaLog = DeltaLog.forTable(spark, tempDir)
+      assert(deltaLog.snapshot.state.rdd.getNumPartitions == 0)
+    }
+  }
+
+  test("SC-24982 - initial snapshot does not trigger jobs") {
+    val jobCount = new AtomicInteger(0)
+    val listener = new SparkListener {
+      override def onJobStart(jobStart: SparkListenerJobStart): Unit = {
+        // Spark will always log a job start/end event even when the job does not launch any task.
+        if (jobStart.stageInfos.forall(_.numTasks > 0)) {
+          jobCount.incrementAndGet()
+        }
+      }
+    }
+    sparkContext.listenerBus.waitUntilEmpty(15000)
+    sparkContext.addSparkListener(listener)
+    try {
+      withTempDir { tempDir =>
+        val files = DeltaLog.forTable(spark, tempDir).snapshot.state.collect()
+        assert(files.isEmpty)
+      }
+      sparkContext.listenerBus.waitUntilEmpty(15000)
+      assert(jobCount.get() == 0)
+    } finally {
+      sparkContext.removeSparkListener(listener)
     }
   }
 }
