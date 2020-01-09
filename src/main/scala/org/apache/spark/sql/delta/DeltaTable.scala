@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
 
-import scala.util.Try
+import scala.util.{Failure, Success, Try}
 
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -95,28 +95,61 @@ object DeltaTableUtils extends PredicateHelper
 
   /**
    * Checks whether TableIdentifier is a path or a table name
-   * We assume it is a path unless the table and database both exist in the catalog@param catalog
-   *
+   * We assume it is a path unless the table and database both exist in the catalog
+   * @param catalog session catalog used to check whether db/table exist
    * @param tableIdent the provided table or path
    * @return true if using table name, false if using path, error otherwise
    */
   def isCatalogTable(catalog: SessionCatalog, tableIdent: TableIdentifier): Boolean = {
-    val dbExists = tableIdent.database.forall(catalog.databaseExists)
-    val dbNameIsAlsoValidFormatName =
-      tableIdent.database.getOrElse("").toLowerCase(Locale.ROOT) == "parquet" ||
-        DeltaSourceUtils.isDeltaDataSourceName(tableIdent.database.getOrElse(""))
+    val (dbExists, assumePath) = dbExistsAndAssumePath(catalog, tableIdent)
 
-    // If db doesnt exist or db is called parquet/delta/tahoe then check if path exists
-    if ((!dbExists || dbNameIsAlsoValidFormatName) && new Path(tableIdent.table).isAbsolute) {
-      return false
-    }
+    // If we don't need to check that the table exists, return false since we think the tableIdent
+    // refers to a path at this point, because the database doesn't exist
+    if (assumePath) return false
 
     // check for dbexists otherwise catalog.tableExists may throw NoSuchDatabaseException
-    if ((dbExists || tableIdent.database.isEmpty) && catalog.tableExists(tableIdent)) {
+    if ((dbExists || tableIdent.database.isEmpty)
+        && Try(catalog.tableExists(tableIdent)).getOrElse(false)) {
       true
+    } else if (isValidPath(tableIdent)) {
+      false
     } else {
       throw new NoSuchTableException(tableIdent.database.getOrElse(""), tableIdent.table)
     }
+  }
+
+  /**
+   * It's possible that checking whether database exists can throw an exception. In that case,
+   * we want to surface the exception only if the provided tableIdentifier cannot be a path.
+   *
+   * @param catalog session catalog used to check whether db/table exist
+   * @param ident the provided table or path
+   * @return tuple where first indicates whether database exists and second indicates whether there
+   *         is a need to check whether table exists
+   */
+  private def dbExistsAndAssumePath(
+      catalog: SessionCatalog,
+      ident: TableIdentifier): (Boolean, Boolean) = {
+    Try(ident.database.forall(catalog.databaseExists)) match {
+      // DB exists, check table exists only if path is not valid
+      case Success(true) => (true, false)
+      // DB does not exist, check table exists only if path does not exist
+      case Success(false) => (false, new Path(ident.table).isAbsolute)
+      // Checking DB exists threw exception, if the path is still valid then check for table exists
+      case Failure(_) if isValidPath(ident) => (false, true)
+      // Checking DB exists threw exception, path is not valid so throw the initial exception
+      case Failure(e) => throw e
+    }
+  }
+
+  /**
+   * @param tableIdent the provided table or path
+   * @return whether or not the provided TableIdentifier can specify a path for parquet or delta
+   */
+  private def isValidPath(tableIdent: TableIdentifier): Boolean = {
+    // If db doesnt exist or db is called delta/tahoe then check if path exists
+    DeltaSourceUtils.isDeltaDataSourceName(tableIdent.database.getOrElse("")) &&
+      new Path(tableIdent.table).isAbsolute
   }
 
   /** Find the root of a Delta table from the provided path. */
