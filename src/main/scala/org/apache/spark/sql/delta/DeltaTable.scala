@@ -261,18 +261,18 @@ object DeltaTableUtils extends PredicateHelper
    */
   def extractIfPathContainsTimeTravel(
       session: SparkSession,
-      path: String): Option[(String, DeltaTimeTravelSpec)] = {
+      path: String): (String, Option[DeltaTimeTravelSpec]) = {
     val conf = session.sessionState.conf
-    if (!DeltaTimeTravelSpec.isApplicable(conf, path)) return None
+    if (!DeltaTimeTravelSpec.isApplicable(conf, path)) return path -> None
 
     val maybePath = new Path(path)
     val fs = maybePath.getFileSystem(session.sessionState.newHadoopConf())
 
     // If the folder really exists, quit
-    if (fs.exists(maybePath)) return None
+    if (fs.exists(maybePath)) return path -> None
 
-    val (tt, realPath) = DeltaTimeTravelSpec.addTimeTravelNode(conf, path)
-    Some(realPath -> tt)
+    val (tt, realPath) = DeltaTimeTravelSpec.resolvePath(conf, path)
+    realPath -> Some(tt)
   }
 
   /**
