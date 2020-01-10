@@ -12,7 +12,7 @@ This is the repository for Delta Lake Connectors. It includes a library for quer
 
 The project is compiled using [SBT](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.html). It has the following subprojects.
 
-## 1. Delta uber jar
+## Delta uber jar
 
 This project generates a single uber jar containing Delta Lake and all it transitive dependencies (except Hadoop and its dependencies).
 - Most of the dependencies are shaded to avoid version conflicts. See the file build.sbt for details on what are not shaded.
@@ -20,15 +20,65 @@ This project generates a single uber jar containing Delta Lake and all it transi
 - To generate the uber jar, run `build/sbt core/compile`
 - To test the uber jar, run `build/sbt coreTest/test`
 
-## 2. Hive connector
+## Hive connector
 This project contains all the code needed to make Hive read Delta Lake tables.
 - To compile the project, run `build/sbt hive/compile`
 - To test the project, run `build/sbt hive/test`
 - To generate the connector jar run `build/sbt hive/package`
 
-Config `HIVE_AUX_JARS_PATH` in hive-env.sh with above two jars(uber jar and Hive connector jar)
+The above commands will generate two JARs in the following paths.
 
-Refer to [SBT docs](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.html) for more commands.
+```
+core/target/scala-2.12/delta-core-shaded-assembly-0.5.0.jar
+hive/target/scala-2.12/hive-delta_2.12-0.5.0.jar
+```
+
+These two JARs include the Hive connector and all its dependencies. They need to be put in Hive’s classpath.
+
+### Setting up Hive
+
+This sections describes how to set up Hive to load the Delta Hive connector.
+
+Before starting your Hive CLI or running your Hive script, add the following special Hive config to the `hive-site.xml` file (Its location is `/etc/hive/conf/hive-site.xml` in a EMR cluster).
+
+```xml
+<property>
+  <name>hive.input.format</name>
+  <value>io.delta.hive.HiveInputFormat</value>
+</property>
+```
+
+The second step is to upload the above two JARs to the machine that runs Hive. Finally, add the paths of the JARs toHive’s environment variable, `HIVE_AUX_JARS_PATH`. You can find this environment variable in the `hive-env.sh` file, whose location is ``/etc/hive/conf/hive-env.sh` on an EMR cluster. This setting will tell Hive where to find the connector JARs.
+
+### Create a Hive table
+
+After finishing setup, you should be able to create a Delta table in Hive.
+
+Right now the connector supports only EXTERNAL Hive tables. The Delta table must be created using Spark before an external Hive table can reference it.
+
+Here is an example of a CREATE TABLE command that defines an external Hive table pointing to a Delta table on `s3://foo-bucket/bar-dir`.
+
+```SQL
+CREATE EXTERNAL TABLE deltaTbl(a INT, b STRING)
+STORED BY 'io.delta.hive.DeltaStorageHandler'
+LOCATION 's3://foo-bucket/bar-dir’
+```
+
+`io.delta.hive.DeltaStorageHandler` is the class that implements Hive data source APIs. It will know how to load a Delta table and extract its metadata. The table schema in the `CREATE TABLE` statement must be consistent with the underlying Delta metadata. Otherwise, the connector will throw an error to tell you about the inconsistency.
+
+### FAQs
+
+#### Supported Hive versions
+Hive 2.x. Please report any incompatible issues.
+
+#### Do I need to specify the partition columns when creating a Delta table?
+No. The partition columns are read from the underlying Delta metadata. The connector will know the partition columns and use this information to do the partition pruning automatically.
+
+#### Why do I need to specify the table schema? Shouldn’t it exist in the underlying Delta table metadata?
+Unfortunately, the table schema is a core concept of Hive and Hive needs it before calling the connector.
+
+#### What if I change the underlying Delta table schema in Spark after creating the Hive table?
+If the schema in the underlying Delta metadata is not consistent with the schema specified by `CREATE TABLE` statement, the connector will report an error when loading the table and ask you to fix the schema. You must drop the table and recreate it using the new schema. Hive 3.x exposes a new API to allow a data source to hook ALTER TABLE. You will be able to use ALTER TABLE to update a table schema when the connector supports Hive 3.x.
 
 # Reporting issues
 
