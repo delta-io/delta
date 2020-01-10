@@ -124,7 +124,6 @@ object VacuumCommand extends VacuumCommandImpl {
       val validFiles = snapshot.state
         .mapPartitions { actions =>
           val reservoirBase = new Path(basePath)
-          val reservoirScheme = reservoirBase.toUri.getScheme
           val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
           actions.flatMap {
             _.unwrap match {
