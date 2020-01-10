@@ -71,6 +71,9 @@ object DeltaOperations {
   /** Recorded when truncating the table. */
   case class Truncate() extends Operation("TRUNCATE") {
     override val parameters: Map[String, Any] = Map.empty
+    override val metricParameters: Seq[String] = Seq(
+      "numRemovedFiles"
+    )
   }
   /** Recorded when fscking the table. */
   case class Fsck(numRemovedFiles: Long) extends Operation("FSCK") {
