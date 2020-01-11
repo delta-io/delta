@@ -177,7 +177,7 @@ class TahoeBatchFileIndex(
       dataFilters: Seq[Expression],
       keepStats: Boolean = false): Seq[AddFile] = {
     DeltaLog.filterFileList(
-      snapshot.metadata.partitionColumns,
+      snapshot.metadata.partitionSchema,
       spark.createDataset(addFiles)(addFileEncoder).toDF(), partitionFilters)
       .as[AddFile](addFileEncoder)
       .collect()

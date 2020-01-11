@@ -117,6 +117,29 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
     }
   }
 
+  test("updateAll and insertAll with columns containing dot") {
+    withTable("source") {
+      append(Seq((1, 10), (2, 20), (4, 40)).toDF("key", "the.value"), Nil) // target
+      val source = Seq((1, 100), (3, 30), (4, 41)).toDF("key", "the.value") // source
+
+      io.delta.tables.DeltaTable.forPath(spark, tempPath).as("t")
+        .merge(source.as("s"), "t.key = s.key")
+        .whenMatched()
+        .updateAll()
+        .whenNotMatched()
+        .insertAll()
+        .execute()
+
+      checkAnswer(
+        readDeltaTable(tempPath),
+        Row(1, 100) :: // Update
+          Row(2, 20) :: // No change
+          Row(4, 41) :: // Update
+          Row(3, 30) :: // Insert
+          Nil)
+    }
+  }
+
   test("update with empty map should do nothing") {
     append(Seq((1, 10), (2, 20)).toDF("trgKey", "trgValue"), Nil) // target
     val source = Seq((1, 100), (3, 30)).toDF("srcKey", "srcValue") // source

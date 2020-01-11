@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.{FileSystem, Path}
 
-import org.apache.spark.SparkException
+import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions.InSet
 import org.apache.spark.sql.catalyst.plans.logical.Filter
@@ -561,15 +561,15 @@ class DeltaSuite extends QueryTest
 
   test("metadataOnly query") {
     withSQLConf(OPTIMIZER_METADATA_ONLY.key -> "true") {
-      withTable("tahoe_test") {
+      withTable("delta_test") {
         Seq(1L -> "a").toDF("dataCol", "partCol")
           .write
           .mode(SaveMode.Overwrite)
           .partitionBy("partCol")
           .format("delta")
-          .saveAsTable("tahoe_test")
+          .saveAsTable("delta_test")
         checkAnswer(
-          sql("select count(distinct partCol) FROM tahoe_test"),
+          sql("select count(distinct partCol) FROM delta_test"),
           Row(1))
       }
     }
@@ -883,6 +883,23 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("SC-24886: partition columns have correct datatype in metadata scans") {
+    withTempDir { inputDir =>
+      Seq(("foo", 2019)).toDF("name", "y")
+        .write.format("delta").partitionBy("y").mode("overwrite")
+        .save(inputDir.getAbsolutePath)
+
+      // Before the fix, this query would fail because it tried to read strings from the metadata
+      // partition values as the LONG type that the actual partition columns are. This works now
+      // because we added a cast.
+      val df = spark.read.format("delta")
+        .load(inputDir.getAbsolutePath)
+        .where(
+          """cast(format_string("%04d-01-01 12:00:00", y) as timestamp) is not null""".stripMargin)
+      assert(df.collect().length == 1)
+    }
+  }
+
   test("SC-11332: session isolation for cached delta logs") {
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath
@@ -914,64 +931,5 @@ class DeltaSuite extends QueryTest
         assert(tableConfigs.get("delta.dataSkippingNumIndexedCols") == Some("1"))
       }
     }
-  }
-
-  test("SC-15200: SaveAsTable on empty dataframe should create table") {
-    withTable("sc15200test") {
-      spark.range(0).selectExpr("id", "id as id2")
-        .write.format("delta").partitionBy("id").saveAsTable("sc15200test")
-      checkAnswer(spark.table("sc15200test"), Seq.empty)
-    }
-  }
-
-  test("support for setting dataChange to false") {
-    val tempDir = Utils.createTempDir()
-
-    spark.range(100)
-      .write
-      .format("delta")
-      .save(tempDir.toString)
-
-    val df = spark.read.format("delta").load(tempDir.toString)
-
-    df
-      .write
-      .format("delta")
-      .mode("overwrite")
-      .option("dataChange", "false")
-      .save(tempDir.toString)
-
-    val deltaLog = DeltaLog.forTable(spark, tempDir)
-    val version = deltaLog.snapshot.version
-    val commitActions = deltaLog.store.read(FileNames.deltaFile(deltaLog.logPath, version))
-      .map(Action.fromJson)
-    val fileActions = commitActions.collect { case a: FileAction => a }
-
-     assert(fileActions.forall(!_.dataChange))
-  }
-
-  test("dataChange is by default set to true") {
-    val tempDir = Utils.createTempDir()
-
-    spark.range(100)
-      .write
-      .format("delta")
-      .save(tempDir.toString)
-
-    val df = spark.read.format("delta").load(tempDir.toString)
-
-    df
-      .write
-      .format("delta")
-      .mode("overwrite")
-      .save(tempDir.toString)
-
-    val deltaLog = DeltaLog.forTable(spark, tempDir)
-    val version = deltaLog.snapshot.version
-    val commitActions = deltaLog.store.read(FileNames.deltaFile(deltaLog.logPath, version))
-      .map(Action.fromJson)
-    val fileActions = commitActions.collect { case a: FileAction => a }
-
-    assert(fileActions.forall(_.dataChange))
   }
 }

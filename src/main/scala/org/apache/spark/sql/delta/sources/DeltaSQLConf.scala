@@ -130,6 +130,13 @@ object DeltaSQLConf {
       .intConf
       .createWithDefault(1000)
 
+  val DELTA_HISTORY_METRICS_ENABLED =
+    buildConf("history.metricsEnabled")
+      .doc("Enables Metrics reporting in Describe History. CommitInfo will now record the " +
+        "Operation Metrics.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_VACUUM_RETENTION_CHECK_ENABLED =
     buildConf("retentionDurationCheck.enabled")
       .doc("Adds a check preventing users from running vacuum with a very short retention " +
@@ -205,5 +212,16 @@ object DeltaSQLConf {
       .doc("Max row count of inserts in each MERGE execution.")
       .longConf
       .createWithDefault(10000L)
+
+  val MERGE_INSERT_ONLY_ENABLED =
+    buildConf("merge.optimizeInsertOnlyMerge.enabled")
+      .internal()
+      .doc(
+        """
+          |If enabled, merge without any matched clause (i.e., insert-only merge) will be optimized
+          |by avoiding rewriting old files and just inserting new files.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 
 }

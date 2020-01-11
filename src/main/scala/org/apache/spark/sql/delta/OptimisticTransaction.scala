@@ -21,12 +21,14 @@ import java.util.ConcurrentModificationException
 import java.util.concurrent.TimeUnit.NANOSECONDS
 
 import scala.collection.mutable
-import scala.collection.mutable.ArrayBuffer
+import scala.collection.mutable.{ArrayBuffer, HashSet}
 import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
+import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files._
+import org.apache.spark.sql.delta.hooks.{GenerateSymlinkManifest, PostCommitHook}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -127,7 +129,7 @@ object OptimisticTransaction {
  *
  * This trait is not thread-safe.
  */
-trait OptimisticTransactionImpl extends TransactionalWrite {
+trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReporting {
 
   import org.apache.spark.sql.delta.util.FileNames._
 
@@ -144,6 +146,15 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
   /** Tracks the appIds that have been seen by this transaction. */
   protected val readTxn = new ArrayBuffer[String]
 
+  /**
+   * Tracks the data that could have been seen by recording the partition
+   * predicates by which files have been queried by by this transaction.
+   */
+  protected val readPredicates = new ArrayBuffer[Expression]
+
+  /** Tracks specific files that have been seen by this transaction. */
+  protected val readFiles = new HashSet[AddFile]
+
   /** Tracks if this transaction has already committed. */
   protected var committed = false
 
@@ -153,12 +164,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
   protected val txnStartNano = System.nanoTime()
   protected var commitStartNano = -1L
   protected var commitInfo: CommitInfo = _
-
-  /**
-   * Tracks if this transaction depends on any data files. This flag must be set if this transaction
-   * reads any data explicitly or implicitly (e.g., delete, update and overwrite).
-   */
-  protected var dependsOnFiles: Boolean = false
 
   /** The version that this transaction is reading from. */
   def readVersion: Long = snapshot.version
@@ -171,6 +176,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
   } else {
     snapshot.metadata
   }
+
+  protected val postCommitHooks = new ArrayBuffer[PostCommitHook]()
 
   /** Returns the metadata at the current point in the log. */
   def metadata: Metadata = newMetadata.getOrElse(snapshotMetadata)
@@ -210,13 +217,18 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
 
   /** Returns files matching the given predicates. */
   def filterFiles(filters: Seq[Expression]): Seq[AddFile] = {
-    dependsOnFiles = true
-    snapshot.filesForScan(Nil, filters).files
+    val scan = snapshot.filesForScan(Nil, filters)
+    val partitionFilters = filters.filter { f =>
+      DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
+    }
+    readPredicates += partitionFilters.reduceLeftOption(And).getOrElse(Literal(true))
+    readFiles ++= scan.files
+    scan.files
   }
 
   /** Mark the entire table as tainted by this transaction. */
   def readWholeTable(): Unit = {
-    dependsOnFiles = true
+    readPredicates += Literal(true)
   }
 
   /**
@@ -225,6 +237,17 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
   def txnVersion(id: String): Long = {
     readTxn += id
     snapshot.transactions.getOrElse(id, -1L)
+  }
+
+  /**
+   * Return the operation metrics for the operation if it is enabled
+   */
+  def getOperationMetrics(op: Operation): Option[Map[String, String]] = {
+    if (spark.conf.get(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED)) {
+      Some(getMetricsForOperation(op))
+    } else {
+      None
+    }
   }
 
   /**
@@ -243,7 +266,19 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
       // Try to commit at the next version.
       var finalActions = prepareCommit(actions, op)
 
+      // Find the isolation level to use for this commit
+      val noDataChanged = actions.collect { case f: FileAction => f.dataChange }.forall(_ == false)
+      val isolationLevelToUse = if (noDataChanged) {
+        // If no data has changed (i.e. its is only being rearranged), then SnapshotIsolation
+        // provides Serializable guarantee. Hence, allow reduced conflict detection by using
+        // SnapshotIsolation of what the table isolation level is.
+        SnapshotIsolation
+      } else {
+        Serializable
+      }
+
       val isBlindAppend = {
+        val dependsOnFiles = readPredicates.nonEmpty || readFiles.nonEmpty
         val onlyAddFiles =
           finalActions.collect { case f: FileAction => f }.forall(_.isInstanceOf[AddFile])
         onlyAddFiles && !dependsOnFiles
@@ -257,11 +292,18 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
           Map.empty,
           Some(readVersion).filter(_ >= 0),
           None,
-          Some(isBlindAppend))
+          Some(isBlindAppend),
+          getOperationMetrics(op))
         finalActions = commitInfo +: finalActions
       }
 
-      val commitVersion = doCommit(snapshot.version + 1, finalActions, 0)
+      // Register post-commit hooks if any
+      lazy val hasFileActions = finalActions.collect { case f: FileAction => f }.nonEmpty
+      if (DeltaConfigs.SYMLINK_FORMAT_MANIFEST_ENABLED.fromMetaData(metadata) && hasFileActions) {
+        registerPostCommitHook(GenerateSymlinkManifest)
+      }
+
+      val commitVersion = doCommit(snapshot.version + 1, finalActions, 0, isolationLevelToUse)
       logInfo(s"Committed delta #$commitVersion to ${deltaLog.logPath}")
       postCommit(commitVersion, finalActions)
       commitVersion
@@ -274,6 +316,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
           deltaLog, "delta.commit.failure", data = Map("exception" -> Utils.exceptionString(e)))
         throw e
     }
+
+    runPostCommitHooks(version, actions)
+
     version
   }
 
@@ -346,13 +391,17 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
   private def doCommit(
       attemptVersion: Long,
       actions: Seq[Action],
-      attemptNumber: Int): Long = deltaLog.lockInterruptibly {
+      attemptNumber: Int,
+      isolationLevel: IsolationLevel): Long = deltaLog.lockInterruptibly {
     try {
-      logDebug(s"Attempting to commit version $attemptVersion with ${actions.size} actions")
+      logDebug(
+        s"Attempting to commit version $attemptVersion with ${actions.size} actions with " +
+          s"$isolationLevel isolation level")
 
       deltaLog.store.write(
         deltaFile(deltaLog.logPath, attemptVersion),
         actions.map(_.json).toIterator)
+
       val commitTime = System.nanoTime()
       val postCommitSnapshot = deltaLog.update()
       if (postCommitSnapshot.version < attemptVersion) {
@@ -394,7 +443,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
       attemptVersion
     } catch {
       case e: java.nio.file.FileAlreadyExistsException =>
-        checkAndRetry(attemptVersion, actions, attemptNumber)
+        checkAndRetry(attemptVersion, actions, attemptNumber, isolationLevel)
     }
   }
 
@@ -406,22 +455,38 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
   protected def checkAndRetry(
       checkVersion: Long,
       actions: Seq[Action],
-      attemptNumber: Int): Long = recordDeltaOperation(
+      attemptNumber: Int,
+      commitIsolationLevel: IsolationLevel): Long = recordDeltaOperation(
         deltaLog,
         "delta.commit.retry",
         tags = Map(TAG_LOG_STORE_CLASS -> deltaLog.store.getClass.getName)) {
-    deltaLog.update()
-    val nextAttempt = deltaLog.snapshot.version + 1
 
-    (checkVersion until nextAttempt).foreach { version =>
+    import _spark.implicits._
+
+    val nextAttemptVersion = getNextAttemptVersion(checkVersion)
+    (checkVersion until nextAttemptVersion).foreach { version =>
+      // Actions of a commit which went in before ours
       val winningCommitActions =
         deltaLog.store.read(deltaFile(deltaLog.logPath, version)).map(Action.fromJson)
+
+      // Categorize all the actions that have happened since the transaction read.
       val metadataUpdates = winningCommitActions.collect { case a: Metadata => a }
+      val removedFiles = winningCommitActions.collect { case a: RemoveFile => a }
       val txns = winningCommitActions.collect { case a: SetTransaction => a }
       val protocol = winningCommitActions.collect { case a: Protocol => a }
       val commitInfo = winningCommitActions.collectFirst { case a: CommitInfo => a }.map(
         ci => ci.copy(version = Some(version)))
-      val fileActions = winningCommitActions.collect { case f: FileAction => f }
+
+      val blindAppendAddedFiles = mutable.ArrayBuffer[AddFile]()
+      val changedDataAddedFiles = mutable.ArrayBuffer[AddFile]()
+
+      val isBlindAppendOption = commitInfo.flatMap(_.isBlindAppend)
+      if (isBlindAppendOption.getOrElse(false)) {
+        blindAppendAddedFiles ++= winningCommitActions.collect { case a: AddFile => a }
+      } else {
+        changedDataAddedFiles ++= winningCommitActions.collect { case a: AddFile => a }
+      }
+
       // If the log protocol version was upgraded, make sure we are still okay.
       // Fail the transaction if we're trying to upgrade protocol ourselves.
       if (protocol.nonEmpty) {
@@ -434,21 +499,123 @@ trait OptimisticTransactionImpl extends TransactionalWrite {
           case _ =>
         }
       }
+
       // Fail if the metadata is different than what the txn read.
       if (metadataUpdates.nonEmpty) {
         throw new MetadataChangedException(commitInfo)
       }
-      // Fail if the data is different than what the txn read.
-      if (dependsOnFiles && fileActions.nonEmpty) {
-        throw new ConcurrentWriteException(commitInfo)
+
+      // Fail if new files have been added that the txn should have read.
+      val addedFilesToCheckForConflicts = commitIsolationLevel match {
+        case Serializable => changedDataAddedFiles ++ blindAppendAddedFiles
+        case WriteSerializable => changedDataAddedFiles // don't conflict with blind appends
+        case SnapshotIsolation => Seq.empty
       }
+      val predicatesMatchingAddedFiles = ExpressionSet(readPredicates).iterator.flatMap { p =>
+        val conflictingFile = DeltaLog.filterFileList(
+          metadata.partitionSchema,
+          addedFilesToCheckForConflicts.toDF(), p :: Nil).as[AddFile].take(1)
+
+        conflictingFile.headOption.map(f => getPrettyPartitionMessage(f.partitionValues))
+      }.take(1).toArray
+
+      if (predicatesMatchingAddedFiles.nonEmpty) {
+        val isWriteSerializable = commitIsolationLevel == WriteSerializable
+        val onlyAddFiles =
+          winningCommitActions.collect { case f: FileAction => f }.forall(_.isInstanceOf[AddFile])
+
+        val retryMsg =
+          if (isWriteSerializable && onlyAddFiles && isBlindAppendOption.isEmpty) {
+            // This transaction was made by an older version which did not set `isBlindAppend` flag.
+            // So even if it looks like an append, we don't know for sure if it was a blind append
+            // or not. So we suggest them to upgrade all there workloads to latest version.
+            Some(
+              "Upgrading all your concurrent writers to use the latest Delta Lake may " +
+                "avoid this error. Please upgrade and then retry this operation again.")
+          } else None
+        throw new ConcurrentAppendException(commitInfo, predicatesMatchingAddedFiles.head, retryMsg)
+      }
+
+      // Fail if files have been deleted that the txn read.
+      val readFilePaths = readFiles.map(f => f.path -> f.partitionValues).toMap
+      val deleteReadOverlap = removedFiles.find(r => readFilePaths.contains(r.path))
+      if (deleteReadOverlap.nonEmpty) {
+        val filePath = deleteReadOverlap.get.path
+        val partition = getPrettyPartitionMessage(readFilePaths(filePath))
+        throw new ConcurrentDeleteReadException(commitInfo, s"$filePath in $partition")
+      }
+
+      // Fail if a file is deleted twice.
+      val txnDeletes = actions.collect { case r: RemoveFile => r }.map(_.path).toSet
+      val deleteOverlap = removedFiles.map(_.path).toSet intersect txnDeletes
+      if (deleteOverlap.nonEmpty) {
+        throw new ConcurrentDeleteDeleteException(commitInfo, deleteOverlap.head)
+      }
+
       // Fail if idempotent transactions have conflicted.
       val txnOverlap = txns.map(_.appId).toSet intersect readTxn.toSet
       if (txnOverlap.nonEmpty) {
         throw new ConcurrentTransactionException(commitInfo)
       }
     }
-    logInfo(s"No logical conflicts with deltas [$checkVersion, $nextAttempt), retrying.")
-    doCommit(nextAttempt, actions, attemptNumber + 1)
+
+    logInfo(s"No logical conflicts with deltas [$checkVersion, $nextAttemptVersion), retrying.")
+    doCommit(nextAttemptVersion, actions, attemptNumber + 1, commitIsolationLevel)
+  }
+
+  /** Returns the next attempt version given the last attempted version */
+  protected def getNextAttemptVersion(previousAttemptVersion: Long): Long = {
+    deltaLog.update()
+    deltaLog.snapshot.version + 1
+  }
+
+  /** A helper function for pretty printing a specific partition directory. */
+  protected def getPrettyPartitionMessage(partitionValues: Map[String, String]): String = {
+    if (metadata.partitionColumns.isEmpty) {
+      "the root of the table"
+    } else {
+      val partition = metadata.partitionColumns.map { name =>
+        s"$name=${partitionValues(name)}"
+      }.mkString("[", ", ", "]")
+      s"partition ${partition}"
+    }
+  }
+
+  /** Register a hook that will be executed once a commit is successful. */
+  def registerPostCommitHook(hook: PostCommitHook): Unit = {
+    if (!postCommitHooks.contains(hook)) {
+      postCommitHooks.append(hook)
+    }
+  }
+
+  /** Executes the registered post commit hooks. */
+  protected def runPostCommitHooks(
+      version: Long,
+      committedActions: Seq[Action]): Unit = {
+      assert(committed, "Can't call post commit hooks before committing")
+
+    // Keep track of the active txn because hooks may create more txns and overwrite the active one.
+    val activeCommit = OptimisticTransaction.getActive()
+    OptimisticTransaction.clearActive()
+
+    try {
+      postCommitHooks.foreach { hook =>
+        try {
+          hook.run(spark, this, committedActions)
+        } catch {
+          case NonFatal(e) =>
+            logWarning(s"Error when executing post-commit hook ${hook.name} " +
+              s"for commit $version", e)
+            recordDeltaEvent(deltaLog, "delta.commit.hook.failure", data = Map(
+              "hook" -> hook.name,
+              "version" -> version,
+              "exception" -> e.toString
+            ))
+            hook.handleError(e, version)
+        }
+      }
+    } finally {
+      activeCommit.foreach(OptimisticTransaction.setActive)
+    }
   }
 }

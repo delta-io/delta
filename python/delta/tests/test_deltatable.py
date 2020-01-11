@@ -73,6 +73,26 @@ class DeltaTableTests(PySparkTestCase):
         with self.assertRaises(TypeError):
             dt.delete(condition=1)
 
+    def test_generate(self):
+        # create a delta table
+        numFiles = 10
+        self.spark.range(100).repartition(numFiles).write.format("delta").save(self.tempFile)
+        dt = DeltaTable.forPath(self.spark, self.tempFile)
+
+        # Generate the symlink format manifest
+        dt.generate("symlink_format_manifest")
+
+        # check the contents of the manifest
+        # NOTE: this is not a correctness test, we are testing correctness in the scala suite
+        manifestPath = os.path.join(self.tempFile,
+                                    os.path.join("_symlink_format_manifest", "manifest"))
+        files = []
+        with open(manifestPath) as f:
+            files = f.readlines()
+
+        # the number of files we write should equal the number of lines in the manifest
+        assert(len(files) == numFiles)
+
     def test_update(self):
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
         dt = DeltaTable.forPath(self.spark, self.tempFile)

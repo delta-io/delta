@@ -487,7 +487,8 @@ abstract class MergeIntoSuiteBase
           insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
       }.toString
 
-      assert(e.contains(DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException.getMessage))
+      val expectedEx = DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(spark)
+      assert(e.contains(expectedEx.getMessage))
     }
   }
 
@@ -695,7 +696,7 @@ abstract class MergeIntoSuiteBase
           update = "key2 = 20 + key1, value = 20 + src.value",
           insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
       }.getMessage
-      errorContains(e, "MERGE destination only supports Delta sources")
+      errorContains(e, "Expect a full scan of Delta sources, but found a partial scan")
     }
   }
 
@@ -712,7 +713,7 @@ abstract class MergeIntoSuiteBase
         update = "key2 = 20 + key1, value = 20 + src.value",
         insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
     }.getMessage
-    errorContains(e, "Expect a full scan of Delta sources, but found the partial scan")
+    errorContains(e, "Expect a full scan of Delta sources, but found a partial scan")
   }
 
   Seq(true, false).foreach { isPartitioned =>
@@ -1185,7 +1186,7 @@ abstract class MergeIntoSuiteBase
     errorStrs = Nil)  // subqueries fail for unresolved reference to `t`
 
 
-  private def testExtendedMerge(
+  protected def testExtendedMerge(
       name: String)(
       source: Seq[(Int, Int)],
       target: Seq[(Int, Int)],
@@ -1195,7 +1196,9 @@ abstract class MergeIntoSuiteBase
     Seq(true, false).foreach { isPartitioned =>
       test(s"extended syntax - $name - isPartitioned: $isPartitioned ") {
         withKeyValueData(source, target, isPartitioned) { case (sourceName, targetName) =>
-          executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
+          withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "true") {
+            executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
+          }
           val deltaPath = if (targetName.startsWith("delta.`")) {
             targetName.stripPrefix("delta.`").stripSuffix("`")
           } else targetName
@@ -1319,18 +1322,6 @@ abstract class MergeIntoSuiteBase
       (2, 2),   // (2, 2) not updated as no update clause
       (3, 30)   // (3, 30) inserted
     ))
-
-  test(s"extended syntax - only insert with multiple matches") {
-    withKeyValueData(
-      source = (0, 0) :: (1, 10) :: (1, 100) :: (3, 30) :: (3, 300) :: Nil,
-      target = (1, 1) :: (2, 2) :: Nil
-    ) { case (sourceName, targetName) =>
-      intercept[UnsupportedOperationException] {
-        executeMerge(s"$targetName t", s"$sourceName s", "s.key = t.key",
-          insert(values = "(key, value) VALUES (s.key, s.value)"))
-      }
-    }
-  }
 
   testExtendedMerge("only conditional insert")(
     source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
@@ -1560,4 +1551,141 @@ abstract class MergeIntoSuiteBase
     update(set = "value = someValue"),
     insert(values = "*"))(
     errorStrs = "INSERT clause" :: "value" :: Nil)
+
+  testExtendedMerge("insert only merge")(
+    source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
+    target = (1, 1) :: (2, 2)  :: Nil,
+    mergeOn = "s.key = t.key",
+    insert(values = "*"))(
+    result = Seq(
+      (0, 0), // inserted
+      (1, 1), // existed previously
+      (2, 2), // existed previously
+      (3, 30) // inserted
+    ))
+
+  testExtendedMerge("insert only merge with insert condition on source")(
+    source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
+    target = (1, 1) :: (2, 2)  :: Nil,
+    mergeOn = "s.key = t.key",
+    insert(values = "*", condition = "s.key = s.value"))(
+    result = Seq(
+      (0, 0), // inserted
+      (1, 1), // existed previously
+      (2, 2)  // existed previously
+    ))
+
+  testExtendedMerge("insert only merge with predicate insert")(
+    source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
+    target = (1, 1) :: (2, 2)  :: Nil,
+    mergeOn = "s.key = t.key",
+    insert(values = "(t.key, t.value) VALUES (s.key + 10, s.value + 10)"))(
+    result = Seq(
+      (10, 10), // inserted
+      (1, 1), // existed previously
+      (2, 2), // existed previously
+      (13, 40) // inserted
+    ))
+
+  testExtendedMerge(s"insert only merge with multiple matches") (
+    source = (0, 0) :: (1, 10) :: (1, 100) :: (3, 30) :: (3, 300) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    insert(values = "(key, value) VALUES (s.key, s.value)")) (
+    result = Seq(
+      (0, 0), // inserted
+      (1, 1), // existed previously
+      (2, 2), // existed previously
+      (3, 30), // inserted
+      (3, 300) // key exists but still inserted
+    )
+  )
+
+
+  protected def testNullCaseInsertOnly(name: String)(
+    target: Seq[(JInt, JInt)],
+    source: Seq[(JInt, JInt)],
+    condition: String,
+    expectedResults: Seq[(JInt, JInt)],
+    insertCondition: Option[String] = None) = {
+    Seq(true, false).foreach { isPartitioned =>
+      test(s"basic case - null handling - $name, isPartitioned: $isPartitioned") {
+        withView("sourceView") {
+          val partitions = if (isPartitioned) "key" :: Nil else Nil
+          append(target.toDF("key", "value"), partitions)
+          source.toDF("key", "value").createOrReplaceTempView("sourceView")
+          withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "true") {
+            if (insertCondition.isDefined) {
+              executeMerge(
+                s"delta.`$tempPath` as t",
+                "sourceView s",
+                condition,
+                insert("(t.key, t.value) VALUES (s.key, s.value)",
+                  condition = insertCondition.get))
+            } else {
+              executeMerge(
+                s"delta.`$tempPath` as t",
+                "sourceView s",
+                condition,
+                insert("(t.key, t.value) VALUES (s.key, s.value)"))
+            }
+          }
+          checkAnswer(
+            readDeltaTable(tempPath),
+            expectedResults.map { r => Row(r._1, r._2) }
+          )
+
+          Utils.deleteRecursively(new File(tempPath))
+        }
+      }
+    }
+  }
+
+  testNullCaseInsertOnly("insert only merge - null in source") (
+    target = Seq((1, 1)),
+    source = Seq((1, 10), (2, 20), (null, null)),
+    condition = "s.key = t.key",
+    expectedResults = Seq(
+      (1, 1),         // Existing value
+      (2, 20),        // Insert
+      (null, null)    // Insert
+    ))
+
+  testNullCaseInsertOnly("insert only merge - null value in both source and target")(
+    target = Seq((1, 1), (null, null)),
+    source = Seq((1, 10), (2, 20), (null, 0)),
+    condition = "s.key = t.key",
+    expectedResults = Seq(
+      (null, null),   // No change as null in source does not match null in target
+      (1, 1),         // Existing value
+      (2, 20),        // Insert
+      (null, 0)       // Insert
+    ))
+
+  testNullCaseInsertOnly("insert only merge - null in insert clause")(
+    target = Seq((1, 1), (2, 20)),
+    source = Seq((1, 10), (3, 30), (null, 0)),
+    condition = "s.key = t.key",
+    expectedResults = Seq(
+      (1, 1),         // Existing value
+      (2, 20),        // Existing value
+      (null, 0)       // Insert
+    ),
+    insertCondition = Some("s.key IS NULL")
+  )
+
+  test("insert only merge - turn off feature flag") {
+    withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "false") {
+      withKeyValueData(
+        source = (0, 0) :: (1, 10) :: (1, 100) :: (3, 30) :: (3, 300) :: Nil,
+        target = (1, 1) :: (2, 2) :: Nil
+      ) { case (sourceName, targetName) =>
+        intercept[UnsupportedOperationException] {
+          // This is supposed to fail as the duplicated keys in source were not supported.
+          executeMerge(s"$targetName t", s"$sourceName s", "s.key = t.key",
+            insert(values = "(key, value) VALUES (s.key, s.value)"))
+        }
+      }
+    }
+  }
 }

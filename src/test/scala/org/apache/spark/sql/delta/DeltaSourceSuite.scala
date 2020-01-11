@@ -584,8 +584,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase {
         CheckLastBatch("0", "1", "2"),
         Assert {
           clock.advance(
-            CalendarInterval.fromString(
-              DeltaConfigs.LOG_RETENTION.defaultValue).milliseconds() + 100000000L)
+            DeltaConfigs.getMilliSeconds(CalendarInterval.fromString(
+              DeltaConfigs.LOG_RETENTION.defaultValue)) + 100000000L)
 
           // Delete all logs before checkpoint
           writersLog.cleanUpExpiredLogs()

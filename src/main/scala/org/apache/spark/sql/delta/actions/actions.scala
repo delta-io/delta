@@ -254,7 +254,8 @@ case class CommitInfo(
     readVersion: Option[Long],
     isolationLevel: Option[String],
     /** Whether this commit has blindly appended without caring about existing files */
-    isBlindAppend: Option[Boolean]) extends Action with CommitMarker {
+    isBlindAppend: Option[Boolean],
+    operationMetrics: Option[Map[String, String]]) extends Action with CommitMarker {
   override def wrap: SingleAction = SingleAction(commitInfo = this)
 
   override def withTimestamp(timestamp: Long): CommitInfo = {
@@ -296,7 +297,7 @@ object NotebookInfo {
 
 object CommitInfo {
   def empty(version: Option[Long] = None): CommitInfo = {
-    CommitInfo(version, null, None, None, null, null, None, None, None, None, None, None)
+    CommitInfo(version, null, None, None, null, null, None, None, None, None, None, None, None)
   }
 
   def apply(
@@ -306,7 +307,8 @@ object CommitInfo {
       commandContext: Map[String, String],
       readVersion: Option[Long],
       isolationLevel: Option[String],
-      isBlindAppend: Option[Boolean]): CommitInfo = {
+      isBlindAppend: Option[Boolean],
+      operationMetrics: Option[Map[String, String]]): CommitInfo = {
     val getUserName = commandContext.get("user").flatMap {
       case "unknown" => None
       case other => Option(other)
@@ -324,7 +326,8 @@ object CommitInfo {
       commandContext.get("clusterId"),
       readVersion,
       isolationLevel,
-      isBlindAppend
+      isBlindAppend,
+      operationMetrics
     )
   }
 }

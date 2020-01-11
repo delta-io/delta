@@ -21,6 +21,7 @@ import java.io.FileNotFoundException
 import java.util.ConcurrentModificationException
 
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata}
+import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{Invariant, InvariantViolationException}
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -37,19 +38,30 @@ import org.apache.spark.sql.types.{DataType, StructField, StructType}
 
 trait DocsPath {
   /**
-   * The URL for the base path of Delta's docs.
+   * The URL for the base path of Delta's docs. When changing this path, ensure that the new path
+   * works with the error messages below.
    */
-  def baseDocsPath(conf: SparkConf): String = "https://docs.delta.io"
+  protected def baseDocsPath(conf: SparkConf): String = "https://docs.delta.io/latest"
+
+  def generateDocsLink(conf: SparkConf, path: String): String = {
+    baseDocsPath(conf) + path
+  }
 }
 
 /**
  * A holder object for Delta errors.
+ *
+ * IMPORTANT: Any time you add a test that references the docs, add to the Seq defined in
+ * DeltaErrorsSuite so that the doc links that are generated can be verified to work in Azure,
+ * docs.databricks.com and docs.delta.io
  */
 object DeltaErrors
     extends DocsPath
     with DeltaLogging {
 
   def baseDocsPath(spark: SparkSession): String = baseDocsPath(spark.sparkContext.getConf)
+
+  val faqRelativePath = "/delta-intro.html#frequently-asked-questions"
 
   val DeltaSourceIgnoreDeleteErrorMessage =
     "Detected deleted data from streaming source. This is currently not supported. If you'd like " +
@@ -66,12 +78,11 @@ object DeltaErrors
    * Note that we must pass in the docAddress as a string, because the config is not available on
    * executors where this method is called.
    */
-  def deltaFileNotFoundHint(path: String, docAddress: String): String = {
+  def deltaFileNotFoundHint(faqPath: String, path: String): String = {
     recordDeltaEvent(null, "delta.error.fileNotFound", data = path)
-    val faq = docAddress + "/delta/delta-intro.html#frequently-asked-questions"
     "A file referenced in the transaction log cannot be found. This occurs when data has been " +
       "manually deleted from the file system rather than using the table `DELETE` statement. " +
-      s"For more information, see $faq"
+      s"For more information, see $faqPath"
   }
 
   def formatColumn(colName: String): String = s"`$colName`"
@@ -149,6 +160,12 @@ object DeltaErrors
       + newColumns)
   }
 
+  def notEnoughColumnsInInsert(table: String, query: Int, target: Int): Throwable = {
+    new AnalysisException(s"Cannot write to '$table', not enough data columns; " +
+        s"target table has ${target} column(s) but the inserted data has " +
+        s"${query} column(s)")
+  }
+
   def alterTableReplaceColumnsException(
       oldSchema: StructType,
       newSchema: StructType,
@@ -185,6 +202,11 @@ object DeltaErrors
         "Vacuuming specific partitions is currently not supported.")
   }
 
+  def unexpectedDataChangeException(op: String): Throwable = {
+    new AnalysisException(s"Attempting to change metadata when 'dataChange' option is set" +
+      s" to false during $op")
+  }
+
   def unknownConfigurationKeyException(confKey: String): Throwable = {
     new AnalysisException(s"Unknown configuration was specified: $confKey")
   }
@@ -199,7 +221,8 @@ object DeltaErrors
         |using format("delta") and that you are trying to $operation the table base path.
         |
         |To disable this check, SET spark.databricks.delta.formatCheck.enabled=false
-        |To learn more about Delta, see ${baseDocsPath(spark)}/delta/index.html
+        |To learn more about Delta, see ${generateDocsLink(spark.sparkContext.getConf,
+        "/index.html")}
         |""".stripMargin)
   }
 
@@ -217,7 +240,8 @@ object DeltaErrors
         |'format("delta")' when reading and writing to a delta table.
         |
         |To disable this check, SET spark.databricks.delta.formatCheck.enabled=false
-        |To learn more about Delta, see ${baseDocsPath(spark)}/delta/index.html
+        |To learn more about Delta, see
+        |${generateDocsLink(spark.sparkContext.getConf, "/index.html")}
         |""".stripMargin)
   }
 
@@ -310,7 +334,7 @@ object DeltaErrors
         s"(${DeltaConfigs.IS_APPEND_ONLY.key}=false)'.")
   }
 
-  def missingPartFilesException(c: CheckpointMetaData, ae: AnalysisException): Throwable = {
+  def missingPartFilesException(c: CheckpointMetaData, ae: Exception): Throwable = {
     new IllegalStateException(
       s"Couldn't find all part files of the checkpoint version: ${c.version}", ae)
   }
@@ -416,9 +440,17 @@ object DeltaErrors
         + unknownColumns.mkString(", "))
   }
 
-  def multipleSourceRowMatchingTargetRowInMergeException: Throwable = {
-    new UnsupportedOperationException("Cannot perform MERGE as multiple source rows " +
-        "matched and attempted to update the same target row in the Delta table.")
+  def multipleSourceRowMatchingTargetRowInMergeException(spark: SparkSession): Throwable = {
+    new UnsupportedOperationException(
+      s"""Cannot perform MERGE as multiple source rows matched and attempted to update the same
+         |target row in the Delta table. By SQL semantics of merge, when multiple source rows match
+         |on the same target row, the update operation is ambiguous as it is unclear which source
+         |should be used to update the matching target row.
+         |You can preprocess the source table to eliminate the possibility of multiple matches.
+         |Please refer to
+         |${baseDocsPath(spark)}/delta/delta-update.html#upsert-into-a-table-using-merge
+       """.stripMargin
+    )
   }
 
   def subqueryNotSupportedException(op: String, cond: Expression): Throwable = {
@@ -470,7 +502,8 @@ object DeltaErrors
          |`$path/_delta_log`. Check the upstream job to make sure that it is writing using
          |format("delta") and that the path is the root of the table.
          |
-         |To learn more about Delta, see ${baseDocsPath(spark)}/delta/index.html
+         |To learn more about Delta, see ${generateDocsLink(spark.sparkContext.getConf,
+        "/index.html")}
        """.stripMargin)
   }
 
@@ -482,7 +515,8 @@ object DeltaErrors
          |from `$path` using Delta Lake, but the schema is not specified when the
          |input path is empty.
          |
-         |To learn more about Delta, see ${baseDocsPath(spark)}/delta/index.html
+         |To learn more about Delta, see ${generateDocsLink(spark.sparkContext.getConf,
+        "/index.html")}
        """.stripMargin)
   }
 
@@ -493,7 +527,8 @@ object DeltaErrors
          |You are trying to create a managed table $tableName
          |using Delta Lake, but the schema is not specified.
          |
-         |To learn more about Delta, see ${baseDocsPath(spark)}/delta/index.html
+         |To learn more about Delta, see ${generateDocsLink(spark.sparkContext.getConf,
+        "/index.html")}
        """.stripMargin)
   }
 
@@ -665,8 +700,32 @@ object DeltaErrors
         |%sql set spark.databricks.delta.alterLocation.bypassSchemaCheck = true""".stripMargin)
   }
 
+  def setLocationNotSupportedOnPathIdentifiers(): Throwable = {
+    throw new AnalysisException("Cannot change the location of a path based table.")
+  }
+
   def describeViewHistory: Throwable = {
     new AnalysisException("Cannot describe the history of a view.")
+  }
+
+  def postCommitHookFailedException(
+      failedHook: PostCommitHook,
+      failedOnCommitVersion: Long,
+      extraErrorMessage: String,
+      error: Throwable): Throwable = {
+    var errorMessage = s"Committing to the Delta table version $failedOnCommitVersion succeeded" +
+      s" but error while executing post-commit hook ${failedHook.name}"
+    if (extraErrorMessage != null && extraErrorMessage.nonEmpty) {
+      errorMessage += s": $extraErrorMessage"
+    }
+    new RuntimeException(errorMessage, error)
+  }
+
+  def unsupportedGenerateModeException(modeName: String): Throwable = {
+    import org.apache.spark.sql.delta.commands.DeltaGenerateCommand
+    val supportedModes = DeltaGenerateCommand.modeNameToGenerationFunc.keys.toSeq.mkString(", ")
+    new IllegalArgumentException(
+      s"Specified mode '$modeName' is not supported. Supported modes are: $supportedModes")
   }
 }
 
@@ -677,8 +736,9 @@ abstract class DeltaConcurrentModificationException(message: String)
   def this(baseMessage: String, conflictingCommit: Option[CommitInfo]) = this(
     baseMessage +
       conflictingCommit.map(ci => s"\nConflicting commit: ${JsonUtils.toJson(ci)}").getOrElse("") +
-      s"\nRefer to ${DeltaErrors.baseDocsPath(SparkEnv.get.conf)}" +
-      "/delta/isolation-level.html#optimistic-concurrency-control for more details."
+      s"\nRefer to " +
+      s"${DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html")} " +
+      "for more details."
   )
 
   /**

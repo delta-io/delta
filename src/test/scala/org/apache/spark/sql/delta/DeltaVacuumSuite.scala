@@ -23,6 +23,7 @@ import java.util.concurrent.TimeUnit
 import org.apache.spark.sql.delta.DeltaOperations.{Delete, Write}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.commands.VacuumCommand
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
@@ -292,7 +293,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
   }
 
   protected def defaultTombstoneInterval: Long = {
-    CalendarInterval.fromString(DeltaConfigs.TOMBSTONE_RETENTION.defaultValue).milliseconds()
+    DeltaConfigs.getMilliSeconds(CalendarInterval.fromString(
+      DeltaConfigs.TOMBSTONE_RETENTION.defaultValue))
   }
 
   implicit def fileToPathString(f: File): String = new Path(f.getAbsolutePath).toString
@@ -497,4 +499,4 @@ trait DeltaVacuumSuiteBase extends QueryTest
 }
 
 class DeltaVacuumSuite
-  extends DeltaVacuumSuiteBase  with org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+  extends DeltaVacuumSuiteBase with DeltaSQLCommandTest

@@ -18,10 +18,12 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.scalatest.Tag
 
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.execution.streaming.MemoryStream
+import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
@@ -276,8 +278,63 @@ trait DescribeDeltaHistorySuiteBase
       assertNotADeltaTableException(tempDir.getCanonicalPath)
     }
   }
+
+  test("operation metrics - write metrics") {
+    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+      withTempDir { tempDir =>
+        // create table
+        spark.range(100).repartition(5).write.format("delta").save(tempDir.getAbsolutePath)
+        val deltaTable = io.delta.tables.DeltaTable.forPath(tempDir.getAbsolutePath)
+
+        // get last command history
+        val lastCmd = deltaTable.history(1)
+
+        // Check if operation metrics from history are accurate
+        assert(lastCmd.select("operationMetrics.numFiles").take(1).head.getString(0).toLong
+          == 5)
+
+        assert(lastCmd.select("operationMetrics.numOutputBytes").take(1).head.getString(0).toLong
+          > 0)
+
+        assert(lastCmd.select("operationMetrics.numOutputRows").take(1).head.getString(0).toLong
+          == 100)
+      }
+    }
+  }
+
+  test("operation metrics - merge") {
+    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+      withTempDir { tempDir =>
+        // create target
+        spark.range(100).write.format("delta").save(tempDir.getAbsolutePath)
+        val deltaTable = io.delta.tables.DeltaTable.forPath(tempDir.getAbsolutePath)
+
+        // run merge
+        deltaTable.as("t")
+          .merge(spark.range(50, 150).toDF().as("s"), "s.id = t.id")
+          .whenMatched()
+          .updateAll()
+          .whenNotMatched()
+          .insertAll()
+          .execute()
+
+        // Get operation metrics
+        val lastCommand = deltaTable.history(1)
+        val operationMetrics: Map[String, String] = lastCommand.select("operationMetrics")
+          .take(1)
+          .head
+          .getMap(0)
+          .asInstanceOf[Map[String, String]]
+
+        assert(operationMetrics("numTargetRowsInserted") == "50")
+        assert(operationMetrics("numTargetRowsUpdated") == "50")
+        assert(operationMetrics("numOutputRows") == "100")
+        assert(operationMetrics("numSourceRows") == "100")
+      }
+    }
+  }
 }
 
 class DescribeDeltaHistorySuite
-  extends DescribeDeltaHistorySuiteBase  with org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+  extends DescribeDeltaHistorySuiteBase with DeltaSQLCommandTest
 
