@@ -20,13 +20,17 @@ import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction}
 import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.analysis.{Analyzer, EliminateSubqueryAliases, NoSuchTableException, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.parser.ParseException
-import org.apache.spark.sql.execution.datasources.HadoopFsRelation
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 
 /**
  * Helper trait for all delta commands.
@@ -147,5 +151,53 @@ trait DeltaCommand extends DeltaLogging {
       throw new IllegalStateException(s"File ($absolutePath) to be rewritten not found " +
         s"among candidate files:\n${nameToAddFileMap.keys.mkString("\n")}")
     })
+  }
+
+  /**
+   * Use the analyzer to resolve the identifier provided
+   * @param analyzer The session state analyzer to call
+   * @param identifier Table Identifier to determine whether is path based or not
+   * @return
+   */
+  protected def resolveIdentifier(analyzer: Analyzer, identifier: TableIdentifier): LogicalPlan = {
+    EliminateSubqueryAliases(analyzer.execute(UnresolvedRelation(identifier)))
+  }
+
+  /**
+   * Use the analyzer to see whether the provided TableIdentifier is for a path based table or not
+   * @param analyzer The session state analyzer to call
+   * @param tableIdent Table Identifier to determine whether is path based or not
+   * @return Boolean where true means that the table is a table in a metastore and false means the
+   *         table is a path based table
+   */
+  def isCatalogTable(analyzer: Analyzer, tableIdent: TableIdentifier): Boolean = {
+    try {
+      resolveIdentifier(analyzer, tableIdent) match {
+        // is path
+        case LogicalRelation(HadoopFsRelation(_, _, _, _, _, _), _, None, _) => false
+        // is table
+        case LogicalRelation(HadoopFsRelation(_, _, _, _, _, _), _, Some(_), _) =>
+          true
+        // could not resolve table/db
+        case UnresolvedRelation(_) =>
+          throw new NoSuchTableException(tableIdent.database.getOrElse(""), tableIdent.table)
+        // other e.g. view
+        case _ => true
+      }
+    } catch {
+      // Checking for table exists/database exists may throw an error in some cases in which case,
+      // see if the table is a path-based table, otherwise throw the original error
+      case _: AnalysisException if isPathIdentifier(tableIdent) => false
+    }
+  }
+
+  /**
+   * Checks if the given identifier can be for a delta table's path
+   * @param tableIdent Table Identifier for which to check
+   */
+  protected def isPathIdentifier(tableIdent: TableIdentifier): Boolean = {
+    val provider = tableIdent.database.getOrElse("")
+    // If db doesnt exist or db is called delta/tahoe then check if path exists
+    DeltaSourceUtils.isDeltaDataSourceName(provider) && new Path(tableIdent.table).isAbsolute
   }
 }
