@@ -56,6 +56,32 @@ trait DescribeDeltaHistorySuiteBase
     )
   }
 
+  protected def checkOperationMetrics(
+      expectedMetrics: Map[String, String],
+      operationMetrics: Map[String, String]): Unit = {
+    expectedMetrics.keys.foreach { key =>
+      if (!operationMetrics.contains(key)) {
+        fail(s"The recorded operation metrics does not contain key: $key")
+      }
+      if (expectedMetrics(key) != operationMetrics(key)) {
+        fail(
+          s"""The recorded metric for $key does not equal the expected value.
+             | expected = ${expectedMetrics(key)} ,
+             | But actual = ${operationMetrics(key)}
+           """.stripMargin
+        )
+      }
+    }
+  }
+
+  protected def getOperationMetrics(history: DataFrame): Map[String, String] = {
+    history.select("operationMetrics")
+      .take(1)
+      .head
+      .getMap(0)
+      .asInstanceOf[Map[String, String]]
+  }
+
   def getHistory(path: String, limit: Option[Int] = None): DataFrame = {
     val deltaTable = io.delta.tables.DeltaTable.forPath(spark, path)
     if (limit.isDefined) {
@@ -319,17 +345,93 @@ trait DescribeDeltaHistorySuiteBase
           .execute()
 
         // Get operation metrics
-        val lastCommand = deltaTable.history(1)
-        val operationMetrics: Map[String, String] = lastCommand.select("operationMetrics")
-          .take(1)
-          .head
-          .getMap(0)
-          .asInstanceOf[Map[String, String]]
+        val operationMetrics: Map[String, String] = getOperationMetrics(deltaTable.history(1))
 
-        assert(operationMetrics("numTargetRowsInserted") == "50")
-        assert(operationMetrics("numTargetRowsUpdated") == "50")
-        assert(operationMetrics("numOutputRows") == "100")
-        assert(operationMetrics("numSourceRows") == "100")
+        val expectedMetrics = Map(
+          "numTargetRowsInserted" -> "50",
+          "numTargetRowsUpdated" -> "50",
+          "numOutputRows" -> "100",
+          "numSourceRows" -> "100"
+        )
+        checkOperationMetrics(expectedMetrics, operationMetrics)
+      }
+    }
+  }
+
+  test("operation metrics - streaming update") {
+    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+      withTempDir { tempDir =>
+        val memoryStream = MemoryStream[Long]
+        val df = memoryStream.toDF()
+
+        val tbl = tempDir.getAbsolutePath + "tbl1"
+
+        spark.range(10).write.format("delta").save(tbl)
+        // ensure that you are writing out a single file per batch
+        val q = df.coalesce(1)
+          .withColumnRenamed("value", "id")
+          .writeStream
+          .format("delta")
+          .option("checkpointLocation", tempDir + "checkpoint")
+          .start(tbl)
+        memoryStream.addData(1)
+        q.processAllAvailable()
+        val deltaTable = io.delta.tables.DeltaTable.forPath(tbl)
+        var operationMetrics: Map[String, String] = getOperationMetrics(deltaTable.history(1))
+        val expectedMetrics = Map(
+          "numAddedFiles" -> "1",
+          "numRemovedFiles" -> "0",
+          "numOutputRows" -> "1"
+        )
+        checkOperationMetrics(expectedMetrics, operationMetrics)
+
+        // check if second batch also returns correct metrics.
+        memoryStream.addData(1, 2, 3)
+        q.processAllAvailable()
+        operationMetrics = getOperationMetrics(deltaTable.history(1))
+        val expectedMetrics2 = Map(
+          "numAddedFiles" -> "1",
+          "numRemovedFiles" -> "0",
+          "numOutputRows" -> "3"
+        )
+        checkOperationMetrics(expectedMetrics2, operationMetrics)
+        q.stop()
+      }
+    }
+  }
+
+  test("operation metrics - streaming update - complete mode") {
+    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+      withTempDir { tempDir =>
+        val memoryStream = MemoryStream[Long]
+        val df = memoryStream.toDF()
+
+        val tbl = tempDir.getAbsolutePath + "tbl1"
+
+        Seq(1L -> 1L, 2L -> 2L).toDF("value", "count")
+          .coalesce(1)
+          .write
+          .format("delta")
+          .save(tbl)
+
+        // ensure that you are writing out a single file per batch
+        val q = df.groupBy("value").count().coalesce(1)
+          .writeStream
+          .format("delta")
+          .outputMode("complete")
+          .option("checkpointLocation", tempDir + "checkpoint")
+          .start(tbl)
+        memoryStream.addData(1)
+        q.processAllAvailable()
+
+        val deltaTable = io.delta.tables.DeltaTable.forPath(tbl)
+        val operationMetrics = getOperationMetrics(deltaTable.history(1))
+        val expectedMetrics = Map(
+          "numAddedFiles" -> "1",
+          "numRemovedFiles" -> "1",
+          "numOutputRows" -> "1"
+        )
+        checkOperationMetrics(expectedMetrics, operationMetrics)
       }
     }
   }

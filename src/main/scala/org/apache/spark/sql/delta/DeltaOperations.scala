@@ -63,6 +63,11 @@ object DeltaOperations {
       epochId: Long) extends Operation("STREAMING UPDATE") {
     override val parameters: Map[String, Any] =
       Map("outputMode" -> outputMode.toString, "queryId" -> queryId, "epochId" -> epochId.toString)
+    override val metricParameters: Seq[String] = Seq(
+      "numAddedFiles",
+      "numRemovedFiles",
+      "numOutputRows"
+    )
   }
   /** Recorded while deleting certain partitions. */
   case class Delete(predicate: Seq[String]) extends Operation("DELETE") {
