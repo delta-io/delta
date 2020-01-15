@@ -121,7 +121,7 @@ trait VerifyChecksum extends DeltaLogging {
       recordDeltaEvent(
         this,
         "delta.checksum.error.missing",
-        data = Map("version" -> version) ++ exception.map(("exception" -> _)))
+        data = Map("version" -> version) ++ exception.map("exception" -> _))
 
       return
     }

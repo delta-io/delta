@@ -71,7 +71,7 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
       val afterCleanup = getLogFiles(tempDir)
       assert(initialFiles !== afterCleanup)
       assert(expectedFiles.forall(suffix => afterCleanup.exists(_.getName.endsWith(suffix))),
-        s"${afterCleanup.mkString("\n")}\n didn't contain files with suffixes: ${expectedFiles}")
+        s"${afterCleanup.mkString("\n")}\n didn't contain files with suffixes: $expectedFiles")
     }
   }
 
