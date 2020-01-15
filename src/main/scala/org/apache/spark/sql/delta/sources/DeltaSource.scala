@@ -153,7 +153,11 @@ case class DeltaSource(
   }
 
   private def iteratorLast[T](iter: Iterator[T]): Option[T] = {
-    iter.foldLeft(Option.empty[T])((_, a) => Some(a))
+    var last: Option[T] = None
+    while (iter.hasNext) {
+      last = Some(iter.next())
+    }
+    last
   }
 
   private def getChangesWithRateLimit(
