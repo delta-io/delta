@@ -21,6 +21,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.internal.SQLConf
 
 /**
  * An identifier for a Delta table containing one of the path or the table identifier.
@@ -77,9 +78,11 @@ object DeltaTableIdentifier {
     def databaseExists = catalog.databaseExists(identifier.database.get)
     def tableExists = catalog.tableExists(identifier)
 
-    DeltaSourceUtils.isDeltaTable(identifier.database) &&
+    spark.sessionState.conf.runSQLonFile &&
+      DeltaSourceUtils.isDeltaTable(identifier.database) &&
       !tableIsTemporaryTable &&
-      (!databaseExists || !tableExists)
+      (!databaseExists || !tableExists) &&
+      new Path(identifier.table).isAbsolute
   }
 
   /**
