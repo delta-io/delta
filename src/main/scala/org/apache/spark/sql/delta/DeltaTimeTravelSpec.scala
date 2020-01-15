@@ -79,7 +79,7 @@ object DeltaTimeTravelSpec {
   }
 
   /** Adds a time travel node based on the special syntax in the table identifier. */
-  def addTimeTravelNode(conf: SQLConf, identifier: String): (DeltaTimeTravelSpec, String) = {
+  def resolvePath(conf: SQLConf, identifier: String): (DeltaTimeTravelSpec, String) = {
     identifier match {
       case TIMESTAMP_URI_FOR_TIME_TRAVEL(ts) =>
         val timestamp = parseTimestamp(ts, conf.sessionLocalTimeZone)

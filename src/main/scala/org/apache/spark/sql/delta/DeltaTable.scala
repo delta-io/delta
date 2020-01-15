@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
 
-import scala.util.Try
+import scala.util.{Failure, Success, Try}
 
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -31,6 +31,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions.{Expression, PredicateHelper, SubqueryExpression}
+import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.datasources.{FileIndex, HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
@@ -52,17 +53,17 @@ object DeltaTable {
  * Extractor Object for pulling out the full table scan of a Delta table.
  */
 object DeltaFullTable {
-  def unapply(a: LogicalRelation): Option[TahoeLogFileIndex] = a match {
-    case LogicalRelation(HadoopFsRelation(index: TahoeLogFileIndex, _, _, _, _, _), _, _, _) =>
-      if (index.partitionFilters.isEmpty && index.versionToUse.isEmpty) {
+  def unapply(a: LogicalPlan): Option[TahoeLogFileIndex] = a match {
+    case PhysicalOperation(_, filters, DeltaTable(index: TahoeLogFileIndex)) =>
+      if (index.partitionFilters.isEmpty && index.versionToUse.isEmpty && filters.isEmpty) {
         Some(index)
       } else if (index.versionToUse.nonEmpty) {
         throw new AnalysisException(
           s"Expect a full scan of the latest version of the Delta source, but found a historical " +
-            s"scan of version ${index.versionToUse.get}")
+          s"scan of version ${index.versionToUse.get}")
       } else {
         throw new AnalysisException(
-          s"Expect a full scan of Delta sources, but found the partial scan. path:${index.path}")
+          s"Expect a full scan of Delta sources, but found a partial scan. path:${index.path}")
       }
     case _ =>
       None
@@ -94,28 +95,61 @@ object DeltaTableUtils extends PredicateHelper
 
   /**
    * Checks whether TableIdentifier is a path or a table name
-   * We assume it is a path unless the table and database both exist in the catalog@param catalog
-   *
+   * We assume it is a path unless the table and database both exist in the catalog
+   * @param catalog session catalog used to check whether db/table exist
    * @param tableIdent the provided table or path
    * @return true if using table name, false if using path, error otherwise
    */
   def isCatalogTable(catalog: SessionCatalog, tableIdent: TableIdentifier): Boolean = {
-    val dbExists = tableIdent.database.forall(catalog.databaseExists)
-    val dbNameIsAlsoValidFormatName =
-      tableIdent.database.getOrElse("").toLowerCase(Locale.ROOT) == "parquet" ||
-        DeltaSourceUtils.isDeltaDataSourceName(tableIdent.database.getOrElse(""))
+    val (dbExists, assumePath) = dbExistsAndAssumePath(catalog, tableIdent)
 
-    // If db doesnt exist or db is called parquet/delta/tahoe then check if path exists
-    if ((!dbExists || dbNameIsAlsoValidFormatName) && new Path(tableIdent.table).isAbsolute) {
-      return false
-    }
+    // If we don't need to check that the table exists, return false since we think the tableIdent
+    // refers to a path at this point, because the database doesn't exist
+    if (assumePath) return false
 
     // check for dbexists otherwise catalog.tableExists may throw NoSuchDatabaseException
-    if ((dbExists || tableIdent.database.isEmpty) && catalog.tableExists(tableIdent)) {
+    if ((dbExists || tableIdent.database.isEmpty)
+        && Try(catalog.tableExists(tableIdent)).getOrElse(false)) {
       true
+    } else if (isValidPath(tableIdent)) {
+      false
     } else {
       throw new NoSuchTableException(tableIdent.database.getOrElse(""), tableIdent.table)
     }
+  }
+
+  /**
+   * It's possible that checking whether database exists can throw an exception. In that case,
+   * we want to surface the exception only if the provided tableIdentifier cannot be a path.
+   *
+   * @param catalog session catalog used to check whether db/table exist
+   * @param ident the provided table or path
+   * @return tuple where first indicates whether database exists and second indicates whether there
+   *         is a need to check whether table exists
+   */
+  private def dbExistsAndAssumePath(
+      catalog: SessionCatalog,
+      ident: TableIdentifier): (Boolean, Boolean) = {
+    Try(ident.database.forall(catalog.databaseExists)) match {
+      // DB exists, check table exists only if path is not valid
+      case Success(true) => (true, false)
+      // DB does not exist, check table exists only if path does not exist
+      case Success(false) => (false, new Path(ident.table).isAbsolute)
+      // Checking DB exists threw exception, if the path is still valid then check for table exists
+      case Failure(_) if isValidPath(ident) => (false, true)
+      // Checking DB exists threw exception, path is not valid so throw the initial exception
+      case Failure(e) => throw e
+    }
+  }
+
+  /**
+   * @param tableIdent the provided table or path
+   * @return whether or not the provided TableIdentifier can specify a path for parquet or delta
+   */
+  private def isValidPath(tableIdent: TableIdentifier): Boolean = {
+    // If db doesnt exist or db is called delta/tahoe then check if path exists
+    DeltaSourceUtils.isDeltaDataSourceName(tableIdent.database.getOrElse("")) &&
+      new Path(tableIdent.table).isAbsolute
   }
 
   /** Find the root of a Delta table from the provided path. */
@@ -227,18 +261,18 @@ object DeltaTableUtils extends PredicateHelper
    */
   def extractIfPathContainsTimeTravel(
       session: SparkSession,
-      path: String): Option[(String, DeltaTimeTravelSpec)] = {
+      path: String): (String, Option[DeltaTimeTravelSpec]) = {
     val conf = session.sessionState.conf
-    if (!DeltaTimeTravelSpec.isApplicable(conf, path)) return None
+    if (!DeltaTimeTravelSpec.isApplicable(conf, path)) return path -> None
 
     val maybePath = new Path(path)
     val fs = maybePath.getFileSystem(session.sessionState.newHadoopConf())
 
     // If the folder really exists, quit
-    if (fs.exists(maybePath)) return None
+    if (fs.exists(maybePath)) return path -> None
 
-    val (tt, realPath) = DeltaTimeTravelSpec.addTimeTravelNode(conf, path)
-    Some(realPath -> tt)
+    val (tt, realPath) = DeltaTimeTravelSpec.resolvePath(conf, path)
+    realPath -> Some(tt)
   }
 
   /**

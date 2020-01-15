@@ -296,6 +296,31 @@ abstract class ConvertToDeltaSuiteBase extends QueryTest
     }
   }
 
+  test("allow file names to have = character") {
+    withTempDir { dir =>
+      val tempDir = dir.getCanonicalPath
+      writeFiles(tempDir + "/part=1/", Seq(1).toDF("id"))
+
+      val sessionHadoopConf = spark.sessionState.newHadoopConf
+      val fs = new Path(tempDir).getFileSystem(sessionHadoopConf)
+      def listFileNames: Array[String] =
+        fs.listStatus(new Path(tempDir + "/part=1/"))
+          .map(_.getPath)
+          .filter(path => !path.getName.startsWith("_") && !path.getName.startsWith("."))
+          .map(_.toUri.toString)
+
+      val fileNames = listFileNames
+      assert(fileNames.size == 1)
+      fs.rename(new Path(fileNames.head), new Path(fileNames.head
+        .stripSuffix(".snappy.parquet").concat("-id=1.snappy.parquet")))
+
+      val newFileNames = listFileNames
+      assert(newFileNames.head.endsWith("-id=1.snappy.parquet"))
+      convertToDelta(s"parquet.`$tempDir`", Some("part string"))
+      checkAnswer(spark.read.format("delta").load(tempDir), Row(1, "1"))
+    }
+  }
+
   test("allow file names to not have .parquet suffix") {
     withTempDir { dir =>
       val tempDir = dir.getCanonicalPath
