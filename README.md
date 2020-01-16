@@ -44,9 +44,9 @@ Delta Lake currently requires Apache Spark 2.4.2. Earlier versions are missing [
 
 ### API Compatibility
 
-The only stable, public APIs currently provided by Delta Lake are through the `DataFrameReader`/`Writer` (i.e. `spark.read`, `df.write`, `spark.readStream` and `df.writeStream`). Options to these APIs will remain stable within a major release of Delta Lake (e.g., 1.x.x).
+The only stable public APIs, currently provided by Delta Lake, are through the `DataFrameReader`/`Writer` (i.e. `spark.read`, `df.write`, `spark.readStream` and `df.writeStream`). Options to these APIs will remain stable within a major release of Delta Lake (e.g., 1.x.x).
 
-All other interfaces in the this library are considered internal, and they are subject to change across minor / patch releases.
+All other interfaces in this library are considered internal, and they are subject to change across minor/patch releases.
 
 ### Data Storage Compatibility
 
@@ -56,7 +56,7 @@ Breaking changes in the protocol are indicated by incrementing the minimum reade
 
 ## Roadmap
 
-Delta Lake is a recent open source project based on technology developed at Databricks. We plan to open-source all APIs that are required to correctly run Spark programs that read and write Delta tables. For a detailed timeline on this effort see the [project roadmap](https://github.com/delta-io/delta/milestones).
+Delta Lake is a recent open-source project based on technology developed at Databricks. We plan to open-source all APIs that are required to correctly run Spark programs that read and write Delta tables. For a detailed timeline on this effort see the [project roadmap](https://github.com/delta-io/delta/milestones).
 
 # Building
 
