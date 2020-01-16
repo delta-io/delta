@@ -66,6 +66,15 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
       generateSymlinkManifest(tablePath.toString)
       assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 1)
       assert(spark.read.format("delta").load(tablePath.toString).count() == 0)
+
+      // delete all data
+      write(5)
+      assertManifest(tablePath, expectSameFiles = false, expectedNumFiles = 1)
+      val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tablePath.toString)
+      deltaTable.delete()
+      generateSymlinkManifest(tablePath.toString)
+      assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 0)
+      assert(spark.read.format("delta").load(tablePath.toString).count() == 0)
     }
   }
 
@@ -111,6 +120,15 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
         .withColumn("part2", $"value" % 10)
         .write.format("delta").mode("overwrite").save(tablePath.toString)
       assertManifest(tablePath, expectSameFiles = false, expectedNumFiles = 50)
+      generateSymlinkManifest(tablePath.toString)
+      assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 0)
+      assert(spark.read.format("delta").load(tablePath.toString).count() == 0)
+
+      // delete all data
+      write(5, 5, 5)
+      assertManifest(tablePath, expectSameFiles = false, expectedNumFiles = 0)
+      val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tablePath.toString)
+      deltaTable.delete()
       generateSymlinkManifest(tablePath.toString)
       assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 0)
       assert(spark.read.format("delta").load(tablePath.toString).count() == 0)
