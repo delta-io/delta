@@ -25,6 +25,7 @@ import org.apache.hadoop.hive.metastore.HiveMetaHook
 import org.apache.hadoop.hive.metastore.MetaStoreUtils
 import org.apache.hadoop.hive.metastore.api.MetaException
 import org.apache.hadoop.hive.metastore.api.Table
+import org.apache.hadoop.hive.metastore.api.hive_metastoreConstants.META_TABLE_LOCATION
 import org.apache.hadoop.hive.ql.exec.FunctionRegistry
 import org.apache.hadoop.hive.ql.index.IndexSearchCondition
 import org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
@@ -63,7 +64,7 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook
       tableDesc: TableDesc,
       jobProperties: java.util.Map[String, String]): Unit = {
     super.configureInputJobProperties(tableDesc, jobProperties)
-    jobProperties.put(DELTA_TABLE_PATH, tableDesc.getProperties().getProperty(DELTA_TABLE_PATH))
+    jobProperties.put(DELTA_TABLE_PATH, tableDesc.getProperties().getProperty(META_TABLE_LOCATION))
     jobProperties.put(DELTA_TABLE_SCHEMA, tableDesc.getProperties().getProperty(DELTA_TABLE_SCHEMA))
   }
 
@@ -72,7 +73,7 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook
       deserializer: Deserializer,
       predicate: ExprNodeDesc): DecomposedPredicate = {
     // Get the delta root path
-    val deltaRootPath = jobConf.get(DELTA_TABLE_PATH)
+    val deltaRootPath = jobConf.get(META_TABLE_LOCATION)
     // Get the partitionColumns of Delta
     val partitionColumns = DeltaHelper.getPartitionCols(new Path(deltaRootPath))
     LOG.info("delta partitionColumns is " + partitionColumns.mkString(", "))
@@ -192,9 +193,9 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook
     val hiveSchema = TypeInfoFactory.getStructTypeInfo(columnNames, columnTypes)
       .asInstanceOf[StructTypeInfo]
     DeltaHelper.checkTableSchema(snapshot.metadata.schema, hiveSchema)
-    tbl.getParameters.put(DELTA_TABLE_PATH, deltaRootString)
     tbl.getParameters.put(DELTA_TABLE_SCHEMA, hiveSchema.toString)
     tbl.getParameters.put("spark.sql.sources.provider", "DELTA")
+    tbl.getSd.getParameters.put("path", deltaRootString)
   }
 
   override def rollbackCreateTable(table: Table): Unit = {
@@ -220,8 +221,7 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook
 
 object DeltaStorageHandler {
   /**
-   * The Delta table path we store in the table properties and it's also passed into `JobConf` so
-   * that `DeltaLog` can be accessed everywhere.
+   * The Delta table path passing into `JobConf` so that `DeltaLog` can be accessed everywhere.
    */
   val DELTA_TABLE_PATH = "delta.table.path"
 
