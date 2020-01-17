@@ -109,6 +109,17 @@ object DeltaOperations {
       "batchId" -> JsonUtils.toJson(batchId),
       "auto" -> auto
     )
+    override val metricParameters: Seq[String] = Seq(
+      "numAddedFiles",
+      "numRemovedFiles",
+      "numAddedBytes",
+      "numRemovedBytes",
+      "minFileSize",
+      "p25FileSize",
+      "p50FileSize",
+      "p75FileSize",
+      "maxFileSize"
+    )
   }
   /** Recorded when a merge operation is committed to the table. */
   case class Merge(
