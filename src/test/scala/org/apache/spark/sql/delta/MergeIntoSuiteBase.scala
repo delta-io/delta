@@ -1136,7 +1136,7 @@ abstract class MergeIntoSuiteBase
         source = Seq.empty,
         target = Seq.empty,
         sourceKeyValueNames = ("key", "newValue"),
-        targetKeyValueNames = ("key", "oldValue"),
+        targetKeyValueNames = ("key", "oldValue")
       ) { case (sourceName, targetName) =>
         val errMsg = intercept[AnalysisException] {
           executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
