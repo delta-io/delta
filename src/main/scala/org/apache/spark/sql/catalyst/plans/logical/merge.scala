@@ -277,7 +277,7 @@ object MergeInto {
             val unresolvedAttrib = UnresolvedAttribute(colNameParts)
             val resolutionErrorMsg =
               s"Cannot resolve ${unresolvedAttrib.sql} in target columns in $typ " +
-                s"clause given columns ${target.output.map(_.sql).mkString(", ")}"
+                s"clause given columns ${planToResolveAction.output.map(_.sql).mkString(", ")}"
 
             // Resolve the target column name without database/table/view qualifiers
             // If clause allows nested field to be target, then this will return the all the
