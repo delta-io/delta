@@ -244,7 +244,7 @@ object MergeInto {
       resolvedExpr.flatMap(_.references).filter(!_.resolved).foreach { a =>
         // Note: This will throw error only on unresolved attribute issues,
         // not other resolution errors like mismatched data types.
-        val cols = "columns " + plan.references.map(_.sql).mkString(", ")
+        val cols = "columns " + plan.children.flatMap(_.output).map(_.sql).mkString(", ")
         a.failAnalysis(s"cannot resolve ${a.sql} in $mergeClauseType given $cols")
       }
       resolvedExpr
@@ -277,7 +277,7 @@ object MergeInto {
             val unresolvedAttrib = UnresolvedAttribute(colNameParts)
             val resolutionErrorMsg =
               s"Cannot resolve ${unresolvedAttrib.sql} in target columns in $typ " +
-                s"clause given columns ${planToResolveAction.output.map(_.sql).mkString(", ")}"
+                s"clause given columns ${target.output.map(_.sql).mkString(", ")}"
 
             // Resolve the target column name without database/table/view qualifiers
             // If clause allows nested field to be target, then this will return the all the
@@ -296,7 +296,8 @@ object MergeInto {
         }
       }
 
-      val resolvedCondition = clause.condition.map(resolveOrFail(_, merge, s"$typ condition"))
+      val resolvedCondition =
+        clause.condition.map(resolveOrFail(_, planToResolveAction, s"$typ condition"))
       clause.makeCopy(Array(resolvedCondition, resolvedActions)).asInstanceOf[T]
     }
 

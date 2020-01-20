@@ -588,7 +588,7 @@ abstract class MergeIntoSuiteBase
       }.getMessage
 
       errorContains(e, "Cannot resolve `key2` in INSERT clause")
-      errorNotContains(e, "key1") // should contain key1 as a valid column name in expressions
+      errorContains(e, "key1") // should contain key1 as a valid column name in expressions
 
       // to-update columns have source table reference
       e = intercept[AnalysisException] {
@@ -1177,7 +1177,7 @@ abstract class MergeIntoSuiteBase
     mergeOn = "s.key = t.key",
     delete(condition = "unknownAttrib > 1"))(
     // Should show unknownAttrib as invalid ref and (key, oldValue, newValue) as valid column names.
-    errorStrs = "UPDATE condition" :: "unknownAttrib" :: "key" :: "oldValue" :: "newValue" :: Nil)
+    errorStrs = "DELETE condition" :: "unknownAttrib" :: "key" :: "oldValue" :: "newValue" :: Nil)
 
   testAnalysisErrorsInExtendedMerge("delete condition - aggregation function")(
     mergeOn = "s.key = t.key",
@@ -1192,10 +1192,16 @@ abstract class MergeIntoSuiteBase
   testAnalysisErrorsInExtendedMerge("insert condition - unknown reference")(
     mergeOn = "s.key = t.key",
     insert(condition = "unknownAttrib > 1", values = "(key, oldValue) VALUES (s.key, s.newValue)"))(
-    // Should show unknownAttrib as invalid ref and (key, someValue) as valid column names,
+    // Should show unknownAttrib as invalid ref and (key, newValue) as valid column names,
     // but not show oldValue as a valid name as target columns cannot be present in insert clause.
     errorStrs = "INSERT condition" :: "unknownAttrib" :: "key" :: "newValue" :: Nil,
     notErrorStrs = "oldValue")
+
+  testAnalysisErrorsInExtendedMerge("insert condition - reference to target table column")(
+    mergeOn = "s.key = t.key",
+    insert(condition = "oldValue > 1", values = "(key, oldValue) VALUES (s.key, s.newValue)"))(
+    // Should show oldValue as invalid ref and (key, newValue) as valid column names
+    errorStrs = "INSERT condition" :: "oldValue" :: "key" :: "newValue" :: Nil)
 
   testAnalysisErrorsInExtendedMerge("insert condition - aggregation function")(
     mergeOn = "s.key = t.key",
