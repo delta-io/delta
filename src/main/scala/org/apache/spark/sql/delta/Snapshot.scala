@@ -75,7 +75,7 @@ class Snapshot(
   // Reconstruct the state by applying deltas in order to the checkpoint.
   // We partition by path as it is likely the bulk of the data is add/remove.
   // Non-path based actions will be collocated to a single partition.
-  private val stateReconstruction = {
+  private def stateReconstruction: Dataset[SingleAction] = {
     val implicits = spark.implicits
     import implicits._
 
@@ -114,19 +114,19 @@ class Snapshot(
   def redactedPath: String =
     Utils.redact(spark.sessionState.conf.stringRedactionPattern, path.toUri.toString)
 
-  private val cachedState =
+  private lazy val cachedState =
     cacheDS(stateReconstruction, s"Delta Table State #$version - $redactedPath")
 
   /** The current set of actions in this [[Snapshot]]. */
   def state: Dataset[SingleAction] = cachedState.getDS
 
-  // Force materialization of the cache and collect the basics to the driver for fast access.
-  // Here we need to bypass the ACL checks for SELECT anonymous function permissions.
-  val State(protocol, metadata, setTransactions, sizeInBytes, numOfFiles, numOfMetadata,
-      numOfProtocol, numOfRemoves, numOfSetTransactions) = {
-    val implicits = spark.implicits
-    import implicits._
-    state.select(
+  // Materialize the cache and collect the basics to the driver for fast access.
+  protected lazy val materializedState: State = {
+    // Here we need to bypass the ACL checks for SELECT anonymous function permissions.
+    {
+      val implicits = spark.implicits
+      import implicits._
+      state.select(
         coalesce(last($"protocol", ignoreNulls = true), defaultProtocol()) as "protocol",
         coalesce(last($"metaData", ignoreNulls = true), emptyMetadata()) as "metadata",
         collect_set($"txn") as "setTransactions",
@@ -137,8 +137,19 @@ class Snapshot(
         count($"protocol") as "numOfProtocol",
         count($"remove") as "numOfRemoves",
         count($"txn") as "numOfSetTransactions")
-      .as[State](stateEncoder)}
-      .first
+        .as[State](stateEncoder)
+    }.first()
+  }
+
+  def protocol: Protocol = materializedState.protocol
+  def metadata: Metadata = materializedState.metadata
+  def setTransactions: Seq[SetTransaction] = materializedState.setTransactions
+  def sizeInBytes: Long = materializedState.sizeInBytes
+  def numOfFiles: Long = materializedState.numOfFiles
+  def numOfMetadata: Long = materializedState.numOfMetadata
+  def numOfProtocol: Long = materializedState.numOfProtocol
+  def numOfRemoves: Long = materializedState.numOfRemoves
+  def numOfSetTransactions: Long = materializedState.numOfSetTransactions
 
   deltaLog.protocolRead(protocol)
 
@@ -194,7 +205,7 @@ class Snapshot(
     }
   }
 
-  private def emptyActions =
+  protected def emptyActions =
     spark.createDataFrame(spark.sparkContext.emptyRDD[Row], logSchema).as[SingleAction]
 }
 
@@ -231,7 +242,7 @@ object Snapshot extends DeltaLogging {
     })
   }
 
-  private case class State(
+  private[delta] case class State(
       protocol: Protocol,
       metadata: Metadata,
       setTransactions: Seq[SetTransaction],
@@ -264,4 +275,9 @@ class InitialSnapshot(
     val logPath: Path,
     override val deltaLog: DeltaLog,
     override val metadata: Metadata)
-  extends Snapshot(logPath, -1, None, Nil, -1, deltaLog, -1)
+  extends Snapshot(logPath, -1, None, Nil, -1, deltaLog, -1) {
+  override val state: Dataset[SingleAction] = emptyActions
+  override protected lazy val materializedState: Snapshot.State = {
+    Snapshot.State(Protocol(), metadata, Nil, 0L, 0L, 0L, 0L, 0L, 0L)
+  }
+}
