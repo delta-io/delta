@@ -39,7 +39,7 @@ object DeltaOperations {
 
     lazy val jsonEncodedValues: Map[String, String] = parameters.mapValues(JsonUtils.toJson(_))
 
-    val metricParameters: Seq[String] = Seq()
+    val operationMetrics: Seq[String] = Seq()
   }
 
   /** Recorded during batch inserts. Predicates can be provided for overwrites. */
@@ -51,7 +51,7 @@ object DeltaOperations {
       partitionBy.map("partitionBy" -> JsonUtils.toJson(_)) ++
       predicate.map("predicate" -> _)
 
-    override val metricParameters: Seq[String] = Seq(
+    override val operationMetrics: Seq[String] = Seq(
       "numFiles",
       "numOutputBytes",
       "numOutputRows")
@@ -63,7 +63,7 @@ object DeltaOperations {
       epochId: Long) extends Operation("STREAMING UPDATE") {
     override val parameters: Map[String, Any] =
       Map("outputMode" -> outputMode.toString, "queryId" -> queryId, "epochId" -> epochId.toString)
-    override val metricParameters: Seq[String] = Seq(
+    override val operationMetrics: Seq[String] = Seq(
       "numAddedFiles",
       "numRemovedFiles",
       "numOutputRows"
@@ -72,11 +72,15 @@ object DeltaOperations {
   /** Recorded while deleting certain partitions. */
   case class Delete(predicate: Seq[String]) extends Operation("DELETE") {
     override val parameters: Map[String, Any] = Map("predicate" -> JsonUtils.toJson(predicate))
+    override val operationMetrics: Seq[String] = Seq(
+      "numAddedFiles",
+      "numRemovedFiles"
+    )
   }
   /** Recorded when truncating the table. */
   case class Truncate() extends Operation("TRUNCATE") {
     override val parameters: Map[String, Any] = Map.empty
-    override val metricParameters: Seq[String] = Seq(
+    override val operationMetrics: Seq[String] = Seq(
       "numRemovedFiles"
     )
   }
@@ -109,7 +113,7 @@ object DeltaOperations {
       "batchId" -> JsonUtils.toJson(batchId),
       "auto" -> auto
     )
-    override val metricParameters: Seq[String] = Seq(
+    override val operationMetrics: Seq[String] = Seq(
       "numAddedFiles",
       "numRemovedFiles",
       "numAddedBytes",
@@ -133,7 +137,7 @@ object DeltaOperations {
         deletePredicate.map("deletePredicate" -> _).toMap ++
         insertPredicate.map("insertPredicate" -> _).toMap
     }
-    override val metricParameters: Seq[String] = Seq(
+    override val operationMetrics: Seq[String] = Seq(
       "numSourceRows",
       "numTargetRowsInserted",
       "numTargetRowsUpdated",
@@ -146,6 +150,10 @@ object DeltaOperations {
   /** Recorded when an update operation is committed to the table. */
   case class Update(predicate: Option[String]) extends Operation("UPDATE") {
     override val parameters: Map[String, Any] = predicate.map("predicate" -> _).toMap
+    override val operationMetrics: Seq[String] = Seq(
+      "numAddedFiles",
+      "numRemovedFiles"
+    )
   }
   /** Recorded when the table is created. */
   case class CreateTable(metadata: Metadata, isManaged: Boolean, asSelect: Boolean = false)

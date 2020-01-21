@@ -435,6 +435,62 @@ trait DescribeDeltaHistorySuiteBase
       }
     }
   }
+
+  test("operation metrics - update") {
+    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+      withTempDir { tempDir =>
+        // Create a Delta table
+        spark.range(100).repartition(5)
+          .withColumnRenamed("id", "key")
+          .withColumn("value", 'key % 2)
+          .write
+          .format("delta")
+          .save(tempDir.getAbsolutePath)
+        val deltaTable = io.delta.tables.DeltaTable.forPath(tempDir.getAbsolutePath)
+
+        // update some records
+        deltaTable.update(col("key") < 1, Map("key" -> lit(1)))
+
+        // check operation metrics
+        val operationMetrics = getOperationMetrics(deltaTable.history(1))
+        val expectedMetrics = Map(
+          "numAddedFiles" -> "1",
+          "numRemovedFiles" -> "1"
+        )
+        checkOperationMetrics(expectedMetrics, operationMetrics)
+      }
+    }
+  }
+
+  test("operation metrics - delete") {
+    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+      withTempDir { tempDir =>
+        // Create a delta table
+        spark.range(100).repartition(5)
+          .withColumnRenamed("id", "key")
+          .withColumn("value", 'key % 2)
+          .write
+          .format("delta")
+          .save(tempDir.getAbsolutePath)
+        val deltaTable = io.delta.tables.DeltaTable.forPath(tempDir.getAbsolutePath)
+        val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+        val numFilesBeforeDelete = deltaLog.snapshot.numOfFiles
+
+        // delete records
+        deltaTable.delete(col("key") < 10)
+
+        // check operation metrics
+        val numFilesAfterDelete = deltaLog.snapshot.numOfFiles
+        val operationMetrics = getOperationMetrics(deltaTable.history(1))
+        val expectedMetrics = Map(
+          "numAddedFiles" -> numFilesAfterDelete.toString,
+          "numRemovedFiles" -> numFilesBeforeDelete.toString
+        )
+        checkOperationMetrics(expectedMetrics, operationMetrics)
+      }
+    }
+  }
+
 }
 
 class DescribeDeltaHistorySuite
