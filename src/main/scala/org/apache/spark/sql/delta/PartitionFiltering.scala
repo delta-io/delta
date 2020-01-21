@@ -16,10 +16,9 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.delta.actions.{AddFile, SingleAction}
 import org.apache.spark.sql.delta.stats.DeltaScan
-
-import org.apache.spark.sql.catalyst.expressions._
 
 trait PartitionFiltering {
   self: Snapshot =>

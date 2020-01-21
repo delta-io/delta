@@ -16,11 +16,10 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
-import org.apache.spark.sql.delta.util.JsonUtils
-
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.{StructField, StructType}
 

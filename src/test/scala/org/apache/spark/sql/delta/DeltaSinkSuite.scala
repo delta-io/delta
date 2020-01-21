@@ -19,17 +19,16 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.util.Locale
 
-import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.commons.io.FileUtils
-import org.scalatest.time.SpanSugar._
-
 import org.apache.spark.sql._
+import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.execution.DataSourceScanExec
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.streaming._
 import org.apache.spark.sql.types._
+import org.scalatest.time.SpanSugar._
 
 class DeltaSinkSuite extends StreamTest {
 

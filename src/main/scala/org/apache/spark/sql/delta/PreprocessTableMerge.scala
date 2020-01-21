@@ -18,13 +18,12 @@ package org.apache.spark.sql.delta
 
 import java.util.Locale
 
-import org.apache.spark.sql.delta.commands.MergeIntoCommand
-
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
-import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
+import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.plans.logical._
+import org.apache.spark.sql.delta.commands.MergeIntoCommand
 import org.apache.spark.sql.internal.SQLConf
 
 case class PreprocessTableMerge(conf: SQLConf) extends UpdateExpressionsSupport {

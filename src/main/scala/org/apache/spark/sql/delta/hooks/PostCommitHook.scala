@@ -16,10 +16,9 @@
 
 package org.apache.spark.sql.delta.hooks
 
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Action
-
-import org.apache.spark.sql.SparkSession
 
 /**
  * A hook which can be executed after a transaction. These hooks are registered to a

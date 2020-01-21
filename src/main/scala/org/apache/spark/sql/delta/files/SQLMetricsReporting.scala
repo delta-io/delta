@@ -16,10 +16,9 @@
 
 package org.apache.spark.sql.delta.files
 
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-
-import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.metric.SQLMetric
 
 /**

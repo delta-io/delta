@@ -18,10 +18,8 @@ package io.delta.tables
 
 import java.util.Locale
 
-
-import org.apache.spark.sql.{AnalysisException, QueryTest}
-import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.{AnalysisException, QueryTest}
 
 class DeltaTableSuite extends QueryTest
   with SharedSparkSession {

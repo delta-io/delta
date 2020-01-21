@@ -16,10 +16,9 @@
 
 package org.apache.spark.sql.delta.schema
 
-import org.apache.spark.sql.delta.util.JsonUtils
-
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.types.StructType
 
 /**

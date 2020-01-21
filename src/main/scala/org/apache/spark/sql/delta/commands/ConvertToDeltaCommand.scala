@@ -22,25 +22,22 @@ import java.util.Locale
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
+import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
+import org.apache.spark.SparkException
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.schema.SchemaUtils
-import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
-import org.apache.spark.sql.delta.util.{DateFormatter, DeltaFileOperations, PartitionUtils, TimestampFormatter}
+import org.apache.spark.sql.delta.sources.{DeltaSQLConf, DeltaSourceUtils}
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
-import org.apache.spark.sql.delta.util.SerializableFileStatus
-import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
-
-import org.apache.spark.SparkException
-import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
-import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.Resolver
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.catalyst.expressions.Cast
+import org.apache.spark.sql.delta.util._
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, ParquetToSparkSchemaConverter}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StringType, StructField, StructType}
+import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
 import org.apache.spark.util.{SerializableConfiguration, Utils}
 
 /**

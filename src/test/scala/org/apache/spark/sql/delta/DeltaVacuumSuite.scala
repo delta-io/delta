@@ -20,20 +20,19 @@ import java.io.File
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
+import org.apache.commons.io.FileUtils
+import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.delta.DeltaOperations.{Delete, Write}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.commands.VacuumCommand
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.DeltaFileOperations
-import org.apache.commons.io.FileUtils
-import org.apache.hadoop.fs.Path
-import org.scalatest.GivenWhenThen
-
-import org.apache.spark.sql.{AnalysisException, QueryTest, SaveMode}
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.{SQLTestUtils, SharedSparkSession}
 import org.apache.spark.sql.types._
+import org.apache.spark.sql.{AnalysisException, QueryTest, SaveMode}
 import org.apache.spark.unsafe.types.CalendarInterval
 import org.apache.spark.util.ManualClock
+import org.scalatest.GivenWhenThen
 
 trait DeltaVacuumSuiteBase extends QueryTest
   with SharedSparkSession

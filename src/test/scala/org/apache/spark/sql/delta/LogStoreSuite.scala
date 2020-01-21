@@ -19,12 +19,11 @@ package org.apache.spark.sql.delta
 import java.io.{File, IOException}
 import java.net.URI
 
+import org.apache.hadoop.fs.{Path, RawLocalFileSystem}
+import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.storage._
-import org.apache.hadoop.fs.{Path, RawLocalFileSystem}
-
-import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
@@ -197,8 +196,8 @@ class FakeAbstractFileSystem(uri: URI, conf: org.apache.hadoop.conf.Configuratio
     false) {
 
   // Implementation copied from RawLocalFs
-  import org.apache.hadoop.fs.local.LocalConfigKeys
   import org.apache.hadoop.fs._
+  import org.apache.hadoop.fs.local.LocalConfigKeys
 
   override def getUriDefaultPort(): Int = -1
   override def getServerDefaults(): FsServerDefaults = LocalConfigKeys.getServerDefaults()

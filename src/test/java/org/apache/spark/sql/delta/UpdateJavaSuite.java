@@ -16,16 +16,20 @@
 
 package test.org.apache.spark.sql.delta;
 
-import java.util.*;
-
-import scala.Tuple2;
-
 import io.delta.tables.DeltaTable;
-import org.junit.*;
-
 import org.apache.spark.sql.*;
 import org.apache.spark.sql.test.TestSparkSession;
 import org.apache.spark.util.Utils;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
+import scala.Tuple2;
+
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 public class UpdateJavaSuite {
     private transient TestSparkSession spark;

@@ -26,9 +26,8 @@ import scala.collection.JavaConverters._
 import org.apache.commons.io.IOUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
-
-import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.{SparkConf, SparkContext}
 
 /**
  * Default implementation of [[LogStore]] for Hadoop [[FileSystem]] implementations.

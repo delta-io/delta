@@ -25,6 +25,9 @@ import scala.collection.mutable.{ArrayBuffer, HashSet}
 import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
+import org.apache.hadoop.fs.Path
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files._
@@ -32,10 +35,6 @@ import org.apache.spark.sql.delta.hooks.{GenerateSymlinkManifest, PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.hadoop.fs.Path
-
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
 import org.apache.spark.util.{Clock, Utils}
 

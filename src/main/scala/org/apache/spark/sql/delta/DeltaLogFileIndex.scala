@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta
 
 import org.apache.hadoop.fs._
-
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, PartitionDirectory}

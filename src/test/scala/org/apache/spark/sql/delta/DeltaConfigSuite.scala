@@ -18,9 +18,8 @@ package org.apache.spark.sql.delta
 
 import java.util.concurrent.TimeUnit
 
-import org.apache.spark.sql.delta.DeltaConfigs.{isValidIntervalConfigValue, parseCalendarInterval}
-
 import org.apache.spark.SparkFunSuite
+import org.apache.spark.sql.delta.DeltaConfigs.{isValidIntervalConfigValue, parseCalendarInterval}
 import org.apache.spark.unsafe.types.CalendarInterval
 
 class DeltaConfigSuite extends SparkFunSuite {

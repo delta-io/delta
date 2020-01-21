@@ -20,15 +20,14 @@ import java.io.File
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations}
-import org.apache.spark.sql.delta.actions.Metadata
-import org.apache.spark.sql.delta.schema.Invariants.{ArbitraryExpression, NotNull, PersistedExpression}
-
 import org.apache.spark.SparkException
 import org.apache.spark.sql._
+import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.schema.Invariants.{ArbitraryExpression, NotNull, PersistedExpression}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations}
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.streaming.StreamingQueryException
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.{SQLTestUtils, SharedSparkSession}
 import org.apache.spark.sql.types._
 
 class InvariantEnforcementSuite extends QueryTest

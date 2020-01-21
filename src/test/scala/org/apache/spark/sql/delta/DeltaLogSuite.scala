@@ -18,14 +18,13 @@ package org.apache.spark.sql.delta
 
 import java.io.{File, FileNotFoundException}
 
+import org.apache.hadoop.fs.Path
+import org.apache.spark.rdd.RDD
+import org.apache.spark.sql._
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
-import org.apache.hadoop.fs.Path
-
-import org.apache.spark.rdd.RDD
-import org.apache.spark.sql._
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.{SQLTestUtils, SharedSparkSession}
 import org.apache.spark.util.Utils
 
 // scalastyle:off: removeFile

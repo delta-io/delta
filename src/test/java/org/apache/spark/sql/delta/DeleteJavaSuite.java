@@ -16,21 +16,19 @@
 
 package test.org.apache.spark.sql.delta;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-
-import scala.Tuple2;
-
 import io.delta.tables.DeltaTable;
+import org.apache.spark.sql.*;
+import org.apache.spark.sql.test.TestSparkSession;
+import org.apache.spark.util.Utils;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import scala.Tuple2;
 
-import org.apache.spark.sql.*;
-import org.apache.spark.sql.test.TestSparkSession;
-import org.apache.spark.util.Utils;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 public class DeleteJavaSuite {
 

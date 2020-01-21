@@ -16,14 +16,13 @@
 
 package org.apache.spark.sql.delta.commands
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier}
-import org.apache.spark.sql.delta.hooks.GenerateSymlinkManifest
 import org.apache.hadoop.fs.Path
-
-import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.delta.hooks.GenerateSymlinkManifest
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier}
 import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
 
 trait DeltaGenerateCommandBase extends RunnableCommand {
 

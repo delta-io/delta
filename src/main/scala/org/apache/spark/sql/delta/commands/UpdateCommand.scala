@@ -16,18 +16,17 @@
 
 package org.apache.spark.sql.delta.commands
 
-import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, DeltaTableUtils, OptimisticTransaction}
-import org.apache.spark.sql.delta.actions.{Action, AddFile}
-import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.hadoop.fs.Path
-
-import org.apache.spark.sql.{Column, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Alias, Expression, If, Literal}
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.delta.actions.{Action, AddFile}
+import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, DeltaTableUtils, OptimisticTransaction}
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.functions.input_file_name
 import org.apache.spark.sql.types.BooleanType
+import org.apache.spark.sql.{Column, Dataset, Row, SparkSession}
 
 /**
  * Performs an Update using `updateExpression` on the rows that match `condition`

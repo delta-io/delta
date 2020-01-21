@@ -23,13 +23,12 @@ import java.util.concurrent.{ConcurrentHashMap, TimeUnit}
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.util.FileNames
 import com.google.common.cache.CacheBuilder
 import com.google.common.io.CountingOutputStream
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs._
-
 import org.apache.spark.SparkConf
+import org.apache.spark.sql.delta.util.FileNames
 
 /**
  * Single Spark-driver/JVM LogStore implementation for S3.

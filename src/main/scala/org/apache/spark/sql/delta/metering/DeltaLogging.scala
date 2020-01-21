@@ -19,12 +19,11 @@ package org.apache.spark.sql.delta.metering
 import scala.util.Try
 import scala.util.control.NonFatal
 
-import com.databricks.spark.util.{DatabricksLogging, OpType, TagDefinition}
 import com.databricks.spark.util.MetricDefinitions.{EVENT_LOGGING_FAILURE, EVENT_TAHOE}
 import com.databricks.spark.util.TagDefinitions.{TAG_OP_TYPE, TAG_TAHOE_ID, TAG_TAHOE_PATH}
+import com.databricks.spark.util.{DatabricksLogging, OpType, TagDefinition}
 import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.util.DeltaProgressReporter
-import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.delta.util.{DeltaProgressReporter, JsonUtils}
 
 /**
  * Convenience wrappers for logging that include delta specific options and

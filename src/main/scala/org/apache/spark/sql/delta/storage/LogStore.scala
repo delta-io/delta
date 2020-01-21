@@ -16,14 +16,13 @@
 
 package org.apache.spark.sql.delta.storage
 
-import org.apache.spark.sql.delta.DeltaLog
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
-
-import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.util.Utils
+import org.apache.spark.{SparkConf, SparkContext}
 
 /**
  * General interface for all critical file system operations required to read and write the

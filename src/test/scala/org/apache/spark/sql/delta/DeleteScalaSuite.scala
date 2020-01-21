@@ -17,8 +17,7 @@
 package org.apache.spark.sql.delta
 
 import io.delta.tables.{DeltaTable, DeltaTableTestUtils}
-
-import org.apache.spark.sql.{functions, Row}
+import org.apache.spark.sql.{Row, functions}
 
 class DeleteScalaSuite extends DeleteSuiteBase {
 

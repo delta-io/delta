@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta
 
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.SparkFunSuite
 
 class FileNamesSuite extends SparkFunSuite {

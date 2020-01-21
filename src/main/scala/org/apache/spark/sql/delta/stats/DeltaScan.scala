@@ -16,10 +16,9 @@
 
 package org.apache.spark.sql.delta.stats
 
-import org.apache.spark.sql.delta.actions.AddFile
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
-
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.delta.actions.AddFile
 
 /**
  * Note: Please don't add any new constructor to this class. `jackson-module-scala` always picks up

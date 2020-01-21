@@ -17,7 +17,6 @@
 package io.delta.sql.parser
 
 import io.delta.tables.execution.VacuumTableCommand
-
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.TableIdentifier
 

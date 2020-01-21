@@ -18,10 +18,8 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Action, FileAction}
 import org.apache.spark.sql.delta.util.FileNames
-
-import org.apache.spark.SparkConf
-import org.apache.spark.sql.{AnalysisException, QueryTest}
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.{AnalysisException, QueryTest}
 import org.apache.spark.util.Utils
 
 class DeltaOptionSuite extends QueryTest

@@ -20,17 +20,16 @@ package org.apache.spark.sql.delta.commands
 import java.io.FileNotFoundException
 import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier, Snapshot}
-import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
-
-import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.encoders.{ExpressionEncoder, RowEncoder}
 import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier, Snapshot}
 import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.{Row, SparkSession}
 
 /** The result returned by the `describe detail` command. */
 case class TableDetail(

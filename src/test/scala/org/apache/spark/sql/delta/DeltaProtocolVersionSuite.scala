@@ -18,11 +18,10 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 
+import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
-
-import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 

@@ -18,12 +18,11 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 
-import org.apache.spark.sql.delta.DeltaOperations.Truncate
-import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.delta.DeltaOperations.Truncate
+import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.unsafe.types.CalendarInterval
 

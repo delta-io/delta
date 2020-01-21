@@ -16,16 +16,13 @@
 
 package org.apache.spark.sql.delta
 
-import java.util.ConcurrentModificationException
-
-import org.apache.spark.sql.delta.DeltaOperations.{Delete, ManualUpdate, Truncate}
-import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, Metadata, RemoveFile, SetTransaction}
 import org.apache.hadoop.fs.Path
-
-import org.apache.spark.sql.{QueryTest, Row}
+import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
+import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{StringType, StructField, StructType}
+import org.apache.spark.sql.{QueryTest, Row}
 
 class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
   private val addA = AddFile("a", Map.empty, 1, 1, dataChange = true)

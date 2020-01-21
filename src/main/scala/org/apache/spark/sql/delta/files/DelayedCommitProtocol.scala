@@ -23,15 +23,14 @@ import java.util.UUID
 import scala.collection.mutable.ArrayBuffer
 import scala.util.Random
 
-import org.apache.spark.sql.delta.actions.AddFile
-import org.apache.spark.sql.delta.util.{DateFormatter, PartitionUtils, TimestampFormatter}
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapreduce.{JobContext, TaskAttemptContext}
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.io.FileCommitProtocol
 import org.apache.spark.internal.io.FileCommitProtocol.TaskCommitMessage
 import org.apache.spark.sql.catalyst.expressions.Cast
+import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.util.{DateFormatter, PartitionUtils, TimestampFormatter}
 import org.apache.spark.sql.types.StringType
 
 /**

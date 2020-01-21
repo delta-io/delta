@@ -16,11 +16,10 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 
 /**
  * An identifier for a Delta table containing one of the path or the table identifier.

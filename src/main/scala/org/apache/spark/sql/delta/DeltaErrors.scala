@@ -20,21 +20,20 @@ package org.apache.spark.sql.delta
 import java.io.FileNotFoundException
 import java.util.ConcurrentModificationException
 
+import org.apache.hadoop.fs.Path
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata}
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{Invariant, InvariantViolationException}
 import org.apache.spark.sql.delta.util.JsonUtils
-import org.apache.hadoop.fs.Path
-
-import org.apache.spark.{SparkConf, SparkEnv}
-import org.apache.spark.sql.{AnalysisException, SparkSession}
-import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
+import org.apache.spark.sql.{AnalysisException, SparkSession}
+import org.apache.spark.{SparkConf, SparkEnv}
 
 trait DocsPath {
   /**

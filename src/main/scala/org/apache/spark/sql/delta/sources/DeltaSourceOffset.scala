@@ -18,10 +18,9 @@ package org.apache.spark.sql.delta.sources
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.execution.streaming.{Offset, SerializedOffset}
 import org.json4s._
 import org.json4s.jackson.JsonMethods.parse
-
-import org.apache.spark.sql.execution.streaming.{Offset, SerializedOffset}
 
 /**
  * Tracks how far we processed in when reading changes from the [[DeltaLog]].

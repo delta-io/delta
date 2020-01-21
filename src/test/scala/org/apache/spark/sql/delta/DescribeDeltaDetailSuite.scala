@@ -16,13 +16,11 @@
 
 package org.apache.spark.sql.delta
 
-import java.io.File
-import java.io.FileNotFoundException
+import java.io.{File, FileNotFoundException}
 
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-
-import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.util.Utils
 
 trait DescribeDeltaDetailSuiteBase extends QueryTest

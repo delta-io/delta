@@ -16,15 +16,14 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.hadoop.fs.Path
+import org.apache.spark.SparkException
+import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.hadoop.fs.Path
-
-import org.apache.spark.SparkException
-import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
-import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
+import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.util.Utils
 
 abstract class ConvertToDeltaSuiteBase extends QueryTest

@@ -17,11 +17,10 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql._
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{Action, AddFile}
 import org.apache.spark.sql.delta.schema.ImplicitMetadataOperation
-
-import org.apache.spark.sql._
 import org.apache.spark.sql.execution.command.RunnableCommand
 
 /**

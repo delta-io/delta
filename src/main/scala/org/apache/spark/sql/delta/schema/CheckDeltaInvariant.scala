@@ -16,13 +16,12 @@
 
 package org.apache.spark.sql.delta.schema
 
-import org.apache.spark.sql.delta.schema.Invariants.{ArbitraryExpression, NotNull}
-
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.expressions.{Expression, NonSQLExpression, UnaryExpression}
-import org.apache.spark.sql.catalyst.expressions.codegen.{Block, CodegenContext, ExprCode, JavaCode, TrueLiteral}
 import org.apache.spark.sql.catalyst.expressions.codegen.Block._
+import org.apache.spark.sql.catalyst.expressions.codegen._
+import org.apache.spark.sql.catalyst.expressions.{Expression, NonSQLExpression, UnaryExpression}
+import org.apache.spark.sql.delta.schema.Invariants.{ArbitraryExpression, NotNull}
 import org.apache.spark.sql.types.{DataType, NullType}
 
 /** An expression that validates a specific invariant on a column, before writing into Delta. */

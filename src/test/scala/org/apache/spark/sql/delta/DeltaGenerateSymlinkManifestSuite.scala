@@ -19,15 +19,14 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.net.URI
 
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs._
+import org.apache.hadoop.util.Progressable
+import org.apache.spark.sql._
 import org.apache.spark.sql.delta.commands.DeltaGenerateCommand
 import org.apache.spark.sql.delta.hooks.GenerateSymlinkManifest
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.DeltaFileOperations
-import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs._
-import org.apache.hadoop.util.Progressable
-
-import org.apache.spark.sql._
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -511,8 +510,8 @@ class SymlinkManifestFailureTestAbstractFileSystem(
     false) {
 
   // Implementation copied from RawLocalFs
-  import org.apache.hadoop.fs.local.LocalConfigKeys
   import org.apache.hadoop.fs._
+  import org.apache.hadoop.fs.local.LocalConfigKeys
 
   override def getUriDefaultPort(): Int = -1
   override def getServerDefaults(): FsServerDefaults = LocalConfigKeys.getServerDefaults()

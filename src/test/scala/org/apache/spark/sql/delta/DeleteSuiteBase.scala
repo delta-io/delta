@@ -18,13 +18,12 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
-import org.scalatest.BeforeAndAfterEach
-
-import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.util.Utils
+import org.scalatest.BeforeAndAfterEach
 
 abstract class DeleteSuiteBase extends QueryTest
   with SharedSparkSession with BeforeAndAfterEach {

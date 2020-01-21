@@ -19,18 +19,16 @@ package org.apache.spark.sql.delta.schema
 import java.io.File
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
+import org.apache.spark.sql._
 import org.apache.spark.sql.delta.actions.SingleAction
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
-
-import org.apache.spark.SparkConf
-import org.apache.spark.sql._
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.StreamingQueryException
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.{SQLTestUtils, SharedSparkSession}
 import org.apache.spark.sql.types._
 
 sealed trait SaveOperation {

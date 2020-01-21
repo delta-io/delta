@@ -18,13 +18,12 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 
-import org.apache.spark.sql.delta.actions.{Action, FileAction, SingleAction}
 import org.apache.hadoop.fs.Path
-
-import org.apache.spark.sql.{QueryTest, SparkSession}
+import org.apache.spark.sql.delta.actions.{Action, FileAction, SingleAction}
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.util.Utils
 
 trait EvolvabilitySuiteBase extends QueryTest with SharedSparkSession {
@@ -88,8 +87,9 @@ object EvolvabilitySuiteBase {
 
   /** Validate the generated data contains all [[Action]] types */
   def validateData(spark: SparkSession, path: String): Unit = {
-    import org.apache.spark.sql.delta.util.FileNames._
     import scala.reflect.runtime.{universe => ru}
+
+    import org.apache.spark.sql.delta.util.FileNames._
     import spark.implicits._
 
     val mirror = ru.runtimeMirror(this.getClass.getClassLoader)

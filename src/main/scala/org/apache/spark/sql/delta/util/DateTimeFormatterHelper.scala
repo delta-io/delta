@@ -43,8 +43,8 @@ import java.time.format.{DateTimeFormatter, DateTimeFormatterBuilder, ResolverSt
 import java.time.temporal.{ChronoField, TemporalAccessor, TemporalQueries}
 import java.util.Locale
 
-import org.apache.spark.sql.delta.util.DateTimeFormatterHelper._
 import com.google.common.cache.CacheBuilder
+import org.apache.spark.sql.delta.util.DateTimeFormatterHelper._
 
 /**
  * Forked from [[org.apache.spark.sql.catalyst.util.DateTimeFormatterHelper]]

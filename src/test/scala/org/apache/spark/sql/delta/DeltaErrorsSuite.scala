@@ -19,10 +19,9 @@ package org.apache.spark.sql.delta
 import scala.sys.process.Process
 
 import org.apache.hadoop.fs.Path
-import org.scalatest.GivenWhenThen
-
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.{SQLTestUtils, SharedSparkSession}
+import org.scalatest.GivenWhenThen
 
 trait DeltaErrorsSuiteBase
     extends QueryTest

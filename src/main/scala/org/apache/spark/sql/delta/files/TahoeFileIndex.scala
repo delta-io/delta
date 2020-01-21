@@ -18,14 +18,12 @@ package org.apache.spark.sql.delta.files
 
 import java.net.URI
 
-import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
-import org.apache.spark.sql.delta.actions.AddFile
-import org.apache.spark.sql.delta.actions.SingleAction.addFileEncoder
-import org.apache.hadoop.fs.FileStatus
-import org.apache.hadoop.fs.Path
-
+import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{Cast, Expression, GenericInternalRow, Literal}
+import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.actions.SingleAction.addFileEncoder
+import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.types.StructType
 

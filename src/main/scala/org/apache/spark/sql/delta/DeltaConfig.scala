@@ -18,10 +18,9 @@ package org.apache.spark.sql.delta
 
 import java.util.{HashMap, Locale}
 
+import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.metering.DeltaLogging
-
-import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.unsafe.types.CalendarInterval
 

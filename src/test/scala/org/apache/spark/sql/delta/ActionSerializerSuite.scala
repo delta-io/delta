@@ -16,9 +16,8 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions._
-
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 

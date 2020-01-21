@@ -18,15 +18,14 @@ package org.apache.spark.sql.delta.schema
 
 import java.io.File
 
+import org.apache.spark.sql._
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.AddFile
-
-import org.apache.spark.sql._
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.{StreamingQuery, StreamingQueryException}
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.{SQLTestUtils, SharedSparkSession}
 
 class CaseSensitivitySuite extends QueryTest
   with SharedSparkSession  with SQLTestUtils {

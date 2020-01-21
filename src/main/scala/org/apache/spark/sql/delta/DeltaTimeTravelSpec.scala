@@ -18,12 +18,11 @@ package org.apache.spark.sql.delta
 
 import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.commons.lang3.time.FastDateFormat
-
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.expressions.{Cast, Expression, Literal, PreciseTimestampConversion}
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{LongType, TimestampType}
 

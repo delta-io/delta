@@ -18,19 +18,18 @@ package org.apache.spark.sql.delta.commands
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.SparkContext
+import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.encoders.{ExpressionEncoder, RowEncoder}
+import org.apache.spark.sql.catalyst.expressions.codegen._
+import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, Expression, Literal, PredicateHelper, UnsafeProjection}
+import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{AnalysisHelper, SetAccumulator}
-
-import org.apache.spark.SparkContext
-import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.encoders.{ExpressionEncoder, RowEncoder}
-import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, Expression, Literal, PredicateHelper, UnsafeProjection}
-import org.apache.spark.sql.catalyst.expressions.codegen._
-import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
@@ -95,8 +94,8 @@ case class MergeIntoCommand(
     notMatchedClause: Option[MergeIntoInsertClause]) extends RunnableCommand
   with DeltaCommand with PredicateHelper with AnalysisHelper {
 
-  import SQLMetrics._
   import MergeIntoCommand._
+  import SQLMetrics._
 
   @transient private lazy val sc: SparkContext = SparkContext.getOrCreate()
   @transient private lazy val targetDeltaLog: DeltaLog = targetFileIndex.deltaLog

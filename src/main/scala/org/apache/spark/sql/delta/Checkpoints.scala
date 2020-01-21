@@ -21,17 +21,15 @@ import java.util.UUID
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.actions.{Action, Metadata, SingleAction}
-import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.storage.LogStore
-import org.apache.spark.sql.delta.util.DeltaFileOperations
-import org.apache.spark.sql.delta.util.FileNames._
-import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
 import org.apache.hadoop.mapreduce.{Job, TaskType}
-
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.delta.actions.{Action, Metadata, SingleAction}
+import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.storage.LogStore
+import org.apache.spark.sql.delta.util.FileNames._
+import org.apache.spark.sql.delta.util.{DeltaFileOperations, JsonUtils}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.util.SerializableConfiguration
 

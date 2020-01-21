@@ -17,10 +17,9 @@
 package org.apache.spark.sql.delta.test
 
 import io.delta.sql.DeltaSparkSessionExtension
-
 import org.apache.spark.SparkConf
+import org.apache.spark.sql.test.{SharedSparkSession, TestSparkSession}
 import org.apache.spark.sql.{SparkSession, SparkSessionExtensions}
-import org.apache.spark.sql.test.{TestSparkSession, SharedSparkSession}
 
 /**
  * Because `TestSparkSession` doesn't pick up the conf `spark.sql.extensions` in Spark 2.4.x, we use

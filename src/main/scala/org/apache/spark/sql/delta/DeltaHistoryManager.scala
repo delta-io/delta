@@ -22,15 +22,14 @@ import java.sql.Timestamp
 
 import scala.collection.mutable
 
+import org.apache.hadoop.fs.{FileStatus, Path}
+import org.apache.spark.SparkEnv
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, CommitMarker}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.LogStore
-import org.apache.spark.sql.delta.util.{DateTimeUtils, FileNames, TimestampFormatter}
 import org.apache.spark.sql.delta.util.FileNames._
-import org.apache.hadoop.fs.{FileStatus, Path}
-
-import org.apache.spark.SparkEnv
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.delta.util.{DateTimeUtils, FileNames, TimestampFormatter}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.util.SerializableConfiguration
 

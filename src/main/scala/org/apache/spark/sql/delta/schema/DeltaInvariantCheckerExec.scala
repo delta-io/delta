@@ -16,14 +16,13 @@
 
 package org.apache.spark.sql.delta.schema
 
-import org.apache.spark.sql.delta.DeltaErrors
-import org.apache.spark.sql.delta.schema.Invariants.NotNull
-
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, BindReferences, Expression, GetStructField, Literal, SortOrder}
 import org.apache.spark.sql.catalyst.expressions.codegen.GenerateUnsafeProjection
+import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, BindReferences, Expression, GetStructField, Literal, SortOrder}
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
+import org.apache.spark.sql.delta.DeltaErrors
+import org.apache.spark.sql.delta.schema.Invariants.NotNull
 import org.apache.spark.sql.execution.{SparkPlan, UnaryExecNode}
 import org.apache.spark.sql.types.{NullType, StructType}
 

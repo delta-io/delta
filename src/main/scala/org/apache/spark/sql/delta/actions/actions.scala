@@ -19,16 +19,15 @@ package org.apache.spark.sql.delta.actions
 import java.net.URI
 import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation.{JsonIgnore, JsonInclude}
 import com.fasterxml.jackson.core.JsonGenerator
-import com.fasterxml.jackson.databind.{JsonSerializer, SerializerProvider}
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
-import org.codehaus.jackson.annotate.JsonRawValue
-
+import com.fasterxml.jackson.databind.{JsonSerializer, SerializerProvider}
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
+import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.types.{DataType, StructType}
+import org.codehaus.jackson.annotate.JsonRawValue
 
 /** Thrown when the protocol version of a table is greater than supported by this client. */
 class InvalidProtocolVersionException extends RuntimeException(

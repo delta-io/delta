@@ -16,17 +16,19 @@
 
 package io.delta.tables;
 
-import java.util.Arrays;
-import java.util.List;
-
-import org.apache.spark.sql.test.*;
-import org.apache.spark.sql.*;
-
+import org.apache.spark.sql.Dataset;
+import org.apache.spark.sql.Encoders;
+import org.apache.spark.sql.QueryTest$;
+import org.apache.spark.sql.Row;
+import org.apache.spark.sql.test.TestSparkSession;
 import org.apache.spark.util.Utils;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.Arrays;
+import java.util.List;
 
 public class JavaDeltaTableSuite {
 
