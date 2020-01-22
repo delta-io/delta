@@ -1135,8 +1135,8 @@ abstract class MergeIntoSuiteBase
       withKeyValueData(
         source = Seq.empty,
         target = Seq.empty,
-        sourceKeyValueNames = ("key", "newValue"),
-        targetKeyValueNames = ("key", "oldValue")
+        sourceKeyValueNames = ("key", "srcValue"),
+        targetKeyValueNames = ("key", "tgtValue")
       ) { case (sourceName, targetName) =>
         val errMsg = intercept[AnalysisException] {
           executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
@@ -1149,23 +1149,23 @@ abstract class MergeIntoSuiteBase
 
   testAnalysisErrorsInExtendedMerge("update condition - ambiguous reference")(
     mergeOn = "s.key = t.key",
-    update(condition = "key > 1", set = "oldValue = newValue"))(
+    update(condition = "key > 1", set = "tgtValue = srcValue"))(
     errorStrs = "reference 'key' is ambiguous" :: Nil)
 
   testAnalysisErrorsInExtendedMerge("update condition - unknown reference")(
     mergeOn = "s.key = t.key",
-    update(condition = "unknownAttrib > 1", set = "oldValue = newValue"))(
-    // Should show unknownAttrib as invalid ref and (key, oldValue, newValue) as valid column names.
-    errorStrs = "UPDATE condition" :: "unknownAttrib" :: "key" :: "oldValue" :: "newValue" :: Nil)
+    update(condition = "unknownAttrib > 1", set = "tgtValue = srcValue"))(
+    // Should show unknownAttrib as invalid ref and (key, tgtValue, srcValue) as valid column names.
+    errorStrs = "UPDATE condition" :: "unknownAttrib" :: "key" :: "tgtValue" :: "srcValue" :: Nil)
 
   testAnalysisErrorsInExtendedMerge("update condition - aggregation function")(
     mergeOn = "s.key = t.key",
-    update(condition = "max(0) > 0", set = "oldValue = newValue"))(
+    update(condition = "max(0) > 0", set = "tgtValue = srcValue"))(
     errorStrs = "UPDATE condition" :: "aggregate functions are not supported" :: Nil)
 
   testAnalysisErrorsInExtendedMerge("update condition - subquery")(
     mergeOn = "s.key = t.key",
-    update(condition = "s.value in (select value from t)", set = "oldValue = newValue"))(
+    update(condition = "s.value in (select value from t)", set = "tgtValue = srcValue"))(
     errorStrs = Nil) // subqueries fail for unresolved reference to `t`
 
   testAnalysisErrorsInExtendedMerge("delete condition - ambiguous reference")(
@@ -1176,8 +1176,8 @@ abstract class MergeIntoSuiteBase
   testAnalysisErrorsInExtendedMerge("delete condition - unknown reference")(
     mergeOn = "s.key = t.key",
     delete(condition = "unknownAttrib > 1"))(
-    // Should show unknownAttrib as invalid ref and (key, oldValue, newValue) as valid column names.
-    errorStrs = "DELETE condition" :: "unknownAttrib" :: "key" :: "oldValue" :: "newValue" :: Nil)
+    // Should show unknownAttrib as invalid ref and (key, tgtValue, srcValue) as valid column names.
+    errorStrs = "DELETE condition" :: "unknownAttrib" :: "key" :: "tgtValue" :: "srcValue" :: Nil)
 
   testAnalysisErrorsInExtendedMerge("delete condition - aggregation function")(
     mergeOn = "s.key = t.key",
@@ -1186,33 +1186,33 @@ abstract class MergeIntoSuiteBase
 
   testAnalysisErrorsInExtendedMerge("delete condition - subquery")(
     mergeOn = "s.key = t.key",
-    delete(condition = "s.newValue in (select oldValue from t)"))(
+    delete(condition = "s.srcValue in (select tgtValue from t)"))(
     errorStrs = Nil)  // subqueries fail for unresolved reference to `t`
 
   testAnalysisErrorsInExtendedMerge("insert condition - unknown reference")(
     mergeOn = "s.key = t.key",
-    insert(condition = "unknownAttrib > 1", values = "(key, oldValue) VALUES (s.key, s.newValue)"))(
-    // Should show unknownAttrib as invalid ref and (key, newValue) as valid column names,
-    // but not show oldValue as a valid name as target columns cannot be present in insert clause.
-    errorStrs = "INSERT condition" :: "unknownAttrib" :: "key" :: "newValue" :: Nil,
-    notErrorStrs = "oldValue")
+    insert(condition = "unknownAttrib > 1", values = "(key, tgtValue) VALUES (s.key, s.srcValue)"))(
+    // Should show unknownAttrib as invalid ref and (key, srcValue) as valid column names,
+    // but not show tgtValue as a valid name as target columns cannot be present in insert clause.
+    errorStrs = "INSERT condition" :: "unknownAttrib" :: "key" :: "srcValue" :: Nil,
+    notErrorStrs = "tgtValue")
 
   testAnalysisErrorsInExtendedMerge("insert condition - reference to target table column")(
     mergeOn = "s.key = t.key",
-    insert(condition = "oldValue > 1", values = "(key, oldValue) VALUES (s.key, s.newValue)"))(
-    // Should show oldValue as invalid ref and (key, newValue) as valid column names
-    errorStrs = "INSERT condition" :: "oldValue" :: "key" :: "newValue" :: Nil)
+    insert(condition = "tgtValue > 1", values = "(key, tgtValue) VALUES (s.key, s.srcValue)"))(
+    // Should show tgtValue as invalid ref and (key, srcValue) as valid column names
+    errorStrs = "INSERT condition" :: "tgtValue" :: "key" :: "srcValue" :: Nil)
 
   testAnalysisErrorsInExtendedMerge("insert condition - aggregation function")(
     mergeOn = "s.key = t.key",
-    insert(condition = "max(0) > 0", values = "(key, oldValue) VALUES (s.key, s.newValue)"))(
+    insert(condition = "max(0) > 0", values = "(key, tgtValue) VALUES (s.key, s.srcValue)"))(
     errorStrs = "INSERT condition" :: "aggregate functions are not supported" :: Nil)
 
   testAnalysisErrorsInExtendedMerge("insert condition - subquery")(
     mergeOn = "s.key = t.key",
     insert(
-      condition = "s.newValue in (select newValue from s)",
-      values = "(key, oldValue) VALUES (s.key, s.newValue)"))(
+      condition = "s.srcValue in (select srcValue from s)",
+      values = "(key, tgtValue) VALUES (s.key, s.srcValue)"))(
     errorStrs = Nil)  // subqueries fail for unresolved reference to `s`
 
 
