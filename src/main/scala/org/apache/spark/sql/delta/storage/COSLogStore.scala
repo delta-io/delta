@@ -30,8 +30,8 @@ import org.apache.spark.SparkConf
  * - Write is atomic.
  *   Note: Write is atomic when using the Stocator v1.0.37+ - Storage Connector for Apache Spark
  *   (https://github.com/CODAIT/stocator) by setting the configuration `fs.cos.atomic.write` to true
- *   If the flag fs.cos.fast.upload is set to true atomic writes will be
- *   available only for writes that require only one block.
+ *   and is available only when the write is done in one chunk.
+ *   (for more info see the documentation for Stocator)
  * - List-after-write is consistent.
  */
 class COSLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
