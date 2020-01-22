@@ -353,7 +353,7 @@ class DeltaLog private(
           // When the state is not empty, it's a real issue and we can't continue to execution.
           if (currentSnapshot.version != -1) {
             val e = new FileNotFoundException(message)
-            e.setStackTrace(f.getStackTrace())
+            e.setStackTrace(f.getStackTrace)
             throw e
           }
       }
@@ -752,7 +752,7 @@ object DeltaLog extends DeltaLogging {
 
     // Invalidate the cache if the reference is no longer valid as a result of the
     // log being deleted.
-    if (cached.snapshot.version == -1 || cached.isValid()) {
+    if (cached.snapshot.version == -1 || cached.isValid) {
       cached
     } else {
       deltaLogCache.invalidate(path)

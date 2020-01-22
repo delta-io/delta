@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.delta.sources.DeltaSourceUtils
+import org.apache.spark.sql.internal.SQLConf
 
 /**
  * An identifier for a Delta table containing one of the path or the table identifier.
@@ -50,7 +50,7 @@ case class DeltaTableIdentifier(
 
   def quotedString: String = {
     val replacedId = quoteIdentifier(identifier)
-    val replacedDb = database.map(quoteIdentifier(_))
+    val replacedDb = database.map(quoteIdentifier)
 
     if (replacedDb.isDefined) s"`${replacedDb.get}`.`$replacedId`" else s"`$replacedId`"
   }
@@ -76,9 +76,11 @@ object DeltaTableIdentifier {
     def databaseExists = catalog.databaseExists(identifier.database.get)
     def tableExists = catalog.tableExists(identifier)
 
-    DeltaSourceUtils.isDeltaTable(identifier.database) &&
+    spark.sessionState.conf.runSQLonFile &&
+      DeltaSourceUtils.isDeltaTable(identifier.database) &&
       !tableIsTemporaryTable &&
-      (!databaseExists || !tableExists)
+      (!databaseExists || !tableExists) &&
+      new Path(identifier.table).isAbsolute
   }
 
   /**

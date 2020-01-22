@@ -156,13 +156,13 @@ object DeltaTableUtils extends PredicateHelper
       options: Map[String, String] = Map.empty): Option[Path] = {
     val fs = path.getFileSystem(spark.sessionState.newHadoopConfWithOptions(options))
     var currentPath = path
-    while (currentPath != null && currentPath.getName() != "_delta_log" &&
-        currentPath.getName() != "_samples") {
+    while (currentPath != null && currentPath.getName != "_delta_log" &&
+        currentPath.getName != "_samples") {
       val deltaLogPath = new Path(currentPath, "_delta_log")
       if (Try(fs.exists(deltaLogPath)).getOrElse(false)) {
         return Option(currentPath)
       }
-      currentPath = currentPath.getParent()
+      currentPath = currentPath.getParent
     }
     None
   }

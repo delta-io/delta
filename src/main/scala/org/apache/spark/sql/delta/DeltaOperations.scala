@@ -62,6 +62,11 @@ object DeltaOperations {
       epochId: Long) extends Operation("STREAMING UPDATE") {
     override val parameters: Map[String, Any] =
       Map("outputMode" -> outputMode.toString, "queryId" -> queryId, "epochId" -> epochId.toString)
+    override val metricParameters: Seq[String] = Seq(
+      "numAddedFiles",
+      "numRemovedFiles",
+      "numOutputRows"
+    )
   }
   /** Recorded while deleting certain partitions. */
   case class Delete(predicate: Seq[String]) extends Operation("DELETE") {
@@ -102,6 +107,17 @@ object DeltaOperations {
       "zOrderBy" -> JsonUtils.toJson(zOrderBy),
       "batchId" -> JsonUtils.toJson(batchId),
       "auto" -> auto
+    )
+    override val metricParameters: Seq[String] = Seq(
+      "numAddedFiles",
+      "numRemovedFiles",
+      "numAddedBytes",
+      "numRemovedBytes",
+      "minFileSize",
+      "p25FileSize",
+      "p50FileSize",
+      "p75FileSize",
+      "maxFileSize"
     )
   }
   /** Recorded when a merge operation is committed to the table. */

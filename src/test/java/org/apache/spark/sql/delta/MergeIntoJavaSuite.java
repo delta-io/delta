@@ -21,7 +21,6 @@ import org.apache.spark.sql.*;
 import org.apache.spark.sql.test.TestSparkSession;
 import org.apache.spark.util.Utils;
 import org.junit.After;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import scala.Tuple2;
@@ -76,8 +75,7 @@ public class MergeIntoJavaSuite implements Serializable {
         List<Row> expectedAnswer = createKVDataSet(
             Arrays.asList(tuple2(1, 100), tuple2(2, 20), tuple2(3, 30))).collectAsList();
 
-        String testResult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
-        Assert.assertNull(testResult);
+        QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
     }
 
     @Test
@@ -109,8 +107,7 @@ public class MergeIntoJavaSuite implements Serializable {
         List<Row> expectedAnswer = createKVDataSet(
             Arrays.asList(tuple2(1, 100), tuple2(2, 20), tuple2(3, 30))).collectAsList();
 
-        String testResult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
-        Assert.assertNull(testResult);
+        QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
     }
 
     @Test
@@ -142,8 +139,7 @@ public class MergeIntoJavaSuite implements Serializable {
         List<Row> expectedAnswer = createKVDataSet(
             Arrays.asList(tuple2(1, 100), tuple2(2, 20), tuple2(3, 30))).collectAsList();
 
-        String testResult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
-        Assert.assertNull(testResult);
+        QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
     }
 
     @Test
@@ -165,8 +161,7 @@ public class MergeIntoJavaSuite implements Serializable {
         List<Row> expectedAnswer = createKVDataSet(Arrays.asList(tuple2(1, 100), tuple2(2, 20),
             tuple2(3, 30), tuple2(4, 41), tuple2(5, 51), tuple2(6, 60))).collectAsList();
 
-        String testResult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
-        Assert.assertNull(testResult);
+        QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
     }
 
     private Dataset<Row> createKVDataSet(

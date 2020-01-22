@@ -93,7 +93,7 @@ class DeltaDataSource
       throw DeltaErrors.schemaNotSetException
     }
     val options = new DeltaOptions(parameters, sqlContext.sparkSession.sessionState.conf)
-    new DeltaSource(sqlContext.sparkSession, deltaLog, options)
+    DeltaSource(sqlContext.sparkSession, deltaLog, options)
   }
 
   override def createSink(

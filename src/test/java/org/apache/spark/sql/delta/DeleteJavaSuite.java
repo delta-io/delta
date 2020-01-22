@@ -21,7 +21,6 @@ import org.apache.spark.sql.*;
 import org.apache.spark.sql.test.TestSparkSession;
 import org.apache.spark.util.Utils;
 import org.junit.After;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import scala.Tuple2;
@@ -60,8 +59,7 @@ public class DeleteJavaSuite {
         target.delete();
 
         List<Row> expectedAnswer = new ArrayList<>();
-        String testResult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
-        Assert.assertNull(testResult);
+        QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
     }
 
     @Test
@@ -76,8 +74,7 @@ public class DeleteJavaSuite {
 
         List<Row> expectedAnswer = createKVDataSet(
             Arrays.asList(tuple2(3, 30), tuple2(4, 40))).collectAsList();
-        String testResult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
-        Assert.assertNull(testResult);
+        QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
     }
 
     @Test
@@ -92,8 +89,7 @@ public class DeleteJavaSuite {
 
         List<Row> expectedAnswer = createKVDataSet(
             Arrays.asList(tuple2(3, 30), tuple2(4, 40))).collectAsList();
-        String testResult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
-        Assert.assertNull(testResult);
+        QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
     }
 
     private Dataset<Row> createKVDataSet(
