@@ -59,14 +59,16 @@ class COSLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
       // create is atomic
       val stream = fs.create(path, overwrite)
       try {
-        actions.map(_ + "\n").map(_.getBytes(UTF_8)).foreach(stream.write)
+        val byteOutput = actions.map(_ + "\n").map(_.getBytes(UTF_8))
+        val writeSize = byteOutput.foldLeft(0L)(_ + _.length)
         // verify the stream can be written in one chunk
         // there is no support for atomic multipart writes
-        if (stream.size() > multipartThreshold) {
+        if (writeSize > multipartThreshold) {
           throw new Exception(s"Atomic write failed for a write of size ${stream.size()} bytes," +
             s"current threshold for multipart upload is ${multipartThreshold} bytes. " +
             s"please increase the threshold '$getMultipartUploadThresholdKey'")
         }
+        byteOutput.foreach(stream.write)
         stream.close()
       } catch {
           case e: IOException =>
