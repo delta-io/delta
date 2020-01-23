@@ -27,6 +27,8 @@ import org.apache.spark.sql.internal.SQLConf
  */
 object DeltaSQLConf {
   def buildConf(key: String): ConfigBuilder = SQLConf.buildConf(s"spark.databricks.delta.$key")
+  def buildStaticConf(key: String): ConfigBuilder =
+    SQLConf.buildStaticConf(s"spark.databricks.delta.$key")
 
 
   val RESOLVE_TIME_TRAVEL_ON_IDENTIFIER =

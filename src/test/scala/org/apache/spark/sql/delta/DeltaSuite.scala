@@ -62,24 +62,24 @@ class DeltaSuite extends QueryTest
       // partition filter
       checkDatasetUnorderly(
         ds.where("part = 1"),
-        (1 -> 1), (3 -> 1), (5 -> 1), (7 -> 1), (9 -> 1))
+        1 -> 1, 3 -> 1, 5 -> 1, 7 -> 1, 9 -> 1)
       checkDatasetUnorderly(
         ds.where("part = 0"),
-        (0 -> 0), (2 -> 0), (4 -> 0), (6 -> 0), (8 -> 0))
+        0 -> 0, 2 -> 0, 4 -> 0, 6 -> 0, 8 -> 0)
       // data filter
       checkDatasetUnorderly(
         ds.where("value >= 5"),
-        (5 -> 1), (6 -> 0), (7 -> 1), (8 -> 0), (9 -> 1))
+        5 -> 1, 6 -> 0, 7 -> 1, 8 -> 0, 9 -> 1)
       checkDatasetUnorderly(
         ds.where("value < 5"),
-        (0 -> 0), (1 -> 1), (2 -> 0), (3 -> 1), (4 -> 0))
+        0 -> 0, 1 -> 1, 2 -> 0, 3 -> 1, 4 -> 0)
       // partition filter + data filter
       checkDatasetUnorderly(
         ds.where("part = 1 and value >= 5"),
-        (5 -> 1), (7 -> 1), (9 -> 1))
+        5 -> 1, 7 -> 1, 9 -> 1)
       checkDatasetUnorderly(
         ds.where("part = 1 and value < 5"),
-        (1 -> 1), (3 -> 1))
+        1 -> 1, 3 -> 1)
     }
   }
 
@@ -94,7 +94,7 @@ class DeltaSuite extends QueryTest
           .partitionBy(partitionColumn)
           .save(testPath)
         val ds = spark.read.format("delta").load(testPath).as[(Int, String)]
-        checkDatasetUnorderly(ds, (1 -> "a"), (2 -> "b"))
+        checkDatasetUnorderly(ds, 1 -> "a", 2 -> "b")
       }
     }
   }
@@ -200,7 +200,7 @@ class DeltaSuite extends QueryTest
     }.getMessage
     assert(e2.contains("Data written into Delta needs to contain at least one non-partitioned"))
 
-    var e3 = intercept[AnalysisException] {
+    val e3 = intercept[AnalysisException] {
       Seq(6).toDF()
         .withColumn("is_odd", $"value" % 2 =!= 0)
         .write
@@ -212,7 +212,7 @@ class DeltaSuite extends QueryTest
     assert(e3 == "Predicate references non-partition column 'not_a_column'. Only the " +
       "partition columns may be referenced: [is_odd];")
 
-    var e4 = intercept[AnalysisException] {
+    val e4 = intercept[AnalysisException] {
       Seq(6).toDF()
         .withColumn("is_odd", $"value" % 2 =!= 0)
         .write
@@ -758,7 +758,7 @@ class DeltaSuite extends QueryTest
         val thrown = intercept[SparkException] {
           data.toDF().count()
         }
-        assert(thrown.getMessage().contains("is not a Parquet file"))
+        assert(thrown.getMessage.contains("is not a Parquet file"))
       }
     }
   }
@@ -817,7 +817,7 @@ class DeltaSuite extends QueryTest
       val thrown = intercept[SparkException] {
         data.toDF().count()
       }
-      assert(thrown.getMessage().contains("FileNotFound"))
+      assert(thrown.getMessage.contains("FileNotFound"))
     }
   }
 

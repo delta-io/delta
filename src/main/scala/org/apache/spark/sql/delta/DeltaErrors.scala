@@ -318,7 +318,7 @@ object DeltaErrors
 
   def replaceWhereMismatchException(replaceWhere: String, badPartitions: String): Throwable = {
     new AnalysisException(
-      s"""Data written out does not match replaceWhere '${replaceWhere}'.
+      s"""Data written out does not match replaceWhere '$replaceWhere'.
          |Invalid data would be written to partitions $badPartitions.""".stripMargin)
   }
 
@@ -340,7 +340,7 @@ object DeltaErrors
   }
 
   def deltaVersionsNotContiguousException(deltaVersions: Seq[Long]): Throwable = {
-    new IllegalStateException(s"versions (${deltaVersions}) are not contiguous")
+    new IllegalStateException(s"versions ($deltaVersions) are not contiguous")
   }
 
   def schemaChangedException(oldSchema: StructType, newSchema: StructType): Throwable = {
