@@ -16,12 +16,12 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql._
 import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql._
 import org.apache.spark.util.Utils
 import org.scalatest.Tag
 

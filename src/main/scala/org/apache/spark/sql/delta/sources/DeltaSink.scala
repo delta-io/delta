@@ -22,13 +22,9 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.SetTransaction
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaUtils}
-import org.apache.hadoop.fs.Path
-
-import org.apache.spark.SparkContext
-import org.apache.spark.sql._
 import org.apache.spark.sql.execution.SQLExecution
-import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
+import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.streaming.{Sink, StreamExecution}
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.NullType

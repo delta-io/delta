@@ -21,7 +21,6 @@ import org.apache.spark.sql.*;
 import org.apache.spark.sql.test.TestSparkSession;
 import org.apache.spark.util.Utils;
 import org.junit.After;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import scala.Tuple2;
