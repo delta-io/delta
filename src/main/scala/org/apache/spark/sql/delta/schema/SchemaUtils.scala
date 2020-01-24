@@ -30,6 +30,9 @@ object SchemaUtils {
   // We use case insensitive resolution while writing into Delta
   val DELTA_COL_RESOLVER: (String, String) => Boolean =
     org.apache.spark.sql.catalyst.analysis.caseInsensitiveResolution
+  private val ARRAY_ELEMENT_INDEX = 0
+  private val MAP_KEY_INDEX = 0
+  private val MAP_VALUE_INDEX = 1
 
   /**
    * Finds `StructField`s that match a given check `f`. Returns the path to the column, and the
@@ -411,6 +414,15 @@ object SchemaUtils {
    * Returns the given column's ordinal within the given `schema` and the size of the last schema
    * size. The length of the returned position will be as long as how nested the column is.
    *
+   * For ArrayType: accessing the array's element adds a position 0 to the position list.
+   * e.g. accessing a.element.y would have the result -> Seq(..., positionOfA, 0, positionOfY)
+   *
+   * For MapType: accessing the map's key adds a position 0 to the position list.
+   * e.g. accessing m.key.y would have the result -> Seq(..., positionOfM, 0, positionOfY)
+   *
+   * For MapType: accessing the map's value adds a position 1 to the position list.
+   * e.g. accessing m.key.y would have the result -> Seq(..., positionOfM, 1, positionOfY)
+   *
    * @param column The column to search for in the given struct. If the length of `column` is
    *               greater than 1, we expect to enter a nested field.
    * @param schema The current struct we are looking at.
@@ -428,16 +440,50 @@ object SchemaUtils {
       if (pos == -1) {
         throw new IndexOutOfBoundsException(columnPath)
       }
-      val (children, lastSize) = schema(pos).dataType match {
-        case s: StructType =>
-          find(column.tail, s, stack :+ thisCol)
-        case ArrayType(s: StructType, _) =>
-          find(column.tail, s, stack :+ thisCol)
-        case o =>
+      val colTail = column.tail
+      val (children, lastSize) = (colTail, schema(pos).dataType) match {
+        case (_, s: StructType) =>
+          find(colTail, s, stack :+ thisCol)
+        case (Seq("element", _ @ _*), ArrayType(s: StructType, _)) =>
+          val (child, size) = find(colTail.tail, s, stack :+ thisCol)
+          (ARRAY_ELEMENT_INDEX +: child, size)
+        case (Seq(), ArrayType(s: StructType, _)) =>
+          find(colTail, s, stack :+ thisCol)
+        case (_, ArrayType(_, _)) =>
+          throw new AnalysisException(
+            s"""An ArrayType was found. In order to access elements of an ArrayType, specify
+               |${prettyFieldName(stack ++ Seq(thisCol, "element"))}
+               |Instead of ${prettyFieldName(stack ++ Seq(thisCol))}
+               """.stripMargin
+          )
+        case (Seq(), MapType(_, _, _)) =>
+          (Nil, 2)
+        case (Seq("key", _ @ _*), MapType(keyType: StructType, _, _)) =>
+          val (child, size) = find(colTail.tail, keyType, stack :+ thisCol)
+          (MAP_KEY_INDEX +: child, size)
+        case (Seq("key"), MapType(_, _, _)) =>
+          (Seq(MAP_KEY_INDEX), 0)
+        case (Seq("value", _ @ _*), MapType(_, valueType: StructType, _)) =>
+          val (child, size) = find(colTail.tail, valueType, stack :+ thisCol)
+          (MAP_VALUE_INDEX +: child, size)
+        case (Seq("value"), MapType(_, _, _)) =>
+          (Seq(MAP_VALUE_INDEX), 0)
+        case (_, MapType(_, _, _)) =>
+          throw new AnalysisException(
+            s"""A MapType was found. In order to access the key or value of a MapType, specify one
+               |of:
+               |${prettyFieldName(stack ++ Seq(thisCol, "key"))} or
+               |${prettyFieldName(stack ++ Seq(thisCol, "value"))}
+               |followed by the name of the column (only if that column is a struct type).
+               |e.g. mymap.key.mykey
+               |If the column is a basic type, mymap.key or mymap.value is sufficient.
+              """.stripMargin
+          )
+        case (_, o) =>
           if (column.length > 1) {
             throw new AnalysisException(
               s"""Expected $columnPath to be a nested data type, but found $o. Was looking for the
-                 |index of ${UnresolvedAttribute(column).name} in a nested field
+                 |index of ${prettyFieldName(column)} in a nested field
               """.stripMargin)
           }
           (Nil, 0)
@@ -454,6 +500,13 @@ object SchemaUtils {
       case e: AnalysisException =>
         throw new AnalysisException(e.getMessage + s":\n${schema.treeString}")
     }
+  }
+
+  /**
+   * Pretty print the column path passed in.
+   */
+  private def prettyFieldName(columnPath: Seq[String]): String = {
+    UnresolvedAttribute(columnPath).name
   }
 
   /**
@@ -486,6 +539,7 @@ object SchemaUtils {
     }
     val pre = schema.take(slicePosition)
     if (position.length > 1) {
+      val posTail = position.tail
       val mid = schema(slicePosition) match {
         case StructField(name, f: StructType, nullable, metadata) =>
           if (!column.nullable && nullable) {
@@ -495,9 +549,47 @@ object SchemaUtils {
           }
           StructField(
             name,
-            addColumn(f, column, position.tail),
+            addColumn(f, column, posTail),
             nullable,
             metadata)
+        case StructField(name, ArrayType(f: StructType, containsNull), nullable, metadata) =>
+          if (!column.nullable && nullable) {
+            throw new AnalysisException(
+              "A non-nullable nested field can't be added to a nullable parent. Please set the " +
+                "nullability of the parent column accordingly.")
+          }
+
+          if (posTail.head != ARRAY_ELEMENT_INDEX) {
+            throw new AnalysisException(
+              s"""Incorrectly accessing an ArrayType. Use arrayname.element.elementname position to
+                 |add to an array.
+               """.stripMargin)
+          }
+
+          StructField(
+            name,
+            ArrayType(addColumn(f, column, posTail.tail), containsNull),
+            nullable,
+            metadata)
+        case StructField(name, map @ MapType(_, _, _), nullable, metadata) =>
+          if (!column.nullable && nullable) {
+            throw new AnalysisException(
+              "A non-nullable nested field can't be added to a nullable parent. Please set the " +
+                "nullability of the parent column accordingly.")
+          }
+
+          val addedMap = (posTail.head, map) match {
+            case (MAP_KEY_INDEX, MapType(key: StructType, v, nullability)) =>
+              MapType(addColumn(key, column, posTail.tail), v, nullability)
+            case (MAP_VALUE_INDEX, MapType(k, value: StructType, nullability)) =>
+              MapType(k, addColumn(value, column, posTail.tail), nullability)
+            case _ =>
+              throw new AnalysisException(
+                s"""
+                  |Can't add column: ${column.name} to Map at position: ${posTail.head}
+                """.stripMargin)
+          }
+          StructField(name, addedMap, nullable, metadata)
         case o =>
           throw new AnalysisException(s"Can only add nested columns to StructType. Found: $o")
       }

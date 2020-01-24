@@ -719,6 +719,16 @@ class SchemaUtilsSuite extends QueryTest
         .add("b", IntegerType)
         .add("c", IntegerType)))
       .add("e", StringType)
+      .add("f", MapType(
+        new StructType()
+          .add("g", IntegerType),
+        new StructType()
+          .add("h", IntegerType)))
+      .add("i", MapType(
+        IntegerType,
+        new StructType()
+          .add("k", new StructType()
+          .add("l", IntegerType))))
     assert(SchemaUtils.findColumnPosition(Seq("a"), schema) === ((Seq(0), 2)))
     assert(SchemaUtils.findColumnPosition(Seq("A"), schema) === ((Seq(0), 2)))
     expectFailure("Couldn't find", schema.treeString) {
@@ -730,13 +740,21 @@ class SchemaUtilsSuite extends QueryTest
     assert(SchemaUtils.findColumnPosition(Seq("A", "B"), schema) === ((Seq(0, 0), 0)))
     assert(SchemaUtils.findColumnPosition(Seq("a", "c"), schema) === ((Seq(0, 1), 0)))
     assert(SchemaUtils.findColumnPosition(Seq("d"), schema) === ((Seq(1), 2)))
-    assert(SchemaUtils.findColumnPosition(Seq("d", "b"), schema) === ((Seq(1, 0), 0)))
-    assert(SchemaUtils.findColumnPosition(Seq("d", "B"), schema) === ((Seq(1, 0), 0)))
-    assert(SchemaUtils.findColumnPosition(Seq("d", "c"), schema) === ((Seq(1, 1), 0)))
+    assert(SchemaUtils.findColumnPosition(Seq("d", "element", "B"), schema) === ((Seq(1, 0, 0), 0)))
+    assert(SchemaUtils.findColumnPosition(Seq("d", "element", "c"), schema) === ((Seq(1, 0, 1), 0)))
     assert(SchemaUtils.findColumnPosition(Seq("e"), schema) === ((Seq(2), 0)))
+    assert(SchemaUtils.findColumnPosition(Seq("f"), schema) === ((Seq(3), 2)))
+    assert(SchemaUtils.findColumnPosition(Seq("f", "key", "g"), schema) === ((Seq(3, 0, 0), 0)))
+    assert(SchemaUtils.findColumnPosition(Seq("f", "value", "h"), schema) === ((Seq(3, 1, 0), 0)))
+    assert(SchemaUtils.findColumnPosition(Seq("f", "value", "H"), schema) === ((Seq(3, 1, 0), 0)))
+    assert(SchemaUtils.findColumnPosition(Seq("i", "key"), schema) === ((Seq(4, 0), 0)))
+    assert(SchemaUtils.findColumnPosition(Seq("i", "value", "k"), schema) === ((Seq(4, 1, 0), 1)))
+    assert(SchemaUtils.findColumnPosition(Seq("i", "key"), schema) === ((Seq(4, 0), 0)))
+    assert(SchemaUtils.findColumnPosition(Seq("i", "value"), schema) === ((Seq(4, 1), 1)))
 
     val resolver = org.apache.spark.sql.catalyst.analysis.caseSensitiveResolution
-    Seq(Seq("A", "b"), Seq("a", "B"), Seq("d", "B")).foreach { column =>
+    Seq(Seq("A", "b"), Seq("a", "B"), Seq("d", "element", "B"), Seq("f", "key", "H"))
+        .foreach { column =>
       expectFailure("Couldn't find", schema.treeString) {
         SchemaUtils.findColumnPosition(column, schema, resolver)
       }
@@ -747,11 +765,15 @@ class SchemaUtilsSuite extends QueryTest
     val schema = new StructType()
       .add("a", IntegerType)
       .add("b", MapType(StringType, StringType))
+      .add("c", ArrayType(IntegerType))
     expectFailure("Couldn't find", schema.treeString) {
-      SchemaUtils.findColumnPosition(Seq("c"), schema)
+      SchemaUtils.findColumnPosition(Seq("d"), schema)
     }
-    expectFailure("b.c", "mapType", schema.treeString) {
+    expectFailure("A MapType was found", "mapType", schema.treeString) {
       SchemaUtils.findColumnPosition(Seq("b", "c"), schema)
+    }
+    expectFailure("An ArrayType was found", "arrayType", schema.treeString) {
+      SchemaUtils.findColumnPosition(Seq("c", "element"), schema)
     }
   }
 
