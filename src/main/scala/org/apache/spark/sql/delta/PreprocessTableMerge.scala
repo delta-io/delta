@@ -29,8 +29,8 @@ import org.apache.spark.sql.internal.SQLConf
 
 case class PreprocessTableMerge(conf: SQLConf) extends UpdateExpressionsSupport {
 
-  def apply(mergeInto: MergeInto): MergeIntoCommand = {
-    val MergeInto(target, source, condition, matched, notMatched) = mergeInto
+  def apply(mergeInto: DeltaMergeInto): MergeIntoCommand = {
+    val DeltaMergeInto(target, source, condition, matched, notMatched) = mergeInto
 
     def checkCondition(cond: Expression, conditionName: String): Unit = {
       if (!cond.deterministic) {
@@ -53,7 +53,7 @@ case class PreprocessTableMerge(conf: SQLConf) extends UpdateExpressionsSupport 
     }
 
     val processedMatched = matched.map {
-      case m: MergeIntoUpdateClause =>
+      case m: DeltaMergeIntoUpdateClause =>
         val alignedUpdateExprs = {
           // Use the helper methods for in UpdateExpressionsSupport to generate expressions such
           // that nested fields can be updated.
@@ -61,12 +61,12 @@ case class PreprocessTableMerge(conf: SQLConf) extends UpdateExpressionsSupport 
             m.resolvedActions.map { a => UpdateOperation(a.targetColNameParts, a.expr) }
           generateUpdateExpressions(target.output, updateOps, conf.resolver)
         }
-        val alignedActions: Seq[MergeAction] = alignedUpdateExprs.zip(target.output).map {
-          case (expr, attrib) => MergeAction(Seq(attrib.name), expr)
+        val alignedActions: Seq[DeltaMergeAction] = alignedUpdateExprs.zip(target.output).map {
+          case (expr, attrib) => DeltaMergeAction(Seq(attrib.name), expr)
         }
         m.copy(m.condition, alignedActions)
 
-      case m: MergeIntoDeleteClause => m    // Delete does not need reordering
+      case m: DeltaMergeIntoDeleteClause => m    // Delete does not need reordering
     }
 
     val processedNotMatched = notMatched.map { m =>
@@ -86,11 +86,11 @@ case class PreprocessTableMerge(conf: SQLConf) extends UpdateExpressionsSupport 
       }
 
       // Reorder actions by the target column order.
-      val alignedActions: Seq[MergeAction] = target.output.map { targetAttrib =>
+      val alignedActions: Seq[DeltaMergeAction] = target.output.map { targetAttrib =>
         m.resolvedActions.find { a =>
           conf.resolver(targetAttrib.name, a.targetColNameParts.head)
         }.map { a =>
-          MergeAction(Seq(targetAttrib.name), castIfNeeded(a.expr, targetAttrib.dataType))
+          DeltaMergeAction(Seq(targetAttrib.name), castIfNeeded(a.expr, targetAttrib.dataType))
         }.getOrElse {
           // If a target table column was not found in the INSERT columns and expressions,
           // then throw exception as there must be an expression to set every target column.

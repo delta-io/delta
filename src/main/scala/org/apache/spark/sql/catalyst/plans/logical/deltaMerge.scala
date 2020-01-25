@@ -30,7 +30,7 @@ import org.apache.spark.sql.types.DataType
  *                           nested fields as targets.
  * @param expr Expression to generate the value of the target column.
  */
-case class MergeAction(targetColNameParts: Seq[String], expr: Expression)
+case class DeltaMergeAction(targetColNameParts: Seq[String], expr: Expression)
   extends UnaryExpression with Unevaluable {
   override def child: Expression = expr
   override def foldable: Boolean = false
@@ -41,10 +41,10 @@ case class MergeAction(targetColNameParts: Seq[String], expr: Expression)
 
 
 /**
- * Trait that represents a WHEN clause in MERGE. See [[MergeInto]]. It extends [[Expression]]
+ * Trait that represents a WHEN clause in MERGE. See [[DeltaMergeInto]]. It extends [[Expression]]
  * so that Catalyst can find all the expressions in the clause implementations.
  */
-sealed trait MergeIntoClause extends Expression with Unevaluable {
+sealed trait DeltaMergeIntoClause extends Expression with Unevaluable {
   /** Optional condition of the clause */
   def condition: Option[Expression]
 
@@ -59,12 +59,13 @@ sealed trait MergeIntoClause extends Expression with Unevaluable {
    * be Aliases and not any other NamedExpressions. So it should be safe to do this casting
    * as long as this is called after the clause has been resolved.
    */
-  def resolvedActions: Seq[MergeAction] = {
+  def resolvedActions: Seq[DeltaMergeAction] = {
     assert(actions.forall(_.resolved), "all actions have not been resolved yet")
-    actions.map(_.asInstanceOf[MergeAction])
+    actions.map(_.asInstanceOf[DeltaMergeAction])
   }
 
-  def clauseType: String = getClass.getSimpleName.replace("MergeInto", "").replace("Clause", "")
+  def clauseType: String =
+    getClass.getSimpleName.stripPrefix("DeltaMergeInto").stripSuffix("Clause")
 
   override def toString: String = {
     val condStr = condition.map { c => s"condition: ${c.sql}" }.getOrElse("")
@@ -82,13 +83,13 @@ sealed trait MergeIntoClause extends Expression with Unevaluable {
   /** Verify whether the expressions in the actions are of the right type */
   protected[logical] def verifyActions(): Unit = actions.foreach {
     case _: UnresolvedStar =>
-    case _: MergeAction =>
+    case _: DeltaMergeAction =>
     case a => throw new IllegalArgumentException(s"Unexpected action expression $a in $this")
   }
 }
 
 
-object MergeIntoClause {
+object DeltaMergeIntoClause {
   /**
    * Convert the parsed columns names and expressions into action for MergeInto. Note:
    * - Size of column names and expressions must be the same.
@@ -105,35 +106,36 @@ object MergeIntoClause {
     if (colNames.isEmpty && isEmptySeqEqualToStar) {
       Seq[Expression](UnresolvedStar(None))
     } else {
-      colNames.zip(exprs).map { case (col, expr) => MergeAction(col.nameParts, expr) }
+      colNames.zip(exprs).map { case (col, expr) => DeltaMergeAction(col.nameParts, expr) }
     }
   }
 }
 
-/** Trait that represents WHEN MATCHED clause in MERGE. See [[MergeInto]]. */
-sealed trait MergeIntoMatchedClause extends MergeIntoClause
+/** Trait that represents WHEN MATCHED clause in MERGE. See [[DeltaMergeInto]]. */
+sealed trait DeltaMergeIntoMatchedClause extends DeltaMergeIntoClause
 
-/** Represents the clause WHEN MATCHED THEN UPDATE in MERGE. See [[MergeInto]]. */
-case class MergeIntoUpdateClause(condition: Option[Expression], actions: Seq[Expression])
-  extends MergeIntoMatchedClause {
+/** Represents the clause WHEN MATCHED THEN UPDATE in MERGE. See [[DeltaMergeInto]]. */
+case class DeltaMergeIntoUpdateClause(condition: Option[Expression], actions: Seq[Expression])
+  extends DeltaMergeIntoMatchedClause {
 
   def this(cond: Option[Expression], cols: Seq[UnresolvedAttribute], exprs: Seq[Expression]) =
-    this(cond, MergeIntoClause.toActions(cols, exprs))
+    this(cond, DeltaMergeIntoClause.toActions(cols, exprs))
 }
 
-/** Represents the clause WHEN MATCHED THEN DELETE in MERGE. See [[MergeInto]]. */
-case class MergeIntoDeleteClause(condition: Option[Expression]) extends MergeIntoMatchedClause {
-  def this(condition: Option[Expression], actions: Seq[MergeAction]) = this(condition)
+/** Represents the clause WHEN MATCHED THEN DELETE in MERGE. See [[DeltaMergeInto]]. */
+case class DeltaMergeIntoDeleteClause(condition: Option[Expression])
+    extends DeltaMergeIntoMatchedClause {
+  def this(condition: Option[Expression], actions: Seq[DeltaMergeAction]) = this(condition)
 
   override def actions: Seq[Expression] = Seq.empty
 }
 
-/** Represents the clause WHEN NOT MATCHED THEN INSERT in MERGE. See [[MergeInto]]. */
-case class MergeIntoInsertClause(condition: Option[Expression], actions: Seq[Expression])
-  extends MergeIntoClause {
+/** Represents the clause WHEN NOT MATCHED THEN INSERT in MERGE. See [[DeltaMergeInto]]. */
+case class DeltaMergeIntoInsertClause(condition: Option[Expression], actions: Seq[Expression])
+  extends DeltaMergeIntoClause {
 
   def this(cond: Option[Expression], cols: Seq[UnresolvedAttribute], exprs: Seq[Expression]) =
-    this(cond, MergeIntoClause.toActions(cols, exprs))
+    this(cond, DeltaMergeIntoClause.toActions(cols, exprs))
 }
 
 /**
@@ -167,12 +169,12 @@ case class MergeIntoInsertClause(condition: Option[Expression], actions: Seq[Exp
  *    - Can only have the INSERT action. If present, it must be the last WHEN clause.
  *    - WHEN NOT MATCHED clause can have an optional condition.
  */
-case class MergeInto(
+case class DeltaMergeInto(
     target: LogicalPlan,
     source: LogicalPlan,
     condition: Expression,
-    matchedClauses: Seq[MergeIntoMatchedClause],
-    notMatchedClause: Option[MergeIntoInsertClause]) extends Command {
+    matchedClauses: Seq[DeltaMergeIntoMatchedClause],
+    notMatchedClause: Option[DeltaMergeIntoInsertClause]) extends Command {
 
   (matchedClauses ++ notMatchedClause).foreach(_.verifyActions())
 
@@ -180,16 +182,16 @@ case class MergeInto(
   override def output: Seq[Attribute] = Seq.empty
 }
 
-object MergeInto {
+object DeltaMergeInto {
   def apply(
       target: LogicalPlan,
       source: LogicalPlan,
       condition: Expression,
-      whenClauses: Seq[MergeIntoClause]): MergeInto = {
-    val deleteClauses = whenClauses.collect { case x: MergeIntoDeleteClause => x }
-    val updateClauses = whenClauses.collect { case x: MergeIntoUpdateClause => x }
-    val insertClauses = whenClauses.collect { case x: MergeIntoInsertClause => x }
-    val matchedClauses = whenClauses.collect { case x: MergeIntoMatchedClause => x }
+      whenClauses: Seq[DeltaMergeIntoClause]): DeltaMergeInto = {
+    val deleteClauses = whenClauses.collect { case x: DeltaMergeIntoDeleteClause => x }
+    val updateClauses = whenClauses.collect { case x: DeltaMergeIntoUpdateClause => x }
+    val insertClauses = whenClauses.collect { case x: DeltaMergeIntoInsertClause => x }
+    val matchedClauses = whenClauses.collect { case x: DeltaMergeIntoMatchedClause => x }
 
     // grammar enforcement goes here.
     if (whenClauses.isEmpty) {
@@ -213,18 +215,18 @@ object MergeInto {
         "one MERGE query")
     }
 
-    MergeInto(
+    DeltaMergeInto(
       target,
       source,
       condition,
-      whenClauses.collect { case x: MergeIntoMatchedClause => x }.take(2),
-      whenClauses.collectFirst { case x: MergeIntoInsertClause => x })
+      whenClauses.collect { case x: DeltaMergeIntoMatchedClause => x }.take(2),
+      whenClauses.collectFirst { case x: DeltaMergeIntoInsertClause => x })
   }
 
-  def resolveReferences(merge: MergeInto)(
-      resolveExpr: (Expression, LogicalPlan) => Expression): MergeInto = {
+  def resolveReferences(merge: DeltaMergeInto)(
+      resolveExpr: (Expression, LogicalPlan) => Expression): DeltaMergeInto = {
 
-    val MergeInto(target, source, condition, matchedClauses, notMatchedClause) = merge
+    val DeltaMergeInto(target, source, condition, matchedClauses, notMatchedClause) = merge
 
     // We must do manual resolution as the expressions in different clauses of the MERGE have
     // visibility of the source, the target or both. Additionally, the resolution logic operates
@@ -254,9 +256,9 @@ object MergeInto {
      * Resolves a clause using the given plan (used for resolving the action exprs) and
      * returns the resolved clause.
      */
-    def resolveClause[T <: MergeIntoClause](clause: T, planToResolveAction: LogicalPlan): T = {
+    def resolveClause[T <: DeltaMergeIntoClause](clause: T, planToResolveAction: LogicalPlan): T = {
       val typ = clause.clauseType.toUpperCase(Locale.ROOT)
-      val resolvedActions: Seq[MergeAction] = clause.actions.flatMap { action =>
+      val resolvedActions: Seq[DeltaMergeAction] = clause.actions.flatMap { action =>
         action match {
           // For actions like `UPDATE SET *` or `INSERT *`
           case _: UnresolvedStar =>
@@ -268,11 +270,11 @@ object MergeInto {
               val resolvedExpr = resolveOrFail(
                   UnresolvedAttribute.quotedString(s"`$tgtColName`"),
                   fakeSourcePlan, s"$typ clause")
-              MergeAction(Seq(tgtColName), resolvedExpr)
+              DeltaMergeAction(Seq(tgtColName), resolvedExpr)
             }
 
           // For actions like `UPDATE SET x = a, y = b` or `INSERT (x, y) VALUES (a, b)`
-          case MergeAction(colNameParts, expr) =>
+          case DeltaMergeAction(colNameParts, expr) =>
 
             val unresolvedAttrib = UnresolvedAttribute(colNameParts)
             val resolutionErrorMsg =
@@ -289,7 +291,7 @@ object MergeInto {
               merge)
 
             val resolvedExpr = resolveOrFail(expr, planToResolveAction, s"$typ clause")
-            Seq(MergeAction(resolvedNameParts, resolvedExpr))
+            Seq(DeltaMergeAction(resolvedNameParts, resolvedExpr))
 
           case _ =>
             action.failAnalysis(s"Unexpected action expression '$action' in clause $clause")
@@ -309,6 +311,6 @@ object MergeInto {
     val resolvedNotMatchedClause = notMatchedClause.map {
       resolveClause(_, fakeSourcePlan)
     }
-    MergeInto(target, source, resolvedCond, resolvedMatchedClauses, resolvedNotMatchedClause)
+    DeltaMergeInto(target, source, resolvedCond, resolvedMatchedClauses, resolvedNotMatchedClause)
   }
 }

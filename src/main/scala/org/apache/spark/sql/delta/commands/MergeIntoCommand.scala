@@ -91,8 +91,8 @@ case class MergeIntoCommand(
     @transient target: LogicalPlan,
     @transient targetFileIndex: TahoeFileIndex,
     condition: Expression,
-    matchedClauses: Seq[MergeIntoMatchedClause],
-    notMatchedClause: Option[MergeIntoInsertClause]) extends RunnableCommand
+    matchedClauses: Seq[DeltaMergeIntoMatchedClause],
+    notMatchedClause: Option[DeltaMergeIntoInsertClause]) extends RunnableCommand
   with DeltaCommand with PredicateHelper with AnalysisHelper {
 
   import SQLMetrics._
@@ -104,10 +104,10 @@ case class MergeIntoCommand(
   /** Whether this merge statement only inserts new data. */
   private def isInsertOnly: Boolean = matchedClauses.isEmpty && notMatchedClause.isDefined
 
-  lazy val updateClause: Option[MergeIntoUpdateClause] =
-    matchedClauses.collectFirst { case u: MergeIntoUpdateClause => u }
-  lazy val deleteClause: Option[MergeIntoDeleteClause] =
-    matchedClauses.collectFirst { case d: MergeIntoDeleteClause => d }
+  lazy val updateClause: Option[DeltaMergeIntoUpdateClause] =
+    matchedClauses.collectFirst { case u: DeltaMergeIntoUpdateClause => u }
+  lazy val deleteClause: Option[DeltaMergeIntoDeleteClause] =
+    matchedClauses.collectFirst { case d: DeltaMergeIntoDeleteClause => d }
 
   override lazy val metrics = Map[String, SQLMetric](
     "numSourceRows" -> createMetric(sc, "number of source rows"),
@@ -332,24 +332,24 @@ case class MergeIntoCommand(
       exprs.map { expr => tryResolveReferences(spark)(expr, joinedPlan) }
     }
 
-    def matchedClauseOutput(clause: MergeIntoMatchedClause): Seq[Expression] = {
+    def matchedClauseOutput(clause: DeltaMergeIntoMatchedClause): Seq[Expression] = {
       val exprs = clause match {
-        case u: MergeIntoUpdateClause =>
+        case u: DeltaMergeIntoUpdateClause =>
           // Generate update expressions and set ROW_DELETED_COL = false
           u.resolvedActions.map(_.expr) :+ Literal(false) :+ incrUpdatedCountExpr
-        case _: MergeIntoDeleteClause =>
+        case _: DeltaMergeIntoDeleteClause =>
           // Generate expressions to set the ROW_DELETED_COL = true
           target.output :+ Literal(true) :+ incrDeletedCountExpr
       }
       resolveOnJoinedPlan(exprs)
     }
 
-    def notMatchedClauseOutput(clause: MergeIntoInsertClause): Seq[Expression] = {
+    def notMatchedClauseOutput(clause: DeltaMergeIntoInsertClause): Seq[Expression] = {
       val exprs = clause.resolvedActions.map(_.expr) :+ Literal(false) :+ incrInsertedCountExpr
       resolveOnJoinedPlan(exprs)
     }
 
-    def clauseCondition(clause: Option[MergeIntoClause]): Option[Expression] = {
+    def clauseCondition(clause: Option[DeltaMergeIntoClause]): Option[Expression] = {
       val condExprOption = clause.map(_.condition.getOrElse(Literal(true)))
       resolveOnJoinedPlan(condExprOption.toSeq).headOption
     }
