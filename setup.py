@@ -56,6 +56,7 @@ setup(
         "Operating System :: OS Independent",
         "Topic :: Software Development :: Libraries :: Python Modules",
         "Programming Language :: Python :: 3",
+        "Typing :: Typed",
     ],
     keywords='delta.io',
     package_dir={'': 'python'},
