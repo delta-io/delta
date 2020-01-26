@@ -18,7 +18,7 @@ import unittest
 import os
 
 from pyspark.sql import Row
-from pyspark.sql.column import _to_seq
+from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
 from pyspark.sql.functions import col, lit, expr
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType
 from pyspark.sql.utils import AnalysisException, ParseException
