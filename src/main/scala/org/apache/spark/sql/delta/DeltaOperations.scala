@@ -89,6 +89,9 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = Map(
       "numRemovedFiles" -> numRemovedFiles
     )
+    override val operationMetrics: Seq[String] = Seq(
+      "numRemovedFiles"
+    )
   }
   /** Recorded when converting a table into a Delta table. */
   case class Convert(
