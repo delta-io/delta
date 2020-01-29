@@ -942,7 +942,7 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  test("SC-24982 - initial snapshot does not trigger jobs") {
+  ignore("SC-24982 - initial snapshot does not trigger jobs") {
     val jobCount = new AtomicInteger(0)
     val listener = new SparkListener {
       override def onJobStart(jobStart: SparkListenerJobStart): Unit = {
