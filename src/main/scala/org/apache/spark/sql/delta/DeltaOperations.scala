@@ -166,6 +166,10 @@ object DeltaOperations {
       "description" -> Option(metadata.description),
       "partitionBy" -> JsonUtils.toJson(metadata.partitionColumns),
       "properties" -> JsonUtils.toJson(metadata.configuration))
+    override val operationMetrics: Seq[String] = Seq(
+      "numFiles",
+      "numOutputBytes",
+      "numOutputRows")
   }
   /** Recorded when the table is replaced. */
   case class ReplaceTable(
