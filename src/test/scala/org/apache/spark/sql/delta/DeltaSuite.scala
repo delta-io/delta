@@ -942,12 +942,12 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  ignore("SC-24982 - initial snapshot does not trigger jobs") {
+  test("SC-24982 - initial snapshot does not trigger jobs") {
     val jobCount = new AtomicInteger(0)
     val listener = new SparkListener {
       override def onJobStart(jobStart: SparkListenerJobStart): Unit = {
         // Spark will always log a job start/end event even when the job does not launch any task.
-        if (jobStart.stageInfos.forall(_.numTasks > 0)) {
+        if (jobStart.stageInfos.exists(_.numTasks > 0)) {
           jobCount.incrementAndGet()
         }
       }
