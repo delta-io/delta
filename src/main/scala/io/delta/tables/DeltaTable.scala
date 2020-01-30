@@ -18,13 +18,12 @@ package io.delta.tables
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta._
 import io.delta.tables.execution._
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.annotation.InterfaceStability._
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -39,8 +38,8 @@ import org.apache.spark.sql.types.StructType
  * @since 0.3.0
  */
 @Evolving
-class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
-  extends DeltaTableOperations {
+class DeltaTable private[tables] (df: Dataset[Row], deltaLog: DeltaLog)
+    extends DeltaTableOperations {
 
   /**
    * :: Evolving ::
@@ -192,7 +191,6 @@ class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
   def delete(): Unit = {
     executeDelete(None)
   }
-
 
   /**
    * :: Evolving ::
@@ -596,9 +594,7 @@ object DeltaTable {
    * @since 0.4.0
    */
   @Evolving
-  def convertToDelta(
-      spark: SparkSession,
-      identifier: String): DeltaTable = {
+  def convertToDelta(spark: SparkSession, identifier: String): DeltaTable = {
     val tableId: TableIdentifier = spark.sessionState.sqlParser.parseTableIdentifier(identifier)
     DeltaConvert.executeConvert(spark, tableId, None, None)
   }
@@ -632,7 +628,8 @@ object DeltaTable {
   @Evolving
   def forPath(sparkSession: SparkSession, path: String): DeltaTable = {
     if (DeltaTableUtils.isDeltaTable(sparkSession, new Path(path))) {
-      new DeltaTable(sparkSession.read.format("delta").load(path),
+      new DeltaTable(
+        sparkSession.read.format("delta").load(path),
         DeltaLog.forTable(sparkSession, path))
     } else {
       throw DeltaErrors.notADeltaTableException(DeltaTableIdentifier(path = Some(path)))
@@ -680,5 +677,40 @@ object DeltaTable {
       throw new IllegalArgumentException("Could not find active SparkSession")
     }
     isDeltaTable(sparkSession, identifier)
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Create an empty DeltaTable with the provided `schema` at the provided file `path`.
+   *
+   * @since 0.6.0
+   */
+  @Evolving
+  def createEmpty(sparkSession: SparkSession, schema: StructType, path: String): DeltaTable = {
+    val emptyDataFrame =
+      sparkSession.createDataFrame(sparkSession.sparkContext.emptyRDD[Row], schema)
+    emptyDataFrame.write.format("delta").save(path)
+    DeltaTable.forPath(path)
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Create an empty DeltaTable with the provided `schema` at the provided file `path`.
+   *
+   * Note: This uses the active SparkSession in the current thread to search for the table. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   *
+   * @since 0.6.0
+   */
+  @Evolving
+  def createEmpty(schema: StructType, path: String): DeltaTable = {
+    val sparkSession = SparkSession.getActiveSession.getOrElse {
+      throw new IllegalArgumentException("Could not find active SparkSession")
+    }
+
+    createEmpty(sparkSession, schema, path)
   }
 }
