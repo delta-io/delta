@@ -710,7 +710,6 @@ object DeltaTable {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
       throw new IllegalArgumentException("Could not find active SparkSession")
     }
-
     createEmpty(sparkSession, schema, path)
   }
 }
