@@ -691,7 +691,7 @@ object DeltaTable {
     val emptyDataFrame =
       sparkSession.createDataFrame(sparkSession.sparkContext.emptyRDD[Row], schema)
     emptyDataFrame.write.format("delta").save(path)
-    DeltaTable.forPath(sparkSession, path)
+    new DeltaTable(emptyDataFrame, DeltaLog.forTable(sparkSession, path))
   }
 
   /**

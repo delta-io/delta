@@ -18,23 +18,17 @@ package io.delta.tables
 
 import java.util.Locale
 
-
-import org.apache.spark.sql.{AnalysisException, QueryTest}
-import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
+import org.apache.spark.sql.{AnalysisException, QueryTest}
 
-class DeltaTableSuite extends QueryTest
-  with SharedSparkSession {
+class DeltaTableSuite extends QueryTest with SharedSparkSession {
 
   test("forPath") {
     withTempDir { dir =>
       testData.write.format("delta").save(dir.getAbsolutePath)
-      checkAnswer(
-        DeltaTable.forPath(spark, dir.getAbsolutePath).toDF,
-        testData.collect().toSeq)
-      checkAnswer(
-        DeltaTable.forPath(dir.getAbsolutePath).toDF,
-        testData.collect().toSeq)
+      checkAnswer(DeltaTable.forPath(spark, dir.getAbsolutePath).toDF, testData.collect().toSeq)
+      checkAnswer(DeltaTable.forPath(dir.getAbsolutePath).toDF, testData.collect().toSeq)
     }
   }
 
@@ -46,7 +40,6 @@ class DeltaTableSuite extends QueryTest
       testError(msg) { DeltaTable.forPath(dir.getAbsolutePath) }
     }
   }
-
 
   test("as") {
     withTempDir { dir =>
@@ -70,6 +63,19 @@ class DeltaTableSuite extends QueryTest
       testData.write.format("parquet").mode("overwrite").save(dir.getAbsolutePath)
       assert(!DeltaTable.isDeltaTable(dir.getAbsolutePath))
     }
+  }
+
+  test("createEmpty - path") {
+    withTempDir(dir => {
+      val schema = StructType(
+        Seq(
+          StructField("id", IntegerType, nullable = false),
+          StructField("value", IntegerType, nullable = false)))
+      val deltaTable = DeltaTable.createEmpty(schema, dir.getAbsolutePath)
+      assert(DeltaTable.isDeltaTable(dir.getAbsolutePath))
+      assert(deltaTable.toDF.count == 0)
+      assert(deltaTable.toDF.schema == schema)
+    })
   }
 
   def testError(expectedMsg: String)(thunk: => Unit): Unit = {
