@@ -691,7 +691,7 @@ object DeltaTable {
     val emptyDataFrame =
       sparkSession.createDataFrame(sparkSession.sparkContext.emptyRDD[Row], schema)
     emptyDataFrame.write.format("delta").save(path)
-    DeltaTable.forPath(path)
+    DeltaTable.forPath(sparkSession, path)
   }
 
   /**
@@ -699,7 +699,7 @@ object DeltaTable {
    *
    * Create an empty DeltaTable with the provided `schema` at the provided file `path`.
    *
-   * Note: This uses the active SparkSession in the current thread to search for the table. Hence,
+   * Note: This uses the active SparkSession in the current thread to create the table. Hence,
    * this throws error if active SparkSession has not been set, that is,
    * `SparkSession.getActiveSession()` is empty.
    *
