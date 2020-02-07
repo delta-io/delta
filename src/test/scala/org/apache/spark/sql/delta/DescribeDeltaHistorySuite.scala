@@ -438,9 +438,11 @@ trait DescribeDeltaHistorySuiteBase
 
   test("operation metrics - update") {
     withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+      val numRows = 100
+      val numPartitions = 5
       withTempDir { tempDir =>
         // Create a Delta table
-        spark.range(100).repartition(5)
+        spark.range(numRows).repartition(numPartitions)
           .withColumnRenamed("id", "key")
           .withColumn("value", 'key % 2)
           .write
@@ -453,9 +455,46 @@ trait DescribeDeltaHistorySuiteBase
 
         // check operation metrics
         val operationMetrics = getOperationMetrics(deltaTable.history(1))
+        var expectedRowCount = numRows - 1
         val expectedMetrics = Map(
           "numAddedFiles" -> "1",
-          "numRemovedFiles" -> "1"
+          "numRemovedFiles" -> "1",
+          "numUpdatedRows" -> "1",
+          "numCopiedRows" -> expectedRowCount.toString
+        )
+        checkOperationMetrics(expectedMetrics, operationMetrics)
+      }
+    }
+  }
+
+  test("operation metrics - update - partitioned column") {
+    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+      val numRows = 100
+      val numPartitions = 5
+      withTempDir { tempDir =>
+        spark.range(numRows)
+          .withColumn("c1", 'id + 1)
+          .withColumn("c2", 'id % numPartitions)
+          .write
+          .partitionBy("c2")
+          .format("delta")
+          .save(tempDir.getAbsolutePath)
+
+        val deltaTable = io.delta.tables.DeltaTable.forPath(tempDir.getAbsolutePath)
+        val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+        val numFilesBeforeUpdate = deltaLog.snapshot.numOfFiles
+        deltaTable.update(col("c2") < 1, Map("c2" -> lit("1")))
+        val numFilesAfterUpdate = deltaLog.snapshot.numOfFiles
+
+        val operationMetrics = getOperationMetrics(deltaTable.history(1))
+        val newFiles = numFilesAfterUpdate - numFilesBeforeUpdate
+        val oldFiles = numFilesBeforeUpdate / numPartitions
+        val addedFiles = newFiles + oldFiles
+        val expectedMetrics = Map(
+          "numUpdatedRows" -> (numRows / numPartitions).toString,
+          "numCopiedRows" -> "0",
+          "numAddedFiles" -> addedFiles.toString,
+          "numRemovedFiles" -> (numFilesBeforeUpdate / numPartitions).toString
         )
         checkOperationMetrics(expectedMetrics, operationMetrics)
       }
