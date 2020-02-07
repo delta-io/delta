@@ -505,7 +505,7 @@ object SchemaUtils {
   /**
    * Pretty print the column path passed in.
    */
-  private def prettyFieldName(columnPath: Seq[String]): String = {
+  def prettyFieldName(columnPath: Seq[String]): String = {
     UnresolvedAttribute(columnPath).name
   }
 

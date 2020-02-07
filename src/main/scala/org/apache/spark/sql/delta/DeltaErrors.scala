@@ -160,10 +160,25 @@ object DeltaErrors
       + newColumns)
   }
 
-  def notEnoughColumnsInInsert(table: String, query: Int, target: Int): Throwable = {
-    new AnalysisException(s"Cannot write to '$table', not enough data columns; " +
+  def notEnoughColumnsInInsert(
+      table: String,
+      query: Int,
+      target: Int,
+      nestedField: Option[String] = None): Throwable = {
+    val nestedFieldStr = nestedField.map(f => s"not enough nested fields in $f")
+      .getOrElse("not enough data columns")
+    new AnalysisException(s"Cannot write to '$table', $nestedFieldStr; " +
         s"target table has ${target} column(s) but the inserted data has " +
         s"${query} column(s)")
+  }
+
+  def cannotInsertIntoColumn(
+      tableName: String,
+      source: String,
+      target: String,
+      targetType: String): Throwable = {
+    new AnalysisException(
+      s"Struct column $source cannot be inserted into a $targetType field $target in $tableName.")
   }
 
   def alterTableReplaceColumnsException(
