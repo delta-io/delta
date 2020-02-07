@@ -21,6 +21,7 @@ import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.{StructField, StructType}
 
@@ -40,6 +41,13 @@ object DeltaOperations {
     lazy val jsonEncodedValues: Map[String, String] = parameters.mapValues(JsonUtils.toJson(_))
 
     val operationMetrics: Seq[String] = Seq()
+
+    def transformMetrics(metrics: Map[String, SQLMetric]): Map[String, String] = {
+      metrics.filterKeys( s =>
+        operationMetrics.contains(s)
+      )
+      metrics.transform((_, v) => v.value.toString)
+    }
   }
 
   /** Recorded during batch inserts. Predicates can be provided for overwrites. */
@@ -74,8 +82,26 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = Map("predicate" -> JsonUtils.toJson(predicate))
     override val operationMetrics: Seq[String] = Seq(
       "numAddedFiles",
-      "numRemovedFiles"
+      "numRemovedFiles",
+      "numDeletedRows",
+      "numCopiedRows"
     )
+
+    override def transformMetrics(metrics: Map[String, SQLMetric]): Map[String, String] = {
+      // find the case where deletedRows are not captured
+      val numTotalRows = metrics("numTotalRows").value
+      var strMetrics = super.transformMetrics(metrics)
+      strMetrics += "numCopiedRows" -> (numTotalRows -
+        metrics("numDeletedRows").value).toString
+      if (strMetrics("numDeletedRows") == "0" && strMetrics("numCopiedRows") == "0" &&
+        strMetrics("numRemovedFiles") != "0") {
+        // identify when row level metrics are unavailable. This will happen when the entire
+        // table or partition are deleted.
+        strMetrics -= "numDeletedRows"
+        strMetrics -= "numCopiedRows"
+      }
+      strMetrics
+    }
   }
   /** Recorded when truncating the table. */
   case class Truncate() extends Operation("TRUNCATE") {
