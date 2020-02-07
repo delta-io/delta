@@ -157,14 +157,12 @@ class S3SingleDriverLogStore(
   override def write(path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit = {
     val (fs, resolvedPath) = resolved(path)
     val lockedPath = getPathKey(resolvedPath)
-    var stream: FSDataOutputStream = null
     acquirePathLock(lockedPath)
     try {
       if (exists(fs, resolvedPath) && !overwrite) {
         throw new java.nio.file.FileAlreadyExistsException(resolvedPath.toUri.toString)
       }
-      val countingStream = new CountingOutputStream(stream)
-      stream = fs.create(resolvedPath, overwrite)
+      val stream = new CountingOutputStream(fs.create(resolvedPath, overwrite))
       actions.map(_ + "\n").map(_.getBytes(UTF_8)).foreach(stream.write)
       stream.close()
 
@@ -183,7 +181,7 @@ class S3SingleDriverLogStore(
 
       // Cache the information of written files to help fix the inconsistency in future listings
       writtenPathCache.put(lockedPath,
-        FileMetadata(countingStream.getCount(), System.currentTimeMillis()))
+        FileMetadata(stream.getCount(), System.currentTimeMillis()))
     } catch {
       // Convert Hadoop's FileAlreadyExistsException to Java's FileAlreadyExistsException
       case e: org.apache.hadoop.fs.FileAlreadyExistsException =>
