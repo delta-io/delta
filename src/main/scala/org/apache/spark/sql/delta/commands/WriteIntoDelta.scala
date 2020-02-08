@@ -102,7 +102,13 @@ case class WriteIntoDelta(
       deltaLog.fs.mkdirs(deltaLog.logPath)
     }
 
-    val newFiles = txn.writeFiles(data, Some(options))
+    // If data has no rows, we don't need to write any new files.
+    val newFiles = if (data.take(1).isEmpty) {
+      Seq.empty
+    } else {
+      txn.writeFiles(data, Some(options))
+    }
+
     val deletedFiles = (mode, partitionFilters) match {
       case (SaveMode.Overwrite, None) =>
         txn.filterFiles().map(_.remove)
