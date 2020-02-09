@@ -74,7 +74,8 @@ object DeltaOperations {
     override val operationMetrics: Seq[String] = Seq(
       "numAddedFiles",
       "numRemovedFiles",
-      "numOutputRows"
+      "numOutputRows",
+      "numOutputBytes"
     )
   }
   /** Recorded while deleting certain partitions. */
@@ -129,6 +130,9 @@ object DeltaOperations {
       "numFiles" -> numFiles,
       "partitionedBy" -> JsonUtils.toJson(partitionBy),
       "collectStats" -> collectStats) ++ catalogTable.map("catalogTable" -> _)
+    override val operationMetrics: Seq[String] = Seq(
+      "numConvertedFiles"
+    )
   }
   /** Recorded when optimizing the table. */
   case class Optimize(

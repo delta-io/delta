@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.scalatest.Tag
 
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SharedSparkSession
@@ -395,6 +396,7 @@ trait DescribeDeltaHistorySuiteBase
           "numOutputRows" -> "3"
         )
         checkOperationMetrics(expectedMetrics2, operationMetrics)
+        assert(operationMetrics("numOutputBytes").toLong > 0)
         q.stop()
       }
     }
@@ -561,6 +563,34 @@ trait DescribeDeltaHistorySuiteBase
       }
     }
   }
+
+  test("operation metrics - convert to delta") {
+    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+      val numPartitions = 5
+      withTempDir { tempDir =>
+        // Create a parquet table
+        val dir = tempDir.getAbsolutePath()
+        spark.range(10)
+          .withColumn("col2", 'id % numPartitions)
+          .write
+          .format("parquet")
+          .mode("overwrite")
+          .partitionBy("col2")
+          .save(dir)
+
+        // convert to delta
+        val deltaTable = io.delta.tables.DeltaTable.convertToDelta(spark, s"parquet.`$dir`",
+          "col2 long")
+        val deltaLog = DeltaLog.forTable(spark, dir)
+        val expectedMetrics = Map(
+          "numConvertedFiles" -> deltaLog.snapshot.numOfFiles.toString
+        )
+        val operationMetrics = getOperationMetrics(deltaTable.history(1))
+        checkOperationMetrics(expectedMetrics, operationMetrics)
+      }
+    }
+  }
+
 
   test("operation metrics - delete - full") {
     withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {

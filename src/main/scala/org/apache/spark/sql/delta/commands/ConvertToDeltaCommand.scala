@@ -218,7 +218,8 @@ abstract class ConvertToDeltaCommandBase(
           numFiles,
           partitionColNames,
           collectStats = false,
-          None))
+          None),
+        numFiles)
     } finally {
       fileListResultDf.unpersist()
     }
@@ -340,12 +341,21 @@ abstract class ConvertToDeltaCommandBase(
       spark: SparkSession,
       txn: OptimisticTransaction,
       addFiles: Iterator[AddFile],
-      op: DeltaOperations.Convert): Long = {
+      op: DeltaOperations.Convert,
+      numFiles: Long): Long = {
     val firstVersion = 0L
     try {
       val deltaLog = txn.deltaLog
       val metadata = txn.metadata
       val context = getContext
+      val metrics = if (spark.conf.get(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED)) {
+        Some(Map[String, String](
+          "numConvertedFiles" -> numFiles.toString
+        ))
+      } else {
+        None
+      }
+
       val commitInfo = CommitInfo(
         time = txn.clock.getTimeMillis(),
         operation = op.name,
@@ -354,7 +364,7 @@ abstract class ConvertToDeltaCommandBase(
         readVersion = None,
         isolationLevel = None,
         isBlindAppend = None,
-        None)
+        metrics)
 
       val extraActions = Seq(commitInfo, Protocol(), metadata)
       val actions = extraActions.toIterator ++ addFiles
