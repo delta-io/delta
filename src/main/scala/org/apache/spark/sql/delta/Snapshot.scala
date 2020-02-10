@@ -28,7 +28,6 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.plans.logical.Union
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.expressions.UserDefinedFunction
@@ -120,36 +119,17 @@ class Snapshot(
   /** The current set of actions in this [[Snapshot]]. */
   def state: Dataset[SingleAction] = cachedState.getDS
 
-  // Materialize the cache and collect the basics to the driver for fast access.
-  protected lazy val materializedState: State = {
-    // Here we need to bypass the ACL checks for SELECT anonymous function permissions.
-    {
-      val implicits = spark.implicits
-      import implicits._
-      state.select(
-        coalesce(last($"protocol", ignoreNulls = true), defaultProtocol()) as "protocol",
-        coalesce(last($"metaData", ignoreNulls = true), emptyMetadata()) as "metadata",
-        collect_set($"txn") as "setTransactions",
-        // sum may return null for empty data set.
-        coalesce(sum($"add.size"), lit(0L)) as "sizeInBytes",
-        count($"add") as "numOfFiles",
-        count($"metaData") as "numOfMetadata",
-        count($"protocol") as "numOfProtocol",
-        count($"remove") as "numOfRemoves",
-        count($"txn") as "numOfSetTransactions")
-        .as[State](stateEncoder)
-    }.first()
-  }
+  protected lazy val metadataGetter: MetadataGetter = new StateMetadataGetter(spark, state)
 
-  def protocol: Protocol = materializedState.protocol
-  def metadata: Metadata = materializedState.metadata
-  def setTransactions: Seq[SetTransaction] = materializedState.setTransactions
-  def sizeInBytes: Long = materializedState.sizeInBytes
-  def numOfFiles: Long = materializedState.numOfFiles
-  def numOfMetadata: Long = materializedState.numOfMetadata
-  def numOfProtocol: Long = materializedState.numOfProtocol
-  def numOfRemoves: Long = materializedState.numOfRemoves
-  def numOfSetTransactions: Long = materializedState.numOfSetTransactions
+  def protocol: Protocol = metadataGetter.protocol
+  def metadata: Metadata = metadataGetter.metadata
+  def setTransactions: Seq[SetTransaction] = metadataGetter.setTransactions
+  def sizeInBytes: Long = metadataGetter.sizeInBytes
+  def numOfFiles: Long = metadataGetter.numOfFiles
+  def numOfMetadata: Long = metadataGetter.numOfMetadata
+  def numOfProtocol: Long = metadataGetter.numOfProtocol
+  def numOfRemoves: Long = metadataGetter.numOfRemoves
+  def numOfSetTransactions: Long = metadataGetter.numOfSetTransactions
 
   deltaLog.protocolRead(protocol)
 
@@ -210,8 +190,6 @@ class Snapshot(
 }
 
 object Snapshot extends DeltaLogging {
-  private lazy val emptyMetadata = udf(() => Metadata())
-  private lazy val defaultProtocol = udf(() => Protocol())
 
   /** Canonicalize the paths for Actions */
   private def canonicalizePath(path: String, hadoopConf: Configuration): String = {
@@ -241,27 +219,6 @@ object Snapshot extends DeltaLogging {
       }
     })
   }
-
-  private[delta] case class State(
-      protocol: Protocol,
-      metadata: Metadata,
-      setTransactions: Seq[SetTransaction],
-      sizeInBytes: Long,
-      numOfFiles: Long,
-      numOfMetadata: Long,
-      numOfProtocol: Long,
-      numOfRemoves: Long,
-      numOfSetTransactions: Long)
-
-  private[this] lazy val _stateEncoder: ExpressionEncoder[State] = try {
-    ExpressionEncoder[State]()
-  } catch {
-    case e: Throwable =>
-      logError(e.getMessage, e)
-      throw e
-  }
-
-  implicit private def stateEncoder: ExpressionEncoder[State] = _stateEncoder.copy()
 }
 
 /**
@@ -277,7 +234,5 @@ class InitialSnapshot(
     override val metadata: Metadata)
   extends Snapshot(logPath, -1, None, Nil, -1, deltaLog, -1) {
   override val state: Dataset[SingleAction] = emptyActions
-  override protected lazy val materializedState: Snapshot.State = {
-    Snapshot.State(Protocol(), metadata, Nil, 0L, 0L, 0L, 0L, 0L, 0L)
-  }
+  override protected lazy val metadataGetter: MetadataGetter = new EmptyMetadataGetter(metadata)
 }
