@@ -150,8 +150,8 @@ case class TahoeLogFileIndex(
 
   override def equals(that: Any): Boolean = that match {
     case t: TahoeLogFileIndex =>
-      t.deltaLog.tableId == deltaLog.tableId && t.versionToUse == versionToUse &&
-        t.path == path && t.partitionFilters == partitionFilters
+      t.deltaLog.compositeId == deltaLog.compositeId && t.versionToUse == versionToUse &&
+        t.partitionFilters == partitionFilters
     case _ => false
   }
 

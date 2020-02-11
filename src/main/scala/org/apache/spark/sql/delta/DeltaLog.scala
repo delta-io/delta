@@ -133,6 +133,16 @@ class DeltaLog private(
   /** The unique identifier for this table. */
   def tableId: String = metadata.id
 
+  /**
+   * Combines the tableId with the path of the table to ensure uniqueness. Normally `tableId`
+   * should be globally unique, but nothing stops users from copying a Delta table directly to
+   * a separate location, where the transaction log is copied directly, causing the tableIds to
+   * match. When users mutate the copied table, and then try to perform some checks joining the
+   * two tables, optimizations that depend on `tableId` alone may not be correct. Hence we use a
+   * composite id.
+   */
+  private[delta] def compositeId: (String, Path) = tableId -> dataPath
+
   /* ------------------ *
    |  State Management  |
    * ------------------ */
@@ -584,7 +594,7 @@ class DeltaLog private(
     }
   }
 
-  def isSameLogAs(otherLog: DeltaLog): Boolean = this.tableId == otherLog.tableId
+  def isSameLogAs(otherLog: DeltaLog): Boolean = this.compositeId == otherLog.compositeId
 
   /** Creates the log directory if it does not exist. */
   def ensureLogDirectoryExist(): Unit = {
