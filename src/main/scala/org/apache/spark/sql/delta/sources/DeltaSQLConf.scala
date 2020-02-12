@@ -137,7 +137,7 @@ object DeltaSQLConf {
       .doc("Enables Metrics reporting in Describe History. CommitInfo will now record the " +
         "Operation Metrics.")
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val DELTA_VACUUM_RETENTION_CHECK_ENABLED =
     buildConf("retentionDurationCheck.enabled")
