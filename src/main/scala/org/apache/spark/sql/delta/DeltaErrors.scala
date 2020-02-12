@@ -742,6 +742,11 @@ object DeltaErrors
     new IllegalArgumentException(
       s"Specified mode '$modeName' is not supported. Supported modes are: $supportedModes")
   }
+
+  def columnNotInSchemaException(column: String, schema: StructType): Throwable = {
+    throw new AnalysisException(
+      s"Couldn't find column $column in:\n${schema.treeString}")
+  }
 }
 
 /** The basic class for all Tahoe commit conflict exceptions. */
