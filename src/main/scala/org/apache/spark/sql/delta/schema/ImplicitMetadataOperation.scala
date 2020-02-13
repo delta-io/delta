@@ -111,7 +111,7 @@ trait ImplicitMetadataOperation extends DeltaLogging {
       recordDeltaEvent(txn.deltaLog, "delta.schemaValidation.failure")
       val errorBuilder = new MetadataMismatchErrorBuilder
       if (isNewSchema) {
-        errorBuilder.addSchemaMismatch(txn.metadata.schema, dataSchema)
+        errorBuilder.addSchemaMismatch(txn.metadata.schema, dataSchema, txn.metadata.id)
       }
       if (isNewPartitioning) {
         errorBuilder.addPartitioningMismatch(txn.metadata.partitionColumns, normalizedPartitionCols)
