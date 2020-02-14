@@ -589,12 +589,13 @@ object SchemaUtils {
             case _ =>
               throw new AnalysisException(
                 s"""
-                  |Can't add column: ${column.name} to Map at position: ${posTail.head}
+                  |Cannot add ${column.name} because its parent is not a StructType.
                 """.stripMargin)
           }
           StructField(name, addedMap, nullable, metadata)
         case o =>
-          throw new AnalysisException(s"Can only add nested columns to StructType. Found: $o")
+          throw new AnalysisException(s"Cannot add ${column.name} because its parent is not a " +
+            s"StructType. Found ${o.dataType}")
       }
       StructType(pre ++ Seq(mid) ++ schema.slice(slicePosition + 1, length))
     } else {

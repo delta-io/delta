@@ -797,7 +797,7 @@ class SchemaUtilsSuite extends QueryTest
     expectFailure("Index 3", "larger than struct length: 2") {
       SchemaUtils.addColumn(schema, x, Seq(3))
     }
-    expectFailure("Can only add nested columns to StructType") {
+    expectFailure("parent is not a structtype") {
       SchemaUtils.addColumn(schema, x, Seq(0, 0))
     }
   }
@@ -825,7 +825,7 @@ class SchemaUtilsSuite extends QueryTest
     expectFailure("Struct not found at position 2") {
       SchemaUtils.addColumn(schema, x, Seq(0, 2, 0))
     }
-    expectFailure("Can only add nested columns to StructType") {
+    expectFailure("parent is not a structtype") {
       SchemaUtils.addColumn(schema, x, Seq(0, 0, 0))
     }
   }

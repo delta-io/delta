@@ -146,7 +146,7 @@ object DeltaTableUtils extends PredicateHelper
    * @param tableIdent the provided table or path
    * @return whether or not the provided TableIdentifier can specify a path for parquet or delta
    */
-  private def isValidPath(tableIdent: TableIdentifier): Boolean = {
+  def isValidPath(tableIdent: TableIdentifier): Boolean = {
     // If db doesnt exist or db is called delta/tahoe then check if path exists
     DeltaSourceUtils.isDeltaDataSourceName(tableIdent.database.getOrElse("")) &&
       new Path(tableIdent.table).isAbsolute
