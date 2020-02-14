@@ -831,9 +831,9 @@ class MetadataMismatchErrorBuilder {
 
   private var mentionedOption = false
 
-  def addSchemaMismatch(original: StructType, data: StructType): Unit = {
+  def addSchemaMismatch(original: StructType, data: StructType, id: String): Unit = {
     bits ++=
-      s"""A schema mismatch detected when writing to the Delta table.
+      s"""A schema mismatch detected when writing to the Delta table (Table ID: $id).
          |To enable schema migration, please set:
          |'.option("${DeltaOptions.MERGE_SCHEMA_OPTION}", "true")'.
          |
