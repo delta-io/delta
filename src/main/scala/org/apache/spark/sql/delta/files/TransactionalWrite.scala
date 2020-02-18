@@ -18,18 +18,17 @@ package org.apache.spark.sql.delta.files
 
 import scala.collection.mutable.ListBuffer
 
+import org.apache.hadoop.fs.Path
+import org.apache.spark.sql.Dataset
+import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.hadoop.fs.Path
-
-import org.apache.spark.sql.Dataset
-import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.datasources.{BasicWriteJobStatsTracker, FileFormatWriter, WriteJobStatsTracker}
-import org.apache.spark.sql.types.{ArrayType, MapType, StructType}
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
 
 /**
@@ -90,7 +89,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       colsDropped: Boolean): Seq[Attribute] = {
     val partitionColumns: Seq[Attribute] = partitionSchema.map { col =>
       // schema is already normalized, therefore we can do an equality check
-      output.find(f => f.name == col.name)
+      output
+        .find(f => f.name == col.name)
         .getOrElse {
           throw DeltaErrors.partitionColumnNotFoundException(col.name, output)
         }
@@ -101,13 +101,16 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     partitionColumns
   }
 
-  def writeFiles(data: Dataset[_]): Seq[AddFile] = writeFiles(data, None, isOptimize = false)
+  def writeFiles(
+      data: Dataset[_],
+      extraStatTrackers: Seq[WriteJobStatsTracker] = Seq()): Seq[AddFile] =
+    writeFiles(data, None, isOptimize = false, extraStatTrackers)
 
-  def writeFiles(data: Dataset[_], writeOptions: Option[DeltaOptions]): Seq[AddFile] =
-    writeFiles(data, writeOptions, isOptimize = false)
-
-  def writeFiles(data: Dataset[_], isOptimize: Boolean): Seq[AddFile] =
-    writeFiles(data, None, isOptimize = isOptimize)
+  def writeFiles(
+      data: Dataset[_],
+      writeOptions: Option[DeltaOptions],
+      extraStatTrackers: Seq[WriteJobStatsTracker] = Seq()): Seq[AddFile] =
+    writeFiles(data, writeOptions, isOptimize = false, extraStatTrackers)
 
   /**
    * Writes out the dataframe after performing schema validation. Returns a list of
@@ -116,7 +119,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
   def writeFiles(
       data: Dataset[_],
       writeOptions: Option[DeltaOptions],
-      isOptimize: Boolean): Seq[AddFile] = {
+      isOptimize: Boolean,
+      extraStatTrackers: Seq[WriteJobStatsTracker] = Seq()): Seq[AddFile] = {
     hasWritten = true
 
     val spark = data.sparkSession
@@ -131,15 +135,18 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
     val invariants = Invariants.getFromSchema(metadata.schema, spark)
 
+    logConsole("invariants:")
+    logConsole(invariants.toString())
+
     SQLExecution.withNewExecutionId(spark, queryExecution) {
-      val outputSpec = FileFormatWriter.OutputSpec(
-        outputPath.toString,
-        Map.empty,
-        output)
+      val outputSpec = FileFormatWriter.OutputSpec(outputPath.toString, Map.empty, output)
 
       val physicalPlan = DeltaInvariantCheckerExec(queryExecution.executedPlan, invariants)
 
       val statsTrackers: ListBuffer[WriteJobStatsTracker] = ListBuffer()
+
+      // Append any added stat trackers.
+      statsTrackers ++= extraStatTrackers
 
       if (spark.conf.get(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED)) {
         val basicWriteJobStatsTracker = new BasicWriteJobStatsTracker(

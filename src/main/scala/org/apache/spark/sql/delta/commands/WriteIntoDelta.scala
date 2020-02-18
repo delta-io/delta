@@ -17,11 +17,12 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.hadoop.fs.{FileSystem, Path}
+import org.apache.spark.sql._
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{Action, AddFile}
 import org.apache.spark.sql.delta.schema.ImplicitMetadataOperation
-
-import org.apache.spark.sql._
+import org.apache.spark.sql.delta.stats.IsFileEmptyStatTracker
 import org.apache.spark.sql.execution.command.RunnableCommand
 
 /**
@@ -49,9 +50,9 @@ case class WriteIntoDelta(
     partitionColumns: Seq[String],
     configuration: Map[String, String],
     data: DataFrame)
-  extends RunnableCommand
-  with ImplicitMetadataOperation
-  with DeltaCommand {
+    extends RunnableCommand
+    with ImplicitMetadataOperation
+    with DeltaCommand {
 
   override protected val canMergeSchema: Boolean = options.canMergeSchema
 
@@ -82,15 +83,20 @@ case class WriteIntoDelta(
       }
     }
     val rearrangeOnly = options.rearrangeOnly
-    updateMetadata(txn, data, partitionColumns, configuration, isOverwriteOperation, rearrangeOnly)
+    updateMetadata(
+      txn,
+      data,
+      partitionColumns,
+      configuration,
+      isOverwriteOperation,
+      rearrangeOnly)
 
     // Validate partition predicates
     val replaceWhere = options.replaceWhere
     val partitionFilters = if (replaceWhere.isDefined) {
       val predicates = parsePartitionPredicates(sparkSession, replaceWhere.get)
       if (mode == SaveMode.Overwrite) {
-        verifyPartitionPredicates(
-          sparkSession, txn.metadata.partitionColumns, predicates)
+        verifyPartitionPredicates(sparkSession, txn.metadata.partitionColumns, predicates)
       }
       Some(predicates)
     } else {
@@ -102,20 +108,27 @@ case class WriteIntoDelta(
       deltaLog.fs.mkdirs(deltaLog.logPath)
     }
 
-    // If data has no rows, we don't need to write any new files.
-    val newFiles = if (data.take(1).isEmpty) {
-      Seq.empty
-    } else {
-      txn.writeFiles(data, Some(options))
-    }
+    val isFileEmptyStatTracker = new IsFileEmptyStatTracker
+    val fs = FileSystem.get(sparkSession.sparkContext.hadoopConfiguration)
+    val newFiles = txn
+      .writeFiles(data, Some(options), Seq(isFileEmptyStatTracker))
+      .filter(addFile => {
+        val fullPath = new Path(deltaLog.dataPath, addFile.path)
+        val isEmpty = !isFileEmptyStatTracker.nonEmptyFiles.contains(fullPath.toString)
+        // Cull the file if empty.
+        if (isEmpty) fs.delete(fullPath, true)
+        !isEmpty
+      })
 
     val deletedFiles = (mode, partitionFilters) match {
       case (SaveMode.Overwrite, None) =>
         txn.filterFiles().map(_.remove)
       case (SaveMode.Overwrite, Some(predicates)) =>
         // Check to make sure the files we wrote out were actually valid.
-        val matchingFiles = DeltaLog.filterFileList(
-          txn.metadata.partitionSchema, newFiles.toDF(), predicates).as[AddFile].collect()
+        val matchingFiles = DeltaLog
+          .filterFileList(txn.metadata.partitionSchema, newFiles.toDF(), predicates)
+          .as[AddFile]
+          .collect()
         val invalidFiles = newFiles.toSet -- matchingFiles
         if (invalidFiles.nonEmpty) {
           val badPartitions = invalidFiles
