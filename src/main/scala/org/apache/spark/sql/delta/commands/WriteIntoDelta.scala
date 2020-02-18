@@ -22,7 +22,7 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{Action, AddFile}
 import org.apache.spark.sql.delta.schema.ImplicitMetadataOperation
-import org.apache.spark.sql.delta.stats.IsFileEmptyStatTracker
+import org.apache.spark.sql.delta.stats.NonEmptyFileJobStatsTracker
 import org.apache.spark.sql.execution.command.RunnableCommand
 
 /**
@@ -108,7 +108,7 @@ case class WriteIntoDelta(
       deltaLog.fs.mkdirs(deltaLog.logPath)
     }
 
-    val isFileEmptyStatTracker = new IsFileEmptyStatTracker
+    val isFileEmptyStatTracker = new NonEmptyFileJobStatsTracker
     val fs = FileSystem.get(sparkSession.sparkContext.hadoopConfiguration)
     val newFiles = txn
       .writeFiles(data, Some(options), Seq(isFileEmptyStatTracker))

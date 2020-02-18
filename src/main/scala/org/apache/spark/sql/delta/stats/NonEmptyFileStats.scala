@@ -20,9 +20,9 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.datasources.{WriteJobStatsTracker, WriteTaskStats, WriteTaskStatsTracker}
 
-case class IsFileEmptyStats(nonEmptyFiles: Set[String]) extends WriteTaskStats
+case class NonEmptyFileStats(nonEmptyFiles: Set[String]) extends WriteTaskStats
 
-class IsFileEmptyTaskStatTracker extends WriteTaskStatsTracker with Logging {
+class NonEmptyFileTaskStatsTracker extends WriteTaskStatsTracker with Logging {
 
   private[this] var nonEmptyFiles = Set[String]()
   private[this] var curFile: Option[String] = None
@@ -33,7 +33,9 @@ class IsFileEmptyTaskStatTracker extends WriteTaskStatsTracker with Logging {
 
   override def newRow(row: InternalRow): Unit = {
     curFile.foreach { path =>
-      nonEmptyFiles += path
+      if (!nonEmptyFiles.contains(path)) {
+        nonEmptyFiles += path
+      }
     }
   }
 
@@ -45,21 +47,23 @@ class IsFileEmptyTaskStatTracker extends WriteTaskStatsTracker with Logging {
     // Not implemented.
   }
 
-  override def getFinalStats(): WriteTaskStats = {
-    IsFileEmptyStats(nonEmptyFiles)
-  }
+  override def getFinalStats(): WriteTaskStats = NonEmptyFileStats(nonEmptyFiles)
 }
 
-class IsFileEmptyStatTracker extends WriteJobStatsTracker {
+/**
+ * Simple WriteJobStatsTracker implementation that tracks all files that have at least 1 row at
+ * the end of a write job.
+ */
+class NonEmptyFileJobStatsTracker extends WriteJobStatsTracker {
 
   var nonEmptyFiles: Set[String] = Set[String]()
 
   override def newTaskInstance(): WriteTaskStatsTracker = {
-    new IsFileEmptyTaskStatTracker
+    new NonEmptyFileTaskStatsTracker
   }
 
   override def processStats(stats: Seq[WriteTaskStats]): Unit = {
-    val basicStats = stats.map(_.asInstanceOf[IsFileEmptyStats])
+    val basicStats = stats.map(_.asInstanceOf[NonEmptyFileStats])
 
     basicStats.foreach { summary =>
       nonEmptyFiles ++= summary.nonEmptyFiles
