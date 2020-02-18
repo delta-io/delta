@@ -112,10 +112,11 @@ case class WriteIntoDelta(
     val fs = FileSystem.get(sparkSession.sparkContext.hadoopConfiguration)
     val newFiles = txn
       .writeFiles(data, Some(options), Seq(nonEmptyFileStatsTracker))
+      // Only add files to the Log if they contain some data rows.
       .filter(addFile => {
         val fullPath = new Path(deltaLog.dataPath, addFile.path)
         val isEmpty = !nonEmptyFileStatsTracker.nonEmptyFiles.contains(fullPath.toString)
-        // Cull the file if empty.
+        // Delete the file if empty.
         if (isEmpty) fs.delete(fullPath, true)
         !isEmpty
       })
