@@ -104,8 +104,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
   def writeFiles(
       data: Dataset[_],
       writeOptions: Option[DeltaOptions] = None,
-      extraStatTrackers: Seq[WriteJobStatsTracker] = Seq()): Seq[AddFile] =
-    writeFiles(data, writeOptions, isOptimize = false, extraStatTrackers)
+      extraStatsTrackers: Seq[WriteJobStatsTracker] = Seq()): Seq[AddFile] =
+    writeFiles(data, writeOptions, isOptimize = false, extraStatsTrackers)
 
   /**
    * Writes out the dataframe after performing schema validation. Returns a list of
@@ -115,7 +115,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       data: Dataset[_],
       writeOptions: Option[DeltaOptions],
       isOptimize: Boolean,
-      extraStatTrackers: Seq[WriteJobStatsTracker]): Seq[AddFile] = {
+      extraStatsTrackers: Seq[WriteJobStatsTracker]): Seq[AddFile] = {
     hasWritten = true
 
     val spark = data.sparkSession
@@ -138,7 +138,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       val statsTrackers: ListBuffer[WriteJobStatsTracker] = ListBuffer()
 
       // Append any added stat trackers.
-      statsTrackers ++= extraStatTrackers
+      statsTrackers ++= extraStatsTrackers
 
       if (spark.conf.get(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED)) {
         val basicWriteJobStatsTracker = new BasicWriteJobStatsTracker(
