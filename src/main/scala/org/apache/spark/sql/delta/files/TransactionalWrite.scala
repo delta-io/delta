@@ -103,12 +103,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
   def writeFiles(
       data: Dataset[_],
-      extraStatTrackers: Seq[WriteJobStatsTracker] = Seq()): Seq[AddFile] =
-    writeFiles(data, None, isOptimize = false, extraStatTrackers)
-
-  def writeFiles(
-      data: Dataset[_],
-      writeOptions: Option[DeltaOptions],
+      writeOptions: Option[DeltaOptions] = None,
       extraStatTrackers: Seq[WriteJobStatsTracker] = Seq()): Seq[AddFile] =
     writeFiles(data, writeOptions, isOptimize = false, extraStatTrackers)
 
@@ -120,7 +115,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       data: Dataset[_],
       writeOptions: Option[DeltaOptions],
       isOptimize: Boolean,
-      extraStatTrackers: Seq[WriteJobStatsTracker] = Seq()): Seq[AddFile] = {
+      extraStatTrackers: Seq[WriteJobStatsTracker]): Seq[AddFile] = {
     hasWritten = true
 
     val spark = data.sparkSession
