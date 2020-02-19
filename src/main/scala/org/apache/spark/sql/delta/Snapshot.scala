@@ -54,10 +54,11 @@ class Snapshot(
     val path: Path,
     val version: Long,
     previousSnapshot: Option[Dataset[SingleAction]],
-    files: Seq[DeltaLogFileIndex],
+    val files: Seq[DeltaLogFileIndex],
     val minFileRetentionTimestamp: Long,
     val deltaLog: DeltaLog,
     val timestamp: Long,
+    val checksumOpt: Option[VersionChecksum],
     val lineageLength: Int = 1)
   extends StateCache
   with PartitionFiltering
@@ -71,14 +72,16 @@ class Snapshot(
   protected def spark = SparkSession.active
 
 
+  protected def getNumPartitions: Int = {
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS)
+  }
+
   // Reconstruct the state by applying deltas in order to the checkpoint.
   // We partition by path as it is likely the bulk of the data is add/remove.
   // Non-path based actions will be collocated to a single partition.
   private def stateReconstruction: Dataset[SingleAction] = {
     val implicits = spark.implicits
     import implicits._
-
-    val numPartitions = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS)
 
     val checkpointData = previousSnapshot.getOrElse(emptyActions)
     val deltaData = load(files)
@@ -100,7 +103,7 @@ class Snapshot(
         }
       }
       .withColumn("file", assertLogBelongsToTable(logPath)(input_file_name()))
-      .repartition(numPartitions, coalesce($"add.path", $"remove.path"))
+      .repartition(getNumPartitions, coalesce($"add.path", $"remove.path"))
       .sortWithinPartitions("file")
       .as[SingleAction]
       .mapPartitions { iter =>
@@ -119,7 +122,9 @@ class Snapshot(
   /** The current set of actions in this [[Snapshot]]. */
   def state: Dataset[SingleAction] = cachedState.getDS
 
-  protected lazy val metadataGetter: MetadataGetter = new StateMetadataGetter(spark, state)
+  protected lazy val metadataGetter: MetadataGetter = {
+    new StateMetadataGetter(spark, state, deltaLog, checksumOpt)
+  }
 
   def protocol: Protocol = metadataGetter.protocol
   def metadata: Metadata = metadataGetter.metadata
@@ -131,6 +136,8 @@ class Snapshot(
   def numOfRemoves: Long = metadataGetter.numOfRemoves
   def numOfSetTransactions: Long = metadataGetter.numOfSetTransactions
 
+  // Validations
+  metadataGetter.validateChecksum()
   deltaLog.protocolRead(protocol)
 
   /** A map to look up transaction version by appId. */
@@ -158,7 +165,7 @@ class Snapshot(
   def dataSchema: StructType = metadata.dataSchema
 
   /** Number of columns to collect stats on for data skipping */
-  val numIndexedCols: Int = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(metadata)
+  lazy val numIndexedCols: Int = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(metadata)
 
   /**
    * Load the transaction logs from file indices. The files here may have different file formats
@@ -232,7 +239,9 @@ class InitialSnapshot(
     val logPath: Path,
     override val deltaLog: DeltaLog,
     override val metadata: Metadata)
-  extends Snapshot(logPath, -1, None, Nil, -1, deltaLog, -1) {
+  extends Snapshot(logPath, -1, None, Nil, -1, deltaLog, -1, None) {
   override val state: Dataset[SingleAction] = emptyActions
-  override protected lazy val metadataGetter: MetadataGetter = new EmptyMetadataGetter(metadata)
+  override protected lazy val metadataGetter: MetadataGetter = {
+    new EmptyMetadataGetter(metadata, deltaLog)
+  }
 }

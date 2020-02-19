@@ -26,7 +26,9 @@ import org.apache.spark.sql.functions.{coalesce, collect_set, count, last, lit, 
 
 class StateMetadataGetter(
     spark: SparkSession,
-    state: Dataset[SingleAction]) extends MetadataGetter {
+    state: Dataset[SingleAction],
+    override val deltaLog: DeltaLog,
+    override protected val checksumOpt: Option[VersionChecksum]) extends MetadataGetter {
 
   import StateMetadataGetter._
 
@@ -84,7 +86,10 @@ object StateMetadataGetter extends DeltaLogging {
   implicit private def stateEncoder: ExpressionEncoder[State] = _stateEncoder.copy()
 }
 
-class EmptyMetadataGetter(override val metadata: Metadata) extends MetadataGetter {
+class EmptyMetadataGetter(
+    override val metadata: Metadata,
+    override val deltaLog: DeltaLog) extends MetadataGetter {
+  override protected val checksumOpt: Option[VersionChecksum] = None
   override def protocol: Protocol = Protocol()
   override def setTransactions: Seq[SetTransaction] = Nil
   override def sizeInBytes: Long = 0

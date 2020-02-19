@@ -19,9 +19,14 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, SetTransaction}
 
 /**
- * MetaDataGetter provides an interface to get the metadata information of a Delta log
+ * MetadataGetter provides an interface to get the metadata information of a Delta log
  */
-trait MetadataGetter {
+trait MetadataGetter extends ValidateChecksum {
+
+  // For logging
+  def deltaLog: DeltaLog
+  protected val checksumOpt: Option[VersionChecksum]
+
   def protocol: Protocol
   def metadata: Metadata
   def setTransactions: Seq[SetTransaction]

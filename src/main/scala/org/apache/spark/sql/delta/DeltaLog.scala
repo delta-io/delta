@@ -64,7 +64,7 @@ class DeltaLog private(
   with MetadataCleanup
   with LogStoreProvider
   with SnapshotManagement
-  with VerifyChecksum {
+  with ReadChecksum {
 
   import org.apache.spark.sql.delta.util.FileNames._
 
@@ -141,23 +141,6 @@ class DeltaLog private(
    * composite id.
    */
   private[delta] def compositeId: (String, Path) = tableId -> dataPath
-
-  if (currentSnapshot.version == -1) {
-    // No checkpoint exists. Call "update" to load delta files.
-    update()
-  }
-
-  /**
-   * Verify the versions are contiguous.
-   */
-  def verifyDeltaVersions(versions: Array[Long]): Unit = {
-    // Turn this to a vector so that we can compare it with a range.
-    val deltaVersions = versions.toVector
-    if (deltaVersions.nonEmpty &&
-      (deltaVersions.head to deltaVersions.last) != deltaVersions) {
-      throw new IllegalStateException(s"versions ($deltaVersions) are not contiguous")
-    }
-  }
 
   /**
    * Run `body` inside `deltaLogLock` lock using `lockInterruptibly` so that the thread can be
@@ -313,66 +296,6 @@ class DeltaLog private(
       recordDeltaEvent(this, "delta.protocol.warning")
       logConsole(oldProtocolMessage(protocol))
     }
-  }
-
-  /* ------------------- *
-   |  History Management |
-   * ------------------- */
-
-  /** Get the snapshot at `version`. */
-  def getSnapshotAt(
-      version: Long,
-      commitTimestamp: Option[Long] = None,
-      lastCheckpointHint: Option[CheckpointInstance] = None): Snapshot = {
-    val current = snapshot
-    if (current.version == version) {
-      return current
-    }
-
-    // Do not use the hint if the version we're asking for is smaller than the last checkpoint hint
-    val lastCheckpoint = lastCheckpointHint.collect { case ci if ci.version <= version => ci }
-      .orElse(findLastCompleteCheckpoint(CheckpointInstance(version, None)))
-    val lastCheckpointFiles = lastCheckpoint.map { c =>
-      c.getCorrespondingFiles(logPath)
-    }.toSeq.flatten
-    val checkpointVersion = lastCheckpoint.map(_.version)
-    if (checkpointVersion.isEmpty) {
-      val versionZeroFile = deltaFile(logPath, 0L)
-      val versionZeroFileExists = store.listFrom(versionZeroFile)
-        .take(1)
-        .exists(_.getPath.getName == versionZeroFile.getName)
-      if (!versionZeroFileExists) {
-        throw DeltaErrors.logFileNotFoundException(versionZeroFile, 0L, metadata)
-      }
-    }
-    val startVersion = checkpointVersion.getOrElse(-1L) + 1
-    // Listing the files may be more efficient than getting the file status for each file
-    val deltaData = store.listFrom(deltaFile(logPath, startVersion))
-      .filter(f => isDeltaFile(f.getPath))
-      .takeWhile(f => deltaVersion(f.getPath) <= version)
-      .toArray
-    val deltaFileVersions = deltaData.map(f => deltaVersion(f.getPath))
-    if (deltaFileVersions.nonEmpty) {
-      // deltaFileVersions can be empty if we're loading a version for which a checkpoint exists
-      verifyDeltaVersions(deltaFileVersions)
-      require(deltaFileVersions.head == startVersion,
-        s"Did not get the first delta file version: $startVersion to compute Snapshot")
-      require(deltaFileVersions.last == version,
-        s"Did not get the last delta file version: $version to compute Snapshot")
-    }
-
-    val deltaIndex = DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT, deltaData)
-    val checkpointIndex =
-      DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT, fs, lastCheckpointFiles)
-
-    createSnapshot(
-      logPath,
-      version,
-      None,
-      checkpointIndex :: deltaIndex :: Nil,
-      minFileRetentionTimestamp,
-      this,
-      commitTimestamp.getOrElse(-1L))
   }
 
   /* ---------------------------------------- *

@@ -349,9 +349,9 @@ object DeltaErrors
         s"(${DeltaConfigs.IS_APPEND_ONLY.key}=false)'.")
   }
 
-  def missingPartFilesException(c: CheckpointMetaData, ae: Exception): Throwable = {
+  def missingPartFilesException(version: Long, ae: Exception): Throwable = {
     new IllegalStateException(
-      s"Couldn't find all part files of the checkpoint version: ${c.version}", ae)
+      s"Couldn't find all part files of the checkpoint version: $version", ae)
   }
 
   def deltaVersionsNotContiguousException(deltaVersions: Seq[Long]): Throwable = {
