@@ -65,9 +65,12 @@ case class DeltaSource(
     spark: SparkSession,
     deltaLog: DeltaLog,
     options: DeltaOptions,
-    filters: Seq[Expression] = Nil) extends Source with DeltaLogging {
+    filters: Seq[Expression] = Nil)
+  extends Source
+  with DeltaLogging {
 
-  private val maxFilesPerTrigger = options.maxFilesPerTrigger
+  private val maxFilesPerTrigger = options.maxFilesPerTrigger.getOrElse(
+    DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION_DEFAULT)
 
   // Deprecated. Please use `ignoreDeletes` or `ignoreChanges` from now on.
   private val ignoreFileDeletion = {
@@ -163,15 +166,15 @@ case class DeltaSource(
   private def getChangesWithRateLimit(
       fromVersion: Long,
       fromIndex: Long,
-      isStartingVersion: Boolean): Iterator[IndexedFile] = {
-
+      isStartingVersion: Boolean,
+      maxFiles: Option[Int] = Some(maxFilesPerTrigger)): Iterator[IndexedFile] = {
     val changes = getChanges(fromVersion, fromIndex, isStartingVersion)
-
+    if (maxFiles.isEmpty) return changes
 
     // Take each change until we've seen the configured number of addFiles. Some changes don't
     // represent file additions; we retain them for offset tracking, but they don't count towards
     // the maxFilesPerTrigger conf.
-    var toTake = maxFilesPerTrigger.getOrElse(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION_DEFAULT) + 1
+    var toTake = maxFiles.get + 1
     changes.takeWhile { file =>
       if (file.add != null) toTake -= 1
 
@@ -179,12 +182,14 @@ case class DeltaSource(
     }
   }
 
-  private def getStartingOffset(): Option[Offset] = {
+  private def getStartingOffset(
+      maxFiles: Option[Int] = Some(maxFilesPerTrigger)): Option[Offset] = {
     val version = deltaLog.snapshot.version
     if (version < 0) {
       return None
     }
-    val last = iteratorLast(getChangesWithRateLimit(version, -1L, isStartingVersion = true))
+    val last = iteratorLast(
+      getChangesWithRateLimit(version, -1L, isStartingVersion = true, maxFiles))
     if (last.isEmpty) {
       return None
     }
@@ -201,6 +206,7 @@ case class DeltaSource(
       Some(DeltaSourceOffset(tableId, v, i, isStartingVersion = v == version))
     }
   }
+
 
   override def getOffset: Option[Offset] = {
     val currentOffset = if (previousOffset == null) {
