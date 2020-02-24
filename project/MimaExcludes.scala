@@ -31,6 +31,7 @@ object MimaExcludes {
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.deltaLog"),
 
       // Changes in 0.6.0
+      ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaTable.makeUpdateTable"),
       ProblemFilters.exclude[IncompatibleMethTypeProblem]("io.delta.tables.DeltaMergeBuilder.withClause")
   )
 }

@@ -19,11 +19,11 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.commands.UpdateCommand
 
 import org.apache.spark.sql.catalyst.analysis.{EliminateSubqueryAliases, UnresolvedAttribute}
-import org.apache.spark.sql.catalyst.plans.logical.UpdateTable
+import org.apache.spark.sql.catalyst.plans.logical.DeltaUpdateTable
 import org.apache.spark.sql.internal.SQLConf
 
 case class PreprocessTableUpdate(conf: SQLConf) extends UpdateExpressionsSupport {
-  def apply(update: UpdateTable): UpdateCommand = {
+  def apply(update: DeltaUpdateTable): UpdateCommand = {
     val index = EliminateSubqueryAliases(update.child) match {
       case DeltaFullTable(tahoeFileIndex) =>
         tahoeFileIndex
@@ -32,7 +32,7 @@ case class PreprocessTableUpdate(conf: SQLConf) extends UpdateExpressionsSupport
     }
 
     val targetColNameParts =
-      update.updateColumns.map{col => new UnresolvedAttribute(col.name.split("\\.")).nameParts}
+      update.updateColumns.map{ col => UnresolvedAttribute(col.name).nameParts }
 
     val alignedUpdateExprs = generateUpdateExpressions(
       update.child.output, targetColNameParts, update.updateExpressions, conf.resolver)
