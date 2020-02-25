@@ -87,12 +87,13 @@ class Snapshot(
     val deltaData = load(files)
     val allActions = checkpointData.union(deltaData)
     val time = minFileRetentionTimestamp
-    val hadoopConf = new SerializableConfiguration(spark.sessionState.newHadoopConf())
+    val hadoopConf = spark.sparkContext.broadcast(
+      new SerializableConfiguration(spark.sessionState.newHadoopConf()))
     val logPath = path.toUri // for serializability
 
     allActions.as[SingleAction]
       .mapPartitions { actions =>
-        val hdpConf = hadoopConf.value
+        val hdpConf = hadoopConf.value.value
         actions.flatMap {
           _.unwrap match {
             case add: AddFile => Some(add.copy(path = canonicalizePath(add.path, hdpConf)).wrap)
