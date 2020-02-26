@@ -547,6 +547,55 @@ class HiveConnectorSuite extends HiveTest with BeforeAndAfterEach {
       }
     }
   }
+
+  test("column names should be case insensitive") {
+    // Create a Delta table
+    withTable("deltaCaseInsensitiveTest") {
+      withTempDir { dir =>
+        val testData = (0 until 10).map(x => (x, s"foo${x % 2}"))
+
+        withSparkSession{ spark =>
+          import spark.implicits._
+          testData.toDS.toDF("FooBar", "BarFoo").write.format("delta")
+            .partitionBy("BarFoo").save(dir.getCanonicalPath)
+        }
+
+        runQuery(
+          s"""
+             |create external table deltaCaseInsensitiveTest(fooBar int, Barfoo string)
+             |stored by 'io.delta.hive.DeltaStorageHandler' location '${dir.getCanonicalPath}'
+         """.stripMargin
+        )
+
+        checkAnswer("select * from deltaCaseInsensitiveTest", testData)
+        for ((col1, col2) <-
+               Seq("fooBar" -> "barFoo", "foobar" -> "barfoo", "FOOBAR" -> "BARFOO")) {
+          checkAnswer(
+            s"select $col1, $col2 from deltaCaseInsensitiveTest",
+            testData)
+          checkAnswer(
+            s"select $col2, $col1 from deltaCaseInsensitiveTest",
+            testData.map(_.swap))
+          checkAnswer(
+            s"select $col1 from deltaCaseInsensitiveTest where $col2 = '2'",
+            testData.filter(_._2 == "2").map(x => OneItem(x._1)))
+          checkAnswer(
+            s"select $col2 from deltaCaseInsensitiveTest where $col1 = 2",
+            testData.filter(_._1 == 2).map(x => OneItem(x._2)))
+        }
+        for (col <- Seq("fooBar", "foobar", "FOOBAR")) {
+          checkAnswer(
+            s"select $col from deltaCaseInsensitiveTest",
+            testData.map(x => OneItem(x._1)))
+        }
+        for (col <- Seq("barFoo", "barfoo", "BARFOO")) {
+          checkAnswer(
+            s"select $col from deltaCaseInsensitiveTest",
+            testData.map(x => OneItem(x._2)))
+        }
+      }
+    }
+  }
 }
 
 case class TestStruct(f1: String, f2: Long)
@@ -569,3 +618,5 @@ case class TestClass(
   c14: Map[String, Long],
   c15: TestStruct
 )
+
+case class OneItem[T](t: T)

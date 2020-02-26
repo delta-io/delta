@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta
 import java.net.URI
 
 import scala.collection.mutable
+import scala.collection.JavaConverters._
+
 import io.delta.hive.{DeltaStorageHandler, PartitionColumnInfo}
 import org.apache.hadoop.fs._
 import org.apache.hadoop.hive.metastore.api.MetaException
@@ -183,8 +185,8 @@ object DeltaHelper extends Logging {
         val sparkField = sparkStruct(i)
         val hiveFieldName = hiveStruct.getAllStructFieldNames.get(i)
         val hiveFieldType = hiveStruct.getAllStructFieldTypeInfos.get(i)
-        // TODO Do we need to respect case insensitive config?
-        sparkField.name == hiveFieldName && isSameType(sparkField.dataType, hiveFieldType)
+        sparkField.name.equalsIgnoreCase(hiveFieldName) &&
+          isSameType(sparkField.dataType, hiveFieldType)
       }
     } else {
       false
@@ -245,11 +247,20 @@ object DeltaHelper extends Logging {
   private def metaInconsistencyException(
       deltaSchema: StructType,
       hiveSchema: StructTypeInfo): MetaException = {
+    val hiveSchemaString = hiveSchema.getAllStructFieldNames
+      .asScala
+      .zip(hiveSchema.getAllStructFieldTypeInfos.asScala.map(_.getTypeName))
+      .map(_.productIterator.mkString(": "))
+      .mkString("\n")
     new MetaException(
       s"""The Delta table schema is not the same as the Hive schema. Please update your Hive
          |table's schema to match the Delta table schema.
-         |Delta table schema: $deltaSchema
-         |Hive schema: $hiveSchema""".stripMargin)
+         |
+         |Delta table schema:
+         |${deltaSchema.treeString}
+         |
+         |Hive schema:
+         |${hiveSchemaString}""".stripMargin)
   }
 
   // TODO Configure `spark` to pick up the right Hadoop configuration.
