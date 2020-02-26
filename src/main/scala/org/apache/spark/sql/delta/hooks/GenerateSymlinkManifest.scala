@@ -303,14 +303,14 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
 
     require(datasetWithPartitionValues.schema.fieldNames.contains("partitionValues"))
     val colNamePrefix = "_col_"
-    var df: Dataset[_] = datasetWithPartitionValues
 
     // Flatten out nested partition value columns while renaming them, so that the new columns do
     // not conflict with existing columns in DF `pathsWithPartitionValues.
-    val colToRenamedCols = partitionCols.map { column =>
-      val renamedColumn = s"$colNamePrefix$column"
-      df = df.withColumn(renamedColumn, col(s"partitionValues.`$column`"))
-      column -> renamedColumn
+    val colToRenamedCols = partitionCols.map { column => column -> s"$colNamePrefix$column" }
+
+    val df = colToRenamedCols.foldLeft(datasetWithPartitionValues.toDF()) {
+      case(currentDs, (column, renamedColumn)) =>
+        currentDs.withColumn(renamedColumn, col(s"partitionValues.`$column`"))
     }
 
     // Mapping between original column names to use for generating partition path and
