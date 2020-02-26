@@ -51,7 +51,7 @@ object DeltaSQLConf {
       .doc("Number of partitions to use when building a Delta Lake snapshot.")
       .intConf
       .checkValue(n => n > 0, "Delta snapshot partition number must be positive.")
-      .createWithDefault(50)
+      .createOptional
 
   val DELTA_COLLECT_STATS =
     buildConf("stats.collect")

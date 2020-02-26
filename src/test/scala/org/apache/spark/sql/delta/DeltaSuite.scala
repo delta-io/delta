@@ -659,7 +659,7 @@ class DeltaSuite extends QueryTest
     withTempDir { tempDir =>
       spark.range(10).write.format("delta").save(tempDir.toString)
       val deltaLog = DeltaLog.forTable(spark, tempDir)
-      val numParts = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS)
+      val numParts = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS).get
       assert(deltaLog.snapshot.state.rdd.getNumPartitions == numParts)
     }
   }

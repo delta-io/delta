@@ -74,6 +74,7 @@ class Snapshot(
 
   protected def getNumPartitions: Int = {
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS)
+      .getOrElse(Snapshot.defaultNumSnapshotPartitions)
   }
 
   // Reconstruct the state by applying deltas in order to the checkpoint.
@@ -198,6 +199,8 @@ class Snapshot(
 }
 
 object Snapshot extends DeltaLogging {
+
+  private val defaultNumSnapshotPartitions: Int = 50
 
   /** Canonicalize the paths for Actions */
   private def canonicalizePath(path: String, hadoopConf: Configuration): String = {
