@@ -190,7 +190,7 @@ case class MergeIntoCommand(
 
     // Accumulator to collect all the distinct touched files
     val touchedFilesAccum = new SetAccumulator[String]()
-    spark.sparkContext.register(touchedFilesAccum, "MergeIntoDelta.touchedFiles")
+    spark.sparkContext.register(touchedFilesAccum, TOUCHED_FILES_ACCUM_NAME)
 
     // UDFs to records touched files names and add them to the accumulator
     val recordTouchedFileName = udf { (fileName: String) => {
@@ -419,6 +419,16 @@ case class MergeIntoCommand(
 }
 
 object MergeIntoCommand {
+  /**
+   * Spark UI will track all normal accumulators along with Spark tasks to show them on Web UI.
+   * However, the accumulator used by `MergeIntoCommand` can store a very large value since it
+   * tracks all files that need to be rewritten. We should ask Spark UI to not remember it,
+   * otherwise, the UI data may consume lots of memory. Hence, we use the prefix `internal.metrics.`
+   * to make this accumulator become an internal accumulator, so that it will not be tracked by
+   * Spark UI.
+   */
+  val TOUCHED_FILES_ACCUM_NAME = "internal.metrics.MergeIntoDelta.touchedFiles"
+
   val ROW_ID_COL = "_row_id_"
   val FILE_NAME_COL = "_file_name_"
   val SOURCE_ROW_PRESENT_COL = "_source_row_present_"
