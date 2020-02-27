@@ -20,7 +20,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, SetTransaction, SingleAction}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 
-import org.apache.spark.sql.{Dataset, SparkSession}
+import org.apache.spark.sql.{Dataset, Encoder, SparkSession}
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.functions.{coalesce, collect_set, count, last, lit, sum, udf}
 
@@ -81,9 +81,12 @@ object StateMetadataGetter extends DeltaLogging {
       throw e
   }
 
+
   private lazy val emptyMetadata = udf(() => Metadata())
   private lazy val defaultProtocol = udf(() => Protocol())
-  implicit private def stateEncoder: ExpressionEncoder[State] = _stateEncoder.copy()
+  implicit private def stateEncoder: Encoder[State] = {
+    _stateEncoder.copy()
+  }
 }
 
 class EmptyMetadataGetter(
