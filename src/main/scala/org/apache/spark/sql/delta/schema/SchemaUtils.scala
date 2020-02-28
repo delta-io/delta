@@ -265,20 +265,16 @@ object SchemaUtils {
         // Dropped a column that was present in the DataFrame schema
         return false
       }
-
       readSchema.forall { newField =>
-        existing.get(newField.name) match {
-          case Some(existingField) =>
-            // we know the name matches modulo case - now verify exact match
-            (existingField.name == newField.name
-              // if existing value is non-nullable, so should be the new value
-              && (existingField.nullable || !newField.nullable)
-              // and the type of the field must be compatible, too
-              && isDatatypeReadCompatible(existingField.dataType, newField.dataType))
-          case None =>
-            // new fields are fine, they just won't be returned
-            true
-        }
+        // new fields are fine, they just won't be returned
+        existing.get(newField.name).forall(existingField => {
+          // we know the name matches modulo case - now verify exact match
+          (existingField.name == newField.name
+            // if existing value is non-nullable, so should be the new value
+            && (existingField.nullable || !newField.nullable)
+            // and the type of the field must be compatible, too
+            && isDatatypeReadCompatible(existingField.dataType, newField.dataType))
+        })
       }
     }
 
