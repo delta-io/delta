@@ -33,7 +33,7 @@ import org.apache.spark.sql.execution.command.RunnableCommand
  *
  * Existing Table Semantics
  *  - The save mode will control how existing data is handled (i.e. overwrite, append, etc)
- *  - The schema will of the DataFrame will be checked and if there are new columns present
+ *  - The schema of the DataFrame will be checked and if there are new columns present
  *    they will be added to the tables schema. Conflicting columns (i.e. a INT, and a STRING)
  *    will result in an exception
  *  - The partition columns, if present are validated against the existing metadata. If not
