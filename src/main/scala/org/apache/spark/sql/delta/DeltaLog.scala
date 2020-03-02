@@ -111,7 +111,7 @@ class DeltaLog private(
 
   // TODO: There is a race here where files could get dropped when increasing the
   // retention interval...
-  protected def metadata = if (snapshot == null) Metadata() else snapshot.metadata
+  protected def metadata = snapshot.metadata
 
   /**
    * Tombstones before this timestamp will be dropped from the state and the files can be
