@@ -35,7 +35,7 @@ import org.apache.spark.sql.catalyst.plans.logical._
 trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
 
   protected def executeDelete(condition: Option[Expression]): Unit = {
-    val delete = Delete(self.toDF.queryExecution.analyzed, condition)
+    val delete = DeltaDelete(self.toDF.queryExecution.analyzed, condition)
 
     // current DELETE does not support subquery,
     // and the reason why perform checking here is that
@@ -44,7 +44,7 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
     subqueryNotSupportedCheck(condition, "DELETE")
 
     val qe = sparkSession.sessionState.executePlan(delete)
-    val resolvedDelete = qe.analyzed.asInstanceOf[Delete]
+    val resolvedDelete = qe.analyzed.asInstanceOf[DeltaDelete]
     val deleteCommand = DeleteCommand(resolvedDelete)
     deleteCommand.run(sparkSession)
   }

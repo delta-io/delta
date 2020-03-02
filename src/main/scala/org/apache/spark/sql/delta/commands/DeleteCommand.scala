@@ -25,7 +25,7 @@ import org.apache.spark.sql.{Column, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
 import org.apache.spark.sql.catalyst.expressions.{EqualNullSafe, Expression, InputFileName, Literal, Not}
 import org.apache.spark.sql.catalyst.plans.QueryPlan
-import org.apache.spark.sql.catalyst.plans.logical.{Delete, LogicalPlan}
+import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
@@ -206,7 +206,7 @@ case class DeleteCommand(
 }
 
 object DeleteCommand {
-  def apply(delete: Delete): DeleteCommand = {
+  def apply(delete: DeltaDelete): DeleteCommand = {
     val index = EliminateSubqueryAliases(delete.child) match {
       case DeltaFullTable(tahoeFileIndex) =>
         tahoeFileIndex
