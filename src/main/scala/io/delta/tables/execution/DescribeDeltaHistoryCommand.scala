@@ -36,8 +36,8 @@ case class DescribeDeltaHistoryCommand(
     val basePath =
       new Path(if (table.nonEmpty) {
         DeltaTableIdentifier(sparkSession, table.get) match {
-          case Some(id) => id.path.getOrElse(
-            throw DeltaErrors.tableNotSupportedException("DESCRIBE HISTORY"))
+          case Some(id) => id.path.getOrElse{
+            throw DeltaErrors.tableNotSupportedException("DESCRIBE HISTORY")}
           case None => throw DeltaErrors.notADeltaTableException("DESCRIBE HISTORY")
         }
       } else {

@@ -44,7 +44,7 @@ case class VacuumTableCommand(
     val pathToVacuum =
       new Path(if (table.nonEmpty) {
         DeltaTableIdentifier(sparkSession, table.get) match {
-          case Some(id) => id.path.getOrElse(throw DeltaErrors.tableNotSupportedException("VACUUM"))
+          case Some(id) => id.path.getOrElse{throw DeltaErrors.tableNotSupportedException("VACUUM")}
           case None => throw DeltaErrors.notADeltaTableException("VACUUM")
         }
       } else {
