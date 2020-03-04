@@ -385,6 +385,12 @@ object DeltaErrors
     new AnalysisException("Delta does not support specifying the schema at read time.")
   }
 
+  def schemaNotProvidedException: Throwable = {
+    new AnalysisException(
+      "Table schema is not provided. Please provide the schema of the table when using " +
+        "REPLACE table and an AS SELECT query is not provided.")
+  }
+
   def outputModeNotSupportedException(dataSource: String, outputMode: OutputMode): Throwable = {
     new AnalysisException(
       s"Data source $dataSource does not support $outputMode output mode")
