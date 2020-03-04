@@ -219,7 +219,7 @@ object DeltaTableUtils extends PredicateHelper
    * Check if condition involves a subquery expression.
    */
   def containsSubquery(condition: Expression): Boolean = {
-    condition.find(_.isInstanceOf[SubqueryExpression]).isDefined
+    SubqueryExpression.hasSubquery(condition)
   }
 
   /**
