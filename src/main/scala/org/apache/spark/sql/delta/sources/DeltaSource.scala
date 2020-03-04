@@ -69,9 +69,6 @@ case class DeltaSource(
   extends Source
   with DeltaLogging {
 
-  private val maxFilesPerTrigger = options.maxFilesPerTrigger.getOrElse(
-    DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION_DEFAULT)
-
   // Deprecated. Please use `ignoreDeletes` or `ignoreChanges` from now on.
   private val ignoreFileDeletion = {
     if (options.ignoreFileDeletion) {
@@ -167,29 +164,27 @@ case class DeltaSource(
       fromVersion: Long,
       fromIndex: Long,
       isStartingVersion: Boolean,
-      maxFiles: Option[Int] = Some(maxFilesPerTrigger)): Iterator[IndexedFile] = {
+      limits: Option[AdmissionLimits] = Some(new AdmissionLimits())): Iterator[IndexedFile] = {
     val changes = getChanges(fromVersion, fromIndex, isStartingVersion)
-    if (maxFiles.isEmpty) return changes
+    if (limits.isEmpty) return changes
 
     // Take each change until we've seen the configured number of addFiles. Some changes don't
     // represent file additions; we retain them for offset tracking, but they don't count towards
     // the maxFilesPerTrigger conf.
-    var toTake = maxFiles.get + 1
-    changes.takeWhile { file =>
-      if (file.add != null) toTake -= 1
-
-      toTake > 0
+    var admissionControl = limits.get
+    changes.takeWhile { action =>
+      admissionControl.admit(Option(action.add))
     }
   }
 
   private def getStartingOffset(
-      maxFiles: Option[Int] = Some(maxFilesPerTrigger)): Option[Offset] = {
+      limits: Option[AdmissionLimits] = Some(new AdmissionLimits())): Option[Offset] = {
     val version = deltaLog.snapshot.version
     if (version < 0) {
       return None
     }
     val last = iteratorLast(
-      getChangesWithRateLimit(version, -1L, isStartingVersion = true, maxFiles))
+      getChangesWithRateLimit(version, -1L, isStartingVersion = true, limits))
     if (last.isEmpty) {
       return None
     }
@@ -319,4 +314,29 @@ case class DeltaSource(
   }
 
   override def toString(): String = s"DeltaSource[${deltaLog.dataPath}]"
+
+  /**
+   * Class that helps controlling how much data should be processed by a single micro-batch.
+   */
+  private class AdmissionLimits(
+      maxFiles: Option[Int] = options.maxFilesPerTrigger,
+      private var bytesToTake: Long = options.maxBytesPerTrigger.getOrElse(Long.MaxValue)) {
+
+    private var filesToTake = maxFiles.getOrElse {
+      if (options.maxBytesPerTrigger.isEmpty) {
+        DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION_DEFAULT
+      } else {
+        Int.MaxValue - 8 // - 8 to prevent JVM Array allocation OOM
+      }
+    }
+
+    /** Whether to admit the next file */
+    def admit(add: Option[AddFile]): Boolean = {
+      if (add.isEmpty) return true
+      val shouldAdmit = filesToTake > 0 && bytesToTake > 0
+      filesToTake -= 1
+      bytesToTake -= add.get.size
+      shouldAdmit
+    }
+  }
 }

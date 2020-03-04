@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.DeltaOptions.{DATA_CHANGE_OPTION, MERGE_SCHEMA
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
+import org.apache.spark.network.util.{ByteUnit, JavaUtils}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.internal.SQLConf
 
@@ -100,6 +101,13 @@ trait DeltaReadOptions extends DeltaOptionParser {
     }
   }
 
+  val maxBytesPerTrigger = options.get(MAX_BYTES_PER_TRIGGER_OPTION).map { str =>
+    Try(JavaUtils.byteStringAs(str, ByteUnit.BYTE)).toOption.filter(_ > 0).getOrElse {
+      throw DeltaErrors.illegalDeltaOptionException(
+        MAX_BYTES_PER_TRIGGER_OPTION, str, "must be a size configuration such as '10g'")
+    }
+  }
+
   val ignoreFileDeletion = options.get(IGNORE_FILE_DELETION_OPTION)
     .map(toBoolean(_, IGNORE_FILE_DELETION_OPTION)).getOrElse(false)
 
@@ -141,6 +149,7 @@ object DeltaOptions extends DeltaLogging {
 
   val MAX_FILES_PER_TRIGGER_OPTION = "maxFilesPerTrigger"
   val MAX_FILES_PER_TRIGGER_OPTION_DEFAULT = 1000
+  val MAX_BYTES_PER_TRIGGER_OPTION = "maxBytesPerTrigger"
   val EXCLUDE_REGEX_OPTION = "excludeRegex"
   val IGNORE_FILE_DELETION_OPTION = "ignoreFileDeletion"
   val IGNORE_CHANGES_OPTION = "ignoreChanges"
