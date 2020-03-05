@@ -21,18 +21,19 @@ import java.util.concurrent.atomic.AtomicInteger
 
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.hadoop.fs.{FileSystem, Path}
-
+import org.apache.hadoop.fs.{FileStatus, FileSystem, Path, PathFilter}
 import org.apache.spark.SparkException
 import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions.InSet
 import org.apache.spark.sql.catalyst.plans.logical.Filter
+import org.apache.spark.sql.delta.actions.{Format, Metadata}
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.OPTIMIZER_METADATA_ONLY
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.{SQLTestUtils, SharedSparkSession}
+import org.apache.spark.sql.types.{IntegerType, StructType}
 import org.apache.spark.util.Utils
 
 class DeltaSuite extends QueryTest
@@ -97,6 +98,44 @@ class DeltaSuite extends QueryTest
         checkDatasetUnorderly(ds, 1 -> "a", 2 -> "b")
       }
     }
+  }
+  /**
+   * Test to make sure that [[org.apache.spark.sql.delta.actions.Metadata.format.options]]
+   * are respected
+   */
+  test("check format options") {
+    val tempDir = Utils.createTempDir()
+    val path = new Path(tempDir.getCanonicalPath)
+    Seq(1).toDF("key").write.format("delta").save(tempDir.toString)
+    val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
+
+    val filter = new PathFilter {
+      override def accept(path: Path): Boolean = {
+        // part-00000-3ff8ed8b-bd38-44c0-af55-21c97b0a9e1b-c000.snappy.parquet
+        path.getName.startsWith("part-")
+      }}
+    fs.listStatus(path, filter).foreach {
+      file: FileStatus => assert(file.getPath.getName.endsWith("snappy.parquet"))
+    }
+
+    val schema = new StructType()
+      .add("key", IntegerType, nullable = false)
+    val deltaLog = DeltaLog.forTable(spark, tempDir)
+    val txn = deltaLog.startTransaction()
+    val m = Metadata(
+      schemaString = schema.json,
+      format = Format(options = Map("compression" -> "gzip")))
+    txn.commit(m :: Nil, DeltaOperations.ManualUpdate)
+
+    val table = io.delta.tables.DeltaTable.forPath(tempDir.toString)
+    table.updateExpr(Map("key" -> "100"))
+
+    val filterGzip = new PathFilter {
+      override def accept(path: Path): Boolean = {
+        // part-00000-d6c4fee7-cba3-45e2-8403-78e8869b2c1b-c000.gz.parquet
+        path.getName.startsWith("part-") && path.getName.endsWith("gz.parquet")
+      }}
+    assert(fs.listStatus(path, filterGzip).length > 0)
   }
 
   test("SC-8078: read deleted directory") {

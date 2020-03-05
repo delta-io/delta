@@ -159,7 +159,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         partitionColumns = partitioningColumns,
         bucketSpec = None,
         statsTrackers = statsTrackers,
-        options = Map.empty)
+        options = snapshot.metadata.format.options)
     }
 
     committer.addedStatuses
