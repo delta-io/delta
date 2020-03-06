@@ -31,7 +31,10 @@ trait DeltaErrorsSuiteBase
 
   val MAX_URL_ACCESS_RETRIES = 3
   val path = "/sample/path"
+
   // Map of error name to the actual error message it throws
+  // When adding an error, add the name of the function throwing the error as the key and the value
+  // as the error being thrown
   def errorsToTest: Map[String, Throwable] = Map(
     "useDeltaOnOtherFormatPathException" ->
       DeltaErrors.useDeltaOnOtherFormatPathException("operation", path, spark),
@@ -42,12 +45,18 @@ trait DeltaErrorsSuiteBase
     "createExternalTableWithoutSchemaException" ->
       DeltaErrors.createExternalTableWithoutSchemaException(new Path(path), "tableName", spark),
     "createManagedTableWithoutSchemaException" ->
-      DeltaErrors.createManagedTableWithoutSchemaException("tableName", spark))
+      DeltaErrors.createManagedTableWithoutSchemaException("tableName", spark),
+    "multipleSourceRowMatchingTargetRowInMergeException" ->
+      DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(spark),
+    "concurrentModificationException" -> new ConcurrentWriteException(None))
 
   def otherMessagesToTest: Map[String, String] = Map(
     "deltaFileNotFoundHint" ->
       DeltaErrors.deltaFileNotFoundHint(
-        DeltaErrors.generateDocsLink(sparkConf, DeltaErrors.faqRelativePath), path))
+        DeltaErrors.generateDocsLink(
+          sparkConf,
+          DeltaErrors.faqRelativePath,
+          skipValidation = true), path))
 
   def errorMessagesToTest: Map[String, String] =
     errorsToTest.mapValues(_.getMessage) ++ otherMessagesToTest
@@ -61,7 +70,7 @@ trait DeltaErrorsSuiteBase
     regexToFindUrl.findAllIn(message).toList
   }
 
-  def testUrls() {
+  def testUrls(): Unit = {
     errorMessagesToTest.foreach { case (errName, message) =>
       getUrlsFromMessage(message).foreach { url =>
         Given(s"*** Checking response for url: $url")

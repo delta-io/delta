@@ -43,9 +43,52 @@ trait DocsPath {
    */
   protected def baseDocsPath(conf: SparkConf): String = "https://docs.delta.io/latest"
 
-  def generateDocsLink(conf: SparkConf, path: String): String = {
-    baseDocsPath(conf) + path
+  def assertValidCallingFunction(): Unit = {
+    val callingMethods = Thread.currentThread.getStackTrace
+    callingMethods.foreach { method =>
+      if (errorsWithDocsLinks.contains(method.getMethodName)) {
+        return
+      }
+    }
+    assert(assertion = false, "The method throwing the error which contains a doc link must be a " +
+      "part of DocsPath.errorsWithDocsLinks")
   }
+
+  /**
+   * Get the link to the docs for the given relativePath. Validates that the error generating the
+   * link is added to docsLinks.
+   *
+   * @param relativePath the relative path after the base url to access.
+   * @param skipValidation whether to validate that the function generating the link is
+   *                       in the whitelist
+   * @return The entire URL of the documentation link
+   */
+  def generateDocsLink(
+      conf: SparkConf,
+      relativePath: String,
+      skipValidation: Boolean = false): String = {
+    if (!skipValidation) assertValidCallingFunction()
+    baseDocsPath(conf) + relativePath
+  }
+
+  /**
+   * List of error function names for all errors that have URLs. When adding your error to this list
+   * remember to also add it to the list of errors in DeltaErrorsSuite
+   *
+   * @note add your error to DeltaErrorsSuiteBase after adding it to this list so that the url can
+   *       be tested
+   */
+  def errorsWithDocsLinks: Seq[String] = Seq(
+    "useDeltaOnOtherFormatPathException",
+    "useOtherFormatOnDeltaPathException",
+    "createExternalTableWithoutLogException",
+    "createExternalTableWithoutSchemaException",
+    "createManagedTableWithoutSchemaException",
+    "multipleSourceRowMatchingTargetRowInMergeException",
+    "faqRelativePath",
+    "ignoreStreamingUpdatesAndDeletesWarning",
+    "concurrentModificationExceptionMsg"
+  )
 }
 
 /**
@@ -61,7 +104,7 @@ object DeltaErrors
 
   def baseDocsPath(spark: SparkSession): String = baseDocsPath(spark.sparkContext.getConf)
 
-  val faqRelativePath = "/delta-intro.html#frequently-asked-questions"
+  val faqRelativePath: String = "/delta-intro.html#frequently-asked-questions"
 
   val DeltaSourceIgnoreDeleteErrorMessage =
     "Detected deleted data from streaming source. This is currently not supported. If you'd like " +
@@ -255,8 +298,8 @@ object DeltaErrors
         |'format("delta")' when reading and writing to a delta table.
         |
         |To disable this check, SET spark.databricks.delta.formatCheck.enabled=false
-        |To learn more about Delta, see
-        |${generateDocsLink(spark.sparkContext.getConf, "/index.html")}
+        |To learn more about Delta, see ${generateDocsLink(spark.sparkContext.getConf,
+        "/index.html")}
         |""".stripMargin)
   }
 
@@ -469,8 +512,8 @@ object DeltaErrors
          |should be used to update the matching target row.
          |You can preprocess the source table to eliminate the possibility of multiple matches.
          |Please refer to
-         |${baseDocsPath(spark)}/delta/delta-update.html#upsert-into-a-table-using-merge
-       """.stripMargin
+         |${generateDocsLink(spark.sparkContext.getConf,
+        "/delta-update.html#upsert-into-a-table-using-merge")}""".stripMargin
     )
   }
 
@@ -753,6 +796,26 @@ object DeltaErrors
     throw new AnalysisException(
       s"Couldn't find column $column in:\n${schema.treeString}")
   }
+
+  def concurrentModificationExceptionMsg(
+      sparkConf: SparkConf,
+      baseMessage: String,
+      commit: Option[CommitInfo]): String = {
+    baseMessage +
+      commit.map(ci => s"\nConflicting commit: ${JsonUtils.toJson(ci)}").getOrElse("") +
+      s"\nRefer to " +
+      s"${DeltaErrors.generateDocsLink(sparkConf, "/concurrency-control.html")} " +
+      "for more details."
+  }
+
+  def ignoreStreamingUpdatesAndDeletesWarning(spark: SparkSession): String = {
+    val docPage = DeltaErrors.generateDocsLink(
+      spark.sparkContext.getConf,
+      "/delta-streaming.html#ignoring-updates-and-deletes")
+    s"""WARNING: The 'ignoreFileDeletion' option is deprecated. Switch to using one of
+       |'ignoreDeletes' or 'ignoreChanges'. Refer to $docPage for details.
+         """.stripMargin
+  }
 }
 
 /** The basic class for all Tahoe commit conflict exceptions. */
@@ -760,12 +823,10 @@ abstract class DeltaConcurrentModificationException(message: String)
   extends ConcurrentModificationException(message) {
 
   def this(baseMessage: String, conflictingCommit: Option[CommitInfo]) = this(
-    baseMessage +
-      conflictingCommit.map(ci => s"\nConflicting commit: ${JsonUtils.toJson(ci)}").getOrElse("") +
-      s"\nRefer to " +
-      s"${DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html")} " +
-      "for more details."
-  )
+    DeltaErrors.concurrentModificationExceptionMsg(
+      SparkEnv.get.conf,
+      baseMessage,
+      conflictingCommit))
 
   /**
    * Type of the commit conflict.
