@@ -226,4 +226,13 @@ object DeltaSQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val MERGE_MATCHED_ONLY_ENABLED =
+    buildConf("merge.optimizeMatchedOnlyMerge.enabled")
+      .internal()
+      .doc(
+        """If enabled, merge without 'when not matched' clause will be optimized to use a
+          |right outer join instead of a full outer join.
+      """.stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 }

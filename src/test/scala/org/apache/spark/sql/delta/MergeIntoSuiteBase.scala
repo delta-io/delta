@@ -1769,4 +1769,112 @@ abstract class MergeIntoSuiteBase
       iter.close()
     }
   }
+
+  protected def testMatchedOnlyOptimization(
+      name: String)(
+      source: Seq[(Int, Int)],
+      target: Seq[(Int, Int)],
+      mergeOn: String,
+      mergeClauses: MergeClause*) (
+      result: Seq[(Int, Int)]): Unit = {
+    Seq(true, false).foreach { matchedOnlyEnabled =>
+      withSQLConf(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED.key -> matchedOnlyEnabled.toString) {
+        val s = if (matchedOnlyEnabled) "enabled" else "disabled"
+        testExtendedMerge(
+          s"matched only merge - $s - $name") (
+          source,
+          target,
+          mergeOn,
+          mergeClauses: _*) (
+          result
+        )
+      }
+    }
+  }
+
+  testMatchedOnlyOptimization("with update") (
+    source = Seq((1, 100), (3, 300), (5, 500)),
+    target = Seq((1, 10), (2, 20), (3, 30)),
+    mergeOn = "s.key = t.key",
+    update("t.key = s.key, t.value = s.value")) (
+    result = Seq(
+      (1, 100), // updated
+      (2, 20), // existed previously
+      (3, 300) // updated
+    )
+  )
+
+  testMatchedOnlyOptimization("with delete") (
+    source = Seq((1, 100), (3, 300), (5, 500)),
+    target = Seq((1, 10), (2, 20), (3, 30)),
+    mergeOn = "s.key = t.key",
+    delete()) (
+    result = Seq(
+      (2, 20) // existed previously
+    )
+  )
+
+  testMatchedOnlyOptimization("with update and delete")(
+    source = Seq((1, 100), (3, 300), (5, 500)),
+    target = Seq((1, 10), (3, 30), (5, 30)),
+    mergeOn = "s.key = t.key",
+    update("t.value = s.value", "t.key < 3"), delete("t.key > 3")) (
+    result = Seq(
+      (1, 100), // updated
+      (3, 30), // existed previously
+    )
+  )
+
+  protected def testNullCaseMatchedOnly(name: String) (
+    source: Seq[(JInt, JInt)],
+    target: Seq[(JInt, JInt)],
+    mergeOn: String,
+    result: Seq[(JInt, JInt)]) = {
+    Seq(true, false).foreach { isPartitioned =>
+      Seq(true, false).foreach { isEnabled =>
+        withSQLConf(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED.key -> isEnabled.toString) {
+          val s = if (isEnabled) "enabled" else "disabled"
+          test(s"basic case - null handling - matched only merge - $s - $name, isPartitioned: $isPartitioned") {
+            withView("sourceView") {
+              val partitions = if (isPartitioned) "key" :: Nil else Nil
+              append(target.toDF("key", "value"), partitions)
+              source.toDF("key", "value").createOrReplaceTempView("sourceView")
+
+              executeMerge(
+                tgt = s"delta.`$tempPath` as t",
+                src = "sourceView s",
+                cond = mergeOn,
+                update("t.value = s.value"))
+
+              checkAnswer(
+                readDeltaTable(tempPath),
+                result.map { r => Row(r._1, r._2) }
+              )
+
+              Utils.deleteRecursively(new File(tempPath))
+            }
+          }
+        }
+      }
+    }
+  }
+
+  testNullCaseMatchedOnly("null in source") (
+    source = Seq((1, 10), (2, 20), (null, null)),
+    target = Seq((1, 1)),
+    mergeOn = "s.key = t.key",
+    result = Seq(
+      (1, 10), // update
+    )
+  )
+
+  testNullCaseMatchedOnly("null value in both source and target") (
+    source = Seq((1, 10), (2, 20), (null, 0)),
+    target = Seq((1, 1), (null, null)),
+    mergeOn = "s.key = t.key",
+    result = Seq(
+      (null, null), // No change as null in source does not match null in target
+      (1, 10) // update
+    )
+  )
 }
