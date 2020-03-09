@@ -96,9 +96,11 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
   }
 
   private def subqueryNotSupportedCheck(condition: Option[Expression], op: String): Unit = {
-    condition.foreach(cond => if (SubqueryExpression.hasSubquery(cond)) {
+    condition.foreach { cond =>
+      if (SubqueryExpression.hasSubquery(cond)) {
         throw DeltaErrors.subqueryNotSupportedException(op, cond)
-    })
+      }
+    }
   }
 
   protected def executeVacuum(

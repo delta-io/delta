@@ -267,14 +267,14 @@ object SchemaUtils {
       }
       readSchema.forall { newField =>
         // new fields are fine, they just won't be returned
-        existing.get(newField.name).forall(existingField => {
+        existing.get(newField.name).forall { existingField =>
           // we know the name matches modulo case - now verify exact match
           (existingField.name == newField.name
             // if existing value is non-nullable, so should be the new value
             && (existingField.nullable || !newField.nullable)
             // and the type of the field must be compatible, too
             && isDatatypeReadCompatible(existingField.dataType, newField.dataType))
-        })
+        }
       }
     }
 
