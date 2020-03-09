@@ -20,6 +20,8 @@ scalastyleConfig in ThisBuild := baseDirectory.value / "scalastyle-config.xml"
 lazy val compileScalastyle = taskKey[Unit]("compileScalastyle")
 lazy val testScalastyle = taskKey[Unit]("testScalastyle")
 
+crossScalaVersions := Seq("2.12.8", "2.11.12")
+
 val sparkVersion = "2.4.3"
 val hadoopVersion = "2.7.2"
 val hiveVersion = "2.3.3"
@@ -92,8 +94,13 @@ lazy val assemblySettings = Seq(
     case "reference.conf" => MergeStrategy.concat
     case _ => MergeStrategy.first
   },
+  assemblyJarName in assembly := s"${name.value}-assembly_${scalaBinaryVersion.value}-${version.value}.jar",
 
-  assemblyShadeRules in assembly := Seq(
+  assemblyShadeRules in assembly :=
+    (if (scalaBinaryVersion.value == "2.11") Seq(
+      // json4s cannot be shaded when using Scala 2.11
+      ShadeRule.rename("org.json4s.**" -> "@0").inAll
+    ) else Nil) ++ Seq(
     /*
       All org.apache.* before shading:
       arrow, avro, commons, curator, ivy, jute, log4j, orc, oro, parquet, spark, xbean, zookeeper
