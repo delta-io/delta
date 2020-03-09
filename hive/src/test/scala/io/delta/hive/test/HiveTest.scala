@@ -31,10 +31,10 @@ import org.apache.hadoop.hive.ql.session.SessionState
 import org.apache.hadoop.mapred.{JobConf, MiniMRCluster}
 import org.apache.hadoop.mapreduce.MRJobConfig
 import org.apache.hadoop.yarn.conf.YarnConfiguration
-import org.apache.spark.SparkConf
 import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.DeltaHelper
 // scalastyle:off funsuite
 import org.scalatest.{BeforeAndAfterAll, FunSuite}
 
@@ -160,12 +160,7 @@ trait HiveTest extends FunSuite with BeforeAndAfterAll {
   }
 
   protected def withSparkSession(f: SparkSession => Unit): Unit = {
-    val conf = new SparkConf()
-    val spark = SparkSession.builder()
-      .appName("HiveConnectorSuite")
-      .master("local[2]")
-      .getOrCreate()
-
+    val spark = DeltaHelper.spark
     try f(spark) finally {
       // Clean up resources so that we can use new DeltaLog and SparkSession
       spark.stop()

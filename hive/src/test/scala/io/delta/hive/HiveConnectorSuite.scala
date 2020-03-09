@@ -22,18 +22,9 @@ import io.delta.hive.test.HiveTest
 import io.delta.tables.DeltaTable
 
 import org.apache.spark.network.util.JavaUtils
-import org.apache.spark.sql.delta.DeltaLog
 import org.scalatest.BeforeAndAfterEach
 
 class HiveConnectorSuite extends HiveTest with BeforeAndAfterEach {
-
-  override def beforeEach(): Unit = {
-    DeltaLog.clearCache()
-  }
-
-  override def afterEach(): Unit = {
-    DeltaLog.clearCache()
-  }
 
   test("should not allow to create a non external Delta table") {
     val e = intercept[Exception] {
