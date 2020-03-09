@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import java.net.URI
+import java.util.Locale
 
 import scala.collection.mutable
 import scala.collection.JavaConverters._
@@ -30,6 +31,7 @@ import org.apache.hadoop.mapred.JobConf
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.delta.actions.{AddFile, SingleAction}
+import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.types._
 
 object DeltaHelper extends Logging {
@@ -173,64 +175,78 @@ object DeltaHelper extends Logging {
    */
   @throws(classOf[MetaException])
   def checkTableSchema(deltaSchema: StructType, hiveSchema: StructTypeInfo): Unit = {
-    // TODO How to check column nullables?
-    if (!isSameStructType(deltaSchema, hiveSchema)) {
-      throw metaInconsistencyException(deltaSchema, hiveSchema)
+    val deltaType = normalizeSparkType(deltaSchema).asInstanceOf[StructType]
+    val hiveType = hiveTypeToSparkType(hiveSchema).asInstanceOf[StructType]
+    if (deltaType != hiveType) {
+      val diffs =
+        SchemaUtils.reportDifferences(existingSchema = deltaType, specifiedSchema = hiveType)
+      throw metaInconsistencyException(
+        deltaSchema,
+        hiveSchema,
+        // `reportDifferences` doesn't report the column order difference so we report a special
+        // error message for this case.
+        if (diffs.isEmpty) "Column order is different" else diffs.mkString("\n"))
     }
   }
 
-  private def isSameStructType(sparkStruct: StructType, hiveStruct: StructTypeInfo): Boolean = {
-    if (sparkStruct.size == hiveStruct.getAllStructFieldNames.size) {
-      (0 until sparkStruct.size).forall { i =>
-        val sparkField = sparkStruct(i)
-        val hiveFieldName = hiveStruct.getAllStructFieldNames.get(i)
-        val hiveFieldType = hiveStruct.getAllStructFieldTypeInfos.get(i)
-        sparkField.name.equalsIgnoreCase(hiveFieldName) &&
-          isSameType(sparkField.dataType, hiveFieldType)
-      }
-    } else {
-      false
-    }
-  }
-
-  private def isSameType(sparkType: DataType, hiveType: TypeInfo): Boolean = {
+  /**
+   * Normalize the Spark type so that we can compare it with user specified Hive schema.
+   * - Field names will be converted to lower case.
+   * - Nullable will be set to `true` since Hive doesn't support non-null fields.
+   */
+  private def normalizeSparkType(sparkType: DataType): DataType = {
     sparkType match {
-      case ByteType => hiveType == TypeInfoFactory.byteTypeInfo
-      case BinaryType => hiveType == TypeInfoFactory.binaryTypeInfo
-      case BooleanType => hiveType == TypeInfoFactory.booleanTypeInfo
-      case IntegerType => hiveType == TypeInfoFactory.intTypeInfo
-      case LongType => hiveType == TypeInfoFactory.longTypeInfo
-      case StringType => hiveType == TypeInfoFactory.stringTypeInfo
-      case FloatType => hiveType == TypeInfoFactory.floatTypeInfo
-      case DoubleType => hiveType == TypeInfoFactory.doubleTypeInfo
-      case ShortType => hiveType == TypeInfoFactory.shortTypeInfo
-      case DateType => hiveType == TypeInfoFactory.dateTypeInfo
-      case TimestampType => hiveType == TypeInfoFactory.timestampTypeInfo
-      case decimalType: DecimalType =>
-        hiveType match {
-          case hiveDecimalType: DecimalTypeInfo =>
-            decimalType.precision == hiveDecimalType.precision() &&
-              decimalType.scale == hiveDecimalType.scale()
-          case _ => false
-        }
-      case arrayType: ArrayType =>
-        hiveType match {
-          case hiveListType: ListTypeInfo =>
-            isSameType(arrayType.elementType, hiveListType.getListElementTypeInfo)
-          case _ => false
-        }
-      case mapType: MapType =>
-        hiveType match {
-          case hiveMapType: MapTypeInfo =>
-            isSameType(mapType.keyType, hiveMapType.getMapKeyTypeInfo) &&
-              isSameType(mapType.valueType, hiveMapType.getMapValueTypeInfo)
-          case _ => false
-        }
       case structType: StructType =>
-        hiveType match {
-          case hiveStructType: StructTypeInfo => isSameStructType(structType, hiveStructType)
-          case _ => false
-        }
+        StructType(structType.fields.map(f => StructField(
+          name = f.name.toLowerCase(Locale.ROOT),
+          dataType = normalizeSparkType(f.dataType),
+          nullable = true,
+          metadata = Metadata.empty
+        )))
+      case arrayType: ArrayType =>
+        ArrayType(normalizeSparkType(arrayType.elementType), containsNull = true)
+      case mapType: MapType =>
+        MapType(
+          normalizeSparkType(mapType.keyType),
+          normalizeSparkType(mapType.valueType),
+          valueContainsNull = true)
+      case other => other
+    }
+  }
+
+  /**
+   * Convert a Hive's type to a Spark type so that we can compare it with the underlying Delta Spark
+   * type.
+   */
+  private def hiveTypeToSparkType(hiveType: TypeInfo): DataType = {
+    hiveType match {
+      case TypeInfoFactory.byteTypeInfo => ByteType
+      case TypeInfoFactory.binaryTypeInfo => BinaryType
+      case TypeInfoFactory.booleanTypeInfo => BooleanType
+      case TypeInfoFactory.intTypeInfo => IntegerType
+      case TypeInfoFactory.longTypeInfo => LongType
+      case TypeInfoFactory.stringTypeInfo => StringType
+      case TypeInfoFactory.floatTypeInfo => FloatType
+      case TypeInfoFactory.doubleTypeInfo => DoubleType
+      case TypeInfoFactory.shortTypeInfo => ShortType
+      case TypeInfoFactory.dateTypeInfo => DateType
+      case TypeInfoFactory.timestampTypeInfo => TimestampType
+      case hiveDecimalType: DecimalTypeInfo =>
+        DecimalType(precision = hiveDecimalType.precision(), scale = hiveDecimalType.scale())
+      case hiveListType: ListTypeInfo =>
+        ArrayType(hiveTypeToSparkType(hiveListType.getListElementTypeInfo), containsNull = true)
+      case hiveMapType: MapTypeInfo =>
+        MapType(
+          hiveTypeToSparkType(hiveMapType.getMapKeyTypeInfo),
+          hiveTypeToSparkType(hiveMapType.getMapValueTypeInfo),
+          valueContainsNull = true)
+      case hiveStructType: StructTypeInfo =>
+        val size = hiveStructType.getAllStructFieldNames.size
+        StructType((0 until size) map { i =>
+          val hiveFieldName = hiveStructType.getAllStructFieldNames.get(i)
+          val hiveFieldType = hiveStructType.getAllStructFieldTypeInfos.get(i)
+          StructField(hiveFieldName.toLowerCase(Locale.ROOT), hiveTypeToSparkType(hiveFieldType))
+        })
       case _ =>
         // TODO More Hive types:
         //  - void
@@ -240,27 +256,31 @@ object DeltaHelper extends Logging {
         //  - intervalDayTimeType
         //  - UnionType
         //  - Others?
-        throw new UnsupportedOperationException(s"Spark type $sparkType is not supported Hive")
+        throw new UnsupportedOperationException(s"Hive type $hiveType is not supported")
     }
   }
 
   private def metaInconsistencyException(
       deltaSchema: StructType,
-      hiveSchema: StructTypeInfo): MetaException = {
+      hiveSchema: StructTypeInfo,
+      diffs: String): MetaException = {
     val hiveSchemaString = hiveSchema.getAllStructFieldNames
       .asScala
       .zip(hiveSchema.getAllStructFieldTypeInfos.asScala.map(_.getTypeName))
       .map(_.productIterator.mkString(": "))
       .mkString("\n")
     new MetaException(
-      s"""The Delta table schema is not the same as the Hive schema. Please update your Hive
-         |table's schema to match the Delta table schema.
+      s"""The Delta table schema is not the same as the Hive schema:
+         |
+         |$diffs
          |
          |Delta table schema:
          |${deltaSchema.treeString}
          |
          |Hive schema:
-         |${hiveSchemaString}""".stripMargin)
+         |$hiveSchemaString
+         |
+         |Please update your Hive table's schema to match the Delta table schema.""".stripMargin)
   }
 
   // TODO Configure `spark` to pick up the right Hadoop configuration.
