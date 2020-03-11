@@ -34,7 +34,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
 import org.apache.spark.util.{Clock, Utils}
@@ -209,7 +209,23 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
 
   protected def verifyNewMetadata(metadata: Metadata): Unit = {
     SchemaUtils.checkColumnNameDuplication(metadata.schema, "in the metadata update")
-    ParquetSchemaConverter.checkFieldNames(SchemaUtils.explodeNestedFieldNames(metadata.dataSchema))
+    SchemaUtils.checkFieldNames(SchemaUtils.explodeNestedFieldNames(metadata.dataSchema))
+    val partitionColCheckIsFatal =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_PARTITION_COLUMN_CHECK_ENABLED)
+    try {
+      SchemaUtils.checkFieldNames(metadata.partitionColumns)
+    } catch {
+      case e: AnalysisException =>
+        recordDeltaEvent(
+          deltaLog,
+          "delta.schema.invalidPartitionColumn",
+          data = Map(
+            "checkEnabled" -> partitionColCheckIsFatal,
+            "columns" -> metadata.partitionColumns
+          )
+        )
+        if (partitionColCheckIsFatal) throw DeltaErrors.invalidPartitionColumn(e)
+    }
   }
 
   /** Returns files matching the given predicates. */

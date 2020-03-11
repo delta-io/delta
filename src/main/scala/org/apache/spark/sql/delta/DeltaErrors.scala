@@ -192,6 +192,22 @@ object DeltaErrors
     new AnalysisException(s"$command destination only supports Delta sources.\n$planName")
   }
 
+  def invalidColumnName(name: String): Throwable = {
+    new AnalysisException(
+      s"""Attribute name "$name" contains invalid character(s) among " ,;{}()\\n\\t=".
+         |Please use alias to rename it.
+       """.stripMargin.split("\n").mkString(" ").trim)
+  }
+
+  def invalidPartitionColumn(e: AnalysisException): Throwable = {
+    new AnalysisException(
+      """Found partition columns having invalid character(s) among " ,;{}()\n\t=". Please """ +
+        "change the name to your partition columns. This check can be turned off by setting " +
+        """spark.conf.set("spark.databricks.delta.partitionColumnValidity.enabled", false) """ +
+        "however this is not recommended as other features of Delta may not work properly.",
+      cause = Option(e))
+  }
+
   def missingTableIdentifierException(operationName: String): Throwable = {
     new AnalysisException(
       s"Please provide the path or table identifier for $operationName.")

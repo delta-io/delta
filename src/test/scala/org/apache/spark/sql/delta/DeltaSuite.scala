@@ -500,11 +500,18 @@ class DeltaSuite extends QueryTest
         assert(tempDir.delete())
       }
 
-      spark.range(100).select('id, 'id % 4 as "by,4")
+      val dfw = spark.range(100).select('id, 'id % 4 as "by,4")
         .write
         .format("delta")
         .partitionBy("by,4")
-        .save(tempDir.toString)
+
+      val e = intercept[AnalysisException] {
+        dfw.save(tempDir.toString)
+      }
+      assert(e.getMessage.contains("invalid character(s)"))
+      withSQLConf(DeltaSQLConf.DELTA_PARTITION_COLUMN_CHECK_ENABLED.key -> "false") {
+        dfw.save(tempDir.toString)
+      }
 
       val files = spark.read.format("delta").load(tempDir.toString).inputFiles
 

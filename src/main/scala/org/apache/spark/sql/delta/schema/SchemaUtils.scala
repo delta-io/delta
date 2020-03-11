@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
 import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.types._
 
@@ -950,5 +951,17 @@ object SchemaUtils {
       }
     }
     // scalastyle:on caselocale
+  }
+
+  /**
+   * Verifies that the column names are acceptable by Parquet and henceforth Delta. Parquet doesn't
+   * accept the characters ' ,;{}()\n\t'. We ensure that neither the data columns nor the partition
+   * columns have these characters.
+   */
+  def checkFieldNames(names: Seq[String]): Unit = {
+    ParquetSchemaConverter.checkFieldNames(names)
+    // The method checkFieldNames doesn't have a valid regex to search for '\n'. That should be
+    // fixed in Apache Spark, and we can remove this additional check here.
+    names.find(_.contains("\n")).foreach(col => throw DeltaErrors.invalidColumnName(col))
   }
 }
