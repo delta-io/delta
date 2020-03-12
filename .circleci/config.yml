@@ -1,4 +1,4 @@
-version: 2
+version: 2.1
 
 workflows:
   test_and_deploy:
