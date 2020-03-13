@@ -96,10 +96,10 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
   }
 
   private def subqueryNotSupportedCheck(condition: Option[Expression], op: String): Unit = {
-    condition match {
-      case Some(cond) if SubqueryExpression.hasSubquery(cond) =>
+    condition.foreach { cond =>
+      if (SubqueryExpression.hasSubquery(cond)) {
         throw DeltaErrors.subqueryNotSupportedException(op, cond)
-      case _ =>
+      }
     }
   }
 
