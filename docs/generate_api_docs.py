@@ -38,24 +38,24 @@ def main():
     sphinx_docs_final_dir = all_api_docs_final_dir + "/python"
 
     # Generate Java and Scala docs
-    print "## Generating ScalaDoc and JavaDoc ..."
+    print("## Generating ScalaDoc and JavaDoc ...")
     with WorkingDirectory(repo_root_dir):
         run_cmd(["build/sbt", ";clean;unidoc"], stream_output=verbose)
 
     # Generate Python docs
-    print '## Generating Python(Sphinx) docs ...'
+    print('## Generating Python(Sphinx) docs ...')
     with WorkingDirectory(sphinx_gen_dir):
         run_cmd(["make", "html"], stream_output=verbose)
 
     # Update Scala docs
-    print "## Patching ScalaDoc ..."
+    print("## Patching ScalaDoc ...")
     with WorkingDirectory(scaladoc_gen_dir):
         # Patch the js and css files
         append(docs_root_dir + "/api-docs.js", "./lib/template.js")  # append new js functions
         append(docs_root_dir + "/api-docs.css", "./lib/template.css")  # append new styles
 
     # Update Java docs
-    print "## Patching JavaDoc ..."
+    print("## Patching JavaDoc ...")
     with WorkingDirectory(javadoc_gen_dir):
         # Find html files to patch
         (_, stdout, _) = run_cmd(["find", ".", "-name", "*.html", "-mindepth", "2"])
@@ -99,7 +99,7 @@ def main():
     run_cmd(["cp", "-r", javadoc_gen_dir, java_api_docs_final_dir])
     run_cmd(["cp", "-r", sphinx_cp_dir, sphinx_docs_final_dir])
 
-    print "## API docs generated in " + all_api_docs_final_dir
+    print("## API docs generated in " + all_api_docs_final_dir)
 
 
 def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
@@ -180,7 +180,7 @@ class WorkingDirectory(object):
 
 def log(str):
     if verbose:
-        print str
+        print(str)
 
 
 verbose = False
