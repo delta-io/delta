@@ -38,8 +38,6 @@ def run_python_tests(root_dir):
     run_cmd(["python", python_test_script], stream_output=True)
 
 
-
-
 def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
     cmd_env = os.environ.copy()
     if env:
