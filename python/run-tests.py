@@ -98,7 +98,7 @@ def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
 
 
 def run_python_style_checks(root_dir):
-    run_cmd([os.path.join(root_dir, "dev", "lint-python")])
+    run_cmd([os.path.join(root_dir, "dev", "lint-python")], stream_output=True)
 
 
 if __name__ == "__main__":

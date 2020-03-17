@@ -142,7 +142,7 @@ flake8 checks failed."
     fi
 
     echo "starting $FLAKE8_BUILD test..."
-    FLAKE8_REPORT=$( ($FLAKE8_BUILD . --count --select=E901,E999,F821,F822,F823 \
+    FLAKE8_REPORT=$( ($FLAKE8_BUILD $1 --count --select=E901,E999,F821,F822,F823 \
                      --max-line-length=100 --show-source --statistics) 2>&1)
     FLAKE8_STATUS=$?
 
@@ -206,11 +206,11 @@ DELTA_ROOT_DIR="$(dirname "${SCRIPT_DIR}")"
 
 pushd "$DELTA_ROOT_DIR" &> /dev/null
 
-PYTHON_SOURCE="$(find . -name "*.py")"
+PYTHON_SOURCE="$(find "${DELTA_ROOT_DIR}/python" -name "*.py")"
 
 #compile_python_test "$PYTHON_SOURCE"
 pycodestyle_test "$PYTHON_SOURCE"
-flake8_test
+flake8_test "$PYTHON_SOURCE"
 pydocstyle_test
 
 echo
