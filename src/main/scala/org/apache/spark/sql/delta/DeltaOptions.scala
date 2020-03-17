@@ -22,10 +22,11 @@ import java.util.regex.PatternSyntaxException
 import scala.util.Try
 import scala.util.matching.Regex
 
-import org.apache.spark.sql.delta.DeltaOptions.{MERGE_SCHEMA_OPTION, OVERWRITE_SCHEMA_OPTION}
+import org.apache.spark.sql.delta.DeltaOptions.{DATA_CHANGE_OPTION, MERGE_SCHEMA_OPTION, OVERWRITE_SCHEMA_OPTION}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
+import org.apache.spark.network.util.{ByteUnit, JavaUtils}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.internal.SQLConf
 
@@ -77,6 +78,17 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
   def canOverwriteSchema: Boolean = {
     options.get(OVERWRITE_SCHEMA_OPTION).map(toBoolean(_, OVERWRITE_SCHEMA_OPTION)).getOrElse(false)
   }
+
+  /**
+   * Whether to write new data to the table or just rearrange data that is already
+   * part of the table. This option declares that the data being written by this job
+   * does not change any data in the table and merely rearranges existing data.
+   * This makes sure streaming queries reading from this table will not see any new changes
+   */
+  def rearrangeOnly: Boolean = {
+    options.get(DATA_CHANGE_OPTION).map(!toBoolean(_, DATA_CHANGE_OPTION)).getOrElse(false)
+  }
+
 }
 
 trait DeltaReadOptions extends DeltaOptionParser {
@@ -86,6 +98,13 @@ trait DeltaReadOptions extends DeltaOptionParser {
     Try(str.toInt).toOption.filter(_ > 0).getOrElse {
       throw DeltaErrors.illegalDeltaOptionException(
         MAX_FILES_PER_TRIGGER_OPTION, str, "must be a positive integer")
+    }
+  }
+
+  val maxBytesPerTrigger = options.get(MAX_BYTES_PER_TRIGGER_OPTION).map { str =>
+    Try(JavaUtils.byteStringAs(str, ByteUnit.BYTE)).toOption.filter(_ > 0).getOrElse {
+      throw DeltaErrors.illegalDeltaOptionException(
+        MAX_BYTES_PER_TRIGGER_OPTION, str, "must be a size configuration such as '10g'")
     }
   }
 
@@ -110,7 +129,7 @@ trait DeltaReadOptions extends DeltaOptionParser {
  * Options for the Delta data source.
  */
 class DeltaOptions(
-    @transient protected val options: CaseInsensitiveMap[String],
+    @transient protected[delta] val options: CaseInsensitiveMap[String],
     @transient protected val sqlConf: SQLConf)
   extends DeltaWriteOptions with DeltaReadOptions with Serializable {
 
@@ -130,11 +149,13 @@ object DeltaOptions extends DeltaLogging {
 
   val MAX_FILES_PER_TRIGGER_OPTION = "maxFilesPerTrigger"
   val MAX_FILES_PER_TRIGGER_OPTION_DEFAULT = 1000
+  val MAX_BYTES_PER_TRIGGER_OPTION = "maxBytesPerTrigger"
   val EXCLUDE_REGEX_OPTION = "excludeRegex"
   val IGNORE_FILE_DELETION_OPTION = "ignoreFileDeletion"
   val IGNORE_CHANGES_OPTION = "ignoreChanges"
   val IGNORE_DELETES_OPTION = "ignoreDeletes"
   val OPTIMIZE_WRITE_OPTION = "optimizeWrite"
+  val DATA_CHANGE_OPTION = "dataChange"
 
   val validOptionKeys : Set[String] = Set(
     REPLACE_WHERE_OPTION,
@@ -146,6 +167,7 @@ object DeltaOptions extends DeltaLogging {
     IGNORE_CHANGES_OPTION,
     IGNORE_DELETES_OPTION,
     OPTIMIZE_WRITE_OPTION,
+    DATA_CHANGE_OPTION,
     "queryName",
     "checkpointLocation",
     "path",

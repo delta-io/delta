@@ -34,11 +34,12 @@ import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.Resolver
+import org.apache.spark.sql.catalyst.analysis.Analyzer
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, ParquetToSparkSchemaConverter}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StringType, StructField, StructType}
 import org.apache.spark.util.{SerializableConfiguration, Utils}
 
@@ -110,6 +111,39 @@ abstract class ConvertToDeltaCommandBase(
       Map.empty[String, String])
   }
 
+  /**
+   * Calls DeltaCommand.isCatalogTable. With Convert, we may get a format check error in cases where
+   * the metastore and the underlying table don't align, e.g. external table where the underlying
+   * files are converted to delta but the metadata has not been converted yet. In these cases,
+   * catch the error and return based on whether the provided Table Identifier could reasonably be
+   * a path
+   *
+   * @param analyzer The session state analyzer to call
+   * @param tableIdent Table Identifier to determine whether is path based or not
+   * @return Boolean where true means that the table is a table in a metastore and false means the
+   *         table is a path based table
+   */
+  override def isCatalogTable(analyzer: Analyzer, tableIdent: TableIdentifier): Boolean = {
+    try {
+      super.isCatalogTable(analyzer, tableIdentifier)
+    } catch {
+      case e: AnalysisException if e.getMessage.contains("Incompatible format detected") =>
+        !isPathIdentifier(tableIdentifier)
+    }
+  }
+
+  /**
+   * Override this method since parquet paths are valid for Convert
+   * @param tableIdent the provided table or path
+   * @return Whether or not the ident provided can refer to a table by path
+   */
+  override def isPathIdentifier(tableIdent: TableIdentifier): Boolean = {
+    val provider = tableIdent.database.getOrElse("")
+    // If db doesnt exist or db is called delta/tahoe then check if path exists
+    (DeltaSourceUtils.isDeltaDataSourceName(provider) || provider == "parquet") &&
+      new Path(tableIdent.table).isAbsolute
+  }
+
   protected def handleExistingTransactionLog(
       spark: SparkSession,
       txn: OptimisticTransaction,
@@ -173,8 +207,7 @@ abstract class ConvertToDeltaCommandBase(
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_IMPORT_BATCH_SIZE_STATS_COLLECTION)
 
       val addFilesIter = fileListResult.asScala.grouped(statsBatchSize).flatMap { batch =>
-        val resolver = spark.sessionState.conf.resolver
-        val adds = batch.map(createAddFile(_, txn.deltaLog.dataPath, fs, resolver))
+        val adds = batch.map(createAddFile(_, txn.deltaLog.dataPath, fs, spark.sessionState.conf))
         adds.toIterator
       }
       streamWrite(
@@ -185,7 +218,8 @@ abstract class ConvertToDeltaCommandBase(
           numFiles,
           partitionColNames,
           collectStats = false,
-          None))
+          None),
+        numFiles)
     } finally {
       fileListResultDf.unpersist()
     }
@@ -193,14 +227,19 @@ abstract class ConvertToDeltaCommandBase(
   }
 
   protected def createAddFile(
-      file: SerializableFileStatus, basePath: Path, fs: FileSystem, resolver: Resolver): AddFile = {
+      file: SerializableFileStatus,
+      basePath: Path,
+      fs: FileSystem,
+      conf: SQLConf): AddFile = {
     val path = file.getPath
     val pathStr = file.getPath.toUri.toString
     val dateFormatter = DateFormatter()
     val timestampFormatter =
       TimestampFormatter(timestampPartitionPattern, java.util.TimeZone.getDefault)
+    val resolver = conf.resolver
+    val dir = if (file.isDir) file.getPath else file.getPath.getParent
     val (partitionOpt, _) = PartitionUtils.parsePartition(
-      path,
+      dir,
       typeInference = false,
       basePaths = Set.empty,
       userSpecifiedDataTypes = Map.empty,
@@ -215,10 +254,11 @@ abstract class ConvertToDeltaCommandBase(
           pathStr, partValues.columnNames, partitionColNames)
       }
 
+      val tz = Option(conf.sessionLocalTimeZone)
       // Check if the partition value can be casted to the provided type
       partValues.literals.zip(partitionFields).foreach { case (literal, field) =>
-        if (literal.eval() != null && Cast(literal, field.dataType).eval() == null) {
-          val partitionValue = Cast(literal, StringType).eval()
+        if (literal.eval() != null && Cast(literal, field.dataType, tz).eval() == null) {
+          val partitionValue = Cast(literal, StringType, tz).eval()
           val partitionValueStr = Option(partitionValue).map(_.toString).orNull
           throw DeltaErrors.castPartitionValueException(partitionValueStr, field.dataType)
         }
@@ -226,7 +266,7 @@ abstract class ConvertToDeltaCommandBase(
 
       val values = partValues
         .literals
-        .map(l => Cast(l, StringType).eval())
+        .map(l => Cast(l, StringType, tz).eval())
         .map(Option(_).map(_.toString).orNull)
 
       partitionColNames.zip(partValues.columnNames).foreach { case (expected, parsed) =>
@@ -301,12 +341,21 @@ abstract class ConvertToDeltaCommandBase(
       spark: SparkSession,
       txn: OptimisticTransaction,
       addFiles: Iterator[AddFile],
-      op: DeltaOperations.Convert): Long = {
+      op: DeltaOperations.Convert,
+      numFiles: Long): Long = {
     val firstVersion = 0L
     try {
       val deltaLog = txn.deltaLog
       val metadata = txn.metadata
       val context = getContext
+      val metrics = if (spark.conf.get(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED)) {
+        Some(Map[String, String](
+          "numConvertedFiles" -> numFiles.toString
+        ))
+      } else {
+        None
+      }
+
       val commitInfo = CommitInfo(
         time = txn.clock.getTimeMillis(),
         operation = op.name,
@@ -314,7 +363,8 @@ abstract class ConvertToDeltaCommandBase(
         context,
         readVersion = None,
         isolationLevel = None,
-        isBlindAppend = None)
+        isBlindAppend = None,
+        metrics)
 
       val extraActions = Seq(commitInfo, Protocol(), metadata)
       val actions = extraActions.toIterator ++ addFiles

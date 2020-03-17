@@ -16,14 +16,15 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+
 class ConvertToDeltaSQLSuite
-  extends ConvertToDeltaSuiteBase
-  with org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+  extends ConvertToDeltaSuiteBase  with DeltaSQLCommandTest
   {
   override protected def convertToDelta(
       identifier: String,
       partitionSchema: Option[String] = None): Unit = {
-    if (!partitionSchema.isDefined) {
+    if (partitionSchema.isEmpty) {
       sql(s"convert to delta $identifier")
     } else {
       val stringSchema = partitionSchema.get

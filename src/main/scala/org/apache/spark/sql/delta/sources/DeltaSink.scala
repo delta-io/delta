@@ -22,7 +22,11 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaUtils}
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.SparkContext
 import org.apache.spark.sql._
+import org.apache.spark.sql.execution.SQLExecution
+import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
+import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.execution.streaming.{Sink, StreamExecution}
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.NullType
@@ -48,6 +52,11 @@ class DeltaSink(
   override protected val canMergeSchema: Boolean = options.canMergeSchema
 
   override def addBatch(batchId: Long, data: DataFrame): Unit = deltaLog.withNewTransaction { txn =>
+    val sc = data.sparkSession.sparkContext
+    val metrics = Map[String, SQLMetric](
+      "numAddedFiles" -> createMetric(sc, "number of files added"),
+      "numRemovedFiles" -> createMetric(sc, "number of files removed")
+    )
     val queryId = sqlContext.sparkContext.getLocalProperty(StreamExecution.QUERY_ID_KEY)
     assert(queryId != null)
 
@@ -90,7 +99,14 @@ class DeltaSink(
     val newFiles = txn.writeFiles(data, Some(options))
     val setTxn = SetTransaction(queryId, batchId, Some(deltaLog.clock.getTimeMillis())) :: Nil
     val info = DeltaOperations.StreamingUpdate(outputMode, queryId, batchId)
+    metrics("numRemovedFiles").set(deletedFiles.size)
+    metrics("numAddedFiles").set(newFiles.size)
+    txn.registerSQLMetrics(sqlContext.sparkSession, metrics)
     txn.commit(setTxn ++ newFiles ++ deletedFiles, info)
+    // This is needed to make the SQL metrics visible in the Spark UI
+    val executionId = sqlContext.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
+    SQLMetrics.postDriverMetricUpdates(
+      sqlContext.sparkContext, executionId, metrics.values.toSeq)
   }
 
   override def toString(): String = s"DeltaSink[$path]"

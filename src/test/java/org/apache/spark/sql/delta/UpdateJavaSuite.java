@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package test.com.databricks.sql.transaction.tahoe;
+package test.org.apache.spark.sql.delta;
 
 import java.util.*;
 
@@ -60,8 +60,7 @@ public class UpdateJavaSuite {
 
         List<Row> expectedAnswer = createKVDataSet(Arrays.asList(
             tuple2(100, 10), tuple2(100, 20), tuple2(100, 30), tuple2(100, 40))).collectAsList();
-        String testResult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
-        Assert.assertNull(testResult);
+        QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
     }
 
     @Test
@@ -79,8 +78,7 @@ public class UpdateJavaSuite {
 
         List<Row> expectedAnswer = createKVDataSet(Arrays.asList(
             tuple2(100, 10), tuple2(100, 20), tuple2(100, 30), tuple2(100, 40))).collectAsList();
-        String testResult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
-        Assert.assertNull(testResult);
+        QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
     }
 
     @Test
@@ -98,8 +96,7 @@ public class UpdateJavaSuite {
 
         List<Row> expectedAnswer = createKVDataSet(Arrays.asList(
             tuple2(100, 10), tuple2(100, 20), tuple2(3, 30), tuple2(4, 40))).collectAsList();
-        String testResult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
-        Assert.assertNull(testResult);
+        QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
     }
 
     @Test
@@ -117,8 +114,7 @@ public class UpdateJavaSuite {
 
         List<Row> expectedAnswer = createKVDataSet(Arrays.asList(
             tuple2(100, 10), tuple2(100, 20), tuple2(3, 30), tuple2(4, 40))).collectAsList();
-        String testResult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
-        Assert.assertNull(testResult);
+        QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
     }
 
     private Dataset<Row> createKVDataSet(

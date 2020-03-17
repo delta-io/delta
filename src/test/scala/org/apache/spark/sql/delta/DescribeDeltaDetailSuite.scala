@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.io.FileNotFoundException
 
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
@@ -105,4 +107,4 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
 }
 
 class DescribeDeltaDetailSuite
-  extends DescribeDeltaDetailSuiteBase  with org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+  extends DescribeDeltaDetailSuiteBase with DeltaSQLCommandTest

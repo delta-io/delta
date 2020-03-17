@@ -122,7 +122,7 @@ class DeltaMergeBuilder private(
     private val targetTable: DeltaTable,
     private val source: DataFrame,
     private val onCondition: Column,
-    private val whenClauses: Seq[MergeIntoClause])
+    private val whenClauses: Seq[DeltaMergeIntoClause])
   extends AnalysisHelper
   with DeltaLogging {
 
@@ -225,7 +225,7 @@ class DeltaMergeBuilder private(
   def execute(): Unit = {
     val sparkSession = targetTable.toDF.sparkSession
     val resolvedMergeInto =
-      MergeInto.resolveReferences(mergePlan)(tryResolveReferences(sparkSession) _)
+      DeltaMergeInto.resolveReferences(mergePlan)(tryResolveReferences(sparkSession) _)
     if (!resolvedMergeInto.resolved) {
       throw DeltaErrors.analysisException("Failed to resolve\n", plan = Some(resolvedMergeInto))
     }
@@ -241,13 +241,13 @@ class DeltaMergeBuilder private(
    * Private method for internal usage only. Do not call this directly.
    */
   @Unstable
-  private[delta] def withClause(clause: MergeIntoClause): DeltaMergeBuilder = {
+  private[delta] def withClause(clause: DeltaMergeIntoClause): DeltaMergeBuilder = {
     new DeltaMergeBuilder(
       this.targetTable, this.source, this.onCondition, this.whenClauses :+ clause)
   }
 
-  private def mergePlan: MergeInto = {
-    MergeInto(
+  private def mergePlan: DeltaMergeInto = {
+    DeltaMergeInto(
       targetTable.toDF.queryExecution.analyzed,
       source.queryExecution.analyzed,
       onCondition.expr,
@@ -350,15 +350,15 @@ class DeltaMergeMatchedActionBuilder private(
    */
   @Evolving
   def updateAll(): DeltaMergeBuilder = {
-    val updateClause = MergeIntoUpdateClause(
+    val updateClause = DeltaMergeIntoUpdateClause(
       matchCondition.map(_.expr),
-      MergeIntoClause.toActions(Nil, Nil))
+      DeltaMergeIntoClause.toActions(Nil, Nil))
     mergeBuilder.withClause(updateClause)
   }
 
   /** Delete a matched row from the table */
   def delete(): DeltaMergeBuilder = {
-    val deleteClause = MergeIntoDeleteClause(matchCondition.map(_.expr))
+    val deleteClause = DeltaMergeIntoDeleteClause(matchCondition.map(_.expr))
     mergeBuilder.withClause(deleteClause)
   }
 
@@ -368,11 +368,11 @@ class DeltaMergeMatchedActionBuilder private(
       mergeBuilder
     } else {
       val setActions = set.toSeq
-      val updateActions = MergeIntoClause.toActions(
+      val updateActions = DeltaMergeIntoClause.toActions(
         colNames = setActions.map(x => UnresolvedAttribute.quotedString(x._1)),
         exprs = setActions.map(x => x._2.expr),
         isEmptySeqEqualToStar = false)
-      val updateClause = MergeIntoUpdateClause(matchCondition.map(_.expr), updateActions)
+      val updateClause = DeltaMergeIntoUpdateClause(matchCondition.map(_.expr), updateActions)
       mergeBuilder.withClause(updateClause)
     }
   }
@@ -479,19 +479,19 @@ class DeltaMergeNotMatchedActionBuilder private(
    */
   @Evolving
   def insertAll(): DeltaMergeBuilder = {
-    val insertClause = MergeIntoInsertClause(
+    val insertClause = DeltaMergeIntoInsertClause(
       notMatchCondition.map(_.expr),
-      MergeIntoClause.toActions(Nil, Nil))
+      DeltaMergeIntoClause.toActions(Nil, Nil))
     mergeBuilder.withClause(insertClause)
   }
 
   private def addInsertClause(setValues: Map[String, Column]): DeltaMergeBuilder = {
     val values = setValues.toSeq
-    val insertActions = MergeIntoClause.toActions(
+    val insertActions = DeltaMergeIntoClause.toActions(
       colNames = values.map(x => UnresolvedAttribute.quotedString(x._1)),
       exprs = values.map(x => x._2.expr),
       isEmptySeqEqualToStar = false)
-    val insertClause = MergeIntoInsertClause(notMatchCondition.map(_.expr), insertActions)
+    val insertClause = DeltaMergeIntoInsertClause(notMatchCondition.map(_.expr), insertActions)
     mergeBuilder.withClause(insertClause)
   }
 

@@ -60,6 +60,23 @@ class DeltaTable(object):
         jdt = self._jdt.alias(aliasName)
         return DeltaTable(self._spark, jdt)
 
+    @since(0.5)
+    def generate(self, mode):
+        """
+        Generate manifest files for the given delta table.
+
+        :param mode: mode for the type of manifest file to be generated
+                     The valid modes are as follows (not case sensitive):
+
+                     - "symlink_format_manifest": This will generate manifests in symlink format
+                                                  for Presto and Athena read support.
+
+                     See the online documentation for more information.
+
+        .. note:: Evolving
+        """
+        self._jdt.generate(mode)
+
     @since(0.4)
     def delete(self, condition=None):
         """

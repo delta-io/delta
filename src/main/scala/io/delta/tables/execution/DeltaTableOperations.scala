@@ -19,11 +19,12 @@ package io.delta.tables.execution
 import scala.collection.Map
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistoryManager, DeltaLog, PreprocessTableUpdate}
-import org.apache.spark.sql.delta.commands.{DeleteCommand, VacuumCommand}
+import org.apache.spark.sql.delta.commands.{DeleteCommand, DeltaGenerateCommand, VacuumCommand}
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import io.delta.tables.DeltaTable
 
 import org.apache.spark.sql.{functions, Column, DataFrame}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.plans.logical._
@@ -34,7 +35,7 @@ import org.apache.spark.sql.catalyst.plans.logical._
 trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
 
   protected def executeDelete(condition: Option[Expression]): Unit = {
-    val delete = Delete(self.toDF.queryExecution.analyzed, condition)
+    val delete = DeltaDelete(self.toDF.queryExecution.analyzed, condition)
 
     // current DELETE does not support subquery,
     // and the reason why perform checking here is that
@@ -43,7 +44,7 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
     subqueryNotSupportedCheck(condition, "DELETE")
 
     val qe = sparkSession.sessionState.executePlan(delete)
-    val resolvedDelete = qe.analyzed.asInstanceOf[Delete]
+    val resolvedDelete = qe.analyzed.asInstanceOf[DeltaDelete]
     val deleteCommand = DeleteCommand(resolvedDelete)
     deleteCommand.run(sparkSession)
   }
@@ -55,11 +56,11 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
   protected def makeUpdateTable(
       target: DeltaTable,
       onCondition: Option[Column],
-      setColumns: Seq[(String, Column)]): UpdateTable = {
+      setColumns: Seq[(String, Column)]): DeltaUpdateTable = {
     val updateColumns = setColumns.map { x => UnresolvedAttribute.quotedString(x._1) }
     val updateExpressions = setColumns.map{ x => x._2.expr }
     val condition = onCondition.map {_.expr}
-    UpdateTable(
+    DeltaUpdateTable(
       target.toDF.queryExecution.analyzed, updateColumns, updateExpressions, condition)
   }
 
@@ -67,6 +68,15 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
     val history = new DeltaHistoryManager(deltaLog)
     val spark = self.toDF.sparkSession
     spark.createDataFrame(history.getHistory(limit))
+  }
+
+  protected def executeGenerate(tblIdentifier: String, mode: String): Unit = {
+    val tableId: TableIdentifier = sparkSession
+      .sessionState
+      .sqlParser
+      .parseTableIdentifier(tblIdentifier)
+    val generate = DeltaGenerateCommand(mode, tableId)
+    generate.run(sparkSession)
   }
 
   protected def executeUpdate(set: Map[String, Column], condition: Option[Column]): Unit = {
@@ -80,16 +90,16 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
 
     val update = makeUpdateTable(self, condition, setColumns)
     val resolvedUpdate =
-      UpdateTable.resolveReferences(update, tryResolveReferences(sparkSession)(_, update))
+      DeltaUpdateTable.resolveReferences(update, tryResolveReferences(sparkSession)(_, update))
     val updateCommand = PreprocessTableUpdate(sparkSession.sessionState.conf)(resolvedUpdate)
     updateCommand.run(sparkSession)
   }
 
   private def subqueryNotSupportedCheck(condition: Option[Expression], op: String): Unit = {
-    condition match {
-      case Some(cond) if SubqueryExpression.hasSubquery(cond) =>
+    condition.foreach { cond =>
+      if (SubqueryExpression.hasSubquery(cond)) {
         throw DeltaErrors.subqueryNotSupportedException(op, cond)
-      case _ =>
+      }
     }
   }
 

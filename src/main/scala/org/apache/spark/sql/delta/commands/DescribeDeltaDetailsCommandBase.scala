@@ -20,7 +20,7 @@ package org.apache.spark.sql.delta.commands
 import java.io.FileNotFoundException
 import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier, Snapshot}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
@@ -51,9 +51,11 @@ case class TableDetail(
 /**
  * A command for describing the details of a table such as the format, name, and size.
  */
-abstract class DescribeDeltaDetailCommandBase(
-    path: Option[String],
-    tableIdentifier: Option[TableIdentifier]) extends RunnableCommand with DeltaLogging {
+trait DescribeDeltaDetailCommandBase extends RunnableCommand with DeltaLogging {
+
+  val path: Option[String]
+
+  val tableIdentifier: Option[TableIdentifier]
 
   private val encoder = ExpressionEncoder[TableDetail]()
 
@@ -88,11 +90,32 @@ abstract class DescribeDeltaDetailCommandBase(
    * Resolve `path` and `tableIdentifier` to get the underlying storage path, and its `CatalogTable`
    * if it's a table. The caller will make sure either `path` or `tableIdentifier` is set but not
    * both.
+   *
+   * If `path` is set, return it and an empty `CatalogTable` since it's a physical path. If
+   * `tableIdentifier` is set, we will try to see if it's a Delta data source path (such as
+   * `delta.<a table path>`). If so, we will return the path and an empty `CatalogTable`. Otherwise,
+   * we will use `SessionCatalog` to resolve `tableIdentifier`.
    */
   protected def getPathAndTableMetadata(
       spark: SparkSession,
       path: Option[String],
-      tableIdentifier: Option[TableIdentifier]): (Path, Option[CatalogTable])
+      tableIdentifier: Option[TableIdentifier]): (Path, Option[CatalogTable]) = {
+    path.map(new Path(_) -> None).orElse {
+      tableIdentifier.map { i =>
+        DeltaTableIdentifier(spark, tableIdentifier.get) match {
+          case Some(id) if id.path.isDefined => new Path(id.path.get) -> None
+          case Some(id) =>
+            throw DeltaErrors.tableNotSupportedException("DESCRIBE DETAIL")
+          case None =>
+            // This is not a Delta table.
+            val metadata = spark.sessionState.catalog.getTableMetadata(i)
+            new Path(metadata.location) -> Some(metadata)
+        }
+      }
+    }.getOrElse {
+      throw DeltaErrors.missingTableIdentifierException("DESCRIBE DETAIL")
+    }
+  }
 
   private def describeNonDeltaTable(table: CatalogTable): Seq[Row] = {
     Seq(rowEncoder.fromRow(encoder.toRow(

@@ -32,9 +32,6 @@ object DeltaSourceUtils {
 
   /** Check whether this table is a Delta table based on information from the Catalog. */
   def isDeltaTable(provider: Option[String]): Boolean = {
-    provider match {
-      case Some(p) => isDeltaDataSourceName(p)
-      case None => false
-    }
+    provider.exists(isDeltaDataSourceName)
   }
 }

@@ -36,7 +36,7 @@ trait DeltaRetentionSuiteBase extends QueryTest
     .set("spark.databricks.delta.properties.defaults.enableExpiredLogCleanup", "false")
 
   protected def intervalStringToMillis(str: String): Long = {
-    CalendarInterval.fromString(str).milliseconds()
+    DeltaConfigs.getMilliSeconds(CalendarInterval.fromString(str))
   }
 
   protected def getDeltaFiles(dir: File): Seq[File] =

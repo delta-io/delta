@@ -211,6 +211,27 @@ object DeltaConfigs extends DeltaLogging {
     }
   }
 
+  def getMilliSeconds(i: CalendarInterval): Long = {
+    getMicroSeconds(i) / 1000L
+  }
+
+  private def getMicroSeconds(i: CalendarInterval): Long = {
+    assert(i.months == 0)
+    i.microseconds.toLong
+  }
+
+  /**
+   * For configs accepting an interval, we require the user specified string must obey:
+   *
+   * - Doesn't use months or years, since an internal like this is not deterministic.
+   * - The microseconds parsed from the string value must be a non-negative value.
+   *
+   * The method returns whether a [[CalendarInterval]] satisfies the requirements.
+   */
+  def isValidIntervalConfigValue(i: CalendarInterval): Boolean = {
+    i.months == 0 && getMicroSeconds(i) >= 0
+  }
+
   /**
    * The shortest duration we have to keep delta files around before deleting them. We can only
    * delete delta files that are before a compaction. We may keep files beyond this duration until
@@ -220,7 +241,7 @@ object DeltaConfigs extends DeltaLogging {
     "logRetentionDuration",
     "interval 30 days",
     parseCalendarInterval,
-    i => i.microseconds > 0 && i.months == 0,
+    isValidIntervalConfigValue,
     "needs to be provided as a calendar interval such as '2 weeks'. Months " +
     "and years are not accepted. You may specify '365 days' for a year instead.")
 
@@ -231,7 +252,7 @@ object DeltaConfigs extends DeltaLogging {
     "sampleRetentionDuration",
     "interval 7 days",
     parseCalendarInterval,
-    i => i.microseconds > 0 && i.months == 0,
+    isValidIntervalConfigValue,
     "needs to be provided as a calendar interval such as '2 weeks'. Months " +
       "and years are not accepted. You may specify '365 days' for a year instead.")
 
@@ -244,7 +265,7 @@ object DeltaConfigs extends DeltaLogging {
     "checkpointRetentionDuration",
     "interval 2 days",
     parseCalendarInterval,
-    i => i.microseconds > 0 && i.months == 0,
+    isValidIntervalConfigValue,
     "needs to be provided as a calendar interval such as '2 weeks'. Months " +
       "and years are not accepted. You may specify '365 days' for a year instead.")
 
@@ -294,7 +315,7 @@ object DeltaConfigs extends DeltaLogging {
     "deletedFileRetentionDuration",
     "interval 1 week",
     parseCalendarInterval,
-    i => i.microseconds > 0 && i.months == 0,
+    isValidIntervalConfigValue,
     "needs to be provided as a calendar interval such as '2 weeks'. Months " +
     "and years are not accepted. You may specify '365 days' for a year instead.")
 
@@ -354,5 +375,12 @@ object DeltaConfigs extends DeltaLogging {
     _.toInt,
     a => a >= -1,
     "needs to be larger than or equal to -1.")
+
+  val SYMLINK_FORMAT_MANIFEST_ENABLED = buildConfig[Boolean](
+    s"${hooks.GenerateSymlinkManifest.CONFIG_NAME_ROOT}.enabled",
+    "false",
+    _.toBoolean,
+    _ => true,
+    "needs to be a boolean.")
 
 }

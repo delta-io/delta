@@ -26,9 +26,12 @@ import com.fasterxml.jackson.databind.{JsonSerializer, SerializerProvider}
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 import org.codehaus.jackson.annotate.JsonRawValue
 
+// scalastyle:off
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.Encoder
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.types.{DataType, StructType}
+// scalastyle:on
 
 /** Thrown when the protocol version of a table is greater than supported by this client. */
 class InvalidProtocolVersionException extends RuntimeException(
@@ -254,7 +257,8 @@ case class CommitInfo(
     readVersion: Option[Long],
     isolationLevel: Option[String],
     /** Whether this commit has blindly appended without caring about existing files */
-    isBlindAppend: Option[Boolean]) extends Action with CommitMarker {
+    isBlindAppend: Option[Boolean],
+    operationMetrics: Option[Map[String, String]]) extends Action with CommitMarker {
   override def wrap: SingleAction = SingleAction(commitInfo = this)
 
   override def withTimestamp(timestamp: Long): CommitInfo = {
@@ -296,7 +300,7 @@ object NotebookInfo {
 
 object CommitInfo {
   def empty(version: Option[Long] = None): CommitInfo = {
-    CommitInfo(version, null, None, None, null, null, None, None, None, None, None, None)
+    CommitInfo(version, null, None, None, null, null, None, None, None, None, None, None, None)
   }
 
   def apply(
@@ -306,7 +310,8 @@ object CommitInfo {
       commandContext: Map[String, String],
       readVersion: Option[Long],
       isolationLevel: Option[String],
-      isBlindAppend: Option[Boolean]): CommitInfo = {
+      isBlindAppend: Option[Boolean],
+      operationMetrics: Option[Map[String, String]]): CommitInfo = {
     val getUserName = commandContext.get("user").flatMap {
       case "unknown" => None
       case other => Option(other)
@@ -324,7 +329,8 @@ object CommitInfo {
       commandContext.get("clusterId"),
       readVersion,
       isolationLevel,
-      isBlindAppend
+      isBlindAppend,
+      operationMetrics
     )
   }
 }
@@ -374,9 +380,14 @@ object SingleAction extends Logging {
       throw e
   }
 
-  implicit def encoder: ExpressionEncoder[SingleAction] = _encoder.copy()
 
-  implicit def addFileEncoder: ExpressionEncoder[AddFile] = _addFileEncoder.copy()
+  implicit def encoder: Encoder[SingleAction] = {
+    _encoder.copy()
+  }
+
+  implicit def addFileEncoder: Encoder[AddFile] = {
+    _addFileEncoder.copy()
+  }
 }
 
 /** Serializes Maps containing JSON strings without extra escaping. */

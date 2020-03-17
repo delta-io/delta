@@ -18,7 +18,7 @@ You include Delta Lake in your Maven project by adding it as a dependency in you
 <dependency>
   <groupId>io.delta</groupId>
   <artifactId>delta-core_2.11</artifactId>
-  <version>0.4.0</version>
+  <version>0.5.0</version>
 </dependency>
 ```
 
@@ -27,7 +27,7 @@ You include Delta Lake in your Maven project by adding it as a dependency in you
 You include Delta Lake in your SBT project by adding the following line to your build.sbt file:
 
 ```scala
-libraryDependencies += "io.delta" %% "delta-core" % "0.4.0"
+libraryDependencies += "io.delta" %% "delta-core" % "0.5.0"
 ```
 
 ## API Documentation
@@ -44,9 +44,9 @@ Delta Lake currently requires Apache Spark 2.4.2. Earlier versions are missing [
 
 ### API Compatibility
 
-The only stable, public APIs currently provided by Delta Lake are through the `DataFrameReader`/`Writer` (i.e. `spark.read`, `df.write`, `spark.readStream` and `df.writeStream`). Options to these APIs will remain stable within a major release of Delta Lake (e.g., 1.x.x).
+The only stable public APIs, currently provided by Delta Lake, are through the `DataFrameReader`/`Writer` (i.e. `spark.read`, `df.write`, `spark.readStream` and `df.writeStream`). Options to these APIs will remain stable within a major release of Delta Lake (e.g., 1.x.x).
 
-All other interfaces in the this library are considered internal, and they are subject to change across minor / patch releases.
+All other interfaces in this library are considered internal, and they are subject to change across minor/patch releases.
 
 ### Data Storage Compatibility
 
@@ -56,7 +56,7 @@ Breaking changes in the protocol are indicated by incrementing the minimum reade
 
 ## Roadmap
 
-Delta Lake is a recent open source project based on technology developed at Databricks. We plan to open-source all APIs that are required to correctly run Spark programs that read and write Delta tables. For a detailed timeline on this effort see the [project roadmap](https://github.com/delta-io/delta/milestones).
+Delta Lake is a recent open-source project based on technology developed at Databricks. We plan to open-source all APIs that are required to correctly run Spark programs that read and write Delta tables. For a detailed timeline on this effort see the [project roadmap](https://github.com/delta-io/delta/milestones).
 
 # Building
 
@@ -109,7 +109,7 @@ We welcome contributions to Delta Lake. We use [GitHub Pull Requests ](https://g
 There are two mediums of communication within the Delta Lake community. 
 
 - Public Slack Channel
-  - [Register here](https://join.slack.com/t/delta-users/shared_invite/enQtNTY1NDg0ODcxOTI1LWJkZGU3ZmQ3MjkzNmY2ZDM0NjNlYjE4MWIzYjg2OWM1OTBmMWIxZTllMjg3ZmJkNjIwZmE1ZTZkMmQ0OTk5ZjA)
+  - [Register here](https://join.slack.com/t/delta-users/shared_invite/enQtODQ5ODM5OTAxMjAwLWY4NGI5ZmQ3Y2JmMjZjYjc1MDkwNTA5YTQ4MzhjOWY1MmVjNTM2OGZhNTExNmM5MzQ0YzEzZjIwMjc0OGI0OGM)
   - [Login here](https://delta-users.slack.com/)
 
 - Public [Mailing list](https://groups.google.com/forum/#!forum/delta-users)
