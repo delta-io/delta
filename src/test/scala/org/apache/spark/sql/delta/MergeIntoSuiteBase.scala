@@ -1821,38 +1821,34 @@ abstract class MergeIntoSuiteBase
     update("t.value = s.value", "t.key < 3"), delete("t.key > 3")) (
     result = Seq(
       (1, 100), // updated
-      (3, 30), // existed previously
+      (3, 30)   // existed previously
     )
   )
 
   protected def testNullCaseMatchedOnly(name: String) (
-    source: Seq[(JInt, JInt)],
-    target: Seq[(JInt, JInt)],
-    mergeOn: String,
-    result: Seq[(JInt, JInt)]) = {
+      source: Seq[(JInt, JInt)],
+      target: Seq[(JInt, JInt)],
+      mergeOn: String,
+      result: Seq[(JInt, JInt)]) = {
     Seq(true, false).foreach { isPartitioned =>
-      Seq(true, false).foreach { isEnabled =>
-        withSQLConf(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED.key -> isEnabled.toString) {
-          val s = if (isEnabled) "enabled" else "disabled"
-          test(s"basic case - null handling - matched only merge - $s - $name, isPartitioned: $isPartitioned") {
-            withView("sourceView") {
-              val partitions = if (isPartitioned) "key" :: Nil else Nil
-              append(target.toDF("key", "value"), partitions)
-              source.toDF("key", "value").createOrReplaceTempView("sourceView")
+      withSQLConf(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED.key -> "true") {
+        test(s"matched only merge - null handling - $name, isPartitioned: $isPartitioned") {
+          withView("sourceView") {
+            append(target.toDF("key", "value"), "key" :: Nil)
+            source.toDF("key", "value").createOrReplaceTempView("sourceView")
 
-              executeMerge(
-                tgt = s"delta.`$tempPath` as t",
-                src = "sourceView s",
-                cond = mergeOn,
-                update("t.value = s.value"))
+            executeMerge(
+              tgt = s"delta.`$tempPath` as t",
+              src = "sourceView s",
+              cond = mergeOn,
+              update("t.value = s.value"))
 
-              checkAnswer(
-                readDeltaTable(tempPath),
-                result.map { r => Row(r._1, r._2) }
-              )
+            checkAnswer(
+              readDeltaTable(tempPath),
+              result.map { r => Row(r._1, r._2) }
+            )
 
-              Utils.deleteRecursively(new File(tempPath))
-            }
+            Utils.deleteRecursively(new File(tempPath))
           }
         }
       }
@@ -1864,7 +1860,7 @@ abstract class MergeIntoSuiteBase
     target = Seq((1, 1)),
     mergeOn = "s.key = t.key",
     result = Seq(
-      (1, 10), // update
+      (1, 10) // update
     )
   )
 
