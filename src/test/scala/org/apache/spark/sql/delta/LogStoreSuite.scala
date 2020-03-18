@@ -19,6 +19,9 @@ package org.apache.spark.sql.delta
 import java.io.{File, IOException}
 import java.net.URI
 
+import scala.collection.mutable.ArrayBuffer
+
+import com.databricks.service.SparkServiceTestUtils
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.storage._
@@ -156,11 +159,44 @@ class AzureLogStoreSuite extends LogStoreSuiteBase {
 class HDFSLogStoreSuite extends LogStoreSuiteBase {
 
   override val logStoreClassName: String = classOf[HDFSLogStore].getName
-  // HDFSLogStore is based on FileContext APIs and hence requires AbstractFileSystem-based
-  // implementations.
-  testHadoopConf(
-    expectedErrMsg = "No AbstractFileSystem",
-    "fs.AbstractFileSystem.fake.impl" -> classOf[FakeAbstractFileSystem].getName)
+
+  import testImplicits._
+
+  test("writes on systems without AbstractFileSystem implemented") {
+    withSQLConf("fs.fake.impl" -> classOf[FakeFileSystem].getName,
+      "fs.fake.impl.disable.cache" -> "true") {
+      val tempDir = Utils.createTempDir()
+      val path = new Path(new URI(s"fake://${tempDir.toURI.getRawPath}/1.json"))
+      val e = intercept[IOException] {
+        createLogStore(spark).write(path, Iterator("zero", "none"))
+      }
+      assert(e.getMessage.contains(
+        DeltaErrors.incorrectLogStoreImplementationException(sparkConf, null).getMessage))
+    }
+  }
+
+  test("reads should work on systems without AbstractFileSystem implemented") {
+    withTempDir { tempDir =>
+      val writtenFile = new File(tempDir, "1")
+      val store = createLogStore(spark)
+      store.write(writtenFile.getCanonicalPath, Iterator("zero", "none"))
+      withSQLConf("fs.fake.impl" -> classOf[FakeFileSystem].getName,
+        "fs.fake.impl.disable.cache" -> "true") {
+        val read = createLogStore(spark).read("fake://" + writtenFile.getCanonicalPath)
+        assert(read === ArrayBuffer("zero", "none"))
+      }
+    }
+  }
+
+  test("No AbstractFileSystem - end to end test using data frame") {
+    val tempDir = Utils.createTempDir()
+    Seq(1, 2, 4).toDF().write.format("delta").save(tempDir.getAbsolutePath)
+    withSQLConf("fs.fake.impl" -> classOf[FakeFileSystem].getName,
+      "fs.fake.impl.disable.cache" -> "true") {
+      val fakeFSLocation = s"fake://${tempDir.getCanonicalFile}"
+      checkAnswer(spark.read.format("delta").load(fakeFSLocation), Seq(1, 2, 4).toDF())
+    }
+  }
 }
 
 class LocalLogStoreSuite extends LogStoreSuiteBase {
