@@ -17,9 +17,10 @@
 package org.apache.spark.sql.delta
 
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicInteger
 
 import io.delta.tables._
-
+import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
 import org.apache.spark.sql._
 import org.apache.spark.sql.types.StructType
 
@@ -276,6 +277,82 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
           .execute()
       }
       errorContains(e.getMessage, "cannot resolve `*`")
+    }
+  }
+
+  test("findTouchedFiles - no files match target predicate") {
+    val jobCount = new AtomicInteger(0)
+    val listener = new SparkListener {
+      override def onJobStart(jobStart: SparkListenerJobStart): Unit = {
+        // Spark will always log a job start/end event even when the job does not launch any task.
+        if (jobStart.stageInfos.exists(_.numTasks > 0)) {
+          jobCount.incrementAndGet()
+        }
+      }
+    }
+    sparkContext.addSparkListener(listener)
+
+    withTable("source") {
+      append(Seq((1, 10), (2, 20)).toDF("key1", "value1"), "value1")  // target
+      val source = Seq((3, 30)).toDF("key2", "value2")  // source
+
+      try {
+
+        io.delta.tables.DeltaTable.forPath(spark, tempPath)
+          .merge(source, "key1 = key2 and value1 in (30)")
+          .whenMatched().updateExpr(Map("key1" -> "key2", "value1" -> "value2"))
+          .whenNotMatched().insertExpr(Map("key1" -> "key2", "value1" -> "value2"))
+          .execute()
+
+        assert(jobCount.get() == 5, "There should be 5 Spark jobs")
+
+        checkAnswer(
+          readDeltaTable(tempPath),
+          Row(1, 10) ::    // No change
+            Row(2, 20) ::     // No change
+            Row(3, 30) ::     // Insert
+            Nil)
+      } finally {
+        sparkContext.removeSparkListener(listener)
+      }
+    }
+  }
+
+  test("findTouchedFiles - files match target predicate") {
+    val jobCount = new AtomicInteger(0)
+    val listener = new SparkListener {
+      override def onJobStart(jobStart: SparkListenerJobStart): Unit = {
+        // Spark will always log a job start/end event even when the job does not launch any task.
+        if (jobStart.stageInfos.exists(_.numTasks > 0)) {
+          jobCount.incrementAndGet()
+        }
+      }
+    }
+    sparkContext.addSparkListener(listener)
+
+    withTable("source") {
+      append(Seq((1, 10), (2, 20)).toDF("key1", "value1"), "value1")  // target
+      val source = Seq((3, 30)).toDF("key2", "value2")  // source
+
+      try {
+
+        io.delta.tables.DeltaTable.forPath(spark, tempPath)
+          .merge(source, "key1 = key2")
+          .whenMatched().updateExpr(Map("key1" -> "key2", "value1" -> "value2"))
+          .whenNotMatched().insertExpr(Map("key1" -> "key2", "value1" -> "value2"))
+          .execute()
+
+        assert(jobCount.get() == 7, "There should be 7 Spark jobs")
+
+        checkAnswer(
+          readDeltaTable(tempPath),
+          Row(1, 10) ::    // No change
+            Row(2, 20) ::     // No change
+            Row(3, 30) ::     // Insert
+            Nil)
+      } finally {
+        sparkContext.removeSparkListener(listener)
+      }
     }
   }
 
