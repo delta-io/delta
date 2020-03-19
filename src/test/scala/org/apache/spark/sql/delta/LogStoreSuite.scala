@@ -21,7 +21,6 @@ import java.net.URI
 
 import scala.collection.mutable.ArrayBuffer
 
-import com.databricks.service.SparkServiceTestUtils
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.storage._
