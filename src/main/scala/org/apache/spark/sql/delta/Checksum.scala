@@ -90,16 +90,14 @@ trait RecordChecksum extends DeltaLogging {
 }
 
 /**
- * Verify the state of the table using the checksum files.
+ * Read checksum files.
  */
-trait VerifyChecksum extends DeltaLogging {
-  self: DeltaLog =>
+trait ReadChecksum extends DeltaLogging { self: DeltaLog =>
 
   val logPath: Path
   private[delta] def store: LogStore
 
-  protected def validateChecksum(snapshot: Snapshot): Unit = {
-    val version = snapshot.version
+  protected def readChecksum(version: Long): Option[VersionChecksum] = {
     val checksumFile = FileNames.checksumFile(logPath, version)
 
     var exception: Option[String] = None
@@ -123,7 +121,7 @@ trait VerifyChecksum extends DeltaLogging {
         "delta.checksum.error.missing",
         data = Map("version" -> version) ++ exception.map("exception" -> _))
 
-      return
+      return None
     }
     val checksumData = content.get
     if (checksumData.isEmpty) {
@@ -131,23 +129,32 @@ trait VerifyChecksum extends DeltaLogging {
         this,
         "delta.checksum.error.empty",
         data = Map("version" -> version))
-      return
+      return None
     }
-    var mismatchStringOpt: Option[String] = None
     try {
-      val checksum = JsonUtils.mapper.readValue[VersionChecksum](checksumData.head)
-      mismatchStringOpt = checkMismatch(checksum, snapshot)
+      Option(JsonUtils.mapper.readValue[VersionChecksum](checksumData.head))
     } catch {
       case NonFatal(e) =>
         recordDeltaEvent(
           this,
           "delta.checksum.error.parsing",
           data = Map("exception" -> Utils.exceptionString(e)))
+        None
     }
+  }
+}
+
+/**
+ * Verify the state of the table using the checksum information.
+ */
+trait ValidateChecksum extends DeltaLogging { self: MetadataGetter =>
+
+  def validateChecksum(): Unit = checksumOpt.foreach { checksum =>
+    val mismatchStringOpt = checkMismatch(checksum)
     if (mismatchStringOpt.isDefined) {
       // Report the failure to usage logs.
       recordDeltaEvent(
-        this,
+        this.deltaLog,
         "delta.checksum.invalid",
         data = Map("error" -> mismatchStringOpt.get))
       // We get the active SparkSession, which may be different than the SparkSession of the
@@ -166,18 +173,19 @@ trait VerifyChecksum extends DeltaLogging {
     }
   }
 
-  private def checkMismatch(checksum: VersionChecksum, snapshot: Snapshot): Option[String] = {
+  private def checkMismatch(checksum: VersionChecksum): Option[String] = {
     val result = new ArrayBuffer[String]()
     def compare(expected: Long, found: Long, title: String): Unit = {
       if (expected != found) {
         result += s"$title - Expected: $expected Computed: $found"
       }
     }
-    compare(checksum.tableSizeBytes, snapshot.sizeInBytes, "Table size (bytes)")
-    compare(checksum.numFiles, snapshot.numOfFiles, "Number of files")
-    compare(checksum.numMetadata, snapshot.numOfMetadata, "Metadata updates")
-    compare(checksum.numProtocol, snapshot.numOfProtocol, "Protocol updates")
-    compare(checksum.numTransactions, snapshot.numOfSetTransactions, "Transactions")
+    compare(checksum.tableSizeBytes, sizeInBytes, "Table size (bytes)")
+    compare(checksum.numFiles, numOfFiles, "Number of files")
+    compare(checksum.numMetadata, numOfMetadata, "Metadata updates")
+    compare(checksum.numProtocol, numOfProtocol, "Protocol updates")
+    compare(checksum.numTransactions, numOfSetTransactions, "Transactions")
     if (result.isEmpty) None else Some(result.mkString("\n"))
   }
+
 }

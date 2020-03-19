@@ -235,7 +235,7 @@ abstract class ConvertToDeltaSuiteBase extends QueryTest
     }
   }
 
-  private def testSpecialCharactersInDirectoryNames(c: String): Unit = {
+  private def testSpecialCharactersInDirectoryNames(c: String, expectFailure: Boolean): Unit = {
     test(s"partition column names and values contain '$c'") {
       withTempDir { dir =>
         val path = dir.getCanonicalPath
@@ -257,30 +257,38 @@ abstract class ConvertToDeltaSuiteBase extends QueryTest
         val df = df1.union(df2)
         writeFiles(path, df, format = "parquet", partCols = Seq(key1, key2))
 
-        convertToDelta(s"parquet.`$path`", Some(s"`$key1` string, `$key2` string"))
+        if (expectFailure) {
+          val e = intercept[AnalysisException] {
+            convertToDelta(s"parquet.`$path`", Some(s"`$key1` string, `$key2` string"))
+          }
+          assert(e.getMessage.contains("invalid character"))
+        } else {
+          convertToDelta(s"parquet.`$path`", Some(s"`$key1` string, `$key2` string"))
 
-        // missing one char from valueA, so no match
-        checkAnswer(
-          spark.read.format("delta").load(path).where(s"`$key1` = '${c}some${c}value${c}A'")
-            .select("id"), Nil)
+          // missing one char from valueA, so no match
+          checkAnswer(
+            spark.read.format("delta").load(path).where(s"`$key1` = '${c}some${c}value${c}A'")
+              .select("id"), Nil)
 
-        checkAnswer(
-          spark.read.format("delta").load(path)
-            .where(s"`$key1` = '$valueA' and `$key2` = '$valueB'").select("id"),
-          Row(0) :: Row(1) :: Row(2) :: Nil)
+          checkAnswer(
+            spark.read.format("delta").load(path)
+              .where(s"`$key1` = '$valueA' and `$key2` = '$valueB'").select("id"),
+            Row(0) :: Row(1) :: Row(2) :: Nil)
 
-        checkAnswer(
-          spark.read.format("delta").load(path).where(s"`$key2` = '$valueD' and id > 4")
-            .select("id"),
-          Row(5) :: Row(6) :: Nil)
+          checkAnswer(
+            spark.read.format("delta").load(path).where(s"`$key2` = '$valueD' and id > 4")
+              .select("id"),
+            Row(5) :: Row(6) :: Nil)
+        }
       }
     }
   }
 
-  testSpecialCharactersInDirectoryNames(" ")
-  testSpecialCharactersInDirectoryNames("=")
-  testSpecialCharactersInDirectoryNames("%!@# $%^&* ()-")
-  testSpecialCharactersInDirectoryNames(" ?. +<>|={}/")
+  " ,;{}()\n\t=".foreach { char =>
+    testSpecialCharactersInDirectoryNames(char.toString, expectFailure = true)
+  }
+  testSpecialCharactersInDirectoryNames("%!@#$%^&*-", expectFailure = false)
+  testSpecialCharactersInDirectoryNames("?.+<_>|/", expectFailure = false)
 
   test("can ignore empty sub-directories") {
     withTempDir { dir =>

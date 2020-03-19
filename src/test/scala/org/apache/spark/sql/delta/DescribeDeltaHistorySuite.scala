@@ -16,14 +16,17 @@
 
 package org.apache.spark.sql.delta
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.scalatest.Tag
 
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions._
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
@@ -395,6 +398,7 @@ trait DescribeDeltaHistorySuiteBase
           "numOutputRows" -> "3"
         )
         checkOperationMetrics(expectedMetrics2, operationMetrics)
+        assert(operationMetrics("numOutputBytes").toLong > 0)
         q.stop()
       }
     }
@@ -435,6 +439,190 @@ trait DescribeDeltaHistorySuiteBase
       }
     }
   }
+
+  test("operation metrics - update") {
+    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+      val numRows = 100
+      val numPartitions = 5
+      withTempDir { tempDir =>
+        // Create a Delta table
+        spark.range(numRows).repartition(numPartitions)
+          .withColumnRenamed("id", "key")
+          .withColumn("value", 'key % 2)
+          .write
+          .format("delta")
+          .save(tempDir.getAbsolutePath)
+        val deltaTable = io.delta.tables.DeltaTable.forPath(tempDir.getAbsolutePath)
+
+        // update some records
+        deltaTable.update(col("key") < 1, Map("key" -> lit(1)))
+
+        // check operation metrics
+        val operationMetrics = getOperationMetrics(deltaTable.history(1))
+        var expectedRowCount = numRows - 1
+        val expectedMetrics = Map(
+          "numAddedFiles" -> "1",
+          "numRemovedFiles" -> "1",
+          "numUpdatedRows" -> "1",
+          "numCopiedRows" -> expectedRowCount.toString
+        )
+        checkOperationMetrics(expectedMetrics, operationMetrics)
+      }
+    }
+  }
+
+  test("operation metrics - update - partitioned column") {
+    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+      val numRows = 100
+      val numPartitions = 5
+      withTempDir { tempDir =>
+        spark.range(numRows)
+          .withColumn("c1", 'id + 1)
+          .withColumn("c2", 'id % numPartitions)
+          .write
+          .partitionBy("c2")
+          .format("delta")
+          .save(tempDir.getAbsolutePath)
+
+        val deltaTable = io.delta.tables.DeltaTable.forPath(tempDir.getAbsolutePath)
+        val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+        val numFilesBeforeUpdate = deltaLog.snapshot.numOfFiles
+        deltaTable.update(col("c2") < 1, Map("c2" -> lit("1")))
+        val numFilesAfterUpdate = deltaLog.snapshot.numOfFiles
+
+        val operationMetrics = getOperationMetrics(deltaTable.history(1))
+        val newFiles = numFilesAfterUpdate - numFilesBeforeUpdate
+        val oldFiles = numFilesBeforeUpdate / numPartitions
+        val addedFiles = newFiles + oldFiles
+        val expectedMetrics = Map(
+          "numUpdatedRows" -> (numRows / numPartitions).toString,
+          "numCopiedRows" -> "0",
+          "numAddedFiles" -> addedFiles.toString,
+          "numRemovedFiles" -> (numFilesBeforeUpdate / numPartitions).toString
+        )
+        checkOperationMetrics(expectedMetrics, operationMetrics)
+      }
+    }
+  }
+
+  test("operation metrics - delete") {
+    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+      val numRows = 100
+      val rowsToDelete = 10
+      withTempDir { tempDir =>
+        // Create a delta table
+        spark.range(numRows).repartition(5)
+          .withColumnRenamed("id", "key")
+          .withColumn("value", 'key % 2)
+          .write
+          .format("delta")
+          .save(tempDir.getAbsolutePath)
+        val deltaTable = io.delta.tables.DeltaTable.forPath(tempDir.getAbsolutePath)
+        val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+        val numFilesBeforeDelete = deltaLog.snapshot.numOfFiles
+
+        // delete records
+        deltaTable.delete(col("key") < rowsToDelete)
+
+        // check operation metrics
+        val numFilesAfterDelete = deltaLog.snapshot.numOfFiles
+        val operationMetrics = getOperationMetrics(deltaTable.history(1))
+        val expectedMetrics = Map(
+          "numAddedFiles" -> numFilesAfterDelete.toString,
+          "numRemovedFiles" -> numFilesBeforeDelete.toString,
+          "numDeletedRows" -> rowsToDelete.toString,
+          "numCopiedRows" -> (numRows - rowsToDelete).toString
+        )
+        checkOperationMetrics(expectedMetrics, operationMetrics)
+      }
+    }
+  }
+
+  test("operation metrics - delete - partition column") {
+    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+      val numRows = 100
+      val numPartitions = 5
+      withTempDir { tempDir =>
+        spark.range(numRows)
+          .withColumn("c1", 'id % numPartitions)
+          .write
+          .format("delta")
+          .partitionBy("c1")
+          .save(tempDir.getAbsolutePath)
+        val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+        val numFilesBeforeDelete = deltaLog.snapshot.numOfFiles
+        val deltaTable = io.delta.tables.DeltaTable.forPath(tempDir.getAbsolutePath)
+
+        deltaTable.delete("c1 = 1")
+        val operationMetrics = getOperationMetrics(deltaTable.history(1))
+        val expectedMetrics = Map[String, String](
+          "numRemovedFiles" -> (numFilesBeforeDelete / numPartitions).toString,
+          "numAddedFiles" -> "0"
+        )
+        assert(!operationMetrics.contains("numDeletedRows"))
+        assert(!operationMetrics.contains("numCopiedRows"))
+        checkOperationMetrics(expectedMetrics, operationMetrics)
+      }
+    }
+  }
+
+  test("operation metrics - convert to delta") {
+    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+      val numPartitions = 5
+      withTempDir { tempDir =>
+        // Create a parquet table
+        val dir = tempDir.getAbsolutePath()
+        spark.range(10)
+          .withColumn("col2", 'id % numPartitions)
+          .write
+          .format("parquet")
+          .mode("overwrite")
+          .partitionBy("col2")
+          .save(dir)
+
+        // convert to delta
+        val deltaTable = io.delta.tables.DeltaTable.convertToDelta(spark, s"parquet.`$dir`",
+          "col2 long")
+        val deltaLog = DeltaLog.forTable(spark, dir)
+        val expectedMetrics = Map(
+          "numConvertedFiles" -> deltaLog.snapshot.numOfFiles.toString
+        )
+        val operationMetrics = getOperationMetrics(deltaTable.history(1))
+        checkOperationMetrics(expectedMetrics, operationMetrics)
+      }
+    }
+  }
+
+
+  test("operation metrics - delete - full") {
+    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+      val numRows = 100
+      val numPartitions = 5
+      withTempDir { tempDir =>
+        spark.range(numRows)
+          .withColumn("c1", 'id % numPartitions)
+          .write
+          .format("delta")
+          .partitionBy("c1")
+          .save(tempDir.getAbsolutePath)
+        val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+        val numFilesBeforeDelete = deltaLog.snapshot.numOfFiles
+        val deltaTable = io.delta.tables.DeltaTable.forPath(tempDir.getAbsolutePath)
+
+        deltaTable.delete()
+
+        val operationMetrics = getOperationMetrics(deltaTable.history(1))
+        val expectedMetrics = Map[String, String](
+          "numRemovedFiles" -> numFilesBeforeDelete.toString,
+          "numAddedFiles" -> "0"
+        )
+        assert(!operationMetrics.contains("numDeletedRows"))
+        assert(!operationMetrics.contains("numCopiedRows"))
+        checkOperationMetrics(expectedMetrics, operationMetrics)
+      }
+    }
+  }
+
 }
 
 class DescribeDeltaHistorySuite

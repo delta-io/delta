@@ -71,7 +71,7 @@ html_theme = 'nature'
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
-html_static_path = ['_static']
+html_static_path = []  # default value was ['_static']
 
 
 # Fix for doc generation to work on older version of sphinx as well.
@@ -79,3 +79,6 @@ master_doc = 'index'
 
 # Display the classes in the generated in the same order as the classes appear in the source files.`
 autodoc_member_order = 'bysource'
+
+# Ignore 'import pyspark' if pyspark is not installed.
+autodoc_mock_imports = ["pyspark"]

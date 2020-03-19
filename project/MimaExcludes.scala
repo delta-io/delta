@@ -28,6 +28,11 @@ object MimaExcludes {
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.apply"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.executeHistory"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.this"),
-      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.deltaLog"))
+      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.deltaLog"),
+
+      // Changes in 0.6.0
+      ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaTable.makeUpdateTable"),
+      ProblemFilters.exclude[IncompatibleMethTypeProblem]("io.delta.tables.DeltaMergeBuilder.withClause")
+  )
 }
 

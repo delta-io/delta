@@ -51,7 +51,15 @@ object DeltaSQLConf {
       .doc("Number of partitions to use when building a Delta Lake snapshot.")
       .intConf
       .checkValue(n => n > 0, "Delta snapshot partition number must be positive.")
-      .createWithDefault(50)
+      .createOptional
+
+  val DELTA_PARTITION_COLUMN_CHECK_ENABLED =
+    buildConf("partitionColumnValidity.enabled")
+      .internal()
+      .doc("Whether to check whether the partition column names have valid names, just like " +
+        "the data columns.")
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_COLLECT_STATS =
     buildConf("stats.collect")
@@ -137,7 +145,7 @@ object DeltaSQLConf {
       .doc("Enables Metrics reporting in Describe History. CommitInfo will now record the " +
         "Operation Metrics.")
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val DELTA_VACUUM_RETENTION_CHECK_ENABLED =
     buildConf("retentionDurationCheck.enabled")
@@ -226,4 +234,13 @@ object DeltaSQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val MERGE_MATCHED_ONLY_ENABLED =
+    buildConf("merge.optimizeMatchedOnlyMerge.enabled")
+      .internal()
+      .doc(
+        """If enabled, merge without 'when not matched' clause will be optimized to use a
+          |right outer join instead of a full outer join.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 }

@@ -18,7 +18,7 @@ package org.apache.spark.sql.catalyst.plans.logical
 
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, Expression, ExtractValue, GetStructField}
+import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, Expression, ExtractValue, GetStructField, NamedExpression}
 
 /**
  * Perform UPDATE on a table
@@ -28,9 +28,9 @@ import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeRef
  * @param updateExpressions: the corresponding update expression if the condition is matched
  * @param condition: Only rows that match the condition will be updated
  */
-case class UpdateTable(
+case class DeltaUpdateTable(
     child: LogicalPlan,
-    updateColumns: Seq[Attribute],
+    updateColumns: Seq[NamedExpression],
     updateExpressions: Seq[Expression],
     condition: Option[Expression])
   extends UnaryNode {
@@ -40,21 +40,23 @@ case class UpdateTable(
   override def output: Seq[Attribute] = Seq.empty
 }
 
-object UpdateTable {
+object DeltaUpdateTable {
 
   /** Resolve all the references of target columns and condition using the given `resolver` */
-  def resolveReferences(update: UpdateTable, resolver: Expression => Expression): UpdateTable = {
+  def resolveReferences(
+      update: DeltaUpdateTable,
+      resolver: Expression => Expression): DeltaUpdateTable = {
     if (update.resolved) return update
     assert(update.child.resolved)
 
-    val UpdateTable(child, updateColumns, updateExpressions, condition) = update
+    val DeltaUpdateTable(child, updateColumns, updateExpressions, condition) = update
 
     val cleanedUpAttributes = updateColumns.map { unresolvedExpr =>
       // Keep them unresolved but use the cleaned-up name parts from the resolved
       val errMsg = s"Failed to resolve ${unresolvedExpr.sql} given columns " +
         s"[${child.output.map(_.qualifiedName).mkString(", ")}]."
       val resolveNameParts =
-        UpdateTable.getNameParts(resolver(unresolvedExpr), errMsg, update)
+        DeltaUpdateTable.getNameParts(resolver(unresolvedExpr), errMsg, update)
       UnresolvedAttribute(resolveNameParts)
     }
 

@@ -253,6 +253,19 @@ trait AppendSaveModeTests extends BatchWriterTest {
       }
     }
   }
+
+  equivalenceTest("ensure schema mismatch error message contains table ID") {
+    disableAutoMigration {
+      withTempDir { dir =>
+        spark.range(10).write.append(dir)
+        val e = intercept[AnalysisException] {
+          spark.range(10).withColumn("part", 'id + 1).write.append(dir)
+        }
+        assert(e.getMessage.contains("schema mismatch detected"))
+        assert(e.getMessage.contains(s"Table ID: ${DeltaLog.forTable(spark, dir).tableId}"))
+      }
+    }
+  }
 }
 
 trait AppendOutputModeTests extends SchemaEnforcementSuiteBase with SharedSparkSession
