@@ -290,6 +290,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
         }
       }
     }
+    sparkContext.listenerBus.waitUntilEmpty(15000)
     sparkContext.addSparkListener(listener)
 
     withTable("source") {
@@ -304,6 +305,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
           .whenNotMatched().insertExpr(Map("key1" -> "key2", "value1" -> "value2"))
           .execute()
 
+        sparkContext.listenerBus.waitUntilEmpty(15000)
         assert(jobCount.get() == 5, "There should be 5 Spark jobs")
 
         checkAnswer(
@@ -328,6 +330,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
         }
       }
     }
+    sparkContext.listenerBus.waitUntilEmpty(15000)
     sparkContext.addSparkListener(listener)
 
     withTable("source") {
@@ -342,6 +345,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
           .whenNotMatched().insertExpr(Map("key1" -> "key2", "value1" -> "value2"))
           .execute()
 
+        sparkContext.listenerBus.waitUntilEmpty(15000)
         assert(jobCount.get() == 7, "There should be 7 Spark jobs")
 
         checkAnswer(
