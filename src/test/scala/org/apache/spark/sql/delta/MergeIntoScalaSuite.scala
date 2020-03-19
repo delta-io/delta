@@ -290,7 +290,6 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
         }
       }
     }
-    sparkContext.listenerBus.waitUntilEmpty(15000)
     sparkContext.addSparkListener(listener)
 
     withTable("source") {
@@ -298,6 +297,8 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
       val source = Seq((3, 30)).toDF("key2", "value2")  // source
 
       try {
+        sparkContext.listenerBus.waitUntilEmpty(15000)
+        jobCount.set(0)
 
         io.delta.tables.DeltaTable.forPath(spark, tempPath)
           .merge(source, "key1 = key2 and value1 in (30)")
@@ -306,7 +307,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
           .execute()
 
         sparkContext.listenerBus.waitUntilEmpty(15000)
-        assert(jobCount.get() == 5, "There should be 5 Spark jobs")
+        assert(jobCount.get() == 3, "There should be 3 Spark jobs")
 
         checkAnswer(
           readDeltaTable(tempPath),
@@ -330,7 +331,6 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
         }
       }
     }
-    sparkContext.listenerBus.waitUntilEmpty(15000)
     sparkContext.addSparkListener(listener)
 
     withTable("source") {
@@ -338,6 +338,8 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
       val source = Seq((3, 30)).toDF("key2", "value2")  // source
 
       try {
+        sparkContext.listenerBus.waitUntilEmpty(15000)
+        jobCount.set(0)
 
         io.delta.tables.DeltaTable.forPath(spark, tempPath)
           .merge(source, "key1 = key2")
@@ -346,7 +348,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
           .execute()
 
         sparkContext.listenerBus.waitUntilEmpty(15000)
-        assert(jobCount.get() == 7, "There should be 7 Spark jobs")
+        assert(jobCount.get() == 5, "There should be 5 Spark jobs")
 
         checkAnswer(
           readDeltaTable(tempPath),
