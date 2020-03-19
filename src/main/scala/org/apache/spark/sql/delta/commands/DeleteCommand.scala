@@ -25,11 +25,12 @@ import org.apache.spark.sql.{Column, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
 import org.apache.spark.sql.catalyst.expressions.{EqualNullSafe, Expression, InputFileName, Literal, Not}
 import org.apache.spark.sql.catalyst.plans.QueryPlan
-import org.apache.spark.sql.catalyst.plans.logical.{Delete, LogicalPlan}
+import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
+import org.apache.spark.sql.functions.udf
 import org.apache.spark.sql.types.BooleanType
 
 /**
@@ -54,7 +55,9 @@ case class DeleteCommand(
 
   override lazy val metrics = Map[String, SQLMetric](
     "numRemovedFiles" -> createMetric(sc, "number of files removed."),
-    "numAddedFiles" -> createMetric(sc, "number of files added.")
+    "numAddedFiles" -> createMetric(sc, "number of files added."),
+    "numDeletedRows" -> createMetric(sc, "number of rows deleted."),
+    "numTotalRows" -> createMetric(sc, "total number of rows.")
   )
 
   final override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -122,12 +125,26 @@ case class DeleteCommand(
           // that only involves the affected files instead of all files.
           val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
           val data = Dataset.ofRows(sparkSession, newTarget)
+          val totalRowsCount = metrics("numTotalRows")
+          val deletedRowCount = metrics("numDeletedRows")
+          val totalRowUdf = udf { () =>
+            totalRowsCount += 1
+            true
+          }.asNondeterministic()
+          val deletedRowUdf = udf { () =>
+            deletedRowCount += 1
+            true
+          }.asNondeterministic()
           val filesToRewrite =
             withStatusCode("DELTA", s"Finding files to rewrite for DELETE operation") {
               if (numTouchedFiles == 0) {
                 Array.empty[String]
               } else {
-                data.filter(new Column(cond)).select(new Column(InputFileName())).distinct()
+                data
+                  .filter(totalRowUdf())
+                  .filter(new Column(cond))
+                  .filter(deletedRowUdf())
+                  .select(new Column(InputFileName())).distinct()
                   .as[String].collect()
               }
             }
@@ -189,7 +206,7 @@ case class DeleteCommand(
 }
 
 object DeleteCommand {
-  def apply(delete: Delete): DeleteCommand = {
+  def apply(delete: DeltaDelete): DeleteCommand = {
     val index = EliminateSubqueryAliases(delete.child) match {
       case DeltaFullTable(tahoeFileIndex) =>
         tahoeFileIndex

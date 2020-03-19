@@ -30,7 +30,7 @@ import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
-import org.apache.spark.sql.functions.input_file_name
+import org.apache.spark.sql.functions.{input_file_name, udf}
 import org.apache.spark.sql.types.BooleanType
 
 /**
@@ -55,7 +55,9 @@ case class UpdateCommand(
 
   override lazy val metrics = Map[String, SQLMetric](
     "numAddedFiles" -> createMetric(sc, "number of files added."),
-    "numRemovedFiles" -> createMetric(sc, "number of files removed.")
+    "numRemovedFiles" -> createMetric(sc, "number of files removed."),
+    "numUpdatedRows" -> createMetric(sc, "number of rows updated."),
+    "numTotalRows" -> createMetric(sc, "number of rows copied.")
   )
 
   final override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -121,9 +123,22 @@ case class UpdateCommand(
       // that only involves the affected files instead of all files.
       val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
       val data = Dataset.ofRows(sparkSession, newTarget)
+      val totalRowsCount = metrics("numTotalRows")
+      val updatedRowCount = metrics("numUpdatedRows")
+      val totalRowUdf = udf { () =>
+        totalRowsCount += 1
+        true
+      }.asNondeterministic()
+      val updatedRowUdf = udf { () =>
+        updatedRowCount += 1
+        true
+      }.asNondeterministic()
       val filesToRewrite =
         withStatusCode("DELTA", s"Finding files to rewrite for UPDATE operation") {
-          data.filter(new Column(updateCondition)).select(input_file_name())
+          data.filter(totalRowUdf())
+            .filter(new Column(updateCondition))
+            .filter(updatedRowUdf())
+            .select(input_file_name())
             .distinct().as[String].collect()
         }
 

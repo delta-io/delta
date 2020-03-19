@@ -21,6 +21,7 @@ import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.{StructField, StructType}
 
@@ -40,6 +41,13 @@ object DeltaOperations {
     lazy val jsonEncodedValues: Map[String, String] = parameters.mapValues(JsonUtils.toJson(_))
 
     val operationMetrics: Seq[String] = Seq()
+
+    def transformMetrics(metrics: Map[String, SQLMetric]): Map[String, String] = {
+      metrics.filterKeys( s =>
+        operationMetrics.contains(s)
+      )
+      metrics.transform((_, v) => v.value.toString)
+    }
   }
 
   /** Recorded during batch inserts. Predicates can be provided for overwrites. */
@@ -66,7 +74,8 @@ object DeltaOperations {
     override val operationMetrics: Seq[String] = Seq(
       "numAddedFiles",
       "numRemovedFiles",
-      "numOutputRows"
+      "numOutputRows",
+      "numOutputBytes"
     )
   }
   /** Recorded while deleting certain partitions. */
@@ -74,8 +83,26 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = Map("predicate" -> JsonUtils.toJson(predicate))
     override val operationMetrics: Seq[String] = Seq(
       "numAddedFiles",
-      "numRemovedFiles"
+      "numRemovedFiles",
+      "numDeletedRows",
+      "numCopiedRows"
     )
+
+    override def transformMetrics(metrics: Map[String, SQLMetric]): Map[String, String] = {
+      // find the case where deletedRows are not captured
+      val numTotalRows = metrics("numTotalRows").value
+      var strMetrics = super.transformMetrics(metrics)
+      strMetrics += "numCopiedRows" -> (numTotalRows -
+        metrics("numDeletedRows").value).toString
+      if (strMetrics("numDeletedRows") == "0" && strMetrics("numCopiedRows") == "0" &&
+        strMetrics("numRemovedFiles") != "0") {
+        // identify when row level metrics are unavailable. This will happen when the entire
+        // table or partition are deleted.
+        strMetrics -= "numDeletedRows"
+        strMetrics -= "numCopiedRows"
+      }
+      strMetrics
+    }
   }
   /** Recorded when truncating the table. */
   case class Truncate() extends Operation("TRUNCATE") {
@@ -103,6 +130,9 @@ object DeltaOperations {
       "numFiles" -> numFiles,
       "partitionedBy" -> JsonUtils.toJson(partitionBy),
       "collectStats" -> collectStats) ++ catalogTable.map("catalogTable" -> _)
+    override val operationMetrics: Seq[String] = Seq(
+      "numConvertedFiles"
+    )
   }
   /** Recorded when optimizing the table. */
   case class Optimize(
@@ -155,8 +185,24 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = predicate.map("predicate" -> _).toMap
     override val operationMetrics: Seq[String] = Seq(
       "numAddedFiles",
-      "numRemovedFiles"
+      "numRemovedFiles",
+      "numUpdatedRows",
+      "numCopiedRows"
     )
+
+    override def transformMetrics(metrics: Map[String, SQLMetric]): Map[String, String] = {
+      val numTotalRows = metrics("numTotalRows").value
+      val numOutputRows = metrics("numOutputRows").value
+      val numUpdatedRows = metrics("numUpdatedRows").value
+      var strMetrics = super.transformMetrics(metrics)
+      strMetrics += "numCopiedRows" -> (numTotalRows - numUpdatedRows).toString
+      // In the case where the numUpdatedRows is not captured in the UpdateCommand implementation
+      // we can siphon out the metrics from the BasicWriteStatsTracker for that command.
+      if(numTotalRows == 0 && numUpdatedRows == 0 && numOutputRows != 0) {
+        strMetrics += "numUpdatedRows" -> numOutputRows.toString
+      }
+      strMetrics
+    }
   }
   /** Recorded when the table is created. */
   case class CreateTable(metadata: Metadata, isManaged: Boolean, asSelect: Boolean = false)

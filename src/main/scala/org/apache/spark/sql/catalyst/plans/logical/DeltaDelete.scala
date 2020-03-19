@@ -20,7 +20,7 @@ import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 
 // This only used by Delta which needs to be compatible with DBR 6 and can't use the new class
 // added in the master branch: `DeleteFromTable`.
-case class Delete(
+case class DeltaDelete(
     child: LogicalPlan,
     condition: Option[Expression])
   extends UnaryNode {

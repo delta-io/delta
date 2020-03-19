@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.schema
 
 import java.util.Locale
 
+import org.scalatest.GivenWhenThen
 
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.internal.SQLConf
@@ -26,6 +27,7 @@ import org.apache.spark.sql.types._
 
 class SchemaUtilsSuite extends QueryTest
   with SharedSparkSession
+  with GivenWhenThen
   with SQLTestUtils {
   import SchemaUtils._
   import testImplicits._
@@ -797,7 +799,7 @@ class SchemaUtilsSuite extends QueryTest
     expectFailure("Index 3", "larger than struct length: 2") {
       SchemaUtils.addColumn(schema, x, Seq(3))
     }
-    expectFailure("Can only add nested columns to StructType") {
+    expectFailure("parent is not a structtype") {
       SchemaUtils.addColumn(schema, x, Seq(0, 0))
     }
   }
@@ -825,7 +827,7 @@ class SchemaUtilsSuite extends QueryTest
     expectFailure("Struct not found at position 2") {
       SchemaUtils.addColumn(schema, x, Seq(0, 2, 0))
     }
-    expectFailure("Can only add nested columns to StructType") {
+    expectFailure("parent is not a structtype") {
       SchemaUtils.addColumn(schema, x, Seq(0, 0, 0))
     }
   }
@@ -1196,5 +1198,28 @@ class SchemaUtilsSuite extends QueryTest
     }
     assert(visitedFields === 4)
     assert(update === res3)
+  }
+
+  ////////////////////////////
+  // checkFieldNames
+  ////////////////////////////
+
+  test("check non alphanumeric column characters") {
+    val badCharacters = " ,;{}()\n\t="
+    val goodCharacters = "#.`!@$%^&*~_<>?/:"
+
+    badCharacters.foreach { char =>
+      Seq(s"a${char}b", s"${char}ab", s"ab${char}", char.toString).foreach { name =>
+        val e = intercept[AnalysisException] {
+          SchemaUtils.checkFieldNames(Seq(name))
+        }
+        assert(e.getMessage.contains("invalid character"))
+      }
+    }
+
+    goodCharacters.foreach { char =>
+      // no issues here
+      SchemaUtils.checkFieldNames(Seq(s"a${char}b", s"${char}ab", s"ab${char}", char.toString))
+    }
   }
 }

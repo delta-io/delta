@@ -20,9 +20,12 @@ import scala.collection.Set._
 import scala.collection.mutable
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.DeltaErrors
+
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
 import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.types._
 
@@ -265,19 +268,15 @@ object SchemaUtils {
         // Dropped a column that was present in the DataFrame schema
         return false
       }
-
       readSchema.forall { newField =>
-        existing.get(newField.name) match {
-          case Some(existingField) =>
-            // we know the name matches modulo case - now verify exact match
-            (existingField.name == newField.name
-              // if existing value is non-nullable, so should be the new value
-              && (existingField.nullable || !newField.nullable)
-              // and the type of the field must be compatible, too
-              && isDatatypeReadCompatible(existingField.dataType, newField.dataType))
-          case None =>
-            // new fields are fine, they just won't be returned
-            true
+        // new fields are fine, they just won't be returned
+        existing.get(newField.name).forall { existingField =>
+          // we know the name matches modulo case - now verify exact match
+          (existingField.name == newField.name
+            // if existing value is non-nullable, so should be the new value
+            && (existingField.nullable || !newField.nullable)
+            // and the type of the field must be compatible, too
+            && isDatatypeReadCompatible(existingField.dataType, newField.dataType))
         }
       }
     }
@@ -449,6 +448,8 @@ object SchemaUtils {
           (ARRAY_ELEMENT_INDEX +: child, size)
         case (Seq(), ArrayType(s: StructType, _)) =>
           find(colTail, s, stack :+ thisCol)
+        case (Seq(), ArrayType(_, _)) =>
+          (Seq(0), 0)
         case (_, ArrayType(_, _)) =>
           throw new AnalysisException(
             s"""An ArrayType was found. In order to access elements of an ArrayType, specify
@@ -495,8 +496,7 @@ object SchemaUtils {
       find(column, schema, Nil)
     } catch {
       case i: IndexOutOfBoundsException =>
-        throw new AnalysisException(
-          s"Couldn't find column ${i.getMessage} in:\n${schema.treeString}")
+        throw DeltaErrors.columnNotInSchemaException(i.getMessage, schema)
       case e: AnalysisException =>
         throw new AnalysisException(e.getMessage + s":\n${schema.treeString}")
     }
@@ -505,7 +505,7 @@ object SchemaUtils {
   /**
    * Pretty print the column path passed in.
    */
-  private def prettyFieldName(columnPath: Seq[String]): String = {
+  def prettyFieldName(columnPath: Seq[String]): String = {
     UnresolvedAttribute(columnPath).name
   }
 
@@ -586,12 +586,13 @@ object SchemaUtils {
             case _ =>
               throw new AnalysisException(
                 s"""
-                  |Can't add column: ${column.name} to Map at position: ${posTail.head}
+                  |Cannot add ${column.name} because its parent is not a StructType.
                 """.stripMargin)
           }
           StructField(name, addedMap, nullable, metadata)
         case o =>
-          throw new AnalysisException(s"Can only add nested columns to StructType. Found: $o")
+          throw new AnalysisException(s"Cannot add ${column.name} because its parent is not a " +
+            s"StructType. Found ${o.dataType}")
       }
       StructType(pre ++ Seq(mid) ++ schema.slice(slicePosition + 1, length))
     } else {
@@ -599,6 +600,8 @@ object SchemaUtils {
     }
   }
 
+  // TODO @pranavanand: This method is no longer being used by AlterTable. If transformColumnsStruct
+  // works sufficiently, remove this method
   /**
    * Drop from the specified `position` in `schema` and return with the original column.
    * @param position A Seq of ordinals on where this column should go. It is a Seq to denote
@@ -873,6 +876,43 @@ object SchemaUtils {
   }
 
   /**
+   * Transform (nested) columns in a schema. Runs the transform function on all nested StructTypes
+   *
+   * @param schema to transform.
+   * @param tf function to apply on the StructType.
+   * @return the transformed schema.
+   */
+  def transformColumnsStructs(
+      schema: StructType,
+      colName: String)(
+      tf: (Seq[String], StructType, Resolver) => Seq[StructField]): StructType = {
+    def transform[E <: DataType](path: Seq[String], dt: E): E = {
+      val newDt = dt match {
+        case struct @ StructType(fields) =>
+          val newFields = if (fields.exists(_.name == colName)) {
+            tf(path, struct, DELTA_COL_RESOLVER)
+          } else {
+            fields.toSeq
+          }
+
+          StructType(newFields.map { field =>
+            field.copy(dataType = transform(path :+ field.name, field.dataType))
+          })
+        case ArrayType(elementType, containsNull) =>
+          ArrayType(transform(path :+ "element", elementType), containsNull)
+        case MapType(keyType, valueType, valueContainsNull) =>
+          MapType(
+            transform(path :+ "key", keyType),
+            transform(path :+ "value", valueType),
+            valueContainsNull)
+        case other => other
+      }
+      newDt.asInstanceOf[E]
+    }
+    transform(Seq.empty, schema)
+  }
+
+  /**
    * Transform (nested) columns in a schema using the given path and parameter pairs. The transform
    * function is only invoked when a field's path matches one of the input paths.
    *
@@ -907,5 +947,17 @@ object SchemaUtils {
       }
     }
     // scalastyle:on caselocale
+  }
+
+  /**
+   * Verifies that the column names are acceptable by Parquet and henceforth Delta. Parquet doesn't
+   * accept the characters ' ,;{}()\n\t'. We ensure that neither the data columns nor the partition
+   * columns have these characters.
+   */
+  def checkFieldNames(names: Seq[String]): Unit = {
+    ParquetSchemaConverter.checkFieldNames(names)
+    // The method checkFieldNames doesn't have a valid regex to search for '\n'. That should be
+    // fixed in Apache Spark, and we can remove this additional check here.
+    names.find(_.contains("\n")).foreach(col => throw DeltaErrors.invalidColumnName(col))
   }
 }
