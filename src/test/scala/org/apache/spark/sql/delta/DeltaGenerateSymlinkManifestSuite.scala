@@ -205,7 +205,7 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
       // Remove all data
       spark.emptyDataset[Int].write.format("delta").mode("overwrite").save(tablePath.toString)
       assert(spark.read.format("delta").load(tablePath.toString).count() == 0)
-      assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 1)
+      assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 0)
     }
   }
 
