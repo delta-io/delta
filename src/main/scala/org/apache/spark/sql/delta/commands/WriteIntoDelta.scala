@@ -17,6 +17,8 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.net.URLDecoder
+
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.sql._
 import org.apache.spark.sql.delta._
@@ -114,7 +116,8 @@ case class WriteIntoDelta(
       .writeFiles(data, Some(options), Seq(nonEmptyFileStatsTracker))
       // Only add files to the Log if they contain some data rows.
       .filter(addFile => {
-        val fullPath = new Path(deltaLog.dataPath, addFile.path)
+        // addFile.path has been escaped, so it must be decoded.
+        val fullPath = new Path(deltaLog.dataPath, URLDecoder.decode(addFile.path, "UTF-8"))
         val isEmpty = !nonEmptyFileStatsTracker.nonEmptyFiles.contains(fullPath.toString)
         // Delete the file if empty.
         if (isEmpty) fs.delete(fullPath, true)
