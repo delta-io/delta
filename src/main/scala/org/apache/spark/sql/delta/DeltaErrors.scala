@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.io.FileNotFoundException
+import java.io.{FileNotFoundException, IOException}
 import java.util.ConcurrentModificationException
 
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata}
@@ -87,7 +87,8 @@ trait DocsPath {
     "multipleSourceRowMatchingTargetRowInMergeException",
     "faqRelativePath",
     "ignoreStreamingUpdatesAndDeletesWarning",
-    "concurrentModificationExceptionMsg"
+    "concurrentModificationExceptionMsg",
+    "incorrectLogStoreImplementationException"
   )
 }
 
@@ -148,6 +149,17 @@ object DeltaErrors
     new InvariantViolationException(s"Column ${UnresolvedAttribute(invariant.column).name}" +
       s", which is defined as ${invariant.rule.name}, is missing from the data being " +
       s"written into the table.")
+  }
+
+  def incorrectLogStoreImplementationException(
+      sparkConf: SparkConf,
+      cause: Throwable): Throwable = {
+    new IOException(s"""The error typically occurs when the default LogStore implementation, that
+      | is, HDFSLogStore, is used to write into a Delta table on a non-HDFS storage system.
+      | In order to get the transactional ACID guarantees on table updates, you have to use the
+      | correct implementation of LogStore that is appropriate for your storage system.
+      | See ${generateDocsLink(sparkConf, "/delta-storage.html")} " for details.
+      """.stripMargin, cause)
   }
 
   def staticPartitionsNotSupportedException: Throwable = {
