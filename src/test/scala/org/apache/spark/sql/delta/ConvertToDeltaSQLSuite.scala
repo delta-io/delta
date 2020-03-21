@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 class ConvertToDeltaSQLSuite
-  extends ConvertToDeltaSuiteBase  with DeltaSQLCommandTest
+  extends ConvertToDeltaSuiteTests  with DeltaSQLCommandTest
   {
   override protected def convertToDelta(
       identifier: String,

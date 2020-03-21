@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.types.StructType
 
-class ConvertToDeltaScalaSuite extends ConvertToDeltaSuiteBase {
+class ConvertToDeltaScalaSuite extends ConvertToDeltaSuiteTests {
   override protected def convertToDelta(
       identifier: String,
       partitionSchema: Option[String] = None): Unit = {
