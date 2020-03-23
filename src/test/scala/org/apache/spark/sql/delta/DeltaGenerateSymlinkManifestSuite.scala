@@ -327,11 +327,16 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
       }
     }
 
-    assertColNames("""{ " " : 0 }""")
+    intercept[AnalysisException] {
+      assertColNames("""{ " " : 0 }""")
+    }
     assertColNames("""{ "%" : 0 }""")
     assertColNames("""{ "a.b." : 0 }""")
+    assertColNames("""{ "a/b." : 0 }""")
     assertColNames("""{ "a_b" : 0 }""")
-    assertColNames("""{ "a b" : 0 }""")
+    intercept[AnalysisException] {
+      assertColNames("""{ "a b" : 0 }""")
+    }
   }
 
   test("special partition column values") {

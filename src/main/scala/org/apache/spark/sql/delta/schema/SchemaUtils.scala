@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
 import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.types._
 
@@ -267,19 +268,15 @@ object SchemaUtils {
         // Dropped a column that was present in the DataFrame schema
         return false
       }
-
       readSchema.forall { newField =>
-        existing.get(newField.name) match {
-          case Some(existingField) =>
-            // we know the name matches modulo case - now verify exact match
-            (existingField.name == newField.name
-              // if existing value is non-nullable, so should be the new value
-              && (existingField.nullable || !newField.nullable)
-              // and the type of the field must be compatible, too
-              && isDatatypeReadCompatible(existingField.dataType, newField.dataType))
-          case None =>
-            // new fields are fine, they just won't be returned
-            true
+        // new fields are fine, they just won't be returned
+        existing.get(newField.name).forall { existingField =>
+          // we know the name matches modulo case - now verify exact match
+          (existingField.name == newField.name
+            // if existing value is non-nullable, so should be the new value
+            && (existingField.nullable || !newField.nullable)
+            // and the type of the field must be compatible, too
+            && isDatatypeReadCompatible(existingField.dataType, newField.dataType))
         }
       }
     }
@@ -950,5 +947,17 @@ object SchemaUtils {
       }
     }
     // scalastyle:on caselocale
+  }
+
+  /**
+   * Verifies that the column names are acceptable by Parquet and henceforth Delta. Parquet doesn't
+   * accept the characters ' ,;{}()\n\t'. We ensure that neither the data columns nor the partition
+   * columns have these characters.
+   */
+  def checkFieldNames(names: Seq[String]): Unit = {
+    ParquetSchemaConverter.checkFieldNames(names)
+    // The method checkFieldNames doesn't have a valid regex to search for '\n'. That should be
+    // fixed in Apache Spark, and we can remove this additional check here.
+    names.find(_.contains("\n")).foreach(col => throw DeltaErrors.invalidColumnName(col))
   }
 }

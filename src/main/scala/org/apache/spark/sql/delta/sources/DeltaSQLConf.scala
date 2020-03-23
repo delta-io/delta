@@ -53,6 +53,14 @@ object DeltaSQLConf {
       .checkValue(n => n > 0, "Delta snapshot partition number must be positive.")
       .createOptional
 
+  val DELTA_PARTITION_COLUMN_CHECK_ENABLED =
+    buildConf("partitionColumnValidity.enabled")
+      .internal()
+      .doc("Whether to check whether the partition column names have valid names, just like " +
+        "the data columns.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_COLLECT_STATS =
     buildConf("stats.collect")
       .internal()
@@ -226,4 +234,13 @@ object DeltaSQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val MERGE_MATCHED_ONLY_ENABLED =
+    buildConf("merge.optimizeMatchedOnlyMerge.enabled")
+      .internal()
+      .doc(
+        """If enabled, merge without 'when not matched' clause will be optimized to use a
+          |right outer join instead of a full outer join.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 }
