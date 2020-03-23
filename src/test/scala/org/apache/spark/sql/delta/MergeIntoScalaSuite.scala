@@ -17,10 +17,9 @@
 package org.apache.spark.sql.delta
 
 import java.util.Locale
-import java.util.concurrent.atomic.AtomicInteger
 
 import io.delta.tables._
-import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
+
 import org.apache.spark.sql._
 import org.apache.spark.sql.types.StructType
 
