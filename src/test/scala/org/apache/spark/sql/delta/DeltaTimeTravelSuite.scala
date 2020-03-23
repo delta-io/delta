@@ -470,6 +470,49 @@ class DeltaTimeTravelSuite extends QueryTest
     }
   }
 
+  test("as of timestamp after last commit should use last if canReturnLastCommit") {
+    withTempDir { dir =>
+      val tblLoc = dir.getCanonicalPath
+      val start = 1540415658000L
+      generateCommits(tblLoc, start, start + 20.minutes, start + 40.minutes)
+
+      val tablePathUri = identifierWithTimestamp(tblLoc, start + 10.minutes)
+
+      val df1 = spark.read.format("delta").load(tablePathUri)
+      checkAnswer(df1.groupBy().count(), Row(10L))
+
+      // 60 minutes after start without canReturnLastCommit
+      val e0 = intercept[AnalysisException] {
+        spark.read.format("delta").option("timestampAsOf", "2018-10-24 15:16:18")
+          .load(tblLoc)
+      }
+      assert(e0.getMessage.contains("after the latest commit timestamp"))
+
+      // 60 minutes after start with canReturnLastCommit=false
+      val e1 = intercept[AnalysisException] {
+        spark.read.format("delta").option("timestampAsOf", "2018-10-24 15:16:18")
+          .option("canReturnLastCommit", "false")
+          .load(tblLoc)
+      }
+      assert(e1.getMessage.contains("after the latest commit timestamp"))
+
+      // 60 minutes after start with wrong data type canReturnLastCommit
+      val e2 = intercept[IllegalArgumentException] {
+        spark.read.format("delta").option("timestampAsOf", "2018-10-24 15:16:18")
+          .option("canReturnLastCommit", "t")
+          .load(tblLoc)
+      }
+      assert(e2.getMessage.contains("canReturnLastCommit needs to be a valid boolean value"))
+
+      // 60 minutes after start with canReturnLastCommit=true
+      val df2 = spark.read.format("delta").option("timestampAsOf", "2018-10-24 15:16:18")
+        .option("canReturnLastCommit", "true")
+        .load(tblLoc)
+
+      checkAnswer(df2.groupBy().count(), Row(30L))
+    }
+  }
+
   test("as of timestamp on exact timestamp") {
     withTempDir { dir =>
       val tblLoc = dir.getCanonicalPath

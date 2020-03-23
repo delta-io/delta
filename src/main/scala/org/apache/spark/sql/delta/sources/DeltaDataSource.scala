@@ -183,6 +183,12 @@ object DeltaDataSource extends DatabricksLogging {
   final val TIME_TRAVEL_TIMESTAMP_KEY = "timestampAsOf"
 
   /**
+   * The option key for hether we can return the latest version of the table if the
+   * provided timestamp is after the latest commit.
+   */
+  final val TIME_TRAVEL_TS_CRLC_KEY = "canReturnLastCommit"
+
+  /**
    * The option key for time traveling using a version of a table. This value should be
    * castable to a long.
    */
@@ -318,22 +324,33 @@ object DeltaDataSource extends DatabricksLogging {
   def getTimeTravelVersion(parameters: Map[String, String]): Option[DeltaTimeTravelSpec] = {
     val caseInsensitive = CaseInsensitiveMap[String](parameters)
     val tsOpt = caseInsensitive.get(DeltaDataSource.TIME_TRAVEL_TIMESTAMP_KEY)
+    val crlcOpt = caseInsensitive.get(
+      DeltaDataSource.TIME_TRAVEL_TS_CRLC_KEY)
     val versionOpt = caseInsensitive.get(DeltaDataSource.TIME_TRAVEL_VERSION_KEY)
     val sourceOpt = caseInsensitive.get(DeltaDataSource.TIME_TRAVEL_SOURCE_KEY)
 
-    if (tsOpt.isDefined && versionOpt.isDefined) {
-      throw DeltaErrors.provideOneOfInTimeTravel
-    } else if (tsOpt.isDefined) {
-      Some(DeltaTimeTravelSpec(Some(Literal(tsOpt.get)), None, sourceOpt.orElse(Some("dfReader"))))
-    } else if (versionOpt.isDefined) {
-      val version = Try(versionOpt.get.toLong) match {
-        case Success(v) => v
-        case Failure(t) => throw new IllegalArgumentException(
-          s"${DeltaDataSource.TIME_TRAVEL_VERSION_KEY} needs to be a valid bigint value.", t)
-      }
-      Some(DeltaTimeTravelSpec(None, Some(version), sourceOpt.orElse(Some("dfReader"))))
-    } else {
-      None
+    (tsOpt, crlcOpt, versionOpt) match {
+      case (Some(_), _, Some(_)) =>
+        throw DeltaErrors.provideOneOfInTimeTravel
+      case (Some(ts), None, _) =>
+        Some(DeltaTimeTravelSpec(Some(Literal(ts)), None, None, sourceOpt.orElse(Some("dfReader"))))
+      case (Some(ts), Some(crlc), _) =>
+        val c = Try(crlc.toBoolean) match {
+          case Success(v) => v
+          case Failure(t) => throw new IllegalArgumentException(
+            s"${DeltaDataSource.TIME_TRAVEL_TS_CRLC_KEY} needs to be a valid boolean value.", t)
+        }
+        Some(
+          DeltaTimeTravelSpec(Some(Literal(ts)), Some(c), None, sourceOpt.orElse(Some("dfReader")))
+        )
+      case (None, _, Some(version)) =>
+        val ver = Try(version.toLong) match {
+          case Success(v) => v
+          case Failure(t) => throw new IllegalArgumentException(
+            s"${DeltaDataSource.TIME_TRAVEL_VERSION_KEY} needs to be a valid bigint value.", t)
+        }
+        Some(DeltaTimeTravelSpec(None, None, Some(ver), sourceOpt.orElse(Some("dfReader"))))
+      case _ => None
     }
   }
 }

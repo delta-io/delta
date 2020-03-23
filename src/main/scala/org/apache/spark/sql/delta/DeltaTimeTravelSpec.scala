@@ -32,11 +32,14 @@ import org.apache.spark.sql.types.{LongType, TimestampType}
  * The specification to time travel a Delta Table to the given `timestamp` or `version`.
  * @param timestamp An expression that can be evaluated into a timestamp. The expression cannot
  *                  be a subquery.
+ * @param canReturnLastCommit Whether we can return the latest version of the table if the
+ *                            provided timestamp is after the latest commit.
  * @param version The version of the table to time travel to. Must be >= 0.
  * @param creationSource The API used to perform time travel, e.g. `atSyntax`, `dfReader` or SQL
  */
 case class DeltaTimeTravelSpec(
     timestamp: Option[Expression],
+    canReturnLastCommit: Option[Boolean],
     version: Option[Long],
     creationSource: Option[String]) extends DeltaLogging {
 
@@ -101,11 +104,12 @@ object DeltaTimeTravelSpec {
         // Drop the 18 characters in the right, which is the timestamp format and the @ character.
         val realIdentifier = identifier.dropRight(TIMESTAMP_FORMAT_LENGTH + 1)
 
-        DeltaTimeTravelSpec(Some(timestamp), None, Some("atSyntax.path")) -> realIdentifier
+        DeltaTimeTravelSpec(Some(timestamp), Some(false), None, Some("atSyntax.path")) ->
+          realIdentifier
       case VERSION_URI_FOR_TIME_TRAVEL(v) =>
         // Drop the version, and `@v` characters from the identifier
         val realIdentifier = identifier.dropRight(v.length + 2)
-        DeltaTimeTravelSpec(None, Some(v.toLong), Some("atSyntax.path")) -> realIdentifier
+        DeltaTimeTravelSpec(None, None, Some(v.toLong), Some("atSyntax.path")) -> realIdentifier
     }
   }
 
