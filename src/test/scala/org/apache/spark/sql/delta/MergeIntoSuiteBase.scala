@@ -19,16 +19,17 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.lang.{Integer => JInt}
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicInteger
+
+import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
 
 import scala.collection.JavaConverters._
-
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.scalatest.BeforeAndAfterEach
-
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.{SQLTestUtils, SharedSparkSession}
 import org.apache.spark.sql.types.{IntegerType, MapType, StringType, StructType}
 import org.apache.spark.status.api.v1.AccumulableInfo
 import org.apache.spark.util.Utils
@@ -1767,6 +1768,81 @@ abstract class MergeIntoSuiteBase
       assert(!accumNames.contains(MergeIntoCommand.TOUCHED_FILES_ACCUM_NAME))
     } finally {
       iter.close()
+    }
+  }
+
+  protected def withJobCountListener(jobCount: AtomicInteger)(f: => Unit): Unit = {
+    val listener = new SparkListener {
+      override def onJobStart(jobStart: SparkListenerJobStart): Unit = {
+        // Spark will always log a job start/end event even when the job does not launch any task.
+        if (jobStart.stageInfos.exists(_.numTasks > 0)) {
+          jobCount.incrementAndGet()
+        }
+      }
+    }
+    sparkContext.addSparkListener(listener)
+    sparkContext.listenerBus.waitUntilEmpty(15000)
+    jobCount.set(0)
+
+    Utils.tryWithSafeFinally(f) {
+      sparkContext.listenerBus.waitUntilEmpty(15000)
+      sparkContext.removeSparkListener(listener)
+    }
+  }
+
+  test("findTouchedFiles - no files match target predicate") {
+
+    withTable("source") {
+      append(Seq((1, 10), (2, 20)).toDF("key1", "value1"), "value1")  // target
+      val source = Seq((3, 30)).toDF("key2", "value2")  // source
+
+      val jobCount = new AtomicInteger(0)
+
+      withJobCountListener(jobCount) {
+        io.delta.tables.DeltaTable.forPath(spark, tempPath)
+          .merge(source, "key1 = key2 and value1 in (30)")
+          .whenMatched().updateExpr(Map("key1" -> "key2", "value1" -> "value2"))
+          .whenNotMatched().insertExpr(Map("key1" -> "key2", "value1" -> "value2"))
+          .execute()
+      }
+
+      assert(jobCount.get() == 3, "There should be 3 Spark jobs")
+
+      checkAnswer(
+        readDeltaTable(tempPath),
+        Row(1, 10) ::    // No change
+          Row(2, 20) ::     // No change
+          Row(3, 30) ::     // Insert
+          Nil)
+
+    }
+  }
+
+  test("findTouchedFiles - files match target predicate") {
+
+    withTable("source") {
+      append(Seq((1, 10), (2, 20)).toDF("key1", "value1"), "value1")  // target
+      val source = Seq((3, 30)).toDF("key2", "value2")  // source
+
+      val jobCount = new AtomicInteger(0)
+
+      withJobCountListener(jobCount) {
+        io.delta.tables.DeltaTable.forPath(spark, tempPath)
+          .merge(source, "key1 = key2")
+          .whenMatched().updateExpr(Map("key1" -> "key2", "value1" -> "value2"))
+          .whenNotMatched().insertExpr(Map("key1" -> "key2", "value1" -> "value2"))
+          .execute()
+      }
+
+      assert(jobCount.get() == 5, "There should be 5 Spark jobs")
+
+      checkAnswer(
+        readDeltaTable(tempPath),
+        Row(1, 10) ::    // No change
+          Row(2, 20) ::     // No change
+          Row(3, 30) ::     // Insert
+          Nil)
+
     }
   }
 }
