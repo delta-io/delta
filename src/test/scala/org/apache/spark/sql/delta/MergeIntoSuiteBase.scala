@@ -21,15 +21,15 @@ import java.lang.{Integer => JInt}
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
 
-import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
-
 import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.scalatest.BeforeAndAfterEach
+import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.{SQLTestUtils, SharedSparkSession}
+import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{IntegerType, MapType, StringType, StructType}
 import org.apache.spark.status.api.v1.AccumulableInfo
 import org.apache.spark.util.Utils
