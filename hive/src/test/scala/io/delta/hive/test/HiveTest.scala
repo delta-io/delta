@@ -16,21 +16,20 @@
 
 package io.delta.hive.test
 
-import java.io.File
+import java.io.{Closeable, File}
 import java.nio.file.Files
 import java.util.{Locale, TimeZone}
 
 import scala.collection.JavaConverters._
 
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.hive.cli.CliSessionState
 import org.apache.hadoop.hive.conf.HiveConf
 import org.apache.hadoop.hive.ql.Driver
 import org.apache.hadoop.hive.ql.metadata.Hive
 import org.apache.hadoop.hive.ql.session.SessionState
-import org.apache.hadoop.mapred.{JobConf, MiniMRCluster}
-import org.apache.hadoop.mapreduce.MRJobConfig
-import org.apache.hadoop.yarn.conf.YarnConfiguration
+
 import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.delta.DeltaLog
@@ -43,7 +42,7 @@ trait HiveTest extends FunSuite with BeforeAndAfterAll {
   private val tempPath = Files.createTempDirectory(this.getClass.getSimpleName).toFile
 
   private var driver: Driver = _
-  private var mr: MiniMRCluster = _
+  private var cluster: Closeable = _
 
   // Timezone is fixed to America/Los_Angeles for those timezone sensitive tests (timestamp_*)
   TimeZone.setDefault(TimeZone.getTimeZone("America/Los_Angeles"))
@@ -54,42 +53,42 @@ trait HiveTest extends FunSuite with BeforeAndAfterAll {
     super.beforeAll()
     val warehouseDir = new File(tempPath, "warehouse")
     val metastoreDir = new File(tempPath, "metastore_db")
+    val hiveJarsDir = new File(tempPath, "hive_jars")
     val conf = new HiveConf()
-
+    conf.set("hive.execution.engine", engine)
+    conf.set("hive.user.install.directory", hiveJarsDir.getCanonicalPath)
     // Disable schema verification and allow schema auto-creation in the
     // Derby database, in case the config for the metastore is set otherwise.
     // Without these settings, starting the client fails with
     // MetaException(message:Version information not found in metastore.)t
     conf.set("hive.metastore.schema.verification", "false")
     conf.set("datanucleus.schema.autoCreateAll", "true")
-    // if hive.fetch.task.conversion set to none, the hive.input.format should be
-    // io.delta.hive.HiveInputFormat
+    // if hive.fetch.task.conversion set to none, "hive.input.format" and "hive.tez.input.format"
+    // should be "io.delta.hive.HiveInputFormat".
     conf.set("hive.fetch.task.conversion", "none")
     conf.set("hive.input.format", "io.delta.hive.HiveInputFormat")
+    conf.set("hive.tez.input.format", "io.delta.hive.HiveInputFormat")
     conf.set(
       "javax.jdo.option.ConnectionURL",
       s"jdbc:derby:memory:;databaseName=${metastoreDir.getCanonicalPath};create=true")
     conf.set("hive.metastore.warehouse.dir", warehouseDir.getCanonicalPath)
     val fs = FileSystem.getLocal(conf)
-    val jConf = new JobConf(conf)
-    jConf.set("yarn.scheduler.capacity.root.queues", "default")
-    jConf.set("yarn.scheduler.capacity.root.default.capacity", "100")
-    jConf.setInt(MRJobConfig.MAP_MEMORY_MB, 512)
-    jConf.setInt(MRJobConfig.REDUCE_MEMORY_MB, 512)
-    jConf.setInt(MRJobConfig.MR_AM_VMEM_MB, 128)
-    jConf.setInt(YarnConfiguration.YARN_MINICLUSTER_NM_PMEM_MB, 512)
-    jConf.setInt(YarnConfiguration.RM_SCHEDULER_MINIMUM_ALLOCATION_MB, 128)
-    jConf.setInt(YarnConfiguration.RM_SCHEDULER_MAXIMUM_ALLOCATION_MB, 512)
-    mr = new MiniMRCluster(2, fs.getUri.toString, 1, null, null, jConf)
-
+    cluster = createCluster(fs.getUri.toString, conf, tempPath)
+    setupConfiguration(conf)
     val db = Hive.get(conf)
     SessionState.start(new CliSessionState(conf))
     driver = new Driver(conf)
   }
 
+  def engine: String
+
+  def createCluster(namenode: String, conf: Configuration, tempPath: File): Closeable
+
+  def setupConfiguration(conf: Configuration): Unit = {}
+
   override def afterAll() {
-    if (mr != null) {
-      mr.shutdown()
+    if (cluster != null) {
+      cluster.close()
     }
     driver.close()
     driver.destroy()
@@ -132,6 +131,16 @@ trait HiveTest extends FunSuite with BeforeAndAfterAll {
            |
          """.stripMargin)
     }
+  }
+
+  /**
+   * Check whether the `filter` is pushed into TableScan's filterExpr field and also verify the
+   * answer.
+   */
+  def checkFilterPushdown[T <: Product](query: String, filter: String, expected: Seq[T]): Unit = {
+    // `explain` in Tez doesn't show TableScan's filterExpr field, so we use `explain extended`.
+    assert(runQuery(s"explain extended $query").mkString("\n").contains(s"filterExpr: $filter"))
+    checkAnswer(query, expected)
   }
 
   /**

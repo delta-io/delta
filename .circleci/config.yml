@@ -8,5 +8,9 @@ jobs:
       - run:
           name: Run tests 
           command: |
-            build/sbt "+ coreTest/test"
-            build/sbt "+ hive/test"
+            build/sbt "++ 2.12.8 coreTest/test"
+            build/sbt "++ 2.12.8 hiveMR/test"
+            build/sbt "++ 2.12.8 hiveTez/test"
+            build/sbt "++ 2.11.12 coreTest/test"
+            build/sbt "++ 2.11.12 hiveMR/test"
+            build/sbt "++ 2.11.12 hiveTez/test"

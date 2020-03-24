@@ -24,7 +24,7 @@ import io.delta.tables.DeltaTable
 import org.apache.spark.network.util.JavaUtils
 import org.scalatest.BeforeAndAfterEach
 
-class HiveConnectorSuite extends HiveTest with BeforeAndAfterEach {
+abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
 
   test("should not allow to create a non external Delta table") {
     val e = intercept[Exception] {
@@ -83,8 +83,15 @@ class HiveConnectorSuite extends HiveTest with BeforeAndAfterEach {
         val e = intercept[Exception] {
           runQuery("INSERT INTO deltaTbl(a, b) VALUES(123, 'foo')")
         }
-        assert(e.getMessage != null && e.getMessage.contains(
-          "Writing to a Delta table in Hive is not supported"))
+        if (engine == "tez") {
+          // We cannot get the root cause in Tez mode because of HIVE-20974. Currently it's only in
+          // the log so we cannot verify it.
+          // TODO Remove this `if` branch once we upgrade to a new Hive version containing the fix
+          // for HIVE-20974
+        } else {
+          assert(e.getMessage != null && e.getMessage.contains(
+            "Writing to a Delta table in Hive is not supported"))
+        }
       }
     }
   }
@@ -333,82 +340,58 @@ class HiveConnectorSuite extends HiveTest with BeforeAndAfterEach {
         )
 
         // equal pushed down
-        assert(runQuery(
-          "explain select city, `date`, name, cnt from deltaPartitionTbl where `date` = '20180520'")
-          .mkString(" ").contains("filterExpr: (date = '20180520')"))
-        checkAnswer(
+        checkFilterPushdown(
           "select city, `date`, name, cnt from deltaPartitionTbl where `date` = '20180520'",
+          "(date = '20180520')",
           testData.filter(_._2 == "20180520"))
 
-        assert(runQuery(
-          "explain select city, `date`, name, cnt from deltaPartitionTbl " +
-            "where `date` != '20180520'")
-          .mkString(" ").contains("filterExpr: (date <> '20180520')"))
-        checkAnswer(
+        checkFilterPushdown(
           "select city, `date`, name, cnt from deltaPartitionTbl where `date` != '20180520'",
+          "(date <> '20180520')",
           testData.filter(_._2 != "20180520"))
 
-        assert(runQuery(
-          "explain select city, `date`, name, cnt from deltaPartitionTbl where `date` > '20180520'")
-          .mkString(" ").contains("filterExpr: (date > '20180520')"))
-        checkAnswer(
+        checkFilterPushdown(
           "select city, `date`, name, cnt from deltaPartitionTbl where `date` > '20180520'",
+          "(date > '20180520')",
           testData.filter(_._2 > "20180520"))
 
-        assert(runQuery(
-          "explain select city, `date`, name, cnt from deltaPartitionTbl " +
-            "where `date` >= '20180520'")
-          .mkString(" ").contains("filterExpr: (date >= '20180520')"))
-        checkAnswer(
+        checkFilterPushdown(
           "select city, `date`, name, cnt from deltaPartitionTbl where `date` >= '20180520'",
+          "(date >= '20180520')",
           testData.filter(_._2 >= "20180520"))
 
-        assert(runQuery(
-          "explain select city, `date`, name, cnt from deltaPartitionTbl where `date` < '20180520'")
-          .mkString(" ").contains("filterExpr: (date < '20180520')"))
-        checkAnswer(
+        checkFilterPushdown(
           "select city, `date`, name, cnt from deltaPartitionTbl where `date` < '20180520'",
+          "(date < '20180520')",
           testData.filter(_._2 < "20180520"))
 
-        assert(runQuery(
-          "explain select city, `date`, name, cnt from deltaPartitionTbl " +
-            "where `date` <= '20180520'")
-          .mkString(" ").contains("filterExpr: (date <= '20180520')"))
-        checkAnswer(
+        checkFilterPushdown(
           "select city, `date`, name, cnt from deltaPartitionTbl where `date` <= '20180520'",
+          "(date <= '20180520')",
           testData.filter(_._2 <= "20180520"))
 
         // expr(like) pushed down
-        assert(runQuery(
-          "explain select * from deltaPartitionTbl where `date` like '201805%'")
-          .mkString(" ").contains("filterExpr: (date like '201805%')"))
-        checkAnswer(
+        checkFilterPushdown(
           "select * from deltaPartitionTbl where `date` like '201805%'",
-          testData.filter(_._2.contains("201805")))
+          "(date like '201805%')",
+          testData.filter(_._2.startsWith("201805")))
 
         // expr(in) pushed down
-        assert(runQuery(
-          "explain select name, `date`, cnt from deltaPartitionTbl where `city` in ('hz', 'sz')")
-          .mkString(" ").contains("filterExpr: (city) IN ('hz', 'sz')"))
-        checkAnswer(
+        checkFilterPushdown(
           "select name, `date`, cnt from deltaPartitionTbl where `city` in ('hz', 'sz')",
+          "(city) IN ('hz', 'sz')",
           testData.filter(c => Seq("hz", "sz").contains(c._1)).map(r => (r._3, r._2, r._4)))
 
         // two partition column pushed down
-        assert(runQuery(
-          "explain select * from deltaPartitionTbl " +
-            "where `date` = '20181212' and `city` in ('hz', 'sz')")
-          .mkString(" ").contains("filterExpr: ((city) IN ('hz', 'sz') and (date = '20181212'))"))
-        checkAnswer(
+        checkFilterPushdown(
           "select * from deltaPartitionTbl where `date` = '20181212' and `city` in ('hz', 'sz')",
+          "((city) IN ('hz', 'sz') and (date = '20181212'))",
           testData.filter(c => Seq("hz", "sz").contains(c._1) && c._2 == "20181212"))
 
         // data column not be pushed down
-        assert(runQuery(
-          "explain select * from deltaPartitionTbl where city = 'hz' and name = 'Jim'")
-          .mkString(" ").contains("filterExpr: (city = 'hz'"))
-        checkAnswer(
+        checkFilterPushdown(
           "select * from deltaPartitionTbl where city = 'hz' and name = 'Jim'",
+          "(city = 'hz')",
           testData.filter(c => c._1 == "hz" && c._3 == "Jim"))
       }
     }

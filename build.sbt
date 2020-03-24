@@ -53,7 +53,27 @@ lazy val core = (project in file("core"))
     name := "delta-core-shaded",
     libraryDependencies ++= Seq(
       "io.delta" %% "delta-core" % deltaVersion excludeAll ExclusionRule("org.apache.hadoop"),
-      "org.apache.spark" %% "spark-sql" % sparkVersion excludeAll ExclusionRule("org.apache.hadoop"),
+      "org.apache.spark" %% "spark-sql" % sparkVersion excludeAll(
+        ExclusionRule("org.apache.hadoop"),
+        // Remove all dependencies used by Spark UI. Spark UI is not needed and we have disabled it.
+        // So these dependencies are not used any more.
+        ExclusionRule("com.sun.jersey"),
+        ExclusionRule("org.glassfish"),
+        ExclusionRule("org.glassfish.jersey.bundles"),
+        ExclusionRule("org.glassfish.jersey.media"),
+        ExclusionRule("org.glassfish.hk2"),
+        ExclusionRule("org.glassfish.jersey.bundles.repackaged"),
+        ExclusionRule("org.glassfish.jersey.test-framework"),
+        ExclusionRule("org.glassfish.hk2.external"),
+        ExclusionRule("org.glassfish.jersey.containers"),
+        ExclusionRule("org.glassfish.jersey.test-framework.providers"),
+        ExclusionRule("org.glassfish.jaxb"),
+        ExclusionRule("org.glassfish.jersey.core"),
+        ExclusionRule("org.glassfish.jersey"),
+        ExclusionRule("org.glassfish.jersey.inject"),
+        ExclusionRule("javax.ws.rs"),
+        ExclusionRule("org.xerial.snappy")
+    ),
       "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided"
     ),
 
@@ -70,8 +90,10 @@ lazy val coreTest = (project in file("coreTest"))
     unmanagedJars in Compile += (packageBin in(core, Compile, packageBin)).value,
 
     // Only dependency not in the uber jar
-    libraryDependencies += "org.apache.hadoop" % "hadoop-client" % hadoopVersion excludeAll
+    libraryDependencies ++= Seq("org.apache.hadoop" % "hadoop-client" % hadoopVersion excludeAll
       ExclusionRule("org.slf4j", "slf4j-log4j12"),
+      "org.xerial.snappy" % "snappy-java" % "1.1.7.3"
+    ),
 
     autoScalaLibrary := false,
 
@@ -117,7 +139,7 @@ lazy val assemblySettings = Seq(
     ShadeRule.rename("org.apache.log4j.**" -> "@0").inAll, // Initialization via reflection fails when package changed
     ShadeRule.rename("org.slf4j.**" -> "@0").inAll, // Initialization via reflection fails when package changed
     ShadeRule.rename("org.apache.commons.**" -> "@0").inAll, // Initialization via reflection fails when package changed
-    ShadeRule.rename("org.xerial.snappy.*Native*" -> "@0").inAll, // JNI class fails to resolve native code when package changed
+    ShadeRule.rename("org.xerial.snappy.**" -> "@0").inAll, // Snappy fails to resolve native code when package changed
     ShadeRule.rename("com.databricks.**" -> "@0").inAll, // Scala package object does not resolve correctly when package changed
 
     // Shade everything else
@@ -153,6 +175,38 @@ lazy val hive = (project in file("hive")) settings (
   // Ensures that the connector core jar is compiled before compiling this project
   (compile in Compile) := ((compile in Compile) dependsOn (packageBin in (core, Compile, packageBin))).value,
 
+  // Minimal dependencies to compile the codes. This project doesn't run any tests so we don't need
+  // any runtime dependencies.
+  libraryDependencies ++= Seq(
+    "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided",
+    "org.apache.hive" % "hive-exec" % hiveVersion % "provided" excludeAll(
+      ExclusionRule(organization = "org.apache.spark"),
+      ExclusionRule(organization = "org.apache.parquet"),
+      ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm"),
+      ExclusionRule(organization = "com.google.protobuf")
+    ),
+    "org.apache.hive" % "hive-cli" % hiveVersion % "test" excludeAll(
+      ExclusionRule(organization = "org.apache.spark"),
+      ExclusionRule(organization = "org.apache.parquet"),
+      ExclusionRule("ch.qos.logback", "logback-classic"),
+      ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm"),
+      ExclusionRule(organization = "com.google.protobuf")
+    ),
+    "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
+    "org.scalatest" %% "scalatest" % "3.0.5" % "test",
+    "io.delta" %% "delta-core" % deltaVersion % "test"
+  )
+)
+
+lazy val hiveMR = (project in file("hive-mr")) dependsOn(hive % "test->test") settings (
+  name := "hive-mr",
+  commonSettings,
+  unmanagedJars in Compile += (packageBin in(core, Compile, packageBin)).value,
+  autoScalaLibrary := false,
+
+  // Ensures that the connector core jar is compiled before compiling this project
+  (compile in Compile) := ((compile in Compile) dependsOn (packageBin in (core, Compile, packageBin))).value,
+
   libraryDependencies ++= Seq(
     "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided",
     "org.apache.hive" % "hive-exec" % hiveVersion % "provided" excludeAll(
@@ -170,6 +224,48 @@ lazy val hive = (project in file("hive")) settings (
       ExclusionRule("ch.qos.logback", "logback-classic"),
       ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm")
     ),
+    // TODO Figure out how this fixes some bad dependency
+    "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
+    "org.scalatest" %% "scalatest" % "3.0.5" % "test",
+    "io.delta" %% "delta-core" % deltaVersion % "test" excludeAll ExclusionRule("org.apache.hadoop")
+  )
+)
+
+lazy val hiveTez = (project in file("hive-tez")) dependsOn(hive % "test->test") settings (
+  name := "hive-tez",
+  commonSettings,
+  unmanagedJars in Compile += (packageBin in(core, Compile, packageBin)).value,
+  autoScalaLibrary := false,
+  // Ensures that the connector core jar is compiled before compiling this project
+  (compile in Compile) := ((compile in Compile) dependsOn (packageBin in (core, Compile, packageBin))).value,
+
+  libraryDependencies ++= Seq(
+    "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided"  excludeAll (
+      ExclusionRule(organization = "com.google.protobuf")
+      ),
+    "com.google.protobuf" % "protobuf-java" % "2.5.0",
+    "org.apache.hive" % "hive-exec" % hiveVersion % "provided" excludeAll(
+      ExclusionRule(organization = "org.apache.spark"),
+      ExclusionRule(organization = "org.apache.parquet"),
+      ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm"),
+      ExclusionRule(organization = "com.google.protobuf")
+    ),
+    "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "test" classifier "tests",
+    "org.apache.hadoop" % "hadoop-mapreduce-client-hs" % hadoopVersion % "test",
+    "org.apache.hadoop" % "hadoop-mapreduce-client-jobclient" % hadoopVersion % "test" classifier "tests",
+    "org.apache.hadoop" % "hadoop-yarn-server-tests" % hadoopVersion % "test" classifier "tests",
+    "org.apache.hive" % "hive-cli" % hiveVersion % "test" excludeAll(
+      ExclusionRule(organization = "org.apache.spark"),
+      ExclusionRule(organization = "org.apache.parquet"),
+      ExclusionRule("ch.qos.logback", "logback-classic"),
+      ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm"),
+      ExclusionRule(organization = "com.google.protobuf")
+    ),
+    "org.apache.hadoop" % "hadoop-yarn-common" % hadoopVersion % "test",
+    "org.apache.hadoop" % "hadoop-yarn-api" % hadoopVersion % "test",
+    "org.apache.tez" % "tez-mapreduce" % "0.8.4" % "test",
+    "org.apache.tez" % "tez-dag" % "0.8.4" % "test",
+    "org.apache.tez" % "tez-tests" % "0.8.4" % "test" classifier "tests",
     // TODO Figure out how this fixes some bad dependency
     "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
     "org.scalatest" %% "scalatest" % "3.0.5" % "test",

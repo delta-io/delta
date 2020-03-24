@@ -34,6 +34,7 @@ object Test {
       .builder()
       .appName("Quickstart")
       .master("local[*]")
+      .config("spark.ui.enabled", "false")
       .getOrCreate()
 
 
