@@ -16,40 +16,47 @@
 
 package org.apache.spark.sql.delta.hooks
 
-import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.storage.LogStore
-import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.hadoop.fs.Path
-
-import org.apache.spark.SparkEnv
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.ExternalCatalogUtils
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Cast, Concat, Expression, Literal, ScalaUDF}
+import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.execution.datasources.InMemoryFileIndex
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.util.SerializableConfiguration
 
-/**
- * Post commit hook to generate hive-style manifests for Delta table. This is useful for
- * compatibility with Presto / Athena.
- */
-object GenerateSymlinkManifest extends GenerateSymlinkManifestImpl
+trait GenerateSymlinkManifest extends PostCommitHook with DeltaLogging with Serializable {
 
+  def manifestType(): ManifestType
+  type T <: ManifestRawEntry
+  /**
+   * transform dataframe to the corresponding Dataset of ManifestRawEntry
+   * @param ds
+   * @return
+   */
+  protected def getManifestContent(ds: DataFrame): Dataset[T]
+  protected def writeSingleManifestFile(manifestDirAbsPath: String,
+                                        manifestRawEntries: Iterator[T],
+                                        tableAbsPathForManifest: String,
+                                        hadoopConf: SerializableConfiguration)
 
-trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with Serializable {
-  val CONFIG_NAME_ROOT = "compatibility.symlinkFormatManifest"
+  lazy val manifestTypeSimpleName = manifestType().simpleName
 
-  val MANIFEST_LOCATION = "_symlink_format_manifest"
+  val RELATIVE_PARTITION_DIR_COL_NAME = "relativePartitionDir"
+  val MANIFEST_FILE_NAME = "manifest"
 
-  val OP_TYPE_ROOT = "delta.compatibility.symlinkFormatManifest"
+  val CONFIG_NAME_ROOT = s"compatibility.symlinkFormatManifest.$manifestTypeSimpleName"
+  val MANIFEST_LOCATION = s"_symlink_format_manifest_${manifestTypeSimpleName}"
+  val OP_TYPE_ROOT = s"delta.compatibility.symlinkFormatManifest.$manifestTypeSimpleName"
   val FULL_MANIFEST_OP_TYPE = s"$OP_TYPE_ROOT.full"
   val INCREMENTAL_MANIFEST_OP_TYPE = s"$OP_TYPE_ROOT.incremental"
 
-  override val name: String = "Generate Symlink Format Manifest"
+  override val name: String = s"Generate Symlink Format Manifest($manifestTypeSimpleName)"
 
   override def run(
       spark: SparkSession,
@@ -214,58 +221,46 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
    * @param hadoopConf           Hadoop configuration to use
    * @return Set of partition relative paths of the written manifest files (e.g., part1=1/part2=2)
    */
-  private def writeManifestFiles(
-      deltaLogDataPath: Path,
-      manifestRootDirPath: String,
-      fileNamesForManifest: Dataset[AddFile],
-      partitionCols: Seq[String],
-      hadoopConf: SerializableConfiguration): Set[String] = {
-
+  protected def writeManifestFiles(
+                                    deltaLogDataPath: Path,
+                                    manifestRootDirPath: String,
+                                    fileNamesForManifest: Dataset[AddFile],
+                                    partitionCols: Seq[String],
+                                    hadoopConf: SerializableConfiguration): Set[String] = {
     val spark = fileNamesForManifest.sparkSession
     import spark.implicits._
 
     val tableAbsPathForManifest =
       LogStore(spark.sparkContext).resolvePathOnPhysicalStorage(deltaLogDataPath).toString
 
-    /** Write the data file relative paths to manifestDirAbsPath/manifest as absolute paths */
-    def writeSingleManifestFile(
-      manifestDirAbsPath: String,
-      dataFileRelativePaths: Iterator[String]): Unit = {
-
-      val manifestFilePath = new Path(manifestDirAbsPath, "manifest")
-      val fs = manifestFilePath.getFileSystem(hadoopConf.value)
-      fs.mkdirs(manifestFilePath.getParent())
-
-      val manifestContent = dataFileRelativePaths.map { relativePath =>
-        DeltaFileOperations.absolutePath(tableAbsPathForManifest, relativePath).toString
-      }
-      val logStore = LogStore(SparkEnv.get.conf, hadoopConf.value)
-      logStore.write(manifestFilePath, manifestContent, overwrite = true)
-    }
-
-    val newManifestPartitionRelativePaths =
+    val updatedPartitionRelativePaths =
       if (fileNamesForManifest.isEmpty && partitionCols.isEmpty) {
-        writeSingleManifestFile(manifestRootDirPath, Iterator())
+        writeSingleManifestFile(manifestRootDirPath, Iterator(),
+          tableAbsPathForManifest, hadoopConf)
         Set.empty[String]
       } else {
         withRelativePartitionDir(spark, partitionCols, fileNamesForManifest)
-          .select("relativePartitionDir", "path").as[(String, String)]
-          .groupByKey(_._1).mapGroups {
-          (relativePartitionDir: String, relativeDataFilePath: Iterator[(String, String)]) =>
+          .transform(getManifestContent)
+          .groupByKey(_.relativePartitionDir)
+          .mapGroups {
+            (relativePartitionDir: String, manifestEntries: Iterator[T]) =>
             val manifestPartitionDirAbsPath = {
               if (relativePartitionDir == null || relativePartitionDir.isEmpty) manifestRootDirPath
               else new Path(manifestRootDirPath, relativePartitionDir).toString
             }
-            writeSingleManifestFile(manifestPartitionDirAbsPath, relativeDataFilePath.map(_._2))
+
+            writeSingleManifestFile(manifestPartitionDirAbsPath, manifestEntries,
+              tableAbsPathForManifest, hadoopConf)
+
             relativePartitionDir
-        }.collect().toSet
+          }.collect().toSet
       }
 
     logInfo(s"Generated manifest partitions for $deltaLogDataPath " +
-      s"[${newManifestPartitionRelativePaths.size}]:\n\t" +
-      newManifestPartitionRelativePaths.mkString("\n\t"))
+      s"[${updatedPartitionRelativePaths.size}]:\n\t" +
+      updatedPartitionRelativePaths.mkString("\n\t"))
 
-    newManifestPartitionRelativePaths
+    updatedPartitionRelativePaths
   }
 
   /**
@@ -296,7 +291,7 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
    * one of the columns. `partitionValues` is a map-type column that contains values of the
    * given `partitionCols`.
    */
-  private def withRelativePartitionDir(
+  protected def withRelativePartitionDir(
       spark: SparkSession,
       partitionCols: Seq[String],
       datasetWithPartitionValues: Dataset[_]) = {
@@ -326,7 +321,7 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
       colNameToAttribs,
       spark.sessionState.conf.sessionLocalTimeZone)
 
-    df.withColumn("relativePartitionDir", new Column(relativePartitionDirExpression))
+    df.withColumn(RELATIVE_PARTITION_DIR_COL_NAME, new Column(relativePartitionDirExpression))
       .drop(colToRenamedCols.map(_._2): _*)
   }
 
@@ -334,8 +329,6 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
   protected def generatePartitionPathExpression(
       partitionColNameToAttrib: Seq[(String, Attribute)],
       timeZoneId: String): Expression = Concat(
-
-
     partitionColNameToAttrib.zipWithIndex.flatMap { case ((colName, col), i) =>
       val partitionName = ScalaUDF(
         ExternalCatalogUtils.getPartitionPathString _,
@@ -346,6 +339,14 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
     }
   )
 
+  protected def createManifestDir(manifestDirAbsPath: String,
+                                  hadoopConf: SerializableConfiguration): Path = {
+    val manifestFilePath = new Path(manifestDirAbsPath, MANIFEST_FILE_NAME)
+    val fs = manifestFilePath.getFileSystem(hadoopConf.value)
+    fs.mkdirs(manifestFilePath.getParent)
+
+    manifestFilePath
+  }
 
   private def recordManifestGeneration(deltaLog: DeltaLog, full: Boolean)(thunk: => Unit): Unit = {
     val (opType, manifestType) =
@@ -358,8 +359,31 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
     }
   }
 
+
   case class SymlinkManifestStats(
       filesWritten: Int,
       filesDeleted: Int,
       partitioned: Boolean)
 }
+
+sealed trait ManifestType {
+  val mode: String
+  val simpleName: String
+}
+case object PrestoManifestType extends ManifestType {
+  override val mode: String = "symlink_format_manifest"
+  override val simpleName: String = "presto"
+}
+case object RedshiftManifestType extends ManifestType {
+  override val mode: String = "redshift_format_manifest"
+  override val simpleName: String = "redshift"
+}
+
+/**
+ * the raw columns information to build the specific type of manifest entry
+ */
+trait ManifestRawEntry extends Product {
+  val relativePartitionDir: String
+  val path: String
+}
+

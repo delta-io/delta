@@ -23,17 +23,15 @@ import java.util.concurrent.TimeUnit.NANOSECONDS
 import scala.collection.mutable
 import scala.collection.mutable.{ArrayBuffer, HashSet}
 import scala.util.control.NonFatal
-
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files._
-import org.apache.spark.sql.delta.hooks.{GenerateSymlinkManifest, PostCommitHook}
+import org.apache.spark.sql.delta.hooks.{GenerateSymlinkManifest, PostCommitHook, PrestoGenerateManifest, RedshiftGenerateManifest}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
@@ -315,8 +313,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
 
       // Register post-commit hooks if any
       lazy val hasFileActions = finalActions.collect { case f: FileAction => f }.nonEmpty
-      if (DeltaConfigs.SYMLINK_FORMAT_MANIFEST_ENABLED.fromMetaData(metadata) && hasFileActions) {
-        registerPostCommitHook(GenerateSymlinkManifest)
+      if (hasFileActions) {
+        if (DeltaConfigs.SYMLINK_FORMAT_MANIFEST_ENABLED.fromMetaData(metadata)) {
+          registerPostCommitHook(PrestoGenerateManifest)
+        }
+        if (DeltaConfigs.REDSHIFT_FORMAT_MANIFEST_ENABLED.fromMetaData(metadata)) {
+          registerPostCommitHook(RedshiftGenerateManifest)
+        }
       }
 
       val commitVersion = doCommit(snapshot.version + 1, finalActions, 0, isolationLevelToUse)
