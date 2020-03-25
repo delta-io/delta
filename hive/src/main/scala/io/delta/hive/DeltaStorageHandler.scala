@@ -28,6 +28,8 @@ import org.apache.hadoop.hive.metastore.api.Table
 import org.apache.hadoop.hive.metastore.api.hive_metastoreConstants.META_TABLE_LOCATION
 import org.apache.hadoop.hive.ql.exec.FunctionRegistry
 import org.apache.hadoop.hive.ql.index.IndexSearchCondition
+import org.apache.hadoop.hive.ql.io.IOConstants
+import org.apache.hadoop.hive.ql.io.parquet.read.DataWritableReadSupport
 import org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
 import org.apache.hadoop.hive.ql.metadata.DefaultStorageHandler
 import org.apache.hadoop.hive.ql.metadata.HiveStoragePredicateHandler
@@ -64,8 +66,15 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook
       tableDesc: TableDesc,
       jobProperties: java.util.Map[String, String]): Unit = {
     super.configureInputJobProperties(tableDesc, jobProperties)
-    jobProperties.put(DELTA_TABLE_PATH, tableDesc.getProperties().getProperty(META_TABLE_LOCATION))
-    jobProperties.put(DELTA_TABLE_SCHEMA, tableDesc.getProperties().getProperty(DELTA_TABLE_SCHEMA))
+    val tableProps = tableDesc.getProperties()
+    val columnNames =
+      DataWritableReadSupport.getColumnNames(tableProps.getProperty(IOConstants.COLUMNS))
+    val columnTypes =
+      DataWritableReadSupport.getColumnTypes(tableProps.getProperty(IOConstants.COLUMNS_TYPES))
+    val hiveSchema = TypeInfoFactory.getStructTypeInfo(columnNames, columnTypes)
+      .asInstanceOf[StructTypeInfo]
+    jobProperties.put(DELTA_TABLE_PATH, tableProps.getProperty(META_TABLE_LOCATION))
+    jobProperties.put(DELTA_TABLE_SCHEMA, hiveSchema.toString)
   }
 
   override def decomposePredicate(
@@ -179,10 +188,8 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook
       throw new MetaException(s"$deltaRootString does not exist or it's not a Delta table")
     }
 
-    // Extract the table schema in Hive and put it into the table property. Then we can compare it
-    // with the latest table schema in Delta logs and fail the query if it was changed.
-    // TODO Investigate if we can get the table schema without manually storing it in the table
-    // property.
+    // Extract the table schema in Hive to compare it with the latest table schema in Delta logs,
+    // and fail the query if it was changed.
     val cols = tbl.getSd.getCols
     val columnNames = new JArrayList[String](cols.size)
     val columnTypes = new JArrayList[TypeInfo](cols.size)
@@ -193,7 +200,6 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook
     val hiveSchema = TypeInfoFactory.getStructTypeInfo(columnNames, columnTypes)
       .asInstanceOf[StructTypeInfo]
     DeltaHelper.checkTableSchema(snapshot.metadata.schema, hiveSchema)
-    tbl.getParameters.put(DELTA_TABLE_SCHEMA, hiveSchema.toString)
     tbl.getParameters.put("spark.sql.sources.provider", "DELTA")
     tbl.getSd.getParameters.put("path", deltaRootString)
   }
@@ -226,10 +232,7 @@ object DeltaStorageHandler {
   val DELTA_TABLE_PATH = "delta.table.path"
 
   /**
-   * A config we use to remember the table schema in the table properties.
-   *
-   * TODO Maybe Hive can tell us this in the `configureInputJobProperties` method. Then we don't
-   * need to store this extra information.
+   * The Hive table schema passing into `JobConf` so that `DeltaLog` can be accessed everywhere.
    */
   val DELTA_TABLE_SCHEMA = "delta.table.schema"
 }
