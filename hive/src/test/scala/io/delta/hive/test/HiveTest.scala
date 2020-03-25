@@ -176,4 +176,21 @@ trait HiveTest extends FunSuite with BeforeAndAfterAll {
       DeltaLog.clearCache()
     }
   }
+
+  protected def withHiveConf(key: String, value: String)(body: => Unit): Unit = {
+    val hiveConfField = driver.getClass.getDeclaredField("conf")
+    hiveConfField.setAccessible(true)
+    val hiveConf = hiveConfField.get(driver).asInstanceOf[HiveConf]
+    val original = hiveConf.get(key)
+    try {
+      hiveConf.set(key, value)
+      body
+    } finally {
+      if (original == null) {
+        hiveConf.unset(key)
+      } else {
+        hiveConf.set(key, original)
+      }
+    }
+  }
 }

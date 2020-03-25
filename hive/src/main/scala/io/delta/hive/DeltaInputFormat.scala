@@ -21,6 +21,7 @@ import java.net.URI
 
 import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
+import org.apache.hadoop.hive.conf.HiveConf
 import org.apache.hadoop.hive.metastore.api.MetaException
 import org.apache.hadoop.hive.ql.exec.Utilities
 import org.apache.hadoop.hive.ql.io.parquet.read.DataWritableReadSupport
@@ -87,6 +88,7 @@ class DeltaInputFormat(realInput: ParquetInputFormat[ArrayWritable])
 
   @throws(classOf[IOException])
   override def listStatus(job: JobConf): Array[FileStatus] = {
+    checkHiveConf(job)
     val deltaRootPath = new Path(job.get(DeltaStorageHandler.DELTA_TABLE_PATH))
     TokenCache.obtainTokensForNamenodes(job.getCredentials(), Array(deltaRootPath), job)
     val (files, partitions) =
@@ -101,6 +103,45 @@ class DeltaInputFormat(realInput: ParquetInputFormat[ArrayWritable])
       }
     fileToPartition = partitions.filter(_._2.nonEmpty)
     files
+  }
+
+  private def checkHiveConf(job: JobConf): Unit = {
+    val engine = HiveConf.getVar(job, HiveConf.ConfVars.HIVE_EXECUTION_ENGINE)
+    val deltaFormat = classOf[HiveInputFormat].getName
+    engine match {
+      case "mr" =>
+        if (HiveConf.getVar(job, HiveConf.ConfVars.HIVEINPUTFORMAT) != deltaFormat) {
+          throw deltaFormatError(engine, HiveConf.ConfVars.HIVEINPUTFORMAT.varname, deltaFormat)
+        }
+      case "tez" =>
+        if (HiveConf.getVar(job, HiveConf.ConfVars.HIVETEZINPUTFORMAT) != deltaFormat) {
+          throw deltaFormatError(engine, HiveConf.ConfVars.HIVETEZINPUTFORMAT.varname, deltaFormat)
+        }
+      case other =>
+        throw new UnsupportedOperationException(s"The execution engine '$other' is not supported." +
+          s" Please set '${HiveConf.ConfVars.HIVE_EXECUTION_ENGINE.varname}' to 'mr' or 'tez'")
+    }
+  }
+
+  private def deltaFormatError(
+      engine: String,
+      formatConfig: String,
+      deltaFormat: String): Throwable = {
+    val message =
+      s"""'$formatConfig' must be set to '$deltaFormat' when reading a Delta table using
+         |'$engine' execution engine. You can run the following SQL command in Hive CLI
+         |before reading a Delta table,
+         |
+         |> SET $formatConfig=$deltaFormat;
+         |
+         |or add the following config to the "hive-site.xml" file.
+         |
+         |<property>
+         |  <name>$formatConfig</name>
+         |  <value>$deltaFormat</value>
+         |</property>
+      """.stripMargin
+    new IllegalArgumentException(message)
   }
 
   override def makeSplit(

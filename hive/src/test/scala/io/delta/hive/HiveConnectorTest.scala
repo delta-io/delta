@@ -570,6 +570,36 @@ abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
       }
     }
   }
+
+  test("fail incorrect format config") {
+    val formatKey = engine match {
+      case "mr" => "hive.input.format"
+      case "tez" => "hive.tez.input.format"
+      case other => throw new UnsupportedOperationException(s"Unsupported engine: $other")
+    }
+    withTable("deltaTbl") {
+      withTempDir { dir =>
+        withSparkSession { spark =>
+          import spark.implicits._
+          val testData = (0 until 10).map(x => (x, s"foo${x % 2}"))
+          testData.toDS.toDF("a", "b").write.format("delta").save(dir.getCanonicalPath)
+        }
+
+        runQuery(
+          s"""
+             |CREATE EXTERNAL TABLE deltaTbl(a INT, b STRING)
+             |STORED BY 'io.delta.hive.DeltaStorageHandler'
+             |LOCATION '${dir.getCanonicalPath}'""".stripMargin)
+      }
+      withHiveConf(formatKey, "org.apache.hadoop.hive.ql.io.HiveInputFormat") {
+        val e = intercept[Exception] {
+          runQuery("SELECT * from deltaTbl")
+        }
+        assert(e.getMessage.contains(formatKey))
+        assert(e.getMessage.contains(classOf[HiveInputFormat].getName))
+      }
+    }
+  }
 }
 
 case class TestStruct(f1: String, f2: Long)
