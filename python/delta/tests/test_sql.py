@@ -77,7 +77,7 @@ class DeltaSqlTests(PySparkTestCase):
         # check the contents of the manifest
         # NOTE: this is not a correctness test, we are testing correctness in the scala suite
         manifestPath = os.path.join(temp_file,
-                                    os.path.join("_symlink_format_manifest", "manifest"))
+                                    os.path.join("_symlink_format_manifest_presto", "manifest"))
         files = []
         with open(manifestPath) as f:
             files = f.readlines()
