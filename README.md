@@ -60,7 +60,7 @@ Delta Lake is a recent open-source project based on technology developed at Data
 
 # Building
 
-Delta Lake Core is compiled using [SBT](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.html). 
+Delta Lake Core is compiled using [SBT](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.html).
 
 To compile, run
 
@@ -71,7 +71,7 @@ To generate artifacts, run
     build/sbt package
 
 To execute tests, run
-  
+
     build/sbt test
 
 Refer to [SBT docs](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.html) for more commands.
@@ -82,9 +82,9 @@ Refer to [SBT docs](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.ht
 
 ## Requirements for Underlying Storage Systems
 
-Delta Lake ACID guarantees are predicated on the atomicity and durability guarantees of the storage system. Specifically, we require the storage system to provide the following. 
+Delta Lake ACID guarantees are predicated on the atomicity and durability guarantees of the storage system. Specifically, we require the storage system to provide the following.
 
-1. **Atomic visibility**: There must be a way for a file to be visible in its entirety or not visible at all. 
+1. **Atomic visibility**: There must be a way for a file to be visible in its entirety or not visible at all.
 2. **Mutual exclusion**: Only one writer must be able to create (or rename) a file at the final destination.
 3. **Consistent listing**: Once a file has been written in a directory, all future listings for that directory must return that file.
 
@@ -101,12 +101,14 @@ Delta Lake ensures _serializability_ for concurrent reads and writes. Please see
 We use [GitHub Issues](https://github.com/delta-io/delta/issues) to track community reported issues. You can also [contact](#community) the community for getting answers.
 
 # Contributing 
+We welcome contributions to Delta Lake. See our [CONTRIBUTING.md](https://github.com/delta-io/delta/blob/master/CONTRIBUTING.md) for more details.
 
-We welcome contributions to Delta Lake. We use [GitHub Pull Requests ](https://github.com/delta-io/delta/pulls) for accepting changes. You will be prompted to sign a contributor license agreement before your change can be accepted.
+# License
+Apache License 2.0, see [LICENSE](https://github.com/delta-io/delta/blob/master/LICENSE.txt).
 
 # Community
 
-There are two mediums of communication within the Delta Lake community. 
+There are two mediums of communication within the Delta Lake community.
 
 - Public Slack Channel
   - [Register here](https://join.slack.com/t/delta-users/shared_invite/enQtODQ5ODM5OTAxMjAwLWY4NGI5ZmQ3Y2JmMjZjYjc1MDkwNTA5YTQ4MzhjOWY1MmVjNTM2OGZhNTExNmM5MzQ0YzEzZjIwMjc0OGI0OGM)
