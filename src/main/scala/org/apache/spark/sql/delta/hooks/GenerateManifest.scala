@@ -56,7 +56,7 @@ trait GenerateManifest extends PostCommitHook with DeltaLogging with Serializabl
   val FULL_MANIFEST_OP_TYPE = s"$OP_TYPE_ROOT.full"
   val INCREMENTAL_MANIFEST_OP_TYPE = s"$OP_TYPE_ROOT.incremental"
 
-  override val name: String = manifestType.name
+  override val name: String = _manifestType.name
 
   override def run(
       spark: SparkSession,

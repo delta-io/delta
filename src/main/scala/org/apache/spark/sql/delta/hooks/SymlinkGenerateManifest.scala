@@ -28,17 +28,16 @@ import org.apache.spark.util.SerializableConfiguration
  */
 object SymlinkGenerateManifest extends GenerateManifest {
 
-  override type T = PrestoManifestRawEntry
+  override type T = SymlinkManifestRawEntry
   override def manifestType(): ManifestType = SymlinkManifestType
 
-  override protected def getManifestContent(ds: DataFrame): Dataset[PrestoManifestRawEntry] = {
-    implicit val encoder = Encoders.product[PrestoManifestRawEntry]
-    ds.select(RELATIVE_PARTITION_DIR_COL_NAME, "path").as[PrestoManifestRawEntry]
+  override protected def getManifestContent(ds: DataFrame): Dataset[SymlinkManifestRawEntry] = {
+    implicit val encoder = Encoders.product[SymlinkManifestRawEntry]
+    ds.select(RELATIVE_PARTITION_DIR_COL_NAME, "path").as[SymlinkManifestRawEntry]
   }
 
   override protected def writeSingleManifestFile(manifestDirAbsPath: String,
-      manifestRawEntries:
-      Iterator[PrestoManifestRawEntry],
+      manifestRawEntries: Iterator[SymlinkManifestRawEntry],
       tableAbsPathForManifest: String,
       hadoopConf: SerializableConfiguration) = {
     val manifestFilePath = createManifestDir(manifestDirAbsPath, hadoopConf)
@@ -53,5 +52,5 @@ object SymlinkGenerateManifest extends GenerateManifest {
 
 }
 
-case class PrestoManifestRawEntry(override val relativePartitionDir: String,
-  override val path: String) extends ManifestRawEntry
+case class SymlinkManifestRawEntry(override val relativePartitionDir: String,
+     override val path: String) extends ManifestRawEntry
