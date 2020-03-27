@@ -1881,7 +1881,7 @@ abstract class MergeIntoSuiteBase
     )
   )
 
-  protected def withJobCountListener(jobCount: AtomicInteger)(f: => Unit): Unit = {
+  protected def withJobCountListener(jobCount: AtomicInteger)(f: => Unit): Int = {
     val listener = new SparkListener {
       override def onJobStart(jobStart: SparkListenerJobStart): Unit = {
         // Spark will always log a job start/end event even when the job does not launch any task.
@@ -1892,67 +1892,58 @@ abstract class MergeIntoSuiteBase
     }
     sparkContext.addSparkListener(listener)
     sparkContext.listenerBus.waitUntilEmpty(15000)
-    jobCount.set(0)
 
     Utils.tryWithSafeFinally(f) {
       sparkContext.listenerBus.waitUntilEmpty(15000)
       sparkContext.removeSparkListener(listener)
     }
+
+    jobCount.get()
   }
 
-  test("findTouchedFiles - no files match target predicate") {
+  test("findTouchedFiles - optimize plan when target files do not match merge condition") {
 
     withTable("source") {
-      append(Seq((1, 10), (2, 20)).toDF("key1", "value1"), "value1")  // target
-      val source = Seq((3, 30)).toDF("key2", "value2")  // source
+      append(Seq((1, 10), (2, 20)).toDF("key", "value"), "value")  // target
+      Seq((3, 30)).toDF("key", "value").createOrReplaceTempView("source")
 
-      val jobCount = new AtomicInteger(0)
+      val jobCountFoundTargetFiles = withJobCountListener(new AtomicInteger(0)) {
 
-      withJobCountListener(jobCount) {
-        io.delta.tables.DeltaTable.forPath(spark, tempPath)
-          .merge(source, "key1 = key2 and value1 in (30)")
-          .whenMatched().updateExpr(Map("key1" -> "key2", "value1" -> "value2"))
-          .whenNotMatched().insertExpr(Map("key1" -> "key2", "value1" -> "value2"))
-          .execute()
+        executeMerge(
+          target = s"delta.`$tempPath` as trgNew",
+          source = "source src",
+          condition = "src.key = trgNew.key",
+          update = "*",
+          insert = "*")
+
+        checkAnswer(
+          readDeltaTable(tempPath),
+          Row(1, 10) ::    // No change
+            Row(2, 20) ::     // No change
+            Row(3, 30) ::     // Insert
+            Nil)
       }
 
-      assert(jobCount.get() == 3, "There should be 3 Spark jobs")
+      Seq((3, 40)).toDF("key", "value").createOrReplaceTempView("source")
+      val jobCountNoTargetFiles = withJobCountListener(new AtomicInteger(0)) {
 
-      checkAnswer(
-        readDeltaTable(tempPath),
-        Row(1, 10) ::    // No change
-          Row(2, 20) ::     // No change
-          Row(3, 30) ::     // Insert
-          Nil)
+        executeMerge(
+          target = s"delta.`$tempPath` as trgNew",
+          source = "source src",
+          condition = "src.key = trgNew.key and trgNew.value = 40",
+          update = "*",
+          insert = "*")
 
-    }
-  }
-
-  test("findTouchedFiles - files match target predicate") {
-
-    withTable("source") {
-      append(Seq((1, 10), (2, 20)).toDF("key1", "value1"), "value1")  // target
-      val source = Seq((3, 30)).toDF("key2", "value2")  // source
-
-      val jobCount = new AtomicInteger(0)
-
-      withJobCountListener(jobCount) {
-        io.delta.tables.DeltaTable.forPath(spark, tempPath)
-          .merge(source, "key1 = key2")
-          .whenMatched().updateExpr(Map("key1" -> "key2", "value1" -> "value2"))
-          .whenNotMatched().insertExpr(Map("key1" -> "key2", "value1" -> "value2"))
-          .execute()
+        checkAnswer(
+          readDeltaTable(tempPath),
+          Row(1, 10) ::    // No change
+            Row(2, 20) ::     // No change
+            Row(3, 30) ::     // No change
+            Row(3, 40) ::
+            Nil)
       }
 
-      assert(jobCount.get() == 5, "There should be 5 Spark jobs")
-
-      checkAnswer(
-        readDeltaTable(tempPath),
-        Row(1, 10) ::    // No change
-          Row(2, 20) ::     // No change
-          Row(3, 30) ::     // Insert
-          Nil)
-
+      assert(jobCountNoTargetFiles < jobCountFoundTargetFiles)
     }
   }
 }
