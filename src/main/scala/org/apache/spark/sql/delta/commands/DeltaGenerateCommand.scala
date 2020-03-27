@@ -21,7 +21,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
-import org.apache.spark.sql.delta.hooks.{PrestoGenerateManifest, PrestoManifestType, RedshiftGenerateManifest, RedshiftManifestType}
+import org.apache.spark.sql.delta.hooks.{SymlinkGenerateManifest, SymlinkManifestType, JsonGenerateManifest, JsonManifestType}
 import org.apache.spark.sql.execution.command.RunnableCommand
 
 trait DeltaGenerateCommandBase extends RunnableCommand {
@@ -62,7 +62,7 @@ case class DeltaGenerateCommand(modeName: String, tableId: TableIdentifier)
 object DeltaGenerateCommand {
   val modeNameToGenerationFunc = CaseInsensitiveMap(
     Map[String, (SparkSession, DeltaLog) => Unit](
-      PrestoManifestType.mode -> PrestoGenerateManifest.generateFullManifest,
-      RedshiftManifestType.mode -> RedshiftGenerateManifest.generateFullManifest
+      SymlinkManifestType.mode -> SymlinkGenerateManifest.generateFullManifest,
+      JsonManifestType.mode -> JsonGenerateManifest.generateFullManifest
   ))
 }

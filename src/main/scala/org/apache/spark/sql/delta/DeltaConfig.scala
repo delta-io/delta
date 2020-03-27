@@ -377,14 +377,14 @@ object DeltaConfigs extends DeltaLogging {
     "needs to be larger than or equal to -1.")
 
   val SYMLINK_FORMAT_MANIFEST_ENABLED = buildConfig[Boolean](
-    s"${hooks.PrestoGenerateManifest.CONFIG_NAME_ROOT}.enabled",
+    s"${hooks.SymlinkGenerateManifest.CONFIG_NAME_ROOT}.enabled",
     "false",
     _.toBoolean,
     _ => true,
     "needs to be a boolean.")
 
-  val REDSHIFT_FORMAT_MANIFEST_ENABLED = buildConfig[Boolean](
-    s"${hooks.RedshiftGenerateManifest.CONFIG_NAME_ROOT}.enabled",
+  val JSON_FORMAT_MANIFEST_ENABLED = buildConfig[Boolean](
+    s"${hooks.JsonGenerateManifest.CONFIG_NAME_ROOT}.enabled",
     "false",
     _.toBoolean,
     _ => true,

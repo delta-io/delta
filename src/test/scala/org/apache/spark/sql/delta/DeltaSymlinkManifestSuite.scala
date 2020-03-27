@@ -27,23 +27,23 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs._
 import org.apache.hadoop.util.Progressable
 import org.apache.spark.sql._
-import org.apache.spark.sql.delta.hooks.{PrestoGenerateManifest, RedshiftGenerateManifest, RedshiftManifest}
+import org.apache.spark.sql.delta.hooks.{SymlinkGenerateManifest, JsonGenerateManifest, JsonManifest}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StringType
 
-class PrestoGenerateManifestSuite
-  extends DeltaGenerateSymlinkManifestSuiteBase
+class SymlinkGenerateManifestSuite
+  extends DeltaGenerateManifestSuiteBase
     with DeltaSQLCommandTest {
   override protected def generateSymlinkManifest(tablePath: String): Unit = {
     val deltaLog = DeltaLog.forTable(spark, tablePath)
-    PrestoGenerateManifest.generateFullManifest(spark, deltaLog)
+    SymlinkGenerateManifest.generateFullManifest(spark, deltaLog)
   }
 
   override protected def getManifestLocation(): String =
-    PrestoGenerateManifest.MANIFEST_LOCATION
+    SymlinkGenerateManifest.MANIFEST_LOCATION
 
-  override protected def mode(): String = PrestoGenerateManifest.manifestType().mode
+  override protected def mode(): String = SymlinkGenerateManifest.manifestType.mode
 
   override protected def readManifestAsDataFilePaths(spark: SparkSession,
                                                      manifestPath: String): Dataset[String] = {
@@ -51,24 +51,24 @@ class PrestoGenerateManifestSuite
     spark.read.text(manifestPath).select("value").as[String]
   }
 
-  override protected def name(): String = PrestoGenerateManifest.name
+  override protected def name(): String = SymlinkGenerateManifest.name
 
   override protected def deltaConfig(): DeltaConfig[Boolean] =
     DeltaConfigs.SYMLINK_FORMAT_MANIFEST_ENABLED
 }
 
-class RedshiftGenerateManifestSuite
-  extends DeltaGenerateSymlinkManifestSuiteBase
+class JsonGenerateManifestSuite
+  extends DeltaGenerateManifestSuiteBase
     with DeltaSQLCommandTest {
   override protected def generateSymlinkManifest(tablePath: String): Unit = {
     val deltaLog = DeltaLog.forTable(spark, tablePath)
-    RedshiftGenerateManifest.generateFullManifest(spark, deltaLog)
+    JsonGenerateManifest.generateFullManifest(spark, deltaLog)
   }
 
   override protected def getManifestLocation(): String =
-    RedshiftGenerateManifest.MANIFEST_LOCATION
+    JsonGenerateManifest.MANIFEST_LOCATION
 
-  override protected def mode(): String = RedshiftGenerateManifest.manifestType().mode
+  override protected def mode(): String = JsonGenerateManifest.manifestType.mode
 
   override protected def readManifestAsDataFilePaths(spark: SparkSession,
                                                      manifestPath: String): Dataset[String] = {
@@ -76,20 +76,20 @@ class RedshiftGenerateManifestSuite
     spark.read
       .text(manifestPath)
       .select(from_json($"value".cast(StringType),
-        Encoders.product[RedshiftManifest].schema).as("data"))
+        Encoders.product[JsonManifest].schema).as("data"))
       .select("data.*")
-      .as[RedshiftManifest]
+      .as[JsonManifest]
       .flatMap(m => m.entries)
       .map(e => e.url)
   }
 
-  override protected def name(): String = RedshiftGenerateManifest.name
+  override protected def name(): String = JsonGenerateManifest.name
 
   override protected def deltaConfig(): DeltaConfig[Boolean] =
-    DeltaConfigs.REDSHIFT_FORMAT_MANIFEST_ENABLED
+    DeltaConfigs.JSON_FORMAT_MANIFEST_ENABLED
 }
 
-trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest with SharedSparkSession {
+trait DeltaGenerateManifestSuiteBase extends QueryTest with SharedSparkSession {
 
   import testImplicits._
 
@@ -630,8 +630,8 @@ class SymlinkManifestFailureTestFileSystem extends RawLocalFileSystem {
 
   private var uri: URI = _
   override def getScheme: String = SymlinkManifestFailureTestFileSystem.SCHEME
-  private val expectedFailurePath = Seq(PrestoGenerateManifest.MANIFEST_LOCATION,
-    RedshiftGenerateManifest.MANIFEST_LOCATION)
+  private val expectedFailurePath = Seq(SymlinkGenerateManifest.MANIFEST_LOCATION,
+    JsonGenerateManifest.MANIFEST_LOCATION)
 
   override def initialize(name: URI, conf: Configuration): Unit = {
     uri = URI.create(name.getScheme + ":///")

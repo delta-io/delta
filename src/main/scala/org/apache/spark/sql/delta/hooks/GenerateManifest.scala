@@ -30,7 +30,7 @@ import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.util.SerializableConfiguration
 
-trait GenerateSymlinkManifest extends PostCommitHook with DeltaLogging with Serializable {
+trait GenerateManifest extends PostCommitHook with DeltaLogging with Serializable {
 
   def manifestType(): ManifestType
   type T <: ManifestRawEntry
@@ -41,22 +41,22 @@ trait GenerateSymlinkManifest extends PostCommitHook with DeltaLogging with Seri
    */
   protected def getManifestContent(ds: DataFrame): Dataset[T]
   protected def writeSingleManifestFile(manifestDirAbsPath: String,
-                                        manifestRawEntries: Iterator[T],
-                                        tableAbsPathForManifest: String,
-                                        hadoopConf: SerializableConfiguration)
-
-  lazy val manifestTypeSimpleName = manifestType().simpleName
+      manifestRawEntries: Iterator[T],
+      tableAbsPathForManifest: String,
+      hadoopConf: SerializableConfiguration)
 
   val RELATIVE_PARTITION_DIR_COL_NAME = "relativePartitionDir"
   val MANIFEST_FILE_NAME = "manifest"
 
-  val CONFIG_NAME_ROOT = s"compatibility.symlinkFormatManifest.$manifestTypeSimpleName"
-  val MANIFEST_LOCATION = s"_symlink_format_manifest_${manifestTypeSimpleName}"
-  val OP_TYPE_ROOT = s"delta.compatibility.symlinkFormatManifest.$manifestTypeSimpleName"
+  val _manifestType = manifestType()
+  val MANIFEST_LOCATION = _manifestType.manifestDirName
+  val CONFIG_NAME_ROOT = _manifestType.configNameRoot
+  val OP_TYPE_ROOT = s"delta.$CONFIG_NAME_ROOT"
+
   val FULL_MANIFEST_OP_TYPE = s"$OP_TYPE_ROOT.full"
   val INCREMENTAL_MANIFEST_OP_TYPE = s"$OP_TYPE_ROOT.incremental"
 
-  override val name: String = s"Generate Symlink Format Manifest($manifestTypeSimpleName)"
+  override val name: String = manifestType.name
 
   override def run(
       spark: SparkSession,
@@ -222,11 +222,11 @@ trait GenerateSymlinkManifest extends PostCommitHook with DeltaLogging with Seri
    * @return Set of partition relative paths of the written manifest files (e.g., part1=1/part2=2)
    */
   protected def writeManifestFiles(
-                                    deltaLogDataPath: Path,
-                                    manifestRootDirPath: String,
-                                    fileNamesForManifest: Dataset[AddFile],
-                                    partitionCols: Seq[String],
-                                    hadoopConf: SerializableConfiguration): Set[String] = {
+       deltaLogDataPath: Path,
+       manifestRootDirPath: String,
+       fileNamesForManifest: Dataset[AddFile],
+       partitionCols: Seq[String],
+       hadoopConf: SerializableConfiguration): Set[String] = {
     val spark = fileNamesForManifest.sparkSession
     import spark.implicits._
 
@@ -340,7 +340,7 @@ trait GenerateSymlinkManifest extends PostCommitHook with DeltaLogging with Seri
   )
 
   protected def createManifestDir(manifestDirAbsPath: String,
-                                  hadoopConf: SerializableConfiguration): Path = {
+      hadoopConf: SerializableConfiguration): Path = {
     val manifestFilePath = new Path(manifestDirAbsPath, MANIFEST_FILE_NAME)
     val fs = manifestFilePath.getFileSystem(hadoopConf.value)
     fs.mkdirs(manifestFilePath.getParent)
@@ -367,23 +367,29 @@ trait GenerateSymlinkManifest extends PostCommitHook with DeltaLogging with Seri
 }
 
 sealed trait ManifestType {
-  val mode: String
-  val simpleName: String
+    val mode: String
+    val manifestDirName: String
+    val configNameRoot: String
+    val name: String
 }
-case object PrestoManifestType extends ManifestType {
-  override val mode: String = "symlink_format_manifest"
-  override val simpleName: String = "presto"
+case object SymlinkManifestType extends ManifestType {
+    override val mode: String = "symlink_format_manifest"
+    override val manifestDirName: String = "_symlink_format_manifest"
+    override val configNameRoot: String = "compatibility.symlinkFormatManifest"
+    override val name: String = "Generate Symlink Format Manifest"
 }
-case object RedshiftManifestType extends ManifestType {
-  override val mode: String = "redshift_format_manifest"
-  override val simpleName: String = "redshift"
+case object JsonManifestType extends ManifestType {
+    override val mode: String = "json_format_manifest"
+    override val manifestDirName: String = "_json_format_manifest"
+    override val configNameRoot: String = "compatibility.jsonFormatManifest"
+    override val name: String = "Generate JSON Format Manifest"
 }
 
 /**
  * the raw columns information to build the specific type of manifest entry
  */
 trait ManifestRawEntry extends Product {
-  val relativePartitionDir: String
-  val path: String
+    val relativePartitionDir: String
+    val path: String
 }
 

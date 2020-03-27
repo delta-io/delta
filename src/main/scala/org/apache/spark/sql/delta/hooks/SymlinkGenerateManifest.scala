@@ -26,11 +26,10 @@ import org.apache.spark.util.SerializableConfiguration
  * Post commit hook to generate hive-style manifests for Delta table. This is useful for
  * compatibility with Presto / Athena.
  */
-object PrestoGenerateManifest extends GenerateSymlinkManifest {
+object SymlinkGenerateManifest extends GenerateManifest {
 
   override type T = PrestoManifestRawEntry
-
-  override def manifestType(): ManifestType = PrestoManifestType
+  override def manifestType(): ManifestType = SymlinkManifestType
 
   override protected def getManifestContent(ds: DataFrame): Dataset[PrestoManifestRawEntry] = {
     implicit val encoder = Encoders.product[PrestoManifestRawEntry]
@@ -38,10 +37,10 @@ object PrestoGenerateManifest extends GenerateSymlinkManifest {
   }
 
   override protected def writeSingleManifestFile(manifestDirAbsPath: String,
-                                                 manifestRawEntries:
-                                                 Iterator[PrestoManifestRawEntry],
-                                                 tableAbsPathForManifest: String,
-                                                 hadoopConf: SerializableConfiguration) = {
+      manifestRawEntries:
+      Iterator[PrestoManifestRawEntry],
+      tableAbsPathForManifest: String,
+      hadoopConf: SerializableConfiguration) = {
     val manifestFilePath = createManifestDir(manifestDirAbsPath, hadoopConf)
 
     val manifestContent = manifestRawEntries.map { rawEntry =>
@@ -55,4 +54,4 @@ object PrestoGenerateManifest extends GenerateSymlinkManifest {
 }
 
 case class PrestoManifestRawEntry(override val relativePartitionDir: String,
-                                  override val path: String) extends ManifestRawEntry
+  override val path: String) extends ManifestRawEntry

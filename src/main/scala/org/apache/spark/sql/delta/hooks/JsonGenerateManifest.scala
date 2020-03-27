@@ -25,39 +25,43 @@ import org.json4s.NoTypeHints
 import org.json4s.jackson.Serialization
 import org.json4s.jackson.Serialization.write
 
-case class RedshiftManifestEntryMetadata(content_length: Long)
-case class RedshiftManifestEntry(url: String, meta: RedshiftManifestEntryMetadata)
-case class RedshiftManifest(entries: Seq[RedshiftManifestEntry])
+case class JsonManifestEntryMetadata(content_length: Long)
+case class JsonManifestEntry(url: String, meta: JsonManifestEntryMetadata)
+case class JsonManifest(entries: Seq[JsonManifestEntry])
 
-object RedshiftGenerateManifest extends GenerateSymlinkManifest {
-  override def manifestType(): ManifestType = RedshiftManifestType
+/**
+ * Post commit hook to generate Redshift spectrum style manifests for Delta table.
+ * This is useful for compatibility with Redshift.
+ */
+object JsonGenerateManifest extends GenerateManifest {
 
-  override type T = RedshiftManifestRawEntry
+  override def manifestType(): ManifestType = JsonManifestType
+  override type T = JsonManifestRawEntry
 
-  override protected def getManifestContent(ds: DataFrame): Dataset[RedshiftManifestRawEntry] = {
-    implicit val encoder = Encoders.product[RedshiftManifestRawEntry]
-    ds.select(RELATIVE_PARTITION_DIR_COL_NAME, "path", "size").as[RedshiftManifestRawEntry]
+  override protected def getManifestContent(ds: DataFrame): Dataset[JsonManifestRawEntry] = {
+    implicit val encoder = Encoders.product[JsonManifestRawEntry]
+    ds.select(RELATIVE_PARTITION_DIR_COL_NAME, "path", "size").as[JsonManifestRawEntry]
   }
 
   override protected def writeSingleManifestFile(manifestDirAbsPath: String,
-                                                 manifestRawEntries:
-                                                 Iterator[RedshiftManifestRawEntry],
-                                                 tableAbsPathForManifest: String,
-                                                 hadoopConf: SerializableConfiguration): Unit = {
+      manifestRawEntries:
+      Iterator[JsonManifestRawEntry],
+      tableAbsPathForManifest: String,
+      hadoopConf: SerializableConfiguration): Unit = {
     val manifestFilePath = createManifestDir(manifestDirAbsPath, hadoopConf)
 
     val entries = manifestRawEntries
       .map(
         rawEntry =>
-          RedshiftManifestEntry(
+          JsonManifestEntry(
             DeltaFileOperations.absolutePath(
               tableAbsPathForManifest, rawEntry.path
             ).toString,
-            RedshiftManifestEntryMetadata(rawEntry.size))
+            JsonManifestEntryMetadata(rawEntry.size))
       )
       .toSeq
 
-    val manifest = RedshiftManifest(entries)
+    val manifest = JsonManifest(entries)
     implicit val formats = Serialization.formats(NoTypeHints)
     val manifestContent = write(manifest)
 
@@ -68,6 +72,5 @@ object RedshiftGenerateManifest extends GenerateSymlinkManifest {
 
 }
 
-case class RedshiftManifestRawEntry(override val relativePartitionDir: String,
-                                    override val path: String,
-                                    size: Long) extends ManifestRawEntry
+case class JsonManifestRawEntry(override val relativePartitionDir: String,
+     override val path: String, size: Long) extends ManifestRawEntry
