@@ -21,6 +21,7 @@ import java.util.Locale
 
 import scala.collection.mutable
 import scala.collection.JavaConverters._
+import scala.util.control.NonFatal
 
 import io.delta.hive.{DeltaStorageHandler, PartitionColumnInfo}
 import org.apache.hadoop.fs._
@@ -46,6 +47,7 @@ object DeltaHelper extends Logging {
   def listDeltaFiles(
       nonNormalizedPath: Path,
       job: JobConf): (Array[FileStatus], Map[URI, Array[PartitionColumnInfo]]) = {
+    val loadStartMs = System.currentTimeMillis()
     val fs = nonNormalizedPath.getFileSystem(job)
     // We need to normalize the table path so that all paths we return to Hive will be normalized
     // This is necessary because `HiveInputFormat.pushProjectionsAndFilters` will try to figure out
@@ -102,7 +104,6 @@ object DeltaHelper extends Logging {
       // Drop unused potential huge fields
       .map(add => add.copy(stats = null, tags = null))(SingleAction.addFileEncoder)
       .collect().map { f =>
-        logInfo(s"selected delta file ${f.path} under $rootPath")
         val status = toFileStatus(fs, rootPath, f, blockSize)
         localFileToPartition +=
           status.getPath.toUri -> partitionColumnWithIndex.map { case (t, index) =>
@@ -112,6 +113,10 @@ object DeltaHelper extends Logging {
           }
         status
       }
+    val loadEndMs = System.currentTimeMillis()
+    logOperationDuration("fetching file list", rootPath, snapshotToUse, loadEndMs - loadStartMs)
+    logInfo(s"Found ${files.size} files to process " +
+      s"in the Delta Lake table ${hideUserInfoInPath(rootPath)}")
     (files, localFileToPartition.toMap)
   }
 
@@ -169,7 +174,11 @@ object DeltaHelper extends Logging {
 
   /** Load the latest Delta [[Snapshot]] from the path. */
   def loadDeltaLatestSnapshot(rootPath: Path): Snapshot = {
-    DeltaLog.forTable(spark, rootPath).update()
+    val loadStartMs = System.currentTimeMillis()
+    val snapshot = DeltaLog.forTable(spark, rootPath).update()
+    val loadEndMs = System.currentTimeMillis()
+    logOperationDuration("loading snapshot", rootPath, snapshot, loadEndMs - loadStartMs)
+    snapshot
   }
 
   /**
@@ -283,6 +292,39 @@ object DeltaHelper extends Logging {
          |$hiveSchemaString
          |
          |Please update your Hive table's schema to match the Delta table schema.""".stripMargin)
+  }
+
+  private def logOperationDuration(
+      ops: String,
+      path: Path,
+      snapshot: Snapshot,
+      durationMs: Long): Unit = {
+    logInfo(s"Delta Lake table '${hideUserInfoInPath(path)}' (" +
+      s"version: ${snapshot.version}, " +
+      s"size: ${snapshot.sizeInBytes}, " +
+      s"add: ${snapshot.numOfFiles}, " +
+      s"remove: ${snapshot.numOfRemoves}, " +
+      s"metadata: ${snapshot.numOfMetadata}, " +
+      s"protocol: ${snapshot.numOfProtocol}, " +
+      s"transactions: ${snapshot.numOfSetTransactions}, " +
+      s"partitions: ${snapshot.metadata.partitionColumns.mkString("[", ", ", "]")}" +
+      s") spent ${durationMs} ms on $ops.")
+  }
+
+  /** Strip out user information to avoid printing credentials to logs. */
+  private def hideUserInfoInPath(path: Path): Path = {
+    try {
+      val uri = path.toUri
+      val newUri = new URI(uri.getScheme, null, uri.getHost, uri.getPort, uri.getPath,
+        uri.getQuery, uri.getFragment)
+      new Path(newUri)
+    } catch {
+      case NonFatal(e) =>
+        // This path may have illegal format, and we can not remove its user info and reassemble the
+        // uri.
+        logError("Path contains illegal format: " + path, e)
+        path
+    }
   }
 
   /**
