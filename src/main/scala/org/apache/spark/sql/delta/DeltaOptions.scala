@@ -22,7 +22,8 @@ import java.util.regex.PatternSyntaxException
 import scala.util.Try
 import scala.util.matching.Regex
 
-import org.apache.spark.sql.delta.DeltaOptions.{DATA_CHANGE_OPTION, MERGE_SCHEMA_OPTION, OVERWRITE_SCHEMA_OPTION}
+import org.apache.spark.sql.delta.DeltaOptions.{DATA_CHANGE_OPTION, MERGE_SCHEMA_OPTION, OVERWRITE_SCHEMA_OPTION,
+  PARTITION_OVERWRITE_MODE}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -89,6 +90,15 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
     options.get(DATA_CHANGE_OPTION).map(!toBoolean(_, DATA_CHANGE_OPTION)).getOrElse(false)
   }
 
+  /** Whether to only overwrite partitions that have data written into it at runtime. */
+  def dynamicPartitionOverwriteMode: Boolean = {
+    val mode = options.get(PARTITION_OVERWRITE_MODE)
+      .map(_.toUpperCase(Locale.ROOT))
+      .getOrElse(sqlConf.getConf(SQLConf.PARTITION_OVERWRITE_MODE))
+    require(mode == "STATIC" || mode == "DYNAMIC",
+      s"invalid setting for ${PARTITION_OVERWRITE_MODE}")
+    mode == "DYNAMIC"
+  }
 }
 
 trait DeltaReadOptions extends DeltaOptionParser {
@@ -146,6 +156,7 @@ object DeltaOptions extends DeltaLogging {
   val MERGE_SCHEMA_OPTION = "mergeSchema"
   /** An option to allow overwriting schema and partitioning during an overwrite write operation. */
   val OVERWRITE_SCHEMA_OPTION = "overwriteSchema"
+  val PARTITION_OVERWRITE_MODE = "partitionOverwriteMode"
 
   val MAX_FILES_PER_TRIGGER_OPTION = "maxFilesPerTrigger"
   val MAX_FILES_PER_TRIGGER_OPTION_DEFAULT = 1000

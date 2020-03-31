@@ -343,6 +343,69 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("batch write: append, dynamic partition overwrite") {
+    withTempDir { tempDir =>
+      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+      Seq (1, 2, 3).toDF
+        .withColumn("part", $"value" % 2)
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .mode("append")
+        .save(tempDir.getCanonicalPath)
+
+      Seq(1, 5).toDF
+        .withColumn("part", $"value" % 2)
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .mode("overwrite")
+        .option("partitionOverwriteMode", "dynamic")
+        .save(tempDir.getCanonicalPath)
+      checkDatasetUnorderly(data.toDF.select($"value".as[Int]), 1, 2, 5)
+
+      Seq(("a", "x"), ("b", "y"), ("c", "x")).toDF("value", "part")
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .mode("overwrite")
+        .option("overwriteSchema", true)
+        .save(tempDir.getCanonicalPath)
+
+      Seq(("a", "x"), ("d", "x")).toDF("value", "part")
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .mode("overwrite")
+        .option("partitionOverwriteMode", "dynamic")
+        .save(tempDir.getCanonicalPath)
+      checkDatasetUnorderly(data.toDF.select($"value".as[String]), "a", "b", "d")
+    }
+  }
+
+  test("batch write: append, overwrite without partitions should ignore partition overwrite mode") {
+    withTempDir { tempDir =>
+      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+      Seq (1, 2, 3).toDF
+        .withColumn("part", $"value" % 2)
+        .write
+        .format("delta")
+        .mode("append")
+        .save(tempDir.getCanonicalPath)
+
+      Seq(1, 5).toDF
+        .withColumn("part", $"value" % 2)
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .option("partitionOverwriteMode", "dynamic")
+        .save(tempDir.getCanonicalPath)
+      checkDatasetUnorderly(data.toDF.select($"value".as[Int]), 1, 5)
+    }
+  }
+
   test("batch write: ignore") {
     withTempDir { tempDir =>
       def data: DataFrame = spark.read.format("delta").load(tempDir.toString)

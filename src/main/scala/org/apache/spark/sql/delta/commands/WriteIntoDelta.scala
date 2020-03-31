@@ -105,7 +105,12 @@ case class WriteIntoDelta(
     val newFiles = txn.writeFiles(data, Some(options))
     val deletedFiles = (mode, partitionFilters) match {
       case (SaveMode.Overwrite, None) =>
-        txn.filterFiles().map(_.remove)
+        if (txn.metadata.partitionColumns.nonEmpty && options.dynamicPartitionOverwriteMode) {
+          val newPartitions = newFiles.map(_.partitionValues).toSet
+          txn.filterFiles(newPartitions).map(_.remove)
+        } else {
+          txn.filterFiles().map(_.remove)
+        }
       case (SaveMode.Overwrite, Some(predicates)) =>
         // Check to make sure the files we wrote out were actually valid.
         val matchingFiles = DeltaLog.filterFileList(

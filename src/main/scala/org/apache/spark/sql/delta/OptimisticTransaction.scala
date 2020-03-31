@@ -242,6 +242,18 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
     scan.files
   }
 
+  /** Returns files within the given partitions. */
+  def filterFiles(partitions: Set[Map[String, String]]): Seq[AddFile] = {
+    import org.apache.spark.sql.functions.{array, col, lit, map, struct}
+    val partitionValues = partitions.map{ partition =>
+      metadata.partitionColumns.map(partition).toArray
+    }
+    val predicate = array(metadata.partitionColumns.map(col): _*)
+      .isInCollection(partitionValues)
+      .expr
+    filterFiles(Seq(predicate))
+  }
+
   /** Mark the entire table as tainted by this transaction. */
   def readWholeTable(): Unit = {
     readPredicates += Literal(true)
