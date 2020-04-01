@@ -201,7 +201,7 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook
       .asInstanceOf[StructTypeInfo]
     DeltaHelper.checkTableSchema(snapshot.metadata.schema, hiveSchema)
     tbl.getParameters.put("spark.sql.sources.provider", "DELTA")
-    tbl.getSd.getParameters.put("path", deltaRootString)
+    tbl.getSd.getSerdeInfo.getParameters.put("path", deltaRootString)
   }
 
   override def rollbackCreateTable(table: Table): Unit = {
