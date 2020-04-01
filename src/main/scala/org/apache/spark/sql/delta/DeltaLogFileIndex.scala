@@ -21,6 +21,8 @@ import org.apache.hadoop.fs._
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, PartitionDirectory}
+import org.apache.spark.sql.execution.datasources.json.JsonFileFormat
+import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -51,6 +53,9 @@ case class DeltaLogFileIndex(format: FileFormat, files: Array[FileStatus]) exten
 }
 
 object DeltaLogFileIndex {
+
+  lazy val COMMIT_FILE_FORMAT = new JsonFileFormat
+  lazy val CHECKPOINT_FILE_FORMAT = new ParquetFileFormat
 
   def apply(format: FileFormat, fs: FileSystem, paths: Seq[Path]): DeltaLogFileIndex = {
     DeltaLogFileIndex(format, paths.map(fs.getFileStatus).toArray)

@@ -65,19 +65,14 @@ case class DeltaSource(
     spark: SparkSession,
     deltaLog: DeltaLog,
     options: DeltaOptions,
-    filters: Seq[Expression] = Nil) extends Source with DeltaLogging {
-
-  private val maxFilesPerTrigger = options.maxFilesPerTrigger
+    filters: Seq[Expression] = Nil)
+  extends Source
+  with DeltaLogging {
 
   // Deprecated. Please use `ignoreDeletes` or `ignoreChanges` from now on.
   private val ignoreFileDeletion = {
     if (options.ignoreFileDeletion) {
-      val docPage = DeltaErrors.generateDocsLink(spark.sparkContext.getConf,
-        "/delta/delta-streaming.html#ignoring-updates-and-deletes")
-      logConsole(
-        s"""WARNING: The 'ignoreFileDeletion' option is deprecated. Switch to using one of
-           |'ignoreDeletes' or 'ignoreChanges'. Refer to $docPage for details.
-         """.stripMargin)
+      logConsole(DeltaErrors.ignoreStreamingUpdatesAndDeletesWarning(spark))
       recordDeltaEvent(deltaLog, "delta.deprecation.ignoreFileDeletion")
     }
     options.ignoreFileDeletion
@@ -94,7 +89,7 @@ case class DeltaSource(
   override val schema: StructType = deltaLog.snapshot.metadata.schema
 
   // This was checked before creating ReservoirSource
-  assert(!schema.isEmpty)
+  assert(schema.nonEmpty)
 
   private val tableId = deltaLog.snapshot.metadata.id
 
@@ -163,28 +158,28 @@ case class DeltaSource(
   private def getChangesWithRateLimit(
       fromVersion: Long,
       fromIndex: Long,
-      isStartingVersion: Boolean): Iterator[IndexedFile] = {
-
+      isStartingVersion: Boolean,
+      limits: Option[AdmissionLimits] = Some(new AdmissionLimits())): Iterator[IndexedFile] = {
     val changes = getChanges(fromVersion, fromIndex, isStartingVersion)
-
+    if (limits.isEmpty) return changes
 
     // Take each change until we've seen the configured number of addFiles. Some changes don't
     // represent file additions; we retain them for offset tracking, but they don't count towards
     // the maxFilesPerTrigger conf.
-    var toTake = maxFilesPerTrigger.getOrElse(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION_DEFAULT) + 1
-    changes.takeWhile { file =>
-      if (file.add != null) toTake -= 1
-
-      toTake > 0
+    var admissionControl = limits.get
+    changes.takeWhile { action =>
+      admissionControl.admit(Option(action.add))
     }
   }
 
-  private def getStartingOffset(): Option[Offset] = {
+  private def getStartingOffset(
+      limits: Option[AdmissionLimits] = Some(new AdmissionLimits())): Option[Offset] = {
     val version = deltaLog.snapshot.version
     if (version < 0) {
       return None
     }
-    val last = iteratorLast(getChangesWithRateLimit(version, -1L, isStartingVersion = true))
+    val last = iteratorLast(
+      getChangesWithRateLimit(version, -1L, isStartingVersion = true, limits))
     if (last.isEmpty) {
       return None
     }
@@ -201,6 +196,7 @@ case class DeltaSource(
       Some(DeltaSourceOffset(tableId, v, i, isStartingVersion = v == version))
     }
   }
+
 
   override def getOffset: Option[Offset] = {
     val currentOffset = if (previousOffset == null) {
@@ -313,4 +309,29 @@ case class DeltaSource(
   }
 
   override def toString(): String = s"DeltaSource[${deltaLog.dataPath}]"
+
+  /**
+   * Class that helps controlling how much data should be processed by a single micro-batch.
+   */
+  private class AdmissionLimits(
+      maxFiles: Option[Int] = options.maxFilesPerTrigger,
+      private var bytesToTake: Long = options.maxBytesPerTrigger.getOrElse(Long.MaxValue)) {
+
+    private var filesToTake = maxFiles.getOrElse {
+      if (options.maxBytesPerTrigger.isEmpty) {
+        DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION_DEFAULT
+      } else {
+        Int.MaxValue - 8 // - 8 to prevent JVM Array allocation OOM
+      }
+    }
+
+    /** Whether to admit the next file */
+    def admit(add: Option[AddFile]): Boolean = {
+      if (add.isEmpty) return true
+      val shouldAdmit = filesToTake > 0 && bytesToTake > 0
+      filesToTake -= 1
+      bytesToTake -= add.get.size
+      shouldAdmit
+    }
+  }
 }

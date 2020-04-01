@@ -20,6 +20,9 @@ import java.io.File
 import java.lang.{Integer => JInt}
 import java.util.Locale
 
+import scala.collection.JavaConverters._
+
+import org.apache.spark.sql.delta.commands.MergeIntoCommand
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.scalatest.BeforeAndAfterEach
 
@@ -27,7 +30,9 @@ import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{IntegerType, MapType, StringType, StructType}
+import org.apache.spark.status.api.v1.AccumulableInfo
 import org.apache.spark.util.Utils
+import org.apache.spark.util.kvstore.KVStore
 
 abstract class MergeIntoSuiteBase
     extends QueryTest
@@ -543,6 +548,10 @@ abstract class MergeIntoSuiteBase
     assert(errMsg.toLowerCase(Locale.ROOT).contains(str.toLowerCase(Locale.ROOT)))
   }
 
+  def errorNotContains(errMsg: String, str: String): Unit = {
+    assert(!errMsg.toLowerCase(Locale.ROOT).contains(str.toLowerCase(Locale.ROOT)))
+  }
+
   test("Negative case - basic syntax analysis") {
     withTable("source") {
       Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value").createOrReplaceTempView("source")
@@ -584,6 +593,7 @@ abstract class MergeIntoSuiteBase
       }.getMessage
 
       errorContains(e, "Cannot resolve `key2` in INSERT clause")
+      errorContains(e, "key1") // should contain key1 as a valid column name in expressions
 
       // to-update columns have source table reference
       e = intercept[AnalysisException] {
@@ -596,6 +606,7 @@ abstract class MergeIntoSuiteBase
       }.getMessage
 
       errorContains(e, "Cannot resolve `key1` in UPDATE clause")
+      errorContains(e, "key2") // should show key2 as a valid name in target columns
 
       // to-insert columns have source table reference
       e = intercept[AnalysisException] {
@@ -608,6 +619,7 @@ abstract class MergeIntoSuiteBase
       }.getMessage
 
       errorContains(e, "Cannot resolve `key1` in INSERT clause")
+      errorContains(e, "key2") // should contain key2 as a valid name in target columns
 
       // ambiguous reference
       e = intercept[AnalysisException] {
@@ -1122,41 +1134,55 @@ abstract class MergeIntoSuiteBase
       name: String)(
       mergeOn: String,
       mergeClauses: MergeClause*)(
-      errorStrs: Seq[String]): Unit = {
+      errorStrs: Seq[String],
+      notErrorStrs: Seq[String] = Nil): Unit = {
     test(s"extended syntax analysis errors - $name") {
-      withKeyValueData(source = Seq.empty, target = Seq.empty) { case (sourceName, targetName) =>
-        val e = intercept[AnalysisException] {
+      withKeyValueData(
+        source = Seq.empty,
+        target = Seq.empty,
+        sourceKeyValueNames = ("key", "srcValue"),
+        targetKeyValueNames = ("key", "tgtValue")
+      ) { case (sourceName, targetName) =>
+        val errMsg = intercept[AnalysisException] {
           executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
-        }
-        errorStrs.foreach { s => errorContains(e.getMessage, s) }
+        }.getMessage
+        errorStrs.foreach { s => errorContains(errMsg, s) }
+        notErrorStrs.foreach { s => errorNotContains(errMsg, s) }
       }
     }
   }
 
   testAnalysisErrorsInExtendedMerge("update condition - ambiguous reference")(
     mergeOn = "s.key = t.key",
-    update(condition = "key > 1", set = "key = s.key, value = s.value"))(
+    update(condition = "key > 1", set = "tgtValue = srcValue"))(
     errorStrs = "reference 'key' is ambiguous" :: Nil)
 
   testAnalysisErrorsInExtendedMerge("update condition - unknown reference")(
     mergeOn = "s.key = t.key",
-    update(condition = "unknownAttrib > 1", set = "key = s.key, value = s.value"))(
-    errorStrs = "UPDATE condition" :: "unknownAttrib" :: Nil)
+    update(condition = "unknownAttrib > 1", set = "tgtValue = srcValue"))(
+    // Should show unknownAttrib as invalid ref and (key, tgtValue, srcValue) as valid column names.
+    errorStrs = "UPDATE condition" :: "unknownAttrib" :: "key" :: "tgtValue" :: "srcValue" :: Nil)
 
   testAnalysisErrorsInExtendedMerge("update condition - aggregation function")(
     mergeOn = "s.key = t.key",
-    update(condition = "max(0) > 0", set = "key = s.key, value = s.value"))(
+    update(condition = "max(0) > 0", set = "tgtValue = srcValue"))(
     errorStrs = "UPDATE condition" :: "aggregate functions are not supported" :: Nil)
 
   testAnalysisErrorsInExtendedMerge("update condition - subquery")(
     mergeOn = "s.key = t.key",
-    update(condition = "s.value in (select value from t)", set = "key = s.key, value = s.value"))(
+    update(condition = "s.value in (select value from t)", set = "tgtValue = srcValue"))(
     errorStrs = Nil) // subqueries fail for unresolved reference to `t`
+
+  testAnalysisErrorsInExtendedMerge("delete condition - ambiguous reference")(
+    mergeOn = "s.key = t.key",
+    delete(condition = "key > 1"))(
+    errorStrs = "reference 'key' is ambiguous" :: Nil)
 
   testAnalysisErrorsInExtendedMerge("delete condition - unknown reference")(
     mergeOn = "s.key = t.key",
     delete(condition = "unknownAttrib > 1"))(
-    errorStrs = "DELETE condition" :: "unknownAttrib" :: Nil)
+    // Should show unknownAttrib as invalid ref and (key, tgtValue, srcValue) as valid column names.
+    errorStrs = "DELETE condition" :: "unknownAttrib" :: "key" :: "tgtValue" :: "srcValue" :: Nil)
 
   testAnalysisErrorsInExtendedMerge("delete condition - aggregation function")(
     mergeOn = "s.key = t.key",
@@ -1165,25 +1191,34 @@ abstract class MergeIntoSuiteBase
 
   testAnalysisErrorsInExtendedMerge("delete condition - subquery")(
     mergeOn = "s.key = t.key",
-    delete(condition = "s.value in (select value from t)"))(
+    delete(condition = "s.srcValue in (select tgtValue from t)"))(
     errorStrs = Nil)  // subqueries fail for unresolved reference to `t`
 
   testAnalysisErrorsInExtendedMerge("insert condition - unknown reference")(
     mergeOn = "s.key = t.key",
-    insert(condition = "unknownAttrib > 1", values = "(key, value) VALUES (s.key, s.value)"))(
-    errorStrs = "INSERT condition" :: "unknownAttrib" :: Nil)
+    insert(condition = "unknownAttrib > 1", values = "(key, tgtValue) VALUES (s.key, s.srcValue)"))(
+    // Should show unknownAttrib as invalid ref and (key, srcValue) as valid column names,
+    // but not show tgtValue as a valid name as target columns cannot be present in insert clause.
+    errorStrs = "INSERT condition" :: "unknownAttrib" :: "key" :: "srcValue" :: Nil,
+    notErrorStrs = "tgtValue")
+
+  testAnalysisErrorsInExtendedMerge("insert condition - reference to target table column")(
+    mergeOn = "s.key = t.key",
+    insert(condition = "tgtValue > 1", values = "(key, tgtValue) VALUES (s.key, s.srcValue)"))(
+    // Should show tgtValue as invalid ref and (key, srcValue) as valid column names
+    errorStrs = "INSERT condition" :: "tgtValue" :: "key" :: "srcValue" :: Nil)
 
   testAnalysisErrorsInExtendedMerge("insert condition - aggregation function")(
     mergeOn = "s.key = t.key",
-    insert(condition = "max(0) > 0", values = "(key, value) VALUES (s.key, s.value)"))(
+    insert(condition = "max(0) > 0", values = "(key, tgtValue) VALUES (s.key, s.srcValue)"))(
     errorStrs = "INSERT condition" :: "aggregate functions are not supported" :: Nil)
 
   testAnalysisErrorsInExtendedMerge("insert condition - subquery")(
     mergeOn = "s.key = t.key",
     insert(
-      condition = "s.value in (select value from s)",
-      values = "(key, value) VALUES (s.key, s.value)"))(
-    errorStrs = Nil)  // subqueries fail for unresolved reference to `t`
+      condition = "s.srcValue in (select srcValue from s)",
+      values = "(key, tgtValue) VALUES (s.key, s.srcValue)"))(
+    errorStrs = Nil)  // subqueries fail for unresolved reference to `s`
 
 
   protected def testExtendedMerge(
@@ -1688,4 +1723,159 @@ abstract class MergeIntoSuiteBase
       }
     }
   }
+
+  test("accumulators used by MERGE should not be tracked by Spark UI") {
+    // Run a simple merge command
+    withTable("source") {
+      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
+      Seq((1, 1), (0, 3)).toDF("key1", "value").createOrReplaceTempView("source")
+
+      executeMerge(
+        target = s"delta.`$tempPath`",
+        source = "source src",
+        condition = "src.key1 = key2",
+        update = "key2 = 20 + key1, value = 20 + src.value",
+        insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
+
+      checkAnswer(readDeltaTable(tempPath),
+        Row(2, 2) :: // No change
+          Row(21, 21) :: // Update
+          Row(-10, 13) :: // Insert
+          Nil)
+    }
+
+    // Make sure all Spark events generated by the above command have been processed
+    spark.sparkContext.listenerBus.waitUntilEmpty(30000)
+
+    // Use Reflection to get `SparkContext.statusStore.store` and access all accumulators stored
+    // with Spark tasks, so that this test can be run with Apache Spark.
+    val statusStore =
+      spark.sparkContext.getClass.getMethod("statusStore").invoke(spark.sparkContext)
+    val store = statusStore.getClass.getMethod("store").invoke(statusStore).asInstanceOf[KVStore]
+    // scalastyle:off classforname
+    val iter = store
+      .view(Class.forName("org.apache.spark.status.TaskDataWrapper"))
+      .closeableIterator()
+    // scalastyle:on classforname
+    try {
+      // Collect all accumulator names tracked by Spark UI.
+      val accumNames = iter.asScala.toVector.flatMap { task =>
+        task.getClass.getMethod("accumulatorUpdates").invoke(task)
+          .asInstanceOf[Seq[AccumulableInfo]].map(_.name)
+      }.toSet
+      // Verify accumulators used by MergeIntoCommand are not tracked.
+      assert(!accumNames.contains(MergeIntoCommand.TOUCHED_FILES_ACCUM_NAME))
+    } finally {
+      iter.close()
+    }
+  }
+
+  protected def testMatchedOnlyOptimization(
+      name: String)(
+      source: Seq[(Int, Int)],
+      target: Seq[(Int, Int)],
+      mergeOn: String,
+      mergeClauses: MergeClause*) (
+      result: Seq[(Int, Int)]): Unit = {
+    Seq(true, false).foreach { matchedOnlyEnabled =>
+      Seq(true, false).foreach { isPartitioned =>
+        val s = if (matchedOnlyEnabled) "enabled" else "disabled"
+        test(s"matched only merge - $s - $name - isPartitioned: $isPartitioned ") {
+          withKeyValueData(source, target, isPartitioned) { case (sourceName, targetName) =>
+            withSQLConf(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED.key -> s"$matchedOnlyEnabled") {
+              executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
+            }
+            val deltaPath = if (targetName.startsWith("delta.`")) {
+              targetName.stripPrefix("delta.`").stripSuffix("`")
+            } else targetName
+            checkAnswer(
+              readDeltaTable(deltaPath),
+              result.map { case (k, v) => Row(k, v) })
+          }
+        }
+      }
+    }
+  }
+
+  testMatchedOnlyOptimization("with update") (
+    source = Seq((1, 100), (3, 300), (5, 500)),
+    target = Seq((1, 10), (2, 20), (3, 30)),
+    mergeOn = "s.key = t.key",
+    update("t.key = s.key, t.value = s.value")) (
+    result = Seq(
+      (1, 100), // updated
+      (2, 20), // existed previously
+      (3, 300) // updated
+    )
+  )
+
+  testMatchedOnlyOptimization("with delete") (
+    source = Seq((1, 100), (3, 300), (5, 500)),
+    target = Seq((1, 10), (2, 20), (3, 30)),
+    mergeOn = "s.key = t.key",
+    delete()) (
+    result = Seq(
+      (2, 20) // existed previously
+    )
+  )
+
+  testMatchedOnlyOptimization("with update and delete")(
+    source = Seq((1, 100), (3, 300), (5, 500)),
+    target = Seq((1, 10), (3, 30), (5, 30)),
+    mergeOn = "s.key = t.key",
+    update("t.value = s.value", "t.key < 3"), delete("t.key > 3")) (
+    result = Seq(
+      (1, 100), // updated
+      (3, 30)   // existed previously
+    )
+  )
+
+  protected def testNullCaseMatchedOnly(name: String) (
+      source: Seq[(JInt, JInt)],
+      target: Seq[(JInt, JInt)],
+      mergeOn: String,
+      result: Seq[(JInt, JInt)]) = {
+    Seq(true, false).foreach { isPartitioned =>
+      withSQLConf(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED.key -> "true") {
+        test(s"matched only merge - null handling - $name, isPartitioned: $isPartitioned") {
+          withView("sourceView") {
+            append(target.toDF("key", "value"), "key" :: Nil)
+            source.toDF("key", "value").createOrReplaceTempView("sourceView")
+
+            executeMerge(
+              tgt = s"delta.`$tempPath` as t",
+              src = "sourceView s",
+              cond = mergeOn,
+              update("t.value = s.value"))
+
+            checkAnswer(
+              readDeltaTable(tempPath),
+              result.map { r => Row(r._1, r._2) }
+            )
+
+            Utils.deleteRecursively(new File(tempPath))
+          }
+        }
+      }
+    }
+  }
+
+  testNullCaseMatchedOnly("null in source") (
+    source = Seq((1, 10), (2, 20), (null, null)),
+    target = Seq((1, 1)),
+    mergeOn = "s.key = t.key",
+    result = Seq(
+      (1, 10) // update
+    )
+  )
+
+  testNullCaseMatchedOnly("null value in both source and target") (
+    source = Seq((1, 10), (2, 20), (null, 0)),
+    target = Seq((1, 1), (null, null)),
+    mergeOn = "s.key = t.key",
+    result = Seq(
+      (null, null), // No change as null in source does not match null in target
+      (1, 10) // update
+    )
+  )
 }

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package test.com.databricks.sql.transaction.tahoe;
+package test.org.apache.spark.sql.delta;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -24,7 +24,6 @@ import scala.Tuple2;
 
 import io.delta.tables.DeltaTable;
 import org.junit.After;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -62,8 +61,7 @@ public class DeleteJavaSuite {
         target.delete();
 
         List<Row> expectedAnswer = new ArrayList<>();
-        String testResult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
-        Assert.assertNull(testResult);
+        QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
     }
 
     @Test
@@ -78,8 +76,7 @@ public class DeleteJavaSuite {
 
         List<Row> expectedAnswer = createKVDataSet(
             Arrays.asList(tuple2(3, 30), tuple2(4, 40))).collectAsList();
-        String testResult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
-        Assert.assertNull(testResult);
+        QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
     }
 
     @Test
@@ -94,8 +91,7 @@ public class DeleteJavaSuite {
 
         List<Row> expectedAnswer = createKVDataSet(
             Arrays.asList(tuple2(3, 30), tuple2(4, 40))).collectAsList();
-        String testResult = QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
-        Assert.assertNull(testResult);
+        QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
     }
 
     private Dataset<Row> createKVDataSet(

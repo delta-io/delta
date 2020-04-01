@@ -42,6 +42,7 @@ import java.time.chrono.IsoChronology
 import java.time.format.{DateTimeFormatter, DateTimeFormatterBuilder, ResolverStyle}
 import java.time.temporal.{ChronoField, TemporalAccessor, TemporalQueries}
 import java.util.Locale
+import java.util.concurrent.Callable
 
 import org.apache.spark.sql.delta.util.DateTimeFormatterHelper._
 import com.google.common.cache.CacheBuilder
@@ -70,12 +71,7 @@ trait DateTimeFormatterHelper {
   // The Cache.get method is not used here to avoid creation of additional instances of Callable.
   protected def getOrCreateFormatter(pattern: String, locale: Locale): DateTimeFormatter = {
     val key = (pattern, locale)
-    var formatter = cache.getIfPresent(key)
-    if (formatter == null) {
-      formatter = buildFormatter(pattern, locale)
-      cache.put(key, formatter)
-    }
-    formatter
+    cache.get(key, new Callable[DateTimeFormatter] { def call = buildFormatter(pattern, locale) })
   }
 }
 

@@ -17,14 +17,14 @@
 package org.apache.spark.sql.delta
 
 import java.io.{File, FileNotFoundException}
+import java.util.concurrent.atomic.AtomicInteger
 
-import org.apache.spark.sql.delta.actions.{Action, FileAction}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.{FileSystem, Path}
 
-import org.apache.spark.{SparkConf, SparkException}
+import org.apache.spark.SparkException
+import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions.InSet
 import org.apache.spark.sql.catalyst.plans.logical.Filter
@@ -62,24 +62,24 @@ class DeltaSuite extends QueryTest
       // partition filter
       checkDatasetUnorderly(
         ds.where("part = 1"),
-        (1 -> 1), (3 -> 1), (5 -> 1), (7 -> 1), (9 -> 1))
+        1 -> 1, 3 -> 1, 5 -> 1, 7 -> 1, 9 -> 1)
       checkDatasetUnorderly(
         ds.where("part = 0"),
-        (0 -> 0), (2 -> 0), (4 -> 0), (6 -> 0), (8 -> 0))
+        0 -> 0, 2 -> 0, 4 -> 0, 6 -> 0, 8 -> 0)
       // data filter
       checkDatasetUnorderly(
         ds.where("value >= 5"),
-        (5 -> 1), (6 -> 0), (7 -> 1), (8 -> 0), (9 -> 1))
+        5 -> 1, 6 -> 0, 7 -> 1, 8 -> 0, 9 -> 1)
       checkDatasetUnorderly(
         ds.where("value < 5"),
-        (0 -> 0), (1 -> 1), (2 -> 0), (3 -> 1), (4 -> 0))
+        0 -> 0, 1 -> 1, 2 -> 0, 3 -> 1, 4 -> 0)
       // partition filter + data filter
       checkDatasetUnorderly(
         ds.where("part = 1 and value >= 5"),
-        (5 -> 1), (7 -> 1), (9 -> 1))
+        5 -> 1, 7 -> 1, 9 -> 1)
       checkDatasetUnorderly(
         ds.where("part = 1 and value < 5"),
-        (1 -> 1), (3 -> 1))
+        1 -> 1, 3 -> 1)
     }
   }
 
@@ -94,7 +94,7 @@ class DeltaSuite extends QueryTest
           .partitionBy(partitionColumn)
           .save(testPath)
         val ds = spark.read.format("delta").load(testPath).as[(Int, String)]
-        checkDatasetUnorderly(ds, (1 -> "a"), (2 -> "b"))
+        checkDatasetUnorderly(ds, 1 -> "a", 2 -> "b")
       }
     }
   }
@@ -200,7 +200,7 @@ class DeltaSuite extends QueryTest
     }.getMessage
     assert(e2.contains("Data written into Delta needs to contain at least one non-partitioned"))
 
-    var e3 = intercept[AnalysisException] {
+    val e3 = intercept[AnalysisException] {
       Seq(6).toDF()
         .withColumn("is_odd", $"value" % 2 =!= 0)
         .write
@@ -212,7 +212,7 @@ class DeltaSuite extends QueryTest
     assert(e3 == "Predicate references non-partition column 'not_a_column'. Only the " +
       "partition columns may be referenced: [is_odd];")
 
-    var e4 = intercept[AnalysisException] {
+    val e4 = intercept[AnalysisException] {
       Seq(6).toDF()
         .withColumn("is_odd", $"value" % 2 =!= 0)
         .write
@@ -500,11 +500,18 @@ class DeltaSuite extends QueryTest
         assert(tempDir.delete())
       }
 
-      spark.range(100).select('id, 'id % 4 as "by,4")
+      val dfw = spark.range(100).select('id, 'id % 4 as "by,4")
         .write
         .format("delta")
         .partitionBy("by,4")
-        .save(tempDir.toString)
+
+      val e = intercept[AnalysisException] {
+        dfw.save(tempDir.toString)
+      }
+      assert(e.getMessage.contains("invalid character(s)"))
+      withSQLConf(DeltaSQLConf.DELTA_PARTITION_COLUMN_CHECK_ENABLED.key -> "false") {
+        dfw.save(tempDir.toString)
+      }
 
       val files = spark.read.format("delta").load(tempDir.toString).inputFiles
 
@@ -657,8 +664,9 @@ class DeltaSuite extends QueryTest
 
   test("SC-8727 - default snapshot num partitions") {
     withTempDir { tempDir =>
+      spark.range(10).write.format("delta").save(tempDir.toString)
       val deltaLog = DeltaLog.forTable(spark, tempDir)
-      val numParts = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS)
+      val numParts = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS).get
       assert(deltaLog.snapshot.state.rdd.getNumPartitions == numParts)
     }
   }
@@ -676,6 +684,7 @@ class DeltaSuite extends QueryTest
   test("SC-8727 - reconfigure num partitions") {
     withTempDir { tempDir =>
       withSQLConf(("spark.databricks.delta.snapshotPartitions", "410")) {
+        spark.range(10).write.format("delta").save(tempDir.toString)
         val deltaLog = DeltaLog.forTable(spark, tempDir)
         assert(deltaLog.snapshot.state.rdd.getNumPartitions == 410)
       }
@@ -756,7 +765,7 @@ class DeltaSuite extends QueryTest
         val thrown = intercept[SparkException] {
           data.toDF().count()
         }
-        assert(thrown.getMessage().contains("is not a Parquet file"))
+        assert(thrown.getMessage.contains("is not a Parquet file"))
       }
     }
   }
@@ -815,7 +824,7 @@ class DeltaSuite extends QueryTest
       val thrown = intercept[SparkException] {
         data.toDF().count()
       }
-      assert(thrown.getMessage().contains("FileNotFound"))
+      assert(thrown.getMessage.contains("FileNotFound"))
     }
   }
 
@@ -930,6 +939,37 @@ class DeltaSuite extends QueryTest
         val tableConfigs = DeltaLog.forTable(spark, path).update().metadata.configuration
         assert(tableConfigs.get("delta.dataSkippingNumIndexedCols") == Some("1"))
       }
+    }
+  }
+
+  test("SC-24982 - initial snapshot has zero partitions") {
+    withTempDir { tempDir =>
+      val deltaLog = DeltaLog.forTable(spark, tempDir)
+      assert(deltaLog.snapshot.state.rdd.getNumPartitions == 0)
+    }
+  }
+
+  test("SC-24982 - initial snapshot does not trigger jobs") {
+    val jobCount = new AtomicInteger(0)
+    val listener = new SparkListener {
+      override def onJobStart(jobStart: SparkListenerJobStart): Unit = {
+        // Spark will always log a job start/end event even when the job does not launch any task.
+        if (jobStart.stageInfos.exists(_.numTasks > 0)) {
+          jobCount.incrementAndGet()
+        }
+      }
+    }
+    sparkContext.listenerBus.waitUntilEmpty(15000)
+    sparkContext.addSparkListener(listener)
+    try {
+      withTempDir { tempDir =>
+        val files = DeltaLog.forTable(spark, tempDir).snapshot.state.collect()
+        assert(files.isEmpty)
+      }
+      sparkContext.listenerBus.waitUntilEmpty(15000)
+      assert(jobCount.get() == 0)
+    } finally {
+      sparkContext.removeSparkListener(listener)
     }
   }
 }

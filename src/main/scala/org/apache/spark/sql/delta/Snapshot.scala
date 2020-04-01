@@ -28,7 +28,6 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.plans.logical.Union
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.expressions.UserDefinedFunction
@@ -55,10 +54,11 @@ class Snapshot(
     val path: Path,
     val version: Long,
     previousSnapshot: Option[Dataset[SingleAction]],
-    files: Seq[DeltaLogFileIndex],
+    val files: Seq[DeltaLogFileIndex],
     val minFileRetentionTimestamp: Long,
     val deltaLog: DeltaLog,
     val timestamp: Long,
+    val checksumOpt: Option[VersionChecksum],
     val lineageLength: Int = 1)
   extends StateCache
   with PartitionFiltering
@@ -72,25 +72,29 @@ class Snapshot(
   protected def spark = SparkSession.active
 
 
+  protected def getNumPartitions: Int = {
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS)
+      .getOrElse(Snapshot.defaultNumSnapshotPartitions)
+  }
+
   // Reconstruct the state by applying deltas in order to the checkpoint.
   // We partition by path as it is likely the bulk of the data is add/remove.
   // Non-path based actions will be collocated to a single partition.
-  private val stateReconstruction = {
+  private def stateReconstruction: Dataset[SingleAction] = {
     val implicits = spark.implicits
     import implicits._
-
-    val numPartitions = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS)
 
     val checkpointData = previousSnapshot.getOrElse(emptyActions)
     val deltaData = load(files)
     val allActions = checkpointData.union(deltaData)
     val time = minFileRetentionTimestamp
-    val hadoopConf = new SerializableConfiguration(spark.sessionState.newHadoopConf())
+    val hadoopConf = spark.sparkContext.broadcast(
+      new SerializableConfiguration(spark.sessionState.newHadoopConf()))
     val logPath = path.toUri // for serializability
 
     allActions.as[SingleAction]
       .mapPartitions { actions =>
-        val hdpConf = hadoopConf.value
+        val hdpConf = hadoopConf.value.value
         actions.flatMap {
           _.unwrap match {
             case add: AddFile => Some(add.copy(path = canonicalizePath(add.path, hdpConf)).wrap)
@@ -101,7 +105,7 @@ class Snapshot(
         }
       }
       .withColumn("file", assertLogBelongsToTable(logPath)(input_file_name()))
-      .repartition(numPartitions, coalesce($"add.path", $"remove.path"))
+      .repartition(getNumPartitions, coalesce($"add.path", $"remove.path"))
       .sortWithinPartitions("file")
       .as[SingleAction]
       .mapPartitions { iter =>
@@ -114,32 +118,28 @@ class Snapshot(
   def redactedPath: String =
     Utils.redact(spark.sessionState.conf.stringRedactionPattern, path.toUri.toString)
 
-  private val cachedState =
+  private lazy val cachedState =
     cacheDS(stateReconstruction, s"Delta Table State #$version - $redactedPath")
 
   /** The current set of actions in this [[Snapshot]]. */
   def state: Dataset[SingleAction] = cachedState.getDS
 
-  // Force materialization of the cache and collect the basics to the driver for fast access.
-  // Here we need to bypass the ACL checks for SELECT anonymous function permissions.
-  val State(protocol, metadata, setTransactions, sizeInBytes, numOfFiles, numOfMetadata,
-      numOfProtocol, numOfRemoves, numOfSetTransactions) = {
-    val implicits = spark.implicits
-    import implicits._
-    state.select(
-        coalesce(last($"protocol", ignoreNulls = true), defaultProtocol()) as "protocol",
-        coalesce(last($"metaData", ignoreNulls = true), emptyMetadata()) as "metadata",
-        collect_set($"txn") as "setTransactions",
-        // sum may return null for empty data set.
-        coalesce(sum($"add.size"), lit(0L)) as "sizeInBytes",
-        count($"add") as "numOfFiles",
-        count($"metaData") as "numOfMetadata",
-        count($"protocol") as "numOfProtocol",
-        count($"remove") as "numOfRemoves",
-        count($"txn") as "numOfSetTransactions")
-      .as[State](stateEncoder)}
-      .first
+  protected lazy val metadataGetter: MetadataGetter = {
+    new StateMetadataGetter(spark, state, deltaLog, checksumOpt)
+  }
 
+  def protocol: Protocol = metadataGetter.protocol
+  def metadata: Metadata = metadataGetter.metadata
+  def setTransactions: Seq[SetTransaction] = metadataGetter.setTransactions
+  def sizeInBytes: Long = metadataGetter.sizeInBytes
+  def numOfFiles: Long = metadataGetter.numOfFiles
+  def numOfMetadata: Long = metadataGetter.numOfMetadata
+  def numOfProtocol: Long = metadataGetter.numOfProtocol
+  def numOfRemoves: Long = metadataGetter.numOfRemoves
+  def numOfSetTransactions: Long = metadataGetter.numOfSetTransactions
+
+  // Validations
+  metadataGetter.validateChecksum()
   deltaLog.protocolRead(protocol)
 
   /** A map to look up transaction version by appId. */
@@ -167,7 +167,7 @@ class Snapshot(
   def dataSchema: StructType = metadata.dataSchema
 
   /** Number of columns to collect stats on for data skipping */
-  val numIndexedCols: Int = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(metadata)
+  lazy val numIndexedCols: Int = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(metadata)
 
   /**
    * Load the transaction logs from file indices. The files here may have different file formats
@@ -194,13 +194,13 @@ class Snapshot(
     }
   }
 
-  private def emptyActions =
+  protected def emptyActions =
     spark.createDataFrame(spark.sparkContext.emptyRDD[Row], logSchema).as[SingleAction]
 }
 
 object Snapshot extends DeltaLogging {
-  private lazy val emptyMetadata = udf(() => Metadata())
-  private lazy val defaultProtocol = udf(() => Protocol())
+
+  private val defaultNumSnapshotPartitions: Int = 50
 
   /** Canonicalize the paths for Actions */
   private def canonicalizePath(path: String, hadoopConf: Configuration): String = {
@@ -230,27 +230,6 @@ object Snapshot extends DeltaLogging {
       }
     })
   }
-
-  private case class State(
-      protocol: Protocol,
-      metadata: Metadata,
-      setTransactions: Seq[SetTransaction],
-      sizeInBytes: Long,
-      numOfFiles: Long,
-      numOfMetadata: Long,
-      numOfProtocol: Long,
-      numOfRemoves: Long,
-      numOfSetTransactions: Long)
-
-  private[this] lazy val _stateEncoder: ExpressionEncoder[State] = try {
-    ExpressionEncoder[State]()
-  } catch {
-    case e: Throwable =>
-      logError(e.getMessage, e)
-      throw e
-  }
-
-  implicit private def stateEncoder: ExpressionEncoder[State] = _stateEncoder.copy()
 }
 
 /**
@@ -264,4 +243,9 @@ class InitialSnapshot(
     val logPath: Path,
     override val deltaLog: DeltaLog,
     override val metadata: Metadata)
-  extends Snapshot(logPath, -1, None, Nil, -1, deltaLog, -1)
+  extends Snapshot(logPath, -1, None, Nil, -1, deltaLog, -1, None) {
+  override val state: Dataset[SingleAction] = emptyActions
+  override protected lazy val metadataGetter: MetadataGetter = {
+    new EmptyMetadataGetter(metadata, deltaLog)
+  }
+}

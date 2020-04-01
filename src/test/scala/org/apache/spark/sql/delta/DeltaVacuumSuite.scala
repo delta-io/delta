@@ -30,6 +30,8 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.GivenWhenThen
 
 import org.apache.spark.sql.{AnalysisException, QueryTest, SaveMode}
+import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.CalendarInterval
@@ -372,6 +374,13 @@ trait DeltaVacuumSuiteBase extends QueryTest
         Given(s"*** Removing files")
         val txn = deltaLog.startTransaction()
         // scalastyle:off
+        val metrics = Map[String, SQLMetric](
+          "numRemovedFiles" -> createMetric(sparkContext, "number of files removed."),
+          "numAddedFiles" -> createMetric(sparkContext, "number of files added."),
+          "numDeletedRows" -> createMetric(sparkContext, "number of rows deleted."),
+          "numTotalRows" -> createMetric(sparkContext, "total number of rows.")
+        )
+        txn.registerSQLMetrics(spark, metrics)
         txn.commit(Seq(RemoveFile(path, Option(clock.getTimeMillis()))), Delete("true" :: Nil))
       // scalastyle:on
       case ExecuteSQL(statement, expectedDf) =>

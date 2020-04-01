@@ -102,3 +102,7 @@ spark-warehouse/
 
 # For SBT
 .jvmopts
+
+# For Python linting
+pep8*.py
+pycodestyle*.py
