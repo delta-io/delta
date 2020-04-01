@@ -571,14 +571,43 @@ abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
     }
   }
 
+  test("fail the query when the path is deleted after the table is created") {
+    withTable("deltaTbl") {
+      withTempDir { dir =>
+        val testData = (0 until 10).map(x => (x, s"foo${x % 2}"))
+
+        withSparkSession{ spark =>
+          import spark.implicits._
+          testData.toDS.toDF("c1", "c2").write.format("delta").save(dir.getCanonicalPath)
+        }
+
+        runQuery(
+          s"""
+             |create external table deltaTbl(c1 int, c2 string)
+             |stored by 'io.delta.hive.DeltaStorageHandler' location '${dir.getCanonicalPath}'
+         """.stripMargin
+        )
+
+        checkAnswer("select * from deltaTbl", testData)
+
+        JavaUtils.deleteRecursively(dir)
+
+        val e = intercept[Exception] {
+          checkAnswer("select * from deltaTbl", testData)
+        }
+        assert(e.getMessage.contains("not a Delta table"))
+      }
+    }
+  }
+
   test("fail incorrect format config") {
     val formatKey = engine match {
       case "mr" => "hive.input.format"
       case "tez" => "hive.tez.input.format"
       case other => throw new UnsupportedOperationException(s"Unsupported engine: $other")
     }
-    withTable("deltaTbl") {
-      withTempDir { dir =>
+    withTempDir { dir =>
+      withTable("deltaTbl") {
         withSparkSession { spark =>
           import spark.implicits._
           val testData = (0 until 10).map(x => (x, s"foo${x % 2}"))
@@ -590,13 +619,14 @@ abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
              |CREATE EXTERNAL TABLE deltaTbl(a INT, b STRING)
              |STORED BY 'io.delta.hive.DeltaStorageHandler'
              |LOCATION '${dir.getCanonicalPath}'""".stripMargin)
-      }
-      withHiveConf(formatKey, "org.apache.hadoop.hive.ql.io.HiveInputFormat") {
-        val e = intercept[Exception] {
-          runQuery("SELECT * from deltaTbl")
+
+        withHiveConf(formatKey, "org.apache.hadoop.hive.ql.io.HiveInputFormat") {
+          val e = intercept[Exception] {
+            runQuery("SELECT * from deltaTbl")
+          }
+          assert(e.getMessage.contains(formatKey))
+          assert(e.getMessage.contains(classOf[HiveInputFormat].getName))
         }
-        assert(e.getMessage.contains(formatKey))
-        assert(e.getMessage.contains(classOf[HiveInputFormat].getName))
       }
     }
   }

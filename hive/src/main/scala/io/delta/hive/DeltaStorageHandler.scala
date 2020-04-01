@@ -73,7 +73,10 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook
       DataWritableReadSupport.getColumnTypes(tableProps.getProperty(IOConstants.COLUMNS_TYPES))
     val hiveSchema = TypeInfoFactory.getStructTypeInfo(columnNames, columnTypes)
       .asInstanceOf[StructTypeInfo]
-    jobProperties.put(DELTA_TABLE_PATH, tableProps.getProperty(META_TABLE_LOCATION))
+    val rootPath = tableProps.getProperty(META_TABLE_LOCATION)
+    val snapshot = DeltaHelper.loadDeltaLatestSnapshot(new Path(rootPath))
+    DeltaHelper.checkTableSchema(snapshot.metadata.schema, hiveSchema)
+    jobProperties.put(DELTA_TABLE_PATH, rootPath)
     jobProperties.put(DELTA_TABLE_SCHEMA, hiveSchema.toString)
   }
 
@@ -184,9 +187,6 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook
     }
 
     val snapshot = DeltaHelper.loadDeltaLatestSnapshot(new Path(deltaRootString))
-    if (snapshot.version < 0) {
-      throw new MetaException(s"$deltaRootString does not exist or it's not a Delta table")
-    }
 
     // Extract the table schema in Hive to compare it with the latest table schema in Delta logs,
     // and fail the query if it was changed.

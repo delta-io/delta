@@ -178,6 +178,10 @@ object DeltaHelper extends Logging {
     val snapshot = DeltaLog.forTable(spark, rootPath).update()
     val loadEndMs = System.currentTimeMillis()
     logOperationDuration("loading snapshot", rootPath, snapshot, loadEndMs - loadStartMs)
+    if (snapshot.version < 0) {
+      throw new MetaException(
+        s"${hideUserInfoInPath(rootPath)} does not exist or it's not a Delta table")
+    }
     snapshot
   }
 
