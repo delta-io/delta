@@ -21,7 +21,14 @@ This project generates a single uber jar containing Delta Lake and all it transi
 - To test the uber jar, run `build/sbt coreTest/test`
 
 ## Hive connector
-This project contains all the code needed to make Hive read Delta Lake tables.
+This project contains all the codes needed to make Hive read Delta Lake tables. The connector has two JARs `delta-core-shaded-assembly_<scala_version>-0.1.0.jar` and `hive-delta_<scala_version>-0.1.0.jar`. You can use either Scala 2.11 or 2.12. The released JARs are available in the [releases](https://github.com/delta-io/connectors/releases) page. Please download the JARs for the corresponding Scala version you would like to use.
+
+You can also use the following instructions to build them.
+
+### Build JARs
+
+Please skip this section if you have downloaded the connector JARs.
+
 - To compile the project, run `build/sbt hive/compile`
 - To test the project, run `build/sbt hive/test`
 - To generate the connector jar run `build/sbt hive/package`
@@ -41,8 +48,6 @@ Note: if you would like to build jars using Scala 2.11, you can run the SBT comm
 core/target/scala-2.11/delta-core-shaded-assembly_2.11-0.1.0.jar
 hive/target/scala-2.12/hive-delta_2.11-0.1.0.jar
 ```
-
-The above JARs are also available in the [releases](https://github.com/delta-io/connectors/releases) page.
 
 ### Setting up Hive
 
@@ -93,15 +98,14 @@ Hive 2.x.
 
 #### Can I use this connector in Apache Spark or Presto?
 No. The connector **must** be used with Apache Hive. It doesn't work in other systems, such as Apache Spark or Presto.
-- https://github.com/delta-io/delta/issues/85 is tracking the work to support Hive Metastore for Apache Spark.
-- There is no native connector for Presto. But you can generate a manifest file to load a Delta table in Presto. See https://docs.delta.io/latest/presto-integration.html.
-- Other system supoprt can be found in https://docs.delta.io/latest/integrations.html.
+- This connector does not provide the support for defining Hive Metastore tables in Apache Spark. It will be added in [Delta Lake core repository](https://github.com/delta-io/delta). It is tracked by the issue https://github.com/delta-io/delta/issues/85.
+- This Hive connector does not native connectivity for Presto. But you can generate a manifest file to load a Delta table in Presto. See https://docs.delta.io/latest/presto-integration.html.
+- Other system support can be found in https://docs.delta.io/latest/integrations.html.
 
 #### If I create a table using the connector in Hive, can I query it in Apache Spark or Presto?
 No. The table created by this connector in Hive cannot be read in any other systems right now. We recommend to create different tables in different systems but point to the same path. Although you need to use different table names to query the same Delta table, the underlying data will be shared by all of systems.
 
 #### Can I write to a Delta table using this connector?
-
 No. The connector doesn't support writing to a Delta table.
 
 #### Do I need to specify the partition columns when creating a Delta table?
@@ -112,6 +116,9 @@ Unfortunately, the table schema is a core concept of Hive and Hive needs it befo
 
 #### What if I change the underlying Delta table schema in Spark after creating the Hive table?
 If the schema in the underlying Delta metadata is not consistent with the schema specified by `CREATE TABLE` statement, the connector will report an error when loading the table and ask you to fix the schema. You must drop the table and recreate it using the new schema. Hive 3.x exposes a new API to allow a data source to hook ALTER TABLE. You will be able to use ALTER TABLE to update a table schema when the connector supports Hive 3.x.
+
+#### Hive has three execution engines, MapReduce, Tez and Spark. Which one does this connector support?
+The connector supports MapReduce and Tez. It doesn't support Spark execution engine in Hive.
 
 # Reporting issues
 
