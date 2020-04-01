@@ -60,8 +60,7 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
       txn.filterFiles()
       val winningTxn = log.startTransaction()
       winningTxn.commit(addA :: Nil, ManualUpdate)
-      // TODO: intercept a more specific exception
-      intercept[DeltaConcurrentModificationException] {
+      intercept[ConcurrentAppendException] {
         txn.commit(addB :: Nil, ManualUpdate)
       }
     }
