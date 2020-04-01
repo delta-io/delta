@@ -28,7 +28,6 @@ val hiveVersion = "2.3.3"
 val deltaVersion = "0.5.0"
 
 lazy val commonSettings = Seq(
-  version := deltaVersion,
   organization := "io.delta",
   scalaVersion := "2.12.8",
   fork := true,
