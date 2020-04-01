@@ -77,9 +77,9 @@ Right now the connector supports only EXTERNAL Hive tables. The Delta table must
 Here is an example of a CREATE TABLE command that defines an external Hive table pointing to a Delta table on `s3://foo-bucket/bar-dir`.
 
 ```SQL
-CREATE EXTERNAL TABLE deltaTbl(a INT, b STRING)
+CREATE EXTERNAL TABLE deltaTable(col1 INT, col2 STRING)
 STORED BY 'io.delta.hive.DeltaStorageHandler'
-LOCATION 's3://foo-bucket/bar-dir’
+LOCATION '/delta/table/path'
 ```
 
 `io.delta.hive.DeltaStorageHandler` is the class that implements Hive data source APIs. It will know how to load a Delta table and extract its metadata. The table schema in the `CREATE TABLE` statement must be consistent with the underlying Delta metadata. Otherwise, the connector will throw an error to tell you about the inconsistency.
@@ -97,6 +97,10 @@ No. The connector **must** be used with Apache Hive. It doesn't work in other sy
 
 #### If I create a table using the connector in Hive, can I query it in Apache Spark or Presto?
 No. The table created by this connector in Hive cannot be read in any other systems right now. We recommend to create different tables in different systems but point to the same path. Although you need to use different table names to query the same Delta table, the underlying data will be shared by all of systems.
+
+#### Can I write to a Delta table using this connector?
+
+No. The connector doesn't support writing to a Delta table.
 
 #### Do I need to specify the partition columns when creating a Delta table?
 No. The partition columns are read from the underlying Delta metadata. The connector will know the partition columns and use this information to do the partition pruning automatically.
