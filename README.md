@@ -84,10 +84,19 @@ LOCATION 's3://foo-bucket/bar-dir’
 
 `io.delta.hive.DeltaStorageHandler` is the class that implements Hive data source APIs. It will know how to load a Delta table and extract its metadata. The table schema in the `CREATE TABLE` statement must be consistent with the underlying Delta metadata. Otherwise, the connector will throw an error to tell you about the inconsistency.
 
-### FAQs
+### Frequently asked questions (FAQ)
 
 #### Supported Hive versions
-Hive 2.x. Please report any incompatible issues.
+Hive 2.x.
+
+#### Can I use this connector in Apache Spark or Presto?
+No. The connector **must** be used with Apache Hive. It doesn't work in other systems, such as Apache Spark or Presto.
+- https://github.com/delta-io/delta/issues/85 is tracking the work to support Hive Metastore for Apache Spark.
+- There is no native connector for Presto. But you can generate a manifest file to load a Delta table in Presto. See https://docs.delta.io/latest/presto-integration.html.
+- Other system supoprt can be found in https://docs.delta.io/latest/integrations.html.
+
+#### If I create a table using the connector in Hive, can I query it in Apache Spark or Presto?
+No. The table created by this connector in Hive cannot be read in any other systems right now. We recommend to create different tables in different systems but point to the same path. Although you need to use different table names to query the same Delta table, the underlying data will be shared by all of systems.
 
 #### Do I need to specify the partition columns when creating a Delta table?
 No. The partition columns are read from the underlying Delta metadata. The connector will know the partition columns and use this information to do the partition pruning automatically.
