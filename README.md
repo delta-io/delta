@@ -42,6 +42,8 @@ core/target/scala-2.11/delta-core-shaded-assembly_2.11-0.1.0.jar
 hive/target/scala-2.12/hive-delta_2.11-0.1.0.jar
 ```
 
+The above JARs are also available in the [releases](https://github.com/delta-io/connectors/releases) page.
+
 ### Setting up Hive
 
 This sections describes how to set up Hive to load the Delta Hive connector.
