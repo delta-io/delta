@@ -1728,29 +1728,19 @@ abstract class MergeIntoSuiteBase
   def testMergeWithRepartition(
       name: String,
       partitionColumns: Seq[String],
-      srcRange: Seq[Int],
+      srcRange: Range,
+      expectLessFilesWithRepartition: Boolean,
       clauses: MergeClause*): Unit = {
     test(s"merge with repartition - $name") {
       withTempDir { basePath =>
         val tgt1 = basePath + "target"
         val tgt2 = basePath + "targetRepartitioned"
 
-        val df = spark.range(100)
-          .withColumn("part1", 'id % 5)
-          .withColumn("part2", 'id % 3)
-
-        df.write
-          .format("delta")
-          .partitionBy(partitionColumns: _*)
-          .save(tgt1)
-
-        df.write
-          .format("delta")
-          .partitionBy(partitionColumns: _*)
-          .save(tgt2)
-
+        val df = spark.range(100).withColumn("part1", 'id % 5).withColumn("part2", 'id % 3)
+        df.write.format("delta").partitionBy(partitionColumns: _*).save(tgt1)
+        df.write.format("delta").partitionBy(partitionColumns: _*).save(tgt2)
         val cond = "src.id = t.id"
-        val src = spark.range(srcRange.head, srcRange(1))
+        val src = srcRange.toDF("id")
           .withColumn("part1", 'id % 5)
           .withColumn("part2", 'id % 3)
           .createOrReplaceTempView("source")
@@ -1769,51 +1759,45 @@ abstract class MergeIntoSuiteBase
             cond = cond,
             clauses = clauses: _*)
         }
+        checkAnswer(
+          io.delta.tables.DeltaTable.forPath(tgt2).toDF,
+          io.delta.tables.DeltaTable.forPath(tgt1).toDF
+        )
         val filesAfterNoRepartition = DeltaLog.forTable(spark, tgt1).snapshot.numOfFiles
         val filesAfterRepartition = DeltaLog.forTable(spark, tgt2).snapshot.numOfFiles
         // check if there are fewer are number of files for merge with repartition
-        assert(filesAfterNoRepartition > filesAfterRepartition)
+        if (expectLessFilesWithRepartition) {
+          assert(filesAfterNoRepartition > filesAfterRepartition)
+        }
       }
     }
   }
 
   testMergeWithRepartition(
-    "partition on multiple columns",
-    Seq("part1", "part2"),
-    Seq(80, 110),
+    name ="partition on multiple columns",
+    partitionColumns = Seq("part1", "part2"),
+    srcRange = Range(80, 110),
+    expectLessFilesWithRepartition = true,
     update("t.part2 = 1"),
     insert("(id, part1, part2) VALUES (id, part1, part2)")
   )
 
   testMergeWithRepartition(
-    "insert only merge",
-    Seq("part1"),
-    Seq(110, 150),
+    name = "insert only merge",
+    partitionColumns = Seq("part1"),
+    srcRange = Range(110, 150),
+    expectLessFilesWithRepartition = true,
     insert("(id, part1, part2) VALUES (id, part1, part2)")
   )
 
-  test("auto repartition merge - non partitioned table") {
-    withTable("source") {
-      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
-      Seq((1, 1), (0, 3)).toDF("key1", "value").createOrReplaceTempView("source")
-
-      withSQLConf(DeltaSQLConf.MERGE_REPARTITION_BEFORE_WRITE.key -> "true") {
-        executeMerge(
-          target = s"delta.`$tempPath` as trgNew",
-          source = "source src",
-          condition = "src.key1 = key2",
-          update = "key2 = 20 + key2, value = trgNew.value + src.value",
-          insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
-      }
-
-      // Correctness check
-      checkAnswer(readDeltaTable(tempPath),
-        Row(2, 2) :: // No change
-          Row(21, 5) :: // Update
-          Row(-10, 13) :: // Insert
-          Nil)
-    }
-  }
+  testMergeWithRepartition(
+    name ="non partitioned table",
+    partitionColumns = Seq(),
+    srcRange = Range(80, 180),
+    expectLessFilesWithRepartition = false,
+    update("t.part2 = 1"),
+    insert("(id, part1, part2) VALUES (id, part1, part2)")
+  )
 
   test("accumulators used by MERGE should not be tracked by Spark UI") {
     // Run a simple merge command
