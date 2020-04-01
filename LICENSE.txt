@@ -1,4 +1,4 @@
-Copyright 2019 Databricks, Inc.  All rights reserved.
+Copyright (2020) The Delta Lake Project Authors.  All rights reserved.
 
 
                                  Apache License
