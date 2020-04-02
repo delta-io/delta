@@ -250,8 +250,12 @@ trait SnapshotManagement { self: DeltaLog =>
       val newCheckpointPaths = newCheckpoint.get.getCorrespondingFiles(logPath).toSet
 
       val newVersion = deltaVersions.last
+      val deltasAfterCheckpoint = deltas.filter { file =>
+        deltaVersion(file.getPath) > newCheckpointVersion
+      }
 
-      val deltaIndex = DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT, deltas)
+      val deltaIndex =
+        DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT, deltasAfterCheckpoint)
       val newCheckpointFiles = checkpoints.filter(f => newCheckpointPaths.contains(f.getPath))
       val checkpointIndex =
         DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT, newCheckpointFiles)
