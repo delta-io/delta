@@ -130,7 +130,8 @@ class DeltaDataSource
       mode = mode,
       new DeltaOptions(parameters, sqlContext.sparkSession.sessionState.conf),
       partitionColumns = partitionColumns,
-      configuration = Map.empty,
+      configuration = DeltaConfigs.validateConfigurations(
+        parameters.filterKeys(_.startsWith("delta."))),
       data = data).run(sqlContext.sparkSession)
 
     deltaLog.createRelation()

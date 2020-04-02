@@ -972,4 +972,23 @@ class DeltaSuite extends QueryTest
       sparkContext.removeSparkListener(listener)
     }
   }
+
+  test("set metadata upon write") {
+    withTempDir { inputDir =>
+      val testPath = inputDir.getCanonicalPath
+      spark.range(10)
+        .map(_.toInt)
+        .withColumn("part", $"value" % 2)
+        .write
+        .format("delta")
+        .option("delta.sampleRetentionDuration", "123 days")
+        .partitionBy("part")
+        .mode("append")
+        .save(testPath)
+
+      val deltaLog = DeltaLog.forTable(spark, testPath)
+      assert(deltaLog.snapshot.metadata.configuration ===
+        Map("delta.sampleRetentionDuration" -> "123 days"))
+    }
+  }
 }
