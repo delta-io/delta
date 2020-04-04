@@ -404,7 +404,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
    *
    * @return the real version that was committed.
    */
-  private def doCommit(
+  protected def doCommit(
       attemptVersion: Long,
       actions: Seq[Action],
       attemptNumber: Int,
