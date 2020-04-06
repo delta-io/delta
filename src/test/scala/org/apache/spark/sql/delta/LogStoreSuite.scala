@@ -142,6 +142,28 @@ abstract class LogStoreSuiteBase extends QueryTest
       }
     }
   }
+
+  /**
+   * Whether the log store being tested should use rename to write checkpoint or not. The following
+   * test is using this method to verify the behavior of `checkpoint`.
+   */
+  protected def shouldUseRenameToWriteCheckpoint: Boolean
+
+  test("use isPartialWriteVisible to decide whether use rename") {
+    withTempDir { tempDir =>
+      import testImplicits._
+      Seq(1, 2, 4).toDF().write.format("delta").save(tempDir.getCanonicalPath)
+      withSQLConf(
+          "fs.file.impl" -> classOf[TrackingRenameFileSystem].getName,
+          "fs.file.impl.disable.cache" -> "true") {
+        val logStore = DeltaLog.forTable(spark, tempDir.getCanonicalPath)
+        TrackingRenameFileSystem.numOfRename = 0
+        logStore.checkpoint()
+        val expectedNumOfRename = if (shouldUseRenameToWriteCheckpoint) 1 else 0
+        assert(TrackingRenameFileSystem.numOfRename === expectedNumOfRename)
+      }
+    }
+  }
 }
 
 class AzureLogStoreSuite extends LogStoreSuiteBase {
@@ -152,6 +174,8 @@ class AzureLogStoreSuite extends LogStoreSuiteBase {
     expectedErrMsg = "No FileSystem for scheme: fake",
     "fs.fake.impl" -> classOf[FakeFileSystem].getName,
     "fs.fake.impl.disable.cache" -> "true")
+
+  protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 
 class HDFSLogStoreSuite extends LogStoreSuiteBase {
@@ -215,6 +239,8 @@ class HDFSLogStoreSuite extends LogStoreSuiteBase {
       }
     }
   }
+
+  protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 
 class LocalLogStoreSuite extends LogStoreSuiteBase {
@@ -225,6 +251,8 @@ class LocalLogStoreSuite extends LogStoreSuiteBase {
     expectedErrMsg = "No FileSystem for scheme: fake",
     "fs.fake.impl" -> classOf[FakeFileSystem].getName,
     "fs.fake.impl.disable.cache" -> "true")
+
+  protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 
 /** A fake file system to test whether session Hadoop configuration will be picked up. */
@@ -257,4 +285,19 @@ class FakeAbstractFileSystem(uri: URI, conf: org.apache.hadoop.conf.Configuratio
   override def getUriDefaultPort(): Int = -1
   override def getServerDefaults(): FsServerDefaults = LocalConfigKeys.getServerDefaults
   override def isValidName(src: String): Boolean = true
+}
+
+/**
+ * A file system allowing to track how many times `rename` is called.
+ * `TrackingRenameFileSystem.numOfRename` should be reset to 0 before starting to trace.
+ */
+class TrackingRenameFileSystem extends RawLocalFileSystem {
+  override def rename(src: Path, dst: Path): Boolean = {
+    TrackingRenameFileSystem.numOfRename += 1
+    super.rename(src, dst)
+  }
+}
+
+object TrackingRenameFileSystem {
+  @volatile var numOfRename = 0
 }
