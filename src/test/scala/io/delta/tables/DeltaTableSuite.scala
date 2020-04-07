@@ -17,10 +17,7 @@
 package io.delta.tables
 
 import java.util.Locale
-
-
 import org.apache.spark.sql.{AnalysisException, QueryTest}
-import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 
 class DeltaTableSuite extends QueryTest
@@ -65,7 +62,6 @@ class DeltaTableSuite extends QueryTest
   }
 
   test("isDeltaTable - with non-Delta table path") {
-    val msg = "not a delta table"
     withTempDir { dir =>
       testData.write.format("parquet").mode("overwrite").save(dir.getAbsolutePath)
       assert(!DeltaTable.isDeltaTable(dir.getAbsolutePath))
