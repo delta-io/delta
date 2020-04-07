@@ -16,12 +16,9 @@
 
 package org.apache.spark.sql.delta
 
-import java.util.ConcurrentModificationException
-
-import org.apache.spark.sql.delta.DeltaOperations.{Delete, ManualUpdate, Truncate}
+import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, Metadata, RemoveFile, SetTransaction}
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.test.SharedSparkSession
@@ -640,8 +637,8 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
       partitionCols: Seq[String] = "part" :: Nil)(
       test: DeltaLog => Unit): Unit = {
 
-    val schema = new StructType(partitionCols.map(p => new StructField(p, StringType)).toArray)
-    var actionWithMetaData =
+    val schema = StructType(partitionCols.map(p => StructField(p, StringType)).toArray)
+    val actionWithMetaData =
       actions :+ Metadata(partitionColumns = partitionCols, schemaString = schema.json)
 
     withTempDir { tempDir =>
