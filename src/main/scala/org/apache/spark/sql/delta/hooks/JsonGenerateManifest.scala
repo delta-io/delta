@@ -33,7 +33,7 @@ case class JsonManifest(entries: Seq[JsonManifestEntry])
  * Post commit hook to generate Redshift spectrum style manifests for Delta table.
  * This is useful for compatibility with Redshift.
  */
-object JsonGenerateManifest extends GenerateManifest {
+object GenerateJsonManifest extends GenerateManifestImpl {
 
   override def manifestType(): ManifestType = JsonManifestType
   override type T = JsonManifestRawEntry

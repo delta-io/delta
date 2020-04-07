@@ -26,7 +26,7 @@ import org.apache.spark.util.SerializableConfiguration
  * Post commit hook to generate hive-style manifests for Delta table. This is useful for
  * compatibility with Presto / Athena.
  */
-object SymlinkGenerateManifest extends GenerateManifest {
+object GenerateSymlinkManifest extends GenerateManifestImpl {
 
   override type T = SymlinkManifestRawEntry
   override def manifestType(): ManifestType = SymlinkManifestType

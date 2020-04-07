@@ -30,7 +30,7 @@ import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.util.SerializableConfiguration
 
-trait GenerateManifest extends PostCommitHook with DeltaLogging with Serializable {
+trait GenerateManifestImpl extends PostCommitHook with DeltaLogging with Serializable {
 
   def manifestType(): ManifestType
   type T <: ManifestRawEntry

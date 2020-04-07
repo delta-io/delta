@@ -27,7 +27,7 @@ import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files._
-import org.apache.spark.sql.delta.hooks.{GenerateManifest, PostCommitHook, SymlinkGenerateManifest, JsonGenerateManifest}
+import org.apache.spark.sql.delta.hooks.{GenerateManifestImpl, PostCommitHook, GenerateSymlinkManifest, GenerateJsonManifest}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -315,10 +315,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       lazy val hasFileActions = finalActions.collect { case f: FileAction => f }.nonEmpty
       if (hasFileActions) {
         if (DeltaConfigs.SYMLINK_FORMAT_MANIFEST_ENABLED.fromMetaData(metadata)) {
-          registerPostCommitHook(SymlinkGenerateManifest)
+          registerPostCommitHook(GenerateSymlinkManifest)
         }
         if (DeltaConfigs.JSON_FORMAT_MANIFEST_ENABLED.fromMetaData(metadata)) {
-          registerPostCommitHook(JsonGenerateManifest)
+          registerPostCommitHook(GenerateJsonManifest)
         }
       }
 
