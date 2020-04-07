@@ -279,7 +279,8 @@ case class MergeIntoCommand(
     val insertDf = sourceDF.join(targetDF, new Column(condition), "leftanti")
       .select(outputCols: _*)
 
-    val newFiles = deltaTxn.writeFiles(insertDf)
+    val newFiles = deltaTxn
+      .writeFiles(repartitionIfNeeded(spark, insertDf, deltaTxn.metadata.partitionColumns))
     metrics("numTargetFilesBeforeSkipping") += deltaTxn.snapshot.numOfFiles
     metrics("numTargetFilesAfterSkipping") += dataSkippedFiles.size
     metrics("numTargetFilesRemoved") += 0
@@ -386,7 +387,8 @@ case class MergeIntoCommand(
     logDebug("writeAllChanges: join output plan:\n" + outputDF.queryExecution)
 
     // Write to Delta
-    val newFiles = deltaTxn.writeFiles(outputDF)
+    val newFiles = deltaTxn
+      .writeFiles(repartitionIfNeeded(spark, outputDF, deltaTxn.metadata.partitionColumns))
     metrics("numTargetFilesAdded") += newFiles.size
     newFiles
   }
@@ -423,6 +425,21 @@ case class MergeIntoCommand(
   }
 
   private def seqToString(exprs: Seq[Expression]): String = exprs.map(_.sql).mkString("\n\t")
+
+  /**
+   * Repartitions the output DataFrame by the partition columns if table is partitioned
+   * and `merge.repartitionBeforeWrite.enabled` is set to true.
+   */
+  protected def repartitionIfNeeded(
+      spark: SparkSession,
+      df: DataFrame,
+      partitionColumns: Seq[String]): DataFrame = {
+    if (partitionColumns.nonEmpty && spark.conf.get(DeltaSQLConf.MERGE_REPARTITION_BEFORE_WRITE)) {
+      df.repartition(partitionColumns.map(col): _*)
+    } else {
+      df
+    }
+  }
 }
 
 object MergeIntoCommand {

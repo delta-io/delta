@@ -234,6 +234,17 @@ object DeltaSQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val MERGE_REPARTITION_BEFORE_WRITE =
+    buildConf("merge.repartitionBeforeWrite.enabled")
+      .internal()
+      .doc(
+        """
+          |When enabled, merge will repartition the output by the table's partition columns before
+          |writing the files.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val MERGE_MATCHED_ONLY_ENABLED =
     buildConf("merge.optimizeMatchedOnlyMerge.enabled")
       .internal()
