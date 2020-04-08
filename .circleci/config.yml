@@ -5,6 +5,7 @@ jobs:
       - image: cimg/openjdk:8.0.282
     steps:
       - checkout
+      - setup_remote_docker
       - run:
           name: Prepare Python env # install python3.7, python3-pip and pipenv for pyspark.
           # TODO: Dockerize this process
