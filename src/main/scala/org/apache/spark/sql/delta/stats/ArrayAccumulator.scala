@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.stats
 
+import java.io.{ObjectInput, ObjectOutput}
+
 import org.apache.spark.util.AccumulatorV2
 
 /**
@@ -53,4 +55,6 @@ class ArrayAccumulator(val size: Int) extends AccumulatorV2[(Int, Long), Array[L
     })
   }
   override def value: Array[Long] = counts
+
 }
+

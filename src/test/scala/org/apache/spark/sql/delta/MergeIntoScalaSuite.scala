@@ -171,19 +171,6 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
       Nil)              // Deleted (3, 30)
   }
 
-  test("insert with empty map throws error") {
-    append(Seq((1, 10), (2, 20)).toDF("trgKey", "trgValue"), Nil) // target
-    val source = Seq((1, 100), (3, 30)).toDF("srcKey", "srcValue") // source
-    val e = intercept[AnalysisException] {
-      io.delta.tables.DeltaTable.forPath(spark, tempPath)
-        .merge(source, "srcKey = trgKey")
-        .whenMatched().updateExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
-        .whenNotMatched().insertExpr(Map[String, String]())
-        .execute()
-    }
-    errorContains(e.getMessage, "INSERT clause must specify value for all the columns")
-  }
-
   // Checks specific to the APIs that are automatically handled by parser for SQL
   test("check invalid merge API calls") {
     withTable("source") {
