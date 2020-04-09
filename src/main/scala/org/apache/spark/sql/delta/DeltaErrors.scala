@@ -820,6 +820,11 @@ object DeltaErrors
       s"Specified mode '$modeName' is not supported. Supported modes are: $supportedModes")
   }
 
+  def illegalUsageException(option: String, operation: String): Throwable = {
+    throw new IllegalArgumentException(
+      s"The usage of $option is not allowed when $operation a Delta table.")
+  }
+
   def columnNotInSchemaException(column: String, schema: StructType): Throwable = {
     throw new AnalysisException(
       s"Couldn't find column $column in:\n${schema.treeString}")
