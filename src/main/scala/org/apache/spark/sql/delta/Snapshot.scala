@@ -196,6 +196,34 @@ class Snapshot(
 
   protected def emptyActions =
     spark.createDataFrame(spark.sparkContext.emptyRDD[Row], logSchema).as[SingleAction]
+
+
+  override def logInfo(msg: => String): Unit = {
+    super.logInfo(s"[tableId=${deltaLog.tableId}] " + msg)
+  }
+
+  override def logWarning(msg: => String): Unit = {
+    super.logWarning(s"[tableId=${deltaLog.tableId}] " + msg)
+  }
+
+  override def logWarning(msg: => String, throwable: Throwable): Unit = {
+    super.logWarning(s"[tableId=${deltaLog.tableId}] " + msg, throwable)
+  }
+
+  override def logError(msg: => String): Unit = {
+    super.logError(s"[tableId=${deltaLog.tableId}] " + msg)
+  }
+
+  override def logError(msg: => String, throwable: Throwable): Unit = {
+    super.logError(s"[tableId=${deltaLog.tableId}] " + msg, throwable)
+ }
+
+  override def toString(): String =
+    s"${getClass.getSimpleName}(path=$path, version=$version, metadata=$metadata, " +
+      s"prevSnapshot=$previousSnapshot, files=$files, " +
+      s"lineageLength=$lineageLength)"
+
+  logInfo(s"Created snapshot $this")
 }
 
 object Snapshot extends DeltaLogging {

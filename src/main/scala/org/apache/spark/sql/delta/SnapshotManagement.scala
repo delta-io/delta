@@ -25,6 +25,7 @@ import com.databricks.spark.util.TagDefinitions.TAG_ASYNC
 import org.apache.spark.sql.delta.actions.{Metadata, SingleAction}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames._
+import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{AnalysisException, Dataset}
@@ -125,10 +126,13 @@ trait SnapshotManagement { self: DeltaLog =>
         1)
 
       lastUpdateTimestamp = clock.getTimeMillis()
+      logInfo(s"Returning initial snapshot $snapshot")
       snapshot
     case Success(None) =>
+      logInfo(s"Creating initial snapshot without metadata")
       new InitialSnapshot(logPath, this, Metadata())
     case Failure(_: FileNotFoundException) =>
+      logInfo(s"Creating initial snapshot without metadata because of FNFException")
       // The log directory may not exist
       new InitialSnapshot(logPath, this, Metadata())
     case Failure(t) => throw t
@@ -296,7 +300,7 @@ trait SnapshotManagement { self: DeltaLog =>
           val fileInfo = fileInfoOpt.get
 
           val newSnapshot = if (fileInfo.checkpoint.isDefined) {
-            logInfo(s"Loading version ${fileInfo.version} starting from " +
+            logInfo(s"Updating snapshot by loading version ${fileInfo.version} starting from " +
               s"checkpoint ${fileInfo.checkpointVersion.get}")
 
             createSnapshot(
@@ -310,8 +314,11 @@ trait SnapshotManagement { self: DeltaLog =>
             // If there is no new checkpoint, just apply the deltas to the existing state.
             if (currentSnapshot.lineageLength >= maxSnapshotLineageLength) {
               // Load Snapshot from scratch to avoid StackOverflowError
+              logInfo(s"Updating snapshot at version ${fileInfo.version} with " +
+                s"lineageLength ${currentSnapshot.lineageLength} >= ${maxSnapshotLineageLength}")
               getSnapshotAt(fileInfo.version, fileInfo.lastCommitTimestamp)
             } else {
+              logInfo(s"Updating snapshot at version ${fileInfo.version}")
               createSnapshot(
                 fileInfo.version,
                 Some(currentSnapshot.state),
@@ -321,8 +328,21 @@ trait SnapshotManagement { self: DeltaLog =>
                 lineageLength = currentSnapshot.lineageLength + 1)
             }
           }
+          if (currentSnapshot.version > -1 &&
+            currentSnapshot.metadata.id != newSnapshot.metadata.id) {
+            val msg = s"Change in the table id detected while updating snapshot. " +
+              s"\nPrevious snapshot = $currentSnapshot\nNew snapshot = $newSnapshot."
+            logError(msg)
+            recordDeltaEvent(self, "delta.metadataCheck.update", data = Map(
+              "prevSnapshotVersion" -> currentSnapshot.version,
+              "prevSnapshotMetadata" -> currentSnapshot.metadata,
+              "nextSnapshotVersion" -> newSnapshot.version,
+              "nextSnapshotMetadata" -> newSnapshot.metadata))
+          }
+
           currentSnapshot.uncache()
           currentSnapshot = newSnapshot
+          logInfo(s"Updated snapshot to $newSnapshot")
         } catch {
           case f: FileNotFoundException =>
             val message = s"No delta log found for the Delta table at $logPath"
