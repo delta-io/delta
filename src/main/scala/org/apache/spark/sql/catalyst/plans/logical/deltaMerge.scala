@@ -123,19 +123,29 @@ case class DeltaMergeIntoUpdateClause(condition: Option[Expression], actions: Se
 }
 
 /** Represents the clause WHEN MATCHED THEN DELETE in MERGE. See [[DeltaMergeInto]]. */
-case class DeltaMergeIntoDeleteClause(condition: Option[Expression])
+case class DeltaMergeIntoMatchedDeleteClause(condition: Option[Expression])
     extends DeltaMergeIntoMatchedClause {
   def this(condition: Option[Expression], actions: Seq[DeltaMergeAction]) = this(condition)
 
   override def actions: Seq[Expression] = Seq.empty
 }
 
-/** Represents the clause WHEN NOT MATCHED THEN INSERT in MERGE. See [[DeltaMergeInto]]. */
+/* Represents the clause WHEN NOT MATCHED [BY TARGET] THEN INSERT in MERGE.
+ *  See [[DeltaMergeInto]]. */
 case class DeltaMergeIntoInsertClause(condition: Option[Expression], actions: Seq[Expression])
   extends DeltaMergeIntoClause {
 
   def this(cond: Option[Expression], cols: Seq[UnresolvedAttribute], exprs: Seq[Expression]) =
     this(cond, DeltaMergeIntoClause.toActions(cols, exprs))
+}
+
+/** Represents the clause WHEN NOT MATCHED BY SOURCE THEN DELETE in MERGE.
+ *  See [[DeltaMergeInto]]. */
+case class DeltaMergeIntoNotMatchedDeleteClause(condition: Option[Expression])
+    extends DeltaMergeIntoClause {
+  def this(condition: Option[Expression], actions: Seq[DeltaMergeAction]) = this(condition)
+
+  override def actions: Seq[Expression] = Seq.empty
 }
 
 /**
@@ -174,9 +184,12 @@ case class DeltaMergeInto(
     source: LogicalPlan,
     condition: Expression,
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
-    notMatchedClause: Option[DeltaMergeIntoInsertClause]) extends Command {
+    notMatchedInTargetClause: Option[DeltaMergeIntoInsertClause],
+    notMatchedInSourceClause: Option[DeltaMergeIntoNotMatchedDeleteClause]
+    ) extends Command {
 
-  (matchedClauses ++ notMatchedClause).foreach(_.verifyActions())
+  (matchedClauses ++ notMatchedInTargetClause ++ notMatchedInSourceClause)
+    .foreach(_.verifyActions())
 
   override def children: Seq[LogicalPlan] = Seq(target, source)
   override def output: Seq[Attribute] = Seq.empty
@@ -188,10 +201,16 @@ object DeltaMergeInto {
       source: LogicalPlan,
       condition: Expression,
       whenClauses: Seq[DeltaMergeIntoClause]): DeltaMergeInto = {
-    val deleteClauses = whenClauses.collect { case x: DeltaMergeIntoDeleteClause => x }
-    val updateClauses = whenClauses.collect { case x: DeltaMergeIntoUpdateClause => x }
-    val insertClauses = whenClauses.collect { case x: DeltaMergeIntoInsertClause => x }
-    val matchedClauses = whenClauses.collect { case x: DeltaMergeIntoMatchedClause => x }
+    val matchedDeleteClauses = whenClauses
+      .collect {case x: DeltaMergeIntoMatchedDeleteClause => x}
+    val notMatchedDeleteClauses = whenClauses
+      .collect { case x: DeltaMergeIntoNotMatchedDeleteClause => x }
+    val updateClauses = whenClauses
+      .collect { case x: DeltaMergeIntoUpdateClause => x }
+    val insertClauses = whenClauses
+      .collect { case x: DeltaMergeIntoInsertClause => x }
+    val matchedClauses = whenClauses
+      .collect { case x: DeltaMergeIntoMatchedClause => x }
 
     // grammar enforcement goes here.
     if (whenClauses.isEmpty) {
@@ -209,7 +228,8 @@ object DeltaMergeInto {
     }
 
     if (updateClauses.length >= 2 ||
-      deleteClauses.length >= 2 ||
+      matchedDeleteClauses.length >= 2 ||
+      notMatchedDeleteClauses.length >= 2 ||
       insertClauses.length >= 2) {
       throw new AnalysisException("INSERT, UPDATE and DELETE cannot appear twice in " +
         "one MERGE query")
@@ -220,13 +240,21 @@ object DeltaMergeInto {
       source,
       condition,
       whenClauses.collect { case x: DeltaMergeIntoMatchedClause => x }.take(2),
-      whenClauses.collectFirst { case x: DeltaMergeIntoInsertClause => x })
+      whenClauses.collectFirst { case x: DeltaMergeIntoInsertClause => x },
+      whenClauses.collectFirst { case x: DeltaMergeIntoNotMatchedDeleteClause => x })
   }
 
   def resolveReferences(merge: DeltaMergeInto)(
       resolveExpr: (Expression, LogicalPlan) => Expression): DeltaMergeInto = {
 
-    val DeltaMergeInto(target, source, condition, matchedClauses, notMatchedClause) = merge
+    val DeltaMergeInto(
+      target,
+      source,
+      condition,
+      matchedClauses,
+      processedNotMatchedByTarget,
+      processedNotMatchedBySource
+    ) = merge
 
     // We must do manual resolution as the expressions in different clauses of the MERGE have
     // visibility of the source, the target or both. Additionally, the resolution logic operates
@@ -308,9 +336,19 @@ object DeltaMergeInto {
     val resolvedMatchedClauses = matchedClauses.map {
       resolveClause(_, merge)
     }
-    val resolvedNotMatchedClause = notMatchedClause.map {
+    val resolvedNotMatchedByTargetClause = processedNotMatchedByTarget.map {
       resolveClause(_, fakeSourcePlan)
     }
-    DeltaMergeInto(target, source, resolvedCond, resolvedMatchedClauses, resolvedNotMatchedClause)
+    val resolvedNotMatchedBySourceClause = processedNotMatchedBySource.map {
+      resolveClause(_, fakeTargetPlan)
+    }
+    DeltaMergeInto(
+      target,
+      source,
+      resolvedCond,
+      resolvedMatchedClauses,
+      resolvedNotMatchedByTargetClause,
+      resolvedNotMatchedBySourceClause
+    )
   }
 }
