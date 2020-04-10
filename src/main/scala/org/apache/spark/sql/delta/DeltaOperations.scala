@@ -40,13 +40,12 @@ object DeltaOperations {
 
     lazy val jsonEncodedValues: Map[String, String] = parameters.mapValues(JsonUtils.toJson(_))
 
-    val operationMetrics: Seq[String] = Seq()
+    val operationMetrics: Set[String] = Set()
 
     def transformMetrics(metrics: Map[String, SQLMetric]): Map[String, String] = {
       metrics.filterKeys( s =>
         operationMetrics.contains(s)
-      )
-      metrics.transform((_, v) => v.value.toString)
+      ).transform((_, v) => v.value.toString)
     }
   }
 
@@ -59,10 +58,7 @@ object DeltaOperations {
       partitionBy.map("partitionBy" -> JsonUtils.toJson(_)) ++
       predicate.map("predicate" -> _)
 
-    override val operationMetrics: Seq[String] = Seq(
-      "numFiles",
-      "numOutputBytes",
-      "numOutputRows")
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.WRITE
   }
   /** Recorded during streaming inserts. */
   case class StreamingUpdate(
@@ -71,22 +67,12 @@ object DeltaOperations {
       epochId: Long) extends Operation("STREAMING UPDATE") {
     override val parameters: Map[String, Any] =
       Map("outputMode" -> outputMode.toString, "queryId" -> queryId, "epochId" -> epochId.toString)
-    override val operationMetrics: Seq[String] = Seq(
-      "numAddedFiles",
-      "numRemovedFiles",
-      "numOutputRows",
-      "numOutputBytes"
-    )
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.STREAMING_UPDATE
   }
   /** Recorded while deleting certain partitions. */
   case class Delete(predicate: Seq[String]) extends Operation("DELETE") {
     override val parameters: Map[String, Any] = Map("predicate" -> JsonUtils.toJson(predicate))
-    override val operationMetrics: Seq[String] = Seq(
-      "numAddedFiles",
-      "numRemovedFiles",
-      "numDeletedRows",
-      "numCopiedRows"
-    )
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.DELETE
 
     override def transformMetrics(metrics: Map[String, SQLMetric]): Map[String, String] = {
       // find the case where deletedRows are not captured
@@ -100,6 +86,7 @@ object DeltaOperations {
         // table or partition are deleted.
         strMetrics -= "numDeletedRows"
         strMetrics -= "numCopiedRows"
+        strMetrics -= "numAddedFiles"
       }
       strMetrics
     }
@@ -107,18 +94,14 @@ object DeltaOperations {
   /** Recorded when truncating the table. */
   case class Truncate() extends Operation("TRUNCATE") {
     override val parameters: Map[String, Any] = Map.empty
-    override val operationMetrics: Seq[String] = Seq(
-      "numRemovedFiles"
-    )
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.TRUNCATE
   }
   /** Recorded when fscking the table. */
   case class Fsck(numRemovedFiles: Long) extends Operation("FSCK") {
     override val parameters: Map[String, Any] = Map(
       "numRemovedFiles" -> numRemovedFiles
     )
-    override val operationMetrics: Seq[String] = Seq(
-      "numRemovedFiles"
-    )
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.FSCK
   }
   /** Recorded when converting a table into a Delta table. */
   case class Convert(
@@ -130,9 +113,7 @@ object DeltaOperations {
       "numFiles" -> numFiles,
       "partitionedBy" -> JsonUtils.toJson(partitionBy),
       "collectStats" -> collectStats) ++ catalogTable.map("catalogTable" -> _)
-    override val operationMetrics: Seq[String] = Seq(
-      "numConvertedFiles"
-    )
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.CONVERT
   }
   /** Recorded when optimizing the table. */
   case class Optimize(
@@ -146,17 +127,7 @@ object DeltaOperations {
       "batchId" -> JsonUtils.toJson(batchId),
       "auto" -> auto
     )
-    override val operationMetrics: Seq[String] = Seq(
-      "numAddedFiles",
-      "numRemovedFiles",
-      "numAddedBytes",
-      "numRemovedBytes",
-      "minFileSize",
-      "p25FileSize",
-      "p50FileSize",
-      "p75FileSize",
-      "maxFileSize"
-    )
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.OPTIMIZE
   }
   /** Recorded when a merge operation is committed to the table. */
   case class Merge(
@@ -170,25 +141,12 @@ object DeltaOperations {
         deletePredicate.map("deletePredicate" -> _).toMap ++
         insertPredicate.map("insertPredicate" -> _).toMap
     }
-    override val operationMetrics: Seq[String] = Seq(
-      "numSourceRows",
-      "numTargetRowsInserted",
-      "numTargetRowsUpdated",
-      "numTargetRowsDeleted",
-      "numTargetRowsCopied",
-      "numOutputRows",
-      "numTargetFilesAdded",
-      "numTargetFilesRemoved")
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.MERGE
   }
   /** Recorded when an update operation is committed to the table. */
   case class Update(predicate: Option[String]) extends Operation("UPDATE") {
     override val parameters: Map[String, Any] = predicate.map("predicate" -> _).toMap
-    override val operationMetrics: Seq[String] = Seq(
-      "numAddedFiles",
-      "numRemovedFiles",
-      "numUpdatedRows",
-      "numCopiedRows"
-    )
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.UPDATE
 
     override def transformMetrics(metrics: Map[String, SQLMetric]): Map[String, String] = {
       val numTotalRows = metrics("numTotalRows").value
@@ -212,10 +170,11 @@ object DeltaOperations {
       "description" -> Option(metadata.description),
       "partitionBy" -> JsonUtils.toJson(metadata.partitionColumns),
       "properties" -> JsonUtils.toJson(metadata.configuration))
-    override val operationMetrics: Seq[String] = Seq(
-      "numFiles",
-      "numOutputBytes",
-      "numOutputRows")
+    override val operationMetrics: Set[String] = if (!asSelect) {
+      Set()
+    } else {
+      DeltaOperationMetrics.WRITE
+    }
   }
   /** Recorded when the table is replaced. */
   case class ReplaceTable(
@@ -230,6 +189,11 @@ object DeltaOperations {
       "description" -> Option(metadata.description),
       "partitionBy" -> JsonUtils.toJson(metadata.partitionColumns),
       "properties" -> JsonUtils.toJson(metadata.configuration))
+    override val operationMetrics: Set[String] = if (!asSelect) {
+      Set()
+    } else {
+      DeltaOperationMetrics.WRITE
+    }
   }
   /** Recorded when the table properties are set. */
   case class SetTableProperties(
@@ -341,4 +305,73 @@ object DeltaOperations {
      columnPath: Seq[String],
      column: StructField,
      colPosition: Option[String])
+}
+
+private[delta] object DeltaOperationMetrics {
+  val WRITE = Set(
+    "numFiles", // number of files written
+    "numOutputBytes", // size in bytes of the written contents
+    "numOutputRows" // number of rows written
+  )
+
+  val STREAMING_UPDATE = Set(
+    "numAddedFiles", // number of files added
+    "numRemovedFiles", // number of files removed
+    "numOutputRows", // number of rows written
+    "numOutputBytes" // number of output writes
+  )
+
+  val DELETE = Set(
+    "numAddedFiles", // number of files added
+    "numRemovedFiles", // number of files removed
+    "numDeletedRows", // number of rows removed
+    "numCopiedRows" // number of rows copied in the process of deleting files
+  )
+
+  /** Deleting the entire table or partition would prevent row level metrics from being recorded */
+  val DELETE_PARTITIONS = Set(
+    "numRemovedFiles" // number of files removed
+  )
+
+  val TRUNCATE = Set(
+    "numRemovedFiles" // number of files removed
+  )
+
+  val FSCK = Set(
+    "numRemovedFiles" // number of files removed
+  )
+
+  val CONVERT = Set(
+    "numConvertedFiles" // number of parquet files that have been converted.
+  )
+
+  val OPTIMIZE = Set(
+    "numAddedFiles", // number of files added
+    "numRemovedFiles", // number of files removed
+    "numAddedBytes", // number of bytes added by optimize
+    "numRemovedBytes", // number of bytes removed by optimize
+    "minFileSize", // the size of the smallest file
+    "p25FileSize", // the size of the 25th percentile file
+    "p50FileSize", // the median file size
+    "p75FileSize", // the 75th percentile of the file sizes
+    "maxFileSize" // the size of the largest file
+  )
+
+  val MERGE = Set(
+    "numSourceRows", // number of rows in the source dataframe
+    "numTargetRowsInserted", // number of rows inserted into the target table.
+    "numTargetRowsUpdated", // number of rows updated in the target table.
+    "numTargetRowsDeleted", // number of rows deleted in the target table.
+    "numTargetRowsCopied", // number of target rows copied
+    "numOutputRows", // total number of rows written out
+    "numTargetFilesAdded", // num files added to the sink(target)
+    "numTargetFilesRemoved" // number of files removed from the sink(target)
+  )
+
+  val UPDATE = Set(
+    "numAddedFiles", // number of files added
+    "numRemovedFiles", // number of files removed
+    "numUpdatedRows", // number of rows updated
+    "numCopiedRows" // number of rows just copied over in the process of updating files.
+  )
 }
