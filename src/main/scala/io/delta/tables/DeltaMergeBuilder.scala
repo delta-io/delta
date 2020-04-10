@@ -34,7 +34,7 @@ import org.apache.spark.sql.functions.expr
  *
  * Builder to specify how to merge data from source DataFrame into the target Delta table.
  * You can specify 1, 2 or 3 `when` clauses of which there can be at most 2 `whenMatched` clauses
- * and at most 1 `whenNotMatched` clause. Here are the constraints on these clauses.
+ * and at most 1 `whenNotMatchedByTarget` clause. Here are the constraints on these clauses.
  *
  *   - `whenMatched` clauses:
  *
@@ -60,12 +60,13 @@ import org.apache.spark.sql.functions.expr
  *           ...))
  *       </pre>
  *
- *   - `whenNotMatched` clauses:
+ *   - `whenNotMatchedByTarget` clauses:
  *
  *     - This clause can have only an `insert` action, which can have an optional condition.
  *
- *     - If the `whenNotMatched` clause is not present or if it is present but the non-matching
- *       source row does not satisfy the condition, then the source row is not inserted.
+ *     - If the `whenNotMatchedByTarget` clause is not present or if it is present but the
+ *       non-matching source row does not satisfy the condition, then the source row is not
+ *       inserted.
  *
  *     - If you want to insert all the columns of the target Delta table with the
  *       corresponding column of the source DataFrame, then you can use
@@ -77,6 +78,15 @@ import org.apache.spark.sql.functions.expr
  *           ...))
  *       </pre>
  *
+  *   - `whenNotMatchedBySource` clauses:
+ *
+ *     - This clause can have only an `delete` action, which can have an optional condition.
+ *
+ *     - If the `whenNotMatchedBySource` clause is not present or if it is present but the
+ *       non-matching target row does not satisfy the condition, then the target row is not
+ *       deleted.
+ *
+ *
  * Scala example to update a key-value Delta table with new key-values from a source DataFrame:
  * {{{
  *    deltaTable
@@ -87,7 +97,7 @@ import org.apache.spark.sql.functions.expr
  *     .whenMatched
  *     .updateExpr(Map(
  *       "value" -> "source.value"))
- *     .whenNotMatched
+ *     .whenNotMatchedByTarget
  *     .insertExpr(Map(
  *       "key" -> "source.key",
  *       "value" -> "source.value"))
@@ -106,7 +116,7 @@ import org.apache.spark.sql.functions.expr
  *        new HashMap<String, String>() {{
  *          put("value", "source.value");
  *        }})
- *     .whenNotMatched
+ *     .whenNotMatchedByTarget
  *     .insertExpr(
  *        new HashMap<String, String>() {{
  *         put("key", "source.key");
@@ -175,43 +185,130 @@ class DeltaMergeBuilder private(
    * :: Evolving ::
    *
    * Build the action to perform when the merge condition was not matched. This returns
-   * [[DeltaMergeNotMatchedActionBuilder]] object which can be used to specify how
+   * [[DeltaMergeNotMatchedByTargetActionBuilder]] object which can be used to specify how
    * to insert the new sourced row into the target table.
    * @since 0.3.0
    */
   @Evolving
-  def whenNotMatched(): DeltaMergeNotMatchedActionBuilder = {
-    DeltaMergeNotMatchedActionBuilder(this, None)
+  def whenNotMatched(): DeltaMergeNotMatchedByTargetActionBuilder = {
+    DeltaMergeNotMatchedByTargetActionBuilder(this, None)
   }
 
   /**
    * :: Evolving ::
    *
    * Build the actions to perform when the merge condition was not matched and
-   * the given `condition` is true. This returns [[DeltaMergeMatchedActionBuilder]] object
-   * which can be used to specify how to insert the new sourced row into the target table.
+   * the given `condition` is true. This returns [[DeltaMergeNotMatchedByTargetActionBuilder]]
+   * object which can be used to specify how to insert the new sourced row into the target table.
    *
    * @param condition boolean expression as a SQL formatted string
    * @since 0.3.0
    */
   @Evolving
-  def whenNotMatched(condition: String): DeltaMergeNotMatchedActionBuilder = {
-    whenNotMatched(expr(condition))
+  def whenNotMatched(condition: String): DeltaMergeNotMatchedByTargetActionBuilder = {
+    whenNotMatchedByTarget(expr(condition))
   }
 
   /**
    * :: Evolving ::
    *
-   * Build the actions to perform when the merge condition was not matched and
-   * the given `condition` is true. This returns [[DeltaMergeMatchedActionBuilder]] object
+   * Build the actions to perform when the merge condition was not matched and the given
+   * `condition` is true. This returns [[DeltaMergeNotMatchedByTargetActionBuilder]] object
    * which can be used to specify how to insert the new sourced row into the target table.
    *
    * @param condition boolean expression as a Column object
    * @since 0.3.0
    */
   @Evolving
-  def whenNotMatched(condition: Column): DeltaMergeNotMatchedActionBuilder = {
-    DeltaMergeNotMatchedActionBuilder(this, Some(condition))
+  def whenNotMatched(condition: Column): DeltaMergeNotMatchedByTargetActionBuilder = {
+    DeltaMergeNotMatchedByTargetActionBuilder(this, Some(condition))
+  }
+
+
+  /**
+   * :: Evolving ::
+   *
+   * Build the action to perform when the merge condition was not matched. This returns
+   * [[DeltaMergeNotMatchedByTargetActionBuilder]] object which can be used to specify how
+   * to insert the new sourced row into the target table.
+   * @since 0.3.0
+   */
+  @Evolving
+  def whenNotMatchedByTarget(): DeltaMergeNotMatchedByTargetActionBuilder = {
+    DeltaMergeNotMatchedByTargetActionBuilder(this, None)
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Build the actions to perform when the merge condition was not matched and the given
+   * `condition` is true. This returns [[DeltaMergeNotMatchedByTargetActionBuilder]] object
+   * which can be used to specify how to insert the new sourced row into the target table.
+   *
+   * @param condition boolean expression as a SQL formatted string
+   * @since 0.3.0
+   */
+  @Evolving
+  def whenNotMatchedByTarget(condition: String): DeltaMergeNotMatchedByTargetActionBuilder = {
+    whenNotMatchedByTarget(expr(condition))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Build the actions to perform when the merge condition was not matched and the given `condition`
+   * is true. This returns [[DeltaMergeNotMatchedByTargetActionBuilder]] object
+   * which can be used to specify how to insert the new sourced row into the target table.
+   *
+   * @param condition boolean expression as a Column object
+   * @since 0.3.0
+   */
+  @Evolving
+  def whenNotMatchedByTarget(condition: Column): DeltaMergeNotMatchedByTargetActionBuilder = {
+    DeltaMergeNotMatchedByTargetActionBuilder(this, Some(condition))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Build the action to perform when the merge condition was not matched. This returns
+   * [[DeltaMergeNotMatchedBySourceActionBuilder]] object which can be used to specify how
+   * to delete the old row in the target table.
+   * @since 0.3.0
+   */
+  @Evolving
+  def whenNotMatchedBySource(): DeltaMergeNotMatchedBySourceActionBuilder = {
+    DeltaMergeNotMatchedBySourceActionBuilder(this, None)
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Build the action to perform when the merge condition was not matched. This returns
+   * [[DeltaMergeNotMatchedBySourceActionBuilder]] object which can be used to specify how
+   * to delete the old row in the target table.
+   *
+   * @param condition boolean expression as a SQL formatted string
+   * @since 0.3.0
+   */
+  @Evolving
+  def whenNotMatchedBySource(condition: String): DeltaMergeNotMatchedBySourceActionBuilder = {
+    whenNotMatchedBySource(expr(condition))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Build the action to perform when the merge condition was not matched. This returns
+   * [[DeltaMergeNotMatchedBySourceActionBuilder]] object which can be used to specify how
+   * to delete the old row in the target table.
+   *
+   * @param condition boolean expression as a Column object
+   * @since 0.3.0
+   */
+  @Evolving
+  def whenNotMatchedBySource(condition: Column): DeltaMergeNotMatchedBySourceActionBuilder = {
+    DeltaMergeNotMatchedBySourceActionBuilder(this, Some(condition))
   }
 
   /**
@@ -359,7 +456,7 @@ class DeltaMergeMatchedActionBuilder private(
 
   /** Delete a matched row from the table */
   def delete(): DeltaMergeBuilder = {
-    val deleteClause = DeltaMergeIntoDeleteClause(matchCondition.map(_.expr))
+    val deleteClause = DeltaMergeIntoMatchedDeleteClause(matchCondition.map(_.expr))
     mergeBuilder.withClause(deleteClause)
   }
 
@@ -410,7 +507,7 @@ object DeltaMergeMatchedActionBuilder {
  * @since 0.3.0
  */
 @Evolving
-class DeltaMergeNotMatchedActionBuilder private(
+class DeltaMergeNotMatchedByTargetActionBuilder private(
     private val mergeBuilder: DeltaMergeBuilder,
     private val notMatchCondition: Option[Column]) {
 
@@ -501,7 +598,7 @@ class DeltaMergeNotMatchedActionBuilder private(
   }
 }
 
-object DeltaMergeNotMatchedActionBuilder {
+object DeltaMergeNotMatchedByTargetActionBuilder {
   /**
    * :: Unstable ::
    *
@@ -510,7 +607,45 @@ object DeltaMergeNotMatchedActionBuilder {
   @Unstable
   private[delta] def apply(
       mergeBuilder: DeltaMergeBuilder,
-      notMatchCondition: Option[Column]): DeltaMergeNotMatchedActionBuilder = {
-    new DeltaMergeNotMatchedActionBuilder(mergeBuilder, notMatchCondition)
+      notMatchCondition: Option[Column]): DeltaMergeNotMatchedByTargetActionBuilder = {
+    new DeltaMergeNotMatchedByTargetActionBuilder(mergeBuilder, notMatchCondition)
+  }
+}
+
+/**
+ * :: Evolving ::
+ *
+ * Builder class to specify the actions to perform when a target Delta table has not matched
+ * any source row based on the merge condition, but has matched the additional condition
+ * if specified.
+ *
+ * See [[DeltaMergeBuilder]] for more information.
+ *
+ * @since 0.3.0
+ */
+@Evolving
+class DeltaMergeNotMatchedBySourceActionBuilder private(
+    private val mergeBuilder: DeltaMergeBuilder,
+    private val notMatchCondition: Option[Column]) {
+
+  /** Delete a matched row from the table */
+  def delete(): DeltaMergeBuilder = {
+    val deleteClause = DeltaMergeIntoNotMatchedDeleteClause(notMatchCondition.map(_.expr))
+    mergeBuilder.withClause(deleteClause)
+  }
+
+}
+
+object DeltaMergeNotMatchedBySourceActionBuilder {
+  /**
+   * :: Unstable ::
+   *
+   * Private method for internal usage only. Do not call this directly.
+   */
+  @Unstable
+  private[delta] def apply(
+      mergeBuilder: DeltaMergeBuilder,
+      notMatchCondition: Option[Column]): DeltaMergeNotMatchedBySourceActionBuilder = {
+    new DeltaMergeNotMatchedBySourceActionBuilder(mergeBuilder, notMatchCondition)
   }
 }

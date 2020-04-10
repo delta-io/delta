@@ -72,7 +72,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
 
   test("extended scala API with Column") {
     withTable("source") {
-      append(Seq((1, 10), (2, 20), (4, 40)).toDF("key1", "value1"), Nil)  // target
+      append(Seq((0, 0), (1, 10), (2, 20), (4, 40)).toDF("key1", "value1"), Nil)  // target
       val source = Seq((1, 100), (3, 30), (4, 41)).toDF("key2", "value2")  // source
 
       io.delta.tables.DeltaTable.forPath(spark, tempPath)
@@ -82,13 +82,19 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
         .update(Map("key1" -> functions.col("key2"), "value1" -> functions.col("value2")))
         .whenNotMatched(functions.expr("key2 = 3"))
         .insert(Map("key1" -> functions.col("key2"), "value1" -> functions.col("value2")))
+        .whenNotMatchedBySource().delete()
         .execute()
 
       checkAnswer(
         readDeltaTable(tempPath),
-        Row(1, 100) ::    // Update
-          Row(2, 20) ::     // No change
-          Row(3, 30) ::     // Insert
+          // .update(Map("key1" -> functions.col("key2"), "value1" -> functions.col("value2")))
+          Row(1, 100) ::
+          // .whenNotMatchedBySource().delete()
+          // Row(2, 20) ::
+          // .insert(Map("key1" -> functions.col("key2"), "value1" -> functions.col("value2")))
+          Row(3, 30) ::
+          // .whenMatched(functions.expr("key1 = 4")).delete()
+          // (4, 40) ::
           Nil)
     }
   }
@@ -305,8 +311,8 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
       tgt = target,
       src = source,
       cond = condition,
-      MergeClause(isMatched = true, condition = null, action = s"UPDATE SET $update"),
-      MergeClause(isMatched = false, condition = null, action = s"INSERT $insert"))
+      MergeClause(isMatched = true, condition = null, action = s"UPDATE SET $update", true),
+      MergeClause(isMatched = false, condition = null, action = s"INSERT $insert", true))
   }
 
   override protected def executeMerge(
@@ -347,16 +353,25 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
             actionBuilder.updateExpr(setColExprPairs)
           }
         }
-      } else {                                        // INSERT clause
-        val actionBuilder: DeltaMergeNotMatchedActionBuilder =
-          if (clause.condition != null) mergeBuilder.whenNotMatched(clause.condition)
-          else mergeBuilder.whenNotMatched()
-        val valueStr = clause.action.trim.stripPrefix("INSERT")
-        if (valueStr.trim == "*") {                   // INSERT *
-          actionBuilder.insertAll()
-        } else {                                      // INSERT (x, y, z) VALUES (a, b, c)
-          val valueColExprsPairs = parseInsert(valueStr, Some(clause))
-          actionBuilder.insertExpr(valueColExprsPairs)
+      } else {
+        if (clause.notMatchedTarget) {
+          // INSERT clause
+          val actionBuilder: DeltaMergeNotMatchedByTargetActionBuilder =
+            if (clause.condition != null) mergeBuilder.whenNotMatchedByTarget(clause.condition)
+            else mergeBuilder.whenNotMatchedByTarget()
+          val valueStr = clause.action.trim.stripPrefix("INSERT")
+          if (valueStr.trim == "*") {                   // INSERT *
+            actionBuilder.insertAll()
+          } else {                                      // INSERT (x, y, z) VALUES (a, b, c)
+            val valueColExprsPairs = parseInsert(valueStr, Some(clause))
+            actionBuilder.insertExpr(valueColExprsPairs)
+          }
+        } else {
+          // DELETE clause
+          if (clause.condition != null) mergeBuilder
+            .whenNotMatchedBySource(clause.condition)
+            .delete()
+          else mergeBuilder.whenNotMatchedBySource().delete()
         }
       }
     }

@@ -133,12 +133,14 @@ object DeltaOperations {
   case class Merge(
       predicate: Option[String],
       updatePredicate: Option[String],
-      deletePredicate: Option[String],
+      deleteMatchedPredicate: Option[String],
+      deleteNotMatchedPredicate: Option[String],
       insertPredicate: Option[String]) extends Operation("MERGE") {
     override val parameters: Map[String, Any] = {
       predicate.map("predicate" -> _).toMap ++
         updatePredicate.map("updatePredicate" -> _).toMap ++
-        deletePredicate.map("deletePredicate" -> _).toMap ++
+        deleteMatchedPredicate.map("deleteMatchedPredicate" -> _).toMap ++
+        deleteNotMatchedPredicate.map("deleteNotMatchedPredicate" -> _).toMap ++
         insertPredicate.map("insertPredicate" -> _).toMap
     }
     override val operationMetrics: Set[String] = DeltaOperationMetrics.MERGE

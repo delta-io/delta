@@ -27,7 +27,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
-import org.apache.spark.sql.functions.lit
+import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{IntegerType, MapType, StringType, StructType}
@@ -872,10 +872,12 @@ abstract class MergeIntoSuiteBase
       targetKeyValueNames: (String, String) = ("key", "value"))(
       thunk: (String, String) => Unit = null): Unit = {
 
-    append(target.toDF(targetKeyValueNames._1, targetKeyValueNames._2),
+    append(target.toDF(targetKeyValueNames._1, targetKeyValueNames._2).repartition(4, col("key")),
       if (isKeyPartitioned) Seq(targetKeyValueNames._1) else Nil)
     withTempView("source") {
-      source.toDF(sourceKeyValueNames._1, sourceKeyValueNames._2).createOrReplaceTempView("source")
+      source.toDF(sourceKeyValueNames._1, sourceKeyValueNames._2)
+        .repartition(4, col("key"))
+        .createOrReplaceTempView("source")
       thunk("source", s"delta.`$tempPath`")
     }
   }
@@ -1085,25 +1087,35 @@ abstract class MergeIntoSuiteBase
     errorStrs = "Updating nested fields is only supported for StructType" :: Nil)
 
   /** A simple representative of a any WHEN clause in a MERGE statement */
-  protected case class MergeClause(isMatched: Boolean, condition: String, action: String = null) {
+  protected case class MergeClause(
+      isMatched: Boolean,
+      condition: String,
+      action: String = null,
+      notMatchedTarget: Boolean
+    ) {
     def sql: String = {
       assert(action != null, "action not specified yet")
-      val matched = if (isMatched) "MATCHED" else "NOT MATCHED"
+      val matched = if (isMatched) "MATCHED"
+        else s"NOT MATCHED BY ${if (notMatchedTarget) "TARGET" else "SOURCE"}"
       val cond = if (condition != null) s"AND $condition" else ""
       s"WHEN $matched $cond THEN $action"
     }
   }
 
   protected def update(set: String = null, condition: String = null): MergeClause = {
-    MergeClause(isMatched = true, condition, s"UPDATE SET $set")
+    MergeClause(isMatched = true, condition, s"UPDATE SET $set", true)
   }
 
-  protected def delete(condition: String = null): MergeClause = {
-    MergeClause(isMatched = true, condition, s"DELETE")
+  protected def deleteMatch(condition: String = null): MergeClause = {
+    MergeClause(isMatched = true, condition, s"DELETE", true)
   }
 
   protected def insert(values: String = null, condition: String = null): MergeClause = {
-    MergeClause(isMatched = false, condition, s"INSERT $values")
+    MergeClause(isMatched = false, condition, s"INSERT $values", true)
+  }
+
+  protected def deleteNotMatch(values: String = null, condition: String = null): MergeClause = {
+    MergeClause(isMatched = false, condition, s"DELETE", false)
   }
 
   protected def testAnalysisErrorsInExtendedMerge(
@@ -1151,23 +1163,23 @@ abstract class MergeIntoSuiteBase
 
   testAnalysisErrorsInExtendedMerge("delete condition - ambiguous reference")(
     mergeOn = "s.key = t.key",
-    delete(condition = "key > 1"))(
+    deleteMatch(condition = "key > 1"))(
     errorStrs = "reference 'key' is ambiguous" :: Nil)
 
   testAnalysisErrorsInExtendedMerge("delete condition - unknown reference")(
     mergeOn = "s.key = t.key",
-    delete(condition = "unknownAttrib > 1"))(
+    deleteMatch(condition = "unknownAttrib > 1"))(
     // Should show unknownAttrib as invalid ref and (key, tgtValue, srcValue) as valid column names.
     errorStrs = "DELETE condition" :: "unknownAttrib" :: "key" :: "tgtValue" :: "srcValue" :: Nil)
 
   testAnalysisErrorsInExtendedMerge("delete condition - aggregation function")(
     mergeOn = "s.key = t.key",
-    delete(condition = "max(0) > 0"))(
+    deleteMatch(condition = "max(0) > 0"))(
     errorStrs = "DELETE condition" :: "aggregate functions are not supported" :: Nil)
 
   testAnalysisErrorsInExtendedMerge("delete condition - subquery")(
     mergeOn = "s.key = t.key",
-    delete(condition = "s.srcValue in (select tgtValue from t)"))(
+    deleteMatch(condition = "s.srcValue in (select tgtValue from t)"))(
     errorStrs = Nil)  // subqueries fail for unresolved reference to `t`
 
   testAnalysisErrorsInExtendedMerge("insert condition - unknown reference")(
@@ -1205,6 +1217,7 @@ abstract class MergeIntoSuiteBase
       mergeClauses: MergeClause*)(
       result: Seq[(Int, Int)]): Unit = {
     Seq(true, false).foreach { isPartitioned =>
+    // Seq(true, false).foreach { isPartitioned =>
       test(s"extended syntax - $name - isPartitioned: $isPartitioned ") {
         withKeyValueData(source, target, isPartitioned) { case (sourceName, targetName) =>
           withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "true") {
@@ -1258,64 +1271,110 @@ abstract class MergeIntoSuiteBase
       (3, 3)    // not updated due to target-only condition `t.value <> 3`
     ))
 
-  testExtendedMerge("only delete")(
+  testExtendedMerge("only deleteMatch")(
     source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
     target = (1, 1) :: (2, 2) :: Nil,
     mergeOn = "s.key = t.key",
-    delete())(
+    deleteMatch())(
     result = Seq(
       (2, 2)    // (1, 1) deleted
     ))          // (3, 30) not inserted as not insert clause
 
-  test(s"extended syntax - only delete with multiple matches") {
+  test(s"extended syntax - only deleteMatch with multiple matches") {
     withKeyValueData(
       source = (0, 0) :: (1, 10) :: (1, 100) :: (3, 30) :: Nil,
       target = (1, 1) :: (2, 2) :: Nil
     ) { case (sourceName, targetName) =>
       intercept[UnsupportedOperationException] {
-        executeMerge(s"$targetName t", s"$sourceName s", "s.key = t.key", delete())
+        executeMerge(s"$targetName t", s"$sourceName s", "s.key = t.key", deleteMatch())
       }
     }
   }
 
-  testExtendedMerge("only conditional delete")(
+  testExtendedMerge("only conditional deleteMatch")(
     source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
     target = (1, 1) :: (2, 2) :: (3, 3) :: Nil,
     mergeOn = "s.key = t.key",
-    delete(condition = "s.value <> 20 AND t.value <> 3"))(
+    deleteMatch(condition = "s.value <> 20 AND t.value <> 3"))(
     result = Seq(
       (2, 2),   // not deleted due to source-only condition `s.value <> 20`
       (3, 3)    // not deleted due to target-only condition `t.value <> 3`
     ))          // (1, 1) deleted
 
-  testExtendedMerge("conditional update + delete")(
+  testExtendedMerge("conditional update + deleteMatch")(
     source = (0, 0) :: (1, 10) :: (2, 20) :: Nil,
     target = (1, 1) :: (2, 2) :: (3, 3) :: Nil,
     mergeOn = "s.key = t.key",
     update(condition = "s.key <> 1", set = "key = s.key, value = s.value"),
-    delete())(
+    deleteMatch())(
     result = Seq(
       (2, 20),  // (2, 2) updated, (1, 1) deleted as it did not match update condition
       (3, 3)
     ))
 
-  testExtendedMerge("conditional update + conditional delete")(
+  testExtendedMerge("only deleteNotMatch")(
+    source = (1, 10) :: (2, 20) :: (3, 30) :: Nil,
+    target = (0, 0) :: (1, 10) :: (2, 20) :: Nil,
+    mergeOn = "s.key = t.key",
+    deleteNotMatch())(
+    result = Seq(
+      (1, 10), // (0, 0) deleted
+      (2, 20)
+    )) // (3, 30) not inserted as not insert clause
+
+  test(s"extended syntax - only deleteNotMatch with multiple matches") {
+    withKeyValueData(
+      source = (0, 0) :: (1, 10) :: (1, 100) :: (3, 30) :: Nil,
+      target = (1, 1) :: (2, 2) :: Nil
+    ) { case (sourceName, targetName) =>
+      intercept[UnsupportedOperationException] {
+        executeMerge(s"$targetName t", s"$sourceName s", "s.key = t.key", deleteNotMatch())
+      }
+    }
+  }
+
+  testExtendedMerge("only conditional deleteNotMatch")(
+    source = (2, 20) :: (3, 30) :: Nil,
+    target = (0, 0) :: (1, 1) :: (2, 2) :: (3, 3) :: Nil,
+    mergeOn = "s.key = t.key",
+    deleteNotMatch(condition = "t.value <> 0"))(
+    result = Seq(
+      (0, 0),   // not deleted due to target-only condition `t.value <> 0`
+      (2, 2),
+      (3, 3)
+    )) // (1, 1) deleted
+
+  testExtendedMerge("conditional update + deleteMatch + deleteNotMatch")(
+    source = (0, 0) :: (1, 10) :: (2, 20) :: Nil,
+    target = (1, 1) :: (2, 2) :: (3, 3) :: Nil,
+    mergeOn = "s.key = t.key",
+    update(condition = "s.key <> 1", set = "key = s.key, value = s.value"),
+    deleteMatch(),
+    deleteNotMatch())(
+    result = Seq(
+      // (0, 0) skipped as no insert condition
+      // (1, 1) deleted as it did not match update condition (deleteMatch)
+      (2, 20)  // (2, 2) updated,
+      // (3, 3) deleted as it did not have a source row (deleteNotMatch)
+    ))
+
+  testExtendedMerge("conditional update + conditional deleteMatch")(
     source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
     target = (1, 1) :: (2, 2) :: (3, 3) :: (4, 4) :: Nil,
     mergeOn = "s.key = t.key",
     update(condition = "s.key <> 1", set = "key = s.key, value = s.value"),
-    delete(condition = "s.key <> 2"))(
+    deleteMatch(condition = "s.key <> 2"))(
     result = Seq(
       (2, 20),  // (2, 2) updated as it matched update condition
       (3, 30),  // (3, 3) updated even though it matched update and delete conditions, as update 1st
       (4, 4)
     ))          // (1, 1) deleted as it matched delete condition
 
-  testExtendedMerge("conditional delete + conditional update (order matters)")(
+  testExtendedMerge("conditional deleteMatch + conditional update (order matters)")(
     source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
     target = (1, 1) :: (2, 2) :: (3, 3) :: (4, 4) :: Nil,
     mergeOn = "s.key = t.key",
-    delete(condition = "s.key <> 2"),
+    deleteMatch(condition = "s.key <> 2"),
     update(condition = "s.key <> 1", set = "key = s.key, value = s.value"))(
     result = Seq(
       (2, 20),  // (2, 2) updated as it matched update condition
@@ -1382,12 +1441,12 @@ abstract class MergeIntoSuiteBase
       (2, 2)
     ))
 
-  testExtendedMerge("conditional update + conditional delete + conditional insert")(
+  testExtendedMerge("conditional update + conditional deleteMatch + conditional insert")(
     source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: (4, 40) :: Nil,
     target = (1, 1) :: (2, 2) :: (3, 3) :: Nil,
     mergeOn = "s.key = t.key",
     update(condition = "s.key < 2", set = "key = s.key, value = s.value"),
-    delete(condition = "s.key < 3"),
+    deleteMatch(condition = "s.key < 3"),
     insert(condition = "s.key > 1", values = "(key, value) VALUES (s.key, s.value)"))(
     result = Seq(
       (1, 10),  // (1, 1) updated by condition, but not (2, 2) or (3, 3)
@@ -1397,12 +1456,12 @@ abstract class MergeIntoSuiteBase
 
   // complex merge condition = has target-only and source-only predicates
   testExtendedMerge(
-    "conditional update + conditional delete + conditional insert + complex merge condition ")(
+    "conditional update + conditional deleteMatch + conditional insert + complex merge condition ")(
     source = (-1, -10) :: (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: (4, 40) :: (5, 50) :: Nil,
     target = (-1, -1) :: (1, 1) :: (2, 2) :: (3, 3) :: (5, 5) :: Nil,
     mergeOn = "s.key = t.key AND t.value > 0 AND s.key < 5",
     update(condition = "s.key < 2", set = "key = s.key, value = s.value"),
-    delete(condition = "s.key < 3"),
+    deleteMatch(condition = "s.key < 3"),
     insert(condition = "s.key > 1", values = "(key, value) VALUES (s.key, s.value)"))(
     result = Seq(
       (-1, -1), // (-1, -1) not matched with (-1, -10) by target-only condition 't.value > 0', so
@@ -1430,7 +1489,7 @@ abstract class MergeIntoSuiteBase
         "source s",
         cond = "s.key = t.key",
         update(condition = "s.key < 2", set = "key = s.key, value = s.value + s.extra"),
-        delete(condition = "s.key < 3"),
+        deleteMatch(condition = "s.key < 3"),
         insert(condition = "s.key > 1", values = "(key, value) VALUES (s.key, s.value + s.extra)"))
 
       checkAnswer(
@@ -1853,7 +1912,7 @@ abstract class MergeIntoSuiteBase
     source = Seq((1, 100), (3, 300), (5, 500)),
     target = Seq((1, 10), (2, 20), (3, 30)),
     mergeOn = "s.key = t.key",
-    delete()) (
+    deleteMatch()) (
     result = Seq(
       (2, 20) // existed previously
     )
@@ -1863,7 +1922,7 @@ abstract class MergeIntoSuiteBase
     source = Seq((1, 100), (3, 300), (5, 500)),
     target = Seq((1, 10), (3, 30), (5, 30)),
     mergeOn = "s.key = t.key",
-    update("t.value = s.value", "t.key < 3"), delete("t.key > 3")) (
+    update("t.value = s.value", "t.key < 3"), deleteMatch("t.key > 3")) (
     result = Seq(
       (1, 100), // updated
       (3, 30)   // existed previously
