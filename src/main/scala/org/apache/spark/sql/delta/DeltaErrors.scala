@@ -413,6 +413,10 @@ object DeltaErrors
       s"Invalid value '$input' for option '$name', $explain")
   }
 
+  def unrecognizedLogFile(path: Path): Throwable = {
+    new UnsupportedOperationException(s"Unrecognized log file $path")
+  }
+
   def modifyAppendOnlyTableException: Throwable = {
     new UnsupportedOperationException(
       "This table is configured to only allow appends. If you would like to permit " +
@@ -775,7 +779,7 @@ object DeltaErrors
   }
 
   def emptyDirectoryException(directory: String): Throwable = {
-    new RuntimeException(s"No file found in the directory: $directory.")
+    new FileNotFoundException(s"No file found in the directory: $directory.")
   }
 
   def alterTableSetLocationSchemaMismatchException(

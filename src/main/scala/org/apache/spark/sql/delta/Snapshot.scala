@@ -37,8 +37,7 @@ import org.apache.spark.util.{SerializableConfiguration, Utils}
 
 /**
  * An immutable snapshot of the state of the log at some delta version. Internally
- * this class manages the replay of actions stored in checkpoint or delta files,
- * given an optional starting snapshot.
+ * this class manages the replay of actions stored in checkpoint or delta files.
  *
  * After resolving any new actions, it caches the result and collects the
  * following basic information to the driver:
@@ -53,13 +52,11 @@ import org.apache.spark.util.{SerializableConfiguration, Utils}
 class Snapshot(
     val path: Path,
     val version: Long,
-    previousSnapshot: Option[Dataset[SingleAction]],
-    val files: Seq[DeltaLogFileIndex],
+    val logSegment: LogSegment,
     val minFileRetentionTimestamp: Long,
     val deltaLog: DeltaLog,
     val timestamp: Long,
-    val checksumOpt: Option[VersionChecksum],
-    val lineageLength: Int = 1)
+    val checksumOpt: Option[VersionChecksum])
   extends StateCache
   with PartitionFiltering
   with DeltaFileFormat
@@ -84,16 +81,12 @@ class Snapshot(
     val implicits = spark.implicits
     import implicits._
 
-    val checkpointData = previousSnapshot.getOrElse(emptyActions)
-    val deltaData = load(files)
-    val allActions = checkpointData.union(deltaData)
     val time = minFileRetentionTimestamp
     val hadoopConf = spark.sparkContext.broadcast(
       new SerializableConfiguration(spark.sessionState.newHadoopConf()))
     val logPath = path.toUri // for serializability
 
-    allActions.as[SingleAction]
-      .mapPartitions { actions =>
+    loadActions.mapPartitions { actions =>
         val hdpConf = hadoopConf.value.value
         actions.flatMap {
           _.unwrap match {
@@ -169,13 +162,26 @@ class Snapshot(
   /** Number of columns to collect stats on for data skipping */
   lazy val numIndexedCols: Int = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(metadata)
 
+  // Given the list of files from `LogSegment`, create respective file indices to help create
+  // a DataFrame and short-circuit the many file existence and partition schema inference checks
+  // that exist in DataSource.resolveRelation().
+  protected lazy val deltaFileIndexOpt: Option[DeltaLogFileIndex] = {
+    DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT, logSegment.deltas)
+  }
+
+  protected lazy val checkpointFileIndexOpt: Option[DeltaLogFileIndex] = {
+    DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT, logSegment.checkpoint)
+  }
+
+  protected lazy val fileIndices: Seq[DeltaLogFileIndex] = {
+    checkpointFileIndexOpt.toSeq ++ deltaFileIndexOpt.toSeq
+  }
+
   /**
-   * Load the transaction logs from file indices. The files here may have different file formats
-   * and the file format can be extracted from the file extensions.
+   * Loads the file indices into a Dataset that can be used for LogReplay.
    */
-  private def load(
-      files: Seq[DeltaLogFileIndex]): Dataset[SingleAction] = {
-    val relations = files.map { index: DeltaLogFileIndex =>
+  private def loadActions: Dataset[SingleAction] = {
+    val dfs = fileIndices.map { index: DeltaLogFileIndex =>
       val fsRelation = HadoopFsRelation(
         index,
         index.partitionSchema,
@@ -183,15 +189,10 @@ class Snapshot(
         None,
         index.format,
         Map.empty[String, String])(spark)
-      LogicalRelation(fsRelation)
+      Dataset[SingleAction](spark, LogicalRelation(fsRelation))
     }
-    if (relations.length == 1) {
-      Dataset[SingleAction](spark, relations.head)
-    } else if (relations.nonEmpty) {
-      Dataset[SingleAction](spark, Union(relations))
-    } else {
-      emptyActions
-    }
+
+    dfs.reduceOption(_.union(_)).getOrElse(emptyActions)
   }
 
   protected def emptyActions =
@@ -218,10 +219,9 @@ class Snapshot(
     super.logError(s"[tableId=${deltaLog.tableId}] " + msg, throwable)
  }
 
-  override def toString(): String =
+  override def toString: String =
     s"${getClass.getSimpleName}(path=$path, version=$version, metadata=$metadata, " +
-      s"prevSnapshot=$previousSnapshot, files=$files, " +
-      s"lineageLength=$lineageLength)"
+      s"logSegment=$logSegment, checksumOpt=$checksumOpt)"
 
   logInfo(s"Created snapshot $this")
 }
@@ -271,7 +271,7 @@ class InitialSnapshot(
     val logPath: Path,
     override val deltaLog: DeltaLog,
     override val metadata: Metadata)
-  extends Snapshot(logPath, -1, None, Nil, -1, deltaLog, -1, None) {
+  extends Snapshot(logPath, -1, LogSegment.empty, -1, deltaLog, -1, None) {
   override val state: Dataset[SingleAction] = emptyActions
   override protected lazy val metadataGetter: MetadataGetter = {
     new EmptyMetadataGetter(metadata, deltaLog)

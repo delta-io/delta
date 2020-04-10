@@ -149,10 +149,10 @@ class DeltaTimeTravelSuite extends QueryTest
     val history = new DeltaHistoryManager(deltaLog)
     assert(history.getActiveCommitAtTime(start + 15.seconds, false).version === 1)
 
-    assert(new File(FileNames.deltaFile(deltaLog.logPath, 0L).toUri).delete())
     val commits2 = history.getHistory(Some(10))
-    assert(commits2.last.version === Some(1))
+    assert(commits2.last.version === Some(0))
 
+    assert(new File(FileNames.deltaFile(deltaLog.logPath, 0L).toUri).delete())
     val e = intercept[AnalysisException] {
       history.getActiveCommitAtTime(start + 15.seconds, false).version
     }
