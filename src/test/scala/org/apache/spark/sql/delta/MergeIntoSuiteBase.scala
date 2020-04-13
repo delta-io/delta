@@ -1693,44 +1693,46 @@ abstract class MergeIntoSuiteBase
       expectLessFilesWithRepartition: Boolean,
       clauses: MergeClause*): Unit = {
     test(s"merge with repartition - $name") {
-      withTempDir { basePath =>
-        val tgt1 = basePath + "target"
-        val tgt2 = basePath + "targetRepartitioned"
+      withTempView("source") {
+        withTempDir { basePath =>
+          val tgt1 = basePath + "target"
+          val tgt2 = basePath + "targetRepartitioned"
 
-        val df = spark.range(100).withColumn("part1", 'id % 5).withColumn("part2", 'id % 3)
-        df.write.format("delta").partitionBy(partitionColumns: _*).save(tgt1)
-        df.write.format("delta").partitionBy(partitionColumns: _*).save(tgt2)
-        val cond = "src.id = t.id"
-        val src = srcRange.toDF("id")
-          .withColumn("part1", 'id % 5)
-          .withColumn("part2", 'id % 3)
-          .createOrReplaceTempView("source")
-        // execute merge without repartition
-        executeMerge(
-          tgt = s"delta.`$tgt1` as t",
-          src = "source src",
-          cond = cond,
-          clauses = clauses: _*)
-
-        // execute merge with repartition
-        withSQLConf(DeltaSQLConf.MERGE_REPARTITION_BEFORE_WRITE.key -> "true") {
+          val df = spark.range(100).withColumn("part1", 'id % 5).withColumn("part2", 'id % 3)
+          df.write.format("delta").partitionBy(partitionColumns: _*).save(tgt1)
+          df.write.format("delta").partitionBy(partitionColumns: _*).save(tgt2)
+          val cond = "src.id = t.id"
+          val src = srcRange.toDF("id")
+            .withColumn("part1", 'id % 5)
+            .withColumn("part2", 'id % 3)
+            .createOrReplaceTempView("source")
+          // execute merge without repartition
           executeMerge(
-            tgt = s"delta.`$tgt2` as t",
+            tgt = s"delta.`$tgt1` as t",
             src = "source src",
             cond = cond,
             clauses = clauses: _*)
-        }
-        checkAnswer(
-          io.delta.tables.DeltaTable.forPath(tgt2).toDF,
-          io.delta.tables.DeltaTable.forPath(tgt1).toDF
-        )
-        val filesAfterNoRepartition = DeltaLog.forTable(spark, tgt1).snapshot.numOfFiles
-        val filesAfterRepartition = DeltaLog.forTable(spark, tgt2).snapshot.numOfFiles
-        // check if there are fewer are number of files for merge with repartition
-        if (expectLessFilesWithRepartition) {
-          assert(filesAfterNoRepartition > filesAfterRepartition)
-        } else {
-          assert(filesAfterNoRepartition === filesAfterRepartition)
+
+          // execute merge with repartition
+          withSQLConf(DeltaSQLConf.MERGE_REPARTITION_BEFORE_WRITE.key -> "true") {
+            executeMerge(
+              tgt = s"delta.`$tgt2` as t",
+              src = "source src",
+              cond = cond,
+              clauses = clauses: _*)
+          }
+          checkAnswer(
+            io.delta.tables.DeltaTable.forPath(tgt2).toDF,
+            io.delta.tables.DeltaTable.forPath(tgt1).toDF
+          )
+          val filesAfterNoRepartition = DeltaLog.forTable(spark, tgt1).snapshot.numOfFiles
+          val filesAfterRepartition = DeltaLog.forTable(spark, tgt2).snapshot.numOfFiles
+          // check if there are fewer are number of files for merge with repartition
+          if (expectLessFilesWithRepartition) {
+            assert(filesAfterNoRepartition > filesAfterRepartition)
+          } else {
+            assert(filesAfterNoRepartition === filesAfterRepartition)
+          }
         }
       }
     }
