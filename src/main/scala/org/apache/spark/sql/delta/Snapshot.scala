@@ -28,7 +28,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.plans.logical.Union
+import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.expressions.UserDefinedFunction
 import org.apache.spark.sql.functions._
@@ -74,6 +74,11 @@ class Snapshot(
       .getOrElse(Snapshot.defaultNumSnapshotPartitions)
   }
 
+  /** Performs validations during initialization */
+  protected def init(): Unit = {
+    deltaLog.protocolRead(protocol)
+  }
+
   // Reconstruct the state by applying deltas in order to the checkpoint.
   // We partition by path as it is likely the bulk of the data is add/remove.
   // Non-path based actions will be collocated to a single partition.
@@ -117,26 +122,39 @@ class Snapshot(
   /** The current set of actions in this [[Snapshot]]. */
   def state: Dataset[SingleAction] = cachedState.getDS
 
-  protected lazy val metadataGetter: MetadataGetter = {
-    new StateMetadataGetter(spark, state, deltaLog, checksumOpt)
+  /**
+   * Computes some statistics around the transaction log, therefore on the actions made on this
+   * Delta table.
+   */
+  protected lazy val computedState: State = {
+    val implicits = spark.implicits
+    import implicits._
+    state.select(
+      coalesce(last($"protocol", ignoreNulls = true), defaultProtocol()) as "protocol",
+      coalesce(last($"metaData", ignoreNulls = true), emptyMetadata()) as "metadata",
+      collect_set($"txn") as "setTransactions",
+      // sum may return null for empty data set.
+      coalesce(sum($"add.size"), lit(0L)) as "sizeInBytes",
+      count($"add") as "numOfFiles",
+      count($"metaData") as "numOfMetadata",
+      count($"protocol") as "numOfProtocol",
+      count($"remove") as "numOfRemoves",
+      count($"txn") as "numOfSetTransactions"
+    ).as[State](stateEncoder).first()
   }
 
-  def protocol: Protocol = metadataGetter.protocol
-  def metadata: Metadata = metadataGetter.metadata
-  def setTransactions: Seq[SetTransaction] = metadataGetter.setTransactions
-  def sizeInBytes: Long = metadataGetter.sizeInBytes
-  def numOfFiles: Long = metadataGetter.numOfFiles
-  def numOfMetadata: Long = metadataGetter.numOfMetadata
-  def numOfProtocol: Long = metadataGetter.numOfProtocol
-  def numOfRemoves: Long = metadataGetter.numOfRemoves
-  def numOfSetTransactions: Long = metadataGetter.numOfSetTransactions
-
-  // Validations
-  metadataGetter.validateChecksum()
-  deltaLog.protocolRead(protocol)
+  def protocol: Protocol = computedState.protocol
+  def metadata: Metadata = computedState.metadata
+  def setTransactions: Seq[SetTransaction] = computedState.setTransactions
+  def sizeInBytes: Long = computedState.sizeInBytes
+  def numOfFiles: Long = computedState.numOfFiles
+  def numOfMetadata: Long = computedState.numOfMetadata
+  def numOfProtocol: Long = computedState.numOfProtocol
+  def numOfRemoves: Long = computedState.numOfRemoves
+  def numOfSetTransactions: Long = computedState.numOfSetTransactions
 
   /** A map to look up transaction version by appId. */
-  lazy val transactions = setTransactions.map(t => t.appId -> t.version).toMap
+  lazy val transactions: Map[String, Long] = setTransactions.map(t => t.appId -> t.version).toMap
 
   // Here we need to bypass the ACL checks for SELECT anonymous function permissions.
   /** All of the files present in this [[Snapshot]]. */
@@ -195,7 +213,7 @@ class Snapshot(
     dfs.reduceOption(_.union(_)).getOrElse(emptyActions)
   }
 
-  protected def emptyActions =
+  protected def emptyActions: Dataset[SingleAction] =
     spark.createDataFrame(spark.sparkContext.emptyRDD[Row], logSchema).as[SingleAction]
 
 
@@ -224,6 +242,7 @@ class Snapshot(
       s"logSegment=$logSegment, checksumOpt=$checksumOpt)"
 
   logInfo(s"Created snapshot $this")
+  init()
 }
 
 object Snapshot extends DeltaLogging {
@@ -258,11 +277,50 @@ object Snapshot extends DeltaLogging {
       }
     })
   }
+
+  /**
+   * Metrics and metadata computed around the Delta table
+   * @param protocol The protocol version of the Delta table
+   * @param metadata The metadata of the table
+   * @param setTransactions The streaming queries writing to this table
+   * @param sizeInBytes The total size of the table (of active files, not including tombstones)
+   * @param numOfFiles The number of files in this table
+   * @param numOfMetadata The number of metadata actions in the state. Should be 1
+   * @param numOfProtocol The number of protocol actions in the state. Should be 1
+   * @param numOfRemoves The number of tombstones in the state
+   * @param numOfSetTransactions Number of streams writing to this table
+   */
+  case class State(
+      protocol: Protocol,
+      metadata: Metadata,
+      setTransactions: Seq[SetTransaction],
+      sizeInBytes: Long,
+      numOfFiles: Long,
+      numOfMetadata: Long,
+      numOfProtocol: Long,
+      numOfRemoves: Long,
+      numOfSetTransactions: Long)
+
+  private[this] lazy val _stateEncoder: ExpressionEncoder[State] = try {
+    ExpressionEncoder[State]()
+  } catch {
+    case e: Throwable =>
+      logError(e.getMessage, e)
+      throw e
+  }
+
+
+  private lazy val emptyMetadata = udf(() => Metadata())
+  private lazy val defaultProtocol = udf(() => Protocol())
+  implicit private def stateEncoder: Encoder[State] = {
+    _stateEncoder.copy()
+  }
 }
 
 /**
  * An initial snapshot with only metadata specified. Useful for creating a DataFrame from an
  * existing parquet table during its conversion to delta.
+ *
  * @param logPath the path to transaction log
  * @param deltaLog the delta log object
  * @param metadata the metadata of the table
@@ -272,8 +330,9 @@ class InitialSnapshot(
     override val deltaLog: DeltaLog,
     override val metadata: Metadata)
   extends Snapshot(logPath, -1, LogSegment.empty, -1, deltaLog, -1, None) {
-  override val state: Dataset[SingleAction] = emptyActions
-  override protected lazy val metadataGetter: MetadataGetter = {
-    new EmptyMetadataGetter(metadata, deltaLog)
+
+  override def state: Dataset[SingleAction] = emptyActions
+  override protected lazy val computedState: Snapshot.State = {
+    Snapshot.State(Protocol(), metadata, Nil, 0L, 0L, 1L, 1L, 0L, 0L)
   }
 }
