@@ -124,7 +124,7 @@ class DeltaMergeBuilder private(
     private val onCondition: Column,
     private val whenClauses: Seq[DeltaMergeIntoClause])
   extends AnalysisHelper
-  with DeltaLogging {
+  {
 
   /**
    * :: Evolving ::
