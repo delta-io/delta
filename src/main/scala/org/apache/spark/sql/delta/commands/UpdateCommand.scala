@@ -16,11 +16,10 @@
 
 package org.apache.spark.sql.delta.commands
 
-import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, DeltaTableUtils, OptimisticTransaction}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOperationMetrics, DeltaOperations, DeltaTableUtils, OptimisticTransaction}
 import org.apache.spark.sql.delta.actions.{Action, AddFile}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{Column, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Alias, Expression, If, Literal}
@@ -57,8 +56,12 @@ case class UpdateCommand(
     "numAddedFiles" -> createMetric(sc, "number of files added."),
     "numRemovedFiles" -> createMetric(sc, "number of files removed."),
     "numUpdatedRows" -> createMetric(sc, "number of rows updated."),
-    "numTotalRows" -> createMetric(sc, "number of rows copied.")
-  )
+    "numTotalRows" -> createMetric(sc, "number of rows copied."),
+    DeltaOperationMetrics.SCAN_TIME_MS ->
+      createMetric(sc, "milliseconds spent on finding the target data."),
+    DeltaOperationMetrics.REWRITE_TIME_MS ->
+      createMetric(sc, "milliseconds spent on rewriting the target data.")
+  ) ++ commonMetrics
 
   final override def run(sparkSession: SparkSession): Seq[Row] = {
     recordDeltaOperation(tahoeFileIndex.deltaLog, "delta.dml.update") {
@@ -170,6 +173,10 @@ case class UpdateCommand(
     if (actions.nonEmpty) {
       metrics("numAddedFiles").set(numRewrittenFiles)
       metrics("numRemovedFiles").set(numTouchedFiles)
+      metrics(DeltaOperationMetrics.EXECUTION_TIME_MS)
+        .set((System.nanoTime() - startTime) / 1000 / 1000)
+      metrics(DeltaOperationMetrics.SCAN_TIME_MS).set(scanTimeMs)
+      metrics(DeltaOperationMetrics.REWRITE_TIME_MS).set(rewriteTimeMs)
       txn.registerSQLMetrics(sparkSession, metrics)
       txn.commit(actions, DeltaOperations.Update(condition.map(_.toString)))
       // This is needed to make the SQL metrics visible in the Spark UI

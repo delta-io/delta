@@ -57,8 +57,12 @@ case class DeleteCommand(
     "numRemovedFiles" -> createMetric(sc, "number of files removed."),
     "numAddedFiles" -> createMetric(sc, "number of files added."),
     "numDeletedRows" -> createMetric(sc, "number of rows deleted."),
-    "numTotalRows" -> createMetric(sc, "total number of rows.")
-  )
+    "numTotalRows" -> createMetric(sc, "total number of rows."),
+    DeltaOperationMetrics.SCAN_TIME_MS ->
+      createMetric(sc, "milliseconds spent on finding the target data."),
+    DeltaOperationMetrics.REWRITE_TIME_MS ->
+      createMetric(sc, "milliseconds spent on rewriting the target data.")
+  ) ++ commonMetrics
 
   final override def run(sparkSession: SparkSession): Seq[Row] = {
     recordDeltaOperation(tahoeFileIndex.deltaLog, "delta.dml.delete") {
@@ -183,6 +187,10 @@ case class DeleteCommand(
     if (deleteActions.nonEmpty) {
       metrics("numRemovedFiles").set(numTouchedFiles)
       metrics("numAddedFiles").set(numRewrittenFiles)
+      metrics(DeltaOperationMetrics.EXECUTION_TIME_MS)
+        .set((System.nanoTime() - startTime) / 1000 / 1000)
+      metrics(DeltaOperationMetrics.SCAN_TIME_MS).set(scanTimeMs)
+      metrics(DeltaOperationMetrics.REWRITE_TIME_MS).set(rewriteTimeMs)
       txn.registerSQLMetrics(sparkSession, metrics)
       txn.commit(deleteActions, DeltaOperations.Delete(condition.map(_.sql).toSeq))
       // This is needed to make the SQL metrics visible in the Spark UI

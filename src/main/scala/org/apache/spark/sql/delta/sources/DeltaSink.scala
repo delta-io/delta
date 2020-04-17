@@ -53,9 +53,12 @@ class DeltaSink(
 
   override def addBatch(batchId: Long, data: DataFrame): Unit = deltaLog.withNewTransaction { txn =>
     val sc = data.sparkSession.sparkContext
+    val startTime = System.nanoTime()
     val metrics = Map[String, SQLMetric](
       "numAddedFiles" -> createMetric(sc, "number of files added"),
-      "numRemovedFiles" -> createMetric(sc, "number of files removed")
+      "numRemovedFiles" -> createMetric(sc, "number of files removed"),
+      DeltaOperationMetrics.EXECUTION_TIME_MS -> createMetric(
+        SparkContext.getActive.get, "milliseconds of the execution time")
     )
     val queryId = sqlContext.sparkContext.getLocalProperty(StreamExecution.QUERY_ID_KEY)
     assert(queryId != null)
@@ -101,6 +104,8 @@ class DeltaSink(
     val info = DeltaOperations.StreamingUpdate(outputMode, queryId, batchId)
     metrics("numRemovedFiles").set(deletedFiles.size)
     metrics("numAddedFiles").set(newFiles.size)
+    metrics(DeltaOperationMetrics.EXECUTION_TIME_MS)
+      .set((System.nanoTime() - startTime) / 1000 / 1000)
     txn.registerSQLMetrics(sqlContext.sparkSession, metrics)
     txn.commit(setTxn ++ newFiles ++ deletedFiles, info)
     // This is needed to make the SQL metrics visible in the Spark UI

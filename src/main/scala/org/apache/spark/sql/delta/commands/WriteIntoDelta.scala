@@ -17,12 +17,14 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.SparkContext
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{Action, AddFile}
 import org.apache.spark.sql.delta.schema.ImplicitMetadataOperation
-
 import org.apache.spark.sql._
 import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 
 /**
  * Used to write a [[DataFrame]] into a delta table.
@@ -53,6 +55,8 @@ case class WriteIntoDelta(
   with ImplicitMetadataOperation
   with DeltaCommand {
 
+  override lazy val metrics = this.commonMetrics
+
   override protected val canMergeSchema: Boolean = options.canMergeSchema
 
   private def isOverwriteOperation: Boolean = mode == SaveMode.Overwrite
@@ -62,8 +66,13 @@ case class WriteIntoDelta(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     deltaLog.withNewTransaction { txn =>
+      val startTime = System.nanoTime()
       val actions = write(txn, sparkSession)
       val operation = DeltaOperations.Write(mode, Option(partitionColumns), options.replaceWhere)
+
+      metrics(DeltaOperationMetrics.EXECUTION_TIME_MS)
+        .set((System.nanoTime() - startTime) / 1000 / 1000)
+      txn.registerSQLMetrics(sparkSession, metrics)
       txn.commit(actions, operation)
     }
     Seq.empty

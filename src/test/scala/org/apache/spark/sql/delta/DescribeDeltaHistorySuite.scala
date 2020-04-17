@@ -334,6 +334,7 @@ trait DescribeDeltaHistorySuiteBase
         // Check if operation metrics from history are accurate
         checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.WRITE)
         assert(operationMetrics("numOutputBytes").toLong > 0)
+        assert(operationMetrics("executionTimeMs").toLong > 0)
       }
     }
   }
@@ -364,6 +365,7 @@ trait DescribeDeltaHistorySuiteBase
           "numSourceRows" -> "100"
         )
         checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.MERGE)
+        assert(operationMetrics("executionTimeMs").toLong > 0)
       }
     }
   }
@@ -395,6 +397,7 @@ trait DescribeDeltaHistorySuiteBase
         )
         checkOperationMetrics(
           expectedMetrics, operationMetrics, DeltaOperationMetrics.STREAMING_UPDATE)
+        assert(operationMetrics("executionTimeMs").toLong > 0)
 
         // check if second batch also returns correct metrics.
         memoryStream.addData(1, 2, 3)
@@ -408,6 +411,7 @@ trait DescribeDeltaHistorySuiteBase
         checkOperationMetrics(
           expectedMetrics2, operationMetrics, DeltaOperationMetrics.STREAMING_UPDATE)
         assert(operationMetrics("numOutputBytes").toLong > 0)
+
         q.stop()
       }
     }
@@ -446,6 +450,7 @@ trait DescribeDeltaHistorySuiteBase
         )
         checkOperationMetrics(
           expectedMetrics, operationMetrics, DeltaOperationMetrics.STREAMING_UPDATE)
+        assert(operationMetrics("executionTimeMs").toLong > 0)
       }
     }
   }
@@ -477,6 +482,9 @@ trait DescribeDeltaHistorySuiteBase
           "numCopiedRows" -> expectedRowCount.toString
         )
         checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.UPDATE)
+        assert(operationMetrics("executionTimeMs").toLong > 0)
+        assert(operationMetrics("scanTimeMs").toLong > 0)
+        assert(operationMetrics("rewriteTimeMs").toLong > 0)
       }
     }
   }
@@ -511,6 +519,9 @@ trait DescribeDeltaHistorySuiteBase
           "numRemovedFiles" -> (numFilesBeforeUpdate / numPartitions).toString
         )
         checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.UPDATE)
+        assert(operationMetrics("executionTimeMs").toLong > 0)
+        assert(operationMetrics("scanTimeMs").toLong > 0)
+        assert(operationMetrics("rewriteTimeMs").toLong > 0)
       }
     }
   }
@@ -544,6 +555,9 @@ trait DescribeDeltaHistorySuiteBase
           "numCopiedRows" -> (numRows - rowsToDelete).toString
         )
         checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.DELETE)
+        assert(operationMetrics("executionTimeMs").toLong > 0)
+        assert(operationMetrics("scanTimeMs").toLong > 0)
+        assert(operationMetrics("rewriteTimeMs").toLong > 0)
       }
     }
   }
@@ -571,6 +585,9 @@ trait DescribeDeltaHistorySuiteBase
         // row level metrics are not collected for deletes with parition columns
         checkOperationMetrics(
           expectedMetrics, operationMetrics, DeltaOperationMetrics.DELETE_PARTITIONS)
+        assert(operationMetrics("executionTimeMs").toLong > 0)
+        assert(operationMetrics("scanTimeMs").toLong > 0)
+        assert(operationMetrics("rewriteTimeMs").toLong == 0)
       }
     }
   }
@@ -598,6 +615,8 @@ trait DescribeDeltaHistorySuiteBase
         )
         checkOperationMetrics(
           expectedMetrics, operationMetrics, DeltaOperationMetrics.DELETE_PARTITIONS)
+        assert(operationMetrics("scanTimeMs").toLong > 0)
+        assert(operationMetrics("rewriteTimeMs").toLong == 0)
       }
     }
   }

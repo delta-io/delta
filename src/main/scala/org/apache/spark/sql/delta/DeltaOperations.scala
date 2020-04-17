@@ -308,30 +308,35 @@ object DeltaOperations {
 }
 
 private[delta] object DeltaOperationMetrics {
+
+  val EXECUTION_TIME_MS = "executionTimeMs" // milliseconds of the execution time
+  val SCAN_TIME_MS = "scanTimeMs" // milliseconds spent on finding the target data
+  val REWRITE_TIME_MS = "rewriteTimeMs" // milliseconds spent on rewriting the target data
+
   val WRITE = Set(
     "numFiles", // number of files written
     "numOutputBytes", // size in bytes of the written contents
     "numOutputRows" // number of rows written
-  )
+  ) + EXECUTION_TIME_MS
 
   val STREAMING_UPDATE = Set(
     "numAddedFiles", // number of files added
     "numRemovedFiles", // number of files removed
     "numOutputRows", // number of rows written
     "numOutputBytes" // number of output writes
-  )
+  ) + EXECUTION_TIME_MS
 
   val DELETE = Set(
     "numAddedFiles", // number of files added
     "numRemovedFiles", // number of files removed
     "numDeletedRows", // number of rows removed
     "numCopiedRows" // number of rows copied in the process of deleting files
-  )
+  ) + EXECUTION_TIME_MS + SCAN_TIME_MS + REWRITE_TIME_MS
 
   /** Deleting the entire table or partition would prevent row level metrics from being recorded */
   val DELETE_PARTITIONS = Set(
     "numRemovedFiles" // number of files removed
-  )
+  ) + EXECUTION_TIME_MS + SCAN_TIME_MS + REWRITE_TIME_MS
 
   val TRUNCATE = Set(
     "numRemovedFiles" // number of files removed
@@ -366,12 +371,12 @@ private[delta] object DeltaOperationMetrics {
     "numOutputRows", // total number of rows written out
     "numTargetFilesAdded", // num files added to the sink(target)
     "numTargetFilesRemoved" // number of files removed from the sink(target)
-  )
+  ) + EXECUTION_TIME_MS
 
   val UPDATE = Set(
     "numAddedFiles", // number of files added
     "numRemovedFiles", // number of files removed
     "numUpdatedRows", // number of rows updated
     "numCopiedRows" // number of rows just copied over in the process of updating files.
-  )
+  ) + EXECUTION_TIME_MS + SCAN_TIME_MS + REWRITE_TIME_MS
 }
