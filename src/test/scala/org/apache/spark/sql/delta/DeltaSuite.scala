@@ -494,6 +494,29 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("support removing partitioning") {
+    withTempDir { tempDir =>
+      if (tempDir.exists()) {
+        assert(tempDir.delete())
+      }
+
+      spark.range(100).select('id, 'id % 4 as 'by4)
+        .write
+        .format("delta")
+        .partitionBy("by4")
+        .save(tempDir.toString)
+
+      spark.read.format("delta").load(tempDir.toString).write
+        .option(DeltaOptions.OVERWRITE_SCHEMA_OPTION, "true")
+        .format("delta")
+        .mode(SaveMode.Overwrite)
+        .save(tempDir.toString)
+
+      val deltaLog = DeltaLog.forTable(spark, tempDir)
+      assert(deltaLog.snapshot.metadata.partitionColumns === Nil)
+    }
+  }
+
   test("columns with commas as partition columns") {
     withTempDir { tempDir =>
       if (tempDir.exists()) {

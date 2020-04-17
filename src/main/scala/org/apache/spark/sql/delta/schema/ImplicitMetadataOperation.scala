@@ -79,8 +79,7 @@ trait ImplicitMetadataOperation extends DeltaLogging {
     def isNewSchema: Boolean = txn.metadata.schema != mergedSchema
     // We need to make sure that the partitioning order and naming is consistent
     // if provided. Otherwise we follow existing partitioning
-    def isNewPartitioning: Boolean = normalizedPartitionCols.nonEmpty &&
-      txn.metadata.partitionColumns != normalizedPartitionCols
+    def isNewPartitioning: Boolean = txn.metadata.partitionColumns != normalizedPartitionCols
     PartitionUtils.validatePartitionColumn(
       mergedSchema,
       normalizedPartitionCols,
