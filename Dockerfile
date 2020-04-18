@@ -8,4 +8,4 @@ COPY . /usr/src/delta
 
 WORKDIR /usr/src/delta
 
-CMD ["python", "run-tests.py"]
+CMD ["python", "-u", "run-tests.py"]
