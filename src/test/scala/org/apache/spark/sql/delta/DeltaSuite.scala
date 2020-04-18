@@ -506,13 +506,15 @@ class DeltaSuite extends QueryTest
         .partitionBy("by4")
         .save(tempDir.toString)
 
+      val deltaLog = DeltaLog.forTable(spark, tempDir)
+      assert(deltaLog.snapshot.metadata.partitionColumns  === Seq("by4"))
+
       spark.read.format("delta").load(tempDir.toString).write
         .option(DeltaOptions.OVERWRITE_SCHEMA_OPTION, "true")
         .format("delta")
         .mode(SaveMode.Overwrite)
         .save(tempDir.toString)
 
-      val deltaLog = DeltaLog.forTable(spark, tempDir)
       assert(deltaLog.snapshot.metadata.partitionColumns === Nil)
     }
   }

@@ -79,7 +79,9 @@ trait ImplicitMetadataOperation extends DeltaLogging {
     def isNewSchema: Boolean = txn.metadata.schema != mergedSchema
     // We need to make sure that the partitioning order and naming is consistent
     // if provided. Otherwise we follow existing partitioning
-    def isNewPartitioning: Boolean = txn.metadata.partitionColumns != normalizedPartitionCols
+    def isNewPartitioning: Boolean = normalizedPartitionCols.nonEmpty &&
+      txn.metadata.partitionColumns != normalizedPartitionCols
+    def isPartitioningChanged: Boolean = txn.metadata.partitionColumns != normalizedPartitionCols
     PartitionUtils.validatePartitionColumn(
       mergedSchema,
       normalizedPartitionCols,
@@ -100,7 +102,7 @@ trait ImplicitMetadataOperation extends DeltaLogging {
           schemaString = dataSchema.json,
           partitionColumns = normalizedPartitionCols,
           configuration = configuration))
-    } else if (isOverwriteMode && canOverwriteSchema && (isNewSchema || isNewPartitioning)) {
+    } else if (isOverwriteMode && canOverwriteSchema && (isNewSchema || isPartitioningChanged)) {
       // Can define new partitioning in overwrite mode
       val newMetadata = txn.metadata.copy(
         schemaString = dataSchema.json,
