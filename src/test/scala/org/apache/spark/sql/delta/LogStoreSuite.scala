@@ -186,6 +186,8 @@ class COSLogStoreSuite extends LogStoreSuiteBase {
     expectedErrMsg = "No FileSystem for scheme: fake",
     "fs.fake.impl" -> classOf[FakeFileSystem].getName,
     "fs.fake.impl.disable.cache" -> "true")
+
+  protected def shouldUseRenameToWriteCheckpoint: Boolean = false
 }
 
 class HDFSLogStoreSuite extends LogStoreSuiteBase {
