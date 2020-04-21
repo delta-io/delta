@@ -185,7 +185,8 @@ class COSLogStoreSuite extends LogStoreSuiteBase {
   testHadoopConf(
     expectedErrMsg = "No FileSystem for scheme: fake",
     "fs.fake.impl" -> classOf[FakeFileSystem].getName,
-    "fs.fake.impl.disable.cache" -> "true")
+    "fs.fake.impl.disable.cache" -> "true",
+    "fs.cos.atomic.write"-> "true")
 
   protected def shouldUseRenameToWriteCheckpoint: Boolean = false
 }
