@@ -39,7 +39,7 @@ import org.apache.spark.sql.types.StructType
  * @since 0.3.0
  */
 @Evolving
-class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
+class DeltaTable private[tables](df: => Dataset[Row], deltaLog: DeltaLog)
   extends DeltaTableOperations {
 
   /**
