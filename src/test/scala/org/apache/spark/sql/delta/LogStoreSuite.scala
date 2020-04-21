@@ -180,13 +180,17 @@ class AzureLogStoreSuite extends LogStoreSuiteBase {
 
 class COSLogStoreSuite extends LogStoreSuiteBase {
 
+  protected override def sparkConf = {
+    super.sparkConf.set(logStoreClassConfKey, logStoreClassName)
+      .set("spark.hadoop.fs.cos.atomic.write", "true")
+  }
+
   override val logStoreClassName: String = classOf[COSLogStore].getName
 
   testHadoopConf(
     expectedErrMsg = "No FileSystem for scheme: fake",
     "fs.fake.impl" -> classOf[FakeFileSystem].getName,
-    "fs.fake.impl.disable.cache" -> "true",
-    "fs.cos.atomic.write"-> "true")
+    "fs.fake.impl.disable.cache" -> "true")
 
   protected def shouldUseRenameToWriteCheckpoint: Boolean = false
 }
