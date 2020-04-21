@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,6 +34,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
@@ -129,7 +130,8 @@ object OptimisticTransaction {
  *
  * This trait is not thread-safe.
  */
-trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReporting {
+trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReporting
+  with DeltaLogging {
 
   import org.apache.spark.sql.delta.util.FileNames._
 
@@ -204,6 +206,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       metadata
     }
     verifyNewMetadata(updatedMetadata)
+    logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $updatedMetadata")
+
     newMetadata = Some(updatedMetadata)
   }
 
@@ -404,15 +408,28 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
    *
    * @return the real version that was committed.
    */
-  private def doCommit(
+  protected def doCommit(
       attemptVersion: Long,
       actions: Seq[Action],
       attemptNumber: Int,
       isolationLevel: IsolationLevel): Long = deltaLog.lockInterruptibly {
     try {
-      logDebug(
+      logInfo(
         s"Attempting to commit version $attemptVersion with ${actions.size} actions with " +
           s"$isolationLevel isolation level")
+
+      if (readVersion > -1 && metadata.id != snapshot.metadata.id) {
+        val msg = s"Change in the table id detected in txn. Table id for txn on table at " +
+          s"${deltaLog.dataPath} was ${snapshot.metadata.id} when the txn was created and " +
+          s"is now changed to ${metadata.id}."
+        logError(msg)
+        recordDeltaEvent(deltaLog, "delta.metadataCheck.commit", data = Map(
+          "readSnapshotTableId" -> snapshot.metadata.id,
+          "txnTableId" -> metadata.id,
+          "txnMetadata" -> metadata,
+          "commitAttemptVersion" -> attemptVersion,
+          "commitAttemptNumber" -> attemptNumber))
+      }
 
       deltaLog.store.write(
         deltaFile(deltaLog.logPath, attemptVersion),
@@ -420,6 +437,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
 
       val commitTime = System.nanoTime()
       val postCommitSnapshot = deltaLog.update()
+
       if (postCommitSnapshot.version < attemptVersion) {
         throw new IllegalStateException(
           s"The committed version is $attemptVersion " +
@@ -633,5 +651,25 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
     } finally {
       activeCommit.foreach(OptimisticTransaction.setActive)
     }
+  }
+
+  override def logInfo(msg: => String): Unit = {
+    super.logInfo(s"[tableId=${snapshot.metadata.id}] " + msg)
+  }
+
+  override def logWarning(msg: => String): Unit = {
+    super.logWarning(s"[tableId=${snapshot.metadata.id}] " + msg)
+  }
+
+  override def logWarning(msg: => String, throwable: Throwable): Unit = {
+    super.logWarning(s"[tableId=${snapshot.metadata.id}] " + msg, throwable)
+  }
+
+  override def logError(msg: => String): Unit = {
+    super.logError(s"[tableId=${snapshot.metadata.id}] " + msg)
+  }
+
+  override def logError(msg: => String, throwable: Throwable): Unit = {
+    super.logError(s"[tableId=${snapshot.metadata.id}] " + msg, throwable)
   }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -585,7 +585,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase {
         AssertOnQuery { q =>
           Utils.deleteRecursively(inputDir)
           val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
-          withMetadata(deltaLog, StructType.fromDDL("value STRING"))
+          // All Delta tables in tests use the same tableId by default. Here we pass a new tableId
+          // to simulate a new table creation in production
+          withMetadata(deltaLog, StructType.fromDDL("value STRING"), tableId = Some("tableId-1234"))
           true
         },
         StartStream(),

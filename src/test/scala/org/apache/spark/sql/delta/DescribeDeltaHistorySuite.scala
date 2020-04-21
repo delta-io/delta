@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.DeltaOperations.{Delete, Merge, Operation, Update}
 import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -61,7 +62,15 @@ trait DescribeDeltaHistorySuiteBase
 
   protected def checkOperationMetrics(
       expectedMetrics: Map[String, String],
-      operationMetrics: Map[String, String]): Unit = {
+      operationMetrics: Map[String, String],
+      metricsSchema: Set[String]): Unit = {
+    if (metricsSchema != operationMetrics.keySet) {
+      fail(
+        s"""The collected metrics does not match the defined schema for the metrics.
+           | Expected : $metricsSchema
+           | Actual : ${operationMetrics.keySet}
+           """.stripMargin)
+    }
     expectedMetrics.keys.foreach { key =>
       if (!operationMetrics.contains(key)) {
         fail(s"The recorded operation metrics does not contain key: $key")
@@ -316,17 +325,15 @@ trait DescribeDeltaHistorySuiteBase
         val deltaTable = io.delta.tables.DeltaTable.forPath(tempDir.getAbsolutePath)
 
         // get last command history
-        val lastCmd = deltaTable.history(1)
+        val operationMetrics = getOperationMetrics(deltaTable.history(1))
+        val expectedMetrics = Map(
+          "numFiles" -> "5",
+          "numOutputRows" -> "100"
+        )
 
         // Check if operation metrics from history are accurate
-        assert(lastCmd.select("operationMetrics.numFiles").take(1).head.getString(0).toLong
-          == 5)
-
-        assert(lastCmd.select("operationMetrics.numOutputBytes").take(1).head.getString(0).toLong
-          > 0)
-
-        assert(lastCmd.select("operationMetrics.numOutputRows").take(1).head.getString(0).toLong
-          == 100)
+        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.WRITE)
+        assert(operationMetrics("numOutputBytes").toLong > 0)
       }
     }
   }
@@ -356,7 +363,7 @@ trait DescribeDeltaHistorySuiteBase
           "numOutputRows" -> "100",
           "numSourceRows" -> "100"
         )
-        checkOperationMetrics(expectedMetrics, operationMetrics)
+        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.MERGE)
       }
     }
   }
@@ -386,7 +393,8 @@ trait DescribeDeltaHistorySuiteBase
           "numRemovedFiles" -> "0",
           "numOutputRows" -> "1"
         )
-        checkOperationMetrics(expectedMetrics, operationMetrics)
+        checkOperationMetrics(
+          expectedMetrics, operationMetrics, DeltaOperationMetrics.STREAMING_UPDATE)
 
         // check if second batch also returns correct metrics.
         memoryStream.addData(1, 2, 3)
@@ -397,7 +405,8 @@ trait DescribeDeltaHistorySuiteBase
           "numRemovedFiles" -> "0",
           "numOutputRows" -> "3"
         )
-        checkOperationMetrics(expectedMetrics2, operationMetrics)
+        checkOperationMetrics(
+          expectedMetrics2, operationMetrics, DeltaOperationMetrics.STREAMING_UPDATE)
         assert(operationMetrics("numOutputBytes").toLong > 0)
         q.stop()
       }
@@ -435,7 +444,8 @@ trait DescribeDeltaHistorySuiteBase
           "numRemovedFiles" -> "1",
           "numOutputRows" -> "1"
         )
-        checkOperationMetrics(expectedMetrics, operationMetrics)
+        checkOperationMetrics(
+          expectedMetrics, operationMetrics, DeltaOperationMetrics.STREAMING_UPDATE)
       }
     }
   }
@@ -466,7 +476,7 @@ trait DescribeDeltaHistorySuiteBase
           "numUpdatedRows" -> "1",
           "numCopiedRows" -> expectedRowCount.toString
         )
-        checkOperationMetrics(expectedMetrics, operationMetrics)
+        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.UPDATE)
       }
     }
   }
@@ -500,7 +510,7 @@ trait DescribeDeltaHistorySuiteBase
           "numAddedFiles" -> addedFiles.toString,
           "numRemovedFiles" -> (numFilesBeforeUpdate / numPartitions).toString
         )
-        checkOperationMetrics(expectedMetrics, operationMetrics)
+        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.UPDATE)
       }
     }
   }
@@ -533,7 +543,7 @@ trait DescribeDeltaHistorySuiteBase
           "numDeletedRows" -> rowsToDelete.toString,
           "numCopiedRows" -> (numRows - rowsToDelete).toString
         )
-        checkOperationMetrics(expectedMetrics, operationMetrics)
+        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.DELETE)
       }
     }
   }
@@ -556,12 +566,38 @@ trait DescribeDeltaHistorySuiteBase
         deltaTable.delete("c1 = 1")
         val operationMetrics = getOperationMetrics(deltaTable.history(1))
         val expectedMetrics = Map[String, String](
-          "numRemovedFiles" -> (numFilesBeforeDelete / numPartitions).toString,
-          "numAddedFiles" -> "0"
+          "numRemovedFiles" -> (numFilesBeforeDelete / numPartitions).toString
         )
-        assert(!operationMetrics.contains("numDeletedRows"))
-        assert(!operationMetrics.contains("numCopiedRows"))
-        checkOperationMetrics(expectedMetrics, operationMetrics)
+        // row level metrics are not collected for deletes with parition columns
+        checkOperationMetrics(
+          expectedMetrics, operationMetrics, DeltaOperationMetrics.DELETE_PARTITIONS)
+      }
+    }
+  }
+
+  test("operation metrics - delete - full") {
+    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+      val numRows = 100
+      val numPartitions = 5
+      withTempDir { tempDir =>
+        spark.range(numRows)
+          .withColumn("c1", 'id % numPartitions)
+          .write
+          .format("delta")
+          .partitionBy("c1")
+          .save(tempDir.getAbsolutePath)
+        val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+        val numFilesBeforeDelete = deltaLog.snapshot.numOfFiles
+        val deltaTable = io.delta.tables.DeltaTable.forPath(tempDir.getAbsolutePath)
+
+        deltaTable.delete()
+
+        val operationMetrics = getOperationMetrics(deltaTable.history(1))
+        val expectedMetrics = Map[String, String](
+          "numRemovedFiles" -> numFilesBeforeDelete.toString
+        )
+        checkOperationMetrics(
+          expectedMetrics, operationMetrics, DeltaOperationMetrics.DELETE_PARTITIONS)
       }
     }
   }
@@ -588,37 +624,7 @@ trait DescribeDeltaHistorySuiteBase
           "numConvertedFiles" -> deltaLog.snapshot.numOfFiles.toString
         )
         val operationMetrics = getOperationMetrics(deltaTable.history(1))
-        checkOperationMetrics(expectedMetrics, operationMetrics)
-      }
-    }
-  }
-
-
-  test("operation metrics - delete - full") {
-    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
-      val numRows = 100
-      val numPartitions = 5
-      withTempDir { tempDir =>
-        spark.range(numRows)
-          .withColumn("c1", 'id % numPartitions)
-          .write
-          .format("delta")
-          .partitionBy("c1")
-          .save(tempDir.getAbsolutePath)
-        val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
-        val numFilesBeforeDelete = deltaLog.snapshot.numOfFiles
-        val deltaTable = io.delta.tables.DeltaTable.forPath(tempDir.getAbsolutePath)
-
-        deltaTable.delete()
-
-        val operationMetrics = getOperationMetrics(deltaTable.history(1))
-        val expectedMetrics = Map[String, String](
-          "numRemovedFiles" -> numFilesBeforeDelete.toString,
-          "numAddedFiles" -> "0"
-        )
-        assert(!operationMetrics.contains("numDeletedRows"))
-        assert(!operationMetrics.contains("numCopiedRows"))
-        checkOperationMetrics(expectedMetrics, operationMetrics)
+        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.CONVERT)
       }
     }
   }

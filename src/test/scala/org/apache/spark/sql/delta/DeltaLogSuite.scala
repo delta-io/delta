@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -97,6 +97,46 @@ class DeltaLogSuite extends QueryTest
       assert(numOfStateRDDs >= 1, "collectReservoirStateRDD may not work properly")
       assert(numOfStateRDDs < checkpointInterval)
     }
+  }
+
+  test("update shouldn't pick up delta files earlier than checkpoint") {
+    val tempDir = Utils.createTempDir()
+    val log1 = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+
+    (1 to 5).foreach { i =>
+      val txn = log1.startTransaction()
+      val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
+      val delete: Seq[Action] = if (i > 1) {
+        RemoveFile(i - 1 toString, Some(System.currentTimeMillis()), true) :: Nil
+      } else {
+        Nil
+      }
+      txn.commit(delete ++ file, testOp)
+    }
+
+    DeltaLog.clearCache()
+    val log2 = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+
+    (6 to 15).foreach { i =>
+      val txn = log1.startTransaction()
+      val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
+      val delete: Seq[Action] = if (i > 1) {
+        RemoveFile(i - 1 toString, Some(System.currentTimeMillis()), true) :: Nil
+      } else {
+        Nil
+      }
+      txn.commit(delete ++ file, testOp)
+    }
+
+    // Since log2 is a separate instance, it shouldn't be updated to version 15
+    assert(log2.snapshot.version == 4)
+    val updateLog2 = log2.update()
+    assert(updateLog2.version == log1.snapshot.version, "Did not update to correct version")
+
+    val deltas = log2.snapshot.logSegment.deltas
+    assert(deltas.length === 4, "Expected 4 files starting at version 11 to 14")
+    val versions = deltas.map(f => FileNames.deltaVersion(f.getPath)).sorted
+    assert(versions === Seq[Long](11, 12, 13, 14), "Received the wrong files for update")
   }
 
   testQuietly("ActionLog cache should use the normalized path as key") {

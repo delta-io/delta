@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,7 +40,7 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
       val clock = new ManualClock(System.currentTimeMillis())
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath), clock)
       (1 to 5).foreach { i =>
-        val txn = log.startTransaction()
+        val txn = if (i == 1) startTxnWithManualLogCleanup(log) else log.startTransaction()
         val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
         val delete: Seq[Action] = if (i > 1) {
           RemoveFile(i - 1 toString, Some(System.currentTimeMillis()), true) :: Nil
@@ -81,7 +81,7 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath), clock)
 
       (1 to 25).foreach { i =>
-        val txn = log.startTransaction()
+        val txn = if (i == 1) startTxnWithManualLogCleanup(log) else log.startTransaction()
         val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
         val delete: Seq[Action] = if (i > 1) {
           RemoveFile(i - 1 toString, Some(System.currentTimeMillis()), true) :: Nil
@@ -123,7 +123,7 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
       val clock = new ManualClock(System.currentTimeMillis())
       val log1 = DeltaLog(spark, new Path(tempDir.getCanonicalPath), clock)
 
-      val txn = log1.startTransaction()
+      val txn = startTxnWithManualLogCleanup(log1)
       val files1 = (1 to 10).map(f => AddFile(f.toString, Map.empty, 1, 1, true))
       txn.commit(files1, testOp)
       val txn2 = log1.startTransaction()
@@ -143,7 +143,7 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
       val clock = new ManualClock(System.currentTimeMillis())
       val log1 = DeltaLog(spark, new Path(tempDir.getCanonicalPath), clock)
 
-      val txn = log1.startTransaction()
+      val txn = startTxnWithManualLogCleanup(log1)
       val files1 = (1 to 10).map(f => AddFile(f.toString, Map.empty, 1, 1, true))
       txn.commit(files1, testOp)
       val txn2 = log1.startTransaction()
@@ -166,7 +166,7 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
     withTempDir { tempDir =>
       val clock = new ManualClock(System.currentTimeMillis())
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath), clock)
-      log.startTransaction().commit(AddFile("0", Map.empty, 1, 1, true) :: Nil, testOp)
+      startTxnWithManualLogCleanup(log).commit(AddFile("0", Map.empty, 1, 1, true) :: Nil, testOp)
       log.checkpoint()
 
       val initialFiles = getLogFiles(tempDir)

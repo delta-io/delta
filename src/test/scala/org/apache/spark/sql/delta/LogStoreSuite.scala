@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta
 
 import java.io.{File, IOException}
 import java.net.URI
+
+import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.AddFile
@@ -134,10 +136,31 @@ abstract class LogStoreSuiteBase extends QueryTest
           createLogStore(spark).listFrom(path)
         }
         assert(e.getMessage.contains(expectedErrMsg))
-
         withSQLConf(fsImplConfs: _*) {
           createLogStore(spark).listFrom(path)
         }
+      }
+    }
+  }
+
+  /**
+   * Whether the log store being tested should use rename to write checkpoint or not. The following
+   * test is using this method to verify the behavior of `checkpoint`.
+   */
+  protected def shouldUseRenameToWriteCheckpoint: Boolean
+
+  test("use isPartialWriteVisible to decide whether use rename") {
+    withTempDir { tempDir =>
+      import testImplicits._
+      Seq(1, 2, 4).toDF().write.format("delta").save(tempDir.getCanonicalPath)
+      withSQLConf(
+          "fs.file.impl" -> classOf[TrackingRenameFileSystem].getName,
+          "fs.file.impl.disable.cache" -> "true") {
+        val logStore = DeltaLog.forTable(spark, tempDir.getCanonicalPath)
+        TrackingRenameFileSystem.numOfRename = 0
+        logStore.checkpoint()
+        val expectedNumOfRename = if (shouldUseRenameToWriteCheckpoint) 1 else 0
+        assert(TrackingRenameFileSystem.numOfRename === expectedNumOfRename)
       }
     }
   }
@@ -151,6 +174,8 @@ class AzureLogStoreSuite extends LogStoreSuiteBase {
     expectedErrMsg = "No FileSystem for scheme: fake",
     "fs.fake.impl" -> classOf[FakeFileSystem].getName,
     "fs.fake.impl.disable.cache" -> "true")
+
+  protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 
 class COSLogStoreSuite extends LogStoreSuiteBase {
@@ -169,8 +194,63 @@ class HDFSLogStoreSuite extends LogStoreSuiteBase {
   // HDFSLogStore is based on FileContext APIs and hence requires AbstractFileSystem-based
   // implementations.
   testHadoopConf(
-    expectedErrMsg = "No AbstractFileSystem",
-    "fs.AbstractFileSystem.fake.impl" -> classOf[FakeAbstractFileSystem].getName)
+    expectedErrMsg = "No FileSystem for scheme: fake",
+    "fs.fake.impl" -> classOf[FakeFileSystem].getName,
+    "fs.fake.impl.disable.cache" -> "true")
+
+  import testImplicits._
+
+  test("writes on systems without AbstractFileSystem implemented") {
+    withSQLConf("fs.fake.impl" -> classOf[FakeFileSystem].getName,
+      "fs.fake.impl.disable.cache" -> "true") {
+      val tempDir = Utils.createTempDir()
+      val path = new Path(new URI(s"fake://${tempDir.toURI.getRawPath}/1.json"))
+      val e = intercept[IOException] {
+        createLogStore(spark).write(path, Iterator("zero", "none"))
+      }
+      assert(e.getMessage.contains(
+        DeltaErrors.incorrectLogStoreImplementationException(sparkConf, null).getMessage))
+    }
+  }
+
+  test("reads should work on systems without AbstractFileSystem implemented") {
+    withTempDir { tempDir =>
+      val writtenFile = new File(tempDir, "1")
+      val store = createLogStore(spark)
+      store.write(writtenFile.getCanonicalPath, Iterator("zero", "none"))
+      withSQLConf("fs.fake.impl" -> classOf[FakeFileSystem].getName,
+        "fs.fake.impl.disable.cache" -> "true") {
+        val read = createLogStore(spark).read("fake://" + writtenFile.getCanonicalPath)
+        assert(read === ArrayBuffer("zero", "none"))
+      }
+    }
+  }
+
+  test("No AbstractFileSystem - end to end test using data frame") {
+    // Writes to the fake file system will fail
+    withTempDir { tempDir =>
+      val fakeFSLocation = s"fake://${tempDir.getCanonicalFile}"
+      withSQLConf("fs.fake.impl" -> classOf[FakeFileSystem].getName,
+        "fs.fake.impl.disable.cache" -> "true") {
+        val e = intercept[IOException] {
+          Seq(1, 2, 4).toDF().write.format("delta").save(fakeFSLocation)
+        }
+        assert(e.getMessage.contains(
+          DeltaErrors.incorrectLogStoreImplementationException(sparkConf, null).getMessage))
+      }
+    }
+    // Reading files written by other systems will work.
+    withTempDir { tempDir =>
+      Seq(1, 2, 4).toDF().write.format("delta").save(tempDir.getAbsolutePath)
+      withSQLConf("fs.fake.impl" -> classOf[FakeFileSystem].getName,
+        "fs.fake.impl.disable.cache" -> "true") {
+        val fakeFSLocation = s"fake://${tempDir.getCanonicalFile}"
+        checkAnswer(spark.read.format("delta").load(fakeFSLocation), Seq(1, 2, 4).toDF())
+      }
+    }
+  }
+
+  protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 
 class LocalLogStoreSuite extends LogStoreSuiteBase {
@@ -181,6 +261,8 @@ class LocalLogStoreSuite extends LogStoreSuiteBase {
     expectedErrMsg = "No FileSystem for scheme: fake",
     "fs.fake.impl" -> classOf[FakeFileSystem].getName,
     "fs.fake.impl.disable.cache" -> "true")
+
+  protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 
 /** A fake file system to test whether session Hadoop configuration will be picked up. */
@@ -213,4 +295,19 @@ class FakeAbstractFileSystem(uri: URI, conf: org.apache.hadoop.conf.Configuratio
   override def getUriDefaultPort(): Int = -1
   override def getServerDefaults(): FsServerDefaults = LocalConfigKeys.getServerDefaults
   override def isValidName(src: String): Boolean = true
+}
+
+/**
+ * A file system allowing to track how many times `rename` is called.
+ * `TrackingRenameFileSystem.numOfRename` should be reset to 0 before starting to trace.
+ */
+class TrackingRenameFileSystem extends RawLocalFileSystem {
+  override def rename(src: Path, dst: Path): Boolean = {
+    TrackingRenameFileSystem.numOfRename += 1
+    super.rename(src, dst)
+  }
+}
+
+object TrackingRenameFileSystem {
+  @volatile var numOfRename = 0
 }

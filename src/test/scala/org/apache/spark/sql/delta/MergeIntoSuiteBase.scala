@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{IntegerType, MapType, StringType, StructType}
@@ -557,33 +558,8 @@ abstract class MergeIntoSuiteBase
       Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value").createOrReplaceTempView("source")
       append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
 
-      // insert expressions are not complete
-      var e = intercept[AnalysisException] {
-        executeMerge(
-          target = s"delta.`$tempPath` as target",
-          source = "source src",
-          condition = "src.key1 = key3",
-          update = "key2 = key1, value = src.value",
-          insert = "(key2, value) VALUES (key1, src.value)")
-      }.getMessage
-
-      errorContains(e, "Cannot resolve `key3` in search condition")
-
-      // insert expressions are not complete
-      e = intercept[AnalysisException] {
-        executeMerge(
-          target = s"delta.`$tempPath` as target",
-          source = "source src",
-          condition = "src.key1 = target.key2",
-          update = "key2 = key1, value = src.value",
-          insert = "(value) VALUES (src.value + 10)")
-      }.getMessage
-
-      errorContains(e, "Unable to find the column 'key2'")
-      errorContains(e, "INSERT clause must specify value for all the columns of the target table")
-
       // insert expressions have target table reference
-      e = intercept[AnalysisException] {
+      var e = intercept[AnalysisException] {
         executeMerge(
           target = s"delta.`$tempPath` as target",
           source = "source src",
@@ -1573,20 +1549,6 @@ abstract class MergeIntoSuiteBase
          { "key": "b", "value" : 2,  "value2" : 2  }
          { "key": "c", "value" : 30, "value2" : 300 }""")
 
-  testStar("update - target column not in source")(
-    source = """{ "key": "a", "someValue" : 10 }""",
-    target = """{ "key": "a", "value" : 1 }""",
-    update(set = "*"),
-    insert(values = "(key, value) VALUES (key, someValue)"))(
-    errorStrs = "UPDATE clause" :: "value" :: Nil)
-
-  testStar("insert - target column not in source")(
-    source = """{ "key": "a", "someValue" : 10 }""",
-    target = """{ "key": "a", "value" : 1 }""",
-    update(set = "value = someValue"),
-    insert(values = "*"))(
-    errorStrs = "INSERT clause" :: "value" :: Nil)
-
   testExtendedMerge("insert only merge")(
     source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
     target = (1, 1) :: (2, 2)  :: Nil,
@@ -1723,6 +1685,84 @@ abstract class MergeIntoSuiteBase
       }
     }
   }
+
+  def testMergeWithRepartition(
+      name: String,
+      partitionColumns: Seq[String],
+      srcRange: Range,
+      expectLessFilesWithRepartition: Boolean,
+      clauses: MergeClause*): Unit = {
+    test(s"merge with repartition - $name") {
+      withTempView("source") {
+        withTempDir { basePath =>
+          val tgt1 = basePath + "target"
+          val tgt2 = basePath + "targetRepartitioned"
+
+          val df = spark.range(100).withColumn("part1", 'id % 5).withColumn("part2", 'id % 3)
+          df.write.format("delta").partitionBy(partitionColumns: _*).save(tgt1)
+          df.write.format("delta").partitionBy(partitionColumns: _*).save(tgt2)
+          val cond = "src.id = t.id"
+          val src = srcRange.toDF("id")
+            .withColumn("part1", 'id % 5)
+            .withColumn("part2", 'id % 3)
+            .createOrReplaceTempView("source")
+          // execute merge without repartition
+          executeMerge(
+            tgt = s"delta.`$tgt1` as t",
+            src = "source src",
+            cond = cond,
+            clauses = clauses: _*)
+
+          // execute merge with repartition
+          withSQLConf(DeltaSQLConf.MERGE_REPARTITION_BEFORE_WRITE.key -> "true") {
+            executeMerge(
+              tgt = s"delta.`$tgt2` as t",
+              src = "source src",
+              cond = cond,
+              clauses = clauses: _*)
+          }
+          checkAnswer(
+            io.delta.tables.DeltaTable.forPath(tgt2).toDF,
+            io.delta.tables.DeltaTable.forPath(tgt1).toDF
+          )
+          val filesAfterNoRepartition = DeltaLog.forTable(spark, tgt1).snapshot.numOfFiles
+          val filesAfterRepartition = DeltaLog.forTable(spark, tgt2).snapshot.numOfFiles
+          // check if there are fewer are number of files for merge with repartition
+          if (expectLessFilesWithRepartition) {
+            assert(filesAfterNoRepartition > filesAfterRepartition)
+          } else {
+            assert(filesAfterNoRepartition === filesAfterRepartition)
+          }
+        }
+      }
+    }
+  }
+
+  testMergeWithRepartition(
+    name = "partition on multiple columns",
+    partitionColumns = Seq("part1", "part2"),
+    srcRange = Range(80, 110),
+    expectLessFilesWithRepartition = true,
+    update("t.part2 = 1"),
+    insert("(id, part1, part2) VALUES (id, part1, part2)")
+  )
+
+  testMergeWithRepartition(
+    name = "insert only merge",
+    partitionColumns = Seq("part1"),
+    srcRange = Range(110, 150),
+    expectLessFilesWithRepartition = true,
+    insert("(id, part1, part2) VALUES (id, part1, part2)")
+  )
+
+  testMergeWithRepartition(
+    name = "non partitioned table",
+    partitionColumns = Seq(),
+    srcRange = Range(80, 180),
+    expectLessFilesWithRepartition = false,
+    update("t.part2 = 1"),
+    insert("(id, part1, part2) VALUES (id, part1, part2)")
+  )
 
   test("accumulators used by MERGE should not be tracked by Spark UI") {
     // Run a simple merge command
@@ -1877,5 +1917,228 @@ abstract class MergeIntoSuiteBase
       (null, null), // No change as null in source does not match null in target
       (1, 10) // update
     )
+  )
+
+  private def testEvolution(name: String)(
+      targetData: => DataFrame,
+      sourceData: => DataFrame,
+      update: String = null,
+      insert: String = null,
+      expected: Seq[Product] = null,
+      expectedWithoutEvolution: Seq[Product] = null,
+      expectErrorContains: String = null,
+      expectErrorWithoutEvolutionContains: String = null) = {
+    test(s"schema evolution - $name - with evolution disabled") {
+      append(targetData)
+      withTempView("source") {
+        sourceData.createOrReplaceTempView("source")
+        val clauses = Option(update).map(u => this.update(set = u)) ++
+          Option(insert).map(i => this.insert(values = i))
+
+        if (expectErrorWithoutEvolutionContains != null) {
+          val ex = intercept[AnalysisException] {
+            executeMerge(s"delta.`$tempPath` t", s"source s", "s.key = t.key",
+              clauses.toSeq: _*)
+          }
+          assert(ex.getMessage.contains(expectErrorWithoutEvolutionContains))
+        } else {
+          executeMerge(s"delta.`$tempPath` t", s"source s", "s.key = t.key",
+            clauses.toSeq: _*)
+          checkAnswer(
+            spark.read.format("delta").load(tempPath),
+            expectedWithoutEvolution.map(Row.fromTuple))
+        }
+      }
+    }
+
+    test(s"schema evolution - $name") {
+      withSQLConf((DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")) {
+        append(targetData)
+        withTempView("source") {
+          sourceData.createOrReplaceTempView("source")
+          val clauses = Option(update).map(u => this.update(set = u)) ++
+            Option(insert).map(i => this.insert(values = i))
+
+          if (expectErrorContains != null) {
+            val ex = intercept[AnalysisException] {
+              executeMerge(s"delta.`$tempPath` t", s"source s", "s.key = t.key",
+                clauses.toSeq: _*)
+            }
+            assert(ex.getMessage.contains(expectErrorContains))
+          } else {
+            executeMerge(s"delta.`$tempPath` t", s"source s", "s.key = t.key",
+              clauses.toSeq: _*)
+            checkAnswer(
+              spark.read.format("delta").load(tempPath),
+              expected.map(Row.fromTuple))
+          }
+        }
+      }
+    }
+  }
+
+  testEvolution("new column with only insert *")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
+    insert = "*",
+    expected =
+      (0, 0, null) +: (3, 30, null) +: // unchanged
+        (1, 10, null) +:  // not updated
+        (2, 2, "extra2") +: Nil, // newly inserted,
+    expectedWithoutEvolution =
+      (0, 0) +: (3, 30) +: (1, 10) +: (2, 2) +: Nil
+  )
+
+  testEvolution("new column with only update *")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
+    update = "*",
+    expected =
+      (0, 0, null) +: (3, 30, null) +:
+        (1, 1, "extra1") +: // updated
+        Nil, // row 2 not inserted
+    expectedWithoutEvolution = (0, 0) +: (3, 30) +: (1, 1) +: Nil
+  )
+
+  testEvolution("update * with column not in source")(
+    targetData = Seq((0, 0, 0), (1, 10, 10), (3, 30, 30)).toDF("key", "value", "extra"),
+    sourceData = Seq((1, 1), (2, 2)).toDF("key", "value"),
+    update = "*",
+    // update went through even though `extra` wasn't there
+    expected = (0, 0, 0) +: (1, 1, 10) +: (3, 30, 30) +: Nil,
+    expectErrorWithoutEvolutionContains = "cannot resolve `extra` in UPDATE clause"
+  )
+
+  testEvolution("insert * with column not in source")(
+    targetData = Seq((0, 0, 0), (1, 10, 10), (3, 30, 30)).toDF("key", "value", "extra"),
+    sourceData = Seq((1, 1), (2, 2)).toDF("key", "value"),
+    insert = "*",
+    // insert went through even though `extra` wasn't there
+    expected = (0, 0, 0) +: (1, 10, 10) +: (2, 2, null) +: (3, 30, 30) +: Nil,
+    expectErrorWithoutEvolutionContains = "cannot resolve `extra` in INSERT clause"
+  )
+
+  testEvolution("explicitly insert subset of columns")(
+    targetData = Seq((0, 0, 0), (1, 10, 10), (3, 30, 30)).toDF("key", "value", "extra"),
+    sourceData = Seq((1, 1, 1), (2, 2, 2)).toDF("key", "value", "extra"),
+    insert = "(key, value) VALUES (s.key, s.value)",
+    // 2 should have extra = null, since extra wasn't in the insert spec.
+    expected = (0, 0, 0) +: (1, 10, 10) +: (2, 2, null) +: (3, 30, 30) +: Nil,
+    expectedWithoutEvolution = (0, 0, 0) +: (1, 10, 10) +: (2, 2, null) +: (3, 30, 30) +: Nil
+  )
+
+  testEvolution("new column with update non-* and insert *")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, 1), (2, 2, 2)).toDF("key", "value", "extra"),
+    update = "key = s.key, value = s.value",
+    insert = "*",
+    expected = (0, 0, null) +: (2, 2, 2) +: (3, 30, null) +:
+      // null because `extra` isn't an update action, even though it's 1 in the source data
+      (1, 1, null) +: Nil,
+    expectedWithoutEvolution = (0, 0) +: (2, 2) +: (3, 30) +: (1, 1) +: Nil
+  )
+
+  testEvolution("new column with update * and insert non-*")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, 1), (2, 2, 2)).toDF("key", "value", "extra"),
+    update = "*",
+    insert = "(key, value) VALUES (s.key, s.value)",
+    expected = (0, 0, null) +: (1, 1, 1) +: (3, 30, null) +:
+      // null because `extra` isn't an insert action, even though it's 2 in the source data
+      (2, 2, null) +: Nil,
+    expectedWithoutEvolution = (0, 0) +: (2, 2) +: (3, 30) +: (1, 1) +: Nil
+  )
+
+  testEvolution("evolve partitioned table")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
+    update = "*",
+    insert = "*",
+    expected = (0, 0, null) +: (1, 1, "extra1") +: (2, 2, "extra2") +: (3, 30, null) +: Nil,
+    expectedWithoutEvolution = (0, 0) +: (2, 2) +: (3, 30) +: (1, 1) +: Nil
+  )
+
+  testEvolution("star expansion with names including dots")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value.with.dotted.name"),
+    sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF(
+      "key", "value.with.dotted.name", "extra.dotted"),
+    update = "*",
+    insert = "*",
+    expected = (0, 0, null) +: (1, 1, "extra1") +: (2, 2, "extra2") +: (3, 30, null) +: Nil,
+    expectedWithoutEvolution = (0, 0) +: (2, 2) +: (3, 30) +: (1, 1) +: Nil
+  )
+
+  // Note that incompatible types are those where a cast to the target type can't resolve - any
+  // valid cast will be permitted.
+  testEvolution("incompatible types in update *")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, Array[Byte](1)), (2, Array[Byte](2))).toDF("key", "value"),
+    update = "*",
+    expectErrorContains = "cannot cast binary to int",
+    expectErrorWithoutEvolutionContains = "cannot cast binary to int"
+  )
+
+  testEvolution("incompatible types in insert *")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, Array[Byte](1)), (2, Array[Byte](2))).toDF("key", "value"),
+    insert = "*",
+    expectErrorContains = "cannot cast binary to int",
+    expectErrorWithoutEvolutionContains = "cannot cast binary to int"
+  )
+
+  // All integral types other than long can be upcasted to integer.
+  testEvolution("upcast numeric source types into integer target")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1.toByte, 1.toShort), (2.toByte, 2.toShort)).toDF("key", "value"),
+    insert = "*",
+    update = "*",
+    expected = (0, 0) +: (1, 1) +: (2, 2) +: (3, 30) +: Nil,
+    expectedWithoutEvolution = (0, 0) +: (1, 1) +: (2, 2) +: (3, 30) +: Nil
+  )
+
+  // Delta's automatic schema evolution allows converting table columns with a numeric type narrower
+  // than integer to integer, because in the underlying Parquet they're all stored as ints.
+  testEvolution("upcast numeric target types from integer source")(
+    targetData = Seq((0.toByte, 0.toShort), (1.toByte, 10.toShort)).toDF("key", "value"),
+    sourceData = Seq((1, 1), (2, 2)).toDF("key", "value"),
+    insert = "*",
+    update = "*",
+    expected = (0, 0) +: (1, 1) +: (2, 2) +: Nil,
+    expectedWithoutEvolution = (0, 0) +: (1, 1) +: (2, 2) +: Nil
+  )
+
+  testEvolution("upcast int source type into long target")(
+    targetData = Seq((0, 0L), (1, 10L), (3, 30L)).toDF("key", "value"),
+    sourceData = Seq((1, 1), (2, 2)).toDF("key", "value"),
+    insert = "*",
+    update = "*",
+    expected = (0, 0L) +: (1, 1L) +: (2, 2L) +: (3, 30L) +: Nil,
+    expectedWithoutEvolution = (0, 0L) +: (1, 1L) +: (2, 2L) +: (3, 30L) +: Nil
+  )
+
+  testEvolution("write string into int column")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, "1"), (2, "2"), (5, "notANumber")).toDF("key", "value"),
+    insert = "*",
+    expected = (0, 0) +: (1, 10) +: (2, 2) +: (3, 30) +: (5, null) +: Nil,
+    expectedWithoutEvolution = (0, 0) +: (1, 10) +: (2, 2) +: (3, 30) +: (5, null) +: Nil
+  )
+
+  // This is kinda bug-for-bug compatibility. It doesn't really make sense that infinity is casted
+  // to int as Int.MaxValue, but that's the behavior.
+  testEvolution("write double into int column")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1.1), (2, 2.2), (5, Double.PositiveInfinity)).toDF("key", "value"),
+    insert = "*",
+    expected = (0, 0) +: (1, 10) +: (2, 2) +: (3, 30) +: (5, Int.MaxValue) +: Nil,
+    expectedWithoutEvolution = (0, 0) +: (1, 10) +: (2, 2) +: (3, 30) +: (5, Int.MaxValue) +: Nil
+  )
+
+  testEvolution("extra nested column in source")(
+    targetData = Seq((1, ("a" -> 1, "b" -> 2))).toDF("key", "x"),
+    sourceData = Seq((2, ("a" -> 2, "b" -> 2, "c" -> 3))).toDF("key", "x"),
+    insert = "*",
+    expectErrorContains = "cannot cast struct",
+    expectErrorWithoutEvolutionContains = "cannot cast struct"
   )
 }

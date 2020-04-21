@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -169,19 +169,6 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
       Row(1, 10) ::     // Neither updated, nor deleted (condition is not ignored)
       Row(2, 20) ::     // No change due to merge condition
       Nil)              // Deleted (3, 30)
-  }
-
-  test("insert with empty map throws error") {
-    append(Seq((1, 10), (2, 20)).toDF("trgKey", "trgValue"), Nil) // target
-    val source = Seq((1, 100), (3, 30)).toDF("srcKey", "srcValue") // source
-    val e = intercept[AnalysisException] {
-      io.delta.tables.DeltaTable.forPath(spark, tempPath)
-        .merge(source, "srcKey = trgKey")
-        .whenMatched().updateExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
-        .whenNotMatched().insertExpr(Map[String, String]())
-        .execute()
-    }
-    errorContains(e.getMessage, "INSERT clause must specify value for all the columns")
   }
 
   // Checks specific to the APIs that are automatically handled by parser for SQL

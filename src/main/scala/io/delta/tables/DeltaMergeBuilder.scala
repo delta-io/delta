@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -124,7 +124,7 @@ class DeltaMergeBuilder private(
     private val onCondition: Column,
     private val whenClauses: Seq[DeltaMergeIntoClause])
   extends AnalysisHelper
-  with DeltaLogging {
+  {
 
   /**
    * :: Evolving ::
@@ -225,7 +225,8 @@ class DeltaMergeBuilder private(
   def execute(): Unit = {
     val sparkSession = targetTable.toDF.sparkSession
     val resolvedMergeInto =
-      DeltaMergeInto.resolveReferences(mergePlan)(tryResolveReferences(sparkSession) _)
+      DeltaMergeInto.resolveReferences(mergePlan, sparkSession.sessionState.conf)(
+        tryResolveReferences(sparkSession) _)
     if (!resolvedMergeInto.resolved) {
       throw DeltaErrors.analysisException("Failed to resolve\n", plan = Some(resolvedMergeInto))
     }
