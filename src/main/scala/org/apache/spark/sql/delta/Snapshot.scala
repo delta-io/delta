@@ -250,7 +250,7 @@ object Snapshot extends DeltaLogging {
   private val defaultNumSnapshotPartitions: Int = 50
 
   /** Canonicalize the paths for Actions */
-  private def canonicalizePath(path: String, hadoopConf: Configuration): String = {
+  private[delta] def canonicalizePath(path: String, hadoopConf: Configuration): String = {
     val hadoopPath = new Path(new URI(path))
     if (hadoopPath.isAbsoluteAndSchemeAuthorityNull) {
       val fs = FileSystem.get(hadoopConf)
