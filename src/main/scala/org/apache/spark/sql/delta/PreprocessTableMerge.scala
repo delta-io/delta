@@ -30,8 +30,15 @@ import org.apache.spark.sql.internal.SQLConf
 case class PreprocessTableMerge(conf: SQLConf) extends UpdateExpressionsSupport {
 
   def apply(mergeInto: DeltaMergeInto): MergeIntoCommand = {
-    val DeltaMergeInto(target, source, condition, matched, notMatchedByTarget, notMatchedBySource, migratedSchema)
-      = mergeInto
+    val DeltaMergeInto(
+      target,
+      source,
+      condition,
+      matched,
+      notMatchedByTarget,
+      notMatchedBySource,
+      migratedSchema
+    ) = mergeInto
 
     def checkCondition(cond: Expression, conditionName: String): Unit = {
       if (!cond.deterministic) {
@@ -61,7 +68,7 @@ case class PreprocessTableMerge(conf: SQLConf) extends UpdateExpressionsSupport 
         // update clause.
         val existingColumns = m.resolvedActions.map(_.targetColNameParts.head) ++
           target.output.map(_.name)
-        val newColsFromInsert = notMatched.toSeq.flatMap {
+        val newColsFromInsert = notMatchedByTarget.toSeq.flatMap {
           _.resolvedActions.filterNot { insertAct =>
             existingColumns.exists { colName =>
               conf.resolver(insertAct.targetColNameParts.head, colName)

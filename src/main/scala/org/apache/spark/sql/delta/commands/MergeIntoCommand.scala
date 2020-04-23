@@ -260,6 +260,8 @@ case class MergeIntoCommand(
   ): (Seq[AddFile], Seq[AddFile]) = {
     import spark.implicits._
 
+    val targetOutputCols = getTargetOutputCols(deltaTxn)
+
     // Skip data based on the merge condition
     val targetOnlyPredicates =
       splitConjunctivePredicates(condition).filter(_.references.subsetOf(target.outputSet))
@@ -327,7 +329,7 @@ case class MergeIntoCommand(
             incrUpdatedCountExpr
         case _: DeltaMergeIntoMatchedDeleteClause =>
           // Generate expressions to set the ROW_DELETED_COL = true
-          target.output :+
+          targetOutputCols :+
             Literal(TARGET_ROW_DELETE) :+
             filenameCol :+
             rowIdCol :+
@@ -347,7 +349,7 @@ case class MergeIntoCommand(
 
     def notMatchedBySourceClauseOutput(clause: DeltaMergeIntoNotMatchedDeleteClause) = {
       resolveOnJoinedPlan(
-        target.output :+
+        targetOutputCols :+
         Literal(TARGET_ROW_DELETE) :+
         filenameCol :+
         rowIdCol :+
@@ -366,7 +368,7 @@ case class MergeIntoCommand(
 
     // this schema includes the data required to identify which files to rewrite
     val outputRowEncoder = RowEncoder(
-      StructType(target.schema.fields.toList :::
+      StructType(deltaTxn.metadata.schema.fields.toList :::
       StructField(TARGET_ROW_OUTCOME, IntegerType, true) ::
       StructField(FILE_NAME_COL, StringType, true) ::
       StructField(ROW_ID_COL, LongType, true) :: Nil)
@@ -384,14 +386,14 @@ case class MergeIntoCommand(
       notMatchedBySourceCondition = clauseCondition(notMatchedBySourceClause),
       notMatchedBySourceOutput = notMatchedBySourceClause.map(notMatchedBySourceClauseOutput),
       copyRowOutput = resolveOnJoinedPlan(
-        target.output :+
+        targetOutputCols :+
         Literal(TARGET_ROW_COPY) :+
         filenameCol :+
         rowIdCol :+
         incrNoopCountExpr
       ),
       skippedRowOutput = resolveOnJoinedPlan(
-        target.output :+
+        targetOutputCols :+
         Literal(TARGET_ROW_SKIP) :+
         filenameCol :+
         rowIdCol :+

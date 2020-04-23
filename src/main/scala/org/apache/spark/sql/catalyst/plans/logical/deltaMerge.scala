@@ -258,7 +258,8 @@ object DeltaMergeInto {
       condition,
       matchedClauses,
       processedNotMatchedByTarget,
-      processedNotMatchedBySource
+      processedNotMatchedBySource,
+      migratedSchema
     ) = merge
 
     // We must do manual resolution as the expressions in different clauses of the MERGE have
@@ -422,7 +423,8 @@ object DeltaMergeInto {
       resolvedCond,
       resolvedMatchedClauses,
       resolvedNotMatchedByTargetClause,
-      resolvedNotMatchedBySourceClause
+      resolvedNotMatchedBySourceClause,
+      if (shouldAutoMigrate) Some(finalSchema) else None
     )
   }
 }
