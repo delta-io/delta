@@ -65,7 +65,7 @@ def prepare(root_dir):
     # Get current release which is required to be loaded
     version = '0.0.0'
     with open(os.path.join(root_dir, "version.sbt")) as fd:
-            version = fd.readline().split('"')[1]
+        version = fd.readline().split('"')[1]
     package = "io.delta:delta-core_2.11:" + version
     return package
 
