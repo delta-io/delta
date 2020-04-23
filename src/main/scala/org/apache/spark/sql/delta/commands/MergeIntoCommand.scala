@@ -549,12 +549,14 @@ object MergeIntoCommand {
         }
       }
 
+      val toRow = joinedRowEncoder.toRow _
+      val fromRow = outputRowEncoder.fromRow _
       rowIterator
-        .map(joinedRowEncoder.toRow)
+        .map(toRow)
         .map(processRow)
         .filter(!shouldDeleteRow(_))
         .map { notDeletedInternalRow =>
-          outputRowEncoder.fromRow(outputProj(notDeletedInternalRow))
+          fromRow(outputProj(notDeletedInternalRow))
         }
     }
   }
