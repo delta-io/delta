@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -491,6 +491,31 @@ class DeltaSuite extends QueryTest
 
       assert(files.forall(path => path.contains("by4=") && path.contains("/by8=")),
         s"${files.toSeq.mkString("\n")}\ndidn't contain partition columns by4 and by8")
+    }
+  }
+
+  test("support removing partitioning") {
+    withTempDir { tempDir =>
+      if (tempDir.exists()) {
+        assert(tempDir.delete())
+      }
+
+      spark.range(100).select('id, 'id % 4 as 'by4)
+        .write
+        .format("delta")
+        .partitionBy("by4")
+        .save(tempDir.toString)
+
+      val deltaLog = DeltaLog.forTable(spark, tempDir)
+      assert(deltaLog.snapshot.metadata.partitionColumns === Seq("by4"))
+
+      spark.read.format("delta").load(tempDir.toString).write
+        .option(DeltaOptions.OVERWRITE_SCHEMA_OPTION, "true")
+        .format("delta")
+        .mode(SaveMode.Overwrite)
+        .save(tempDir.toString)
+
+      assert(deltaLog.snapshot.metadata.partitionColumns === Nil)
     }
   }
 

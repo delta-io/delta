@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.util.Locale
 
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.tables._
 
 import org.apache.spark.sql._
@@ -171,19 +172,6 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
       Nil)              // Deleted (3, 30)
   }
 
-  test("insert with empty map throws error") {
-    append(Seq((1, 10), (2, 20)).toDF("trgKey", "trgValue"), Nil) // target
-    val source = Seq((1, 100), (3, 30)).toDF("srcKey", "srcValue") // source
-    val e = intercept[AnalysisException] {
-      io.delta.tables.DeltaTable.forPath(spark, tempPath)
-        .merge(source, "srcKey = trgKey")
-        .whenMatched().updateExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
-        .whenNotMatched().insertExpr(Map[String, String]())
-        .execute()
-    }
-    errorContains(e.getMessage, "INSERT clause must specify value for all the columns")
-  }
-
   // Checks specific to the APIs that are automatically handled by parser for SQL
   test("check invalid merge API calls") {
     withTable("source") {
@@ -276,6 +264,33 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
           .execute()
       }
       errorContains(e.getMessage, "cannot resolve `*`")
+    }
+  }
+
+  test("merge after schema change") {
+    withSQLConf((DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")) {
+      withTempPath { targetDir =>
+        val targetPath = targetDir.getCanonicalPath
+        spark.range(10).write.format("delta").save(targetPath)
+        val t = io.delta.tables.DeltaTable.forPath(spark, targetPath).as("t")
+        assert(t.toDF.schema == StructType.fromDDL("id LONG"))
+
+        // Do one merge to change the schema.
+        t.merge(Seq((11L, "newVal11")).toDF("id", "newCol1").as("s"), "t.id = s.id")
+          .whenMatched().updateAll()
+          .whenNotMatched().insertAll()
+          .execute()
+        assert(t.toDF.schema == StructType.fromDDL("id LONG, newCol1 STRING"))
+
+        // In order to work, the next merge will need to pick up the updated schema from above,
+        // rather than the schema from when `t` was originally created.
+        t.merge(Seq((12L, "newVal12")).toDF("id", "newCol2").as("s"), "t.id = s.id")
+          .whenMatched().updateAll()
+          .whenNotMatched().insertAll()
+          .execute()
+
+        assert(t.toDF.schema == StructType.fromDDL("id LONG, newCol1 STRING, newCol2 STRING"))
+      }
     }
   }
 

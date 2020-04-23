@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,11 +18,12 @@ package org.apache.spark.sql.delta
 
 import java.sql.Timestamp
 
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.commons.lang3.time.FastDateFormat
 
 import org.apache.spark.sql.AnalysisException
-import org.apache.spark.sql.catalyst.expressions.{Cast, Expression, Literal, PreciseTimestampConversion}
+import org.apache.spark.sql.catalyst.expressions.{Cast, Expression, Literal, PreciseTimestampConversion, RuntimeReplaceable, Unevaluable}
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{LongType, TimestampType}
@@ -37,7 +38,7 @@ import org.apache.spark.sql.types.{LongType, TimestampType}
 case class DeltaTimeTravelSpec(
     timestamp: Option[Expression],
     version: Option[Long],
-    creationSource: Option[String]) {
+    creationSource: Option[String]) extends DeltaLogging {
 
   assert(version.isEmpty ^ timestamp.isEmpty,
     "Either the version or timestamp should be provided for time travel")
@@ -47,8 +48,22 @@ case class DeltaTimeTravelSpec(
    * the given time zone.
    */
   def getTimestamp(timeZone: String): Timestamp = {
+    // note @brkyvz (2020-04-13): not great that we need to handle RuntimeReplaceable expressions...
+    val evaluable = timestamp match {
+      case Some(e) => e.transform {
+        case rr: RuntimeReplaceable => rr.child
+        case e: Unevaluable =>
+          recordDeltaEvent(null, "delta.timeTravel.unexpected", data = e.sql)
+          throw new IllegalStateException(s"Unsupported expression (${e.sql}) for time travel.")
+      }
+      case None =>
+        // scalastyle:off throwerror
+        throw new AssertionError(
+          "Should not ask to get Timestamp for time travel when the timestamp was not available")
+      // scalastyle:on throwerror
+    }
     DateTimeUtils.toJavaTimestamp(
-      Cast(timestamp.get, TimestampType, Option(timeZone)).eval().asInstanceOf[java.lang.Long])
+      Cast(evaluable, TimestampType, Option(timeZone)).eval().asInstanceOf[java.lang.Long])
   }
 }
 

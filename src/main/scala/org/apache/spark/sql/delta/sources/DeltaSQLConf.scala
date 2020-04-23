@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -233,6 +233,17 @@ object DeltaSQLConf {
         """.stripMargin)
       .booleanConf
       .createWithDefault(true)
+
+  val MERGE_REPARTITION_BEFORE_WRITE =
+    buildConf("merge.repartitionBeforeWrite.enabled")
+      .internal()
+      .doc(
+        """
+          |When enabled, merge will repartition the output by the table's partition columns before
+          |writing the files.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(false)
 
   val MERGE_MATCHED_ONLY_ENABLED =
     buildConf("merge.optimizeMatchedOnlyMerge.enabled")

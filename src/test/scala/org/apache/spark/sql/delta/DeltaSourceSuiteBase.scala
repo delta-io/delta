@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,9 +28,11 @@ trait DeltaSourceSuiteBase extends StreamTest {
   protected def withMetadata(
       deltaLog: DeltaLog,
       schema: StructType,
-      format: String = "parquet"): Unit = {
+      format: String = "parquet",
+      tableId: Option[String] = None): Unit = {
     val txn = deltaLog.startTransaction()
-    txn.commit(txn.metadata.copy(
+    val baseMetadata = tableId.map { tId => txn.metadata.copy(id = tId) }.getOrElse(txn.metadata)
+    txn.commit(baseMetadata.copy(
       schemaString = schema.json,
       format = Format(format)
     ) :: Nil, DeltaOperations.ManualUpdate)

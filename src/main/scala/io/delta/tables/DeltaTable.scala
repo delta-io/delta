@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,7 +39,7 @@ import org.apache.spark.sql.types.StructType
  * @since 0.3.0
  */
 @Evolving
-class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
+class DeltaTable private[tables](df: => Dataset[Row], deltaLog: DeltaLog)
   extends DeltaTableOperations {
 
   /**
