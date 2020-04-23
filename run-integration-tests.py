@@ -134,4 +134,4 @@ if __name__ == "__main__":
             version = fd.readline().split('"')[1]
 
     run_scala_integration_tests(root_dir, version)
-    # run_python_integration_tests(root_dir, version)
+    run_python_integration_tests(root_dir, version)
