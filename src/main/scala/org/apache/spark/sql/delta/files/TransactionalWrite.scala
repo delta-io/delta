@@ -131,7 +131,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
     val invariants = Invariants.getFromSchema(metadata.schema, spark)
 
-    SQLExecution.withNewExecutionId(spark, queryExecution) {
+    SQLExecution.withNewExecutionId(queryExecution) {
       val outputSpec = FileFormatWriter.OutputSpec(
         outputPath.toString,
         Map.empty,

@@ -28,6 +28,7 @@ import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions.InSet
 import org.apache.spark.sql.catalyst.plans.logical.Filter
+import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.internal.SQLConf
@@ -80,6 +81,37 @@ class DeltaSuite extends QueryTest
       checkDatasetUnorderly(
         ds.where("part = 1 and value < 5"),
         1 -> 1, 3 -> 1)
+    }
+  }
+
+  test("query with predicates should skip partitions") {
+    withTempDir { tempDir =>
+      val testPath = tempDir.getCanonicalPath
+
+      // Generate two files in two partitions
+      spark.range(2)
+        .withColumn("part", $"id" % 2)
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .mode("append")
+        .save(testPath)
+
+      // Read only one partition
+      val query = spark.read.format("delta").load(testPath).where("part = 1")
+      val fileScans = query.queryExecution.executedPlan.collect {
+        case f: FileSourceScanExec => f
+      }
+
+      // Force the query to read files and generate metrics
+      query.queryExecution.executedPlan.execute().count()
+
+      // Verify only one file was read
+      assert(fileScans.size == 1)
+      val numFilesAferPartitionSkipping = fileScans.head.metrics.get("numFiles")
+      assert(numFilesAferPartitionSkipping.nonEmpty)
+      assert(numFilesAferPartitionSkipping.get.value == 1)
+      checkAnswer(query, Seq(Row(1, 1)))
     }
   }
 

@@ -450,7 +450,8 @@ trait DescribeDeltaHistorySuiteBase
     }
   }
 
-  test("operation metrics - update") {
+  // SC-33980: Ignored tests since this is incorrect Delta OSS
+  ignore("operation metrics - update") {
     withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
       val numRows = 100
       val numPartitions = 5
@@ -515,7 +516,8 @@ trait DescribeDeltaHistorySuiteBase
     }
   }
 
-  test("operation metrics - delete") {
+  // SC-33980: Ignored tests since this is incorrect Delta OSS
+  ignore("operation metrics - delete") {
     withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
       val numRows = 100
       val rowsToDelete = 10

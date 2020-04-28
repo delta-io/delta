@@ -336,13 +336,11 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
       partitionColNameToAttrib: Seq[(String, Attribute)],
       timeZoneId: String): Expression = Concat(
 
-
     partitionColNameToAttrib.zipWithIndex.flatMap { case ((colName, col), i) =>
       val partitionName = ScalaUDF(
         ExternalCatalogUtils.getPartitionPathString _,
         StringType,
-        Seq(Literal(colName), Cast(col, StringType, Option(timeZoneId))),
-        Seq(true, true))
+        Seq(Literal(colName), Cast(col, StringType, Option(timeZoneId))))
       if (i == 0) Seq(partitionName) else Seq(Literal(Path.SEPARATOR), partitionName)
     }
   )

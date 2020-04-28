@@ -30,11 +30,12 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.GivenWhenThen
 
 import org.apache.spark.sql.{AnalysisException, QueryTest, SaveMode}
+import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
-import org.apache.spark.unsafe.types.CalendarInterval
+import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.ManualClock
 
 trait DeltaVacuumSuiteBase extends QueryTest
@@ -295,8 +296,9 @@ trait DeltaVacuumSuiteBase extends QueryTest
   }
 
   protected def defaultTombstoneInterval: Long = {
-    DeltaConfigs.getMilliSeconds(CalendarInterval.fromString(
-      DeltaConfigs.TOMBSTONE_RETENTION.defaultValue))
+    DeltaConfigs.getMilliSeconds(
+      IntervalUtils.safeStringToInterval(
+        UTF8String.fromString(DeltaConfigs.TOMBSTONE_RETENTION.defaultValue)))
   }
 
   implicit def fileToPathString(f: File): String = new Path(f.getAbsolutePath).toString
