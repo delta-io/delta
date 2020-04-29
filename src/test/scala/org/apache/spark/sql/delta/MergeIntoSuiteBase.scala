@@ -1919,7 +1919,7 @@ abstract class MergeIntoSuiteBase
     )
   )
 
-  private def testEvolution(name: String)(
+  protected def testEvolution(name: String)(
       targetData: => DataFrame,
       sourceData: => DataFrame,
       update: String = null,
