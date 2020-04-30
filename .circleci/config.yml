@@ -21,7 +21,7 @@ jobs:
             pyenv install 3.7.4
             pyenv global system 3.7.4
             pipenv install
-            pipenv --python 3.7 run pip install pip install https://docs.delta.io/spark3artifacts/rc1/distributions/pyspark-3.0.0.tar.gz
+            pipenv --python 3.7 run pip install https://docs.delta.io/spark3artifacts/rc1/distributions/pyspark-3.0.0.tar.gz
             pipenv --python 3.7 run pip install flake8==3.5.0 pypandoc==1.3.3
       - run:
           name: Run Scala/Java and Python tests
