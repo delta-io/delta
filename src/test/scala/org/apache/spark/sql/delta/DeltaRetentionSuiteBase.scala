@@ -27,7 +27,7 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
+import org.apache.spark.unsafe.types.UTF8String
 
 trait DeltaRetentionSuiteBase extends QueryTest
   with SharedSparkSession {
