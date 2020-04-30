@@ -380,7 +380,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
           "numRemovedFiles" -> createMetric(sparkContext, "number of files removed."),
           "numAddedFiles" -> createMetric(sparkContext, "number of files added."),
           "numDeletedRows" -> createMetric(sparkContext, "number of rows deleted."),
-          "numTotalRows" -> createMetric(sparkContext, "total number of rows.")
+          "numCopiedRows" -> createMetric(sparkContext, "total number of rows.")
         )
         txn.registerSQLMetrics(spark, metrics)
         txn.commit(Seq(RemoveFile(path, Option(clock.getTimeMillis()))), Delete("true" :: Nil))
