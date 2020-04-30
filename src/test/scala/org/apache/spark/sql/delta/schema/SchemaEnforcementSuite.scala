@@ -22,6 +22,7 @@ import java.io.File
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
 import org.apache.spark.sql.delta.actions.SingleAction
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 
 import org.apache.spark.SparkConf
@@ -43,7 +44,6 @@ case class SaveWithPath(path: String = null) extends SaveOperation {
   }
 }
 
-// Not supported yet
 case class SaveAsTable(tableName: String) extends SaveOperation {
   override def apply(dfw: DataFrameWriter[_]): Unit = dfw.saveAsTable(tableName)
 }
@@ -862,6 +862,13 @@ class SchemaEnforcementWithPathSuite extends AppendSaveModeTests with OverwriteS
   override val saveOperation = SaveWithPath()
 }
 
+class SchemaEnforcementWithTableSuite
+  extends AppendSaveModeTests
+  with OverwriteSaveModeTests
+  with DeltaSQLCommandTest {
+
+  override val saveOperation = SaveAsTable("delta_schema_test")
+}
 
 class SchemaEnforcementStreamingSuite
   extends AppendOutputModeTests

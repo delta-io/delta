@@ -38,12 +38,12 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkContext
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Cast, Expression, In, InSet, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
 import org.apache.spark.sql.execution.datasources._
-import org.apache.spark.sql.execution.datasources.json.JsonFileFormat
-import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.sources.{BaseRelation, InsertableRelation}
 import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.util.{Clock, SystemClock, ThreadUtils}
@@ -453,6 +453,37 @@ object DeltaLog extends DeltaLogging {
   def forTable(spark: SparkSession, dataPath: Path, clock: Clock): DeltaLog = {
     apply(spark, new Path(dataPath, "_delta_log"), clock)
   }
+
+  /** Helper for creating a log for the table. */
+  def forTable(spark: SparkSession, tableName: TableIdentifier): DeltaLog = {
+    forTable(spark, tableName, new SystemClock)
+  }
+
+  /** Helper for creating a log for the table. */
+  def forTable(spark: SparkSession, table: CatalogTable): DeltaLog = {
+    forTable(spark, table, new SystemClock)
+  }
+
+  /** Helper for creating a log for the table. */
+  def forTable(spark: SparkSession, tableName: TableIdentifier, clock: Clock): DeltaLog = {
+    val catalog = spark.sessionState.catalog
+    forTable(spark, catalog.getTableMetadata(tableName), clock)
+  }
+
+  /** Helper for creating a log for the table. */
+  def forTable(spark: SparkSession, table: CatalogTable, clock: Clock): DeltaLog = {
+    apply(spark, new Path(new Path(table.location), "_delta_log"), clock)
+  }
+
+  /** Helper for creating a log for the table. */
+  def forTable(spark: SparkSession, deltaTable: DeltaTableIdentifier): DeltaLog = {
+    if (deltaTable.path.isDefined) {
+      forTable(spark, deltaTable.path.get)
+    } else {
+      forTable(spark, deltaTable.table.get)
+    }
+  }
+
   // TODO: Don't assume the data path here.
   def apply(spark: SparkSession, rawPath: Path, clock: Clock = new SystemClock): DeltaLog = {
     val hadoopConf = spark.sessionState.newHadoopConf()

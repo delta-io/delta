@@ -16,6 +16,7 @@
 
 package io.delta.sql
 
+import org.apache.spark.sql.delta.{DeltaAnalysis, DeltaUnsupportedOperationsCheck}
 import io.delta.sql.parser.DeltaSqlParser
 
 import org.apache.spark.sql.SparkSessionExtensions
@@ -72,6 +73,12 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
   override def apply(extensions: SparkSessionExtensions): Unit = {
     extensions.injectParser { (session, parser) =>
       new DeltaSqlParser(parser)
+    }
+    extensions.injectResolutionRule { session =>
+      new DeltaAnalysis(session, session.sessionState.conf)
+    }
+    extensions.injectCheckRule { session =>
+      new DeltaUnsupportedOperationsCheck(session)
     }
   }
 }

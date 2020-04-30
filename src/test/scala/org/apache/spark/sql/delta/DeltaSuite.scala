@@ -623,22 +623,6 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  test("metadataOnly query") {
-    withSQLConf(OPTIMIZER_METADATA_ONLY.key -> "true") {
-      withTable("delta_test") {
-        Seq(1L -> "a").toDF("dataCol", "partCol")
-          .write
-          .mode(SaveMode.Overwrite)
-          .partitionBy("partCol")
-          .format("delta")
-          .saveAsTable("delta_test")
-        checkAnswer(
-          sql("select count(distinct partCol) FROM delta_test"),
-          Row(1))
-      }
-    }
-  }
-
   test("support partitioning with batch data source API - overwrite") {
     withTempDir { tempDir =>
       if (tempDir.exists()) {
