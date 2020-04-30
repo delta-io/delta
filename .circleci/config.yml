@@ -26,4 +26,4 @@ jobs:
       - run:
           name: Run Scala/Java and Python tests
           command: |
-            pipenv run python run-tests.py
+            pipenv --python 3.7 run python run-tests.py
