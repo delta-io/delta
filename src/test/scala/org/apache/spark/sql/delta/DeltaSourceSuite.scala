@@ -133,7 +133,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase {
     }
   }
 
-  testQuietly("disallow to change schema after staring a streaming query") {
+  testQuietly("disallow to change schema after starting a streaming query") {
     withTempDir { inputDir =>
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
       (0 until 5).foreach { i =>
