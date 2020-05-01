@@ -23,7 +23,7 @@ import org.apache.spark.sql.delta.{DeltaErrors, PreprocessTableMerge}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
-import org.apache.spark.annotation.InterfaceStability._
+import org.apache.spark.annotation._
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.plans.logical._
@@ -124,7 +124,7 @@ class DeltaMergeBuilder private(
     private val onCondition: Column,
     private val whenClauses: Seq[DeltaMergeIntoClause])
   extends AnalysisHelper
-  with DeltaLogging {
+  {
 
   /**
    * :: Evolving ::
@@ -225,7 +225,8 @@ class DeltaMergeBuilder private(
   def execute(): Unit = {
     val sparkSession = targetTable.toDF.sparkSession
     val resolvedMergeInto =
-      DeltaMergeInto.resolveReferences(mergePlan)(tryResolveReferences(sparkSession) _)
+      DeltaMergeInto.resolveReferences(mergePlan, sparkSession.sessionState.conf)(
+        tryResolveReferences(sparkSession) _)
     if (!resolvedMergeInto.resolved) {
       throw DeltaErrors.analysisException("Failed to resolve\n", plan = Some(resolvedMergeInto))
     }

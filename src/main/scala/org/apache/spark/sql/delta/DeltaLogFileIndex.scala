@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.hadoop.fs._
 
+import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, PartitionDirectory}
@@ -33,7 +34,11 @@ import org.apache.spark.sql.types.StructType
  * @param format The file format of the log files. Currently "parquet" or "json"
  * @param files The files to read
  */
-case class DeltaLogFileIndex(format: FileFormat, files: Array[FileStatus]) extends FileIndex {
+case class DeltaLogFileIndex private (
+    format: FileFormat,
+    files: Array[FileStatus])
+  extends FileIndex
+  with Logging {
 
   override lazy val rootPaths: Seq[Path] = files.map(_.getPath)
 
@@ -50,6 +55,11 @@ case class DeltaLogFileIndex(format: FileFormat, files: Array[FileStatus]) exten
   override val sizeInBytes: Long = files.map(_.getLen).sum
 
   override def partitionSchema: StructType = new StructType()
+
+  override def toString: String =
+    s"DeltaLogFileIndex($format, numFilesInSegment: ${files.size}, totalFileSize: $sizeInBytes)"
+
+  logInfo(s"Created $this")
 }
 
 object DeltaLogFileIndex {
@@ -59,5 +69,9 @@ object DeltaLogFileIndex {
 
   def apply(format: FileFormat, fs: FileSystem, paths: Seq[Path]): DeltaLogFileIndex = {
     DeltaLogFileIndex(format, paths.map(fs.getFileStatus).toArray)
+  }
+
+  def apply(format: FileFormat, files: Seq[FileStatus]): Option[DeltaLogFileIndex] = {
+    if (files.isEmpty) None else Some(DeltaLogFileIndex(format, files.toArray))
   }
 }

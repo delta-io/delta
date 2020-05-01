@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs._
+import org.apache.hadoop.fs.permission.FsPermission
 import org.apache.hadoop.util.Progressable
 
 import org.apache.spark.sql._
@@ -299,7 +300,11 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
             .write.format("delta").mode("overwrite").save(s"$SCHEME://$tablePath")
         }
 
-        write(1) // first write enables the property
+        val manifestPath = new File(tablePath, GenerateSymlinkManifest.MANIFEST_LOCATION)
+        require(!manifestPath.exists())
+        write(1) // first write enables the property does not write any file
+        require(!manifestPath.exists())
+
         val ex = catalyst.util.quietly {
           intercept[RuntimeException] { write(2) }
         }
@@ -562,7 +567,9 @@ class SymlinkManifestFailureTestFileSystem extends RawLocalFileSystem {
     uri
   }
 
-  // Create function used by the parquet writer
+  // Override both create() method defined in RawLocalFileSystem such that any file creation
+  // throws error.
+
   override def create(
       path: Path,
       overwrite: Boolean,
@@ -574,6 +581,20 @@ class SymlinkManifestFailureTestFileSystem extends RawLocalFileSystem {
       throw new RuntimeException("Test exception")
     }
     super.create(path, overwrite, bufferSize, replication, blockSize, null)
+  }
+
+  override def create(
+      path: Path,
+      permission: FsPermission,
+      overwrite: Boolean,
+      bufferSize: Int,
+      replication: Short,
+      blockSize: Long,
+      progress: Progressable): FSDataOutputStream = {
+    if (path.toString.contains(GenerateSymlinkManifest.MANIFEST_LOCATION)) {
+      throw new RuntimeException("Test exception")
+    }
+    super.create(path, permission, overwrite, bufferSize, replication, blockSize, progress)
   }
 }
 

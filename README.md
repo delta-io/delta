@@ -18,7 +18,7 @@ You include Delta Lake in your Maven project by adding it as a dependency in you
 <dependency>
   <groupId>io.delta</groupId>
   <artifactId>delta-core_2.11</artifactId>
-  <version>0.5.0</version>
+  <version>0.6.0</version>
 </dependency>
 ```
 
@@ -27,7 +27,7 @@ You include Delta Lake in your Maven project by adding it as a dependency in you
 You include Delta Lake in your SBT project by adding the following line to your build.sbt file:
 
 ```scala
-libraryDependencies += "io.delta" %% "delta-core" % "0.5.0"
+libraryDependencies += "io.delta" %% "delta-core" % "0.6.0"
 ```
 
 ## API Documentation

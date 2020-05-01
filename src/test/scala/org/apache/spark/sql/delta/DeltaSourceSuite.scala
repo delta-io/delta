@@ -27,11 +27,12 @@ import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
 
 import org.apache.spark.sql.AnalysisException
+import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.streaming.{OutputMode, StreamingQueryException, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.unsafe.types.CalendarInterval
+import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.{ManualClock, Utils}
 
 class DeltaSourceSuite extends DeltaSourceSuiteBase {
@@ -781,9 +782,10 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase {
         AdvanceManualClock(10 * 1000L),
         CheckLastBatch("0", "1", "2"),
         Assert {
-          clock.advance(
-            DeltaConfigs.getMilliSeconds(CalendarInterval.fromString(
-              DeltaConfigs.LOG_RETENTION.defaultValue)) + 100000000L)
+          val defaultLogRetentionMillis = DeltaConfigs.getMilliSeconds(
+            IntervalUtils.safeStringToInterval(
+              UTF8String.fromString(DeltaConfigs.LOG_RETENTION.defaultValue)))
+          clock.advance(defaultLogRetentionMillis + 100000000L)
 
           // Delete all logs before checkpoint
           writersLog.cleanUpExpiredLogs()

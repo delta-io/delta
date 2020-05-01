@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import java.io.FileNotFoundException
+
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
@@ -180,7 +182,7 @@ trait ConvertToDeltaSuiteTests extends ConvertToDeltaTestUtils
   test("negative case: empty and non-existent root dir") {
     withTempDir { dir =>
       val tempDir = dir.getCanonicalPath
-      val re = intercept[RuntimeException] {
+      val re = intercept[FileNotFoundException] {
         convertToDelta(s"parquet.`$tempDir`")
       }
       assert(re.getMessage.contains("No file found in the directory"))

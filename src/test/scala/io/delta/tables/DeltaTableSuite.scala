@@ -72,6 +72,14 @@ class DeltaTableSuite extends QueryTest
     }
   }
 
+  test("toDF regenerated each time") {
+    withTempDir { dir =>
+      testData.write.format("delta").save(dir.getAbsolutePath)
+      val table = DeltaTable.forPath(dir.getAbsolutePath)
+      assert(table.toDF != table.toDF)
+    }
+  }
+
   def testError(expectedMsg: String)(thunk: => Unit): Unit = {
     val e = intercept[AnalysisException] { thunk }
     assert(e.getMessage.toLowerCase(Locale.ROOT).contains(expectedMsg.toLowerCase(Locale.ROOT)))

@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata}
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{Invariant, InvariantViolationException}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 
@@ -33,6 +34,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
 
@@ -413,6 +415,10 @@ object DeltaErrors
       s"Invalid value '$input' for option '$name', $explain")
   }
 
+  def unrecognizedLogFile(path: Path): Throwable = {
+    new UnsupportedOperationException(s"Unrecognized log file $path")
+  }
+
   def modifyAppendOnlyTableException: Throwable = {
     new UnsupportedOperationException(
       "This table is configured to only allow appends. If you would like to permit " +
@@ -775,7 +781,7 @@ object DeltaErrors
   }
 
   def emptyDirectoryException(directory: String): Throwable = {
-    new RuntimeException(s"No file found in the directory: $directory.")
+    new FileNotFoundException(s"No file found in the directory: $directory.")
   }
 
   def alterTableSetLocationSchemaMismatchException(
@@ -818,6 +824,11 @@ object DeltaErrors
     val supportedModes = DeltaGenerateCommand.modeNameToGenerationFunc.keys.toSeq.mkString(", ")
     new IllegalArgumentException(
       s"Specified mode '$modeName' is not supported. Supported modes are: $supportedModes")
+  }
+
+  def illegalUsageException(option: String, operation: String): Throwable = {
+    throw new IllegalArgumentException(
+      s"The usage of $option is not allowed when $operation a Delta table.")
   }
 
   def columnNotInSchemaException(column: String, schema: StructType): Throwable = {
@@ -924,13 +935,14 @@ class ConcurrentTransactionException(
 class MetadataMismatchErrorBuilder {
   private var bits: Seq[String] = Nil
 
-  private var mentionedOption = false
-
   def addSchemaMismatch(original: StructType, data: StructType, id: String): Unit = {
     bits ++=
       s"""A schema mismatch detected when writing to the Delta table (Table ID: $id).
-         |To enable schema migration, please set:
+         |To enable schema migration using DataFrameWriter or DataStreamWriter, please set:
          |'.option("${DeltaOptions.MERGE_SCHEMA_OPTION}", "true")'.
+         |For other operations, set the session configuration
+         |${DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key} to "true". See the documentation
+         |specific to the operation for details.
          |
          |Table schema:
          |${DeltaErrors.formatSchema(original)}
@@ -938,7 +950,6 @@ class MetadataMismatchErrorBuilder {
          |Data schema:
          |${DeltaErrors.formatSchema(data)}
          """.stripMargin :: Nil
-    mentionedOption = true
   }
 
   def addPartitioningMismatch(original: Seq[String], provided: Seq[String]): Unit = {
@@ -957,16 +968,9 @@ class MetadataMismatchErrorBuilder {
            |Note that the schema can't be overwritten when using
          |'${DeltaOptions.REPLACE_WHERE_OPTION}'.
          """.stripMargin :: Nil
-    mentionedOption = true
   }
 
-  def finalizeAndThrow(): Unit = {
-    if (mentionedOption) {
-      bits ++=
-        """If Table ACLs are enabled, these options will be ignored. Please use the ALTER TABLE
-          |command for changing the schema.
-        """.stripMargin :: Nil
-    }
+  def finalizeAndThrow(conf: SQLConf): Unit = {
     throw new AnalysisException(bits.mkString("\n"))
   }
 }

@@ -2,7 +2,7 @@ FROM python:3.7.4-stretch
 
 RUN apt-get update && apt-get -y install openjdk-8-jdk
 
-RUN pip install pyspark>=2.4.2
+RUN pip install https://docs.delta.io/spark3artifacts/rc1/distributions/pyspark-3.0.0.tar.gz
 
 COPY . /usr/src/delta
 

@@ -133,9 +133,7 @@ class DeltaLogSuite extends QueryTest
     val updateLog2 = log2.update()
     assert(updateLog2.version == log1.snapshot.version, "Did not update to correct version")
 
-    val deltas = log2.snapshot.files.collect {
-      case DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT, deltaFiles) => deltaFiles
-    }.flatten
+    val deltas = log2.snapshot.logSegment.deltas
     assert(deltas.length === 4, "Expected 4 files starting at version 11 to 14")
     val versions = deltas.map(f => FileNames.deltaVersion(f.getPath)).sorted
     assert(versions === Seq[Long](11, 12, 13, 14), "Received the wrong files for update")
@@ -233,6 +231,11 @@ class DeltaLogSuite extends QueryTest
         assert(log.snapshot.numOfFiles === 0)
       }
     }
+  }
+
+  test("Reject read from Delta if no path is passed") {
+    val e = intercept[IllegalArgumentException](spark.read.format("delta").load()).getMessage
+    assert(e.contains("'path' is not specified"))
   }
 
   test("do not relativize paths in RemoveFiles") {
