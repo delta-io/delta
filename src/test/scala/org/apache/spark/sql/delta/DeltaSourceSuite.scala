@@ -148,7 +148,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase {
       testStream(df)(
         AssertOnQuery { q => q.processAllAvailable(); true },
         CheckAnswer((0 until 5).map(_.toString): _*),
-        AssertOnQuery { q =>
+        AssertOnQuery { _ =>
           withMetadata(deltaLog, StructType.fromDDL("id LONG, value STRING"))
           true
         },
@@ -583,7 +583,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase {
         AssertOnQuery { q => q.processAllAvailable(); true },
         CheckAnswer("keep1", "keep2"),
         StopStream,
-        AssertOnQuery { q =>
+        AssertOnQuery { _ =>
           Utils.deleteRecursively(inputDir)
           val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
           // All Delta tables in tests use the same tableId by default. Here we pass a new tableId
@@ -834,7 +834,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase {
 
       // Make sure OffsetSeqLog won't choke on the offset we wrote
       withTempDir { logPath =>
-        val seqLog = new OffsetSeqLog(spark, logPath.toString) {
+        new OffsetSeqLog(spark, logPath.toString) {
           val offsetSeq = this.deserialize(new FileInputStream(offsetFile))
           val out = new OutputStream() { override def write(b: Int): Unit = { } }
           this.serialize(offsetSeq, out)
@@ -983,7 +983,7 @@ class MonotonicallyIncreasingTimestampFS extends RawLocalFileSystem {
   override def getFileStatus(f: Path): FileStatus = {
     val original = super.getFileStatus(f)
     time += 1000L
-    new FileStatus(original.getLen, original.isDir, 0, 0, time, f)
+    new FileStatus(original.getLen, original.isDirectory, 0, 0, time, f)
   }
 }
 
