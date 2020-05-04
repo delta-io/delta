@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -56,8 +56,7 @@ case class DeleteCommand(
   override lazy val metrics = Map[String, SQLMetric](
     "numRemovedFiles" -> createMetric(sc, "number of files removed."),
     "numAddedFiles" -> createMetric(sc, "number of files added."),
-    "numDeletedRows" -> createMetric(sc, "number of rows deleted."),
-    "numTotalRows" -> createMetric(sc, "total number of rows.")
+    "numDeletedRows" -> createMetric(sc, "number of rows deleted.")
   )
 
   final override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -96,6 +95,7 @@ case class DeleteCommand(
         scanTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
 
         val operationTimestamp = System.currentTimeMillis()
+        metrics("numRemovedFiles").set(allFiles.size)
         allFiles.map(_.removeWithTimestamp(operationTimestamp))
       case Some(cond) =>
         val (metadataPredicates, otherPredicates) =
@@ -111,6 +111,7 @@ case class DeleteCommand(
           scanTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
           numTouchedFiles = candidateFiles.size
 
+          metrics("numRemovedFiles").set(numTouchedFiles)
           candidateFiles.map(_.removeWithTimestamp(operationTimestamp))
         } else {
           // Case 3: Delete the rows based on the condition.
@@ -125,12 +126,7 @@ case class DeleteCommand(
           // that only involves the affected files instead of all files.
           val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
           val data = Dataset.ofRows(sparkSession, newTarget)
-          val totalRowsCount = metrics("numTotalRows")
           val deletedRowCount = metrics("numDeletedRows")
-          val totalRowUdf = udf { () =>
-            totalRowsCount += 1
-            true
-          }.asNondeterministic()
           val deletedRowUdf = udf { () =>
             deletedRowCount += 1
             true
@@ -141,7 +137,6 @@ case class DeleteCommand(
                 Array.empty[String]
               } else {
                 data
-                  .filter(totalRowUdf())
                   .filter(new Column(cond))
                   .filter(deletedRowUdf())
                   .select(new Column(InputFileName())).distinct()
@@ -149,6 +144,7 @@ case class DeleteCommand(
               }
             }
 
+          metrics("numRemovedFiles").set(filesToRewrite.size)
           scanTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
           if (filesToRewrite.isEmpty) {
             // Case 3.1: no row matches and no delete will be triggered
@@ -181,7 +177,6 @@ case class DeleteCommand(
         }
     }
     if (deleteActions.nonEmpty) {
-      metrics("numRemovedFiles").set(numTouchedFiles)
       metrics("numAddedFiles").set(numRewrittenFiles)
       txn.registerSQLMetrics(sparkSession, metrics)
       txn.commit(deleteActions, DeltaOperations.Delete(condition.map(_.sql).toSeq))

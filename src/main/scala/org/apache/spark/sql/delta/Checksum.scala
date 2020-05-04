@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -147,7 +147,7 @@ trait ReadChecksum extends DeltaLogging { self: DeltaLog =>
 /**
  * Verify the state of the table using the checksum information.
  */
-trait ValidateChecksum extends DeltaLogging { self: MetadataGetter =>
+trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
 
   def validateChecksum(): Unit = checksumOpt.foreach { checksum =>
     val mismatchStringOpt = checkMismatch(checksum)
@@ -180,12 +180,11 @@ trait ValidateChecksum extends DeltaLogging { self: MetadataGetter =>
         result += s"$title - Expected: $expected Computed: $found"
       }
     }
-    compare(checksum.tableSizeBytes, sizeInBytes, "Table size (bytes)")
-    compare(checksum.numFiles, numOfFiles, "Number of files")
-    compare(checksum.numMetadata, numOfMetadata, "Metadata updates")
-    compare(checksum.numProtocol, numOfProtocol, "Protocol updates")
-    compare(checksum.numTransactions, numOfSetTransactions, "Transactions")
+    compare(checksum.tableSizeBytes, computedState.sizeInBytes, "Table size (bytes)")
+    compare(checksum.numFiles, computedState.numOfFiles, "Number of files")
+    compare(checksum.numMetadata, computedState.numOfMetadata, "Metadata updates")
+    compare(checksum.numProtocol, computedState.numOfProtocol, "Protocol updates")
+    compare(checksum.numTransactions, computedState.numOfSetTransactions, "Transactions")
     if (result.isEmpty) None else Some(result.mkString("\n"))
   }
-
 }

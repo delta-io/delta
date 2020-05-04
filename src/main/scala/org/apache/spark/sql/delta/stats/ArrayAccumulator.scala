@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,8 @@
  */
 
 package org.apache.spark.sql.delta.stats
+
+import java.io.{ObjectInput, ObjectOutput}
 
 import org.apache.spark.util.AccumulatorV2
 
@@ -53,4 +55,6 @@ class ArrayAccumulator(val size: Int) extends AccumulatorV2[(Int, Long), Array[L
     })
   }
   override def value: Array[Long] = counts
+
 }
+

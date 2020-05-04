@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -196,29 +196,43 @@ class DeltaHistoryManager(
     // A map of checkpoint version and number of parts, to number of parts observed
     val checkpointMap = new scala.collection.mutable.HashMap[(Long, Int), Int]()
     var smallestDeltaVersion = Long.MaxValue
+    var lastCompleteCheckpoint: Option[Long] = None
 
+    // Iterate through the log files - this will be in order starting from the lowest version.
+    // Checkpoint files come before deltas, so when we see a checkpoint, we remember it and
+    // return it once we detect that we've seen a smaller or equal delta version.
     while (files.hasNext) {
       val nextFilePath = files.next().getPath
       if (FileNames.isDeltaFile(nextFilePath)) {
         val version = FileNames.deltaVersion(nextFilePath)
         if (version == 0L) return version
         smallestDeltaVersion = math.min(version, smallestDeltaVersion)
+
+        // Note that we also check this condition at the end of the function - we check it
+        // here too to to try and avoid more file listing when it's unnecessary.
+        if (lastCompleteCheckpoint.exists(_ >= smallestDeltaVersion)) {
+          return lastCompleteCheckpoint.get
+        }
       } else if (FileNames.isCheckpointFile(nextFilePath)) {
         val checkpointVersion = FileNames.checkpointVersion(nextFilePath)
         val parts = FileNames.numCheckpointParts(nextFilePath)
-        if (parts.isEmpty && smallestDeltaVersion <= checkpointVersion) return checkpointVersion
-
-        // if we have a multi-part checkpoint, we need to check that all parts exist
-        val numParts = parts.getOrElse(1)
-        val preCount = checkpointMap.getOrElse(checkpointVersion -> numParts, 0)
-        if (numParts == preCount + 1 && smallestDeltaVersion <= checkpointVersion) {
-          return checkpointVersion
+        if (parts.isEmpty) {
+          lastCompleteCheckpoint = Some(checkpointVersion)
+        } else {
+          // if we have a multi-part checkpoint, we need to check that all parts exist
+          val numParts = parts.getOrElse(1)
+          val preCount = checkpointMap.getOrElse(checkpointVersion -> numParts, 0)
+          if (numParts == preCount + 1 && smallestDeltaVersion <= checkpointVersion) {
+            lastCompleteCheckpoint = Some(checkpointVersion)
+          }
+          checkpointMap.put(checkpointVersion -> numParts, preCount + 1)
         }
-        checkpointMap.put(checkpointVersion -> numParts, preCount + 1)
       }
     }
 
-    if (smallestDeltaVersion < Long.MaxValue) {
+    if (lastCompleteCheckpoint.exists(_ >= smallestDeltaVersion)) {
+      return lastCompleteCheckpoint.get
+    } else if (smallestDeltaVersion < Long.MaxValue) {
       throw DeltaErrors.noReproducibleHistoryFound(deltaLog.logPath)
     } else {
       throw DeltaErrors.noHistoryFound(deltaLog.logPath)

@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.files._
+import org.apache.spark.sql.delta.schema.ImplicitMetadataOperation
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{AnalysisHelper, SetAccumulator}
 
@@ -29,12 +30,15 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.encoders.{ExpressionEncoder, RowEncoder}
 import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, Expression, Literal, PredicateHelper, UnsafeProjection}
+import org.apache.spark.sql.catalyst.expressions.BasePredicate
+import org.apache.spark.sql.catalyst.expressions.NamedExpression
 import org.apache.spark.sql.catalyst.expressions.codegen._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.functions._
+import org.apache.spark.sql.types.{StructField, StructType}
 
 case class MergeDataRows(rows: Long)
 case class MergeDataFiles(files: Long)
@@ -85,6 +89,7 @@ case class MergeStats(
  * @param condition         Condition for a source row to match with a target row
  * @param matchedClauses    All info related to matched clauses.
  * @param notMatchedClause  All info related to not matched clause.
+ * @param migratedSchema    The final schema of the target - may be changed by schema evolution.
  */
 case class MergeIntoCommand(
     @transient source: LogicalPlan,
@@ -92,11 +97,15 @@ case class MergeIntoCommand(
     @transient targetFileIndex: TahoeFileIndex,
     condition: Expression,
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
-    notMatchedClause: Option[DeltaMergeIntoInsertClause]) extends RunnableCommand
-  with DeltaCommand with PredicateHelper with AnalysisHelper {
+    notMatchedClause: Option[DeltaMergeIntoInsertClause],
+    migratedSchema: Option[StructType]) extends RunnableCommand
+  with DeltaCommand with PredicateHelper with AnalysisHelper with ImplicitMetadataOperation {
 
   import SQLMetrics._
   import MergeIntoCommand._
+
+  override val canMergeSchema: Boolean = conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE)
+  override val canOverwriteSchema: Boolean = false
 
   @transient private lazy val sc: SparkContext = SparkContext.getOrCreate()
   @transient private lazy val targetDeltaLog: DeltaLog = targetFileIndex.deltaLog
@@ -124,6 +133,13 @@ case class MergeIntoCommand(
   override def run(
     spark: SparkSession): Seq[Row] = recordDeltaOperation(targetDeltaLog, "delta.dml.merge") {
     targetDeltaLog.withNewTransaction { deltaTxn =>
+      if (canMergeSchema) {
+        updateMetadata(
+          spark, deltaTxn, migratedSchema.getOrElse(target.schema),
+          deltaTxn.metadata.partitionColumns, deltaTxn.metadata.configuration,
+          isOverwriteMode = false, rearrangeOnly = false)
+      }
+
       val deltaActions = {
        if (isInsertOnly && spark.conf.get(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED)) {
          writeInsertsOnlyWhenNoMatchedClauses(spark, deltaTxn)
@@ -255,7 +271,7 @@ case class MergeIntoCommand(
     val incrSourceRowCountExpr = makeMetricUpdateUDF("numSourceRows")
     val incrInsertedCountExpr = makeMetricUpdateUDF("numTargetRowsInserted")
 
-    val outputColNames = target.output.map(_.name)
+    val outputColNames = getTargetOutputCols(deltaTxn).map(_.name)
     val outputExprs = notMatchedClause.get.resolvedActions.map(_.expr) :+ incrInsertedCountExpr
     val outputCols = outputExprs.zip(outputColNames).map { case (expr, name) =>
       new Column(Alias(expr, name)())
@@ -279,7 +295,8 @@ case class MergeIntoCommand(
     val insertDf = sourceDF.join(targetDF, new Column(condition), "leftanti")
       .select(outputCols: _*)
 
-    val newFiles = deltaTxn.writeFiles(insertDf)
+    val newFiles = deltaTxn
+      .writeFiles(repartitionIfNeeded(spark, insertDf, deltaTxn.metadata.partitionColumns))
     metrics("numTargetFilesBeforeSkipping") += deltaTxn.snapshot.numOfFiles
     metrics("numTargetFilesAfterSkipping") += dataSkippedFiles.size
     metrics("numTargetFilesRemoved") += 0
@@ -296,6 +313,7 @@ case class MergeIntoCommand(
     deltaTxn: OptimisticTransaction,
     filesToRewrite: Seq[AddFile]
   ): Seq[AddFile] = {
+    val targetOutputCols = getTargetOutputCols(deltaTxn)
 
     // Generate a new logical plan that has same output attributes exprIds as the target plan.
     // This allows us to apply the existing resolved update/insert expressions.
@@ -346,7 +364,7 @@ case class MergeIntoCommand(
           u.resolvedActions.map(_.expr) :+ Literal(false) :+ incrUpdatedCountExpr
         case _: DeltaMergeIntoDeleteClause =>
           // Generate expressions to set the ROW_DELETED_COL = true
-          target.output :+ Literal(true) :+ incrDeletedCountExpr
+          targetOutputCols :+ Literal(true) :+ incrDeletedCountExpr
       }
       resolveOnJoinedPlan(exprs)
     }
@@ -364,7 +382,7 @@ case class MergeIntoCommand(
     val matchedClause1 = matchedClauses.headOption
     val matchedClause2 = matchedClauses.drop(1).headOption
     val joinedRowEncoder = RowEncoder(joinedPlan.schema)
-    val outputRowEncoder = RowEncoder(target.schema).resolveAndBind()
+    val outputRowEncoder = RowEncoder(deltaTxn.metadata.schema).resolveAndBind()
 
     val processor = new JoinedRowProcessor(
       targetRowHasNoMatch = resolveOnJoinedPlan(Seq(col(SOURCE_ROW_PRESENT_COL).isNull.expr)).head,
@@ -375,8 +393,10 @@ case class MergeIntoCommand(
       matchedOutput2 = matchedClause2.map(matchedClauseOutput),
       notMatchedCondition = clauseCondition(notMatchedClause),
       notMatchedOutput = notMatchedClause.map(notMatchedClauseOutput),
-      noopCopyOutput = resolveOnJoinedPlan(target.output :+ Literal(false) :+ incrNoopCountExpr),
-      deleteRowOutput = resolveOnJoinedPlan(target.output :+ Literal(true) :+ Literal(true)),
+      noopCopyOutput =
+        resolveOnJoinedPlan(targetOutputCols :+ Literal(false) :+ incrNoopCountExpr),
+      deleteRowOutput =
+        resolveOnJoinedPlan(targetOutputCols :+ Literal(true) :+ Literal(true)),
       joinedAttributes = joinedPlan.output,
       joinedRowEncoder = joinedRowEncoder,
       outputRowEncoder = outputRowEncoder)
@@ -386,7 +406,8 @@ case class MergeIntoCommand(
     logDebug("writeAllChanges: join output plan:\n" + outputDF.queryExecution)
 
     // Write to Delta
-    val newFiles = deltaTxn.writeFiles(outputDF)
+    val newFiles = deltaTxn
+      .writeFiles(repartitionIfNeeded(spark, outputDF, deltaTxn.metadata.partitionColumns))
     metrics("numTargetFilesAdded") += newFiles.size
     newFiles
   }
@@ -406,10 +427,12 @@ case class MergeIntoCommand(
     // create an alias
     val aliases = plan.output.map {
       case newAttrib: AttributeReference =>
-        val existingTargetAttrib = target.output.find(_.name == newAttrib.name).getOrElse {
-          throw new AnalysisException(
-            s"Could not find ${newAttrib.name} among the existing target output ${target.output}")
-        }.asInstanceOf[AttributeReference]
+        val existingTargetAttrib = getTargetOutputCols(deltaTxn).find(_.name == newAttrib.name)
+          .getOrElse {
+            throw new AnalysisException(
+              s"Could not find ${newAttrib.name} among the existing target output " +
+                s"${getTargetOutputCols(deltaTxn)}")
+          }.asInstanceOf[AttributeReference]
         Alias(newAttrib, existingTargetAttrib.name)(exprId = existingTargetAttrib.exprId)
     }
     Project(aliases, plan)
@@ -423,6 +446,29 @@ case class MergeIntoCommand(
   }
 
   private def seqToString(exprs: Seq[Expression]): String = exprs.map(_.sql).mkString("\n\t")
+
+  private def getTargetOutputCols(txn: OptimisticTransaction): Seq[NamedExpression] = {
+    txn.metadata.schema.map { col =>
+      target.output.find(attr => conf.resolver(attr.name, col.name)).getOrElse {
+        Alias(Literal(null, col.dataType), col.name)()
+      }
+    }
+  }
+
+  /**
+   * Repartitions the output DataFrame by the partition columns if table is partitioned
+   * and `merge.repartitionBeforeWrite.enabled` is set to true.
+   */
+  protected def repartitionIfNeeded(
+      spark: SparkSession,
+      df: DataFrame,
+      partitionColumns: Seq[String]): DataFrame = {
+    if (partitionColumns.nonEmpty && spark.conf.get(DeltaSQLConf.MERGE_REPARTITION_BEFORE_WRITE)) {
+      df.repartition(partitionColumns.map(col): _*)
+    } else {
+      df
+    }
+  }
 }
 
 object MergeIntoCommand {
@@ -460,7 +506,7 @@ object MergeIntoCommand {
       UnsafeProjection.create(exprs, joinedAttributes)
     }
 
-    private def generatePredicate(expr: Expression): Predicate = {
+    private def generatePredicate(expr: Expression): BasePredicate = {
       GeneratePredicate.generate(expr, joinedAttributes)
     }
 
@@ -504,12 +550,14 @@ object MergeIntoCommand {
         }
       }
 
+      val toRow = joinedRowEncoder.toRow _
+      val fromRow = outputRowEncoder.fromRow _
       rowIterator
-        .map(joinedRowEncoder.toRow)
+        .map(toRow)
         .map(processRow)
         .filter(!shouldDeleteRow(_))
         .map { notDeletedInternalRow =>
-          outputRowEncoder.fromRow(outputProj(notDeletedInternalRow))
+          fromRow(outputProj(notDeletedInternalRow))
         }
     }
   }

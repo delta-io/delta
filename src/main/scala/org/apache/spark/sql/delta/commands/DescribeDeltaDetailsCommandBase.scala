@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,11 +26,12 @@ import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{Row, SparkSession}
-import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.{CatalystTypeConverters, ScalaReflection, TableIdentifier}
+import org.apache.spark.sql.catalyst.ScalaReflection.Schema
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.catalyst.encoders.{ExpressionEncoder, RowEncoder}
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.types.StructType
 
 /** The result returned by the `describe detail` command. */
 case class TableDetail(
@@ -48,6 +49,18 @@ case class TableDetail(
   minReaderVersion: java.lang.Integer,
   minWriterVersion: java.lang.Integer)
 
+object TableDetail {
+  val Schema(schema: StructType, _) = ScalaReflection.schemaFor[TableDetail]
+
+  private lazy val converter: TableDetail => Row = {
+    val toInternalRow = CatalystTypeConverters.createToCatalystConverter(schema)
+    val toExternalRow = CatalystTypeConverters.createToScalaConverter(schema)
+    toInternalRow.andThen(toExternalRow).asInstanceOf[TableDetail => Row]
+  }
+
+  def toRow(table: TableDetail): Row = converter(table)
+}
+
 /**
  * A command for describing the details of a table such as the format, name, and size.
  */
@@ -57,11 +70,7 @@ trait DescribeDeltaDetailCommandBase extends RunnableCommand with DeltaLogging {
 
   val tableIdentifier: Option[TableIdentifier]
 
-  private val encoder = ExpressionEncoder[TableDetail]()
-
-  private val rowEncoder = RowEncoder(encoder.schema).resolveAndBind()
-
-  override val output: Seq[Attribute] = encoder.schema.toAttributes
+  override val output: Seq[Attribute] = TableDetail.schema.toAttributes
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val (basePath, tableMetadata) = getPathAndTableMetadata(sparkSession, path, tableIdentifier)
@@ -117,8 +126,10 @@ trait DescribeDeltaDetailCommandBase extends RunnableCommand with DeltaLogging {
     }
   }
 
+  private def toRows(detail: TableDetail): Seq[Row] = TableDetail.toRow(detail) :: Nil
+
   private def describeNonDeltaTable(table: CatalogTable): Seq[Row] = {
-    Seq(rowEncoder.fromRow(encoder.toRow(
+    toRows(
       TableDetail(
         table.provider.orNull,
         null,
@@ -133,11 +144,11 @@ trait DescribeDeltaDetailCommandBase extends RunnableCommand with DeltaLogging {
         table.properties,
         null,
         null
-      ))))
+      ))
   }
 
   private def describeNonDeltaPath(path: String): Seq[Row] = {
-    Seq(rowEncoder.fromRow(encoder.toRow(
+    toRows(
       TableDetail(
         null,
         null,
@@ -151,7 +162,7 @@ trait DescribeDeltaDetailCommandBase extends RunnableCommand with DeltaLogging {
         null,
         Map.empty,
         null,
-        null))))
+        null))
   }
 
   private def describeDeltaTable(
@@ -162,7 +173,7 @@ trait DescribeDeltaDetailCommandBase extends RunnableCommand with DeltaLogging {
     val currentVersionPath = FileNames.deltaFile(deltaLog.logPath, snapshot.version)
     val fs = currentVersionPath.getFileSystem(sparkSession.sessionState.newHadoopConf)
     val tableName = tableMetadata.map(_.qualifiedName).getOrElse(snapshot.metadata.name)
-    Seq(rowEncoder.fromRow(encoder.toRow(
+    toRows(
       TableDetail(
         "delta",
         snapshot.metadata.id,
@@ -176,6 +187,6 @@ trait DescribeDeltaDetailCommandBase extends RunnableCommand with DeltaLogging {
         snapshot.sizeInBytes,
         snapshot.metadata.configuration,
         snapshot.protocol.minReaderVersion,
-        snapshot.protocol.minWriterVersion))))
+        snapshot.protocol.minWriterVersion))
   }
 }

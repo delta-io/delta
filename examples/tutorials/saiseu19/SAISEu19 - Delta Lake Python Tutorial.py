@@ -48,8 +48,8 @@
 import os, shutil
 
 # Configurations necessary for running of Databricks Community Edition
-spark.sql("set spark.sql.shuffle.partitions = 1")
-spark.sql("set spark.databricks.delta.snapshotPartitions = 1")
+spark.sql("set spark.sql.shuffle.partitions = 1")  # noqa
+spark.sql("set spark.databricks.delta.snapshotPartitions = 1")  # noqa
 
 demo_path = "/sais_eu_19_demo/"
 

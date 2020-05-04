@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import java.io.FileNotFoundException
+
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
@@ -23,25 +25,28 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.parser.ParseException
-import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
-abstract class ConvertToDeltaSuiteBase extends QueryTest
-    with SharedSparkSession {
-
+/**
+ * Common functions used across CONVERT TO DELTA test suites. We separate out these functions
+ * so that we can re-use them in tests using Hive support. Tests that leverage Hive support cannot
+ * extend the `SharedSparkSession`, therefore we keep this utility class as bare-bones as possible.
+ */
+trait ConvertToDeltaTestUtils extends QueryTest { self: SQLTestUtils =>
   import org.apache.spark.sql.functions._
-  import testImplicits._
 
   protected def simpleDF = spark.range(100)
     .withColumn("key1", col("id") % 2)
     .withColumn("key2", col("id") % 3 cast "String")
 
+  protected def convertToDelta(identifier: String, partitionSchema: Option[String] = None): Unit
 
   protected val blockNonDeltaMsg = "A transaction log for Delta Lake was found at"
   protected val parquetOnlyMsg = "CONVERT TO DELTA only supports parquet tables"
 
-  protected def deltaRead(df: DataFrame): Boolean = {
+  protected def deltaRead(df: => DataFrame): Boolean = {
     val analyzed = df.queryExecution.analyzed
     analyzed.find {
       case DeltaTable(_: TahoeLogFileIndex) => true
@@ -61,6 +66,15 @@ abstract class ConvertToDeltaSuiteBase extends QueryTest
       df.write.format(format).mode(mode).save(dir)
     }
   }
+}
+
+/** Tests for CONVERT TO DELTA that can be leveraged across SQL and Scala APIs. */
+trait ConvertToDeltaSuiteTests extends ConvertToDeltaTestUtils
+  with SharedSparkSession
+  with SQLTestUtils {
+
+  import org.apache.spark.sql.functions._
+  import testImplicits._
 
   // Use different batch sizes to cover different merge schema code paths.
   protected def testSchemaMerging(testName: String)(block: => Unit): Unit = {
@@ -73,8 +87,6 @@ abstract class ConvertToDeltaSuiteBase extends QueryTest
       }
     }
   }
-
-  protected def convertToDelta(identifier: String, partitionSchema: Option[String] = None): Unit
 
   test("negative case: convert a non-delta path falsely claimed as parquet") {
     Seq("orc", "json", "csv").foreach { format =>
@@ -170,7 +182,7 @@ abstract class ConvertToDeltaSuiteBase extends QueryTest
   test("negative case: empty and non-existent root dir") {
     withTempDir { dir =>
       val tempDir = dir.getCanonicalPath
-      val re = intercept[RuntimeException] {
+      val re = intercept[FileNotFoundException] {
         convertToDelta(s"parquet.`$tempDir`")
       }
       assert(re.getMessage.contains("No file found in the directory"))

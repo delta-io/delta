@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -82,6 +82,8 @@ abstract class ConvertToDeltaCommandBase(
         case delta if DeltaSourceUtils.isDeltaDataSourceName(delta) =>
           logConsole("The table you are trying to convert is already a delta table")
           return Seq.empty[Row]
+        case _ if convertProperties.catalogTable.exists(isHiveStyleParquetTable) =>
+          // allowed
         case checkProvider if checkProvider != "parquet" =>
           throw DeltaErrors.convertNonParquetTablesException(tableIdentifier, checkProvider)
         case _ =>
@@ -501,6 +503,11 @@ abstract class ConvertToDeltaCommandBase(
       provider: Option[String],
       targetDir: String,
       properties: Map[String, String])
+
+  private def isHiveStyleParquetTable(catalogTable: CatalogTable): Boolean = {
+    catalogTable.provider.contains("hive") && catalogTable.storage.serde.contains(
+      "org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe")
+  }
 }
 
 case class ConvertToDeltaCommand(

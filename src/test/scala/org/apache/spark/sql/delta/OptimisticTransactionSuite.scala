@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -682,28 +682,6 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
       intercept[ConcurrentTransactionException] {
         txn.commit(Nil, ManualUpdate)
       }
-    }
-  }
-
-  test("query with predicates should skip partitions") {
-    withTempDir { tempDir =>
-      val testPath = tempDir.getCanonicalPath
-      spark.range(2)
-        .map(_.toInt)
-        .withColumn("part", $"value" % 2)
-        .write
-        .format("delta")
-        .partitionBy("part")
-        .mode("append")
-        .save(testPath)
-
-      val query = spark.read.format("delta").load(testPath).where("part = 1")
-      val fileScans = query.queryExecution.executedPlan.collect {
-        case f: FileSourceScanExec => f
-      }
-      assert(fileScans.size == 1)
-      assert(fileScans.head.metadata.get("PartitionCount").contains("1"))
-      checkAnswer(query, Seq(Row(1, 1)))
     }
   }
 }

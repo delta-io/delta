@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -56,8 +56,7 @@ case class UpdateCommand(
   override lazy val metrics = Map[String, SQLMetric](
     "numAddedFiles" -> createMetric(sc, "number of files added."),
     "numRemovedFiles" -> createMetric(sc, "number of files removed."),
-    "numUpdatedRows" -> createMetric(sc, "number of rows updated."),
-    "numTotalRows" -> createMetric(sc, "number of rows copied.")
+    "numUpdatedRows" -> createMetric(sc, "number of rows updated.")
   )
 
   final override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -123,20 +122,14 @@ case class UpdateCommand(
       // that only involves the affected files instead of all files.
       val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
       val data = Dataset.ofRows(sparkSession, newTarget)
-      val totalRowsCount = metrics("numTotalRows")
       val updatedRowCount = metrics("numUpdatedRows")
-      val totalRowUdf = udf { () =>
-        totalRowsCount += 1
-        true
-      }.asNondeterministic()
       val updatedRowUdf = udf { () =>
         updatedRowCount += 1
         true
       }.asNondeterministic()
       val filesToRewrite =
         withStatusCode("DELTA", s"Finding files to rewrite for UPDATE operation") {
-          data.filter(totalRowUdf())
-            .filter(new Column(updateCondition))
+          data.filter(new Column(updateCondition))
             .filter(updatedRowUdf())
             .select(input_file_name())
             .distinct().as[String].collect()

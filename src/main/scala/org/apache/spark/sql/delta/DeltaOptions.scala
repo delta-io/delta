@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -77,7 +77,7 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
    * MODIFY permissions, when schema changes require OWN permissions.
    */
   def canOverwriteSchema: Boolean = {
-    options.get(OVERWRITE_SCHEMA_OPTION).map(toBoolean(_, OVERWRITE_SCHEMA_OPTION)).getOrElse(false)
+    options.get(OVERWRITE_SCHEMA_OPTION).exists(toBoolean(_, OVERWRITE_SCHEMA_OPTION))
   }
 
   /**
@@ -87,7 +87,7 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
    * This makes sure streaming queries reading from this table will not see any new changes
    */
   def rearrangeOnly: Boolean = {
-    options.get(DATA_CHANGE_OPTION).map(!toBoolean(_, DATA_CHANGE_OPTION)).getOrElse(false)
+    options.get(DATA_CHANGE_OPTION).exists(!toBoolean(_, DATA_CHANGE_OPTION))
   }
 
   /** Whether to only overwrite partitions that have data written into it at runtime. */
@@ -119,13 +119,11 @@ trait DeltaReadOptions extends DeltaOptionParser {
   }
 
   val ignoreFileDeletion = options.get(IGNORE_FILE_DELETION_OPTION)
-    .map(toBoolean(_, IGNORE_FILE_DELETION_OPTION)).getOrElse(false)
+    .exists(toBoolean(_, IGNORE_FILE_DELETION_OPTION))
 
-  val ignoreChanges = options.get(IGNORE_CHANGES_OPTION)
-    .map(toBoolean(_, IGNORE_CHANGES_OPTION)).getOrElse(false)
+  val ignoreChanges = options.get(IGNORE_CHANGES_OPTION).exists(toBoolean(_, IGNORE_CHANGES_OPTION))
 
-  val ignoreDeletes = options.get(IGNORE_DELETES_OPTION)
-    .map(toBoolean(_, IGNORE_DELETES_OPTION)).getOrElse(false)
+  val ignoreDeletes = options.get(IGNORE_DELETES_OPTION).exists(toBoolean(_, IGNORE_DELETES_OPTION))
 
   val excludeRegex: Option[Regex] = try options.get(EXCLUDE_REGEX_OPTION).map(_.r) catch {
     case e: PatternSyntaxException =>

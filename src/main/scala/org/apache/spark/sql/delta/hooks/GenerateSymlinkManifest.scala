@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ import org.apache.spark.SparkEnv
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.ExternalCatalogUtils
+import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Cast, Concat, Expression, Literal, ScalaUDF}
 import org.apache.spark.sql.execution.datasources.InMemoryFileIndex
 import org.apache.spark.sql.functions.col
@@ -335,13 +336,11 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
       partitionColNameToAttrib: Seq[(String, Attribute)],
       timeZoneId: String): Expression = Concat(
 
-
     partitionColNameToAttrib.zipWithIndex.flatMap { case ((colName, col), i) =>
       val partitionName = ScalaUDF(
         ExternalCatalogUtils.getPartitionPathString _,
         StringType,
-        Seq(Literal(colName), Cast(col, StringType, Option(timeZoneId))),
-        Seq(true, true))
+        Seq(Literal(colName), Cast(col, StringType, Option(timeZoneId))))
       if (i == 0) Seq(partitionName) else Seq(Literal(Path.SEPARATOR), partitionName)
     }
   )

@@ -10,3 +10,4 @@
   bintray-typesafe-sbt-plugin-releases: https://dl.bintray.com/typesafe/sbt-plugins/, [organization]/[module]/(scala_[scalaVersion]/)(sbt_[sbtVersion]/)[revision]/[type]s/[artifact](-[classifier]).[ext]
   bintray-spark-packages: https://dl.bintray.com/spark-packages/maven/
   typesafe-releases: http://repo.typesafe.com/typesafe/releases/
+  temporary-staging-for-spark-3.0: https://docs.delta.io/spark3artifacts/rc1/maven/

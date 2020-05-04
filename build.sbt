@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,11 +18,9 @@ name := "delta-core"
 
 organization := "io.delta"
 
-crossScalaVersions := Seq("2.12.8", "2.11.12")
+scalaVersion := "2.12.10"
 
-scalaVersion := crossScalaVersions.value.head
-
-sparkVersion := "2.4.2"
+sparkVersion := "3.0.0"
 
 libraryDependencies ++= Seq(
   // Adding test classifier seems to break transitive resolution of the core dependencies
@@ -37,8 +35,14 @@ libraryDependencies ++= Seq(
   "com.novocode" % "junit-interface" % "0.11" % "test",
   "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
   "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
-  "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests"
+  "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
+
+  // Compiler plugins
+  // -- Bump up the genjavadoc version explicitly to 0.16 to work with Scala 2.12
+  compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.16" cross CrossVersion.full)
 )
+
+resolvers += "Temporary Staging of Spark 3.0" at "https://docs.delta.io/spark3artifacts/rc1/maven/"
 
 antlr4Settings
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@ import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions.InSet
 import org.apache.spark.sql.catalyst.plans.logical.Filter
+import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.internal.SQLConf
@@ -80,6 +81,37 @@ class DeltaSuite extends QueryTest
       checkDatasetUnorderly(
         ds.where("part = 1 and value < 5"),
         1 -> 1, 3 -> 1)
+    }
+  }
+
+  test("query with predicates should skip partitions") {
+    withTempDir { tempDir =>
+      val testPath = tempDir.getCanonicalPath
+
+      // Generate two files in two partitions
+      spark.range(2)
+        .withColumn("part", $"id" % 2)
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .mode("append")
+        .save(testPath)
+
+      // Read only one partition
+      val query = spark.read.format("delta").load(testPath).where("part = 1")
+      val fileScans = query.queryExecution.executedPlan.collect {
+        case f: FileSourceScanExec => f
+      }
+
+      // Force the query to read files and generate metrics
+      query.queryExecution.executedPlan.execute().count()
+
+      // Verify only one file was read
+      assert(fileScans.size == 1)
+      val numFilesAferPartitionSkipping = fileScans.head.metrics.get("numFiles")
+      assert(numFilesAferPartitionSkipping.nonEmpty)
+      assert(numFilesAferPartitionSkipping.get.value == 1)
+      checkAnswer(query, Seq(Row(1, 1)))
     }
   }
 
@@ -554,6 +586,31 @@ class DeltaSuite extends QueryTest
 
       assert(files.forall(path => path.contains("by4=") && path.contains("/by8=")),
         s"${files.toSeq.mkString("\n")}\ndidn't contain partition columns by4 and by8")
+    }
+  }
+
+  test("support removing partitioning") {
+    withTempDir { tempDir =>
+      if (tempDir.exists()) {
+        assert(tempDir.delete())
+      }
+
+      spark.range(100).select('id, 'id % 4 as 'by4)
+        .write
+        .format("delta")
+        .partitionBy("by4")
+        .save(tempDir.toString)
+
+      val deltaLog = DeltaLog.forTable(spark, tempDir)
+      assert(deltaLog.snapshot.metadata.partitionColumns === Seq("by4"))
+
+      spark.read.format("delta").load(tempDir.toString).write
+        .option(DeltaOptions.OVERWRITE_SCHEMA_OPTION, "true")
+        .format("delta")
+        .mode(SaveMode.Overwrite)
+        .save(tempDir.toString)
+
+      assert(deltaLog.snapshot.metadata.partitionColumns === Nil)
     }
   }
 

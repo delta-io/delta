@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -69,6 +69,14 @@ class DeltaTableSuite extends QueryTest
     withTempDir { dir =>
       testData.write.format("parquet").mode("overwrite").save(dir.getAbsolutePath)
       assert(!DeltaTable.isDeltaTable(dir.getAbsolutePath))
+    }
+  }
+
+  test("toDF regenerated each time") {
+    withTempDir { dir =>
+      testData.write.format("delta").save(dir.getAbsolutePath)
+      val table = DeltaTable.forPath(dir.getAbsolutePath)
+      assert(table.toDF != table.toDF)
     }
   }
 

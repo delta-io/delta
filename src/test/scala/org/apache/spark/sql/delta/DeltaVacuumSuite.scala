@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,11 +30,12 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.GivenWhenThen
 
 import org.apache.spark.sql.{AnalysisException, QueryTest, SaveMode}
+import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
-import org.apache.spark.unsafe.types.CalendarInterval
+import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.ManualClock
 
 trait DeltaVacuumSuiteBase extends QueryTest
@@ -295,8 +296,9 @@ trait DeltaVacuumSuiteBase extends QueryTest
   }
 
   protected def defaultTombstoneInterval: Long = {
-    DeltaConfigs.getMilliSeconds(CalendarInterval.fromString(
-      DeltaConfigs.TOMBSTONE_RETENTION.defaultValue))
+    DeltaConfigs.getMilliSeconds(
+      IntervalUtils.safeStringToInterval(
+        UTF8String.fromString(DeltaConfigs.TOMBSTONE_RETENTION.defaultValue)))
   }
 
   implicit def fileToPathString(f: File): String = new Path(f.getAbsolutePath).toString
@@ -378,7 +380,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
           "numRemovedFiles" -> createMetric(sparkContext, "number of files removed."),
           "numAddedFiles" -> createMetric(sparkContext, "number of files added."),
           "numDeletedRows" -> createMetric(sparkContext, "number of rows deleted."),
-          "numTotalRows" -> createMetric(sparkContext, "total number of rows.")
+          "numCopiedRows" -> createMetric(sparkContext, "total number of rows.")
         )
         txn.registerSQLMetrics(spark, metrics)
         txn.commit(Seq(RemoveFile(path, Option(clock.getTimeMillis()))), Delete("true" :: Nil))
