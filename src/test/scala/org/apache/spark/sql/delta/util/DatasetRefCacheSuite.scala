@@ -16,19 +16,18 @@
 
 package org.apache.spark.sql.delta.util
 
-import org.apache.spark.internal.Logging
+import org.apache.spark.sql.{QueryTest, SparkSession}
+import org.apache.spark.sql.test.SharedSparkSession
 
-trait DeltaProgressReporter extends Logging {
-  /**
-   * Report a log to indicate some command is running.
-   */
-  def withStatusCode[T](
-      statusCode: String,
-      defaultMessage: String,
-      data: Map[String, Any] = Map.empty)(body: => T): T = {
-    logInfo(s"$statusCode: $defaultMessage")
-    val t = body
-    logInfo(s"$statusCode: Done")
-    t
+class DatasetRefCacheSuite extends QueryTest with SharedSparkSession {
+
+  test("should create a new Dataset when the active session is changed") {
+    val cache = new DatasetRefCache(() => spark.range(1, 10) )
+    val ref = cache.get
+    // Should reuse `Dataset` when the active session is the same
+    assert(ref eq cache.get)
+    SparkSession.setActiveSession(spark.newSession())
+    // Should create a new `Dataset` when the active session is changed
+    assert(ref ne cache.get)
   }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,13 +19,15 @@ package org.apache.spark.sql.delta
 import java.io.File
 
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
+import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.unsafe.types.CalendarInterval
+import org.apache.spark.unsafe.types.UTF8String
 
 trait DeltaRetentionSuiteBase extends QueryTest
   with SharedSparkSession {
@@ -36,7 +38,8 @@ trait DeltaRetentionSuiteBase extends QueryTest
     .set("spark.databricks.delta.properties.defaults.enableExpiredLogCleanup", "false")
 
   protected def intervalStringToMillis(str: String): Long = {
-    DeltaConfigs.getMilliSeconds(CalendarInterval.fromString(str))
+    DeltaConfigs.getMilliSeconds(
+      IntervalUtils.safeStringToInterval(UTF8String.fromString(str)))
   }
 
   protected def getDeltaFiles(dir: File): Seq[File] =
@@ -46,4 +49,24 @@ trait DeltaRetentionSuiteBase extends QueryTest
     dir.listFiles().filter(f => FileNames.isCheckpointFile(new Path(f.getCanonicalPath)))
 
   protected def getLogFiles(dir: File): Seq[File]
+
+  /**
+   * Start a txn that disables automatic log cleanup. Some tests may need to manually clean up logs
+   * to get deterministic behaviors.
+   */
+  protected def startTxnWithManualLogCleanup(log: DeltaLog): OptimisticTransaction = {
+    val txn = log.startTransaction()
+    // This will pick up `spark.databricks.delta.properties.defaults.enableExpiredLogCleanup` to
+    // disable log cleanup.
+    txn.updateMetadata(Metadata())
+    txn
+  }
+
+  test("startTxnWithManualLogCleanup") {
+    withTempDir { tempDir =>
+      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+      startTxnWithManualLogCleanup(log).commit(Nil, testOp)
+      assert(!log.enableExpiredLogCleanup)
+    }
+  }
 }

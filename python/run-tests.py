@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 #
-# Copyright 2019 Databricks, Inc.
+# Copyright (2020) The Delta Lake Project Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -60,13 +60,13 @@ def prepare(root_dir):
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
     delete_if_exists(os.path.expanduser("~/.ivy2/cache/io.delta"))
     delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
-    run_cmd([sbt_path, "clean", "++ 2.11.12 publishM2"], stream_output=True)
+    run_cmd([sbt_path, "clean", "publishM2"], stream_output=True)
 
     # Get current release which is required to be loaded
     version = '0.0.0'
     with open(os.path.join(root_dir, "version.sbt")) as fd:
-            version = fd.readline().split('"')[1]
-    package = "io.delta:delta-core_2.11:" + version
+        version = fd.readline().split('"')[1]
+    package = "io.delta:delta-core_2.12:" + version
     return package
 
 

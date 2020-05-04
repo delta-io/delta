@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 class ConvertToDeltaSQLSuite
-  extends ConvertToDeltaSuiteBase  with DeltaSQLCommandTest
+  extends ConvertToDeltaSuiteTests  with DeltaSQLCommandTest
   {
   override protected def convertToDelta(
       identifier: String,

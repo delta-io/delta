@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,8 @@ import com.fasterxml.jackson.core.JsonGenerator
 import com.fasterxml.jackson.databind.{JsonSerializer, SerializerProvider}
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 import org.codehaus.jackson.annotate.JsonRawValue
+
+import org.apache.spark.util.Utils
 
 // scalastyle:off
 import org.apache.spark.internal.Logging
@@ -184,7 +186,7 @@ case class Format(
  * any data already present in the table is still valid after any change.
  */
 case class Metadata(
-    id: String = java.util.UUID.randomUUID().toString,
+    id: String = if (Utils.isTesting) "testId" else java.util.UUID.randomUUID().toString,
     name: String = null,
     description: String = null,
     format: Format = Format(),

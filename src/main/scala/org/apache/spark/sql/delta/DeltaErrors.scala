@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,13 +17,14 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.io.FileNotFoundException
+import java.io.{FileNotFoundException, IOException}
 import java.util.ConcurrentModificationException
 
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata}
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{Invariant, InvariantViolationException}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 
@@ -33,6 +34,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
 
@@ -87,7 +89,8 @@ trait DocsPath {
     "multipleSourceRowMatchingTargetRowInMergeException",
     "faqRelativePath",
     "ignoreStreamingUpdatesAndDeletesWarning",
-    "concurrentModificationExceptionMsg"
+    "concurrentModificationExceptionMsg",
+    "incorrectLogStoreImplementationException"
   )
 }
 
@@ -148,6 +151,17 @@ object DeltaErrors
     new InvariantViolationException(s"Column ${UnresolvedAttribute(invariant.column).name}" +
       s", which is defined as ${invariant.rule.name}, is missing from the data being " +
       s"written into the table.")
+  }
+
+  def incorrectLogStoreImplementationException(
+      sparkConf: SparkConf,
+      cause: Throwable): Throwable = {
+    new IOException(s"""The error typically occurs when the default LogStore implementation, that
+      | is, HDFSLogStore, is used to write into a Delta table on a non-HDFS storage system.
+      | In order to get the transactional ACID guarantees on table updates, you have to use the
+      | correct implementation of LogStore that is appropriate for your storage system.
+      | See ${generateDocsLink(sparkConf, "/delta-storage.html")} " for details.
+      """.stripMargin, cause)
   }
 
   def staticPartitionsNotSupportedException: Throwable = {
@@ -399,6 +413,10 @@ object DeltaErrors
   def illegalDeltaOptionException(name: String, input: String, explain: String): Throwable = {
     new IllegalArgumentException(
       s"Invalid value '$input' for option '$name', $explain")
+  }
+
+  def unrecognizedLogFile(path: Path): Throwable = {
+    new UnsupportedOperationException(s"Unrecognized log file $path")
   }
 
   def modifyAppendOnlyTableException: Throwable = {
@@ -763,7 +781,7 @@ object DeltaErrors
   }
 
   def emptyDirectoryException(directory: String): Throwable = {
-    new RuntimeException(s"No file found in the directory: $directory.")
+    new FileNotFoundException(s"No file found in the directory: $directory.")
   }
 
   def alterTableSetLocationSchemaMismatchException(
@@ -806,6 +824,11 @@ object DeltaErrors
     val supportedModes = DeltaGenerateCommand.modeNameToGenerationFunc.keys.toSeq.mkString(", ")
     new IllegalArgumentException(
       s"Specified mode '$modeName' is not supported. Supported modes are: $supportedModes")
+  }
+
+  def illegalUsageException(option: String, operation: String): Throwable = {
+    throw new IllegalArgumentException(
+      s"The usage of $option is not allowed when $operation a Delta table.")
   }
 
   def columnNotInSchemaException(column: String, schema: StructType): Throwable = {
@@ -912,13 +935,14 @@ class ConcurrentTransactionException(
 class MetadataMismatchErrorBuilder {
   private var bits: Seq[String] = Nil
 
-  private var mentionedOption = false
-
   def addSchemaMismatch(original: StructType, data: StructType, id: String): Unit = {
     bits ++=
       s"""A schema mismatch detected when writing to the Delta table (Table ID: $id).
-         |To enable schema migration, please set:
+         |To enable schema migration using DataFrameWriter or DataStreamWriter, please set:
          |'.option("${DeltaOptions.MERGE_SCHEMA_OPTION}", "true")'.
+         |For other operations, set the session configuration
+         |${DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key} to "true". See the documentation
+         |specific to the operation for details.
          |
          |Table schema:
          |${DeltaErrors.formatSchema(original)}
@@ -926,7 +950,6 @@ class MetadataMismatchErrorBuilder {
          |Data schema:
          |${DeltaErrors.formatSchema(data)}
          """.stripMargin :: Nil
-    mentionedOption = true
   }
 
   def addPartitioningMismatch(original: Seq[String], provided: Seq[String]): Unit = {
@@ -945,16 +968,9 @@ class MetadataMismatchErrorBuilder {
            |Note that the schema can't be overwritten when using
          |'${DeltaOptions.REPLACE_WHERE_OPTION}'.
          """.stripMargin :: Nil
-    mentionedOption = true
   }
 
-  def finalizeAndThrow(): Unit = {
-    if (mentionedOption) {
-      bits ++=
-        """If Table ACLs are enabled, these options will be ignored. Please use the ALTER TABLE
-          |command for changing the schema.
-        """.stripMargin :: Nil
-    }
+  def finalizeAndThrow(conf: SQLConf): Unit = {
     throw new AnalysisException(bits.mkString("\n"))
   }
 }

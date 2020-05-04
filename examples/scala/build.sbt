@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,9 +20,20 @@ organizationName := "example"
 scalaVersion := "2.11.12"
 version := "0.1.0"
 
+def getDeltaVersion(): String = {
+  val envVars = System.getenv
+  if (envVars.containsKey("DELTA_VERSION")) {
+    val version = envVars.get("DELTA_VERSION")
+    println("Using Delta version " + version)
+    version
+  } else {
+    "0.5.0"
+  }
+}
+
 lazy val root = (project in file("."))
   .settings(
     name := "hello-world",
-    libraryDependencies += "io.delta" %% "delta-core" % "0.5.0",
+    libraryDependencies += "io.delta" %% "delta-core" % getDeltaVersion(),
     libraryDependencies += "org.apache.spark" %% "spark-sql" % "2.4.3",
     resolvers += "Delta" at "https://dl.bintray.com/delta-io/delta/")

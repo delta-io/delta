@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,8 +22,9 @@ import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 
 import org.apache.spark.sql.AnalysisException
+import org.apache.spark.sql.catalyst.util.{DateTimeConstants, IntervalUtils}
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.unsafe.types.CalendarInterval
+import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
 
 case class DeltaConfig[T](
     key: String,
@@ -82,7 +83,7 @@ object DeltaConfigs extends DeltaLogging {
     val sInLowerCase = s.trim.toLowerCase(Locale.ROOT)
     val interval =
       if (sInLowerCase.startsWith("interval ")) sInLowerCase else "interval " + sInLowerCase
-    val cal = CalendarInterval.fromString(interval)
+    val cal = IntervalUtils.safeStringToInterval(UTF8String.fromString(interval))
     if (cal == null) {
       throw new IllegalArgumentException("Invalid interval: " + s)
     }
@@ -217,7 +218,7 @@ object DeltaConfigs extends DeltaLogging {
 
   private def getMicroSeconds(i: CalendarInterval): Long = {
     assert(i.months == 0)
-    i.microseconds.toLong
+    i.days * DateTimeConstants.MICROS_PER_DAY + i.microseconds
   }
 
   /**

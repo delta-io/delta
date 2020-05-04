@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,10 +18,15 @@ package org.apache.spark.sql.catalyst.plans.logical
 
 import java.util.Locale
 
+import scala.collection.mutable
+
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.analysis._
-import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Expression, UnaryExpression, Unevaluable}
-import org.apache.spark.sql.types.DataType
+import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, Expression, Literal, UnaryExpression, Unevaluable}
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.{ByteType, DataType, IntegerType, ShortType, StructField, StructType}
 
 /**
  * Represents an action in MERGE's UPDATE or INSERT clause where a target columns is assigned the
@@ -174,7 +179,8 @@ case class DeltaMergeInto(
     source: LogicalPlan,
     condition: Expression,
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
-    notMatchedClause: Option[DeltaMergeIntoInsertClause]) extends Command {
+    notMatchedClause: Option[DeltaMergeIntoInsertClause],
+    migratedSchema: Option[StructType] = None) extends Command {
 
   (matchedClauses ++ notMatchedClause).foreach(_.verifyActions())
 
@@ -220,13 +226,16 @@ object DeltaMergeInto {
       source,
       condition,
       whenClauses.collect { case x: DeltaMergeIntoMatchedClause => x }.take(2),
-      whenClauses.collectFirst { case x: DeltaMergeIntoInsertClause => x })
+      whenClauses.collectFirst { case x: DeltaMergeIntoInsertClause => x },
+      None)
   }
 
-  def resolveReferences(merge: DeltaMergeInto)(
+  def resolveReferences(merge: DeltaMergeInto, conf: SQLConf)(
       resolveExpr: (Expression, LogicalPlan) => Expression): DeltaMergeInto = {
 
-    val DeltaMergeInto(target, source, condition, matchedClauses, notMatchedClause) = merge
+    val DeltaMergeInto(
+        target, source, condition, matchedClauses, notMatchedClause, migratedSchema) =
+      merge
 
     // We must do manual resolution as the expressions in different clauses of the MERGE have
     // visibility of the source, the target or both. Additionally, the resolution logic operates
@@ -252,25 +261,94 @@ object DeltaMergeInto {
       resolvedExpr
     }
 
+
+    val shouldAutoMigrate = conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE)
+    // Migrated schema to be used for schema evolution.
+    val finalSchema = if (shouldAutoMigrate) {
+      // We can't just use the merge method in StructType, because it doesn't account
+      // for possible implicit conversions. Instead, we use the target schema for all
+      // existing columns and the source schema only for new ones.
+      val targetSchema = target.schema
+      val migratedSchema = mutable.ListBuffer[StructField]()
+      targetSchema.foreach(migratedSchema.append(_))
+
+      source.schema.foreach { col =>
+        val isInTarget = targetSchema.exists { targetCol =>
+          target.conf.resolver(targetCol.name, col.name)
+        }
+        if (!isInTarget) { migratedSchema.append(col) }
+      }
+
+      StructType(migratedSchema)
+    } else {
+      target.schema
+    }
+
     /**
      * Resolves a clause using the given plan (used for resolving the action exprs) and
      * returns the resolved clause.
      */
     def resolveClause[T <: DeltaMergeIntoClause](clause: T, planToResolveAction: LogicalPlan): T = {
       val typ = clause.clauseType.toUpperCase(Locale.ROOT)
+
       val resolvedActions: Seq[DeltaMergeAction] = clause.actions.flatMap { action =>
         action match {
           // For actions like `UPDATE SET *` or `INSERT *`
-          case _: UnresolvedStar =>
+          case _: UnresolvedStar if !shouldAutoMigrate =>
             // Expand `*` into seq of [ `columnName = sourceColumnBySameName` ] for every target
             // column name. The target columns do not need resolution. The right hand side
             // expression (i.e. sourceColumnBySameName) needs to be resolved only by the source
             // plan.
-            fakeTargetPlan.output.map(_.name).map { tgtColName =>
+            target.output.map(_.name).map { tgtColName =>
               val resolvedExpr = resolveOrFail(
-                  UnresolvedAttribute.quotedString(s"`$tgtColName`"),
-                  fakeSourcePlan, s"$typ clause")
+                UnresolvedAttribute.quotedString(s"`$tgtColName`"),
+                source, s"$typ clause")
               DeltaMergeAction(Seq(tgtColName), resolvedExpr)
+            }
+          case _: UnresolvedStar if shouldAutoMigrate =>
+            clause match {
+              case _: DeltaMergeIntoInsertClause =>
+                // Expand `*` into seq of [ `columnName = sourceColumnBySameName` ] for every source
+                // and target column name. Columns that exist only in the target are set to null,
+                // and columns that exist only in the source will be added later through
+                // schema evolution.
+                finalSchema.map { col =>
+                  // Construct an action that sets the target column to either the source column if
+                  // it's present or NULL otherwise.
+                  val sourceExpr = source.output.find { a =>
+                    conf.resolver(a.name, col.name)
+                  }.getOrElse {
+                    Alias(Literal.create(null, col.dataType), col.name)()
+                  }
+
+                  DeltaMergeAction(Seq(col.name), sourceExpr)
+                }
+              case clause: DeltaMergeIntoUpdateClause =>
+                // Expand `*` into seq of [ `columnName = sourceColumnBySameName` ] for every source
+                // and target column name. Columns that exist only in the target are set to
+                // themselves to produce a no-op, and columns that exist only in the source will be
+                // added later through schema evolution.
+                finalSchema.map { col =>
+                  // Construct an action that sets the target column to the source column if present
+                  // or the current column value otherwise. (The no-op action is required because
+                  // later code will assume actions are present for all target columns.)
+                  val sourceExpr = source.output.find { a =>
+                    conf.resolver(a.name, col.name)
+                  }.orElse {
+                    target.output.find { a =>
+                      conf.resolver(a.name, col.name)
+                    }
+                  }.getOrElse {
+                    // This shouldn't be able to happen - every column in the merged result has
+                    // gotta resolve in either the target or the source.
+                    clause.failAnalysis(
+                      s"cannot expand $col from merged schema ${finalSchema.prettyJson} in " +
+                        s"UPDATE *, given source ${source.output}, " +
+                        s"target ${target.output}")
+                  }
+
+                  DeltaMergeAction(Seq(col.name), sourceExpr)
+                }
             }
 
           // For actions like `UPDATE SET x = a, y = b` or `INSERT (x, y) VALUES (a, b)`
@@ -311,6 +389,9 @@ object DeltaMergeInto {
     val resolvedNotMatchedClause = notMatchedClause.map {
       resolveClause(_, fakeSourcePlan)
     }
-    DeltaMergeInto(target, source, resolvedCond, resolvedMatchedClauses, resolvedNotMatchedClause)
+    DeltaMergeInto(
+      target, source, resolvedCond,
+      resolvedMatchedClauses, resolvedNotMatchedClause,
+      if (shouldAutoMigrate) Some(finalSchema) else None)
   }
 }
