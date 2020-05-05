@@ -61,9 +61,10 @@ trait DescribeDeltaHistorySuiteBase
   }
 
   protected def checkOperationMetrics(
-      expectedMetrics: Map[String, String],
+      expectedEqualMetrics: Map[String, String],
       operationMetrics: Map[String, String],
-      metricsSchema: Set[String]): Unit = {
+      metricsSchema: Set[String],
+      expectedPositiveMetrics: Seq[String] = Seq.empty): Unit = {
     if (metricsSchema != operationMetrics.keySet) {
       fail(
         s"""The collected metrics does not match the defined schema for the metrics.
@@ -71,14 +72,27 @@ trait DescribeDeltaHistorySuiteBase
            | Actual : ${operationMetrics.keySet}
            """.stripMargin)
     }
-    expectedMetrics.keys.foreach { key =>
+    expectedEqualMetrics.keys.foreach { key =>
       if (!operationMetrics.contains(key)) {
         fail(s"The recorded operation metrics does not contain key: $key")
       }
-      if (expectedMetrics(key) != operationMetrics(key)) {
+      if (expectedEqualMetrics(key) != operationMetrics(key)) {
         fail(
           s"""The recorded metric for $key does not equal the expected value.
-             | expected = ${expectedMetrics(key)} ,
+             | expected = ${expectedEqualMetrics(key)} ,
+             | But actual = ${operationMetrics(key)}
+           """.stripMargin
+        )
+      }
+    }
+    expectedPositiveMetrics.foreach { key =>
+      if (!operationMetrics.contains(key)) {
+        fail(s"The recorded operation metrics does not contain key: $key")
+      }
+
+      if (operationMetrics(key).toLong <= 0) {
+        fail(
+          s"""The recorded metric for $key should > 0,
              | But actual = ${operationMetrics(key)}
            """.stripMargin
         )
@@ -330,11 +344,11 @@ trait DescribeDeltaHistorySuiteBase
           "numFiles" -> "5",
           "numOutputRows" -> "100"
         )
+        val expectedPositiveMetrics = Seq("numOutputBytes", "executionTimeMs")
 
         // Check if operation metrics from history are accurate
-        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.WRITE)
-        assert(operationMetrics("numOutputBytes").toLong > 0)
-        assert(operationMetrics("executionTimeMs").toLong > 0)
+        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.WRITE,
+          expectedPositiveMetrics)
       }
     }
   }
@@ -364,8 +378,9 @@ trait DescribeDeltaHistorySuiteBase
           "numOutputRows" -> "100",
           "numSourceRows" -> "100"
         )
-        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.MERGE)
-        assert(operationMetrics("executionTimeMs").toLong > 0)
+        val expectedPositiveMetrics = Seq("executionTimeMs")
+        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.MERGE,
+          expectedPositiveMetrics)
       }
     }
   }
@@ -395,9 +410,8 @@ trait DescribeDeltaHistorySuiteBase
           "numRemovedFiles" -> "0",
           "numOutputRows" -> "1"
         )
-        checkOperationMetrics(
-          expectedMetrics, operationMetrics, DeltaOperationMetrics.STREAMING_UPDATE)
-        assert(operationMetrics("executionTimeMs").toLong > 0)
+        checkOperationMetrics(expectedMetrics, operationMetrics,
+          DeltaOperationMetrics.STREAMING_UPDATE, Seq("executionTimeMs"))
 
         // check if second batch also returns correct metrics.
         memoryStream.addData(1, 2, 3)
@@ -409,8 +423,8 @@ trait DescribeDeltaHistorySuiteBase
           "numOutputRows" -> "3"
         )
         checkOperationMetrics(
-          expectedMetrics2, operationMetrics, DeltaOperationMetrics.STREAMING_UPDATE)
-        assert(operationMetrics("numOutputBytes").toLong > 0)
+          expectedMetrics2, operationMetrics, DeltaOperationMetrics.STREAMING_UPDATE,
+          Seq("executionTimeMs", "numOutputBytes"))
 
         q.stop()
       }
@@ -448,9 +462,8 @@ trait DescribeDeltaHistorySuiteBase
           "numRemovedFiles" -> "1",
           "numOutputRows" -> "1"
         )
-        checkOperationMetrics(
-          expectedMetrics, operationMetrics, DeltaOperationMetrics.STREAMING_UPDATE)
-        assert(operationMetrics("executionTimeMs").toLong > 0)
+        checkOperationMetrics(expectedMetrics, operationMetrics,
+          DeltaOperationMetrics.STREAMING_UPDATE, Seq("executionTimeMs"))
       }
     }
   }
@@ -474,17 +487,15 @@ trait DescribeDeltaHistorySuiteBase
 
         // check operation metrics
         val operationMetrics = getOperationMetrics(deltaTable.history(1))
-        var expectedRowCount = numRows - 1
+        val expectedRowCount = numRows - 1
         val expectedMetrics = Map(
           "numAddedFiles" -> "1",
           "numRemovedFiles" -> "1",
           "numUpdatedRows" -> "1",
           "numCopiedRows" -> expectedRowCount.toString
         )
-        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.UPDATE)
-        assert(operationMetrics("executionTimeMs").toLong > 0)
-        assert(operationMetrics("scanTimeMs").toLong > 0)
-        assert(operationMetrics("rewriteTimeMs").toLong > 0)
+        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.UPDATE,
+          Seq("executionTimeMs", "scanTimeMs", "rewriteTimeMs"))
       }
     }
   }
@@ -518,10 +529,8 @@ trait DescribeDeltaHistorySuiteBase
           "numAddedFiles" -> addedFiles.toString,
           "numRemovedFiles" -> (numFilesBeforeUpdate / numPartitions).toString
         )
-        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.UPDATE)
-        assert(operationMetrics("executionTimeMs").toLong > 0)
-        assert(operationMetrics("scanTimeMs").toLong > 0)
-        assert(operationMetrics("rewriteTimeMs").toLong > 0)
+        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.UPDATE,
+          Seq("executionTimeMs", "scanTimeMs", "rewriteTimeMs"))
       }
     }
   }
@@ -554,10 +563,8 @@ trait DescribeDeltaHistorySuiteBase
           "numDeletedRows" -> rowsToDelete.toString,
           "numCopiedRows" -> (numRows - rowsToDelete).toString
         )
-        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.DELETE)
-        assert(operationMetrics("executionTimeMs").toLong > 0)
-        assert(operationMetrics("scanTimeMs").toLong > 0)
-        assert(operationMetrics("rewriteTimeMs").toLong > 0)
+        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.DELETE,
+          Seq("executionTimeMs", "scanTimeMs", "rewriteTimeMs"))
       }
     }
   }
@@ -580,14 +587,13 @@ trait DescribeDeltaHistorySuiteBase
         deltaTable.delete("c1 = 1")
         val operationMetrics = getOperationMetrics(deltaTable.history(1))
         val expectedMetrics = Map[String, String](
-          "numRemovedFiles" -> (numFilesBeforeDelete / numPartitions).toString
+          "numRemovedFiles" -> (numFilesBeforeDelete / numPartitions).toString,
+          "rewriteTimeMs" -> "0"
         )
-        // row level metrics are not collected for deletes with parition columns
+        // row level metrics are not collected for deletes with partition columns
         checkOperationMetrics(
-          expectedMetrics, operationMetrics, DeltaOperationMetrics.DELETE_PARTITIONS)
-        assert(operationMetrics("executionTimeMs").toLong > 0)
-        assert(operationMetrics("scanTimeMs").toLong > 0)
-        assert(operationMetrics("rewriteTimeMs").toLong == 0)
+          expectedMetrics, operationMetrics, DeltaOperationMetrics.DELETE_PARTITIONS,
+          Seq("executionTimeMs", "scanTimeMs"))
       }
     }
   }
@@ -611,12 +617,12 @@ trait DescribeDeltaHistorySuiteBase
 
         val operationMetrics = getOperationMetrics(deltaTable.history(1))
         val expectedMetrics = Map[String, String](
-          "numRemovedFiles" -> numFilesBeforeDelete.toString
+          "numRemovedFiles" -> numFilesBeforeDelete.toString,
+          "rewriteTimeMs" -> "0"
         )
         checkOperationMetrics(
-          expectedMetrics, operationMetrics, DeltaOperationMetrics.DELETE_PARTITIONS)
-        assert(operationMetrics("scanTimeMs").toLong > 0)
-        assert(operationMetrics("rewriteTimeMs").toLong == 0)
+          expectedMetrics, operationMetrics, DeltaOperationMetrics.DELETE_PARTITIONS,
+          Seq("executionTimeMs", "scanTimeMs"))
       }
     }
   }
