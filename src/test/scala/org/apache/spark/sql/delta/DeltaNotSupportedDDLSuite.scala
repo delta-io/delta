@@ -20,6 +20,8 @@ import java.util.Locale
 
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+
 import org.apache.spark.sql.{AnalysisException, QueryTest}
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 
@@ -27,12 +29,8 @@ import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 class DeltaNotSupportedDDLSuite
   extends DeltaNotSupportedDDLBase
   with SharedSparkSession
-  with DataSourceV2Test
+  with DeltaSQLCommandTest
 
-class DeltaNotSupportedDDLLegacySuite
-  extends DeltaNotSupportedDDLBase
-    with SharedSparkSession
-    with DataSourceV2LegacyTest
 
 abstract class DeltaNotSupportedDDLBase extends QueryTest
     with SQLTestUtils {
@@ -127,9 +125,6 @@ abstract class DeltaNotSupportedDDLBase extends QueryTest
     assertUnsupported(s"ALTER TABLE $nonPartitionedTableName SET SERDEPROPERTIES (s1=3)")
   }
 
-  test("REFRESH TABLE") {
-    assertIgnored(s"REFRESH TABLE $nonPartitionedTableName")
-  }
 
   test("LOAD DATA") {
     assertUnsupported(
