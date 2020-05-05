@@ -56,7 +56,6 @@ case class UpdateCommand(
     "numAddedFiles" -> createMetric(sc, "number of files added."),
     "numRemovedFiles" -> createMetric(sc, "number of files removed."),
     "numUpdatedRows" -> createMetric(sc, "number of rows updated."),
-    "numTotalRows" -> createMetric(sc, "number of rows copied."),
     DeltaOperationMetrics.SCAN_TIME_MS ->
       createMetric(sc, "milliseconds spent on finding the target data."),
     DeltaOperationMetrics.REWRITE_TIME_MS ->
@@ -126,20 +125,14 @@ case class UpdateCommand(
       // that only involves the affected files instead of all files.
       val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
       val data = Dataset.ofRows(sparkSession, newTarget)
-      val totalRowsCount = metrics("numTotalRows")
       val updatedRowCount = metrics("numUpdatedRows")
-      val totalRowUdf = udf { () =>
-        totalRowsCount += 1
-        true
-      }.asNondeterministic()
       val updatedRowUdf = udf { () =>
         updatedRowCount += 1
         true
       }.asNondeterministic()
       val filesToRewrite =
         withStatusCode("DELTA", s"Finding files to rewrite for UPDATE operation") {
-          data.filter(totalRowUdf())
-            .filter(new Column(updateCondition))
+          data.filter(new Column(updateCondition))
             .filter(updatedRowUdf())
             .select(input_file_name())
             .distinct().as[String].collect()

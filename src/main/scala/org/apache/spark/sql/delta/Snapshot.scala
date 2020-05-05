@@ -195,21 +195,25 @@ class Snapshot(
     checkpointFileIndexOpt.toSeq ++ deltaFileIndexOpt.toSeq
   }
 
+  /** Creates a LogicalRelation with the given schema from a DeltaLogFileIndex. */
+  protected def indexToRelation(
+      index: DeltaLogFileIndex,
+      schema: StructType = logSchema): LogicalRelation = {
+    val fsRelation = HadoopFsRelation(
+      index,
+      index.partitionSchema,
+      schema,
+      None,
+      index.format,
+      Map.empty[String, String])(spark)
+    LogicalRelation(fsRelation)
+  }
+
   /**
    * Loads the file indices into a Dataset that can be used for LogReplay.
    */
   private def loadActions: Dataset[SingleAction] = {
-    val dfs = fileIndices.map { index: DeltaLogFileIndex =>
-      val fsRelation = HadoopFsRelation(
-        index,
-        index.partitionSchema,
-        logSchema,
-        None,
-        index.format,
-        Map.empty[String, String])(spark)
-      Dataset[SingleAction](spark, LogicalRelation(fsRelation))
-    }
-
+    val dfs = fileIndices.map { index => Dataset[SingleAction](spark, indexToRelation(index)) }
     dfs.reduceOption(_.union(_)).getOrElse(emptyActions)
   }
 
@@ -250,7 +254,7 @@ object Snapshot extends DeltaLogging {
   private val defaultNumSnapshotPartitions: Int = 50
 
   /** Canonicalize the paths for Actions */
-  private def canonicalizePath(path: String, hadoopConf: Configuration): String = {
+  private[delta] def canonicalizePath(path: String, hadoopConf: Configuration): String = {
     val hadoopPath = new Path(new URI(path))
     if (hadoopPath.isAbsoluteAndSchemeAuthorityNull) {
       val fs = FileSystem.get(hadoopConf)

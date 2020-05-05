@@ -81,6 +81,7 @@ trait ImplicitMetadataOperation extends DeltaLogging {
     // if provided. Otherwise we follow existing partitioning
     def isNewPartitioning: Boolean = normalizedPartitionCols.nonEmpty &&
       txn.metadata.partitionColumns != normalizedPartitionCols
+    def isPartitioningChanged: Boolean = txn.metadata.partitionColumns != normalizedPartitionCols
     PartitionUtils.validatePartitionColumn(
       mergedSchema,
       normalizedPartitionCols,
@@ -101,7 +102,7 @@ trait ImplicitMetadataOperation extends DeltaLogging {
           schemaString = dataSchema.json,
           partitionColumns = normalizedPartitionCols,
           configuration = configuration))
-    } else if (isOverwriteMode && canOverwriteSchema && (isNewSchema || isNewPartitioning)) {
+    } else if (isOverwriteMode && canOverwriteSchema && (isNewSchema || isPartitioningChanged)) {
       // Can define new partitioning in overwrite mode
       val newMetadata = txn.metadata.copy(
         schemaString = dataSchema.json,
@@ -132,7 +133,7 @@ trait ImplicitMetadataOperation extends DeltaLogging {
       if (isOverwriteMode) {
         errorBuilder.addOverwriteBit()
       }
-      errorBuilder.finalizeAndThrow()
+      errorBuilder.finalizeAndThrow(spark.sessionState.conf)
     }
   }
 }

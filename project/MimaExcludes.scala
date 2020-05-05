@@ -33,6 +33,7 @@ object MimaExcludes {
       // Changes in 0.6.0
       ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaTable.makeUpdateTable"),
       ProblemFilters.exclude[IncompatibleMethTypeProblem]("io.delta.tables.DeltaMergeBuilder.withClause"),
+      ProblemFilters.exclude[IncompatibleMethTypeProblem]("io.delta.tables.DeltaTable.this"),
 
       // ... removed unnecessarily public methods in DeltaMergeBuilder
       ProblemFilters.exclude[MissingTypesProblem]("io.delta.tables.DeltaMergeBuilder"),
