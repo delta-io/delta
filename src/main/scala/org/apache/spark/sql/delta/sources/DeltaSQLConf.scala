@@ -89,6 +89,17 @@ object DeltaSQLConf {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_CONVERT_METADATA_CHECK_ENABLED =
+    buildConf("convert.metadataCheck.enabled")
+      .doc(
+        """
+          |If enabled, during convert to delta, if there is a difference between the catalog table's
+          |properties and the Delta table's configuration, we should error. If disabled, merge
+          |the two configurations with the same semantics as update and merge.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_STATS_SKIPPING =
     buildConf("stats.skipping")
       .internal()
