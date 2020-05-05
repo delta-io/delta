@@ -21,6 +21,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.util.AnalysisHelper
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Alias, And, AnsiCast, Cast, CreateStruct, Expression, GetStructField, NamedExpression, UpCast}
@@ -37,7 +38,7 @@ import org.apache.spark.sql.types.{DataType, StructField, StructType}
  * INSERT INTO.
  */
 class DeltaAnalysis(session: SparkSession, conf: SQLConf)
-  extends Rule[LogicalPlan] with DeltaLogging {
+  extends Rule[LogicalPlan] with AnalysisHelper with DeltaLogging {
 
   type CastFunction = (Expression, DataType) => Expression
 
@@ -82,7 +83,7 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
       val newTable = table.transformUp { case DeltaRelation(lr) => lr }
       DeltaUpdateTable(newTable, cols, expressions, condition)
 
-    case MergeIntoTable(target, source, condition, matched, notMatched) =>
+    case m@MergeIntoTable(target, source, condition, matched, notMatched) if m.childrenResolved =>
       val matchedActions = matched.map {
         case update: UpdateAction =>
           DeltaMergeIntoUpdateClause(
@@ -107,7 +108,14 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
       val newTarget = target.transformUp { case DeltaRelation(lr) => lr }
       // Even if we're merging into a non-Delta target, we will catch it later and throw an
       // exception.
-      DeltaMergeInto(newTarget, source, condition, matchedActions ++ notMatchedActions)
+      val deltaMerge =
+        DeltaMergeInto(newTarget, source, condition, matchedActions ++ notMatchedActions)
+
+      val deltaMergeResolved =
+        DeltaMergeInto.resolveReferences(deltaMerge, conf)(tryResolveReferences(session) _)
+
+      deltaMergeResolved
+
 
     case DeleteFromTable(table, condition) =>
       // rewrites Delta from V2 to V1

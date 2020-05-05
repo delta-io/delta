@@ -16,19 +16,16 @@
 
 package org.apache.spark.sql.delta
 
-import com.databricks.service.IgnoreIfSparkService
+// scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.sql.{AnalysisException, Row}
 import org.apache.spark.sql.execution.FileSourceScanExec
-import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, InMemoryFileIndex}
 import org.apache.spark.sql.types.StructType
 
-class MergeIntoSQLSuite extends MergeIntoSuiteBase {
+class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
 
   import testImplicits._
-
-  override def expectedTestCount: Int = 210
-
   private def basicMergeStmt(
       target: String,
       source: String,
@@ -70,7 +67,7 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase {
 
       val cte = "WITH cte1 AS (SELECT key1 + 2 AS key3, value FROM source) "
       val merge = basicMergeStmt(
-        target = s"tahoe.`$tempPath` as target",
+        target = s"delta.`$tempPath` as target",
         source = "cte1 src",
         condition = "src.key3 = target.key2",
         update = "key2 = 20 + src.key3, value = 20 + src.value",
@@ -102,7 +99,7 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase {
         update = "trg.key2 = 20 + key1, value = 20 + src.value",
         insert = "(trg.key2, value) VALUES (key1 - 10, src.value + 10)")
 
-      checkAnswer(sql(getDeltaFileStmt(tempPath)),
+      checkAnswer(readDeltaTable(tempPath),
         Row(2, 2) :: // No change
           Row(21, 26) :: // Update
           Row(-10, 13) :: // Insert
@@ -116,7 +113,7 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase {
     update = "value.a.x = 2" :: "value.a.x = 3" :: Nil,
     errorStrs = "There is a conflict from these SET columns" :: Nil)
 
-  test("Negative case - basic syntax analysis SQL", IgnoreIfSparkService("different error")) {
+  test("Negative case - basic syntax analysis SQL") {
     withTable("source") {
       Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value").createOrReplaceTempView("source")
       append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
@@ -167,10 +164,7 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase {
           val df = sql(merge)
 
           val readSchema: Seq[StructType] = df.queryExecution.executedPlan.collect {
-            case FileSourceScanExec(
-              HadoopFsRelation(_: InMemoryFileIndex, _, _, _, _, _),
-                _, requiredSchema, _, _, _, _, _) =>
-              requiredSchema
+            case f: FileSourceScanExec => f.requiredSchema
           }
           assert(readSchema.flatten.isEmpty, "column pruning does not work")
         }

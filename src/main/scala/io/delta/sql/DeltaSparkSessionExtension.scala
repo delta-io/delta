@@ -16,7 +16,7 @@
 
 package io.delta.sql
 
-import org.apache.spark.sql.delta.{DeltaAnalysis, DeltaUnsupportedOperationsCheck}
+import org.apache.spark.sql.delta.{DeltaAnalysis, DeltaUnsupportedOperationsCheck, PreprocessTableMerge}
 import io.delta.sql.parser.DeltaSqlParser
 
 import org.apache.spark.sql.SparkSessionExtensions
@@ -79,6 +79,9 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
     }
     extensions.injectCheckRule { session =>
       new DeltaUnsupportedOperationsCheck(session)
+    }
+    extensions.injectPostHocResolutionRule { session =>
+      new PreprocessTableMerge(session.sessionState.conf)
     }
   }
 }
