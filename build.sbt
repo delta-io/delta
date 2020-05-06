@@ -36,6 +36,7 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
   "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
   "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
+  "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
 
   // Compiler plugins
   // -- Bump up the genjavadoc version explicitly to 0.16 to work with Scala 2.12
