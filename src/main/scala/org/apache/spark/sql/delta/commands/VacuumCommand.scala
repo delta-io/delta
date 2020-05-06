@@ -224,8 +224,11 @@ object VacuumCommand extends VacuumCommandImpl {
         }
         logInfo(s"Deleting untracked files and empty directories in $path")
 
-        val filesDeleted = delete(diff, fs)
 
+        // scalastyle:off
+        //val filesDeleted = delete(diff, fs)
+        val filesDeleted = delete2(diff, spark, deltaLog)
+        // scalastyle:on
         val stats = DeltaVacuumStats(
           isDryRun = false,
           specifiedRetentionMillis = retentionMillis,
@@ -273,6 +276,25 @@ trait VacuumCommandImpl extends DeltaCommand {
   protected def delete(diff: Dataset[String], fs: FileSystem): Long = {
     val fileResultSet = diff.toLocalIterator().asScala
     fileResultSet.map(p => stringToPath(p)).count(f => tryDeleteNonRecursive(fs, f))
+  }
+
+  protected def delete2(diff: Dataset[String],
+                       spark: SparkSession,
+                       deltaLog: DeltaLog): Long = {
+    import spark.implicits._
+    // scalastyle:off
+    val sessionHadoopConf = spark.sessionState.newHadoopConf()
+    val hadoopConf = spark.sparkContext.broadcast(
+      new SerializableConfiguration(sessionHadoopConf))
+    val path = deltaLog.dataPath
+    val fs = path.getFileSystem(sessionHadoopConf)
+    val basePath = fs.makeQualified(path).toString
+    diff.mapPartitions { files =>
+           val fs = new Path(basePath).getFileSystem(hadoopConf.value.value)
+           val count = files.map(p => new Path(new URI(p))).count(f => tryDeleteNonRecursive(fs, f))
+           Iterator(count)
+        }.reduce(_+_)
+    // scalastyle:on
   }
 
   protected def stringToPath(path: String): Path = new Path(new URI(path))
