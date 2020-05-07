@@ -27,16 +27,15 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
-import org.scalatest.{FlatSpec, GivenWhenThen}
-import org.apache.spark.sql.{AnalysisException, QueryTest, SaveMode, SparkSession}
+import org.scalatest.GivenWhenThen
+
+import org.apache.spark.sql.{AnalysisException, QueryTest, SaveMode}
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
-import org.apache.spark.sql.test.{SQLTestUtils, SharedSparkSession}
+import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.CalendarInterval
 import org.apache.spark.util.ManualClock
-
-case class Schema1(id: Int, col1: String, col2: String)
 
 trait DeltaVacuumSuiteBase extends QueryTest
   with SharedSparkSession
@@ -510,41 +509,3 @@ trait DeltaVacuumSuiteBase extends QueryTest
 
 class DeltaVacuumSuite
   extends DeltaVacuumSuiteBase with DeltaSQLCommandTest
-
-class VacuumPerf extends FlatSpec with GivenWhenThen {
-
-  "vacuum performance" should "" in  {
-    import org.apache.log4j.{Level, Logger}
-    val spark = SparkSession
-      .builder()
-      .appName("vaccum-test")
-      .master("local[*]")
-      .getOrCreate()
-
-     // scalastyle:off
-      println(spark.sparkContext.uiWebUrl)
-      // scalastyle:on
-      import spark.implicits._
-      val data1 = Seq(
-        Schema1(1, "a", "1"),
-        Schema1(2, "a", "5"),
-        Schema1(3, "b", "5")
-      )
-      val df1 = data1.toDF
-      df1.write
-        .format("delta")
-        .mode("overwrite")
-        .save("C:\\Users\\EliteBook\\IdeaProjects\\unittestdemo\\target\\table")
-
-      val table = io.delta.tables.DeltaTable
-        .forPath(spark, "C:\\Users\\EliteBook\\IdeaProjects\\unittestdemo\\target\\table")
-
-      val updatedTable = io.delta.tables.DeltaTable
-        .forPath(spark, "C:\\Users\\EliteBook\\IdeaProjects\\unittestdemo\\target\\table")
-
-      updatedTable.vacuum()
-
-      Thread.sleep(1000000000)
-
-    }
-}
