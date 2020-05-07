@@ -128,9 +128,14 @@ class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
   override def parseFunctionIdentifier(sqlText: String): FunctionIdentifier =
     delegate.parseFunctionIdentifier(sqlText)
 
+  override def parseMultipartIdentifier (sqlText: String): Seq[String] =
+    delegate.parseMultipartIdentifier(sqlText)
+
   override def parseTableSchema(sqlText: String): StructType = delegate.parseTableSchema(sqlText)
 
   override def parseDataType(sqlText: String): DataType = delegate.parseDataType(sqlText)
+
+  override def parseRawDataType(sqlText: String): DataType = delegate.parseRawDataType(sqlText)
 }
 
 /**

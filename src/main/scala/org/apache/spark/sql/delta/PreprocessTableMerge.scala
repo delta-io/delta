@@ -25,9 +25,15 @@ import org.apache.spark.sql.catalyst.analysis.{EliminateSubqueryAliases, Unresol
 import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Expression, Literal, SubqueryExpression}
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.plans.logical._
+import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.internal.SQLConf
 
-case class PreprocessTableMerge(conf: SQLConf) extends UpdateExpressionsSupport {
+case class PreprocessTableMerge(conf: SQLConf)
+  extends Rule[LogicalPlan] with UpdateExpressionsSupport {
+
+  override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
+    case m: DeltaMergeInto if m.resolved => apply(m)
+  }
 
   def apply(mergeInto: DeltaMergeInto): MergeIntoCommand = {
     val DeltaMergeInto(target, source, condition, matched, notMatched, migratedSchema) = mergeInto

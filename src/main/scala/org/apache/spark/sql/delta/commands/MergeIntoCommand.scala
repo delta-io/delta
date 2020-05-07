@@ -30,6 +30,7 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.encoders.{ExpressionEncoder, RowEncoder}
 import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, Expression, Literal, PredicateHelper, UnsafeProjection}
+import org.apache.spark.sql.catalyst.expressions.BasePredicate
 import org.apache.spark.sql.catalyst.expressions.NamedExpression
 import org.apache.spark.sql.catalyst.expressions.codegen._
 import org.apache.spark.sql.catalyst.plans.logical._
@@ -505,7 +506,7 @@ object MergeIntoCommand {
       UnsafeProjection.create(exprs, joinedAttributes)
     }
 
-    private def generatePredicate(expr: Expression): Predicate = {
+    private def generatePredicate(expr: Expression): BasePredicate = {
       GeneratePredicate.generate(expr, joinedAttributes)
     }
 
@@ -549,12 +550,14 @@ object MergeIntoCommand {
         }
       }
 
+      val toRow = joinedRowEncoder.toRow _
+      val fromRow = outputRowEncoder.fromRow _
       rowIterator
-        .map(joinedRowEncoder.toRow)
+        .map(toRow)
         .map(processRow)
         .filter(!shouldDeleteRow(_))
         .map { notDeletedInternalRow =>
-          outputRowEncoder.fromRow(outputProj(notDeletedInternalRow))
+          fromRow(outputProj(notDeletedInternalRow))
         }
     }
   }
