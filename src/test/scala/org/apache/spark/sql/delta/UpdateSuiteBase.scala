@@ -26,6 +26,7 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
@@ -96,7 +97,7 @@ abstract class UpdateSuiteBase
   }
 
   Seq(true, false).foreach { isPartitioned =>
-    test(s"basic update - delta table - Partition=$isPartitioned") {
+    test(s"basic update - Delta table by path - Partition=$isPartitioned") {
       withTable("deltaTable") {
         val partitions = if (isPartitioned) "key" :: Nil else Nil
         append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"), partitions)
@@ -104,7 +105,30 @@ abstract class UpdateSuiteBase
         checkUpdate(
           condition = Some("key >= 1"),
           setClauses = "value = key + value, key = key + 1",
-          expectedResults = Row(0, 3) :: Row(2, 5) :: Row(2, 2) :: Row(3, 4) :: Nil)
+          expectedResults = Row(0, 3) :: Row(2, 5) :: Row(2, 2) :: Row(3, 4) :: Nil,
+          tableName = Some(s"delta.`$tempPath`"))
+      }
+    }
+  }
+
+  Seq(true, false).foreach { isPartitioned =>
+    test(s"basic update - Delta table by name - Partition=$isPartitioned") {
+      withTable("delta_table") {
+        val partitionByClause = if (isPartitioned) "PARTITIONED BY (key)" else ""
+        sql(s"""
+             |CREATE TABLE delta_table(key INT, value INT)
+             |USING delta
+             |OPTIONS('path'='$tempPath')
+             |$partitionByClause
+           """.stripMargin)
+
+        append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
+
+        checkUpdate(
+          condition = Some("key >= 1"),
+          setClauses = "value = key + value, key = key + 1",
+          expectedResults = Row(0, 3) :: Row(2, 5) :: Row(2, 2) :: Row(3, 4) :: Nil,
+          tableName = Some("delta_table"))
       }
     }
   }
@@ -268,16 +292,6 @@ abstract class UpdateSuiteBase
     }
   }
 
-  test("Negative case - non-delta target") {
-    Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value")
-      .write.mode("overwrite").format("parquet").save(tempPath)
-    val e = intercept[AnalysisException] {
-      executeUpdate(target = s"delta.`$tempPath`", set = "key1 = 3")
-    }.getMessage
-    assert(e.contains("UPDATE destination only supports Delta sources") ||
-      e.contains("is not a Delta table") || e.contains("Incompatible format"))
-  }
-
   test("update cached table") {
     Seq((2, 2), (1, 4)).toDF("key", "value")
       .write.mode("overwrite").format("delta").save(tempPath)
@@ -304,7 +318,84 @@ abstract class UpdateSuiteBase
       Row(99, -1) :: Row(100, -1) :: Row(101, -1) :: Row(102, -1) :: Nil, Some("tblName"))
   }
 
-  test("do not support subquery test") {
+  test("target columns can have db and table qualifiers") {
+    withTable("target") {
+      spark.read.json("""
+          {"a": {"b.1": 1, "c.e": 'random'}, "d": 1}
+          {"a": {"b.1": 3, "c.e": 'string'}, "d": 2}"""
+        .split("\n").toSeq.toDS()).write.format("delta").saveAsTable("`target`")
+
+      executeUpdate(
+        target = "target",
+        set = "`default`.`target`.a.`b.1` = -1, target.a.`c.e` = 'RANDOM'",
+        where = "d = 1")
+
+      checkAnswer(spark.table("target"),
+        spark.read.json("""
+            {"a": {"b.1": -1, "c.e": 'RANDOM'}, "d": 1}
+            {"a": {"b.1": 3, "c.e": 'string'}, "d": 2}"""
+          .split("\n").toSeq.toDS()))
+    }
+  }
+
+  test("Negative case - non-delta target") {
+    Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value")
+      .write.mode("overwrite").format("parquet").save(tempPath)
+    val e = intercept[AnalysisException] {
+      executeUpdate(target = s"delta.`$tempPath`", set = "key1 = 3")
+    }.getMessage
+    assert(e.contains("UPDATE destination only supports Delta sources") ||
+      e.contains("is not a Delta table") || e.contains("Incompatible format"))
+  }
+
+  test("Negative case - check target columns during analysis") {
+    withTable("table") {
+      sql("CREATE TABLE table (s int, t string) USING delta PARTITIONED BY (s)")
+      var ae = intercept[AnalysisException] {
+        executeUpdate("table", set = "column_doesnt_exist = 'San Francisco'", where = "t = 'a'")
+      }
+      assert(ae.message.contains("cannot resolve"))
+
+      withSQLConf(SQLConf.CASE_SENSITIVE.key -> "false") {
+        executeUpdate(target = "table", set = "S = 1, T = 'b'", where = "T = 'a'")
+        ae = intercept[AnalysisException] {
+          executeUpdate(target = "table", set = "S = 1, s = 'b'", where = "s = 1")
+        }
+        assert(ae.message.contains("There is a conflict from these SET columns"))
+      }
+
+      withSQLConf(SQLConf.CASE_SENSITIVE.key -> "true") {
+        ae = intercept[AnalysisException] {
+          executeUpdate(target = "table", set = "S = 1", where = "t = 'a'")
+        }
+        assert(ae.message.contains("cannot resolve"))
+
+        ae = intercept[AnalysisException] {
+          executeUpdate(target = "table", set = "S = 1, s = 'b'", where = "s = 1")
+        }
+        assert(ae.message.contains("cannot resolve"))
+
+        // unresolved column in condition
+        ae = intercept[AnalysisException] {
+          executeUpdate(target = "table", set = "s = 1", where = "T = 'a'")
+        }
+        assert(ae.message.contains("cannot resolve"))
+      }
+    }
+  }
+
+  test("Negative case - UPDATE the child directory") {
+    append(Seq((2, 2), (3, 2)).toDF("key", "value"), partitionBy = "key" :: Nil)
+    val e = intercept[AnalysisException] {
+      executeUpdate(
+        target = s"delta.`$tempPath/key=2`",
+        set = "key = 1, value = 2",
+        where = "value = 2")
+    }.getMessage
+    assert(e.contains("Expect a full scan of Delta sources, but found a partial scan"))
+  }
+
+  test("Negative case - do not support subquery test") {
     append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
     Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("c", "d").createOrReplaceTempView("source")
 

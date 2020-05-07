@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.util
 
 import org.apache.spark.sql.delta.DeltaErrors
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 
@@ -40,6 +40,11 @@ trait AnalysisHelper {
           s"Could not resolve expression $expr", plan = Option(planContainingExpr))
     }
   }
+
+  protected def toDataset(sparkSession: SparkSession, logicalPlan: LogicalPlan): Dataset[Row] = {
+    Dataset.ofRows(sparkSession, logicalPlan)
+  }
+
 }
 
 object AnalysisHelper {

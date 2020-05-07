@@ -76,11 +76,17 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
       DeltaRelation.fromV2Relation(d, dsv2)
 
     // DML - TODO: Remove these and use stable public interfaces once they are in Spark
-    case u @ UpdateTable(table, assignments, condition) =>
+    case u @ UpdateTable(table, assignments, condition) if u.childrenResolved =>
       val (cols, expressions) = assignments.map(a =>
         a.key.asInstanceOf[NamedExpression] -> a.value).unzip
       // rewrites Delta from V2 to V1
       val newTable = table.transformUp { case DeltaRelation(lr) => lr }
+      newTable.collectLeaves().headOption match {
+        case Some(DeltaFullTable(index)) if index.deltaLog.snapshot.version > -1 =>
+          index
+        case o =>
+          throw DeltaErrors.notADeltaSourceException("UPDATE", o)
+      }
       DeltaUpdateTable(newTable, cols, expressions, condition)
 
     case m@MergeIntoTable(target, source, condition, matched, notMatched) if m.childrenResolved =>
