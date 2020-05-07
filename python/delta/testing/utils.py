@@ -14,13 +14,19 @@
 # limitations under the License.
 #
 
+import os
+import shutil
+import sys
+import tempfile
 import unittest
 
 from pyspark import SparkContext, SparkConf
-import sys
+from pyspark.sql import SparkSession
 
 
-class PySparkTestCase(unittest.TestCase):
+class DeltaTestCase(unittest.TestCase):
+    """Test class base that sets up a correctly configured SparkSession for querying Delta tables.
+    """
 
     def setUp(self):
         self._old_sys_path = list(sys.path)
@@ -34,11 +40,15 @@ class PySparkTestCase(unittest.TestCase):
             .set("spark.sql.shuffle.partitions", "5") \
             .set("delta.log.cacheSize", "3") \
             .set("spark.sql.sources.parallelPartitionDiscovery.parallelism", "5")
-        # Enable Delta's SQL syntax for Spark 3.0+. Older versions require a hack to
-        # enable it. See "DeltaSqlTests.setUp" for details.
         conf.set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+        conf.set("spark.sql.catalog.spark_catalog",
+                 "org.apache.spark.sql.delta.catalog.DeltaCatalog")
         self.sc = SparkContext(conf=conf)
+        self.spark = SparkSession(self.sc)
+        self.tempPath = tempfile.mkdtemp()
+        self.tempFile = os.path.join(self.tempPath, "tempFile")
 
     def tearDown(self):
         self.sc.stop()
+        shutil.rmtree(self.tempPath)
         sys.path = self._old_sys_path
