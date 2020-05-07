@@ -20,10 +20,12 @@ import java.io.FileNotFoundException
 
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
@@ -69,9 +71,11 @@ trait ConvertToDeltaTestUtils extends QueryTest { self: SQLTestUtils =>
 }
 
 /** Tests for CONVERT TO DELTA that can be leveraged across SQL and Scala APIs. */
-trait ConvertToDeltaSuiteTests extends ConvertToDeltaTestUtils
+trait ConvertToDeltaSuiteBase extends ConvertToDeltaTestUtils
   with SharedSparkSession
-  with SQLTestUtils {
+  with SQLTestUtils
+  with ConvertToDeltaHiveTableTests
+  with DeltaSQLCommandTest {
 
   import org.apache.spark.sql.functions._
   import testImplicits._
@@ -188,10 +192,10 @@ trait ConvertToDeltaSuiteTests extends ConvertToDeltaTestUtils
       assert(re.getMessage.contains("No file found in the directory"))
       Utils.deleteRecursively(dir)
 
-      val ae = intercept[AnalysisException] {
+      val ae = intercept[FileNotFoundException] {
         convertToDelta(s"parquet.`$tempDir`")
       }
-      assert(ae.getMessage.contains("doesn't exist"))
+      assert(ae.getMessage.contains("No file found in the directory"))
     }
   }
 
@@ -576,6 +580,357 @@ trait ConvertToDeltaSuiteTests extends ConvertToDeltaTestUtils
       checkAnswer(
         spark.read.format("delta").load(tempDir).where("key1 = 1").select("id"),
         simpleDF.filter("id % 2 == 1").select("id"))
+    }
+  }
+}
+
+/**
+ * Tests that involve tables defined in a Catalog such as Hive. We test in the sql as well as
+ * hive package, where the hive package uses a proper HiveExternalCatalog to alter table definitions
+ * in the HiveMetaStore. This test trait *should not* extend SharedSparkSession so that it can be
+ * mixed in with the Hive test utilities.
+ */
+trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestUtils {
+  protected def getPathForTableName(tableName: String): String = {
+    spark
+      .sessionState
+      .catalog
+      .getTableMetadata(TableIdentifier(tableName, Some("default"))).location.getPath
+  }
+
+  protected def verifyExternalCatalogMetadata(tableName: String): Unit = {
+    val catalog = spark.sessionState.catalog.externalCatalog.getTable("default", tableName)
+    // Hive automatically adds some properties
+    val cleanProps = catalog.properties.filterKeys(_ != "transient_lastDdlTime")
+    assert(catalog.schema.isEmpty,
+      s"Schema wasn't empty in the catalog for table $tableName: ${catalog.schema}")
+    assert(catalog.partitionColumnNames.isEmpty, "Partition columns weren't empty in the " +
+      s"catalog for table $tableName: ${catalog.partitionColumnNames}")
+    assert(cleanProps.isEmpty,
+      s"Table properties weren't empty for table $tableName: $cleanProps")
+  }
+
+  testQuietly("negative case: converting non-parquet table") {
+    val tableName = "csvtable"
+    withTable(tableName) {
+      // Create a csv table
+      simpleDF.write.partitionBy("key1", "key2").format("csv").saveAsTable(tableName)
+
+      // Attempt to convert to delta
+      val ae = intercept[AnalysisException] {
+        convertToDelta(tableName, Some("key1 long, key2 string"))
+      }
+
+      // Get error message
+      assert(ae.getMessage.contains(parquetOnlyMsg))
+    }
+  }
+
+  testQuietly("negative case: convert parquet path to delta when there is a database called " +
+    "parquet but no table or path exists") {
+    val dbName = "parquet"
+    withDatabase(dbName) {
+      withTempDir { dir =>
+        sql(s"CREATE DATABASE $dbName")
+
+        val tempDir = dir.getCanonicalPath
+        // Attempt to convert to delta
+        val ae = intercept[FileNotFoundException] {
+          convertToDelta(s"parquet.`$tempDir`")
+        }
+
+        // Get error message
+        assert(ae.getMessage.contains("No file found in the directory"))
+      }
+    }
+  }
+
+  testQuietly("negative case: convert views to delta") {
+    val viewName = "view"
+    val tableName = "pqtbl"
+    withTable(tableName) {
+      // Create view
+      simpleDF.write.format("parquet").saveAsTable(tableName)
+      sql(s"CREATE VIEW $viewName as SELECT * from $tableName")
+
+      // Attempt to convert to delta
+      val ae = intercept[AnalysisException] {
+        convertToDelta(viewName)
+      }
+
+      assert(ae.getMessage.contains("Converting a view to a Delta table"))
+    }
+  }
+
+  testQuietly("negative case: converting a table that doesn't exist but the database does") {
+    val dbName = "db"
+    withDatabase(dbName) {
+      sql(s"CREATE DATABASE $dbName")
+
+      // Attempt to convert to delta
+      val ae = intercept[AnalysisException] {
+        convertToDelta(s"$dbName.faketable", Some("key1 long, key2 string"))
+      }
+
+      assert(ae.getMessage.contains("Table or view 'faketable' not found"))
+    }
+  }
+
+  testQuietly("convert two external tables pointing to same underlying files " +
+    "with differing table properties should error if conf enabled otherwise merge properties") {
+    val externalTblName = "extpqtbl"
+    val secondExternalTbl = "othertbl"
+    withTable(externalTblName, secondExternalTbl) {
+      withTempDir { dir =>
+        val path = dir.getCanonicalPath
+
+        // Create external table
+        sql(s"CREATE TABLE $externalTblName " +
+          s"USING PARQUET LOCATION '$path' TBLPROPERTIES ('abc'='def', 'def'='ghi') AS SELECT 1")
+
+        // Create second external table with different table properties
+        sql(s"CREATE TABLE $secondExternalTbl " +
+          s"USING PARQUET LOCATION '$path' TBLPROPERTIES ('abc'='111', 'jkl'='mno')")
+
+        // Convert first table to delta
+        convertToDelta(externalTblName)
+
+        // Verify that files converted to delta
+        checkAnswer(
+          sql(s"select * from delta.`$path`"), Row(1))
+
+        // Verify first table converted to delta
+        assert(spark.sessionState.catalog.getTableMetadata(
+          TableIdentifier(externalTblName, Some("default"))).provider.contains("delta"))
+
+        // Attempt to convert second external table to delta
+        val ae = intercept[AnalysisException] {
+          convertToDelta(secondExternalTbl)
+        }
+
+        assert(
+          ae.getMessage.contains("You are trying to convert a table which already has a delta") &&
+            ae.getMessage.contains("convert.metadataCheck.enabled"))
+
+        // Disable convert metadata check
+        withSQLConf(DeltaSQLConf.DELTA_CONVERT_METADATA_CHECK_ENABLED.key -> "false") {
+          // Convert second external table to delta
+          convertToDelta(secondExternalTbl)
+
+          // Check delta table configuration has updated properties
+          assert(DeltaLog.forTable(spark, path).startTransaction().metadata.configuration ==
+            Map("abc" -> "111", "def" -> "ghi", "jkl" -> "mno"))
+        }
+      }
+    }
+  }
+
+  testQuietly("convert two external tables pointing to the same underlying files") {
+    val externalTblName = "extpqtbl"
+    val secondExternalTbl = "othertbl"
+    withTable(externalTblName, secondExternalTbl) {
+      withTempDir { dir =>
+        val path = dir.getCanonicalPath
+        writeFiles(path, simpleDF, "delta")
+        val deltaLog = DeltaLog.forTable(spark, path)
+
+        // Create external table
+        sql(s"CREATE TABLE $externalTblName (key1 long, key2 string) " +
+          s"USING PARQUET LOCATION '$path'")
+
+        // Create second external table
+        sql(s"CREATE TABLE $secondExternalTbl (key1 long, key2 string) " +
+          s"USING PARQUET LOCATION '$path'")
+
+        assert(deltaLog.update().version == 0)
+
+        // Convert first table to delta
+        convertToDelta(externalTblName)
+
+        // Convert should not update version since delta log metadata is not changing
+        assert(deltaLog.update().version == 0)
+        // Check that the metadata in the catalog was emptied and pushed to the delta log
+        verifyExternalCatalogMetadata(externalTblName)
+
+        // Convert second external table to delta
+        convertToDelta(secondExternalTbl)
+        verifyExternalCatalogMetadata(secondExternalTbl)
+
+        // Verify that underlying files converted to delta
+        checkAnswer(
+          sql(s"select id from delta.`$path` where key1 = 1"),
+          simpleDF.filter("id % 2 == 1").select("id"))
+
+        // Verify catalog table provider is 'delta' for both tables
+        assert(spark.sessionState.catalog.getTableMetadata(
+          TableIdentifier(externalTblName, Some("default"))).provider.contains("delta"))
+
+        assert(spark.sessionState.catalog.getTableMetadata(
+          TableIdentifier(secondExternalTbl, Some("default"))).provider.contains("delta"))
+
+      }
+    }
+  }
+
+  testQuietly("convert an external parquet table") {
+    val tableName = "pqtbl"
+    val externalTblName = "extpqtbl"
+    withTable(tableName) {
+      simpleDF.write.format("parquet").saveAsTable(tableName)
+
+      // Get where the table is stored and try to access it using parquet rather than delta
+      val path = getPathForTableName(tableName)
+
+      // Create external table
+      sql(s"CREATE TABLE $externalTblName (key1 long, key2 string) " +
+        s"USING PARQUET LOCATION '$path'")
+
+      // Convert to delta
+      sql(s"convert to delta $externalTblName")
+
+      assert(spark.sessionState.catalog.getTableMetadata(
+        TableIdentifier(externalTblName, Some("default"))).provider.contains("delta"))
+
+      // Verify that table converted to delta
+      checkAnswer(
+        sql(s"select id from delta.`$path` where key1 = 1"),
+        simpleDF.filter("id % 2 == 1").select("id"))
+
+      checkAnswer(
+        sql(s"select id from $externalTblName where key1 = 1"),
+        simpleDF.filter("id % 2 == 1").select("id"))
+    }
+  }
+
+  testQuietly("converting a delta table should not error for idempotency") {
+    val tableName = "deltatbl"
+    val format = "delta"
+    withTable(tableName) {
+      simpleDF.write.partitionBy("key1", "key2").format(format).saveAsTable(tableName)
+      convertToDelta(tableName)
+
+      // reads actually went through Delta
+      val path = getPathForTableName(tableName)
+      checkAnswer(
+        sql(s"select id from $format.`$path` where key1 = 1"),
+        simpleDF.filter("id % 2 == 1").select("id"))
+    }
+  }
+
+  testQuietly("convert to delta using table name without database name") {
+    val tableName = "pqtable"
+    withTable(tableName) {
+      // Create a parquet table
+      simpleDF.write.partitionBy("key1", "key2").format("parquet").saveAsTable(tableName)
+
+      // Convert to delta using only table name
+      convertToDelta(tableName, Some("key1 long, key2 string"))
+
+      // reads actually went through Delta
+      val path = getPathForTableName(tableName)
+      checkAnswer(
+        sql(s"select id from delta.`$path` where key1 = 1"),
+        simpleDF.filter("id % 2 == 1").select("id"))
+    }
+  }
+
+  testQuietly("convert a parquet table to delta with database name as parquet") {
+    val dbName = "parquet"
+    val tableName = "pqtbl"
+    withDatabase(dbName) {
+      withTable(dbName + "." + tableName) {
+        sql(s"CREATE DATABASE $dbName")
+        val table = TableIdentifier(tableName, Some(dbName))
+        simpleDF.write.partitionBy("key1", "key2")
+          .format("parquet").saveAsTable(dbName + "." + tableName)
+
+        convertToDelta(dbName + "." + tableName, Some("key1 long, key2 string"))
+
+        // reads actually went through Delta
+        val path = spark
+          .sessionState
+          .catalog
+          .getTableMetadata(table).location.getPath
+
+        checkAnswer(
+          sql(s"select id from delta.`$path` where key1 = 1"),
+          simpleDF.filter("id % 2 == 1").select("id"))
+      }
+    }
+  }
+
+  testQuietly("convert a parquet path to delta while database called parquet exists") {
+    val dbName = "parquet"
+    withDatabase(dbName) {
+      withTempDir { dir =>
+        // Create a database called parquet
+        sql(s"CREATE DATABASE $dbName")
+
+        // Create a parquet table at given path
+        val tempDir = dir.getCanonicalPath
+        writeFiles(tempDir, simpleDF, partCols = Seq("key1", "key2"))
+
+        // Convert should convert the path instead of trying to find a table in that database
+        convertToDelta(s"parquet.`$tempDir`", Some("key1 long, key2 string"))
+
+        // reads actually went through Delta
+        checkAnswer(
+          sql(s"select id from delta.`$tempDir` where key1 = 1"),
+          simpleDF.filter("id % 2 == 1").select("id"))
+      }
+    }
+  }
+
+  testQuietly("convert a delta table where metadata does not reflect that the table is " +
+    "already converted should update the metadata") {
+    val tableName = "deltatbl"
+    withTable(tableName) {
+      simpleDF.write.partitionBy("key1", "key2").format("parquet").saveAsTable(tableName)
+
+      // Get where the table is stored and try to access it using parquet rather than delta
+      val path = getPathForTableName(tableName)
+
+      // Convert using path so that metadata is not updated
+      convertToDelta(s"parquet.`$path`", Some("key1 long, key2 string"))
+
+      // Call convert again
+      convertToDelta(s"default.$tableName", Some("key1 long, key2 string"))
+
+      // Metadata should be updated so we can use table name
+      checkAnswer(
+        sql(s"select id from default.$tableName where key1 = 1"),
+        simpleDF.filter("id % 2 == 1").select("id"))
+    }
+  }
+
+  testQuietly("convert a parquet table using table name") {
+    val tableName = "pqtable"
+    withTable(tableName) {
+      // Create a parquet table
+      simpleDF.write.partitionBy("key1", "key2").format("parquet").saveAsTable(tableName)
+
+      // Convert to delta
+      convertToDelta(s"default.$tableName", Some("key1 long, key2 string"))
+
+      // Get where the table is stored and try to access it using parquet rather than delta
+      val path = getPathForTableName(tableName)
+
+
+      // reads actually went through Delta
+      assert(deltaRead(sql(s"select id from default.$tableName")))
+
+      // query through Delta is correct
+      checkAnswer(
+        sql(s"select id from default.$tableName where key1 = 0"),
+        simpleDF.filter("id % 2 == 0").select("id"))
+
+
+      // delta writers went through
+      writeFiles(path, simpleDF, format = "delta", partCols = Seq("key1", "key2"), mode = "append")
+
+      checkAnswer(
+        sql(s"select id from default.$tableName where key1 = 1"),
+        simpleDF.union(simpleDF).filter("id % 2 == 1").select("id"))
     }
   }
 }

@@ -27,11 +27,12 @@ import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
 
 import org.apache.spark.sql.AnalysisException
+import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.streaming.{OutputMode, StreamingQueryException, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.unsafe.types.CalendarInterval
+import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.{ManualClock, Utils}
 
 class DeltaSourceSuite extends DeltaSourceSuiteBase {
@@ -132,7 +133,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase {
     }
   }
 
-  testQuietly("disallow to change schema after staring a streaming query") {
+  testQuietly("disallow to change schema after starting a streaming query") {
     withTempDir { inputDir =>
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
       (0 until 5).foreach { i =>
@@ -147,7 +148,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase {
       testStream(df)(
         AssertOnQuery { q => q.processAllAvailable(); true },
         CheckAnswer((0 until 5).map(_.toString): _*),
-        AssertOnQuery { q =>
+        AssertOnQuery { _ =>
           withMetadata(deltaLog, StructType.fromDDL("id LONG, value STRING"))
           true
         },
@@ -582,7 +583,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase {
         AssertOnQuery { q => q.processAllAvailable(); true },
         CheckAnswer("keep1", "keep2"),
         StopStream,
-        AssertOnQuery { q =>
+        AssertOnQuery { _ =>
           Utils.deleteRecursively(inputDir)
           val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
           // All Delta tables in tests use the same tableId by default. Here we pass a new tableId
@@ -781,9 +782,10 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase {
         AdvanceManualClock(10 * 1000L),
         CheckLastBatch("0", "1", "2"),
         Assert {
-          clock.advance(
-            DeltaConfigs.getMilliSeconds(CalendarInterval.fromString(
-              DeltaConfigs.LOG_RETENTION.defaultValue)) + 100000000L)
+          val defaultLogRetentionMillis = DeltaConfigs.getMilliSeconds(
+            IntervalUtils.safeStringToInterval(
+              UTF8String.fromString(DeltaConfigs.LOG_RETENTION.defaultValue)))
+          clock.advance(defaultLogRetentionMillis + 100000000L)
 
           // Delete all logs before checkpoint
           writersLog.cleanUpExpiredLogs()
@@ -832,7 +834,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase {
 
       // Make sure OffsetSeqLog won't choke on the offset we wrote
       withTempDir { logPath =>
-        val seqLog = new OffsetSeqLog(spark, logPath.toString) {
+        new OffsetSeqLog(spark, logPath.toString) {
           val offsetSeq = this.deserialize(new FileInputStream(offsetFile))
           val out = new OutputStream() { override def write(b: Int): Unit = { } }
           this.serialize(offsetSeq, out)
@@ -981,7 +983,7 @@ class MonotonicallyIncreasingTimestampFS extends RawLocalFileSystem {
   override def getFileStatus(f: Path): FileStatus = {
     val original = super.getFileStatus(f)
     time += 1000L
-    new FileStatus(original.getLen, original.isDir, 0, 0, time, f)
+    new FileStatus(original.getLen, original.isDirectory, 0, 0, time, f)
   }
 }
 

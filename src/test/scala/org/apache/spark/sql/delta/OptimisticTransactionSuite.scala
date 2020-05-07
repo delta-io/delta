@@ -16,14 +16,11 @@
 
 package org.apache.spark.sql.delta
 
-import java.util.ConcurrentModificationException
-
-import org.apache.spark.sql.delta.DeltaOperations.{Delete, ManualUpdate, Truncate}
+import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, Metadata, RemoveFile, SetTransaction}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{QueryTest, Row}
-import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{StringType, StructField, StructType}
 
@@ -640,8 +637,8 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
       partitionCols: Seq[String] = "part" :: Nil)(
       test: DeltaLog => Unit): Unit = {
 
-    val schema = new StructType(partitionCols.map(p => new StructField(p, StringType)).toArray)
-    var actionWithMetaData =
+    val schema = StructType(partitionCols.map(p => StructField(p, StringType)).toArray)
+    val actionWithMetaData =
       actions :+ Metadata(partitionColumns = partitionCols, schemaString = schema.json)
 
     withTempDir { tempDir =>
@@ -682,28 +679,6 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
       intercept[ConcurrentTransactionException] {
         txn.commit(Nil, ManualUpdate)
       }
-    }
-  }
-
-  test("query with predicates should skip partitions") {
-    withTempDir { tempDir =>
-      val testPath = tempDir.getCanonicalPath
-      spark.range(2)
-        .map(_.toInt)
-        .withColumn("part", $"value" % 2)
-        .write
-        .format("delta")
-        .partitionBy("part")
-        .mode("append")
-        .save(testPath)
-
-      val query = spark.read.format("delta").load(testPath).where("part = 1")
-      val fileScans = query.queryExecution.executedPlan.collect {
-        case f: FileSourceScanExec => f
-      }
-      assert(fileScans.size == 1)
-      assert(fileScans.head.metadata.get("PartitionCount").contains("1"))
-      checkAnswer(query, Seq(Row(1, 1)))
     }
   }
 }

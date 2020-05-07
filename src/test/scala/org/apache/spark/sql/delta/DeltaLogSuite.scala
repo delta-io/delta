@@ -233,6 +233,11 @@ class DeltaLogSuite extends QueryTest
     }
   }
 
+  test("Reject read from Delta if no path is passed") {
+    val e = intercept[IllegalArgumentException](spark.read.format("delta").load()).getMessage
+    assert(e.contains("'path' is not specified"))
+  }
+
   test("do not relativize paths in RemoveFiles") {
     withTempDir { dir =>
       val log = DeltaLog.forTable(spark, dir)

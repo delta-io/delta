@@ -133,7 +133,7 @@ trait ImplicitMetadataOperation extends DeltaLogging {
       if (isOverwriteMode) {
         errorBuilder.addOverwriteBit()
       }
-      errorBuilder.finalizeAndThrow()
+      errorBuilder.finalizeAndThrow(spark.sessionState.conf)
     }
   }
 }
