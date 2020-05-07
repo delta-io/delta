@@ -433,6 +433,7 @@ A reference implementation can be found in [the catalyst package of the Apache S
 Type Name | Description
 -|-
 string| UTF-8 encoded string of characters
+long| 8-byte signed integer. Rnage: -9223372036854775808 to 9223372036854775807
 integer|4-byte signed integer. Range: -2147483648 to 2147483647
 short| 2-byte signed integer numbers. Range: -32768 to 32767
 byte| 1-byte signed integer number. Range: -128 to 127
