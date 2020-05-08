@@ -23,7 +23,7 @@ import java.util.ConcurrentModificationException
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata}
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.schema.{Invariant, InvariantViolationException}
+import org.apache.spark.sql.delta.schema.{Invariant, InvariantViolationException, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
@@ -204,6 +204,17 @@ object DeltaErrors
   def notADeltaSourceException(command: String, plan: Option[LogicalPlan] = None): Throwable = {
     val planName = if (plan.isDefined) plan.toString else ""
     new AnalysisException(s"$command destination only supports Delta sources.\n$planName")
+  }
+
+  def schemaChangedSinceAnalysis(atAnalysis: StructType, latestSchema: StructType): Throwable = {
+    val schemaDiff = SchemaUtils.reportDifferences(atAnalysis, latestSchema)
+      .map(_.replace("Specified", "Latest"))
+    new ConcurrentModificationException(
+      s"""The schema of your Delta table has changed in an incompatible way since your DataFrame
+         |was created. Please redefine your DataFrame. This check can be turned off by setting
+         |${DeltaSQLConf.DELTA_SCHEMA_ON_READ_CHECK_ENABLED.key} to false.
+         |Changes:\n${schemaDiff.mkString("\n")}
+       """.stripMargin)
   }
 
   def invalidColumnName(name: String): Throwable = {

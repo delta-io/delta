@@ -756,9 +756,7 @@ class DeltaSuite extends QueryTest
 
         // The file names are opaque. To identify which one we're deleting, we ensure that only one
         // append has 2 partitions, and give them the same value so we know what was deleted.
-        val inputFiles =
-          TahoeLogFileIndex(spark, deltaLog, new Path(tempDir.getCanonicalPath))
-            .inputFiles.toSeq
+        val inputFiles = TahoeLogFileIndex(spark, deltaLog).inputFiles.toSeq
         assert(inputFiles.size == 5)
 
         val filesToDelete = inputFiles.filter(_.split("/").last.startsWith("part-00001"))
@@ -790,9 +788,7 @@ class DeltaSuite extends QueryTest
 
         // The file names are opaque. To identify which one we're deleting, we ensure that only one
         // append has 2 partitions, and give them the same value so we know what was deleted.
-        val inputFiles =
-          TahoeLogFileIndex(spark, deltaLog, new Path(tempDir.getCanonicalPath))
-            .inputFiles.toSeq
+        val inputFiles = TahoeLogFileIndex(spark, deltaLog).inputFiles.toSeq
         assert(inputFiles.size == 5)
 
         val filesToCorrupt = inputFiles.filter(_.split("/").last.startsWith("part-00001"))
@@ -821,9 +817,7 @@ class DeltaSuite extends QueryTest
         Range(0, 10).foreach(n =>
           Seq(n).toDF().write.format("delta").mode("append").save(tempDir.toString))
 
-        val inputFiles =
-          TahoeLogFileIndex(spark, deltaLog, new Path(tempDir.getCanonicalPath))
-            .inputFiles.toSeq
+        val inputFiles = TahoeLogFileIndex(spark, deltaLog).inputFiles.toSeq
 
         val filesToDelete = inputFiles.take(4)
         filesToDelete.foreach { f =>
@@ -850,9 +844,7 @@ class DeltaSuite extends QueryTest
       Range(0, 10).foreach(n =>
         Seq(n).toDF().write.format("delta").mode("append").save(tempDir.toString))
 
-      val inputFiles =
-        TahoeLogFileIndex(spark, deltaLog, new Path(tempDir.getCanonicalPath))
-          .inputFiles.toSeq
+      val inputFiles = TahoeLogFileIndex(spark, deltaLog).inputFiles.toSeq
 
       val filesToDelete = inputFiles.take(4)
       filesToDelete.foreach { f =>

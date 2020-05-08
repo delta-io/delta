@@ -376,8 +376,9 @@ class DeltaLog private(
     }
 
     /** Used to link the files present in the table into the query planner. */
-    val fileIndex = TahoeLogFileIndex(spark, this, dataPath, partitionFilters, versionToUse)
     val snapshotToUse = versionToUse.map(getSnapshotAt(_)).getOrElse(snapshot)
+    val fileIndex = TahoeLogFileIndex(
+      spark, this, dataPath, snapshotToUse.metadata.schema, partitionFilters, versionToUse)
 
     new HadoopFsRelation(
       fileIndex,
