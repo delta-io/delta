@@ -75,7 +75,25 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
     case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, _) =>
       DeltaRelation.fromV2Relation(d, dsv2)
 
-    // DML - TODO: Remove these and use stable public interfaces once they are in Spark
+    // DML - TODO: Remove these Delta-specific DML logical plans and use Spark's plans directly
+
+    case d @ DeleteFromTable(table, condition) if d.childrenResolved =>
+      // rewrites Delta from V2 to V1
+      val newTarget = table.transformUp { case DeltaRelation(lr) => lr }
+      val indices = newTarget.collect {
+        case DeltaFullTable(index) => index
+      }
+      if (indices.isEmpty) {
+        // Not a Delta table at all, do not transform
+        d
+      } else if (indices.size == 1 && indices(0).deltaLog.snapshot.version > -1) {
+        // It is a well-defined Delta table with a schema
+        DeltaDelete(newTarget, condition)
+      } else {
+        // Not a well-defined Delta table
+        throw DeltaErrors.notADeltaSourceException("DELETE", Some(d))
+      }
+
     case u @ UpdateTable(table, assignments, condition) if u.childrenResolved =>
       val (cols, expressions) = assignments.map(a =>
         a.key.asInstanceOf[NamedExpression] -> a.value).unzip
@@ -122,11 +140,6 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
 
       deltaMergeResolved
 
-
-    case DeleteFromTable(table, condition) =>
-      // rewrites Delta from V2 to V1
-      val newTarget = table.transformUp { case DeltaRelation(lr) => lr }
-      DeltaDelete(newTarget, condition)
   }
 
   /**

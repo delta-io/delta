@@ -28,17 +28,16 @@ import org.junit.Before;
 import org.junit.Test;
 
 import org.apache.spark.sql.*;
-import org.apache.spark.sql.test.TestSparkSession;
 import org.apache.spark.util.Utils;
 
-public class DeleteJavaSuite {
+public class DeleteJavaSuite implements DeltaSQLCommandJavaTest {
 
-    private transient TestSparkSession spark;
+    private transient SparkSession spark;
     private transient String tempPath;
 
     @Before
     public void setUp() {
-        spark = new TestSparkSession();
+        spark = buildSparkSession();
         tempPath = Utils.createTempDir(System.getProperty("java.io.tmpdir"), "spark").toString();
     }
 
