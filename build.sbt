@@ -71,7 +71,7 @@ Test / testGrouping := (Test / testGrouping).value.flatMap { group =>
 concurrentRestrictions := {
   val testParallelismOpt = sys.env.get("DELTA_TEST_PARALLELISM").map(_.toInt)
   // Default to number of processors / 2
-  val defaultParallelism = java.lang.Runtime.getRuntime().availableProcessors() / 2
+  val defaultParallelism = java.lang.Runtime.getRuntime().availableProcessors() / 3
   val parallelism = testParallelismOpt.getOrElse(defaultParallelism)
 
   if (testParallelismOpt.isDefined) {
