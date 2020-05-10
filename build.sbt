@@ -68,10 +68,13 @@ Test / testGrouping := (Test / testGrouping).value.flatMap { group =>
   group.tests.map(test => sbt.Tests.Group(test.name, Seq(test), sbt.Tests.SubProcess(ForkOptions())))
 }
 
+// We need to set concurrent restrictions to execute tests in parallel. By default SBT sets this to
+// 1x parallelism for forked JVMs.
 concurrentRestrictions := {
-  val testParallelismOpt = sys.env.get("DELTA_TEST_PARALLELISM").map(_.toInt)
-  // Default to number of processors / 2
+  // Default to number of processors / 3
   val defaultParallelism = java.lang.Runtime.getRuntime().availableProcessors() / 3
+  // Allow users to specify parallelism with env var
+  val testParallelismOpt = sys.env.get("DELTA_TEST_PARALLELISM").map(_.toInt)
   val parallelism = testParallelismOpt.getOrElse(defaultParallelism)
 
   if (testParallelismOpt.isDefined) {
