@@ -21,11 +21,12 @@ resolvers += "bintray-spark-packages" at "https://dl.bintray.com/spark-packages/
 
 resolvers += "Typesafe Repository" at "http://repo.typesafe.com/typesafe/releases/"
 
-addSbtPlugin("org.spark-packages" % "sbt-spark-package" % "0.2.6")
+// sbt-spark-package is not published for SBT 1.x
+// addSbtPlugin("org.spark-packages" % "sbt-spark-package" % "0.2.6")
 
-addSbtPlugin("me.lessis" % "bintray-sbt" % "0.3.0")
+addSbtPlugin("org.foundweekends" % "sbt-bintray" % "0.5.4")
 
-addSbtPlugin("com.github.gseitz" % "sbt-release" % "1.0.0")
+addSbtPlugin("com.github.gseitz" % "sbt-release" % "1.0.11")
 
 addSbtPlugin("com.eed3si9n" % "sbt-assembly" % "0.14.9")
 
@@ -37,7 +38,7 @@ addSbtPlugin("com.eed3si9n" % "sbt-unidoc" % "0.4.2")
 
 addSbtPlugin("com.typesafe" % "sbt-mima-plugin" % "0.3.0")
 
-addSbtPlugin("com.simplytyped" % "sbt-antlr4" % "0.7.13")
+addSbtPlugin("com.simplytyped" % "sbt-antlr4" % "0.8.2")
 
 resolvers += Resolver.url("typesafe sbt-plugins",
   url("https://dl.bintray.com/typesafe/sbt-plugins"))(Resolver.ivyStylePatterns)
