@@ -36,7 +36,7 @@ addSbtPlugin("org.scalastyle" %% "scalastyle-sbt-plugin" % "1.0.0")
 
 addSbtPlugin("com.eed3si9n" % "sbt-unidoc" % "0.4.2")
 
-addSbtPlugin("com.typesafe" % "sbt-mima-plugin" % "0.3.0")
+addSbtPlugin("com.typesafe" % "sbt-mima-plugin" % "0.7.0")
 
 addSbtPlugin("com.simplytyped" % "sbt-antlr4" % "0.8.2")
 
