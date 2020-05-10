@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,9 +21,10 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.functions.typedLit
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.test.SQLTestUtils
 import org.apache.spark.util.Utils
 
-class EvolvabilitySuite extends EvolvabilitySuiteBase {
+class EvolvabilitySuite extends EvolvabilitySuiteBase with SQLTestUtils {
 
   import testImplicits._
 

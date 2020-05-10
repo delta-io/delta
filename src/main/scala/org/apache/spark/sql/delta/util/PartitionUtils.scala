@@ -21,7 +21,7 @@
  */
 
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -311,7 +311,7 @@ private[delta] object PartitionUtils {
         //    i.e. currentPath.getParent == null. For the example of "/table/a=1/",
         //    the top level dir is "/table".
         finished =
-          (maybeColumn.isEmpty && !columns.isEmpty) || currentPath.getParent == null
+          (maybeColumn.isEmpty && columns.nonEmpty) || currentPath.getParent == null
 
         if (!finished) {
           // For the above example, currentPath will be "/table/".

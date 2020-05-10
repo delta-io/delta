@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,16 +16,21 @@
 
 package org.apache.spark.sql.delta.commands
 
-import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaTableUtils, OptimisticTransaction}
 import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.hadoop.fs.Path
-import org.apache.spark.sql.{AnalysisException, Column, Dataset, Row, SparkSession}
+
+import org.apache.spark.sql.{AnalysisException, SparkSession}
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.analysis.{Analyzer, EliminateSubqueryAliases, NoSuchTableException, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.parser.ParseException
-import org.apache.spark.sql.execution.datasources.HadoopFsRelation
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 
 /**
  * Helper trait for all delta commands.
@@ -36,7 +41,7 @@ trait DeltaCommand extends DeltaLogging {
    *
    * @throws AnalysisException if a non-partition column is referenced.
    */
-  protected def parsePredicates(
+  protected def parsePartitionPredicates(
       spark: SparkSession,
       predicate: String): Seq[Expression] = {
     try {
@@ -50,7 +55,7 @@ trait DeltaCommand extends DeltaLogging {
   protected def verifyPartitionPredicates(
       spark: SparkSession,
       partitionColumns: Seq[String],
-      predicates: Seq[Expression]): Boolean = {
+      predicates: Seq[Expression]): Unit = {
 
     predicates.foreach { pred =>
       if (SubqueryExpression.hasSubquery(pred)) {
@@ -60,12 +65,13 @@ trait DeltaCommand extends DeltaLogging {
       pred.references.foreach { col =>
         val nameEquality = spark.sessionState.conf.resolver
         partitionColumns.find(f => nameEquality(f, col.name)).getOrElse {
-          return false
+          throw new AnalysisException(
+            s"Predicate references non-partition column '${col.name}'. " +
+              "Only the partition columns may be referenced: " +
+              s"[${partitionColumns.mkString(", ")}]")
         }
       }
     }
-
-    true
   }
 
   /**
@@ -148,33 +154,50 @@ trait DeltaCommand extends DeltaLogging {
   }
 
   /**
-   * Create a DataFrame that replace the targets records matching the given predicate with those
-   * from source and any new data partition records from source.
-   *
-   * @param sourceDF DataFrame of data being written to Delta.
-   * @param targetDF DataFrame of data in the latest resolved tahoe index.
-   * @param predicate Condition by which target records need to be replaced.
-   * @param txn Delta Transaction used to get the partition columns of the Delta table.
+   * Use the analyzer to resolve the identifier provided
+   * @param analyzer The session state analyzer to call
+   * @param identifier Table Identifier to determine whether is path based or not
+   * @return
    */
-  protected def getRevisedDataFrame(
-      sourceDF: Dataset[Row],
-      targetDF: Dataset[Row],
-      predicate: Expression,
-      txn: OptimisticTransaction): Dataset[Row] = {
+  protected def resolveIdentifier(analyzer: Analyzer, identifier: TableIdentifier): LogicalPlan = {
+    EliminateSubqueryAliases(analyzer.execute(UnresolvedRelation(identifier)))
+  }
 
-    val revisedPartitionsDF = {
-      sourceDF.filter(new Column(predicate))
-        .unionByName(
-          targetDF.filter(!new Column(predicate)))
+  /**
+   * Use the analyzer to see whether the provided TableIdentifier is for a path based table or not
+   * @param analyzer The session state analyzer to call
+   * @param tableIdent Table Identifier to determine whether is path based or not
+   * @return Boolean where true means that the table is a table in a metastore and false means the
+   *         table is a path based table
+   */
+  def isCatalogTable(analyzer: Analyzer, tableIdent: TableIdentifier): Boolean = {
+    try {
+      resolveIdentifier(analyzer, tableIdent) match {
+        // is path
+        case LogicalRelation(HadoopFsRelation(_, _, _, _, _, _), _, None, _) => false
+        // is table
+        case LogicalRelation(HadoopFsRelation(_, _, _, _, _, _), _, Some(_), _) =>
+          true
+        // could not resolve table/db
+        case UnresolvedRelation(_) =>
+          throw new NoSuchTableException(tableIdent.database.getOrElse(""), tableIdent.table)
+        // other e.g. view
+        case _ => true
+      }
+    } catch {
+      // Checking for table exists/database exists may throw an error in some cases in which case,
+      // see if the table is a path-based table, otherwise throw the original error
+      case _: AnalysisException if isPathIdentifier(tableIdent) => false
     }
+  }
 
-    val newPartitionsDF = {
-      sourceDF.join(
-        targetDF.select(txn.metadata.partitionColumns.map(new Column(_)): _*),
-        usingColumns = txn.metadata.partitionColumns,
-        joinType = "left_anti")
-    }
-
-    revisedPartitionsDF.unionByName(newPartitionsDF).distinct()
+  /**
+   * Checks if the given identifier can be for a delta table's path
+   * @param tableIdent Table Identifier for which to check
+   */
+  protected def isPathIdentifier(tableIdent: TableIdentifier): Boolean = {
+    val provider = tableIdent.database.getOrElse("")
+    // If db doesnt exist or db is called delta/tahoe then check if path exists
+    DeltaSourceUtils.isDeltaDataSourceName(provider) && new Path(tableIdent.table).isAbsolute
   }
 }

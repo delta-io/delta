@@ -21,7 +21,7 @@
  */
 
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -74,7 +74,7 @@ object DateTimeUtils {
   final val MILLIS_PER_HOUR: Long = 60 * MILLIS_PER_MINUTE
   final val MILLIS_PER_DAY: Long = SECONDS_PER_DAY * MILLIS_PER_SECOND
 
-  def defaultTimeZone(): TimeZone = TimeZone.getDefault()
+  def defaultTimeZone(): TimeZone = TimeZone.getDefault
 
   def getTimeZone(timeZoneId: String): TimeZone = {
     val zoneId = ZoneId.of(timeZoneId, ZoneId.SHORT_IDS)
@@ -109,7 +109,7 @@ object DateTimeUtils {
    */
   def fromJavaTimestamp(t: Timestamp): SQLTimestamp = {
     if (t != null) {
-      MILLISECONDS.toMicros(t.getTime()) + NANOSECONDS.toMicros(t.getNanos()) % NANOS_PER_MICROS
+      MILLISECONDS.toMicros(t.getTime) + NANOSECONDS.toMicros(t.getNanos()) % NANOS_PER_MICROS
     } else {
       0L
     }

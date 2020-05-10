@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,6 +27,8 @@ import org.apache.spark.sql.internal.SQLConf
  */
 object DeltaSQLConf {
   def buildConf(key: String): ConfigBuilder = SQLConf.buildConf(s"spark.databricks.delta.$key")
+  def buildStaticConf(key: String): ConfigBuilder =
+    SQLConf.buildStaticConf(s"spark.databricks.delta.$key")
 
 
   val RESOLVE_TIME_TRAVEL_ON_IDENTIFIER =
@@ -49,7 +51,15 @@ object DeltaSQLConf {
       .doc("Number of partitions to use when building a Delta Lake snapshot.")
       .intConf
       .checkValue(n => n > 0, "Delta snapshot partition number must be positive.")
-      .createWithDefault(50)
+      .createOptional
+
+  val DELTA_PARTITION_COLUMN_CHECK_ENABLED =
+    buildConf("partitionColumnValidity.enabled")
+      .internal()
+      .doc("Whether to check whether the partition column names have valid names, just like " +
+        "the data columns.")
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_COLLECT_STATS =
     buildConf("stats.collect")
@@ -78,6 +88,17 @@ object DeltaSQLConf {
       .doc("Enable sample based estimation.")
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_CONVERT_METADATA_CHECK_ENABLED =
+    buildConf("convert.metadataCheck.enabled")
+      .doc(
+        """
+          |If enabled, during convert to delta, if there is a difference between the catalog table's
+          |properties and the Delta table's configuration, we should error. If disabled, merge
+          |the two configurations with the same semantics as update and merge.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_STATS_SKIPPING =
     buildConf("stats.skipping")
@@ -129,6 +150,13 @@ object DeltaSQLConf {
         "therefore we choose 1000.")
       .intConf
       .createWithDefault(1000)
+
+  val DELTA_HISTORY_METRICS_ENABLED =
+    buildConf("history.metricsEnabled")
+      .doc("Enables Metrics reporting in Describe History. CommitInfo will now record the " +
+        "Operation Metrics.")
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_VACUUM_RETENTION_CHECK_ENABLED =
     buildConf("retentionDurationCheck.enabled")
@@ -206,4 +234,35 @@ object DeltaSQLConf {
       .longConf
       .createWithDefault(10000L)
 
+  val MERGE_INSERT_ONLY_ENABLED =
+    buildConf("merge.optimizeInsertOnlyMerge.enabled")
+      .internal()
+      .doc(
+        """
+          |If enabled, merge without any matched clause (i.e., insert-only merge) will be optimized
+          |by avoiding rewriting old files and just inserting new files.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val MERGE_REPARTITION_BEFORE_WRITE =
+    buildConf("merge.repartitionBeforeWrite.enabled")
+      .internal()
+      .doc(
+        """
+          |When enabled, merge will repartition the output by the table's partition columns before
+          |writing the files.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
+  val MERGE_MATCHED_ONLY_ENABLED =
+    buildConf("merge.optimizeMatchedOnlyMerge.enabled")
+      .internal()
+      .doc(
+        """If enabled, merge without 'when not matched' clause will be optimized to use a
+          |right outer join instead of a full outer join.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 }

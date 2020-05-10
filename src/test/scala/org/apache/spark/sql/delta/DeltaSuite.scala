@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,24 +17,27 @@
 package org.apache.spark.sql.delta
 
 import java.io.{File, FileNotFoundException}
+import java.util.concurrent.atomic.AtomicInteger
 
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.SparkException
+import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions.InSet
 import org.apache.spark.sql.catalyst.plans.logical.Filter
+import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.OPTIMIZER_METADATA_ONLY
-import org.apache.spark.sql.test.SharedSQLContext
+import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.util.Utils
 
 class DeltaSuite extends QueryTest
-  with SharedSQLContext {
+  with SharedSparkSession  with SQLTestUtils {
 
   import testImplicits._
 
@@ -60,24 +63,55 @@ class DeltaSuite extends QueryTest
       // partition filter
       checkDatasetUnorderly(
         ds.where("part = 1"),
-        (1 -> 1), (3 -> 1), (5 -> 1), (7 -> 1), (9 -> 1))
+        1 -> 1, 3 -> 1, 5 -> 1, 7 -> 1, 9 -> 1)
       checkDatasetUnorderly(
         ds.where("part = 0"),
-        (0 -> 0), (2 -> 0), (4 -> 0), (6 -> 0), (8 -> 0))
+        0 -> 0, 2 -> 0, 4 -> 0, 6 -> 0, 8 -> 0)
       // data filter
       checkDatasetUnorderly(
         ds.where("value >= 5"),
-        (5 -> 1), (6 -> 0), (7 -> 1), (8 -> 0), (9 -> 1))
+        5 -> 1, 6 -> 0, 7 -> 1, 8 -> 0, 9 -> 1)
       checkDatasetUnorderly(
         ds.where("value < 5"),
-        (0 -> 0), (1 -> 1), (2 -> 0), (3 -> 1), (4 -> 0))
+        0 -> 0, 1 -> 1, 2 -> 0, 3 -> 1, 4 -> 0)
       // partition filter + data filter
       checkDatasetUnorderly(
         ds.where("part = 1 and value >= 5"),
-        (5 -> 1), (7 -> 1), (9 -> 1))
+        5 -> 1, 7 -> 1, 9 -> 1)
       checkDatasetUnorderly(
         ds.where("part = 1 and value < 5"),
-        (1 -> 1), (3 -> 1))
+        1 -> 1, 3 -> 1)
+    }
+  }
+
+  test("query with predicates should skip partitions") {
+    withTempDir { tempDir =>
+      val testPath = tempDir.getCanonicalPath
+
+      // Generate two files in two partitions
+      spark.range(2)
+        .withColumn("part", $"id" % 2)
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .mode("append")
+        .save(testPath)
+
+      // Read only one partition
+      val query = spark.read.format("delta").load(testPath).where("part = 1")
+      val fileScans = query.queryExecution.executedPlan.collect {
+        case f: FileSourceScanExec => f
+      }
+
+      // Force the query to read files and generate metrics
+      query.queryExecution.executedPlan.execute().count()
+
+      // Verify only one file was read
+      assert(fileScans.size == 1)
+      val numFilesAferPartitionSkipping = fileScans.head.metrics.get("numFiles")
+      assert(numFilesAferPartitionSkipping.nonEmpty)
+      assert(numFilesAferPartitionSkipping.get.value == 1)
+      checkAnswer(query, Seq(Row(1, 1)))
     }
   }
 
@@ -92,7 +126,7 @@ class DeltaSuite extends QueryTest
           .partitionBy(partitionColumn)
           .save(testPath)
         val ds = spark.read.format("delta").load(testPath).as[(Int, String)]
-        checkDatasetUnorderly(ds, (1 -> "a"), (2 -> "b"))
+        checkDatasetUnorderly(ds, 1 -> "a", 2 -> "b")
       }
     }
   }
@@ -198,6 +232,30 @@ class DeltaSuite extends QueryTest
     }.getMessage
     assert(e2.contains("Data written into Delta needs to contain at least one non-partitioned"))
 
+    val e3 = intercept[AnalysisException] {
+      Seq(6).toDF()
+        .withColumn("is_odd", $"value" % 2 =!= 0)
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .option(DeltaOptions.REPLACE_WHERE_OPTION, "not_a_column = true")
+        .save(tempDir.toString)
+    }.getMessage
+    assert(e3 == "Predicate references non-partition column 'not_a_column'. Only the " +
+      "partition columns may be referenced: [is_odd];")
+
+    val e4 = intercept[AnalysisException] {
+      Seq(6).toDF()
+        .withColumn("is_odd", $"value" % 2 =!= 0)
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .option(DeltaOptions.REPLACE_WHERE_OPTION, "value = 1")
+        .save(tempDir.toString)
+    }.getMessage
+    assert(e4 == "Predicate references non-partition column 'value'. Only the " +
+      "partition columns may be referenced: [is_odd];")
+
     val e5 = intercept[AnalysisException] {
       Seq(6).toDF()
         .withColumn("is_odd", $"value" % 2 =!= 0)
@@ -208,71 +266,6 @@ class DeltaSuite extends QueryTest
         .save(tempDir.toString)
     }.getMessage
     assert(e5.contains("Cannot recognize the predicate ''"))
-  }
-
-  test("replaceWhere with multiple non-partition predicates") {
-    withTempDir { tempDir =>
-      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
-
-      Seq((1, 10), (2, 20), (3, 10), (4, 20), (4, 10)).toDF("key", "value")
-        .write
-        .format("delta")
-        .partitionBy("value")
-        .save(tempDir.getCanonicalPath)
-
-      Seq((4, 30), (5, 20), (6, 70)).toDF("key", "value")
-        .write
-        .format("delta")
-        .mode("overwrite")
-        .option(DeltaOptions.REPLACE_WHERE_OPTION, "key = 4 OR key = 5")
-        .save(tempDir.getCanonicalPath)
-
-      checkDatasetUnorderly(data.toDF.as[(Int, Int)],
-        1 -> 10, 3 -> 10, 2 -> 20, 5 -> 20, 4 -> 30, 6 -> 70)
-    }
-  }
-
-  test("replaceWhere with nested predicates") {
-    withTempDir { tempDir =>
-      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
-
-      Seq((1, 10), (2, 20), (3, 10), (4, 20), (4, 10)).toDF("key", "value")
-        .write
-        .format("delta")
-        .partitionBy("value")
-        .save(tempDir.getCanonicalPath)
-
-      Seq((4, 30), (5, 20)).toDF("key", "value")
-        .write
-        .format("delta")
-        .mode("overwrite")
-        .option(DeltaOptions.REPLACE_WHERE_OPTION, "(key = 4 AND value = 20) OR key = 5")
-        .save(tempDir.getCanonicalPath)
-
-      checkDatasetUnorderly(data.toDF.as[(Int, Int)],
-        1 -> 10, 3 -> 10, 4 -> 10, 2 -> 20, 5 -> 20, 4 -> 30)
-    }
-  }
-
-  test("replaceWhere with no matching predicates") {
-    withTempDir { tempDir =>
-      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
-
-      Seq((1, 10), (2, 20), (3, 10), (4, 20), (4, 10)).toDF("key", "value")
-        .write
-        .format("delta")
-        .partitionBy("value")
-        .save(tempDir.getCanonicalPath)
-
-      Seq((4, 30), (5, 20)).toDF("key", "value")
-        .write
-        .format("delta")
-        .mode("overwrite")
-        .option(DeltaOptions.REPLACE_WHERE_OPTION, "key = 7")
-        .save(tempDir.getCanonicalPath)
-
-      checkDatasetUnorderly(data.toDF.as[(Int, Int)], 1 -> 10, 3 -> 10, 2 -> 20, 4 -> 10, 4 -> 20)
-    }
   }
 
   test("move delta table") {
@@ -533,17 +526,49 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("support removing partitioning") {
+    withTempDir { tempDir =>
+      if (tempDir.exists()) {
+        assert(tempDir.delete())
+      }
+
+      spark.range(100).select('id, 'id % 4 as 'by4)
+        .write
+        .format("delta")
+        .partitionBy("by4")
+        .save(tempDir.toString)
+
+      val deltaLog = DeltaLog.forTable(spark, tempDir)
+      assert(deltaLog.snapshot.metadata.partitionColumns === Seq("by4"))
+
+      spark.read.format("delta").load(tempDir.toString).write
+        .option(DeltaOptions.OVERWRITE_SCHEMA_OPTION, "true")
+        .format("delta")
+        .mode(SaveMode.Overwrite)
+        .save(tempDir.toString)
+
+      assert(deltaLog.snapshot.metadata.partitionColumns === Nil)
+    }
+  }
+
   test("columns with commas as partition columns") {
     withTempDir { tempDir =>
       if (tempDir.exists()) {
         assert(tempDir.delete())
       }
 
-      spark.range(100).select('id, 'id % 4 as "by,4")
+      val dfw = spark.range(100).select('id, 'id % 4 as "by,4")
         .write
         .format("delta")
         .partitionBy("by,4")
-        .save(tempDir.toString)
+
+      val e = intercept[AnalysisException] {
+        dfw.save(tempDir.toString)
+      }
+      assert(e.getMessage.contains("invalid character(s)"))
+      withSQLConf(DeltaSQLConf.DELTA_PARTITION_COLUMN_CHECK_ENABLED.key -> "false") {
+        dfw.save(tempDir.toString)
+      }
 
       val files = spark.read.format("delta").load(tempDir.toString).inputFiles
 
@@ -595,22 +620,6 @@ class DeltaSuite extends QueryTest
           .save(tempDir.toString)
       }
       assert(e.getMessage.contains("incompatible"))
-    }
-  }
-
-  test("metadataOnly query") {
-    withSQLConf(OPTIMIZER_METADATA_ONLY.key -> "true") {
-      withTable("tahoe_test") {
-        Seq(1L -> "a").toDF("dataCol", "partCol")
-          .write
-          .mode(SaveMode.Overwrite)
-          .partitionBy("partCol")
-          .format("delta")
-          .saveAsTable("tahoe_test")
-        checkAnswer(
-          sql("select count(distinct partCol) FROM tahoe_test"),
-          Row(1))
-      }
     }
   }
 
@@ -696,8 +705,9 @@ class DeltaSuite extends QueryTest
 
   test("SC-8727 - default snapshot num partitions") {
     withTempDir { tempDir =>
+      spark.range(10).write.format("delta").save(tempDir.toString)
       val deltaLog = DeltaLog.forTable(spark, tempDir)
-      val numParts = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS)
+      val numParts = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS).get
       assert(deltaLog.snapshot.state.rdd.getNumPartitions == numParts)
     }
   }
@@ -715,6 +725,7 @@ class DeltaSuite extends QueryTest
   test("SC-8727 - reconfigure num partitions") {
     withTempDir { tempDir =>
       withSQLConf(("spark.databricks.delta.snapshotPartitions", "410")) {
+        spark.range(10).write.format("delta").save(tempDir.toString)
         val deltaLog = DeltaLog.forTable(spark, tempDir)
         assert(deltaLog.snapshot.state.rdd.getNumPartitions == 410)
       }
@@ -795,7 +806,7 @@ class DeltaSuite extends QueryTest
         val thrown = intercept[SparkException] {
           data.toDF().count()
         }
-        assert(thrown.getMessage().contains("is not a Parquet file"))
+        assert(thrown.getMessage.contains("is not a Parquet file"))
       }
     }
   }
@@ -854,7 +865,7 @@ class DeltaSuite extends QueryTest
       val thrown = intercept[SparkException] {
         data.toDF().count()
       }
-      assert(thrown.getMessage().contains("FileNotFound"))
+      assert(thrown.getMessage.contains("FileNotFound"))
     }
   }
 
@@ -922,6 +933,23 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("SC-24886: partition columns have correct datatype in metadata scans") {
+    withTempDir { inputDir =>
+      Seq(("foo", 2019)).toDF("name", "y")
+        .write.format("delta").partitionBy("y").mode("overwrite")
+        .save(inputDir.getAbsolutePath)
+
+      // Before the fix, this query would fail because it tried to read strings from the metadata
+      // partition values as the LONG type that the actual partition columns are. This works now
+      // because we added a cast.
+      val df = spark.read.format("delta")
+        .load(inputDir.getAbsolutePath)
+        .where(
+          """cast(format_string("%04d-01-01 12:00:00", y) as timestamp) is not null""".stripMargin)
+      assert(df.collect().length == 1)
+    }
+  }
+
   test("SC-11332: session isolation for cached delta logs") {
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath
@@ -955,11 +983,34 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  test("SC-15200: SaveAsTable on empty dataframe should create table") {
-    withTable("sc15200test") {
-      spark.range(0).selectExpr("id", "id as id2")
-        .write.format("delta").partitionBy("id").saveAsTable("sc15200test")
-      checkAnswer(spark.table("sc15200test"), Seq.empty)
+  test("SC-24982 - initial snapshot has zero partitions") {
+    withTempDir { tempDir =>
+      val deltaLog = DeltaLog.forTable(spark, tempDir)
+      assert(deltaLog.snapshot.state.rdd.getNumPartitions == 0)
+    }
+  }
+
+  test("SC-24982 - initial snapshot does not trigger jobs") {
+    val jobCount = new AtomicInteger(0)
+    val listener = new SparkListener {
+      override def onJobStart(jobStart: SparkListenerJobStart): Unit = {
+        // Spark will always log a job start/end event even when the job does not launch any task.
+        if (jobStart.stageInfos.exists(_.numTasks > 0)) {
+          jobCount.incrementAndGet()
+        }
+      }
+    }
+    sparkContext.listenerBus.waitUntilEmpty(15000)
+    sparkContext.addSparkListener(listener)
+    try {
+      withTempDir { tempDir =>
+        val files = DeltaLog.forTable(spark, tempDir).snapshot.state.collect()
+        assert(files.isEmpty)
+      }
+      sparkContext.listenerBus.waitUntilEmpty(15000)
+      assert(jobCount.get() == 0)
+    } finally {
+      sparkContext.removeSparkListener(listener)
     }
   }
 }

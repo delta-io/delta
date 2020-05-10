@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -80,7 +80,7 @@ trait SnapshotIterator {
     import spark.implicits._
     if (result == null) {
       result = DeltaLog.filterFileList(
-        snapshot.metadata.partitionColumns,
+        snapshot.metadata.partitionSchema,
         initialFiles.toDF(),
         partitionFilters,
         Seq("add")).as[IndexedFile].collect().toIterable

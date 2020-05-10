@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,17 +17,12 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.{AnalysisException, _}
-import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{Action, AddFile}
-import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.schema.ImplicitMetadataOperation
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.execution.command.RunnableCommand
-import org.apache.spark.sql.functions.input_file_name
 
 /**
  * Used to write a [[DataFrame]] into a delta table.
@@ -38,7 +33,7 @@ import org.apache.spark.sql.functions.input_file_name
  *
  * Existing Table Semantics
  *  - The save mode will control how existing data is handled (i.e. overwrite, append, etc)
- *  - The schema will of the DataFrame will be checked and if there are new columns present
+ *  - The schema of the DataFrame will be checked and if there are new columns present
  *    they will be added to the tables schema. Conflicting columns (i.e. a INT, and a STRING)
  *    will result in an exception
  *  - The partition columns, if present are validated against the existing metadata. If not
@@ -74,96 +69,8 @@ case class WriteIntoDelta(
     Seq.empty
   }
 
-  protected def fileActions(
-    spark: SparkSession,
-    partitionColumns: Seq[String],
-    predicate: Option[Expression],
-    txn: OptimisticTransaction): Seq[Action] = {
-    import spark.implicits._
-
-    val (metadataPredicates, otherPredicates) = predicate match {
-        case Some(pred) =>
-          DeltaTableUtils
-            .splitMetadataAndDataPredicates(pred, txn.metadata.partitionColumns, spark)
-        case None => (Seq.empty, Seq.empty)
-      }
-
-
-    if (otherPredicates.isEmpty) {
-      val newFiles = txn.writeFiles(data, Some(options))
-      val deletedFiles = (mode, predicate) match {
-        case (SaveMode.Overwrite, None) =>
-          txn.filterFiles().map(_.remove)
-        case (SaveMode.Overwrite, Some(predicates)) =>
-          // Check to make sure the files we wrote out were actually valid.
-          val matchingFiles = DeltaLog.filterFileList(
-            txn.metadata.partitionColumns, newFiles.toDF(), Seq(predicates)).as[AddFile].collect()
-          val invalidFiles = newFiles.toSet -- matchingFiles
-          if (invalidFiles.nonEmpty) {
-            val badPartitions = invalidFiles
-              .map(_.partitionValues)
-              .map { _.map { case (k, v) => s"$k=$v" }.mkString("/") }
-              .mkString(", ")
-            throw DeltaErrors.replaceWhereMismatchException(options.replaceWhere.get, badPartitions)
-          }
-
-          txn.filterFiles(metadataPredicates).map(_.remove)
-        case _ => Nil
-      }
-
-      newFiles ++ deletedFiles
-    } else {
-      val affectedFiles = txn.filterFiles(metadataPredicates ++ otherPredicates)
-      val nameToAddFileMap = generateCandidateFileMap(deltaLog.dataPath, affectedFiles)
-
-      if (affectedFiles.isEmpty) {
-        // no rows qualify the partition predicates
-        Nil
-      } else {
-        val affectedFileIndex = new TahoeBatchFileIndex(
-          spark, "replaceWhere", affectedFiles, deltaLog, deltaLog.dataPath, txn.snapshot)
-
-        val targetPlan = {
-          txn.deltaLog.createDataFrame(txn.snapshot, affectedFiles).queryExecution.analyzed
-        }
-
-        val newTargetPlan = DeltaTableUtils.replaceFileIndex(targetPlan, affectedFileIndex)
-        val targetDF = Dataset.ofRows(spark, newTargetPlan)
-
-        val filesToRewrite: Array[String] = {
-          targetDF.filter(new Column(predicate.get))
-            .select(input_file_name()).distinct().as[String].collect()
-        }
-
-        if (filesToRewrite.isEmpty) {
-          // Do nothing if no row qualifies the predicate
-          Nil
-        } else {
-
-          val baseRelation = buildBaseRelation(
-            spark, txn, "replaceWhere", affectedFileIndex.path, filesToRewrite, nameToAddFileMap)
-
-          // Keep everything from the resolved target except a new TahoeFileIndex
-          // that only involves the affected files instead of all files.
-          val newTarget = DeltaTableUtils.replaceFileIndex(targetPlan, baseRelation.location)
-          val targetDF = Dataset.ofRows(spark, newTarget)
-
-          val rewrittenFiles = withStatusCode(
-            "DELTA", s"Rewriting ${filesToRewrite.length} files for arbitraryReplace operation") {
-            txn.writeFiles(getRevisedDataFrame(data, targetDF, predicate.get, txn))
-          }
-
-          val operationTimestamp = System.currentTimeMillis()
-          val deleteActions =
-            removeFilesFromPaths(deltaLog, nameToAddFileMap, filesToRewrite, operationTimestamp)
-
-          deleteActions ++ rewrittenFiles
-        }
-      }
-    }
-  }
-
   def write(txn: OptimisticTransaction, sparkSession: SparkSession): Seq[Action] = {
+    import sparkSession.implicits._
     if (txn.readVersion > -1) {
       // This table already exists, check if the insert is valid.
       if (mode == SaveMode.ErrorIfExists) {
@@ -174,20 +81,18 @@ case class WriteIntoDelta(
         deltaLog.assertRemovable()
       }
     }
-    updateMetadata(txn, data, partitionColumns, configuration, isOverwriteOperation)
+    val rearrangeOnly = options.rearrangeOnly
+    updateMetadata(txn, data, partitionColumns, configuration, isOverwriteOperation, rearrangeOnly)
 
     // Validate partition predicates
     val replaceWhere = options.replaceWhere
     val partitionFilters = if (replaceWhere.isDefined) {
-
-      // While the return is a `Seq`, we only ever get a single expression.
-      val predicate = parsePredicates(sparkSession, replaceWhere.get).head
+      val predicates = parsePartitionPredicates(sparkSession, replaceWhere.get)
       if (mode == SaveMode.Overwrite) {
-        if (DeltaTableUtils.containsSubquery(predicate)) {
-          DeltaErrors.subqueryNotSupportedException("replaceWhere", predicate)
-        }
+        verifyPartitionPredicates(
+          sparkSession, txn.metadata.partitionColumns, predicates)
       }
-      Some(predicate)
+      Some(predicates)
     } else {
       None
     }
@@ -197,7 +102,32 @@ case class WriteIntoDelta(
       deltaLog.fs.mkdirs(deltaLog.logPath)
     }
 
-    fileActions(sparkSession, txn.metadata.partitionColumns, partitionFilters, txn)
+    val newFiles = txn.writeFiles(data, Some(options))
+    val deletedFiles = (mode, partitionFilters) match {
+      case (SaveMode.Overwrite, None) =>
+        txn.filterFiles().map(_.remove)
+      case (SaveMode.Overwrite, Some(predicates)) =>
+        // Check to make sure the files we wrote out were actually valid.
+        val matchingFiles = DeltaLog.filterFileList(
+          txn.metadata.partitionSchema, newFiles.toDF(), predicates).as[AddFile].collect()
+        val invalidFiles = newFiles.toSet -- matchingFiles
+        if (invalidFiles.nonEmpty) {
+          val badPartitions = invalidFiles
+            .map(_.partitionValues)
+            .map { _.map { case (k, v) => s"$k=$v" }.mkString("/") }
+            .mkString(", ")
+          throw DeltaErrors.replaceWhereMismatchException(replaceWhere.get, badPartitions)
+        }
 
+        txn.filterFiles(predicates).map(_.remove)
+      case _ => Nil
+    }
+
+    if (rearrangeOnly) {
+      newFiles.map(_.copy(dataChange = !rearrangeOnly)) ++
+        deletedFiles.map(_.copy(dataChange = !rearrangeOnly))
+    } else {
+      newFiles ++ deletedFiles
+    }
   }
 }

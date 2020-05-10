@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,10 +24,11 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.test.SQLTestUtils
 import org.apache.spark.util.ManualClock
 
 // scalastyle:off: removeFile
-class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase {
+class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQLTestUtils {
 
   protected override def sparkConf: SparkConf = super.sparkConf
 
@@ -39,7 +40,7 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase {
       val clock = new ManualClock(System.currentTimeMillis())
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath), clock)
       (1 to 5).foreach { i =>
-        val txn = log.startTransaction()
+        val txn = if (i == 1) startTxnWithManualLogCleanup(log) else log.startTransaction()
         val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
         val delete: Seq[Action] = if (i > 1) {
           RemoveFile(i - 1 toString, Some(System.currentTimeMillis()), true) :: Nil
@@ -70,17 +71,17 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase {
       val afterCleanup = getLogFiles(tempDir)
       assert(initialFiles !== afterCleanup)
       assert(expectedFiles.forall(suffix => afterCleanup.exists(_.getName.endsWith(suffix))),
-        s"${afterCleanup.mkString("\n")}\n didn't contain files with suffixes: ${expectedFiles}")
+        s"${afterCleanup.mkString("\n")}\n didn't contain files with suffixes: $expectedFiles")
     }
   }
 
-  testQuietly("log files being already deleted shouldn't fail log deletion job") {
+  test("log files being already deleted shouldn't fail log deletion job") {
     withTempDir { tempDir =>
       val clock = new ManualClock(System.currentTimeMillis())
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath), clock)
 
       (1 to 25).foreach { i =>
-        val txn = log.startTransaction()
+        val txn = if (i == 1) startTxnWithManualLogCleanup(log) else log.startTransaction()
         val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
         val delete: Seq[Action] = if (i > 1) {
           RemoveFile(i - 1 toString, Some(System.currentTimeMillis()), true) :: Nil
@@ -101,7 +102,7 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase {
       // delete some files in the middle
       getDeltaFiles(tempDir).sortBy(_.getName).slice(5, 15).foreach(_.delete())
       clock.advance(intervalStringToMillis(DeltaConfigs.LOG_RETENTION.defaultValue) +
-        intervalStringToMillis("interval 1 day"))
+        intervalStringToMillis("interval 2 day"))
       log.cleanUpExpiredLogs()
 
       val minDeltaFile =
@@ -122,7 +123,7 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase {
       val clock = new ManualClock(System.currentTimeMillis())
       val log1 = DeltaLog(spark, new Path(tempDir.getCanonicalPath), clock)
 
-      val txn = log1.startTransaction()
+      val txn = startTxnWithManualLogCleanup(log1)
       val files1 = (1 to 10).map(f => AddFile(f.toString, Map.empty, 1, 1, true))
       txn.commit(files1, testOp)
       val txn2 = log1.startTransaction()
@@ -142,7 +143,7 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase {
       val clock = new ManualClock(System.currentTimeMillis())
       val log1 = DeltaLog(spark, new Path(tempDir.getCanonicalPath), clock)
 
-      val txn = log1.startTransaction()
+      val txn = startTxnWithManualLogCleanup(log1)
       val files1 = (1 to 10).map(f => AddFile(f.toString, Map.empty, 1, 1, true))
       txn.commit(files1, testOp)
       val txn2 = log1.startTransaction()
@@ -165,7 +166,7 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase {
     withTempDir { tempDir =>
       val clock = new ManualClock(System.currentTimeMillis())
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath), clock)
-      log.startTransaction().commit(AddFile("0", Map.empty, 1, 1, true) :: Nil, testOp)
+      startTxnWithManualLogCleanup(log).commit(AddFile("0", Map.empty, 1, 1, true) :: Nil, testOp)
       log.checkpoint()
 
       val initialFiles = getLogFiles(tempDir)

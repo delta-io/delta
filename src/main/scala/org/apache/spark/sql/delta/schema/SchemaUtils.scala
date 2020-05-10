@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,18 +16,26 @@
 
 package org.apache.spark.sql.delta.schema
 
+import scala.collection.Set._
 import scala.collection.mutable
 import scala.util.control.NonFatal
+
+import org.apache.spark.sql.delta.DeltaErrors
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
 import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.types._
 
 object SchemaUtils {
   // We use case insensitive resolution while writing into Delta
-  val DELTA_COL_RESOLVER = org.apache.spark.sql.catalyst.analysis.caseInsensitiveResolution
+  val DELTA_COL_RESOLVER: (String, String) => Boolean =
+    org.apache.spark.sql.catalyst.analysis.caseInsensitiveResolution
+  private val ARRAY_ELEMENT_INDEX = 0
+  private val MAP_KEY_INDEX = 0
+  private val MAP_VALUE_INDEX = 1
 
   /**
    * Finds `StructField`s that match a given check `f`. Returns the path to the column, and the
@@ -205,10 +213,9 @@ object SchemaUtils {
 
       val baseFields = toFieldMap(baseSchema)
       val aliasExpressions = dataSchema.map { field =>
-        val originalCase = baseFields.get(field.name).getOrElse {
+        val originalCase = baseFields.getOrElse(field.name,
           throw new AnalysisException(
-            s"Can't resolve column ${field.name} in ${baseSchema.treeString}")
-        }
+            s"Can't resolve column ${field.name} in ${baseSchema.treeString}"))
         if (originalCase.name != field.name) {
           functions.col(field.name).as(originalCase.name)
         } else {
@@ -228,48 +235,192 @@ object SchemaUtils {
    *   - Any change of datatype
    */
   def isReadCompatible(existingSchema: StructType, readSchema: StructType): Boolean = {
-    val existing = toFieldMap(existingSchema)
-    // scalastyle:off caselocale
-    val existingFieldNames = existingSchema.fieldNames.map(_.toLowerCase).toSet
-    assert(existingFieldNames.size == existingSchema.length,
-      "Delta tables don't allow field names that only differ by case")
-    val newFields = readSchema.fieldNames.map(_.toLowerCase).toSet
-    assert(newFields.size == readSchema.length,
-      "Delta tables don't allow field names that only differ by case")
-    // scalastyle:on caselocale
 
-    if (!existingFieldNames.subsetOf(newFields)) {
-      // Dropped a column that was present in the DataFrame schema
-      return false
-    }
-
-    readSchema.forall { newField =>
-      existing.get(newField.name) match {
-        case Some(existingField) =>
-          val nullabilityConstraintMet = if (!existingField.nullable) {
-            // newField should also be non-nullable
-            !newField.nullable
-          } else {
-            true
-          }
-          val dataTypeMatched = (existingField.dataType, newField.dataType) match {
-            case (e: StructType, n: StructType) =>
-              isReadCompatible(e, n)
-            case (ArrayType(e: StructType, _), ArrayType(n: StructType, _)) =>
-              isReadCompatible(e, n)
-            case (a, b) => a == b
-          }
-          dataTypeMatched && nullabilityConstraintMet
-        case None =>
-          // new fields are fine, they just won't be returned
-          true
+    def isDatatypeReadCompatible(existing: DataType, newtype: DataType): Boolean = {
+      (existing, newtype) match {
+        case (e: StructType, n: StructType) =>
+          isReadCompatible(e, n)
+        case (e: ArrayType, n: ArrayType) =>
+          // if existing elements are non-nullable, so should be the new element
+          (e.containsNull || !n.containsNull) &&
+            isDatatypeReadCompatible(e.elementType, n.elementType)
+        case (e: MapType, n: MapType) =>
+          // if existing value is non-nullable, so should be the new value
+          (e.valueContainsNull || !n.valueContainsNull) &&
+            isDatatypeReadCompatible(e.keyType, n.keyType) &&
+            isDatatypeReadCompatible(e.valueType, n.valueType)
+        case (a, b) => a == b
       }
     }
+
+    def isStructReadCompatible(existing: StructType, newtype: StructType): Boolean = {
+      val existing = toFieldMap(existingSchema)
+      // scalastyle:off caselocale
+      val existingFieldNames = existingSchema.fieldNames.map(_.toLowerCase).toSet
+      assert(existingFieldNames.size == existingSchema.length,
+        "Delta tables don't allow field names that only differ by case")
+      val newFields = readSchema.fieldNames.map(_.toLowerCase).toSet
+      assert(newFields.size == readSchema.length,
+        "Delta tables don't allow field names that only differ by case")
+      // scalastyle:on caselocale
+
+      if (!existingFieldNames.subsetOf(newFields)) {
+        // Dropped a column that was present in the DataFrame schema
+        return false
+      }
+      readSchema.forall { newField =>
+        // new fields are fine, they just won't be returned
+        existing.get(newField.name).forall { existingField =>
+          // we know the name matches modulo case - now verify exact match
+          (existingField.name == newField.name
+            // if existing value is non-nullable, so should be the new value
+            && (existingField.nullable || !newField.nullable)
+            // and the type of the field must be compatible, too
+            && isDatatypeReadCompatible(existingField.dataType, newField.dataType))
+        }
+      }
+    }
+
+    isStructReadCompatible(existingSchema, readSchema)
+  }
+
+  /**
+   * Compare an existing schema to a specified new schema and
+   * return a message describing the first difference found, if any:
+   *   - different field name or datatype
+   *   - different metadata
+   */
+  def reportDifferences(existingSchema: StructType, specifiedSchema: StructType): Seq[String] = {
+
+    def canOrNot(can: Boolean) = if (can) "can" else "can not"
+    def isOrNon(b: Boolean) = if (b) "" else "non-"
+
+    def missingFieldsMessage(fields: Set[String]) : String = {
+      s"Specified schema is missing field(s): ${fields.mkString(", ")}"
+    }
+    def additionalFieldsMessage(fields: Set[String]) : String = {
+      s"Specified schema has additional field(s): ${fields.mkString(", ")}"
+    }
+    def fieldNullabilityMessage(field: String, specified: Boolean, existing: Boolean) : String = {
+      s"Field $field is ${isOrNon(specified)}nullable in specified " +
+        s"schema but ${isOrNon(existing)}nullable in existing schema."
+    }
+    def arrayNullabilityMessage(field: String, specified: Boolean, existing: Boolean) : String = {
+      s"Array field $field ${canOrNot(specified)} contain null in specified schema " +
+        s"but ${canOrNot(existing)} in existing schema"
+    }
+    def valueNullabilityMessage(field: String, specified: Boolean, existing: Boolean) : String = {
+      s"Map field $field ${canOrNot(specified)} contain null values in specified schema " +
+        s"but ${canOrNot(existing)} in existing schema"
+    }
+    def metadataDifferentMessage(field: String, specified: Metadata, existing: Metadata)
+      : String = {
+      s"""Specified metadata for field $field is different from existing schema:
+         |Specified: $specified
+         |Existing:  $existing""".stripMargin
+    }
+    def typeDifferenceMessage(field: String, specified: DataType, existing: DataType)
+      : String = {
+      s"""Specified type for $field is different from existing schema:
+         |Specified: ${specified.typeName}
+         |Existing:  ${existing.typeName}""".stripMargin
+    }
+
+    // prefix represents the nested field(s) containing this schema
+    def structDifference(existing: StructType, specified: StructType, prefix: String)
+      : Seq[String] = {
+
+      // 1. ensure set of fields is the same
+      val existingFieldNames = existing.fieldNames.toSet
+      val specifiedFieldNames = specified.fieldNames.toSet
+
+      val missingFields = existingFieldNames diff specifiedFieldNames
+      val missingFieldsDiffs =
+        if (missingFields.isEmpty) Nil
+        else Seq(missingFieldsMessage(missingFields.map(prefix + _)))
+
+      val extraFields = specifiedFieldNames diff existingFieldNames
+      val extraFieldsDiffs =
+        if (extraFields.isEmpty) Nil
+        else Seq(additionalFieldsMessage(extraFields.map(prefix + _)))
+
+      // 2. for each common field, ensure it has the same type and metadata
+      val existingFields = toFieldMap(existing)
+      val specifiedFields = toFieldMap(specified)
+      val fieldsDiffs = (existingFieldNames intersect specifiedFieldNames).flatMap(
+        (name: String) => fieldDifference(existingFields(name), specifiedFields(name), prefix))
+
+      missingFieldsDiffs ++ extraFieldsDiffs ++ fieldsDiffs
+    }
+
+    def fieldDifference(existing: StructField, specified: StructField, prefix: String)
+      : Seq[String] = {
+
+      val name = s"$prefix${existing.name}"
+      val nullabilityDiffs =
+        if (existing.nullable == specified.nullable) Nil
+        else Seq(fieldNullabilityMessage(s"$name", specified.nullable, existing.nullable))
+      val metadataDiffs =
+        if (existing.metadata == specified.metadata) Nil
+        else Seq(metadataDifferentMessage(s"$name", specified.metadata, existing.metadata))
+      val typeDiffs =
+        typeDifference(existing.dataType, specified.dataType, name)
+
+      nullabilityDiffs ++ metadataDiffs ++ typeDiffs
+    }
+
+    def typeDifference(existing: DataType, specified: DataType, field: String)
+      : Seq[String] = {
+
+      (existing, specified) match {
+        case (e: StructType, s: StructType) => structDifference(e, s, s"$field.")
+        case (e: ArrayType, s: ArrayType) => arrayDifference(e, s, s"$field[]")
+        case (e: MapType, s: MapType) => mapDifference(e, s, s"$field")
+        case (e, s) if e != s => Seq(typeDifferenceMessage(field, s, e))
+        case _ => Nil
+      }
+    }
+
+    def arrayDifference(existing: ArrayType, specified: ArrayType, field: String): Seq[String] = {
+
+      val elementDiffs =
+        typeDifference(existing.elementType, specified.elementType, field)
+      val nullabilityDiffs =
+        if (existing.containsNull == specified.containsNull) Nil
+        else Seq(arrayNullabilityMessage(field, specified.containsNull, existing.containsNull))
+
+      elementDiffs ++ nullabilityDiffs
+    }
+
+    def mapDifference(existing: MapType, specified: MapType, field: String) : Seq[String] = {
+
+      val keyDiffs =
+        typeDifference(existing.keyType, specified.keyType, s"$field[key]")
+      val valueDiffs =
+        typeDifference(existing.valueType, specified.valueType, s"$field[value]")
+      val nullabilityDiffs =
+        if (existing.valueContainsNull == specified.valueContainsNull) Nil
+        else Seq(
+          valueNullabilityMessage(field, specified.valueContainsNull, existing.valueContainsNull))
+
+      keyDiffs ++ valueDiffs ++ nullabilityDiffs
+    }
+
+    structDifference(existingSchema, specifiedSchema, "")
   }
 
   /**
    * Returns the given column's ordinal within the given `schema` and the size of the last schema
    * size. The length of the returned position will be as long as how nested the column is.
+   *
+   * For ArrayType: accessing the array's element adds a position 0 to the position list.
+   * e.g. accessing a.element.y would have the result -> Seq(..., positionOfA, 0, positionOfY)
+   *
+   * For MapType: accessing the map's key adds a position 0 to the position list.
+   * e.g. accessing m.key.y would have the result -> Seq(..., positionOfM, 0, positionOfY)
+   *
+   * For MapType: accessing the map's value adds a position 1 to the position list.
+   * e.g. accessing m.key.y would have the result -> Seq(..., positionOfM, 1, positionOfY)
    *
    * @param column The column to search for in the given struct. If the length of `column` is
    *               greater than 1, we expect to enter a nested field.
@@ -288,16 +439,52 @@ object SchemaUtils {
       if (pos == -1) {
         throw new IndexOutOfBoundsException(columnPath)
       }
-      val (children, lastSize) = schema(pos).dataType match {
-        case s: StructType =>
-          find(column.tail, s, stack :+ thisCol)
-        case ArrayType(s: StructType, _) =>
-          find(column.tail, s, stack :+ thisCol)
-        case o =>
+      val colTail = column.tail
+      val (children, lastSize) = (colTail, schema(pos).dataType) match {
+        case (_, s: StructType) =>
+          find(colTail, s, stack :+ thisCol)
+        case (Seq("element", _ @ _*), ArrayType(s: StructType, _)) =>
+          val (child, size) = find(colTail.tail, s, stack :+ thisCol)
+          (ARRAY_ELEMENT_INDEX +: child, size)
+        case (Seq(), ArrayType(s: StructType, _)) =>
+          find(colTail, s, stack :+ thisCol)
+        case (Seq(), ArrayType(_, _)) =>
+          (Seq(0), 0)
+        case (_, ArrayType(_, _)) =>
+          throw new AnalysisException(
+            s"""An ArrayType was found. In order to access elements of an ArrayType, specify
+               |${prettyFieldName(stack ++ Seq(thisCol, "element"))}
+               |Instead of ${prettyFieldName(stack ++ Seq(thisCol))}
+               """.stripMargin
+          )
+        case (Seq(), MapType(_, _, _)) =>
+          (Nil, 2)
+        case (Seq("key", _ @ _*), MapType(keyType: StructType, _, _)) =>
+          val (child, size) = find(colTail.tail, keyType, stack :+ thisCol)
+          (MAP_KEY_INDEX +: child, size)
+        case (Seq("key"), MapType(_, _, _)) =>
+          (Seq(MAP_KEY_INDEX), 0)
+        case (Seq("value", _ @ _*), MapType(_, valueType: StructType, _)) =>
+          val (child, size) = find(colTail.tail, valueType, stack :+ thisCol)
+          (MAP_VALUE_INDEX +: child, size)
+        case (Seq("value"), MapType(_, _, _)) =>
+          (Seq(MAP_VALUE_INDEX), 0)
+        case (_, MapType(_, _, _)) =>
+          throw new AnalysisException(
+            s"""A MapType was found. In order to access the key or value of a MapType, specify one
+               |of:
+               |${prettyFieldName(stack ++ Seq(thisCol, "key"))} or
+               |${prettyFieldName(stack ++ Seq(thisCol, "value"))}
+               |followed by the name of the column (only if that column is a struct type).
+               |e.g. mymap.key.mykey
+               |If the column is a basic type, mymap.key or mymap.value is sufficient.
+              """.stripMargin
+          )
+        case (_, o) =>
           if (column.length > 1) {
             throw new AnalysisException(
               s"""Expected $columnPath to be a nested data type, but found $o. Was looking for the
-                 |index of ${UnresolvedAttribute(column).name} in a nested field
+                 |index of ${prettyFieldName(column)} in a nested field
               """.stripMargin)
           }
           (Nil, 0)
@@ -309,11 +496,17 @@ object SchemaUtils {
       find(column, schema, Nil)
     } catch {
       case i: IndexOutOfBoundsException =>
-        throw new AnalysisException(
-          s"Couldn't find column ${i.getMessage} in:\n${schema.treeString}")
+        throw DeltaErrors.columnNotInSchemaException(i.getMessage, schema)
       case e: AnalysisException =>
         throw new AnalysisException(e.getMessage + s":\n${schema.treeString}")
     }
+  }
+
+  /**
+   * Pretty print the column path passed in.
+   */
+  def prettyFieldName(columnPath: Seq[String]): String = {
+    UnresolvedAttribute(columnPath).name
   }
 
   /**
@@ -346,6 +539,7 @@ object SchemaUtils {
     }
     val pre = schema.take(slicePosition)
     if (position.length > 1) {
+      val posTail = position.tail
       val mid = schema(slicePosition) match {
         case StructField(name, f: StructType, nullable, metadata) =>
           if (!column.nullable && nullable) {
@@ -355,11 +549,50 @@ object SchemaUtils {
           }
           StructField(
             name,
-            addColumn(f, column, position.tail),
+            addColumn(f, column, posTail),
             nullable,
             metadata)
+        case StructField(name, ArrayType(f: StructType, containsNull), nullable, metadata) =>
+          if (!column.nullable && nullable) {
+            throw new AnalysisException(
+              "A non-nullable nested field can't be added to a nullable parent. Please set the " +
+                "nullability of the parent column accordingly.")
+          }
+
+          if (posTail.head != ARRAY_ELEMENT_INDEX) {
+            throw new AnalysisException(
+              s"""Incorrectly accessing an ArrayType. Use arrayname.element.elementname position to
+                 |add to an array.
+               """.stripMargin)
+          }
+
+          StructField(
+            name,
+            ArrayType(addColumn(f, column, posTail.tail), containsNull),
+            nullable,
+            metadata)
+        case StructField(name, map @ MapType(_, _, _), nullable, metadata) =>
+          if (!column.nullable && nullable) {
+            throw new AnalysisException(
+              "A non-nullable nested field can't be added to a nullable parent. Please set the " +
+                "nullability of the parent column accordingly.")
+          }
+
+          val addedMap = (posTail.head, map) match {
+            case (MAP_KEY_INDEX, MapType(key: StructType, v, nullability)) =>
+              MapType(addColumn(key, column, posTail.tail), v, nullability)
+            case (MAP_VALUE_INDEX, MapType(k, value: StructType, nullability)) =>
+              MapType(k, addColumn(value, column, posTail.tail), nullability)
+            case _ =>
+              throw new AnalysisException(
+                s"""
+                  |Cannot add ${column.name} because its parent is not a StructType.
+                """.stripMargin)
+          }
+          StructField(name, addedMap, nullable, metadata)
         case o =>
-          throw new AnalysisException(s"Can only add nested columns to StructType. Found: $o")
+          throw new AnalysisException(s"Cannot add ${column.name} because its parent is not a " +
+            s"StructType. Found ${o.dataType}")
       }
       StructType(pre ++ Seq(mid) ++ schema.slice(slicePosition + 1, length))
     } else {
@@ -367,6 +600,8 @@ object SchemaUtils {
     }
   }
 
+  // TODO @pranavanand: This method is no longer being used by AlterTable. If transformColumnsStruct
+  // works sufficiently, remove this method
   /**
    * Drop from the specified `position` in `schema` and return with the original column.
    * @param position A Seq of ordinals on where this column should go. It is a Seq to denote
@@ -475,10 +710,10 @@ object SchemaUtils {
    */
   def changeDataType(from: DataType, to: DataType, resolver: Resolver): DataType = {
     (from, to) match {
-      case (ArrayType(fromElement, fn), ArrayType(toElement, tn)) =>
+      case (ArrayType(fromElement, fn), ArrayType(toElement, _)) =>
         ArrayType(changeDataType(fromElement, toElement, resolver), fn)
 
-      case (MapType(fromKey, fromValue, fn), MapType(toKey, toValue, tn)) =>
+      case (MapType(fromKey, fromValue, fn), MapType(toKey, toValue, _)) =>
         MapType(
           changeDataType(fromKey, toKey, resolver),
           changeDataType(fromValue, toValue, resolver),
@@ -488,7 +723,7 @@ object SchemaUtils {
         StructType(
           toFields.map { toField =>
             fromFields.find(field => resolver(field.name, toField.name)).map { fromField =>
-              toField.getComment.map(fromField.withComment).getOrElse(fromField)
+              toField.getComment().map(fromField.withComment).getOrElse(fromField)
                 .copy(
                   dataType = changeDataType(fromField.dataType, toField.dataType, resolver),
                   nullable = toField.nullable)
@@ -641,6 +876,43 @@ object SchemaUtils {
   }
 
   /**
+   * Transform (nested) columns in a schema. Runs the transform function on all nested StructTypes
+   *
+   * @param schema to transform.
+   * @param tf function to apply on the StructType.
+   * @return the transformed schema.
+   */
+  def transformColumnsStructs(
+      schema: StructType,
+      colName: String)(
+      tf: (Seq[String], StructType, Resolver) => Seq[StructField]): StructType = {
+    def transform[E <: DataType](path: Seq[String], dt: E): E = {
+      val newDt = dt match {
+        case struct @ StructType(fields) =>
+          val newFields = if (fields.exists(_.name == colName)) {
+            tf(path, struct, DELTA_COL_RESOLVER)
+          } else {
+            fields.toSeq
+          }
+
+          StructType(newFields.map { field =>
+            field.copy(dataType = transform(path :+ field.name, field.dataType))
+          })
+        case ArrayType(elementType, containsNull) =>
+          ArrayType(transform(path :+ "element", elementType), containsNull)
+        case MapType(keyType, valueType, valueContainsNull) =>
+          MapType(
+            transform(path :+ "key", keyType),
+            transform(path :+ "value", valueType),
+            valueContainsNull)
+        case other => other
+      }
+      newDt.asInstanceOf[E]
+    }
+    transform(Seq.empty, schema)
+  }
+
+  /**
    * Transform (nested) columns in a schema using the given path and parameter pairs. The transform
    * function is only invoked when a field's path matches one of the input paths.
    *
@@ -675,5 +947,17 @@ object SchemaUtils {
       }
     }
     // scalastyle:on caselocale
+  }
+
+  /**
+   * Verifies that the column names are acceptable by Parquet and henceforth Delta. Parquet doesn't
+   * accept the characters ' ,;{}()\n\t'. We ensure that neither the data columns nor the partition
+   * columns have these characters.
+   */
+  def checkFieldNames(names: Seq[String]): Unit = {
+    ParquetSchemaConverter.checkFieldNames(names)
+    // The method checkFieldNames doesn't have a valid regex to search for '\n'. That should be
+    // fixed in Apache Spark, and we can remove this additional check here.
+    names.find(_.contains("\n")).foreach(col => throw DeltaErrors.invalidColumnName(col))
   }
 }

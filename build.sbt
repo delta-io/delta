@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,11 +18,9 @@ name := "delta-core"
 
 organization := "io.delta"
 
-crossScalaVersions := Seq("2.12.8", "2.11.12")
+scalaVersion := "2.12.10"
 
-scalaVersion := crossScalaVersions.value.head
-
-sparkVersion := "2.4.2"
+sparkVersion := "3.0.0"
 
 libraryDependencies ++= Seq(
   // Adding test classifier seems to break transitive resolution of the core dependencies
@@ -37,8 +35,24 @@ libraryDependencies ++= Seq(
   "com.novocode" % "junit-interface" % "0.11" % "test",
   "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
   "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
-  "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests"
+  "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
+
+  // Compiler plugins
+  // -- Bump up the genjavadoc version explicitly to 0.16 to work with Scala 2.12
+  compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.16" cross CrossVersion.full)
 )
+
+resolvers += "Temporary Staging of Spark 3.0" at "https://docs.delta.io/spark3artifacts/rc1/maven/"
+
+antlr4Settings
+
+antlr4Version in Antlr4 := "4.7"
+
+antlr4PackageName in Antlr4 := Some("io.delta.sql.parser")
+
+antlr4GenListener in Antlr4 := true
+
+antlr4GenVisitor in Antlr4 := true
 
 testOptions in Test += Tests.Argument("-oDF")
 
@@ -110,23 +124,26 @@ enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin)
 
 // Configure Scala unidoc
 scalacOptions in(ScalaUnidoc, unidoc) ++= Seq(
-  "-skip-packages", "org:com:io.delta.tables.execution",
+  "-skip-packages", "org:com:io.delta.sql:io.delta.tables.execution",
   "-doc-title", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " ScalaDoc"
 )
 
 // Configure Java unidoc
 javacOptions in(JavaUnidoc, unidoc) := Seq(
   "-public",
-  "-exclude", "org:com:io.delta.tables.execution",
+  "-exclude", "org:com:io.delta.sql:io.delta.tables.execution",
   "-windowtitle", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
   "-noqualifier", "java.lang",
-  "-tag", "return:X"
+  "-tag", "return:X",
+  // `doclint` is disabled on Circle CI. Need to enable it manually to test our javadoc.
+  "-Xdoclint:all"
 )
 
 // Explicitly remove source files by package because these docs are not formatted correctly for Javadocs
 def ignoreUndocumentedPackages(packages: Seq[Seq[java.io.File]]): Seq[Seq[java.io.File]] = {
   packages
     .map(_.filterNot(_.getName.contains("$")))
+    .map(_.filterNot(_.getCanonicalPath.contains("io/delta/sql")))
     .map(_.filterNot(_.getCanonicalPath.contains("io/delta/tables/execution")))
     .map(_.filterNot(_.getCanonicalPath.contains("spark")))
 }
@@ -150,6 +167,8 @@ spAppendScalaVersion := true
 spIncludeMaven := true
 
 spIgnoreProvided := true
+
+packageBin in Compile := spPackage.value
 
 sparkComponents := Seq("sql")
 

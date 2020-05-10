@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,11 +23,11 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
 
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.test.SharedSQLContext
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
 trait DeltaProtocolVersionSuiteBase extends QueryTest
-    with SharedSQLContext {
+    with SharedSparkSession {
 
   private lazy val testTableSchema = spark.range(1).schema
 

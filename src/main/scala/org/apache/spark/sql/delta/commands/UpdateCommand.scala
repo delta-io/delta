@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,12 +21,16 @@ import org.apache.spark.sql.delta.actions.{Action, AddFile}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.SparkContext
 import org.apache.spark.sql.{Column, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Alias, Expression, If, Literal}
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.command.RunnableCommand
-import org.apache.spark.sql.functions.input_file_name
+import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
+import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
+import org.apache.spark.sql.functions.{input_file_name, udf}
 import org.apache.spark.sql.types.BooleanType
 
 /**
@@ -46,6 +50,14 @@ case class UpdateCommand(
   extends RunnableCommand with DeltaCommand {
 
   override def innerChildren: Seq[QueryPlan[_]] = Seq(target)
+
+  @transient private lazy val sc: SparkContext = SparkContext.getOrCreate()
+
+  override lazy val metrics = Map[String, SQLMetric](
+    "numAddedFiles" -> createMetric(sc, "number of files added."),
+    "numRemovedFiles" -> createMetric(sc, "number of files removed."),
+    "numUpdatedRows" -> createMetric(sc, "number of rows updated.")
+  )
 
   final override def run(sparkSession: SparkSession): Seq[Row] = {
     recordDeltaOperation(tahoeFileIndex.deltaLog, "delta.dml.update") {
@@ -110,9 +122,16 @@ case class UpdateCommand(
       // that only involves the affected files instead of all files.
       val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
       val data = Dataset.ofRows(sparkSession, newTarget)
+      val updatedRowCount = metrics("numUpdatedRows")
+      val updatedRowUdf = udf { () =>
+        updatedRowCount += 1
+        true
+      }.asNondeterministic()
       val filesToRewrite =
         withStatusCode("DELTA", s"Finding files to rewrite for UPDATE operation") {
-          data.filter(new Column(updateCondition)).select(input_file_name())
+          data.filter(new Column(updateCondition))
+            .filter(updatedRowUdf())
+            .select(input_file_name())
             .distinct().as[String].collect()
         }
 
@@ -142,7 +161,14 @@ case class UpdateCommand(
     }
 
     if (actions.nonEmpty) {
+      metrics("numAddedFiles").set(numRewrittenFiles)
+      metrics("numRemovedFiles").set(numTouchedFiles)
+      txn.registerSQLMetrics(sparkSession, metrics)
       txn.commit(actions, DeltaOperations.Update(condition.map(_.toString)))
+      // This is needed to make the SQL metrics visible in the Spark UI
+      val executionId = sparkSession.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
+      SQLMetrics.postDriverMetricUpdates(
+        sparkSession.sparkContext, executionId, metrics.values.toSeq)
     }
 
     recordDeltaEvent(

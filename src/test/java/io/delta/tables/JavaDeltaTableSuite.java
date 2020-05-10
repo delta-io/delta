@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -58,20 +58,17 @@ public class JavaDeltaTableSuite {
 
     // Test creating DeltaTable by path
     DeltaTable table1 = DeltaTable.forPath(spark, input);
-    Assert.assertEquals(
-        QueryTest$.MODULE$.checkAnswer(table1.toDF(), dataRows),
-        null);
+    QueryTest$.MODULE$.checkAnswer(table1.toDF(), dataRows);
 
     // Test creating DeltaTable by path picks up active SparkSession
     DeltaTable table2 = DeltaTable.forPath(input);
-    Assert.assertEquals(
-        QueryTest$.MODULE$.checkAnswer(table2.toDF(), dataRows),
-        null);
+    QueryTest$.MODULE$.checkAnswer(table2.toDF(), dataRows);
 
 
     // Test DeltaTable.as() creates subquery alias
-    Assert.assertEquals(
-        QueryTest$.MODULE$.checkAnswer(table2.as("tbl").toDF().select("tbl.value"), dataRows),
-        null);
+    QueryTest$.MODULE$.checkAnswer(table2.as("tbl").toDF().select("tbl.value"), dataRows);
+
+    // Test DeltaTable.isDeltaTable() is true for a Delta file path.
+    Assert.assertTrue(DeltaTable.isDeltaTable(input));
   }
 }

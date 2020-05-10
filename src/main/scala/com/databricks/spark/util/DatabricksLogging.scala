@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,7 +31,7 @@ object TagDefinitions {
   object TAG_OP_TYPE extends TagDefinition
 }
 
-class OpType(typeName: String, description: String)
+case class OpType(typeName: String, description: String)
 
 class MetricDefinition
 

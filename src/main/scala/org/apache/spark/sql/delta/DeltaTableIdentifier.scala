@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.internal.SQLConf
 
 /**
  * An identifier for a Delta table containing one of the path or the table identifier.
@@ -51,7 +52,7 @@ case class DeltaTableIdentifier(
 
   def quotedString: String = {
     val replacedId = quoteIdentifier(identifier)
-    val replacedDb = database.map(quoteIdentifier(_))
+    val replacedDb = database.map(quoteIdentifier)
 
     if (replacedDb.isDefined) s"`${replacedDb.get}`.`$replacedId`" else s"`$replacedId`"
   }
@@ -77,9 +78,11 @@ object DeltaTableIdentifier {
     def databaseExists = catalog.databaseExists(identifier.database.get)
     def tableExists = catalog.tableExists(identifier)
 
-    DeltaSourceUtils.isDeltaTable(identifier.database) &&
+    spark.sessionState.conf.runSQLonFile &&
+      DeltaSourceUtils.isDeltaTable(identifier.database) &&
       !tableIsTemporaryTable &&
-      (!databaseExists || !tableExists)
+      (!databaseExists || !tableExists) &&
+      new Path(identifier.table).isAbsolute
   }
 
   /**

@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,14 +26,15 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
-import org.apache.spark.sql.test.SharedSQLContext
+import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
 abstract class UpdateSuiteBase
   extends QueryTest
-  with SharedSQLContext
-  with BeforeAndAfterEach {
+  with SharedSparkSession
+  with BeforeAndAfterEach
+  with SQLTestUtils {
   import testImplicits._
 
   var tempDir: File = _
@@ -497,13 +498,6 @@ abstract class UpdateSuiteBase
     val arrayStructData = spark.read.json(Seq("""{"a": [{"b": 1}, {"b": 2}]}""").toDS())
     testAnalysisException(
       arrayStructData,
-      set = "a.b = -1" :: Nil,
-      errMsgs = "Updating nested fields is only supported for StructType" :: Nil)
-
-    // Updating an Array is not supported
-    val arrayData = spark.read.json(Seq("""{"a": [1, 2]}""").toDS())
-    testAnalysisException(
-      arrayData,
       set = "a.b = -1" :: Nil,
       errMsgs = "Updating nested fields is only supported for StructType" :: Nil)
   }

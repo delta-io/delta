@@ -62,6 +62,9 @@ project/plugins/src_managed/
 project/plugins/target/
 python/lib/pyspark.zip
 python/deps
+docs/python/_static/
+docs/python/_templates/
+docs/python/_build/
 python/test_coverage/coverage_data
 python/test_coverage/htmlcov
 python/pyspark/python
@@ -99,3 +102,7 @@ spark-warehouse/
 
 # For SBT
 .jvmopts
+
+# For Python linting
+pep8*.py
+pycodestyle*.py

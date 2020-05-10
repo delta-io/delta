@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,12 +20,17 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 
+import org.apache.spark.SparkContext
 import org.apache.spark.sql.{Column, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
 import org.apache.spark.sql.catalyst.expressions.{EqualNullSafe, Expression, InputFileName, Literal, Not}
 import org.apache.spark.sql.catalyst.plans.QueryPlan
-import org.apache.spark.sql.catalyst.plans.logical.{Delete, LogicalPlan}
+import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
+import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
+import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
+import org.apache.spark.sql.functions.udf
 import org.apache.spark.sql.types.BooleanType
 
 /**
@@ -45,6 +50,14 @@ case class DeleteCommand(
   extends RunnableCommand with DeltaCommand {
 
   override def innerChildren: Seq[QueryPlan[_]] = Seq(target)
+
+  @transient private lazy val sc: SparkContext = SparkContext.getOrCreate()
+
+  override lazy val metrics = Map[String, SQLMetric](
+    "numRemovedFiles" -> createMetric(sc, "number of files removed."),
+    "numAddedFiles" -> createMetric(sc, "number of files added."),
+    "numDeletedRows" -> createMetric(sc, "number of rows deleted.")
+  )
 
   final override def run(sparkSession: SparkSession): Seq[Row] = {
     recordDeltaOperation(tahoeFileIndex.deltaLog, "delta.dml.delete") {
@@ -82,6 +95,7 @@ case class DeleteCommand(
         scanTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
 
         val operationTimestamp = System.currentTimeMillis()
+        metrics("numRemovedFiles").set(allFiles.size)
         allFiles.map(_.removeWithTimestamp(operationTimestamp))
       case Some(cond) =>
         val (metadataPredicates, otherPredicates) =
@@ -97,6 +111,7 @@ case class DeleteCommand(
           scanTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
           numTouchedFiles = candidateFiles.size
 
+          metrics("numRemovedFiles").set(numTouchedFiles)
           candidateFiles.map(_.removeWithTimestamp(operationTimestamp))
         } else {
           // Case 3: Delete the rows based on the condition.
@@ -111,16 +126,25 @@ case class DeleteCommand(
           // that only involves the affected files instead of all files.
           val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
           val data = Dataset.ofRows(sparkSession, newTarget)
+          val deletedRowCount = metrics("numDeletedRows")
+          val deletedRowUdf = udf { () =>
+            deletedRowCount += 1
+            true
+          }.asNondeterministic()
           val filesToRewrite =
             withStatusCode("DELTA", s"Finding files to rewrite for DELETE operation") {
               if (numTouchedFiles == 0) {
                 Array.empty[String]
               } else {
-                data.filter(new Column(cond)).select(new Column(InputFileName())).distinct()
+                data
+                  .filter(new Column(cond))
+                  .filter(deletedRowUdf())
+                  .select(new Column(InputFileName())).distinct()
                   .as[String].collect()
               }
             }
 
+          metrics("numRemovedFiles").set(filesToRewrite.size)
           scanTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
           if (filesToRewrite.isEmpty) {
             // Case 3.1: no row matches and no delete will be triggered
@@ -153,7 +177,13 @@ case class DeleteCommand(
         }
     }
     if (deleteActions.nonEmpty) {
+      metrics("numAddedFiles").set(numRewrittenFiles)
+      txn.registerSQLMetrics(sparkSession, metrics)
       txn.commit(deleteActions, DeltaOperations.Delete(condition.map(_.sql).toSeq))
+      // This is needed to make the SQL metrics visible in the Spark UI
+      val executionId = sparkSession.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
+      SQLMetrics.postDriverMetricUpdates(
+        sparkSession.sparkContext, executionId, metrics.values.toSeq)
     }
 
     recordDeltaEvent(
@@ -171,7 +201,7 @@ case class DeleteCommand(
 }
 
 object DeleteCommand {
-  def apply(delete: Delete): DeleteCommand = {
+  def apply(delete: DeltaDelete): DeleteCommand = {
     val index = EliminateSubqueryAliases(delete.child) match {
       case DeltaFullTable(tahoeFileIndex) =>
         tahoeFileIndex

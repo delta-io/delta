@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,8 +22,10 @@ import org.apache.spark.sql.delta._
 import io.delta.tables.execution._
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.annotation.InterfaceStability._
+import org.apache.spark.annotation._
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.types.StructType
 
 /**
  * :: Evolving ::
@@ -37,7 +39,7 @@ import org.apache.spark.sql._
  * @since 0.3.0
  */
 @Evolving
-class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
+class DeltaTable private[tables](df: => Dataset[Row], deltaLog: DeltaLog)
   extends DeltaTableOperations {
 
   /**
@@ -50,6 +52,17 @@ class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
    */
   @Evolving
   def as(alias: String): DeltaTable = new DeltaTable(df.as(alias), deltaLog)
+
+  /**
+   * :: Evolving ::
+   *
+   * Apply an alias to the DeltaTable. This is similar to `Dataset.as(alias)` or
+   * SQL `tableName AS alias`.
+   *
+   * @since 0.3.0
+   */
+  @Evolving
+  def alias(alias: String): DeltaTable = as(alias)
 
   /**
    * :: Evolving ::
@@ -85,7 +98,7 @@ class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
    * maintaining older versions up to the given retention threshold. This method will return an
    * empty DataFrame on successful completion.
    *
-   * note: This will use the default retention period of 7 hours.
+   * note: This will use the default retention period of 7 days.
    *
    * @since 0.3.0
    */
@@ -120,6 +133,24 @@ class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
   @Evolving
   def history(): DataFrame = {
     executeHistory(deltaLog, None)
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Generate a manifest for the given Delta Table
+   *
+   * @param mode Specifies the mode for the generation of the manifest.
+   *             The valid modes are as follows (not case sensitive):
+   *              - "symlink_format_manifest" : This will generate manifests in symlink format
+   *                                            for Presto and Athena read support.
+   *             See the online documentation for more information.
+   * @since 0.5.0
+   */
+  @Evolving
+  def generate(mode: String): Unit = {
+    val path = deltaLog.dataPath.toString
+    executeGenerate(s"delta.`$path`", mode)
   }
 
   /**
@@ -360,11 +391,11 @@ class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
   /**
    * :: Evolving ::
    *
-   * Merge data from the `source` DataFrame based on the given merge `condition`. This class returns
+   * Merge data from the `source` DataFrame based on the given merge `condition`. This returns
    * a [[DeltaMergeBuilder]] object that can be used to specify the update, delete, or insert
    * actions to be performed on rows based on whether the rows matched the condition or not.
    *
-   * See the [[DeltaMergeBuilder]] for a full description of this operation and what combination
+   * See the [[DeltaMergeBuilder]] for a full description of this operation and what combinations of
    * update, delete and insert operations are allowed.
    *
    * Scala example to update a key-value Delta table with new key-values from a source DataFrame:
@@ -417,11 +448,11 @@ class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
   /**
    * :: Evolving ::
    *
-   * Merge data from the `source` DataFrame based on the given merge `condition`. This class returns
+   * Merge data from the `source` DataFrame based on the given merge `condition`. This returns
    * a [[DeltaMergeBuilder]] object that can be used to specify the update, delete, or insert
    * actions to be performed on rows based on whether the rows matched the condition or not.
    *
-   * See the [[DeltaMergeBuilder]] for a full description of this operation and what combination
+   * See the [[DeltaMergeBuilder]] for a full description of this operation and what combinations of
    * update, delete and insert operations are allowed.
    *
    * Scala example to update a key-value Delta table with new key-values from a source DataFrame:
@@ -488,6 +519,93 @@ object DeltaTable {
   /**
    * :: Evolving ::
    *
+   * Create a DeltaTable from the given parquet table and partition schema.
+   * Takes an existing parquet table and constructs a delta transaction log in the base path of
+   * that table.
+   *
+   * Note: Any changes to the table during the conversion process may not result in a consistent
+   * state at the end of the conversion. Users should stop any changes to the table before the
+   * conversion is started.
+   *
+   * An example usage would be
+   * {{{
+   *  io.delta.tables.DeltaTable.convertToDelta(
+   *   spark,
+   *   "parquet.`/path`",
+   *   new StructType().add(StructField("key1", LongType)).add(StructField("key2", StringType)))
+   * }}}
+   *
+   * @since 0.4.0
+   */
+  @Evolving
+  def convertToDelta(
+      spark: SparkSession,
+      identifier: String,
+      partitionSchema: StructType): DeltaTable = {
+    val tableId: TableIdentifier = spark.sessionState.sqlParser.parseTableIdentifier(identifier)
+    DeltaConvert.executeConvert(spark, tableId, Some(partitionSchema), None)
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Create a DeltaTable from the given parquet table and partition schema.
+   * Takes an existing parquet table and constructs a delta transaction log in the base path of
+   * that table.
+   *
+   * Note: Any changes to the table during the conversion process may not result in a consistent
+   * state at the end of the conversion. Users should stop any changes to the table before the
+   * conversion is started.
+   *
+   * An example usage would be
+   * {{{
+   *  io.delta.tables.DeltaTable.convertToDelta(
+   *   spark,
+   *   "parquet.`/path`",
+   *   "key1 long, key2 string")
+   * }}}
+   *
+   * @since 0.4.0
+   */
+  @Evolving
+  def convertToDelta(
+      spark: SparkSession,
+      identifier: String,
+      partitionSchema: String): DeltaTable = {
+    val tableId: TableIdentifier = spark.sessionState.sqlParser.parseTableIdentifier(identifier)
+    DeltaConvert.executeConvert(spark, tableId, Some(StructType.fromDDL(partitionSchema)), None)
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Create a DeltaTable from the given parquet table. Takes an existing parquet table and
+   * constructs a delta transaction log in the base path of the table.
+   *
+   * Note: Any changes to the table during the conversion process may not result in a consistent
+   * state at the end of the conversion. Users should stop any changes to the table before the
+   * conversion is started.
+   *
+   * An Example would be
+   * {{{
+   *  io.delta.tables.DeltaTable.convertToDelta(
+   *   spark,
+   *   "parquet.`/path`"
+   * }}}
+   *
+   * @since 0.4.0
+   */
+  @Evolving
+  def convertToDelta(
+      spark: SparkSession,
+      identifier: String): DeltaTable = {
+    val tableId: TableIdentifier = spark.sessionState.sqlParser.parseTableIdentifier(identifier)
+    DeltaConvert.executeConvert(spark, tableId, None, None)
+  }
+
+  /**
+   * :: Evolving ::
+   *
    * Create a DeltaTable for the data at the given `path`.
    *
    * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
@@ -507,8 +625,7 @@ object DeltaTable {
   /**
    * :: Evolving ::
    *
-   * Create a DeltaTable for the data at the given `path` using the given SparkSession to
-   * read the data.
+   * Create a DeltaTable for the data at the given `path` using the given SparkSession.
    *
    * @since 0.3.0
    */
@@ -522,4 +639,72 @@ object DeltaTable {
     }
   }
 
+  /**
+   * Create a DeltaTable using the given table or view name using the given SparkSession.
+   *
+   * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   */
+  def forName(tableOrViewName: String): DeltaTable = {
+    val sparkSession = SparkSession.getActiveSession.getOrElse {
+      throw new IllegalArgumentException("Could not find active SparkSession")
+    }
+    forName(sparkSession, tableOrViewName)
+  }
+
+  /**
+   * Create a DeltaTable using the given table or view name using the given SparkSession.
+   */
+  def forName(sparkSession: SparkSession, tableName: String): DeltaTable = {
+    val tableId = sparkSession.sessionState.sqlParser.parseTableIdentifier(tableName)
+    if (DeltaTableUtils.isDeltaTable(sparkSession, tableId)) {
+      new DeltaTable(sparkSession.table(tableName), DeltaLog.forTable(sparkSession, tableId))
+    } else {
+      throw DeltaErrors.notADeltaTableException(DeltaTableIdentifier(table = Some(tableId)))
+    }
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Check if the provided `identifier` string, in this case a file path,
+   * is the root of a Delta table using the given SparkSession.
+   *
+   * An example would be
+   * {{{
+   *   DeltaTable.isDeltaTable(spark, "path/to/table")
+   * }}}
+   *
+   * @since 0.4.0
+   */
+  @Evolving
+  def isDeltaTable(sparkSession: SparkSession, identifier: String): Boolean = {
+    DeltaTableUtils.isDeltaTable(sparkSession, new Path(identifier))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Check if the provided `identifier` string, in this case a file path,
+   * is the root of a Delta table.
+   *
+   * Note: This uses the active SparkSession in the current thread to search for the table. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   *
+   * An example would be
+   * {{{
+   *   DeltaTable.isDeltaTable(spark, "/path/to/table")
+   * }}}
+   *
+   * @since 0.4.0
+   */
+  @Evolving
+  def isDeltaTable(identifier: String): Boolean = {
+    val sparkSession = SparkSession.getActiveSession.getOrElse {
+      throw new IllegalArgumentException("Could not find active SparkSession")
+    }
+    isDeltaTable(sparkSession, identifier)
+  }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,15 +18,16 @@ package org.apache.spark.sql.delta
 
 import java.util.Locale
 
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.tables._
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.types.StructType
 
-class MergeIntoScalaSuite extends MergeIntoSuiteBase {
+class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
 
   import testImplicits._
-
 
   test("basic scala API") {
     withTable("source") {
@@ -117,6 +118,29 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
     }
   }
 
+  test("updateAll and insertAll with columns containing dot") {
+    withTable("source") {
+      append(Seq((1, 10), (2, 20), (4, 40)).toDF("key", "the.value"), Nil) // target
+      val source = Seq((1, 100), (3, 30), (4, 41)).toDF("key", "the.value") // source
+
+      io.delta.tables.DeltaTable.forPath(spark, tempPath).as("t")
+        .merge(source.as("s"), "t.key = s.key")
+        .whenMatched()
+        .updateAll()
+        .whenNotMatched()
+        .insertAll()
+        .execute()
+
+      checkAnswer(
+        readDeltaTable(tempPath),
+        Row(1, 100) :: // Update
+          Row(2, 20) :: // No change
+          Row(4, 41) :: // Update
+          Row(3, 30) :: // Insert
+          Nil)
+    }
+  }
+
   test("update with empty map should do nothing") {
     append(Seq((1, 10), (2, 20)).toDF("trgKey", "trgValue"), Nil) // target
     val source = Seq((1, 100), (3, 30)).toDF("srcKey", "srcValue") // source
@@ -146,19 +170,6 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
       Row(1, 10) ::     // Neither updated, nor deleted (condition is not ignored)
       Row(2, 20) ::     // No change due to merge condition
       Nil)              // Deleted (3, 30)
-  }
-
-  test("insert with empty map throws error") {
-    append(Seq((1, 10), (2, 20)).toDF("trgKey", "trgValue"), Nil) // target
-    val source = Seq((1, 100), (3, 30)).toDF("srcKey", "srcValue") // source
-    val e = intercept[AnalysisException] {
-      io.delta.tables.DeltaTable.forPath(spark, tempPath)
-        .merge(source, "srcKey = trgKey")
-        .whenMatched().updateExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
-        .whenNotMatched().insertExpr(Map[String, String]())
-        .execute()
-    }
-    errorContains(e.getMessage, "INSERT clause must specify value for all the columns")
   }
 
   // Checks specific to the APIs that are automatically handled by parser for SQL
@@ -256,6 +267,33 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
     }
   }
 
+  test("merge after schema change") {
+    withSQLConf((DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")) {
+      withTempPath { targetDir =>
+        val targetPath = targetDir.getCanonicalPath
+        spark.range(10).write.format("delta").save(targetPath)
+        val t = io.delta.tables.DeltaTable.forPath(spark, targetPath).as("t")
+        assert(t.toDF.schema == StructType.fromDDL("id LONG"))
+
+        // Do one merge to change the schema.
+        t.merge(Seq((11L, "newVal11")).toDF("id", "newCol1").as("s"), "t.id = s.id")
+          .whenMatched().updateAll()
+          .whenNotMatched().insertAll()
+          .execute()
+        assert(t.toDF.schema == StructType.fromDDL("id LONG, newCol1 STRING"))
+
+        // In order to work, the next merge will need to pick up the updated schema from above,
+        // rather than the schema from when `t` was originally created.
+        t.merge(Seq((12L, "newVal12")).toDF("id", "newCol2").as("s"), "t.id = s.id")
+          .whenMatched().updateAll()
+          .whenNotMatched().insertAll()
+          .execute()
+
+        assert(t.toDF.schema == StructType.fromDDL("id LONG, newCol1 STRING, newCol2 STRING"))
+      }
+    }
+  }
+
   override protected def executeMerge(
       target: String,
       source: String,
@@ -277,13 +315,19 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
       cond: String,
       clauses: MergeClause*): Unit = {
 
-    def parse(tableNameWithAlias: String): (String, Option[String]) = {
+    def parseTableAndAlias(tableNameWithAlias: String): (String, Option[String]) = {
       tableNameWithAlias.split(" ").toList match {
-        case tableName :: Nil => tableName -> None
-        case tableName :: alias :: Nil => tableName -> Some(alias)
+        case tableName :: Nil =>
+          // 'MERGE INTO tableName' OR `MERGE INTO delta.`path`'
+          tableName -> None
+        case tableName :: alias :: Nil =>
+          // 'MERGE INTO tableName alias' or 'MERGE INTO delta.`path` alias'
+          tableName -> Some(alias)
         case list if list.size >= 3 && list(list.size - 2).toLowerCase(Locale.ROOT) == "as" =>
+          // 'MERGE INTO ... AS alias'
           list.dropRight(2).mkString(" ").trim() -> Some(list.last)
         case list if list.size >= 2 =>
+          // 'MERGE INTO ... alias'
           list.dropRight(1).mkString(" ").trim() -> Some(list.last)
         case _ =>
           fail(s"Could not build parse '$tableNameWithAlias' for table and optional alias")
@@ -324,14 +368,14 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
     }
 
     val deltaTable = {
-      val (tableNameOrPath, optionalAlias) = parse(tgt)
+      val (tableNameOrPath, optionalAlias) = parseTableAndAlias(tgt)
       var table = makeDeltaTable(tableNameOrPath)
       optionalAlias.foreach { alias => table = table.as(alias) }
       table
     }
 
     val sourceDataFrame: DataFrame = {
-      val (tableOrQuery, optionalAlias) = parse(src)
+      val (tableOrQuery, optionalAlias) = parseTableAndAlias(src)
       var df =
         if (tableOrQuery.startsWith("(")) spark.sql(tableOrQuery) else spark.table(tableOrQuery)
       optionalAlias.foreach { alias => df = df.as(alias) }

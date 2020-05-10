@@ -1,5 +1,6 @@
+# !/usr/bin/env python
 #
-#  Copyright 2019 Databricks, Inc.
+#  Copyright (2020) The Delta Lake Project Authors.
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
 #  You may obtain a copy of the License at
@@ -11,9 +12,8 @@
 #  limitations under the License.
 #
 
-# !/usr/bin/env python2
-
 import os
+import sys
 import subprocess
 import argparse
 
@@ -34,21 +34,29 @@ def main():
     all_api_docs_final_dir = docs_root_dir + "/_site/api"
     scala_api_docs_final_dir = all_api_docs_final_dir + "/scala"
     java_api_docs_final_dir = all_api_docs_final_dir + "/java"
+    sphinx_gen_dir = repo_root_dir + "/docs/python"
+    sphinx_cp_dir = sphinx_gen_dir + "/_build/html"
+    sphinx_docs_final_dir = all_api_docs_final_dir + "/python"
 
     # Generate Java and Scala docs
-    print "## Generating ScalaDoc and JavaDoc ..."
+    print("## Generating ScalaDoc and JavaDoc ...")
     with WorkingDirectory(repo_root_dir):
         run_cmd(["build/sbt", ";clean;unidoc"], stream_output=verbose)
 
+    # Generate Python docs
+    print('## Generating Python(Sphinx) docs ...')
+    with WorkingDirectory(sphinx_gen_dir):
+        run_cmd(["make", "html"], stream_output=verbose)
+
     # Update Scala docs
-    print "## Patching ScalaDoc ..."
+    print("## Patching ScalaDoc ...")
     with WorkingDirectory(scaladoc_gen_dir):
         # Patch the js and css files
         append(docs_root_dir + "/api-docs.js", "./lib/template.js")  # append new js functions
         append(docs_root_dir + "/api-docs.css", "./lib/template.css")  # append new styles
 
     # Update Java docs
-    print "## Patching JavaDoc ..."
+    print("## Patching JavaDoc ...")
     with WorkingDirectory(javadoc_gen_dir):
         # Find html files to patch
         (_, stdout, _) = run_cmd(["find", ".", "-name", "*.html", "-mindepth", "2"])
@@ -90,8 +98,9 @@ def main():
     run_cmd(["mkdir", "-p", all_api_docs_final_dir])
     run_cmd(["cp", "-r", scaladoc_gen_dir, scala_api_docs_final_dir])
     run_cmd(["cp", "-r", javadoc_gen_dir, java_api_docs_final_dir])
+    run_cmd(["cp", "-r", sphinx_cp_dir, sphinx_docs_final_dir])
 
-    print "## API docs generated in " + all_api_docs_final_dir
+    print("## API docs generated in " + all_api_docs_final_dir)
 
 
 def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
@@ -128,6 +137,10 @@ def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
             stderr=subprocess.PIPE,
             **kwargs)
         (stdout, stderr) = child.communicate()
+        if sys.version_info >= (3, 0):
+            stdout = stdout.decode("UTF-8")
+            stderr = stderr.decode("UTF-8")
+
         exit_code = child.wait()
         if throw_on_error and exit_code is not 0:
             raise Exception(
@@ -172,7 +185,7 @@ class WorkingDirectory(object):
 
 def log(str):
     if verbose:
-        print str
+        print(str)
 
 
 verbose = False

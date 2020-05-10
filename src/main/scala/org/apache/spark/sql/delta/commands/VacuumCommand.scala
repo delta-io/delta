@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -124,7 +124,6 @@ object VacuumCommand extends VacuumCommandImpl {
       val validFiles = snapshot.state
         .mapPartitions { actions =>
           val reservoirBase = new Path(basePath)
-          val reservoirScheme = reservoirBase.toUri.getScheme
           val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
           actions.flatMap {
             _.unwrap match {

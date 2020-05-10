@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Databricks, Inc.
+ * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,17 +16,21 @@
 
 package org.apache.spark.sql.delta.files
 
+import scala.collection.mutable.ListBuffer
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema._
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.Dataset
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
 import org.apache.spark.sql.execution._
-import org.apache.spark.sql.execution.datasources.FileFormatWriter
+import org.apache.spark.sql.execution.datasources.{BasicWriteJobStatsTracker, FileFormatWriter, WriteJobStatsTracker}
 import org.apache.spark.sql.types.{ArrayType, MapType, StructType}
+import org.apache.spark.util.SerializableConfiguration
 
 /**
  * Adds the ability to write files out as part of a transaction. Checks
@@ -127,13 +131,23 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
     val invariants = Invariants.getFromSchema(metadata.schema, spark)
 
-    SQLExecution.withNewExecutionId(spark, queryExecution) {
+    SQLExecution.withNewExecutionId(queryExecution) {
       val outputSpec = FileFormatWriter.OutputSpec(
         outputPath.toString,
         Map.empty,
         output)
 
       val physicalPlan = DeltaInvariantCheckerExec(queryExecution.executedPlan, invariants)
+
+      val statsTrackers: ListBuffer[WriteJobStatsTracker] = ListBuffer()
+
+      if (spark.conf.get(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED)) {
+        val basicWriteJobStatsTracker = new BasicWriteJobStatsTracker(
+          new SerializableConfiguration(spark.sessionState.newHadoopConf()),
+          BasicWriteJobStatsTracker.metrics)
+        registerSQLMetrics(spark, basicWriteJobStatsTracker.metrics)
+        statsTrackers.append(basicWriteJobStatsTracker)
+      }
 
       FileFormatWriter.write(
         sparkSession = spark,
@@ -144,7 +158,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         hadoopConf = spark.sessionState.newHadoopConfWithOptions(metadata.configuration),
         partitionColumns = partitioningColumns,
         bucketSpec = None,
-        statsTrackers = Nil,
+        statsTrackers = statsTrackers,
         options = Map.empty)
     }
 
