@@ -20,22 +20,22 @@ organization := "io.delta"
 
 scalaVersion := "2.12.10"
 
-sparkVersion := "3.0.0"
+val sparkVersion = "3.0.0"
 
 libraryDependencies ++= Seq(
   // Adding test classifier seems to break transitive resolution of the core dependencies
-  "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
-  "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
-  "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
-  "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
+  "org.apache.spark" %% "spark-hive" % sparkVersion % "provided",
+  "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
+  "org.apache.spark" %% "spark-core" % sparkVersion % "provided",
+  "org.apache.spark" %% "spark-catalyst" % sparkVersion % "provided",
 
   // Test deps
   "org.scalatest" %% "scalatest" % "3.0.5" % "test",
   "junit" % "junit" % "4.12" % "test",
   "com.novocode" % "junit-interface" % "0.11" % "test",
-  "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
-  "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
-  "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
+  "org.apache.spark" %% "spark-catalyst" % sparkVersion % "test" classifier "tests",
+  "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
+  "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
 
   // Compiler plugins
   // -- Bump up the genjavadoc version explicitly to 0.16 to work with Scala 2.12
@@ -44,7 +44,7 @@ libraryDependencies ++= Seq(
 
 resolvers += "Temporary Staging of Spark 3.0" at "https://docs.delta.io/spark3artifacts/rc1/maven/"
 
-antlr4Settings
+enablePlugins(Antlr4Plugin)
 
 antlr4Version in Antlr4 := "4.7"
 
@@ -160,6 +160,7 @@ unidocAllSources in(JavaUnidoc, unidoc) := {
  * Spark Packages settings *
  ***************************/
 
+/* TODO: Re-enable once we get Spark Package working on SBT 1.x
 spName := "databricks/delta-core"
 
 spAppendScalaVersion := true
@@ -171,6 +172,7 @@ spIgnoreProvided := true
 packageBin in Compile := spPackage.value
 
 sparkComponents := Seq("sql")
+*/
 
 /********************
  * Release settings *
