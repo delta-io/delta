@@ -58,8 +58,17 @@ testOptions in Test += Tests.Argument("-oDF")
 
 testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
 
-// Don't execute in parallel since we can't have multiple Sparks in the same JVM
-parallelExecution in Test := false
+// Execute in parallel since run tests in a forked JVM (we don't need to worry about multiple Spark
+// contexts in the same JVM)
+Test / testGrouping := (Test / testGrouping).value.flatMap { group =>
+  // SBT does parallelism and forking at the test group level. By default there is 1 test group per
+  // sbt subproject. We take the existing test-groups, and for each test/suite make a new test group
+  // containing the single suite (with forking enabled). This allows paralleism across all test
+  // suites.
+  group.tests.map(test => sbt.Tests.Group(test.name, Seq(test), sbt.Tests.SubProcess(ForkOptions())))
+}
+
+concurrentRestrictions := Seq(Tags.limit(Tags.ForkedTestGroup, 8))
 
 scalacOptions ++= Seq(
   "-target:jvm-1.8",
