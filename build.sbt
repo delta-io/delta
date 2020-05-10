@@ -77,10 +77,12 @@ concurrentRestrictions := {
   val testParallelismOpt = sys.env.get("DELTA_TEST_PARALLELISM").map(_.toInt)
   val parallelism = testParallelismOpt.getOrElse(defaultParallelism)
 
+  val logger = sLog.value
+
   if (testParallelismOpt.isDefined) {
-    println(s"Tests will run with user specified ${parallelism}x Parallelism")
+    logger.info(s"Tests will run with user specified ${parallelism}x Parallelism")
   } else {
-    println(s"Tests will run with default ${parallelism}x Parallelism")
+    logger.info(s"Tests will run with default ${parallelism}x Parallelism")
   }
 
   Seq(Tags.limit(Tags.ForkedTestGroup, parallelism))
