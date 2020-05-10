@@ -68,7 +68,20 @@ Test / testGrouping := (Test / testGrouping).value.flatMap { group =>
   group.tests.map(test => sbt.Tests.Group(test.name, Seq(test), sbt.Tests.SubProcess(ForkOptions())))
 }
 
-concurrentRestrictions := Seq(Tags.limit(Tags.ForkedTestGroup, 8))
+concurrentRestrictions := {
+  val testParallelismOpt = sys.env.get("DELTA_TEST_PARALLELISM").map(_.toInt)
+  // Default to number of processors / 2
+  val defaultParallelism = java.lang.Runtime.getRuntime().availableProcessors() / 2
+  val parallelism = testParallelismOpt.getOrElse(defaultParallelism)
+
+  if (testParallelismOpt.isDefined) {
+    println(s"Tests will run with user specified ${parallelism}x Parallelism")
+  } else {
+    println(s"Tests will run with default ${parallelism}x Parallelism")
+  }
+
+  Seq(Tags.limit(Tags.ForkedTestGroup, parallelism))
+}
 
 scalacOptions ++= Seq(
   "-target:jvm-1.8",
