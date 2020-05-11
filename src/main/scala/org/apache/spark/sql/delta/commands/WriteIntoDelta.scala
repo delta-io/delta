@@ -87,7 +87,7 @@ case class WriteIntoDelta(
     // Validate partition predicates
     val replaceWhere = options.replaceWhere
     val partitionFilters = if (replaceWhere.isDefined) {
-      val predicates = parsePartitionPredicates(sparkSession, replaceWhere.get)
+      val predicates = parsePredicates(sparkSession, replaceWhere.get)
       if (mode == SaveMode.Overwrite) {
         verifyPartitionPredicates(
           sparkSession, txn.metadata.partitionColumns, predicates)

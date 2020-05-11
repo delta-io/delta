@@ -39,9 +39,9 @@ trait DeltaCommand extends DeltaLogging {
   /**
    * Converts string predicates into [[Expression]]s relative to a transaction.
    *
-   * @throws AnalysisException if a non-partition column is referenced.
+   * @throws AnalysisException if a non-existing column is referenced.
    */
-  protected def parsePartitionPredicates(
+  protected def parsePredicates(
       spark: SparkSession,
       predicate: String): Seq[Expression] = {
     try {
