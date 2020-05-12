@@ -118,6 +118,13 @@ object DeltaErrors
       "like to ignore updates, set the option 'ignoreChanges' to 'true'. If you would like the " +
       "data update to be reflected, please restart this query with a fresh checkpoint directory."
 
+  val EmptyCheckpointErrorMessage =
+    s"""
+       |Attempted to write an empty checkpoint without any actions. This checkpoint will not be
+       |useful in recomputing the state of the table. However this might cause other checkpoints to
+       |get deleted based on retention settings.
+     """.stripMargin
+
   /**
    * File not found hint for Delta, replacing the normal one which is inapplicable.
    *
@@ -444,6 +451,12 @@ object DeltaErrors
 
   def deltaVersionsNotContiguousException(deltaVersions: Seq[Long]): Throwable = {
     new IllegalStateException(s"versions ($deltaVersions) are not contiguous")
+  }
+
+  def actionNotFoundException(action: String, version: Long): Throwable = {
+    new IllegalStateException(s"The $action of your Delta table couldn't be recovered " +
+      s"while Reconstructing version: ${version.toString}. " +
+      s"Did you manually delete files in the _delta_log directory?")
   }
 
   def schemaChangedException(oldSchema: StructType, newSchema: StructType): Throwable = {

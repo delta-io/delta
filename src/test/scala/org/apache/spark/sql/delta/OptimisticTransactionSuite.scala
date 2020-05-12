@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
+import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, Metadata, RemoveFile, SetTransaction}
 import org.apache.hadoop.fs.Path
 
@@ -34,8 +35,8 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
   test("block append against metadata change") {
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
-      // Initialize the log. ManualUpdate is just a no-op placeholder.
-      log.startTransaction().commit(Nil, ManualUpdate)
+      // Initialize the log.
+      log.startTransaction().commitManually()
 
       val txn = log.startTransaction()
       val winningTxn = log.startTransaction()
@@ -49,8 +50,8 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
   test("block read+append against append") {
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
-      // Initialize the log. ManualUpdate is just a no-op placeholder.
-      log.startTransaction().commit(Metadata() :: Nil, ManualUpdate)
+      // Initialize the log.
+      log.startTransaction().commitManually()
 
       val txn = log.startTransaction()
       // reads the table
@@ -67,8 +68,8 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
   test("allow blind-append against any data change") {
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
-      // Initialize the log and add data. ManualUpdate is just a no-op placeholder.
-      log.startTransaction().commit(addA :: Nil, ManualUpdate)
+      // Initialize the log and add data.
+      log.startTransaction().commitManually(addA)
 
       val txn = log.startTransaction()
       val winningTxn = log.startTransaction()
@@ -82,7 +83,7 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
       // Initialize the log and add data. ManualUpdate is just a no-op placeholder.
-      log.startTransaction().commit(addA :: Nil, ManualUpdate)
+      log.startTransaction().commitManually(addA)
 
       val txn = log.startTransaction()
       txn.filterFiles()
@@ -644,7 +645,7 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
       // Initialize the log and add data. ManualUpdate is just a no-op placeholder.
-      log.startTransaction().commit(actionWithMetaData, ManualUpdate)
+      log.startTransaction().commitManually(actionWithMetaData: _*)
       test(log)
     }
   }
@@ -652,8 +653,8 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
   test("allow concurrent set-txns with different app ids") {
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
-      // Initialize the log and add data. ManualUpdate is just a no-op placeholder.
-      log.startTransaction().commit(Nil, ManualUpdate)
+      // Initialize the log.
+      log.startTransaction().commitManually()
 
       val txn = log.startTransaction()
       txn.txnVersion("t1")
@@ -668,8 +669,8 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
   test("block concurrent set-txns with the same app id") {
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
-      // Initialize the log and add data. ManualUpdate is just a no-op placeholder.
-      log.startTransaction().commit(Nil, ManualUpdate)
+      // Initialize the log.
+      log.startTransaction().commitManually()
 
       val txn = log.startTransaction()
       txn.txnVersion("t1")
