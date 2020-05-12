@@ -17,11 +17,13 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
+import io.delta.tables.execution.DeltaTableOperations
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.{Action, AddFile}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, RemoveFile}
 import org.apache.spark.sql.delta.schema.ImplicitMetadataOperation
-
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.expressions.{And, Expression, Literal, SubqueryExpression}
+import org.apache.spark.sql.catalyst.plans.logical.DeltaDelete
 import org.apache.spark.sql.execution.command.RunnableCommand
 
 /**
@@ -69,8 +71,45 @@ case class WriteIntoDelta(
     Seq.empty
   }
 
-  def write(txn: OptimisticTransaction, sparkSession: SparkSession): Seq[Action] = {
+  private def deleteFilesReplaceWhere(
+    txn: OptimisticTransaction, sparkSession: SparkSession,
+    predicates: Seq[Expression], newFiles: Seq[AddFile]): Seq[RemoveFile] = {
     import sparkSession.implicits._
+
+    val filterExpression = predicates.reduceLeftOption(And).getOrElse(Literal(true))
+
+    filterExpression.foreach { cond =>
+      if (SubqueryExpression.hasSubquery(cond)) {
+        throw DeltaErrors.subqueryNotSupportedException("DELETE", cond)
+      }
+    }
+
+    // Not really sure how to get the logical plan for the target to pass to DeltaDelete
+    val delete = DeltaDelete(
+      deltaLog.createDataFrame(txn.snapshot, txn.filterFiles()).logicalPlan,
+      Some(filterExpression))
+    val qe = sparkSession.sessionState.executePlan(delete)
+    val resolvedDelete = qe.analyzed.asInstanceOf[DeltaDelete]
+    val deleteCommand = DeleteCommand(resolvedDelete)
+    val actions = deleteCommand.gatherDeleteActions(sparkSession, deltaLog, txn)
+
+    // Check to make sure the files we wrote out were actually valid.
+    val matchingFiles = DeltaLog.filterFileList(
+      txn.metadata.partitionSchema, newFiles.toDF(), predicates).as[AddFile].collect()
+    val invalidFiles = newFiles.toSet -- matchingFiles
+    if (invalidFiles.nonEmpty) {
+      val badPartitions = invalidFiles
+        .map(_.partitionValues)
+        .map { _.map { case (k, v) => s"$k=$v" }.mkString("/") }
+        .mkString(", ")
+      throw DeltaErrors.replaceWhereMismatchException(options.replaceWhere.get, badPartitions)
+    }
+
+    txn.filterFiles(predicates).map(_.remove)
+  }
+
+  def write(txn: OptimisticTransaction, sparkSession: SparkSession): Seq[Action] = {
+
     if (txn.readVersion > -1) {
       // This table already exists, check if the insert is valid.
       if (mode == SaveMode.ErrorIfExists) {
@@ -86,12 +125,8 @@ case class WriteIntoDelta(
 
     // Validate partition predicates
     val replaceWhere = options.replaceWhere
-    val partitionFilters = if (replaceWhere.isDefined) {
+    val replaceWherePredicates = if (replaceWhere.isDefined) {
       val predicates = parsePredicates(sparkSession, replaceWhere.get)
-      if (mode == SaveMode.Overwrite) {
-        verifyPartitionPredicates(
-          sparkSession, txn.metadata.partitionColumns, predicates)
-      }
       Some(predicates)
     } else {
       None
@@ -102,24 +137,13 @@ case class WriteIntoDelta(
       deltaLog.fs.mkdirs(deltaLog.logPath)
     }
 
+    // DeltaInvariantCheckerExec is called through writeFiles
     val newFiles = txn.writeFiles(data, Some(options))
-    val deletedFiles = (mode, partitionFilters) match {
+    val deletedFiles: Seq[RemoveFile] = (mode, replaceWherePredicates) match {
       case (SaveMode.Overwrite, None) =>
         txn.filterFiles().map(_.remove)
       case (SaveMode.Overwrite, Some(predicates)) =>
-        // Check to make sure the files we wrote out were actually valid.
-        val matchingFiles = DeltaLog.filterFileList(
-          txn.metadata.partitionSchema, newFiles.toDF(), predicates).as[AddFile].collect()
-        val invalidFiles = newFiles.toSet -- matchingFiles
-        if (invalidFiles.nonEmpty) {
-          val badPartitions = invalidFiles
-            .map(_.partitionValues)
-            .map { _.map { case (k, v) => s"$k=$v" }.mkString("/") }
-            .mkString(", ")
-          throw DeltaErrors.replaceWhereMismatchException(replaceWhere.get, badPartitions)
-        }
-
-        txn.filterFiles(predicates).map(_.remove)
+        deleteFilesReplaceWhere(txn, sparkSession, predicates, newFiles)
       case _ => Nil
     }
 
