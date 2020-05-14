@@ -160,6 +160,8 @@ description|`String`| User-provided description for this table
 format|[Format Struct](#Format-Specification)| Specification of the encoding for the files stored in the table
 schemaString|[Schema Struct](#Schema-Serialization-Format)| Schema of the table
 partitionColumns|`Array[String]`| An array containing the names of columns by which the data should be partitioned
+createdTime|`Option[Long]`| The time when this metadata action is created, in milliseconds since the Unix epoch
+configuration|`Map[String, String]`| A map containing configuration options for the metadata action
 
 #### Format Specification
 Field Name | Data Type | Description
@@ -274,6 +276,7 @@ Field Name | Data Type | Description
 -|-|-
 appId | String | A unique identifier for the application performing the transaction
 version | Long | An application-specific numeric identifier for this transaction
+lastUpdated | Option[Long] | The time when this transaction action is created, in milliseconds since the Unix epoch
 
 The following is an example `txn` action:
 ```
