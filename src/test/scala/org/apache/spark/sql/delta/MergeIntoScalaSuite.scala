@@ -294,6 +294,24 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
     }
   }
 
+  test("merge without table alias") {
+    withTempDir { dir =>
+      val location = dir.getAbsolutePath
+      Seq((1, 1, 1), (2, 2, 2)).toDF("part", "id", "n").write
+        .format("delta")
+        .partitionBy("part")
+        .save(location)
+      val table = io.delta.tables.DeltaTable.forPath(spark, location)
+      val data1 = Seq((2, 2, 4, 2), (9, 3, 6, 9), (3, 3, 9, 3)).toDF("part", "id", "n", "part2")
+      table.alias("t").merge(
+        data1,
+        "t.part = part2")
+        .whenMatched().updateAll()
+        .whenNotMatched().insertAll()
+        .execute()
+    }
+  }
+
   override protected def executeMerge(
       target: String,
       source: String,
