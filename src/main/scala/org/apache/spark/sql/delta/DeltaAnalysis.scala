@@ -99,12 +99,11 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
         a.key.asInstanceOf[NamedExpression] -> a.value).unzip
       // rewrites Delta from V2 to V1
       val newTable = table.transformUp { case DeltaRelation(lr) => lr }
-      newTable.collectLeaves().headOption match {
-        case Some(DeltaFullTable(index)) if index.deltaLog.snapshot.version > -1 =>
-          index
-        case o =>
-          throw DeltaErrors.notADeltaSourceException("UPDATE", o)
-      }
+        newTable.collectLeaves().headOption match {
+          case Some(DeltaFullTable(index)) if index.deltaLog.snapshot.version > -1 =>
+          case o =>
+            throw DeltaErrors.notADeltaSourceException("UPDATE", o)
+        }
       DeltaUpdateTable(newTable, cols, expressions, condition)
 
     case m@MergeIntoTable(target, source, condition, matched, notMatched) if m.childrenResolved =>

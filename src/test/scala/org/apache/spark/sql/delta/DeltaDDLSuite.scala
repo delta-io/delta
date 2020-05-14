@@ -52,7 +52,7 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
   protected def verifyNullabilityFailure(exception: AnalysisException): Unit
 
   protected def getDeltaLog(tableLocation: String): DeltaLog = {
-    DeltaLog.forTable(spark, tableLocation)
+      DeltaLog.forTable(spark, tableLocation)
   }
 
   testQuietly("create table with NOT NULL - check violation through file writing") {
