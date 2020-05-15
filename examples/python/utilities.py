@@ -22,14 +22,13 @@ from delta.tables import *
 import shutil
 import threading
 
-# Enable SQL and for the current spark session. we need to set the following configs
-# to enable SQL Commands
-# config io.delta.sql.DeltaSparkSessionExtension -- to enable custom Delta-specific SQL commands
-
 conf = SparkConf() \
     .setAppName("utilities") \
     .setMaster("local[*]")
 
+# Enable SQL and for the current spark session. we need to set the following configs
+# to enable SQL Commands
+# config io.delta.sql.DeltaSparkSessionExtension -- to enable custom Delta-specific SQL commands
 conf.set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
 sc = SparkContext(conf=conf)
 spark = SparkSession(sc)

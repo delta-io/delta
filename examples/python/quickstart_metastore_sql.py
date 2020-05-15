@@ -8,14 +8,12 @@ import threading
 
 tableName = "tbltestpython"
 
-# Enable SQL and Metastore tables for the current spark session. we need to set the following configs 
-# to enable SQL Commands
-# config io.delta.sql.DeltaSparkSessionExtension -- to enable custom Delta-specific SQL commands
-# To enable metastore table 
-
 conf = SparkConf() \
-    .setAppName("metastore-sql") \
+    .setAppName("quickstart-metastore-sql") \
     .setMaster("local[*]") 
+
+# Enable SQL/DML commands and Metastore tables for the current spark session.
+# We need to set the following configs 
 
 conf.set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
 conf.set("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")

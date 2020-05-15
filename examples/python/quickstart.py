@@ -28,14 +28,13 @@ try:
 except:
     pass
 
-# Enable SQL and for the current spark session. we need to set the following configs
-# to enable SQL Commands
-# config io.delta.sql.DeltaSparkSessionExtension -- to enable custom Delta-specific SQL commands
-
 conf = SparkConf() \
-    .setAppName("utilities") \
+    .setAppName("quickstart") \
     .setMaster("local[*]")
 
+# Enable SQL commands and Update/Delete/Merge for the current spark session. 
+# we need to set the following configs
+# config io.delta.sql.DeltaSparkSessionExtension -- to enable custom Delta-specific SQL commands
 conf.set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
 sc = SparkContext(conf=conf)
 spark = SparkSession(sc)
