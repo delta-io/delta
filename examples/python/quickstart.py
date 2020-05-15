@@ -14,7 +14,7 @@
 # limitations under the License.
 #
 
-from pyspark import SparkContext
+from pyspark import SparkContext, SparkConf
 from pyspark.sql import Column, DataFrame, SparkSession, SQLContext, functions
 from pyspark.sql.functions import *
 from py4j.java_collections import MapConverter
@@ -28,15 +28,17 @@ try:
 except:
     pass
 
-# Create SparkContext
-sc = SparkContext()
-sqlContext = SQLContext(sc)
+# Enable SQL and for the current spark session. we need to set the following configs
+# to enable SQL Commands
+# config io.delta.sql.DeltaSparkSessionExtension -- to enable custom Delta-specific SQL commands
 
-spark = SparkSession \
-    .builder \
-    .appName("quickstart") \
-    .master("local[*]") \
-    .getOrCreate()
+conf = SparkConf() \
+    .setAppName("utilities") \
+    .setMaster("local[*]")
+
+conf.set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+sc = SparkContext(conf=conf)
+spark = SparkSession(sc)
 
 # Create a table
 print("############# Creating a table ###############")
