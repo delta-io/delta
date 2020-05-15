@@ -830,6 +830,16 @@ object DeltaErrors
     new AnalysisException("Cannot describe the history of a view.")
   }
 
+  def copyIntoCredentialsOnlyS3(scheme: String): Throwable = {
+    new IllegalArgumentException(
+      s"Invalid scheme $scheme. COPY INTO command credentials are only supported for S3 paths.")
+  }
+
+  def copyIntoCredentialsAllRequired(cause: Throwable): Throwable = {
+    new IllegalArgumentException(
+      "COPY INTO credentials must include awsKeyId, awsSecretKey, and awsSessionToken.", cause)
+  }
+
   def postCommitHookFailedException(
       failedHook: PostCommitHook,
       failedOnCommitVersion: Long,
