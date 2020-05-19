@@ -228,9 +228,12 @@ case class MergeIntoCommand(
     val joinToFindTouchedFiles = {
       val sourceDF = Dataset.ofRows(spark, source)
       val targetDF = Dataset.ofRows(spark, buildTargetPlanWithFiles(deltaTxn, dataSkippedFiles))
+      // Since the columns with non-deterministic udf prevent from applying parquet filter pushdown,
+      // we add a filter with all target only predicates to targetDF to avoid whole table scan.
+      val targetDFWithFilterPushdown = addFilterPushdown(targetDF, targetOnlyPredicates)
         .withColumn(ROW_ID_COL, monotonically_increasing_id())
         .withColumn(FILE_NAME_COL, input_file_name())
-      sourceDF.join(targetDF, new Column(condition), "inner")
+      sourceDF.join(targetDFWithFilterPushdown, new Column(condition), "inner")
     }
 
     // Process the matches from the inner join to record touched files and find multiple matches
