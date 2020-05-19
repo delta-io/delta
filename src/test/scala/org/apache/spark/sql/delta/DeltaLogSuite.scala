@@ -278,6 +278,31 @@ class DeltaLogSuite extends QueryTest
     }
   }
 
+  test("error - versions not contiguous") {
+    withTempDir { dir =>
+      val log = DeltaLog.forTable(spark, dir)
+      assert(new File(log.logPath.toUri).mkdirs())
+
+      val metadata = Metadata()
+      val add1 = AddFile("foo", Map.empty, 1L, System.currentTimeMillis(), dataChange = true)
+      log.startTransaction().commit(metadata :: add1 :: Nil, DeltaOperations.ManualUpdate)
+
+      val add2 = AddFile("foo", Map.empty, 1L, System.currentTimeMillis(), dataChange = true)
+      log.startTransaction().commit(add2 :: Nil, DeltaOperations.ManualUpdate)
+
+      val add3 = AddFile("foo", Map.empty, 1L, System.currentTimeMillis(), dataChange = true)
+      log.startTransaction().commit(add3 :: Nil, DeltaOperations.ManualUpdate)
+
+      new File(new Path(log.logPath, "00000000000000000001.json").toUri).delete()
+
+      DeltaLog.clearCache()
+      val ex = intercept[IllegalStateException] {
+        DeltaLog.forTable(spark, dir)
+      }
+      assert(ex.getMessage === "Versions (Vector(0, 2)) are not contiguous.")
+    }
+  }
+
   test("First commit with missing metadata should throw error.") {
     withTempDir { tempDir =>
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))

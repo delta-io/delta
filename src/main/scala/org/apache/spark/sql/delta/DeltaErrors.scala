@@ -449,8 +449,9 @@ object DeltaErrors
       s"Couldn't find all part files of the checkpoint version: $version", ae)
   }
 
-  def deltaVersionsNotContiguousException(deltaVersions: Seq[Long]): Throwable = {
-    new IllegalStateException(s"versions ($deltaVersions) are not contiguous")
+  def deltaVersionsNotContiguousException(
+      spark: SparkSession, deltaVersions: Seq[Long]): Throwable = {
+    new IllegalStateException(s"Versions ($deltaVersions) are not contiguous.")
   }
 
   def actionNotFoundException(action: String, version: Long): Throwable = {

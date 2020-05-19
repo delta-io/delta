@@ -350,8 +350,8 @@ trait SnapshotManagement { self: DeltaLog =>
     // Turn this to a vector so that we can compare it with a range.
     val deltaVersions = versions.toVector
     if (deltaVersions.nonEmpty &&
-      (deltaVersions.head to deltaVersions.last) != deltaVersions) {
-      throw new IllegalStateException(s"versions ($deltaVersions) are not contiguous")
+        (deltaVersions.head to deltaVersions.last) != deltaVersions) {
+      throw DeltaErrors.deltaVersionsNotContiguousException(self.spark, deltaVersions)
     }
   }
 }
