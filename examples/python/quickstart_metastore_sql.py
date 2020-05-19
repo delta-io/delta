@@ -67,7 +67,7 @@ spark.sql("SELECT * FROM %s" % tableName).show()
 
 # Read old version of data using time travel
 print("######## Read old data using time travel ############")
-df = spark.read.format("delta").option("versionAsOf", 0).load("/tmp/delta-table")
+df = spark.read.format("delta").option("versionAsOf", 0).table(tableName)
 df.show()
 
 # cleanup
