@@ -290,6 +290,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
             .whenNotMatched().insertAll()
             .execute()
         }
+        ex.getMessage.contains("schema of your Delta table has changed in an incompatible way")
       }
     }
   }

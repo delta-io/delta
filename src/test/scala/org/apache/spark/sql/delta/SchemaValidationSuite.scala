@@ -26,16 +26,12 @@ import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SharedSparkSession
 
-trait SchemaValidtionSuiteBase extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
+trait SchemaValidationSuiteBase extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
 
-  private def checkMetadataChangedException(e: Exception, col: String): Unit = {
+  def checkMergeException(e: Exception, col: String): Unit = {
     assert(e.isInstanceOf[MetadataChangedException])
     assert(e.getMessage.contains(
       "The metadata of the Delta table has been changed by a concurrent update"))
-  }
-
-  def checkMergeException(e: Exception, col: String): Unit = {
-    checkMetadataChangedException(e, col)
   }
 }
 
@@ -44,7 +40,7 @@ trait SchemaValidtionSuiteBase extends QueryTest with SharedSparkSession with De
  * command completes analysis but before the command starts the transaction. We want to make sure
  * That we do not corrupt tables.
  */
-class SchemaValidationSuite extends SchemaValidtionSuiteBase {
+class SchemaValidationSuite extends SchemaValidationSuiteBase {
 
   class BlockingRule(
       blockActionLatch: CountDownLatch,

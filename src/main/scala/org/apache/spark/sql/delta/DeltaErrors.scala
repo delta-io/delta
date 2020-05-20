@@ -216,11 +216,12 @@ object DeltaErrors
   def schemaChangedSinceAnalysis(atAnalysis: StructType, latestSchema: StructType): Throwable = {
     val schemaDiff = SchemaUtils.reportDifferences(atAnalysis, latestSchema)
       .map(_.replace("Specified", "Latest"))
-    new ConcurrentModificationException(
-      s"""The schema of your Delta table has changed in an incompatible way since your DataFrame
-         |was created. Please redefine your DataFrame. This check can be turned off by setting
-         |${DeltaSQLConf.DELTA_SCHEMA_ON_READ_CHECK_ENABLED.key} to false.
+    new AnalysisException(
+      s"""The schema of your Delta table has changed in an incompatible way since your DataFrame or
+         |DeltaTable object was created. Please redefine your DataFrame or DeltaTable object.
          |Changes:\n${schemaDiff.mkString("\n")}
+         |This check can be turned off by setting the session configuration key
+         |${DeltaSQLConf.DELTA_SCHEMA_ON_READ_CHECK_ENABLED.key} to false.
        """.stripMargin)
   }
 
