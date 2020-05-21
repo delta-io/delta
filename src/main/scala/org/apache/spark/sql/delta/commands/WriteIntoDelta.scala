@@ -124,7 +124,15 @@ case class WriteIntoDelta(
           throw DeltaErrors.replaceWhereMismatchException(replaceWhere.get, badPartitions)
         }
 
-        txn.filterFiles(predicates).map(_.remove)
+        if (txn.metadata.partitionColumns.nonEmpty && options.dynamicPartitionOverwriteMode) {
+          // if a replaceWhere predicate is provided and partitionOverwriteMode=dynamic then
+          // 1) replaceWhere still makes sure the newly inserted values fit the predicate, but
+          // 2) dynamic parttion overwrite determines what files are deleted
+          val newPartitions = newFiles.map(_.partitionValues).toSet
+          txn.filterFiles(newPartitions).map(_.remove)
+        } else {
+          txn.filterFiles(predicates).map(_.remove)
+        }
       case _ => Nil
     }
 

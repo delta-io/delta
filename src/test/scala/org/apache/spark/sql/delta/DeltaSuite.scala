@@ -416,6 +416,31 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("batch write: append, dynamic partition overwrite with replaceWhere") {
+    withTempDir { tempDir =>
+      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+      Seq((1, "x"), (2, "y"), (3, "z")).toDF("value", "sub")
+        .withColumn("part", $"value" % 2)
+        .write
+        .format("delta")
+        .partitionBy("part", "sub")
+        .mode("append")
+        .save(tempDir.getCanonicalPath)
+
+      Seq((3, "x"), (5, "x")).toDF("value", "sub")
+        .withColumn("part", $"value" % 2)
+        .write
+        .format("delta")
+        .partitionBy("part", "sub")
+        .mode("overwrite")
+        .option("replaceWhere", "part==1")
+        .option("partitionOverwriteMode", "dynamic")
+        .save(tempDir.getCanonicalPath)
+      checkDatasetUnorderly(data.toDF.select($"value".as[Int], $"sub".as[String]), (2, "y"), (3, "x"), (3, "z"), (5, "x"))
+    }
+  }
+
   test("batch write: append, overwrite without partitions should ignore partition overwrite mode") {
     withTempDir { tempDir =>
       def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
