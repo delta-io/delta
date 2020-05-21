@@ -437,7 +437,8 @@ class DeltaSuite extends QueryTest
         .option("replaceWhere", "part==1")
         .option("partitionOverwriteMode", "dynamic")
         .save(tempDir.getCanonicalPath)
-      checkDatasetUnorderly(data.toDF.select($"value".as[Int], $"sub".as[String]), (2, "y"), (3, "x"), (3, "z"), (5, "x"))
+      checkDatasetUnorderly(data.toDF.select($"value".as[Int], $"sub".as[String]),
+        (2, "y"), (3, "x"), (3, "z"), (5, "x"))
     }
   }
 
