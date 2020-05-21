@@ -21,6 +21,7 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta.DeltaOperations.{Delete, Write}
+import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.commands.VacuumCommand
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -361,6 +362,10 @@ trait DeltaVacuumSuiteBase extends QueryTest
         val file = new File(
           fs.makeQualified(DeltaFileOperations.absolutePath(basePath, sanitizedPath)).toUri)
         if (commit) {
+          if (!DeltaTableUtils.isDeltaTable(spark, new Path(basePath))) {
+            // initialize the table
+            deltaLog.startTransaction().commitManually()
+          }
           val txn = deltaLog.startTransaction()
           val action = createFile(basePath, sanitizedPath, file, clock)
           txn.commit(Seq(action), Write(SaveMode.Append))

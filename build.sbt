@@ -20,7 +20,7 @@ organization := "io.delta"
 
 scalaVersion := "2.12.10"
 
-sparkVersion := "3.0.0"
+sparkVersion := "3.0.0-SNAPSHOT"
 
 libraryDependencies ++= Seq(
   // Adding test classifier seems to break transitive resolution of the core dependencies
@@ -36,13 +36,14 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
   "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
   "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
+  "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
 
   // Compiler plugins
   // -- Bump up the genjavadoc version explicitly to 0.16 to work with Scala 2.12
   compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.16" cross CrossVersion.full)
 )
 
-resolvers += "Temporary Staging of Spark 3.0" at "https://docs.delta.io/spark3artifacts/rc1/maven/"
+resolvers += "Temporary Staging of Spark 3.0" at "https://docs.delta.io/spark3artifacts/snapshot-5687b31be3f/maven/"
 
 antlr4Settings
 

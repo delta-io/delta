@@ -189,7 +189,7 @@ class DeltaHistoryManager(
    * that way we can reconstruct the entire history of the table. This method assumes that the
    * commits are contiguous.
    */
-  private def getEarliestReproducibleCommit: Long = {
+  private[delta] def getEarliestReproducibleCommit: Long = {
     val files = deltaLog.store.listFrom(FileNames.deltaFile(deltaLog.logPath, 0))
       .filter(f => FileNames.isDeltaFile(f.getPath) || FileNames.isCheckpointFile(f.getPath))
 
@@ -222,7 +222,7 @@ class DeltaHistoryManager(
           // if we have a multi-part checkpoint, we need to check that all parts exist
           val numParts = parts.getOrElse(1)
           val preCount = checkpointMap.getOrElse(checkpointVersion -> numParts, 0)
-          if (numParts == preCount + 1 && smallestDeltaVersion <= checkpointVersion) {
+          if (numParts == preCount + 1) {
             lastCompleteCheckpoint = Some(checkpointVersion)
           }
           checkpointMap.put(checkpointVersion -> numParts, preCount + 1)

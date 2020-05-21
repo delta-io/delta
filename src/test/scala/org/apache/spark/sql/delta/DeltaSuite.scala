@@ -686,22 +686,6 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  test("metadataOnly query") {
-    withSQLConf(OPTIMIZER_METADATA_ONLY.key -> "true") {
-      withTable("delta_test") {
-        Seq(1L -> "a").toDF("dataCol", "partCol")
-          .write
-          .mode(SaveMode.Overwrite)
-          .partitionBy("partCol")
-          .format("delta")
-          .saveAsTable("delta_test")
-        checkAnswer(
-          sql("select count(distinct partCol) FROM delta_test"),
-          Row(1))
-      }
-    }
-  }
-
   test("support partitioning with batch data source API - overwrite") {
     withTempDir { tempDir =>
       if (tempDir.exists()) {
@@ -835,9 +819,7 @@ class DeltaSuite extends QueryTest
 
         // The file names are opaque. To identify which one we're deleting, we ensure that only one
         // append has 2 partitions, and give them the same value so we know what was deleted.
-        val inputFiles =
-          TahoeLogFileIndex(spark, deltaLog, new Path(tempDir.getCanonicalPath))
-            .inputFiles.toSeq
+        val inputFiles = TahoeLogFileIndex(spark, deltaLog).inputFiles.toSeq
         assert(inputFiles.size == 5)
 
         val filesToDelete = inputFiles.filter(_.split("/").last.startsWith("part-00001"))
@@ -869,9 +851,7 @@ class DeltaSuite extends QueryTest
 
         // The file names are opaque. To identify which one we're deleting, we ensure that only one
         // append has 2 partitions, and give them the same value so we know what was deleted.
-        val inputFiles =
-          TahoeLogFileIndex(spark, deltaLog, new Path(tempDir.getCanonicalPath))
-            .inputFiles.toSeq
+        val inputFiles = TahoeLogFileIndex(spark, deltaLog).inputFiles.toSeq
         assert(inputFiles.size == 5)
 
         val filesToCorrupt = inputFiles.filter(_.split("/").last.startsWith("part-00001"))
@@ -900,9 +880,7 @@ class DeltaSuite extends QueryTest
         Range(0, 10).foreach(n =>
           Seq(n).toDF().write.format("delta").mode("append").save(tempDir.toString))
 
-        val inputFiles =
-          TahoeLogFileIndex(spark, deltaLog, new Path(tempDir.getCanonicalPath))
-            .inputFiles.toSeq
+        val inputFiles = TahoeLogFileIndex(spark, deltaLog).inputFiles.toSeq
 
         val filesToDelete = inputFiles.take(4)
         filesToDelete.foreach { f =>
@@ -929,9 +907,7 @@ class DeltaSuite extends QueryTest
       Range(0, 10).foreach(n =>
         Seq(n).toDF().write.format("delta").mode("append").save(tempDir.toString))
 
-      val inputFiles =
-        TahoeLogFileIndex(spark, deltaLog, new Path(tempDir.getCanonicalPath))
-          .inputFiles.toSeq
+      val inputFiles = TahoeLogFileIndex(spark, deltaLog).inputFiles.toSeq
 
       val filesToDelete = inputFiles.take(4)
       filesToDelete.foreach { f =>

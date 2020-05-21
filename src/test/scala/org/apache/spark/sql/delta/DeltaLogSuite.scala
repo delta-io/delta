@@ -19,7 +19,9 @@ package org.apache.spark.sql.delta
 import java.io.{File, FileNotFoundException}
 
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
+import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
@@ -46,7 +48,7 @@ class DeltaLogSuite extends QueryTest
       } else {
         Nil
       }
-      txn.commit(delete ++ file, testOp)
+      txn.commitManually(delete ++ file: _*)
     }
 
     DeltaLog.clearCache()
@@ -63,7 +65,7 @@ class DeltaLogSuite extends QueryTest
       // Commit data so the in-memory state isn't consistent with an empty log.
       val txn = log.startTransaction()
       val files = (1 to 10).map(f => AddFile(f.toString, Map.empty, 1, 1, true))
-      txn.commit(files, testOp)
+      txn.commitManually(files: _*)
       log.checkpoint()
 
       val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
@@ -82,7 +84,7 @@ class DeltaLogSuite extends QueryTest
       val checkpointInterval = log.checkpointInterval
       for (f <- 0 until (checkpointInterval * 2)) {
         val txn = log.startTransaction()
-        txn.commit(Seq(AddFile(f.toString, Map.empty, 1, 1, true)), testOp)
+        txn.commitManually(AddFile(f.toString, Map.empty, 1, 1, true))
       }
 
       def collectReservoirStateRDD(rdd: RDD[_]): Seq[RDD[_]] = {
@@ -111,7 +113,7 @@ class DeltaLogSuite extends QueryTest
       } else {
         Nil
       }
-      txn.commit(delete ++ file, testOp)
+      txn.commitManually(delete ++ file: _*)
     }
 
     DeltaLog.clearCache()
@@ -125,7 +127,7 @@ class DeltaLogSuite extends QueryTest
       } else {
         Nil
       }
-      txn.commit(delete ++ file, testOp)
+      txn.commitManually(delete ++ file: _*)
     }
 
     // Since log2 is a separate instance, it shouldn't be updated to version 15
@@ -164,7 +166,7 @@ class DeltaLogSuite extends QueryTest
       val checkpointInterval = log.checkpointInterval
       for (f <- 0 to checkpointInterval) {
         val txn = log.startTransaction()
-        txn.commit(Seq(AddFile(f.toString, Map.empty, 1, 1, true)), testOp)
+        txn.commitManually(AddFile(f.toString, Map.empty, 1, 1, true))
       }
       assert(log.lastCheckpoint.isDefined)
 
@@ -198,7 +200,7 @@ class DeltaLogSuite extends QueryTest
 
         log.store.write(
           FileNames.deltaFile(log.logPath, 0L),
-          Iterator(JsonUtils.toJson(add.wrap)))
+          Iterator(Protocol(), Metadata(), add).map(a => JsonUtils.toJson(a.wrap)))
         log.store.write(
           FileNames.deltaFile(log.logPath, 1L),
           Iterator(JsonUtils.toJson(rm.wrap)))
@@ -222,7 +224,7 @@ class DeltaLogSuite extends QueryTest
 
         log.store.write(
           FileNames.deltaFile(log.logPath, 0L),
-          Iterator(JsonUtils.toJson(add.wrap)))
+          Iterator(Protocol(), Metadata(), add).map(a => JsonUtils.toJson(a.wrap)))
         log.store.write(
           FileNames.deltaFile(log.logPath, 1L),
           Iterator(JsonUtils.toJson(rm.wrap)))
@@ -244,7 +246,7 @@ class DeltaLogSuite extends QueryTest
       assert(new File(log.logPath.toUri).mkdirs())
       val path = new File(dir, "a/b/c").getCanonicalPath
       val rm = RemoveFile(path, Some(System.currentTimeMillis()), dataChange = true)
-      log.startTransaction().commit(rm :: Nil, DeltaOperations.ManualUpdate)
+      log.startTransaction().commitManually(rm)
 
       val committedRemove = log.update(stalenessAcceptable = false).tombstones.collect()
       assert(committedRemove.head.path === s"file://$path")
@@ -257,7 +259,7 @@ class DeltaLogSuite extends QueryTest
       assert(new File(log.logPath.toUri).mkdirs())
 
       val add1 = AddFile("foo", Map.empty, 1L, System.currentTimeMillis(), dataChange = true)
-      log.startTransaction().commit(add1 :: Nil, DeltaOperations.ManualUpdate)
+      log.startTransaction().commitManually(add1)
 
       val rm = add1.remove
       log.startTransaction().commit(rm :: Nil, DeltaOperations.ManualUpdate)
@@ -273,6 +275,101 @@ class DeltaLogSuite extends QueryTest
       assert(log.update().allFiles.collect().find(_.path == "foo")
         // `dataChange` is set to `false` after replaying logs.
         === Some(add2.copy(dataChange = false)))
+    }
+  }
+
+  test("First commit with missing metadata should throw error.") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      val file = AddFile("abc", Map.empty, 1, 1, true)
+      val e = intercept[IllegalStateException] {
+        log.startTransaction().commit(Seq(file), DeltaOperations.ManualUpdate)
+      }
+      assert(e.getMessage === DeltaErrors.actionNotFoundException("metadata", 0).getMessage)
+    }
+  }
+
+  Seq("protocol", "metadata").foreach { action =>
+    test(s"state reconstruction without $action should fail") {
+      withTempDir { tempDir =>
+        val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+        assert(new File(log.logPath.toUri).mkdirs())
+        val selectedAction = if (action == "metadata") {
+          Protocol()
+        } else {
+          Metadata()
+        }
+        val file = AddFile("abc", Map.empty, 1, 1, true)
+        log.store.write(
+          FileNames.deltaFile(log.logPath, 0L),
+          Iterator(selectedAction, file).map(a => JsonUtils.toJson(a.wrap)))
+        val e = intercept[IllegalStateException] {
+          log.update()
+        }
+        assert(e.getMessage === DeltaErrors.actionNotFoundException(action, 0).getMessage)
+      }
+    }
+  }
+
+  Seq("protocol", "metadata").foreach { action =>
+    testQuietly(s"state reconstruction from checkpoint with missing $action should fail") {
+      withTempDir { tempDir =>
+        import testImplicits._
+        val log = DeltaLog.forTable(spark, tempDir)
+        val checkpointInterval = log.checkpointInterval
+        // Create a checkpoint regularly
+        for (f <- 0 to checkpointInterval) {
+          val txn = log.startTransaction()
+          if (f == 0) {
+            txn.commitManually(AddFile(f.toString, Map.empty, 1, 1, true))
+          } else {
+            txn.commit(Seq(AddFile(f.toString, Map.empty, 1, 1, true)), testOp)
+          }
+        }
+
+        {
+          // Create an incomplete checkpoint without the action and overwrite the
+          // original checkpoint
+          val checkpointPath = FileNames.checkpointFileSingular(log.logPath, log.snapshot.version)
+          withTempDir { tmpCheckpoint =>
+            val takeAction = if (action == "metadata") {
+              "protocol"
+            } else {
+              "metadata"
+            }
+            val corruptedCheckpointData = spark.read.parquet(checkpointPath.toString)
+              .where(s"add is not null or $takeAction is not null")
+              .as[SingleAction].collect()
+
+            // Keep the add files and also filter by the additional condition
+            corruptedCheckpointData.toSeq.toDS().coalesce(1).write
+              .mode("overwrite").parquet(tmpCheckpoint.toString)
+            val writtenCheckpoint =
+              tmpCheckpoint.listFiles().toSeq.filter(_.getName.startsWith("part")).head
+            val checkpointFile = new File(checkpointPath.toUri)
+            new File(log.logPath.toUri).listFiles().toSeq.foreach { file =>
+              if (file.getName.startsWith(".0")) {
+                // we need to delete checksum files, otherwise trying to replace our incomplete
+                // checkpoint file fails due to the LocalFileSystem's checksum checks.
+                require(file.delete(), "Failed to delete checksum file")
+              }
+            }
+            require(checkpointFile.delete(), "Failed to delete old checkpoint")
+            require(writtenCheckpoint.renameTo(checkpointFile),
+              "Failed to rename corrupt checkpoint")
+          }
+        }
+
+        DeltaLog.clearCache()
+
+        // Verify if the state reconstruction from the checkpoint fails.
+        withSQLConf(DeltaSQLConf.DELTA_STATE_CORRUPTION_IS_FATAL.key -> "true") {
+          val e = intercept[IllegalStateException] {
+            DeltaLog.forTable(spark, tempDir).update()
+          }
+          assert(e.getMessage === DeltaErrors.actionNotFoundException(action, 10).getMessage)
+        }
+      }
     }
   }
 }

@@ -129,9 +129,9 @@ class Snapshot(
   protected lazy val computedState: State = {
     val implicits = spark.implicits
     import implicits._
-    state.select(
-      coalesce(last($"protocol", ignoreNulls = true), defaultProtocol()) as "protocol",
-      coalesce(last($"metaData", ignoreNulls = true), emptyMetadata()) as "metadata",
+    val _computedState = state.select(
+      last($"protocol", ignoreNulls = true) as "protocol",
+      last($"metaData", ignoreNulls = true) as "metadata",
       collect_set($"txn") as "setTransactions",
       // sum may return null for empty data set.
       coalesce(sum($"add.size"), lit(0L)) as "sizeInBytes",
@@ -141,6 +141,21 @@ class Snapshot(
       count($"remove") as "numOfRemoves",
       count($"txn") as "numOfSetTransactions"
     ).as[State](stateEncoder).first()
+    if (_computedState.protocol == null) {
+      recordDeltaEvent(
+        deltaLog,
+        opType = "delta.metadataCheck.noProtocolInSnapshot",
+        data = Map("version" -> version.toString))
+      throw DeltaErrors.actionNotFoundException("protocol", version)
+    }
+    if (_computedState.metadata == null) {
+      recordDeltaEvent(
+        deltaLog,
+        opType = "delta.metadataCheck.noMetadataInSnapshot",
+        data = Map("version" -> version.toString))
+      throw DeltaErrors.actionNotFoundException("metadata", version)
+    }
+    _computedState
   }
 
   def protocol: Protocol = computedState.protocol

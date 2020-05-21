@@ -294,6 +294,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   def commit(actions: Seq[Action], op: DeltaOperations.Operation): Long = recordDeltaOperation(
       deltaLog,
       "delta.commit") {
+    commitStartNano = System.nanoTime()
+
     val version = try {
       // Try to commit at the next version.
       var finalActions = prepareCommit(actions, op)

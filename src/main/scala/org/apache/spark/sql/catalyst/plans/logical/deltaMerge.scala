@@ -114,6 +114,19 @@ object DeltaMergeIntoClause {
       colNames.zip(exprs).map { case (col, expr) => DeltaMergeAction(col.nameParts, expr) }
     }
   }
+
+  def toActions(assignments: Seq[Assignment]): Seq[Expression] = {
+    if (assignments.isEmpty) {
+      Seq[Expression](UnresolvedStar(None))
+    } else {
+      assignments.map {
+        case Assignment(key: UnresolvedAttribute, expr) => DeltaMergeAction(key.nameParts, expr)
+        case Assignment(key: Attribute, expr) => DeltaMergeAction(Seq(key.name), expr)
+        case other =>
+          throw new AnalysisException(s"Unexpected assignment key: ${other.getClass} - $other")
+      }
+    }
+  }
 }
 
 /** Trait that represents WHEN MATCHED clause in MERGE. See [[DeltaMergeInto]]. */
@@ -363,10 +376,8 @@ object DeltaMergeInto {
             // If clause allows nested field to be target, then this will return the all the
             // parts of the name (e.g., "a.b" -> Seq("a", "b")). Otherwise, this will
             // return only one string.
-            val resolvedNameParts = DeltaUpdateTable.getNameParts(
-              resolveOrFail(unresolvedAttrib, fakeTargetPlan, s"$typ clause"),
-              resolutionErrorMsg,
-              merge)
+            val resolvedNameParts = DeltaUpdateTable.getTargetColNameParts(
+              resolveOrFail(unresolvedAttrib, fakeTargetPlan, s"$typ clause"), resolutionErrorMsg)
 
             val resolvedExpr = resolveOrFail(expr, planToResolveAction, s"$typ clause")
             Seq(DeltaMergeAction(resolvedNameParts, resolvedExpr))
