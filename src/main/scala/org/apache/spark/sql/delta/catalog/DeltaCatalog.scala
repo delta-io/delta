@@ -107,7 +107,6 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
       partitionColumnNames = partitionColumns,
       bucketSpec = maybeBucketSpec,
       properties = tableProperties.toMap,
-      tracksPartitionsInCatalog = false,
       comment = Option(properties.get("comment")))
     // END: copy-paste from the super method finished.
 
