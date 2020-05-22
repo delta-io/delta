@@ -244,7 +244,9 @@ case class MergeIntoCommand(
 
     // Calculate frequency of matches per source row
     val matchedRowCounts = collectTouchedFiles.groupBy(ROW_ID_COL).agg(sum("one").as("count"))
-    if (matchedRowCounts.filter("count > 1").count() != 0) {
+    // Even there is no update clause, we still need this inner join job to fill touchedFilesAccum,
+    // but the exception is thrown only with update clause.
+    if (matchedRowCounts.filter("count > 1").count() != 0 && updateClause.isDefined) {
       throw DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(spark)
     }
 

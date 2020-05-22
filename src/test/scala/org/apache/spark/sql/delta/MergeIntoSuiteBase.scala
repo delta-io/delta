@@ -531,6 +531,22 @@ abstract class MergeIntoSuiteBase
     }
   }
 
+  testQuietly("No update clause - more than one source rows match the same target row") {
+    withTable("source") {
+      Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value").createOrReplaceTempView("source")
+      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
+
+      executeMerge(
+        tgt = s"delta.`$tempPath` as target",
+        src = "source src",
+        cond = "src.key1 = target.key2",
+        delete())
+
+      checkAnswer(readDeltaTable(tempPath),
+        Row(2, 2) :: Nil)
+    }
+  }
+
   test("More than one target rows match the same source row") {
     withTable("source") {
       Seq((1, 5), (2, 9)).toDF("key1", "value").createOrReplaceTempView("source")
