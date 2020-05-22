@@ -18,12 +18,15 @@ package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
 import io.delta.tables.execution.DeltaTableOperations
+import java.io
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{Action, AddFile, RemoveFile}
 import org.apache.spark.sql.delta.schema.ImplicitMetadataOperation
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions.{And, Expression, Literal, SubqueryExpression}
-import org.apache.spark.sql.catalyst.plans.logical.DeltaDelete
+import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
+import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.execution.command.RunnableCommand
 
 /**
@@ -73,7 +76,7 @@ case class WriteIntoDelta(
 
   private def deleteFilesReplaceWhere(
     txn: OptimisticTransaction, sparkSession: SparkSession,
-    predicates: Seq[Expression], newFiles: Seq[AddFile]): Seq[RemoveFile] = {
+    predicates: Seq[Expression], newFiles: Seq[AddFile]): Seq[Action] = {
     import sparkSession.implicits._
 
     val filterExpression = predicates.reduceLeftOption(And).getOrElse(Literal(true))
@@ -84,31 +87,32 @@ case class WriteIntoDelta(
       }
     }
 
-    // Not really sure how to get the logical plan for the target to pass to DeltaDelete
-    val delete = DeltaDelete(
-      deltaLog.createDataFrame(txn.snapshot, txn.filterFiles()).logicalPlan,
-      Some(filterExpression))
-    val qe = sparkSession.sessionState.executePlan(delete)
-    val resolvedDelete = qe.analyzed.asInstanceOf[DeltaDelete]
-    val deleteCommand = DeleteCommand(resolvedDelete)
-    val actions = deleteCommand.gatherDeleteActions(sparkSession, deltaLog, txn)
+    val index = TahoeLogFileIndex(sparkSession, deltaLog, deltaLog.dataPath)
+    val targetPlan = {
+      txn.deltaLog.createDataFrame(txn.snapshot, newFiles).queryExecution.analyzed
+    }
+    val deleteCommand = DeleteCommand(
+      index, targetPlan, Some(filterExpression))
+
+    val actions: Seq[Action] = deleteCommand.delete(sparkSession, deltaLog, txn)
 
     // Check to make sure the files we wrote out were actually valid.
-    val matchingFiles = DeltaLog.filterFileList(
-      txn.metadata.partitionSchema, newFiles.toDF(), predicates).as[AddFile].collect()
-    val invalidFiles = newFiles.toSet -- matchingFiles
-    if (invalidFiles.nonEmpty) {
-      val badPartitions = invalidFiles
-        .map(_.partitionValues)
-        .map { _.map { case (k, v) => s"$k=$v" }.mkString("/") }
-        .mkString(", ")
-      throw DeltaErrors.replaceWhereMismatchException(options.replaceWhere.get, badPartitions)
-    }
+//    val matchingFiles = DeltaLog.filterFileList(
+//      txn.metadata.partitionSchema, newFiles.toDF(), predicates).as[AddFile].collect()
+//    val invalidFiles = newFiles.toSet -- matchingFiles
+//    if (invalidFiles.nonEmpty) {
+//      val badPartitions = invalidFiles
+//        .map(_.partitionValues)
+//        .map { _.map { case (k, v) => s"$k=$v" }.mkString("/") }
+//        .mkString(", ")
+//      throw DeltaErrors.replaceWhereMismatchException(options.replaceWhere.get, badPartitions)
+//    }
 
-    txn.filterFiles(predicates).map(_.remove)
+    actions
   }
 
   def write(txn: OptimisticTransaction, sparkSession: SparkSession): Seq[Action] = {
+    import sparkSession.implicits._
 
     if (txn.readVersion > -1) {
       // This table already exists, check if the insert is valid.
@@ -138,8 +142,13 @@ case class WriteIntoDelta(
     }
 
     // DeltaInvariantCheckerExec is called through writeFiles
-    val newFiles = txn.writeFiles(data, Some(options))
-    val deletedFiles: Seq[RemoveFile] = (mode, replaceWherePredicates) match {
+    val newFiles: Seq[AddFile] = if (replaceWhere.isDefined) {
+      txn.writeFiles(data.where(replaceWhere.get), Some(options))
+    } else {
+      txn.writeFiles(data, Some(options))
+    }
+
+    val deletedFiles: Seq[Action] = (mode, replaceWherePredicates) match {
       case (SaveMode.Overwrite, None) =>
         txn.filterFiles().map(_.remove)
       case (SaveMode.Overwrite, Some(predicates)) =>
@@ -147,11 +156,16 @@ case class WriteIntoDelta(
       case _ => Nil
     }
 
+    // DeleteCommand can return AddFile and RemoveFile types
+    val removeFiles = deletedFiles.filter(_.isInstanceOf[RemoveFile]).asInstanceOf[Seq[RemoveFile]]
+    val addFiles = deletedFiles.filter(_.isInstanceOf[AddFile]).asInstanceOf[Seq[AddFile]]
+
     if (rearrangeOnly) {
       newFiles.map(_.copy(dataChange = !rearrangeOnly)) ++
-        deletedFiles.map(_.copy(dataChange = !rearrangeOnly))
+        removeFiles.map(_.copy(dataChange = !rearrangeOnly)) ++
+        addFiles.map(_.copy(dataChange = !rearrangeOnly))
     } else {
-      newFiles ++ deletedFiles
+      newFiles ++ removeFiles ++ addFiles
     }
   }
 }

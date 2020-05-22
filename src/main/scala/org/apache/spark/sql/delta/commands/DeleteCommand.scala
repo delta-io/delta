@@ -146,7 +146,7 @@ case class DeleteCommand(
   }
 
 
-  def gatherDeleteActions(
+  def delete(
     sparkSession: SparkSession, deltaLog: DeltaLog, txn: OptimisticTransaction): Seq[Action] = {
 
     val deleteActions: Seq[Action] = condition match {
@@ -188,7 +188,7 @@ case class DeleteCommand(
 
     val numFilesTotal = deltaLog.snapshot.numOfFiles
 
-    val deleteActions: Seq[Action] = gatherDeleteActions(sparkSession, deltaLog, txn)
+    val deleteActions: Seq[Action] = delete(sparkSession, deltaLog, txn)
     if (deleteActions.nonEmpty) {
       metrics("numAddedFiles").set(numRewrittenFiles)
       txn.registerSQLMetrics(sparkSession, metrics)

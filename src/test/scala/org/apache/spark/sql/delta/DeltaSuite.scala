@@ -241,8 +241,7 @@ class DeltaSuite extends QueryTest
         .option(DeltaOptions.REPLACE_WHERE_OPTION, "not_a_column = true")
         .save(tempDir.toString)
     }.getMessage
-    assert(e3 == "Predicate references non-partition column 'not_a_column'. Only the " +
-      "partition columns may be referenced: [is_odd];")
+    assert(e3.contains("cannot resolve '`not_a_column`' given input columns"))
 
     val e4 = intercept[AnalysisException] {
       Seq(6).toDF()
@@ -253,8 +252,8 @@ class DeltaSuite extends QueryTest
         .option(DeltaOptions.REPLACE_WHERE_OPTION, "value = 1")
         .save(tempDir.toString)
     }.getMessage
-    assert(e4 == "Predicate references non-partition column 'value'. Only the " +
-      "partition columns may be referenced: [is_odd];")
+    assert(e4 == "Data written out does not match replaceWhere 'value = 1'.\n" +
+      "Invalid data would be written to partitions is_odd=false.;")
 
     val e5 = intercept[AnalysisException] {
       Seq(6).toDF()
@@ -1011,6 +1010,71 @@ class DeltaSuite extends QueryTest
       assert(jobCount.get() == 0)
     } finally {
       sparkContext.removeSparkListener(listener)
+    }
+  }
+
+  test("replaceWhere with multiple non-partition predicates") {
+    withTempDir { tempDir =>
+      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+      Seq((1, 10), (2, 20), (3, 10), (4, 20), (4, 10)).toDF("key", "value")
+        .write
+        .format("delta")
+        .partitionBy("value")
+        .save(tempDir.getCanonicalPath)
+
+      Seq((4, 30), (4, 50), (5, 20), (6, 70)).toDF("key", "value")
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .option(DeltaOptions.REPLACE_WHERE_OPTION, "key = 4 OR key = 5")
+        .save(tempDir.getCanonicalPath)
+
+      checkDatasetUnorderly(data.toDF.as[(Int, Int)],
+        1 -> 10, 3 -> 10, 2 -> 20, 5 -> 20, 4 -> 30, 4 -> 50)
+    }
+  }
+
+  test("replaceWhere with nested predicates") {
+    withTempDir { tempDir =>
+      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+      Seq((1, 10), (2, 20), (3, 10), (4, 20), (4, 10)).toDF("key", "value")
+        .write
+        .format("delta")
+        .partitionBy("value")
+        .save(tempDir.getCanonicalPath)
+
+      Seq((4, 30), (5, 20)).toDF("key", "value")
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .option(DeltaOptions.REPLACE_WHERE_OPTION, "(key = 4 AND value = 20) OR key = 5")
+        .save(tempDir.getCanonicalPath)
+
+      checkDatasetUnorderly(data.toDF.as[(Int, Int)],
+        1 -> 10, 3 -> 10, 4 -> 10, 2 -> 20, 5 -> 20)
+    }
+  }
+
+  test("replaceWhere with no matching predicates") {
+    withTempDir { tempDir =>
+      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+      Seq((1, 10), (2, 20), (3, 10), (4, 20), (4, 10)).toDF("key", "value")
+        .write
+        .format("delta")
+        .partitionBy("value")
+        .save(tempDir.getCanonicalPath)
+
+      Seq((4, 30), (5, 20)).toDF("key", "value")
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .option(DeltaOptions.REPLACE_WHERE_OPTION, "key = 7")
+        .save(tempDir.getCanonicalPath)
+
+      checkDatasetUnorderly(data.toDF.as[(Int, Int)], 1 -> 10, 3 -> 10, 2 -> 20, 4 -> 10, 4 -> 20)
     }
   }
 }
