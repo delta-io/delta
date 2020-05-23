@@ -531,22 +531,6 @@ abstract class MergeIntoSuiteBase
     }
   }
 
-  testQuietly("No update clause - more than one source rows match the same target row") {
-    withTable("source") {
-      Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value").createOrReplaceTempView("source")
-      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
-
-      executeMerge(
-        tgt = s"delta.`$tempPath` as target",
-        src = "source src",
-        cond = "src.key1 = target.key2",
-        delete())
-
-      checkAnswer(readDeltaTable(tempPath),
-        Row(2, 2) :: Nil)
-    }
-  }
-
   test("More than one target rows match the same source row") {
     withTable("source") {
       Seq((1, 5), (2, 9)).toDF("key1", "value").createOrReplaceTempView("source")
@@ -1317,16 +1301,15 @@ abstract class MergeIntoSuiteBase
       (2, 2)    // (1, 1) deleted
     ))          // (3, 30) not inserted as not insert clause
 
-  test(s"extended syntax - only delete with multiple matches") {
-    withKeyValueData(
-      source = (0, 0) :: (1, 10) :: (1, 100) :: (3, 30) :: Nil,
-      target = (1, 1) :: (2, 2) :: Nil
-    ) { case (sourceName, targetName) =>
-      intercept[UnsupportedOperationException] {
-        executeMerge(s"$targetName t", s"$sourceName s", "s.key = t.key", delete())
-      }
-    }
-  }
+  testExtendedMerge(s"extended syntax - only delete with multiple matches")(
+    source = (0, 0) :: (1, 10) :: (1, 100) :: (3, 30) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    delete())(
+    result = Seq(
+      (2, 2)
+    )
+  )
 
   testExtendedMerge("only conditional delete")(
     source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
