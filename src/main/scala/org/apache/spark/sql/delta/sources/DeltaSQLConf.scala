@@ -276,4 +276,16 @@ object DeltaSQLConf {
         """.stripMargin)
       .booleanConf
       .createWithDefault(true)
+
+  val MERGE_MATCHED_ONLY_REWRITE_WITH_UNION_ENABLED =
+    buildConf("merge.optimizeMatchedOnlyMerge.rewriteWithUnion.enabled")
+      .doc(
+        s"""
+          |Enable this should set ${MERGE_MATCHED_ONLY_ENABLED.key} to true first.
+          |If this enabled, the right outer join will be further rewritten together with an union
+          |to minimize the data in shuffle.
+          |Especially for partition table, enabled this will highly improve performance.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 }

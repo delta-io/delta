@@ -1904,6 +1904,69 @@ abstract class MergeIntoSuiteBase
     )
   )
 
+  protected def testMatchedOnlyOptimizationRewriteWithUnion(
+      name: String)(
+      source: Seq[(Int, Int)],
+      target: Seq[(Int, Int)],
+      mergeOn: String,
+      mergeClauses: MergeClause*) (
+      result: Seq[(Int, Int)]): Unit = {
+    Seq(true, false).foreach { rewriteWithUnionEnabled =>
+      Seq(true, false).foreach { isPartitioned =>
+        val s = if (rewriteWithUnionEnabled) "enabled" else "disabled"
+        test(s"matched only merge rewrite with union " +
+          s"- $s - $name - isPartitioned: $isPartitioned ") {
+          withKeyValueData(source, target, isPartitioned) { case (sourceName, targetName) =>
+            withSQLConf(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED.key -> "true",
+              DeltaSQLConf.MERGE_MATCHED_ONLY_REWRITE_WITH_UNION_ENABLED.key
+                -> s"$rewriteWithUnionEnabled") {
+              executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
+            }
+            val deltaPath = if (targetName.startsWith("delta.`")) {
+              targetName.stripPrefix("delta.`").stripSuffix("`")
+            } else targetName
+            checkAnswer(
+              readDeltaTable(deltaPath),
+              result.map { case (k, v) => Row(k, v) })
+          }
+        }
+      }
+    }
+  }
+
+  testMatchedOnlyOptimizationRewriteWithUnion("with update") (
+    source = Seq((1, 100), (3, 300), (5, 500)),
+    target = Seq((1, 10), (2, 20), (3, 30)),
+    mergeOn = "s.key = t.key",
+    update("t.key = s.key, t.value = s.value")) (
+    result = Seq(
+      (1, 100), // updated
+      (2, 20), // existed previously
+      (3, 300) // updated
+    )
+  )
+
+  testMatchedOnlyOptimizationRewriteWithUnion("with delete") (
+    source = Seq((1, 100), (3, 300), (5, 500)),
+    target = Seq((1, 10), (2, 20), (3, 30)),
+    mergeOn = "s.key = t.key",
+    delete()) (
+    result = Seq(
+      (2, 20) // existed previously
+    )
+  )
+
+  testMatchedOnlyOptimizationRewriteWithUnion("with update and delete")(
+    source = Seq((1, 100), (3, 300), (5, 500)),
+    target = Seq((1, 10), (3, 30), (5, 30)),
+    mergeOn = "s.key = t.key",
+    update("t.value = s.value", "t.key < 3"), delete("t.key > 3")) (
+    result = Seq(
+      (1, 100), // updated
+      (3, 30)   // existed previously
+    )
+  )
+
   protected def testNullCaseMatchedOnly(name: String) (
       source: Seq[(JInt, JInt)],
       target: Seq[(JInt, JInt)],
