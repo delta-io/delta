@@ -281,10 +281,12 @@ object DeltaSQLConf {
     buildConf("merge.optimizeMatchedOnlyMerge.rewriteWithUnion.enabled")
       .doc(
         s"""
-          |Enable this should set ${MERGE_MATCHED_ONLY_ENABLED.key} to true first.
+          |Enable this should set ${MERGE_MATCHED_ONLY_ENABLED.key} to true.
           |If this enabled, the right outer join will be further rewritten together with an union
-          |to minimize the data in shuffle.
-          |Especially for partition table, enabled this will highly improve performance.
+          |to minimize the data in shuffle: In right outer join, even there are some predicates in
+          |right side, it still needs all rows to preform join. We move right side only predicates
+          |from join conditions to its filters, then union the join and the right side which
+          |applied anti-predicates filters.
         """.stripMargin)
       .booleanConf
       .createWithDefault(true)
