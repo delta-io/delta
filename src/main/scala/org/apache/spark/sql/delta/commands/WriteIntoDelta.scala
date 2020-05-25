@@ -22,7 +22,7 @@ import java.io
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{Action, AddFile, RemoveFile}
-import org.apache.spark.sql.delta.schema.ImplicitMetadataOperation
+import org.apache.spark.sql.delta.schema.{DeltaInvariantCheckerExec, ImplicitMetadataOperation, Invariants}
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions.{And, Expression, Literal, SubqueryExpression}
 import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
@@ -77,7 +77,6 @@ case class WriteIntoDelta(
   private def deleteFilesReplaceWhere(
     txn: OptimisticTransaction, sparkSession: SparkSession,
     predicates: Seq[Expression], newFiles: Seq[AddFile]): Seq[Action] = {
-    import sparkSession.implicits._
 
     val filterExpression = predicates.reduceLeftOption(And).getOrElse(Literal(true))
 
@@ -96,6 +95,8 @@ case class WriteIntoDelta(
 
     val actions: Seq[Action] = deleteCommand.delete(sparkSession, deltaLog, txn)
 
+//    val invariants = Invariants.
+
     // Check to make sure the files we wrote out were actually valid.
 //    val matchingFiles = DeltaLog.filterFileList(
 //      txn.metadata.partitionSchema, newFiles.toDF(), predicates).as[AddFile].collect()
@@ -112,7 +113,6 @@ case class WriteIntoDelta(
   }
 
   def write(txn: OptimisticTransaction, sparkSession: SparkSession): Seq[Action] = {
-    import sparkSession.implicits._
 
     if (txn.readVersion > -1) {
       // This table already exists, check if the insert is valid.
@@ -141,7 +141,6 @@ case class WriteIntoDelta(
       deltaLog.fs.mkdirs(deltaLog.logPath)
     }
 
-    // DeltaInvariantCheckerExec is called through writeFiles
     val newFiles: Seq[AddFile] = if (replaceWhere.isDefined) {
       txn.writeFiles(data.where(replaceWhere.get), Some(options))
     } else {

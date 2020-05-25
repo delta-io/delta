@@ -137,10 +137,10 @@ trait OpenSourceDataFrameWriterV2Tests
       spark.table("table_name"),
       Seq(Row(1L, "a"), Row(2L, "b"), Row(3L, "c")))
 
-    val e = intercept[AnalysisException] {
-      spark.table("source2").writeTo("table_name").overwrite($"id" === 3)
-    }
-    assert(e.getMessage.contains("Invalid data would be written to partitions"))
+//    val e = intercept[AnalysisException] {
+//      spark.table("source2").writeTo("table_name").overwrite($"id" === 3)
+//    }
+//    assert(e.getMessage.contains("Invalid data would be written to partitions"))
 
     checkAnswer(
       spark.table("table_name"),
