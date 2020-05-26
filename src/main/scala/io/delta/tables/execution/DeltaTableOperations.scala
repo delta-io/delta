@@ -34,7 +34,7 @@ import org.apache.spark.sql.catalyst.plans.logical._
  */
 trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
 
-  protected def executeDelete(condition: Option[Expression]): Unit = {
+  protected def executeDelete(condition: Option[Expression]): Unit = improveUnsupportedOpError {
     val delete = DeleteFromTable(self.toDF.queryExecution.analyzed, condition)
     toDataset(sparkSession, delete)
   }
@@ -54,7 +54,9 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
     generate.run(sparkSession)
   }
 
-  protected def executeUpdate(set: Map[String, Column], condition: Option[Column]): Unit = {
+  protected def executeUpdate(
+      set: Map[String, Column],
+      condition: Option[Column]): Unit = improveUnsupportedOpError {
     val assignments = set.map { case (targetColName, column) =>
       Assignment(UnresolvedAttribute.quotedString(targetColName), column.expr)
     }.toSeq

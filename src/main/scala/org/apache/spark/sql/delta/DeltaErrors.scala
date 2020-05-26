@@ -21,11 +21,13 @@ import java.io.{FileNotFoundException, IOException}
 import java.util.ConcurrentModificationException
 
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata}
+import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{Invariant, InvariantViolationException, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
+import io.delta.sql.DeltaSparkSessionExtension
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.{SparkConf, SparkEnv}
@@ -906,6 +908,22 @@ object DeltaErrors
     s"""WARNING: The 'ignoreFileDeletion' option is deprecated. Switch to using one of
        |'ignoreDeletes' or 'ignoreChanges'. Refer to $docPage for details.
          """.stripMargin
+  }
+
+  def configureSparkSessionWithExtensionAndCatalog(originalException: Throwable): Throwable = {
+    val catalogImplConfig = SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key
+    new AnalysisException(
+      s"""This Delta operation requires the SparkSession to be configured with the
+         |DeltaSparkSessionExtension and the DeltaCatalog. Please set the necessary
+         |configurations when creating the SparkSession as shown below.
+         |
+         |  SparkSession.builder()
+         |    .option("spark.sql.extensions", "${classOf[DeltaSparkSessionExtension].getName}")
+         |    .option("$catalogImplConfig", "${classOf[DeltaCatalog].getName}"
+         |    ...
+         |    .build()
+      """.stripMargin,
+      cause = Some(originalException))
   }
 }
 
