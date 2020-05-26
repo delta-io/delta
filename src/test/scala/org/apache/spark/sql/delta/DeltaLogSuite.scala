@@ -303,17 +303,6 @@ class DeltaLogSuite extends QueryTest
     }
   }
 
-  test("First commit with missing metadata should throw error.") {
-    withTempDir { tempDir =>
-      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
-      val file = AddFile("abc", Map.empty, 1, 1, true)
-      val e = intercept[IllegalStateException] {
-        log.startTransaction().commit(Seq(file), DeltaOperations.ManualUpdate)
-      }
-      assert(e.getMessage === DeltaErrors.actionNotFoundException("metadata", 0).getMessage)
-    }
-  }
-
   Seq("protocol", "metadata").foreach { action =>
     test(s"state reconstruction without $action should fail") {
       withTempDir { tempDir =>

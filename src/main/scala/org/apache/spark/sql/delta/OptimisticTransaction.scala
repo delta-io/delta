@@ -357,16 +357,25 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
     // If the metadata has changed, add that to the set of actions
     var finalActions = newMetadata.toSeq ++ actions
     val metadataChanges = finalActions.collect { case m: Metadata => m }
-    assert(
-      metadataChanges.length <= 1,
-      "Cannot change the metadata more than once in a transaction.")
+    if (metadataChanges.length > 1) {
+      recordDeltaEvent(deltaLog, "delta.metadataCheck.multipleMetadataActions", data = Map(
+        "metadataChanges" -> metadataChanges
+      ))
+      assert(
+        metadataChanges.length <= 1, "Cannot change the metadata more than once in a transaction.")
+    }
     metadataChanges.foreach(m => verifyNewMetadata(m))
 
-    // If this is the first commit and no protocol is specified, initialize the protocol version.
     if (snapshot.version == -1) {
       deltaLog.ensureLogDirectoryExist()
+      // If this is the first commit and no protocol is specified, initialize the protocol version.
       if (!finalActions.exists(_.isInstanceOf[Protocol])) {
         finalActions = Protocol() +: finalActions
+      }
+      // If this is the first commit and no metadata is specified, throw an exception
+      if (!finalActions.exists(_.isInstanceOf[Metadata])) {
+        recordDeltaEvent(deltaLog, "delta.metadataCheck.noMetadataInInitialCommit")
+        throw DeltaErrors.metadataAbsentException()
       }
     }
 
@@ -376,6 +385,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
         val updatedConf = DeltaConfigs.mergeGlobalConfigs(
           spark.sessionState.conf, m.configuration, Protocol())
         m.copy(configuration = updatedConf)
+      case a: AddFile if metadata.partitionColumns.toSet != a.partitionValues.keySet =>
+        // If the partitioning in metadata does not match the partitioning in the AddFile
+        recordDeltaEvent(deltaLog, "delta.metadataCheck.partitionMismatch", data = Map(
+          "tablePartitionColumns" -> metadata.partitionColumns,
+          "filePartitionValues" -> a.partitionValues
+        ))
+        throw DeltaErrors.addFilePartitioningMismatchException(
+          a.partitionValues.keySet.toSeq, metadata.partitionColumns)
       case other => other
     }
 

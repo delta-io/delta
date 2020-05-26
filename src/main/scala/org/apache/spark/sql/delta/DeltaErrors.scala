@@ -20,7 +20,7 @@ package org.apache.spark.sql.delta
 import java.io.{FileNotFoundException, IOException}
 import java.util.ConcurrentModificationException
 
-import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata}
+import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata}
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{Invariant, InvariantViolationException, SchemaUtils}
@@ -870,6 +870,22 @@ object DeltaErrors
   def columnNotInSchemaException(column: String, schema: StructType): Throwable = {
     throw new AnalysisException(
       s"Couldn't find column $column in:\n${schema.treeString}")
+  }
+
+  def metadataAbsentException(): Throwable = {
+    new IllegalStateException(
+      s"Couldn't find Metadata while committing the first version of the Delta table.")
+  }
+
+  def addFilePartitioningMismatchException(
+      addFilePartitions: Seq[String],
+      metadataPartitions: Seq[String]): Throwable = {
+    new IllegalStateException(
+      """
+        |The AddFile contains partitioning schema different from the table's partitioning schema
+        |expected: ${DeltaErrors.formatColumnList(metadataPartitions)}
+        |actual: ${DeltaErrors.formatColumnList(addFilePartitions)
+      """.stripMargin)
   }
 
   def concurrentModificationExceptionMsg(

@@ -82,8 +82,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
         Metadata(schemaString = schema.json, partitionColumns = Seq("_underscore_col_"))
       txn.commit(metadata :: Nil, DeltaOperations.CreateTable(metadata, isManaged = true))
       gcTest(deltaLog, clock)(
-        CreateFile("file1.txt", commitToActionLog = true),
-        CreateFile("_underscore_col_=10/test.txt", commitToActionLog = true),
+        CreateFile("file1.txt", commitToActionLog = true, Map("_underscore_col_" -> "10")),
+        CreateFile("_underscore_col_=10/test.txt", true, Map("_underscore_col_" -> "10")),
         CheckFiles(Seq("file1.txt", "_underscore_col_=10")),
         LogicallyDeleteFile("_underscore_col_=10/test.txt"),
         AdvanceClock(defaultTombstoneInterval + 1000),
@@ -309,7 +309,10 @@ trait DeltaVacuumSuiteBase extends QueryTest
    * Write a file to the given absolute or relative path. Could be inside or outside the Reservoir
    * base path. The file can be committed to the action log to be tracked, or left out for deletion.
    */
-  case class CreateFile(path: String, commitToActionLog: Boolean) extends Action
+  case class CreateFile(
+      path: String,
+      commitToActionLog: Boolean,
+      partitionValues: Map[String, String] = Map.empty) extends Action
   /** Create a directory at the given path. */
   case class CreateDirectory(path: String) extends Action
   /**
@@ -345,10 +348,11 @@ trait DeltaVacuumSuiteBase extends QueryTest
       reservoirBase: String,
       filePath: String,
       file: File,
-      clock: ManualClock): AddFile = {
+      clock: ManualClock,
+      partitionValues: Map[String, String] = Map.empty): AddFile = {
     FileUtils.write(file, "gibberish")
     file.setLastModified(clock.getTimeMillis())
-    AddFile(filePath, Map.empty, 10L, clock.getTimeMillis(), dataChange = true)
+    AddFile(filePath, partitionValues, 10L, clock.getTimeMillis(), dataChange = true)
   }
 
   protected def gcTest(deltaLog: DeltaLog, clock: ManualClock)(actions: Action*): Unit = {
@@ -356,7 +360,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
     val basePath = deltaLog.dataPath.toString
     val fs = new Path(basePath).getFileSystem(spark.sessionState.newHadoopConf())
     actions.foreach {
-      case CreateFile(path, commit) =>
+      case CreateFile(path, commit, partitionValues) =>
         Given(s"*** Writing file to $path. Commit to log: $commit")
         val sanitizedPath = new Path(path).toUri.toString
         val file = new File(
@@ -367,7 +371,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
             deltaLog.startTransaction().commitManually()
           }
           val txn = deltaLog.startTransaction()
-          val action = createFile(basePath, sanitizedPath, file, clock)
+          val action = createFile(basePath, sanitizedPath, file, clock, partitionValues)
           txn.commit(Seq(action), Write(SaveMode.Append))
         } else {
           createFile(basePath, path, file, clock)
