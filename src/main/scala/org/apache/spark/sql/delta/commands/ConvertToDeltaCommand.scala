@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.io.Closeable
 import java.util.Locale
 
 import scala.collection.JavaConverters._
@@ -24,6 +25,7 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, CommitInfo, Metadata, Protocol}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.util.{DateFormatter, DeltaFileOperations, PartitionUtils, TimestampFormatter}
@@ -32,11 +34,12 @@ import org.apache.spark.sql.delta.util.SerializableFileStatus
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
 import org.apache.spark.SparkException
-import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
+import org.apache.spark.sql.{AnalysisException, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.Analyzer
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.analysis.{Analyzer, NoSuchTableException}
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions.Cast
+import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog, V1Table}
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, ParquetToSparkSchemaConverter}
 import org.apache.spark.sql.internal.SQLConf
@@ -74,14 +77,16 @@ abstract class ConvertToDeltaCommandBase(
   val timestampPartitionPattern = "yyyy-MM-dd HH:mm:ss[.S]"
 
   override def run(spark: SparkSession): Seq[Row] = {
-    val convertProperties = getConvertProperties(spark, tableIdentifier)
+    val convertProperties = resolveConvertTarget(spark, tableIdentifier) match {
+      case Some(props) if !DeltaSourceUtils.isDeltaTable(props.provider) => props
+      case _ =>
+        // Make convert to delta idempotent
+        logConsole("The table you are trying to convert is already a delta table")
+        return Seq.empty[Row]
+    }
 
     convertProperties.provider match {
       case Some(providerName) => providerName.toLowerCase(Locale.ROOT) match {
-        // Make convert to delta idempotent
-        case delta if DeltaSourceUtils.isDeltaDataSourceName(delta) =>
-          logConsole("The table you are trying to convert is already a delta table")
-          return Seq.empty[Row]
         case _ if convertProperties.catalogTable.exists(isHiveStyleParquetTable) =>
           // allowed
         case checkProvider if checkProvider != "parquet" =>
@@ -93,7 +98,6 @@ abstract class ConvertToDeltaCommandBase(
     }
 
     val deltaLog = DeltaLog.forTable(spark, deltaPath.getOrElse(convertProperties.targetDir))
-    deltaLog.update()
     val txn = deltaLog.startTransaction()
     if (txn.readVersion > -1) {
       handleExistingTransactionLog(spark, txn, convertProperties)
@@ -103,14 +107,68 @@ abstract class ConvertToDeltaCommandBase(
     performConvert(spark, txn, convertProperties)
   }
 
-  protected def getConvertProperties(
+  /** Given the table identifier, figure out what our conversion target is. */
+  private def resolveConvertTarget(
       spark: SparkSession,
-      tableIdentifier: TableIdentifier): ConvertProperties = {
-    ConvertProperties(
-      None,
-      tableIdentifier.database,
-      tableIdentifier.table,
-      Map.empty[String, String])
+      tableIdentifier: TableIdentifier): Option[ConvertTarget] = {
+    val v2SessionCatalog =
+      spark.sessionState.catalogManager.v2SessionCatalog.asInstanceOf[TableCatalog]
+
+    // TODO: Leverage the analyzer for all this work
+    if (isCatalogTable(spark.sessionState.analyzer, tableIdentifier)) {
+      val ident = Identifier.of(
+        tableIdentifier.database.map(Array(_))
+          .getOrElse(spark.sessionState.catalogManager.currentNamespace),
+        tableIdentifier.table)
+      v2SessionCatalog.loadTable(ident) match {
+        case v1: V1Table if v1.catalogTable.tableType == CatalogTableType.VIEW =>
+          throw DeltaErrors.operationNotSupportedException(
+            "Converting a view to a Delta table",
+            tableIdentifier)
+        case v1: V1Table =>
+          val table = v1.catalogTable
+          // Hive adds some transient table properties which should be ignored
+          val props = table.properties.filterKeys(_ != "transient_lastDdlTime")
+          Some(ConvertTarget(Some(table), table.provider, new Path(table.location).toString, props))
+        case _: DeltaTableV2 =>
+          // Already a Delta table
+          None
+      }
+    } else {
+      Some(ConvertTarget(
+        None,
+        tableIdentifier.database,
+        tableIdentifier.table,
+        Map.empty[String, String]))
+    }
+  }
+
+  /**
+   * When converting a table to delta using table name, we should also change the metadata in the
+   * catalog table because the delta log should be the source of truth for the metadata rather than
+   * the metastore.
+   *
+   * @param catalogTable metadata of the table to be converted
+   * @param sessionCatalog session catalog of the metastore used to update the metadata
+   */
+  private def convertMetadata(
+      catalogTable: CatalogTable,
+      sessionCatalog: SessionCatalog): Unit = {
+    val newCatalog = catalogTable.copy(
+      provider = Some("delta"),
+      // TODO: Schema changes unfortunately doesn't get reflected in the HiveMetaStore. Should be
+      // fixed in Apache Spark
+      schema = new StructType(),
+      partitionColumnNames = Seq.empty,
+      properties = Map.empty,
+      // TODO: Serde information also doesn't get removed
+      storage = catalogTable.storage.copy(
+        inputFormat = None,
+        outputFormat = None,
+        serde = None)
+    )
+    sessionCatalog.alterTable(newCatalog)
+    logInfo("Convert to Delta converted metadata")
   }
 
   /**
@@ -131,6 +189,9 @@ abstract class ConvertToDeltaCommandBase(
     } catch {
       case e: AnalysisException if e.getMessage.contains("Incompatible format detected") =>
         !isPathIdentifier(tableIdentifier)
+      case _: NoSuchTableException
+          if tableIdent.database.isEmpty && new Path(tableIdent.table).isAbsolute =>
+        throw DeltaErrors.missingProviderForConvertException(tableIdent.table)
     }
   }
 
@@ -146,19 +207,111 @@ abstract class ConvertToDeltaCommandBase(
       new Path(tableIdent.table).isAbsolute
   }
 
-  protected def handleExistingTransactionLog(
+  /**
+   * If there is already a transaction log we should handle what happens when convert to delta is
+   * run once again. It may be the case that the table is entirely converted i.e. the underlying
+   * files AND the catalog (if one exists) are updated. Or it may be the case that the table is
+   * partially converted i.e. underlying files are converted but catalog (if one exists)
+   * has not been updated.
+   *
+   * @param spark spark session to get session catalog
+   * @param txn existing transaction log
+   * @param target properties that contains: the provider and the catalogTable when
+   * converting using table name
+   */
+  private def handleExistingTransactionLog(
       spark: SparkSession,
       txn: OptimisticTransaction,
-      convertProperties: ConvertProperties): Unit = {
-    logConsole("The table you are trying to convert is already a delta table")
+      target: ConvertTarget): Unit = {
+    // In the case that the table is a delta table but the provider has not been updated we should
+    // update table metadata to reflect that the table is a delta table and table properties should
+    // also be updated
+    if (isParquetCatalogTable(target)) {
+      val catalogTable = target.catalogTable
+      val tableProps = target.properties
+      val deltaLogConfig = txn.metadata.configuration
+      val mergedConfig = deltaLogConfig ++ tableProps
+
+      if (mergedConfig != deltaLogConfig) {
+        if (deltaLogConfig.nonEmpty &&
+          spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_METADATA_CHECK_ENABLED)) {
+          throw DeltaErrors
+            .convertMetastoreMetadataMismatchException(tableProps, deltaLogConfig)
+        }
+        val newMetadata = txn.metadata.copy(
+          configuration = mergedConfig
+        )
+        txn.commit(
+          newMetadata :: Nil,
+          DeltaOperations.Convert(
+            numFiles = 0L,
+            partitionColNames,
+            collectStats = false,
+            catalogTable = catalogTable.map(t => t.identifier.toString)))
+      }
+      convertMetadata(catalogTable.get, spark.sessionState.catalog)
+    } else {
+      logConsole("The table you are trying to convert is already a delta table")
+    }
   }
 
-  protected def performConvert(
+  /** Is the target table a parquet table defined in an external catalog. */
+  private def isParquetCatalogTable(target: ConvertTarget): Boolean = {
+    target.catalogTable match {
+      case Some(ct) =>
+        isHiveStyleParquetTable(ct) || target.provider.get.toLowerCase(Locale.ROOT) == "parquet"
+      case None => false
+    }
+  }
+
+  /**
+   * Generate a file manifest for the table with the given base path `qualifiedDir`.
+   */
+  protected def getFileManifest(
+      spark: SparkSession,
+      qualifiedDir: String,
+      serializableConf: SerializableConfiguration): FileManifest = {
+    new ManualListingFileManifest(spark, qualifiedDir, serializableConf)
+  }
+
+  /**
+   * Given the file manifest, create corresponding AddFile actions for the entire list of files.
+   */
+  protected def createDeltaActions(
+      spark: SparkSession,
+      manifest: FileManifest,
+      txn: OptimisticTransaction,
+      fs: FileSystem): Iterator[AddFile] = {
+    val statsBatchSize = conf.getConf(DeltaSQLConf.DELTA_IMPORT_BATCH_SIZE_STATS_COLLECTION)
+    manifest.getFiles.grouped(statsBatchSize).flatMap { batch =>
+      val adds = batch.map(createAddFile(_, txn.deltaLog.dataPath, fs, conf))
+      adds.toIterator
+    }
+  }
+
+  /** Infers the schema from a batch of parquet files. */
+  protected def getSchemaForBatch(
+      spark: SparkSession,
+      batch: Seq[SerializableFileStatus],
+      serializedConf: SerializableConfiguration): StructType = {
+    mergeSchemasInParallel(spark, batch.map(_.toFileStatus), serializedConf).getOrElse(
+      throw new RuntimeException("Failed to infer schema from the given list of files."))
+  }
+
+  /**
+   * Converts the given table to a Delta table. First gets the file manifest for the table. Then
+   * in the first pass, it infers the schema of the table. Then in the second pass, it generates
+   * the relevant Actions for Delta's transaction log, namely the AddFile actions for each file
+   * in the manifest. Once a commit is made, updates an external catalog, e.g. Hive MetaStore,
+   * if this table was referenced through a table in a catalog.
+   */
+  private def performConvert(
       spark: SparkSession,
       txn: OptimisticTransaction,
-      convertProperties: ConvertProperties): Seq[Row] =
+      convertProperties: ConvertTarget): Seq[Row] =
     recordDeltaOperation(txn.deltaLog, "delta.convert") {
 
+    txn.deltaLog.ensureLogDirectoryExist()
     val targetPath = new Path(convertProperties.targetDir)
     val sessionHadoopConf = spark.sessionState.newHadoopConf()
     val fs = targetPath.getFileSystem(sessionHadoopConf)
@@ -167,19 +320,12 @@ abstract class ConvertToDeltaCommandBase(
     if (!fs.exists(qualifiedPath)) {
       throw DeltaErrors.pathNotExistsException(qualifiedDir)
     }
-    txn.deltaLog.ensureLogDirectoryExist()
-
-    val conf = spark.sparkContext.broadcast(
-      new SerializableConfiguration(spark.sessionState.newHadoopConf()))
-
-
-    val fileListResultDf = DeltaFileOperations.recursiveListDirs(
-        spark, Seq(qualifiedDir), conf).where("!isDir")
-    fileListResultDf.cache()
-    def fileListResult = fileListResultDf.toLocalIterator()
+    val serializableConfiguration = new SerializableConfiguration(sessionHadoopConf)
+    val manifest = getFileManifest(spark, qualifiedDir, serializableConfiguration)
 
     try {
-      if (!fileListResult.hasNext) {
+      val initialList = manifest.getFiles
+      if (!initialList.hasNext) {
         throw DeltaErrors.emptyDirectoryException(qualifiedDir)
       }
 
@@ -187,44 +333,41 @@ abstract class ConvertToDeltaCommandBase(
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_IMPORT_BATCH_SIZE_SCHEMA_INFERENCE)
       var dataSchema: StructType = StructType(Seq())
       var numFiles = 0L
-      fileListResult.asScala.grouped(schemaBatchSize).foreach { batch =>
-        numFiles += batch.size
-        // Obtain a union schema from all files.
-        // Here we explicitly mark the inferred schema nullable. This also means we don't currently
-        // support specifying non-nullable columns after the table conversion.
-        val batchSchema =
-          recordDeltaOperation(txn.deltaLog, "delta.convert.schemaInference") {
-            mergeSchemasInParallel(spark, batch.map(_.toFileStatus))
-              .getOrElse(
-                throw new RuntimeException("Failed to infer schema from the given list of files."))
-          }.asNullable
-        dataSchema = SchemaUtils.mergeSchemas(dataSchema, batchSchema)
+      recordDeltaOperation(txn.deltaLog, "delta.convert.schemaInference") {
+        initialList.grouped(schemaBatchSize).foreach { batch =>
+          numFiles += batch.size
+          // Obtain a union schema from all files.
+          // Here we explicitly mark the inferred schema nullable. This also means we don't
+          // currently support specifying non-nullable columns after the table conversion.
+          val batchSchema = getSchemaForBatch(spark, batch, serializableConfiguration).asNullable
+          dataSchema = SchemaUtils.mergeSchemas(dataSchema, batchSchema)
+        }
       }
 
       val schema = constructTableSchema(spark, dataSchema, partitionFields)
-      val metadata = Metadata(schemaString = schema.json, partitionColumns = partitionColNames)
+      val metadata = Metadata(
+        schemaString = schema.json,
+        partitionColumns = partitionColNames,
+        configuration = convertProperties.properties)
       txn.updateMetadata(metadata)
 
-      val statsBatchSize =
-        spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_IMPORT_BATCH_SIZE_STATS_COLLECTION)
+      val addFilesIter = createDeltaActions(spark, manifest, txn, fs)
 
-      val addFilesIter = fileListResult.asScala.grouped(statsBatchSize).flatMap { batch =>
-        val adds = batch.map(createAddFile(_, txn.deltaLog.dataPath, fs, spark.sessionState.conf))
-        adds.toIterator
-      }
       streamWrite(
         spark,
         txn,
         addFilesIter,
-        DeltaOperations.Convert(
-          numFiles,
-          partitionColNames,
-          collectStats = false,
-          None),
+        getOperation(numFiles, convertProperties),
         numFiles)
     } finally {
-      fileListResultDf.unpersist()
+      manifest.close()
     }
+
+    // If there is a catalog table, convert metadata
+    if (convertProperties.catalogTable.isDefined) {
+      convertMetadata(convertProperties.catalogTable.get, spark.sessionState.catalog)
+    }
+
     Seq.empty[Row]
   }
 
@@ -334,16 +477,27 @@ abstract class ConvertToDeltaCommandBase(
     Map.empty
   }
 
+  /** Get the operation to store in the commit message. */
+  protected def getOperation(
+      numFilesConverted: Long,
+      convertProperties: ConvertTarget): DeltaOperations.Operation = {
+    DeltaOperations.Convert(
+      numFilesConverted,
+      partitionColNames,
+      collectStats = false,
+      convertProperties.catalogTable.map(t => t.identifier.toString))
+  }
+
   /**
    * Create the first commit on the Delta log by directly writing an iterator of AddFiles to the
    * LogStore. This bypasses the Delta transactional protocol, but we assume this is ok as this is
    * the very first commit and only happens at table conversion which is a one-off process.
    */
-  protected def streamWrite(
+  private def streamWrite(
       spark: SparkSession,
       txn: OptimisticTransaction,
       addFiles: Iterator[AddFile],
-      op: DeltaOperations.Convert,
+      op: DeltaOperations.Operation,
       numFiles: Long): Long = {
     val firstVersion = 0L
     try {
@@ -425,10 +579,11 @@ abstract class ConvertToDeltaCommandBase(
    *     S3 nodes).
    */
   protected def mergeSchemasInParallel(
-      sparkSession: SparkSession, filesToTouch: Seq[FileStatus]): Option[StructType] = {
+      sparkSession: SparkSession,
+      filesToTouch: Seq[FileStatus],
+      serializedConf: SerializableConfiguration): Option[StructType] = {
     val assumeBinaryIsString = sparkSession.sessionState.conf.isParquetBinaryAsString
     val assumeInt96IsTimestamp = sparkSession.sessionState.conf.isParquetINT96AsTimestamp
-    val serializedConf = new SerializableConfiguration(sparkSession.sessionState.newHadoopConf())
 
     // !! HACK ALERT !!
     //
@@ -498,7 +653,7 @@ abstract class ConvertToDeltaCommandBase(
     }
   }
 
-  protected case class ConvertProperties(
+  protected case class ConvertTarget(
       catalogTable: Option[CatalogTable],
       provider: Option[String],
       targetDir: String,
@@ -507,6 +662,37 @@ abstract class ConvertToDeltaCommandBase(
   private def isHiveStyleParquetTable(catalogTable: CatalogTable): Boolean = {
     catalogTable.provider.contains("hive") && catalogTable.storage.serde.contains(
       "org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe")
+  }
+
+  /** An interface for providing an iterator of files for a table. */
+  protected trait FileManifest extends Closeable {
+    /** The base path of a table. Should be a qualified, normalized path. */
+    val basePath: String
+
+    /** Return the active files for a table */
+    def getFiles: Iterator[SerializableFileStatus]
+  }
+
+  /** A file manifest generated through recursively listing a base path. */
+  class ManualListingFileManifest(
+      spark: SparkSession,
+      override val basePath: String,
+      serializableConf: SerializableConfiguration) extends FileManifest {
+
+    protected def doList(): Dataset[SerializableFileStatus] = {
+      val conf = spark.sparkContext.broadcast(serializableConf)
+      DeltaFileOperations.recursiveListDirs(spark, Seq(basePath), conf).where("!isDir")
+    }
+
+    private lazy val list: Dataset[SerializableFileStatus] = {
+      val ds = doList()
+      ds.cache()
+      ds
+    }
+
+    override def getFiles: Iterator[SerializableFileStatus] = list.toLocalIterator().asScala
+
+    override def close(): Unit = list.unpersist()
   }
 }
 

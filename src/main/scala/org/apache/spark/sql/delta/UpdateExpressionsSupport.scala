@@ -138,6 +138,7 @@ trait UpdateExpressionsSupport extends CastSupport {
     }
   }
 
+  /** See docs on overloaded method. */
   protected def generateUpdateExpressions(
       targetCols: Seq[NamedExpression],
       nameParts: Seq[Seq[String]],

@@ -61,6 +61,17 @@ object DeltaSQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_SCHEMA_ON_READ_CHECK_ENABLED =
+    buildConf("checkLatestSchemaOnRead")
+      .doc("In Delta, we always try to give users the latest version of their data without " +
+        "having to call REFRESH TABLE or redefine their DataFrames when used in the context of " +
+        "streaming. There is a possibility that the schema of the latest version of the table " +
+        "may be incompatible with the schema at the time of DataFrame creation. This flag " +
+        "enables a check that ensures that users won't read corrupt data if the source schema " +
+        "changes in an incompatible way.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_COLLECT_STATS =
     buildConf("stats.collect")
       .internal()
@@ -88,6 +99,17 @@ object DeltaSQLConf {
       .doc("Enable sample based estimation.")
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_CONVERT_METADATA_CHECK_ENABLED =
+    buildConf("convert.metadataCheck.enabled")
+      .doc(
+        """
+          |If enabled, during convert to delta, if there is a difference between the catalog table's
+          |properties and the Delta table's configuration, we should error. If disabled, merge
+          |the two configurations with the same semantics as update and merge.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_STATS_SKIPPING =
     buildConf("stats.skipping")

@@ -33,6 +33,7 @@ object MimaExcludes {
       // Changes in 0.6.0
       ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaTable.makeUpdateTable"),
       ProblemFilters.exclude[IncompatibleMethTypeProblem]("io.delta.tables.DeltaMergeBuilder.withClause"),
+      ProblemFilters.exclude[IncompatibleMethTypeProblem]("io.delta.tables.DeltaTable.this"),
 
       // ... removed unnecessarily public methods in DeltaMergeBuilder
       ProblemFilters.exclude[MissingTypesProblem]("io.delta.tables.DeltaMergeBuilder"),
@@ -72,7 +73,10 @@ object MimaExcludes {
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaMergeBuilder.recordOperation$default$5"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaMergeBuilder.recordEvent$default$4"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaMergeBuilder.recordOperation$default$8"),
-      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaMergeBuilder.initializeLogIfNecessary$default$2")
+      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaMergeBuilder.initializeLogIfNecessary$default$2"),
+
+      // Changes in 0.7.0
+      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.makeUpdateTable")
   )
 }
 

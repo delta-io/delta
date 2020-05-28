@@ -25,8 +25,9 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.unsafe.types.CalendarInterval
+import org.apache.spark.unsafe.types.UTF8String
 
 trait DeltaRetentionSuiteBase extends QueryTest
   with SharedSparkSession {
@@ -37,7 +38,8 @@ trait DeltaRetentionSuiteBase extends QueryTest
     .set("spark.databricks.delta.properties.defaults.enableExpiredLogCleanup", "false")
 
   protected def intervalStringToMillis(str: String): Long = {
-    DeltaConfigs.getMilliSeconds(CalendarInterval.fromString(str))
+    DeltaConfigs.getMilliSeconds(
+      IntervalUtils.safeStringToInterval(UTF8String.fromString(str)))
   }
 
   protected def getDeltaFiles(dir: File): Seq[File] =

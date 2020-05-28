@@ -18,15 +18,16 @@ package org.apache.spark.sql.delta
 
 import java.util.Locale
 
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.tables._
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.types.StructType
 
-class MergeIntoScalaSuite extends MergeIntoSuiteBase {
+class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
 
   import testImplicits._
-
 
   test("basic scala API") {
     withTable("source") {
@@ -266,6 +267,71 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
     }
   }
 
+  test("merge after schema change") {
+    withSQLConf((DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")) {
+      withTempPath { targetDir =>
+        val targetPath = targetDir.getCanonicalPath
+        spark.range(10).write.format("delta").save(targetPath)
+        val t = io.delta.tables.DeltaTable.forPath(spark, targetPath).as("t")
+        assert(t.toDF.schema == StructType.fromDDL("id LONG"))
+
+        // Do one merge to change the schema.
+        t.merge(Seq((11L, "newVal11")).toDF("id", "newCol1").as("s"), "t.id = s.id")
+          .whenMatched().updateAll()
+          .whenNotMatched().insertAll()
+          .execute()
+        // assert(t.toDF.schema == StructType.fromDDL("id LONG, newCol1 STRING"))
+
+        // SC-35564 - ideally this shouldn't throw an error, but right now we can't fix it without
+        // causing a regression.
+        val ex = intercept[Exception] {
+          t.merge(Seq((12L, "newVal12")).toDF("id", "newCol2").as("s"), "t.id = s.id")
+            .whenMatched().updateAll()
+            .whenNotMatched().insertAll()
+            .execute()
+        }
+        ex.getMessage.contains("schema of your Delta table has changed in an incompatible way")
+      }
+    }
+  }
+
+  test("merge without table alias") {
+    withTempDir { dir =>
+      val location = dir.getAbsolutePath
+      Seq((1, 1, 1), (2, 2, 2)).toDF("part", "id", "n").write
+        .format("delta")
+        .partitionBy("part")
+        .save(location)
+      val table = io.delta.tables.DeltaTable.forPath(spark, location)
+      val data1 = Seq((2, 2, 4, 2), (9, 3, 6, 9), (3, 3, 9, 3)).toDF("part", "id", "n", "part2")
+      table.alias("t").merge(
+        data1,
+        "t.part = part2")
+        .whenMatched().updateAll()
+        .whenNotMatched().insertAll()
+        .execute()
+    }
+  }
+
+  test("merge without table alias with pre-computed condition") {
+    withTempDir { dir =>
+      val location = dir.getAbsolutePath
+      Seq((1, 1, 1), (2, 2, 2)).toDF("part", "id", "x").write
+        .format("delta")
+        .partitionBy("part")
+        .save(location)
+      val table = io.delta.tables.DeltaTable.forPath(spark, location)
+      val tableDf = table.toDF
+      val data1 = Seq((2, 2, 4), (2, 3, 6), (3, 3, 9)).toDF("part", "id", "x")
+      table.merge(
+        data1,
+        tableDf("part") === data1("part") && tableDf("id") === data1("id"))
+        .whenMatched().updateAll()
+        .whenNotMatched().insertAll()
+        .execute()
+    }
+  }
+
   override protected def executeMerge(
       target: String,
       source: String,
@@ -287,13 +353,19 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
       cond: String,
       clauses: MergeClause*): Unit = {
 
-    def parse(tableNameWithAlias: String): (String, Option[String]) = {
+    def parseTableAndAlias(tableNameWithAlias: String): (String, Option[String]) = {
       tableNameWithAlias.split(" ").toList match {
-        case tableName :: Nil => tableName -> None
-        case tableName :: alias :: Nil => tableName -> Some(alias)
+        case tableName :: Nil =>
+          // 'MERGE INTO tableName' OR `MERGE INTO delta.`path`'
+          tableName -> None
+        case tableName :: alias :: Nil =>
+          // 'MERGE INTO tableName alias' or 'MERGE INTO delta.`path` alias'
+          tableName -> Some(alias)
         case list if list.size >= 3 && list(list.size - 2).toLowerCase(Locale.ROOT) == "as" =>
+          // 'MERGE INTO ... AS alias'
           list.dropRight(2).mkString(" ").trim() -> Some(list.last)
         case list if list.size >= 2 =>
+          // 'MERGE INTO ... alias'
           list.dropRight(1).mkString(" ").trim() -> Some(list.last)
         case _ =>
           fail(s"Could not build parse '$tableNameWithAlias' for table and optional alias")
@@ -334,14 +406,14 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase {
     }
 
     val deltaTable = {
-      val (tableNameOrPath, optionalAlias) = parse(tgt)
+      val (tableNameOrPath, optionalAlias) = parseTableAndAlias(tgt)
       var table = makeDeltaTable(tableNameOrPath)
       optionalAlias.foreach { alias => table = table.as(alias) }
       table
     }
 
     val sourceDataFrame: DataFrame = {
-      val (tableOrQuery, optionalAlias) = parse(src)
+      val (tableOrQuery, optionalAlias) = parseTableAndAlias(src)
       var df =
         if (tableOrQuery.startsWith("(")) spark.sql(tableOrQuery) else spark.table(tableOrQuery)
       optionalAlias.foreach { alias => df = df.as(alias) }

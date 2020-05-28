@@ -23,7 +23,7 @@ import org.apache.spark.sql.delta.{DeltaErrors, PreprocessTableMerge}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
-import org.apache.spark.annotation.InterfaceStability._
+import org.apache.spark.annotation._
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.plans.logical._

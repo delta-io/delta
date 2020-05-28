@@ -30,6 +30,7 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.encoders.{ExpressionEncoder, RowEncoder}
 import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, Expression, Literal, PredicateHelper, UnsafeProjection}
+import org.apache.spark.sql.catalyst.expressions.BasePredicate
 import org.apache.spark.sql.catalyst.expressions.NamedExpression
 import org.apache.spark.sql.catalyst.expressions.codegen._
 import org.apache.spark.sql.catalyst.plans.logical._
@@ -132,6 +133,11 @@ case class MergeIntoCommand(
   override def run(
     spark: SparkSession): Seq[Row] = recordDeltaOperation(targetDeltaLog, "delta.dml.merge") {
     targetDeltaLog.withNewTransaction { deltaTxn =>
+      if (target.schema.size != deltaTxn.metadata.schema.size) {
+        throw DeltaErrors.schemaChangedSinceAnalysis(
+          atAnalysis = target.schema, latestSchema = deltaTxn.metadata.schema)
+      }
+
       if (canMergeSchema) {
         updateMetadata(
           spark, deltaTxn, migratedSchema.getOrElse(target.schema),
@@ -505,7 +511,7 @@ object MergeIntoCommand {
       UnsafeProjection.create(exprs, joinedAttributes)
     }
 
-    private def generatePredicate(expr: Expression): Predicate = {
+    private def generatePredicate(expr: Expression): BasePredicate = {
       GeneratePredicate.generate(expr, joinedAttributes)
     }
 
@@ -549,12 +555,14 @@ object MergeIntoCommand {
         }
       }
 
+      val toRow = joinedRowEncoder.toRow _
+      val fromRow = outputRowEncoder.fromRow _
       rowIterator
-        .map(joinedRowEncoder.toRow)
+        .map(toRow)
         .map(processRow)
         .filter(!shouldDeleteRow(_))
         .map { notDeletedInternalRow =>
-          outputRowEncoder.fromRow(outputProj(notDeletedInternalRow))
+          fromRow(outputProj(notDeletedInternalRow))
         }
     }
   }

@@ -25,6 +25,7 @@ import scala.concurrent.duration._
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
+import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.commons.lang3.time.DateUtils
@@ -66,7 +67,7 @@ class DeltaTimeTravelSuite extends QueryTest
     var startVersion = deltaLog.snapshot.version + 1
     commits.foreach { ts =>
       val action = AddFile(startVersion.toString, Map.empty, 10L, startVersion, dataChange = true)
-      deltaLog.startTransaction().commit(Seq(action), DeltaOperations.ManualUpdate)
+      deltaLog.startTransaction().commitManually(action)
       modifyCommitTimestamp(deltaLog, startVersion, ts)
       startVersion += 1
     }

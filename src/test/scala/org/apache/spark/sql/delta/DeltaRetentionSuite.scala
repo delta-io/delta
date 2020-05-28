@@ -75,7 +75,7 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
     }
   }
 
-  testQuietly("log files being already deleted shouldn't fail log deletion job") {
+  test("log files being already deleted shouldn't fail log deletion job") {
     withTempDir { tempDir =>
       val clock = new ManualClock(System.currentTimeMillis())
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath), clock)

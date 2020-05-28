@@ -21,6 +21,7 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta.DeltaOperations.{Delete, Write}
+import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.commands.VacuumCommand
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -30,11 +31,12 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.GivenWhenThen
 
 import org.apache.spark.sql.{AnalysisException, QueryTest, SaveMode}
+import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
-import org.apache.spark.unsafe.types.CalendarInterval
+import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.ManualClock
 
 trait DeltaVacuumSuiteBase extends QueryTest
@@ -295,8 +297,9 @@ trait DeltaVacuumSuiteBase extends QueryTest
   }
 
   protected def defaultTombstoneInterval: Long = {
-    DeltaConfigs.getMilliSeconds(CalendarInterval.fromString(
-      DeltaConfigs.TOMBSTONE_RETENTION.defaultValue))
+    DeltaConfigs.getMilliSeconds(
+      IntervalUtils.safeStringToInterval(
+        UTF8String.fromString(DeltaConfigs.TOMBSTONE_RETENTION.defaultValue)))
   }
 
   implicit def fileToPathString(f: File): String = new Path(f.getAbsolutePath).toString
@@ -359,6 +362,10 @@ trait DeltaVacuumSuiteBase extends QueryTest
         val file = new File(
           fs.makeQualified(DeltaFileOperations.absolutePath(basePath, sanitizedPath)).toUri)
         if (commit) {
+          if (!DeltaTableUtils.isDeltaTable(spark, new Path(basePath))) {
+            // initialize the table
+            deltaLog.startTransaction().commitManually()
+          }
           val txn = deltaLog.startTransaction()
           val action = createFile(basePath, sanitizedPath, file, clock)
           txn.commit(Seq(action), Write(SaveMode.Append))
@@ -378,7 +385,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
           "numRemovedFiles" -> createMetric(sparkContext, "number of files removed."),
           "numAddedFiles" -> createMetric(sparkContext, "number of files added."),
           "numDeletedRows" -> createMetric(sparkContext, "number of rows deleted."),
-          "numTotalRows" -> createMetric(sparkContext, "total number of rows.")
+          "numCopiedRows" -> createMetric(sparkContext, "total number of rows.")
         )
         txn.registerSQLMetrics(spark, metrics)
         txn.commit(Seq(RemoveFile(path, Option(clock.getTimeMillis()))), Delete("true" :: Nil))

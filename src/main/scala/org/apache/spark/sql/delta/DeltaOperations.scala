@@ -75,13 +75,12 @@ object DeltaOperations {
     override val operationMetrics: Set[String] = DeltaOperationMetrics.DELETE
 
     override def transformMetrics(metrics: Map[String, SQLMetric]): Map[String, String] = {
-      // find the case where deletedRows are not captured
-      val numTotalRows = metrics("numTotalRows").value
       var strMetrics = super.transformMetrics(metrics)
-      strMetrics += "numCopiedRows" -> (numTotalRows -
-        metrics("numDeletedRows").value).toString
-      if (strMetrics("numDeletedRows") == "0" && strMetrics("numCopiedRows") == "0" &&
-        strMetrics("numRemovedFiles") != "0") {
+      if (metrics.contains("numOutputRows")) {
+        strMetrics += "numCopiedRows" -> metrics("numOutputRows").value.toString
+      }
+      // find the case where deletedRows are not captured
+      if (strMetrics("numDeletedRows") == "0" && strMetrics("numRemovedFiles") != "0") {
         // identify when row level metrics are unavailable. This will happen when the entire
         // table or partition are deleted.
         strMetrics -= "numDeletedRows"
@@ -149,15 +148,18 @@ object DeltaOperations {
     override val operationMetrics: Set[String] = DeltaOperationMetrics.UPDATE
 
     override def transformMetrics(metrics: Map[String, SQLMetric]): Map[String, String] = {
-      val numTotalRows = metrics("numTotalRows").value
       val numOutputRows = metrics("numOutputRows").value
       val numUpdatedRows = metrics("numUpdatedRows").value
       var strMetrics = super.transformMetrics(metrics)
-      strMetrics += "numCopiedRows" -> (numTotalRows - numUpdatedRows).toString
       // In the case where the numUpdatedRows is not captured in the UpdateCommand implementation
       // we can siphon out the metrics from the BasicWriteStatsTracker for that command.
-      if(numTotalRows == 0 && numUpdatedRows == 0 && numOutputRows != 0) {
+      // This is for the case where the entire partition is re-written.
+      if (numUpdatedRows == 0 && numOutputRows != 0) {
         strMetrics += "numUpdatedRows" -> numOutputRows.toString
+        strMetrics += "numCopiedRows" -> "0"
+      } else {
+        strMetrics += "numCopiedRows" -> (
+          numOutputRows - strMetrics("numUpdatedRows").toLong).toString
       }
       strMetrics
     }

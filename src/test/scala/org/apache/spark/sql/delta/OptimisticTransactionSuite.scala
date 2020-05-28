@@ -16,14 +16,12 @@
 
 package org.apache.spark.sql.delta
 
-import java.util.ConcurrentModificationException
-
-import org.apache.spark.sql.delta.DeltaOperations.{Delete, ManualUpdate, Truncate}
+import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
+import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, Metadata, RemoveFile, SetTransaction}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{QueryTest, Row}
-import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{StringType, StructField, StructType}
 
@@ -37,8 +35,8 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
   test("block append against metadata change") {
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
-      // Initialize the log. ManualUpdate is just a no-op placeholder.
-      log.startTransaction().commit(Nil, ManualUpdate)
+      // Initialize the log.
+      log.startTransaction().commitManually()
 
       val txn = log.startTransaction()
       val winningTxn = log.startTransaction()
@@ -52,8 +50,8 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
   test("block read+append against append") {
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
-      // Initialize the log. ManualUpdate is just a no-op placeholder.
-      log.startTransaction().commit(Metadata() :: Nil, ManualUpdate)
+      // Initialize the log.
+      log.startTransaction().commitManually()
 
       val txn = log.startTransaction()
       // reads the table
@@ -70,8 +68,8 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
   test("allow blind-append against any data change") {
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
-      // Initialize the log and add data. ManualUpdate is just a no-op placeholder.
-      log.startTransaction().commit(addA :: Nil, ManualUpdate)
+      // Initialize the log and add data.
+      log.startTransaction().commitManually(addA)
 
       val txn = log.startTransaction()
       val winningTxn = log.startTransaction()
@@ -85,7 +83,7 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
       // Initialize the log and add data. ManualUpdate is just a no-op placeholder.
-      log.startTransaction().commit(addA :: Nil, ManualUpdate)
+      log.startTransaction().commitManually(addA)
 
       val txn = log.startTransaction()
       txn.filterFiles()
@@ -640,14 +638,14 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
       partitionCols: Seq[String] = "part" :: Nil)(
       test: DeltaLog => Unit): Unit = {
 
-    val schema = new StructType(partitionCols.map(p => new StructField(p, StringType)).toArray)
-    var actionWithMetaData =
+    val schema = StructType(partitionCols.map(p => StructField(p, StringType)).toArray)
+    val actionWithMetaData =
       actions :+ Metadata(partitionColumns = partitionCols, schemaString = schema.json)
 
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
       // Initialize the log and add data. ManualUpdate is just a no-op placeholder.
-      log.startTransaction().commit(actionWithMetaData, ManualUpdate)
+      log.startTransaction().commitManually(actionWithMetaData: _*)
       test(log)
     }
   }
@@ -655,8 +653,8 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
   test("allow concurrent set-txns with different app ids") {
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
-      // Initialize the log and add data. ManualUpdate is just a no-op placeholder.
-      log.startTransaction().commit(Nil, ManualUpdate)
+      // Initialize the log.
+      log.startTransaction().commitManually()
 
       val txn = log.startTransaction()
       txn.txnVersion("t1")
@@ -671,8 +669,8 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
   test("block concurrent set-txns with the same app id") {
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
-      // Initialize the log and add data. ManualUpdate is just a no-op placeholder.
-      log.startTransaction().commit(Nil, ManualUpdate)
+      // Initialize the log.
+      log.startTransaction().commitManually()
 
       val txn = log.startTransaction()
       txn.txnVersion("t1")
@@ -682,28 +680,6 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
       intercept[ConcurrentTransactionException] {
         txn.commit(Nil, ManualUpdate)
       }
-    }
-  }
-
-  test("query with predicates should skip partitions") {
-    withTempDir { tempDir =>
-      val testPath = tempDir.getCanonicalPath
-      spark.range(2)
-        .map(_.toInt)
-        .withColumn("part", $"value" % 2)
-        .write
-        .format("delta")
-        .partitionBy("part")
-        .mode("append")
-        .save(testPath)
-
-      val query = spark.read.format("delta").load(testPath).where("part = 1")
-      val fileScans = query.queryExecution.executedPlan.collect {
-        case f: FileSourceScanExec => f
-      }
-      assert(fileScans.size == 1)
-      assert(fileScans.head.metadata.get("PartitionCount").contains("1"))
-      checkAnswer(query, Seq(Row(1, 1)))
     }
   }
 }

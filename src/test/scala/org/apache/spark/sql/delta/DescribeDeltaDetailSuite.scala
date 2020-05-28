@@ -104,6 +104,59 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
     }
     assert(e.getMessage.contains(tempDir.toString))
   }
+
+  test("delta table: table name") {
+    withTable("describe_detail") {
+      sql(
+        """
+          |CREATE TABLE describe_detail(column1 INT, column2 INT)
+          |USING delta
+          |PARTITIONED BY (column1)
+          |COMMENT "describe a non delta table"
+        """.stripMargin)
+      sql(
+        """
+          |INSERT INTO describe_detail VALUES(1, 1)
+        """.stripMargin
+      )
+      checkResult(
+        sql("DESCRIBE DETAIL describe_detail"),
+        Seq("delta", Array("column1"), 1),
+        Seq("format", "partitionColumns", "numFiles"))
+    }
+  }
+
+  test("delta table: create table on an existing delta log") {
+    val tempDir = Utils.createTempDir().toString
+    Seq(1 -> 1).toDF("column1", "column2")
+      .write
+      .format("delta")
+      .partitionBy("column1")
+      .mode("overwrite")
+      .save(tempDir)
+    val tblName1 = "tbl_name1"
+    val tblName2 = "tbl_name2"
+    withTable(tblName1, tblName2) {
+      sql(s"CREATE TABLE $tblName1 USING DELTA LOCATION '$tempDir'")
+      sql(s"CREATE TABLE $tblName2 USING DELTA LOCATION '$tempDir'")
+      checkResult(
+        sql(s"DESCRIBE DETAIL $tblName1"),
+        Seq(s"default.$tblName1"),
+        Seq("name"))
+      checkResult(
+        sql(s"DESCRIBE DETAIL $tblName2"),
+        Seq(s"default.$tblName2"),
+        Seq("name"))
+      checkResult(
+        sql(s"DESCRIBE DETAIL delta.`$tempDir`"),
+        Seq(null),
+        Seq("name"))
+      checkResult(
+        sql(s"DESCRIBE DETAIL '$tempDir'"),
+        Seq(null),
+        Seq("name"))
+    }
+  }
 }
 
 class DescribeDeltaDetailSuite
