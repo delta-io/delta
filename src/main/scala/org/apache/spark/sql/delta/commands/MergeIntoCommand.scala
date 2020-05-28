@@ -120,7 +120,7 @@ case class MergeIntoCommand(
     matchedClauses.collectFirst { case d: DeltaMergeIntoDeleteClause => d }
 
   override lazy val metrics = Map[String, SQLMetric](
-    "numSourceRows" -> createMetric(sc, "number of source rows"),
+    "numSourceRows" -> createMetric(sc, "number of source rows participated in merge"),
     "numTargetRowsCopied" -> createMetric(sc, "number of target rows rewritten unmodified"),
     "numTargetRowsInserted" -> createMetric(sc, "number of inserted rows"),
     "numTargetRowsUpdated" -> createMetric(sc, "number of updated rows"),
@@ -344,13 +344,38 @@ case class MergeIntoCommand(
     val incrNoopCountExpr = makeMetricUpdateUDF("numTargetRowsCopied")
     val incrDeletedCountExpr = makeMetricUpdateUDF("numTargetRowsDeleted")
 
+    val sourceOnlyPredicatesInCondition =
+      splitConjunctivePredicates(condition).filter(_.references.subsetOf(source.outputSet))
+
+    val sourceOnlyPredicatesInUpdate = updateClause.flatMap(_.condition).map { c =>
+      splitConjunctivePredicates(c).filter(_.references.subsetOf(source.outputSet))
+    }.getOrElse(Nil)
+
+    val sourceOnlyPredicatesInDelete = updateClause.flatMap(_.condition).map { c =>
+      splitConjunctivePredicates(c).filter(_.references.subsetOf(source.outputSet))
+    }.getOrElse(Nil)
+
+    val sourceOnlyPredicatesToPushdown =
+      if (sourceOnlyPredicatesInUpdate.nonEmpty && sourceOnlyPredicatesInDelete.isEmpty) {
+        sourceOnlyPredicatesInCondition ++ sourceOnlyPredicatesInUpdate
+      } else if (sourceOnlyPredicatesInUpdate.isEmpty && sourceOnlyPredicatesInDelete.nonEmpty) {
+        sourceOnlyPredicatesInCondition ++ sourceOnlyPredicatesInDelete
+      } else {
+        // We cannot add sourceOnlyPredicatesInUpdate and sourceOnlyPredicatesInDelete together if
+        // sourceOnlyPredicatesInUpdate and sourceOnlyPredicatesInDelete are all empty or non-empty
+        sourceOnlyPredicatesInCondition
+      }
+
     // Apply an outer join to find both, matches and non-matches. We are adding two boolean fields
     // with value `true`, one to each side of the join. Whether this field is null or not after
     // the outer join, will allow us to identify whether the resultant joined row was a
     // matched inner result or an unmatched result with null on one side.
     val joinedDF = {
-      val sourceDF = Dataset.ofRows(spark, source)
-        .withColumn(SOURCE_ROW_PRESENT_COL, new Column(incrSourceRowCountExpr))
+      val sourceDF = (if (isMatchedOnly && sourceOnlyPredicatesToPushdown.nonEmpty) {
+        addFilterPushdown(Dataset.ofRows(spark, source), sourceOnlyPredicatesToPushdown)
+      } else {
+        Dataset.ofRows(spark, source)
+      }).withColumn(SOURCE_ROW_PRESENT_COL, new Column(incrSourceRowCountExpr))
       val targetDF = Dataset.ofRows(spark, newTarget)
         .withColumn(TARGET_ROW_PRESENT_COL, lit(true))
       sourceDF.join(targetDF, new Column(condition), joinType)
