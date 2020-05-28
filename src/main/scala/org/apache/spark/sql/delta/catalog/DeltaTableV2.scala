@@ -79,11 +79,11 @@ case class DeltaTableV2(
     timeTravelOpt.orElse(timeTravelByPath)
   }
 
-  private def snapshot: Snapshot = {
+  private lazy val snapshot: Snapshot = {
     timeTravelSpec.map { spec =>
       val v = DeltaTableUtils.resolveTimeTravelVersion(spark.sessionState.conf, deltaLog, spec)
       deltaLog.getSnapshotAt(v._1)
-    }.getOrElse(deltaLog.snapshot)
+    }.getOrElse(deltaLog.update(stalenessAcceptable = true))
   }
 
   override def schema(): StructType = snapshot.schema
@@ -127,8 +127,9 @@ case class DeltaTableV2(
       throw DeltaErrors.notADeltaTableException(id)
     }
     val partitionPredicates = DeltaDataSource.verifyAndCreatePartitionFilters(
-      path.toString, deltaLog, partitionFilters)
+      path.toString, deltaLog.snapshot, partitionFilters)
 
+    // TODO(burak): We should pass in the snapshot here
     deltaLog.createRelation(partitionPredicates, timeTravelSpec)
   }
 }
