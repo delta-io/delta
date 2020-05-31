@@ -328,13 +328,15 @@ case class MergeIntoCommand(
       "fullOuter"
     }
 
-    val (targetOnlyPredicates, otherPredicates) =
-      splitConjunctivePredicates(condition).partition(_.references.subsetOf(target.outputSet))
+    val (targetOnlyPredicatesNullIntolerant, otherPredicates) =
+      splitConjunctivePredicates(condition).partition { expr =>
+        isNullIntolerant(expr) && expr.references.subsetOf(target.outputSet)
+      }
 
     val rewriteWithUnion = isMatchedOnly &&
       spark.conf.get(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED) &&
       spark.conf.get(DeltaSQLConf.MERGE_MATCHED_ONLY_REWRITE_WITH_UNION_ENABLED) &&
-      targetOnlyPredicates.nonEmpty
+      targetOnlyPredicatesNullIntolerant.nonEmpty
 
 
     logDebug(s"""writeAllChanges using $joinType join:
@@ -366,7 +368,7 @@ case class MergeIntoCommand(
       // Especially for partition table which the targetOnlyPredicates contains partition columns.
       sourceDF.join(targetDF, new Column(otherPredicates.reduceLeftOption(And)
         .getOrElse(Literal(true, BooleanType))), joinType)
-        .filter(new Column(targetOnlyPredicates.reduceLeftOption(And)
+        .filter(new Column(targetOnlyPredicatesNullIntolerant.reduceLeftOption(And)
           .getOrElse(Literal(true, BooleanType))))
     } else {
       sourceDF.join(targetDF, new Column(condition), joinType)
@@ -425,8 +427,16 @@ case class MergeIntoCommand(
     val mergeDF =
       Dataset.ofRows(spark, joinedPlan).mapPartitions(processor.processPartition)(outputRowEncoder)
     val outputDF = if (rewriteWithUnion) {
-      val nonMergeDF = Dataset.ofRows(spark, newTarget)
-        .filter(new Column(Not(targetOnlyPredicates.reduceLeft(And))))
+      val targetDF = Dataset.ofRows(spark, newTarget)
+      // Before adding NOT operator to targetOnlyPredicatesNullIntolerant,
+      // we should infer isNotNull for them.
+      val targetOnlyPredicatesIsNotNull = targetOnlyPredicatesNullIntolerant.toSet
+        .union(
+          constructIsNotNullConstraints(targetOnlyPredicatesNullIntolerant.toSet, target.output)
+        ).filter { c =>
+        c.references.nonEmpty && c.references.subsetOf(target.outputSet) && c.deterministic
+      }.reduceLeft(And)
+      val nonMergeDF = targetDF.filter(new Column(Not(targetOnlyPredicatesIsNotNull)))
       mergeDF.union(nonMergeDF)
     } else {
       mergeDF

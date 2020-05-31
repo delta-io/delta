@@ -913,6 +913,22 @@ abstract class MergeIntoSuiteBase
     }
   }
 
+  protected def withKeyValueStringData(
+      source: Seq[(Int, String)],
+      target: Seq[(Int, String)],
+      isKeyPartitioned: Boolean = false,
+      sourceKeyValueNames: (String, String) = ("key", "value"),
+      targetKeyValueNames: (String, String) = ("key", "value"))(
+      thunk: (String, String) => Unit = null): Unit = {
+
+    append(target.toDF(targetKeyValueNames._1, targetKeyValueNames._2),
+      if (isKeyPartitioned) Seq(targetKeyValueNames._1) else Nil)
+    withTempView("source") {
+      source.toDF(sourceKeyValueNames._1, sourceKeyValueNames._2).createOrReplaceTempView("source")
+      thunk("source", s"delta.`$tempPath`")
+    }
+  }
+
   test("merge into cached table edge") {
     // Merge with a cached target only works in the join-based implementation right now
     withTable("source") {
@@ -1906,17 +1922,17 @@ abstract class MergeIntoSuiteBase
 
   protected def testMatchedOnlyOptimizationRewriteWithUnion(
       name: String)(
-      source: Seq[(Int, Int)],
-      target: Seq[(Int, Int)],
+      source: Seq[(Int, String)],
+      target: Seq[(Int, String)],
       mergeOn: String,
       mergeClauses: MergeClause*) (
-      result: Seq[(Int, Int)]): Unit = {
+      result: Seq[(Int, String)]): Unit = {
     Seq(true, false).foreach { rewriteWithUnionEnabled =>
       Seq(true, false).foreach { isPartitioned =>
         val s = if (rewriteWithUnionEnabled) "enabled" else "disabled"
-        test(s"matched only merge rewrite with union " +
+        test(s"matched only merge rewrite with union: $rewriteWithUnionEnabled " +
           s"- $s - $name - isPartitioned: $isPartitioned ") {
-          withKeyValueData(source, target, isPartitioned) { case (sourceName, targetName) =>
+          withKeyValueStringData(source, target, isPartitioned) { case (sourceName, targetName) =>
             withSQLConf(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED.key -> "true",
               DeltaSQLConf.MERGE_MATCHED_ONLY_REWRITE_WITH_UNION_ENABLED.key
                 -> s"$rewriteWithUnionEnabled") {
@@ -1935,35 +1951,47 @@ abstract class MergeIntoSuiteBase
   }
 
   testMatchedOnlyOptimizationRewriteWithUnion("with update") (
-    source = Seq((1, 100), (3, 300), (5, 500)),
-    target = Seq((1, 10), (2, 20), (3, 30)),
-    mergeOn = "s.key = t.key",
+    source = Seq((1, "100"), (3, "300"), (5, "500")),
+    target = Seq((1, "10"), (2, "20"), (3, "30")),
+    mergeOn = "s.key = t.key AND t.key % 2 = 1",
     update("t.key = s.key, t.value = s.value")) (
     result = Seq(
-      (1, 100), // updated
-      (2, 20), // existed previously
-      (3, 300) // updated
+      (1, "100"), // updated
+      (2, "20"), // existed previously
+      (3, "300") // updated
     )
   )
 
   testMatchedOnlyOptimizationRewriteWithUnion("with delete") (
-    source = Seq((1, 100), (3, 300), (5, 500)),
-    target = Seq((1, 10), (2, 20), (3, 30)),
-    mergeOn = "s.key = t.key",
+    source = Seq((1, "100"), (3, "300"), (5, "500")),
+    target = Seq((1, "10"), (2, "20"), (3, "30")),
+    mergeOn = "s.key = t.key AND t.key % 2 = 1",
     delete()) (
     result = Seq(
-      (2, 20) // existed previously
+      (2, "20") // existed previously
     )
   )
 
   testMatchedOnlyOptimizationRewriteWithUnion("with update and delete")(
-    source = Seq((1, 100), (3, 300), (5, 500)),
-    target = Seq((1, 10), (3, 30), (5, 30)),
+    source = Seq((1, "100"), (3, "300"), (5, "500")),
+    target = Seq((1, "10"), (3, "30"), (5, "30")),
     mergeOn = "s.key = t.key",
     update("t.value = s.value", "t.key < 3"), delete("t.key > 3")) (
     result = Seq(
-      (1, 100), // updated
-      (3, 30)   // existed previously
+      (1, "100"), // updated
+      (3, "30")   // existed previously
+    )
+  )
+
+  testMatchedOnlyOptimizationRewriteWithUnion("with non-NullIntolerant") (
+    source = Seq((1, "100"), (3, "300"), (5, "500")),
+    target = Seq((1, "10"), (2, null), (3, "30")),
+    mergeOn = "s.key = t.key AND round(t.value) < 100",
+    update("t.key = s.key, t.value = s.value")) (
+    result = Seq(
+      (1, "100"), // updated
+      (2, null), // existed previously
+      (3, "300") // updated
     )
   )
 
