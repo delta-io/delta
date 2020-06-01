@@ -38,7 +38,7 @@ class DeltaLogSuite extends QueryTest
 
   testQuietly("checkpoint") {
     val tempDir = Utils.createTempDir()
-    val log1 = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+    val log1 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
 
     (1 to 15).foreach { i =>
       val txn = log1.startTransaction()
@@ -52,7 +52,7 @@ class DeltaLogSuite extends QueryTest
     }
 
     DeltaLog.clearCache()
-    val log2 = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+    val log2 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
     assert(log2.snapshot.version == log1.snapshot.version)
     assert(log2.snapshot.allFiles.count == 1)
   }
@@ -60,7 +60,7 @@ class DeltaLogSuite extends QueryTest
   testQuietly("SC-8078: update deleted directory") {
     withTempDir { dir =>
       val path = new Path(dir.getCanonicalPath)
-      val log = DeltaLog(spark, path)
+      val log = DeltaLog.forTable(spark, path)
 
       // Commit data so the in-memory state isn't consistent with an empty log.
       val txn = log.startTransaction()
@@ -80,7 +80,7 @@ class DeltaLogSuite extends QueryTest
 
   testQuietly("update should pick up checkpoints") {
     withTempDir { tempDir =>
-      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       val checkpointInterval = log.checkpointInterval
       for (f <- 0 until (checkpointInterval * 2)) {
         val txn = log.startTransaction()
@@ -103,7 +103,7 @@ class DeltaLogSuite extends QueryTest
 
   test("update shouldn't pick up delta files earlier than checkpoint") {
     val tempDir = Utils.createTempDir()
-    val log1 = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+    val log1 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
 
     (1 to 5).foreach { i =>
       val txn = log1.startTransaction()
@@ -117,7 +117,7 @@ class DeltaLogSuite extends QueryTest
     }
 
     DeltaLog.clearCache()
-    val log2 = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+    val log2 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
 
     (6 to 15).foreach { i =>
       val txn = log1.startTransaction()
@@ -152,7 +152,7 @@ class DeltaLogSuite extends QueryTest
         new Path(fs.getScheme + ":" + dir + "/foo"),
         new Path(fs.getScheme + "://" + dir + "/foo")
       )
-      val logs = samePaths.map(DeltaLog(spark, _))
+      val logs = samePaths.map(DeltaLog.forTable(spark, _))
       logs.foreach { log =>
         assert(log eq logs.head)
       }
@@ -161,7 +161,7 @@ class DeltaLogSuite extends QueryTest
 
   testQuietly("handle corrupted '_last_checkpoint' file") {
     withTempDir { tempDir =>
-      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
 
       val checkpointInterval = log.checkpointInterval
       for (f <- 0 to checkpointInterval) {
@@ -178,7 +178,7 @@ class DeltaLogSuite extends QueryTest
 
       // Create a new DeltaLog
       DeltaLog.clearCache()
-      val log2 = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+      val log2 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       // Make sure we create a new DeltaLog in order to test the loading logic.
       assert(log ne log2)
 
