@@ -100,7 +100,7 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
       // rewrites Delta from V2 to V1
       val newTable = table.transformUp { case DeltaRelation(lr) => lr }
         newTable.collectLeaves().headOption match {
-          case Some(DeltaFullTable(index)) if index.deltaLog.snapshot.version > -1 =>
+          case Some(DeltaFullTable(index)) =>
           case o =>
             throw DeltaErrors.notADeltaSourceException("UPDATE", o)
         }
