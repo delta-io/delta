@@ -29,6 +29,7 @@ import org.apache.hadoop.fs.permission.FsPermission
 import org.apache.hadoop.util.Progressable
 
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -40,6 +41,119 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
   with SharedSparkSession {
 
   import testImplicits._
+
+  test("basic case: SQL command - path-based table") {
+    withTempDir { tablePath =>
+      tablePath.delete()
+
+      spark.createDataset(spark.sparkContext.parallelize(1 to 100, 7))
+        .write.format("delta").mode("overwrite").save(tablePath.toString)
+
+      assertManifest(tablePath, expectSameFiles = false, expectedNumFiles = 0)
+
+      // Create a Delta table and call the scala api for generating manifest files
+      spark.sql(s"GENERATE symlink_ForMat_Manifest FOR TABLE delta.`${tablePath.getAbsolutePath}`")
+      assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 7)
+    }
+  }
+
+  test("basic case: SQL command - name-based table") {
+    withTable("deltaTable") {
+      spark.createDataset(spark.sparkContext.parallelize(1 to 100, 7))
+        .write.format("delta").saveAsTable("deltaTable")
+
+      val tableId = TableIdentifier("deltaTable")
+      val tablePath = new File(spark.sessionState.catalog.getTableMetadata(tableId).location)
+      assertManifest(tablePath, expectSameFiles = false, expectedNumFiles = 0)
+
+      spark.sql(s"GENERATE symlink_ForMat_Manifest FOR TABLE deltaTable")
+      assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 7)
+    }
+  }
+
+  test("basic case: SQL command - throw error on bad tables") {
+    var e: Exception = intercept[AnalysisException] {
+      spark.sql("GENERATE symlink_format_manifest FOR TABLE nonExistentTable")
+    }
+    assert(e.getMessage.contains("not found"))
+
+    withTable("nonDeltaTable") {
+      spark.range(2).write.format("parquet").saveAsTable("nonDeltaTable")
+      e = intercept[AnalysisException] {
+        spark.sql("GENERATE symlink_format_manifest FOR TABLE nonDeltaTable")
+      }
+      assert(e.getMessage.contains("only supported for Delta"))
+    }
+  }
+
+  test("basic case: SQL command - throw error on non delta table paths") {
+    withTempDir { dir =>
+      var e = intercept[AnalysisException] {
+        spark.sql(s"GENERATE symlink_format_manifest FOR TABLE delta.`$dir`")
+      }
+
+      assert(e.getMessage.contains("not found") ||
+        e.getMessage.contains("only supported for Delta"))
+
+      spark.range(2).write.format("parquet").mode("overwrite").save(dir.toString)
+
+      e = intercept[AnalysisException] {
+        spark.sql(s"GENERATE symlink_format_manifest FOR TABLE delta.`$dir`")
+      }
+      assert(e.getMessage.contains("table not found") ||
+        e.getMessage.contains("only supported for Delta"))
+
+      e = intercept[AnalysisException] {
+        spark.sql(s"GENERATE symlink_format_manifest FOR TABLE parquet.`$dir`")
+      }
+      assert(e.getMessage.contains("not found"))
+    }
+  }
+
+  test("basic case: SQL command - throw error on unsupported mode") {
+    withTempDir { tablePath =>
+      spark.range(2).write.format("delta").save(tablePath.getAbsolutePath)
+      val e = intercept[IllegalArgumentException] {
+        spark.sql(s"GENERATE xyz FOR TABLE delta.`${tablePath.getAbsolutePath}`")
+      }
+      assert(e.toString.contains("not supported"))
+      DeltaGenerateCommand.modeNameToGenerationFunc.keys.foreach { modeName =>
+        assert(e.toString.contains(modeName))
+      }
+    }
+  }
+
+  test("basic case: Scala API - path-based table") {
+    withTempDir { tablePath =>
+      tablePath.delete()
+
+      spark.createDataset(spark.sparkContext.parallelize(1 to 100, 7))
+        .write.format("delta").mode("overwrite").save(tablePath.toString)
+
+      assertManifest(tablePath, expectSameFiles = false, expectedNumFiles = 0)
+
+      // Create a Delta table and call the scala api for generating manifest files
+      val deltaTable = io.delta.tables.DeltaTable.forPath(tablePath.getAbsolutePath)
+      deltaTable.generate("symlink_format_manifest")
+      assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 7)
+    }
+  }
+
+  test("basic case: Scala API - name-based table") {
+    withTable("deltaTable") {
+      spark.createDataset(spark.sparkContext.parallelize(1 to 100, 7))
+        .write.format("delta").saveAsTable("deltaTable")
+
+      val tableId = TableIdentifier("deltaTable")
+      val tablePath = new File(spark.sessionState.catalog.getTableMetadata(tableId).location)
+      assertManifest(tablePath, expectSameFiles = false, expectedNumFiles = 0)
+
+      val deltaTable = io.delta.tables.DeltaTable.forName("deltaTable")
+      deltaTable.generate("symlink_format_manifest")
+      assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 7)
+    }
+  }
+
 
   test ("full manifest: non-partitioned table") {
     withTempDir { tablePath =>
@@ -134,27 +248,6 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
       generateSymlinkManifest(tablePath.toString)
       assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 0)
       assert(spark.read.format("delta").load(tablePath.toString).count() == 0)
-    }
-  }
-
-  test("full manifest: throw error on non delta table paths") {
-    withTempDir { dir =>
-      var e = intercept[AnalysisException] {
-        spark.sql(s"GENERATE symlink_format_manifest FOR TABLE delta.`$dir`")
-      }
-      assert(e.getMessage.contains("not found"))
-
-      spark.range(2).write.format("parquet").mode("overwrite").save(dir.toString)
-
-      e = intercept[AnalysisException] {
-        spark.sql(s"GENERATE symlink_format_manifest FOR TABLE delta.`$dir`")
-      }
-      assert(e.getMessage.contains("table not found"))
-
-      e = intercept[AnalysisException] {
-        spark.sql(s"GENERATE symlink_format_manifest FOR TABLE parquet.`$dir`")
-      }
-      assert(e.getMessage.contains("not found"))
     }
   }
 
@@ -375,93 +468,13 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
     }
   }
 
-  test("full manifest: scala api") {
-    withTempDir { tablePath =>
-      tablePath.delete()
-
-      def write(parallelism: Int): Unit = {
-        spark.createDataset(spark.sparkContext.parallelize(1 to 100, parallelism))
-          .write.format("delta").mode("overwrite").save(tablePath.toString)
-      }
-
-      write(7)
-      assertManifest(tablePath, expectSameFiles = false, expectedNumFiles = 0)
-
-      // Create a Delta table and call the scala api for generating manifest files
-      val deltaTable = io.delta.tables.DeltaTable.forPath(tablePath.getAbsolutePath)
-      deltaTable.generate("symlink_format_manifest")
-      assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 7)
-    }
-  }
-
-  test("full manifest: SQL command") {
-    withTable("deltaTable") {
-      withTempDir { tablePath =>
-        tablePath.delete()
-
-        def write(parallelism: Int, partitions1: Int, partitions2: Int): Unit = {
-          spark.createDataset(spark.sparkContext.parallelize(1 to 100, parallelism)).toDF("value")
-            .withColumn("part1", $"value" % partitions1)
-            .withColumn("part2", $"value" % partitions2)
-            .write.format("delta").partitionBy("part1", "part2")
-            .mode("overwrite")
-            .option("path", tablePath.toString)
-            .save(tablePath.getAbsolutePath)
-        }
-
-        val path = tablePath.getAbsolutePath
-        write(10, 10, 10)
-        assertManifest(tablePath, expectSameFiles = false, expectedNumFiles = 0)
-        spark.sql(s"""GENERATE symlink_ForMat_Manifest FOR TABLE delta.`$path`""")
-
-        // 10 files each in ../part1=X/part2=X/ for X = 0 to 9
-        assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 100)
-
-        // Reduce # partitions on both dimensions
-        write(1, 1, 1)
-        assertManifest(tablePath, expectSameFiles = false, expectedNumFiles = 100)
-        spark.sql(s"""GENERATE SYMLINK_FORMAT_MANIFEST FOR TABLE delta.`$path`""")
-        assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 1)
-
-        // Increase # partitions on both dimensions
-        write(5, 5, 5)
-        assertManifest(tablePath, expectSameFiles = false, expectedNumFiles = 1)
-        spark.sql(s"GENERATE symlink_ForMat_Manifest FOR TABLE delta.`$path`")
-        assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 25)
-
-        // Increase # partitions on only one dimension
-        write(5, 10, 5)
-        assertManifest(tablePath, expectSameFiles = false, expectedNumFiles = 25)
-        spark.sql(s"GENERATE symlink_format_manifest FOR TABLE delta.`$path`")
-        assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 50)
-
-        // Remove all data
-        spark.emptyDataset[Int].toDF("value")
-          .withColumn("part1", $"value" % 10)
-          .withColumn("part2", $"value" % 10)
-          .write.format("delta").mode("overwrite").save(tablePath.toString)
-        assertManifest(tablePath, expectSameFiles = false, expectedNumFiles = 50)
-        spark.sql(s"GENERATE symlink_ForMat_Manifest FOR TABLE delta.`$path`")
-        assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 0)
-        assert(spark.read.format("delta")
-          .load(tablePath.getAbsolutePath).count() == 0)
-      }
-    }
-  }
-
-  test("full manifest: SQL command - throw error on unsupported mode") {
-    withTempDir { tablePath =>
-      spark.range(2).write.format("delta").save(tablePath.getAbsolutePath)
-      val e = intercept[IllegalArgumentException] {
-        spark.sql(s"GENERATE xyz FOR TABLE delta.`${tablePath.getAbsolutePath}`")
-      }
-      assert(e.toString.contains("not supported"))
-      DeltaGenerateCommand.modeNameToGenerationFunc.keys.foreach { modeName =>
-        assert(e.toString.contains(modeName))
-      }
-    }
-  }
-
+  /**
+   * Assert that the manifest files in the table meet the expectations.
+   * @param tablePath Path of the Delta table
+   * @param expectSameFiles Expect that the manifest files contain the same data files
+   *                        as the latest version of the table
+   * @param expectedNumFiles Expected number of manifest files
+   */
   def assertManifest(tablePath: File, expectSameFiles: Boolean, expectedNumFiles: Int): Unit = {
     val deltaSnapshot = DeltaLog.forTable(spark, tablePath.toString).update()
     val manifestPath = new File(tablePath, GenerateSymlinkManifest.MANIFEST_LOCATION)
@@ -509,15 +522,10 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
 
   protected def withIncrementalManifest(tablePath: File, enabled: Boolean)(func: => Unit): Unit = {
     if (tablePath.exists()) {
-      val deltaLog = DeltaLog.forTable(spark, tablePath)
-      val latestMetadata = deltaLog.update().metadata
+      val latestMetadata = DeltaLog.forTable(spark, tablePath).update().metadata
       if (DeltaConfigs.SYMLINK_FORMAT_MANIFEST_ENABLED.fromMetaData(latestMetadata) != enabled) {
-        // Update the metadata of the table
-        val config = Map(DeltaConfigs.SYMLINK_FORMAT_MANIFEST_ENABLED.key -> enabled.toString)
-        val txn = deltaLog.startTransaction()
-        val metadata = txn.metadata
-        val newMetadata = metadata.copy(configuration = metadata.configuration ++ config)
-        txn.commit(newMetadata :: Nil, DeltaOperations.SetTableProperties(config))
+        spark.sql(s"ALTER TABLE delta.`$tablePath` " +
+          s"SET TBLPROPERTIES(${DeltaConfigs.SYMLINK_FORMAT_MANIFEST_ENABLED.key}=$enabled)")
       }
     }
     func
