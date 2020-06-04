@@ -125,10 +125,12 @@ class DynamoDBLogStore(
       val tempPath = Option(item.get("tempPath").getS).map(new Path(_))
       val length = item.get("length").getN.toLong
       val modificationTime = item.get("modificationTime").getN.toLong
+      val isComplete = item.get("isComplete").getS() == "true"
       storage.LogEntryMetadata(
         path = new Path(s"$parentPath/$filename"),
         tempPath = tempPath,
         length = length,
+        isComplete = isComplete,
         modificationTime = modificationTime
       )
     })
