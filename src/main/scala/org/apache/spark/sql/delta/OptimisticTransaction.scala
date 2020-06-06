@@ -271,6 +271,17 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   }
 
   /**
+   * Return the user-defined metadata for the operation.
+   */
+  def getUserMetadata(op: Operation): Option[String] = {
+    // option wins over config if both are set
+    op.userMetadata match {
+      case data @ Some(_) => data
+      case None => spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_USER_METADATA)
+    }
+  }
+
+  /**
    * Modifies the state of the log by adding a new commit that is based on a read at
    * the given `lastVersion`.  In the case of a conflict with a concurrent writer this
    * method will throw an exception.
@@ -315,7 +326,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
           Some(readVersion).filter(_ >= 0),
           None,
           Some(isBlindAppend),
-          getOperationMetrics(op))
+          getOperationMetrics(op),
+          getUserMetadata(op))
         finalActions = commitInfo +: finalActions
       }
 

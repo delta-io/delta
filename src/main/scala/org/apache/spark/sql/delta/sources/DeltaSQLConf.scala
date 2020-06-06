@@ -45,6 +45,12 @@ object DeltaSQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_USER_METADATA =
+    buildConf("commitInfo.userMetadata")
+      .doc("Arbitrary user-defined metadata to include in CommitInfo. Requires commitInfo.enabled.")
+      .stringConf
+      .createOptional
+
   val DELTA_SNAPSHOT_PARTITIONS =
     buildConf("snapshotPartitions")
       .internal()
