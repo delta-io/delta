@@ -387,24 +387,41 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       // If this is the first commit and no metadata is specified, throw an exception
       if (!finalActions.exists(_.isInstanceOf[Metadata])) {
         recordDeltaEvent(deltaLog, "delta.metadataCheck.noMetadataInInitialCommit")
-        throw DeltaErrors.metadataAbsentException()
+        if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED)) {
+          throw DeltaErrors.metadataAbsentException()
+        }
+        logWarning(
+          s"""
+            |Detected no metadata in initial commit but commit validation was turned off. To turn
+            |it back on set ${DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED} to "true"
+          """.stripMargin)
       }
     }
 
+    val partitionColumns = metadata.partitionColumns.toSet
     finalActions = finalActions.map {
       // Fetch global config defaults for the first commit
       case m: Metadata if snapshot.version == -1 =>
         val updatedConf = DeltaConfigs.mergeGlobalConfigs(
           spark.sessionState.conf, m.configuration, Protocol())
         m.copy(configuration = updatedConf)
-      case a: AddFile if metadata.partitionColumns.toSet != a.partitionValues.keySet =>
+      case a: AddFile if partitionColumns != a.partitionValues.keySet =>
         // If the partitioning in metadata does not match the partitioning in the AddFile
         recordDeltaEvent(deltaLog, "delta.metadataCheck.partitionMismatch", data = Map(
           "tablePartitionColumns" -> metadata.partitionColumns,
           "filePartitionValues" -> a.partitionValues
         ))
-        throw DeltaErrors.addFilePartitioningMismatchException(
-          a.partitionValues.keySet.toSeq, metadata.partitionColumns)
+        if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED)) {
+          throw DeltaErrors.addFilePartitioningMismatchException(
+            a.partitionValues.keySet.toSeq, partitionColumns.toSeq)
+        }
+        logWarning(
+          s"""
+             |Detected mismatch in partition values between AddFile and table metadata but
+             |commit validation was turned off.
+             |To turn it back on set ${DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED} to "true"
+          """.stripMargin)
+        a
       case other => other
     }
 

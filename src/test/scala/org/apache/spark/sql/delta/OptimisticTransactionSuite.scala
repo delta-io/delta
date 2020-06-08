@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, Metadata, RemoveFile, SetTransaction}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{QueryTest, Row}
@@ -688,10 +689,19 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
       val txn = log.startTransaction()
-      val e = intercept[IllegalStateException] {
-        txn.commit(Nil, ManualUpdate)
+      withSQLConf(DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "true") {
+        val e = intercept[IllegalStateException] {
+          txn.commit(Nil, ManualUpdate)
+        }
+        assert(e.getMessage === DeltaErrors.metadataAbsentException().getMessage)
       }
-      assert(e.getMessage === DeltaErrors.metadataAbsentException().getMessage)
+
+      // Try with commit validation turned off
+      withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "false",
+          DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "false") {
+        txn.commit(Nil, ManualUpdate)
+        assert(log.update().version === 0)
+      }
     }
   }
 
@@ -710,12 +720,21 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getAbsolutePath))
       log.startTransaction().commit(Seq(Metadata(partitionColumns = Seq("col2"))), ManualUpdate)
-      val e = intercept[IllegalStateException] {
+      withSQLConf(DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "true") {
+        val e = intercept[IllegalStateException] {
+          log.startTransaction().commit(Seq(AddFile(
+            log.dataPath.toString, Map("col3" -> "1"), 12322, 0L, true, null, null)), ManualUpdate)
+        }
+        assert(e.getMessage === DeltaErrors.addFilePartitioningMismatchException(
+          Seq("col3"), Seq("col2")).getMessage)
+      }
+      // Try with commit validation turned off
+      withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "false",
+        DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "false") {
         log.startTransaction().commit(Seq(AddFile(
           log.dataPath.toString, Map("col3" -> "1"), 12322, 0L, true, null, null)), ManualUpdate)
+        assert(log.update().version === 1)
       }
-      assert(e.getMessage === DeltaErrors.addFilePartitioningMismatchException(
-        Seq("col3"), Seq("col2")).getMessage)
     }
   }
 }

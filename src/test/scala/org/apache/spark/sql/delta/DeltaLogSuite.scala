@@ -317,10 +317,16 @@ class DeltaLogSuite extends QueryTest
         log.store.write(
           FileNames.deltaFile(log.logPath, 0L),
           Iterator(selectedAction, file).map(a => JsonUtils.toJson(a.wrap)))
-        val e = intercept[IllegalStateException] {
-          log.update()
+        withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "true") {
+          val e = intercept[IllegalStateException] {
+            log.update()
+          }
+          assert(e.getMessage === DeltaErrors.actionNotFoundException(action, 0).getMessage)
         }
-        assert(e.getMessage === DeltaErrors.actionNotFoundException(action, 0).getMessage)
+        // Disable the validation check
+        withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "false") {
+          assert(log.update().version === 0L)
+        }
       }
     }
   }
@@ -377,11 +383,16 @@ class DeltaLogSuite extends QueryTest
         DeltaLog.clearCache()
 
         // Verify if the state reconstruction from the checkpoint fails.
-        withSQLConf(DeltaSQLConf.DELTA_STATE_CORRUPTION_IS_FATAL.key -> "true") {
+        withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "true") {
           val e = intercept[IllegalStateException] {
             DeltaLog.forTable(spark, tempDir).update()
           }
           assert(e.getMessage === DeltaErrors.actionNotFoundException(action, 10).getMessage)
+        }
+
+        // Disable state reconstruction validation and try again
+        withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "false") {
+          assert(DeltaLog.forTable(spark, tempDir).update().version === 10)
         }
       }
     }

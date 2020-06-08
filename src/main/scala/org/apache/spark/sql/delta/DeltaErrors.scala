@@ -458,9 +458,13 @@ object DeltaErrors
   }
 
   def actionNotFoundException(action: String, version: Long): Throwable = {
-    new IllegalStateException(s"The $action of your Delta table couldn't be recovered " +
-      s"while Reconstructing version: ${version.toString}. " +
-      s"Did you manually delete files in the _delta_log directory?")
+    new IllegalStateException(
+      s"""
+         |The $action of your Delta table couldn't be recovered while Reconstructing
+         |version: ${version.toString}. Did you manually delete files in the _delta_log directory?
+         |Set ${DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key}
+         |to "false" to skip validation.
+       """.stripMargin)
   }
 
   def schemaChangedException(oldSchema: StructType, newSchema: StructType): Throwable = {
@@ -876,17 +880,21 @@ object DeltaErrors
 
   def metadataAbsentException(): Throwable = {
     new IllegalStateException(
-      s"Couldn't find Metadata while committing the first version of the Delta table.")
+      s"""
+         |Couldn't find Metadata while committing the first version of the Delta table. To disable
+         |this check set ${DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key} to "false"
+       """.stripMargin)
   }
 
   def addFilePartitioningMismatchException(
       addFilePartitions: Seq[String],
       metadataPartitions: Seq[String]): Throwable = {
     new IllegalStateException(
-      """
+      s"""
         |The AddFile contains partitioning schema different from the table's partitioning schema
         |expected: ${DeltaErrors.formatColumnList(metadataPartitions)}
-        |actual: ${DeltaErrors.formatColumnList(addFilePartitions)
+        |actual: ${DeltaErrors.formatColumnList(addFilePartitions)}
+        |To disable this check set ${DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key} to "false"
       """.stripMargin)
   }
 

@@ -67,6 +67,20 @@ object DeltaSQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED =
+    buildConf("stateReconstructionValidation.enabled")
+      .internal()
+      .doc("Whether to perform validation checks on the reconstructed state.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_COMMIT_VALIDATION_ENABLED =
+    buildConf("commitValidation.enabled")
+      .internal()
+      .doc("Whether to perform validation checks before commit or not.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_SCHEMA_ON_READ_CHECK_ENABLED =
     buildConf("checkLatestSchemaOnRead")
       .doc("In Delta, we always try to give users the latest version of their data without " +
