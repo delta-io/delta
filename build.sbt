@@ -43,7 +43,7 @@ libraryDependencies ++= Seq(
   compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.16" cross CrossVersion.full)
 )
 
-resolvers += "Temporary Staging of Spark 3.0" at "https://docs.delta.io/spark3artifacts/snapshot-740da348/maven/"
+resolvers += "Temporary Staging of Spark 3.0" at "https://docs.delta.io/spark3artifacts/snapshot-fa608b94/maven/"
 
 antlr4Settings
 
