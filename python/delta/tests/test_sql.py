@@ -89,6 +89,53 @@ class DeltaSqlTests(DeltaTestCase):
         shutil.rmtree(temp_path2)
         shutil.rmtree(temp_path3)
 
+    def test_ddls(self):
+        table = "deltaTable"
+        table2 = "deltaTable2"
+        try:
+            def read_table():
+                return self.spark.sql(f"SELECT * FROM {table}")
+
+            self.spark.sql(f"DROP TABLE IF EXISTS {table}")
+            self.spark.sql(f"DROP TABLE IF EXISTS {table2}")
+
+            self.spark.sql(f"CREATE TABLE {table}(a LONG, b String NOT NULL) USING delta")
+            self.assertEqual(read_table().count(), 0)
+
+            self.__checkAnswer(
+                self.spark.sql(f"DESCRIBE TABLE {table}").select("col_name", "data_type"),
+                [("a", "bigint"), ("b", "string"), ("", ""), ("# Partitioning", ""),
+                 ("Not partitioned", "")],
+                schema=["col_name", "data_type"])
+
+            self.spark.sql(f"ALTER TABLE {table} CHANGE COLUMN a a LONG AFTER b")
+            self.assertSequenceEqual(["b", "a"], [f.name for f in read_table().schema.fields])
+
+            self.spark.sql(f"ALTER TABLE {table} ALTER COLUMN b DROP NOT NULL")
+            self.assertIn(True, [f.nullable for f in read_table().schema.fields if f.name == "b"])
+
+            self.spark.sql(f"ALTER TABLE {table} ADD COLUMNS (x LONG)")
+            self.assertIn("x", [f.name for f in read_table().schema.fields])
+
+            self.spark.sql(f"ALTER TABLE {table} SET TBLPROPERTIES ('k' = 'v')")
+            self.__checkAnswer(self.spark.sql(f"SHOW TBLPROPERTIES {table}"), [('k', 'v')])
+
+            self.spark.sql(f"ALTER TABLE {table} UNSET TBLPROPERTIES ('k')")
+            self.__checkAnswer(self.spark.sql(f"SHOW TBLPROPERTIES {table}"), [])
+
+            self.spark.sql(f"ALTER TABLE {table} RENAME TO {table2}")
+            self.assertEqual(self.spark.sql(f"SELECT * FROM {table2}").count(), 0)
+
+            test_dir = os.path.join(tempfile.mkdtemp(), table2)
+            self.spark.createDataFrame([("", 0, 0)], ["b", "a", "x"]) \
+                .write.format("delta").save(test_dir)
+
+            self.spark.sql(f"ALTER TABLE {table2} SET LOCATION '{test_dir}'")
+            self.assertEqual(self.spark.sql(f"SELECT * FROM {table2}").count(), 1)
+        finally:
+            self.spark.sql(f"DROP TABLE IF EXISTS {table}")
+            self.spark.sql(f"DROP TABLE IF EXISTS {table2}")
+
     def __checkAnswer(self, df, expectedAnswer, schema=["key", "value"]):
         if not expectedAnswer:
             self.assertEqual(df.count(), 0)
