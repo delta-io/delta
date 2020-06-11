@@ -838,9 +838,24 @@ object DeltaErrors
     new AnalysisException("Cannot describe the history of a view.")
   }
 
+  def copyIntoEncryptionOnlyS3(scheme: String): Throwable = {
+    new IllegalArgumentException(
+      s"Invalid scheme $scheme. COPY INTO source encryption is only supported for S3 paths.")
+  }
+
+  def copyIntoEncryptionSseCRequired(): Throwable = {
+    new IllegalArgumentException(
+      s"Invalid encryption type. COPY INTO source encryption must specify 'type' = 'SSE-C'.")
+  }
+
+  def copyIntoEncryptionMasterKeyRequired(): Throwable = {
+    new IllegalArgumentException(
+      s"Invalid encryption arguments. COPY INTO source encryption must specify a masterKey.")
+  }
+
   def copyIntoCredentialsOnlyS3(scheme: String): Throwable = {
     new IllegalArgumentException(
-      s"Invalid scheme $scheme. COPY INTO command credentials are only supported for S3 paths.")
+      s"Invalid scheme $scheme. COPY INTO source credentials are only supported for S3 paths.")
   }
 
   def copyIntoCredentialsAllRequired(cause: Throwable): Throwable = {
