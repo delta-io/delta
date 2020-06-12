@@ -1,5 +1,5 @@
-from pyspark import SparkContext, SparkConf
-from pyspark.sql import Column, DataFrame, SparkSession, SQLContext, functions
+
+from pyspark.sql import Column, DataFrame, SparkSession, functions
 from pyspark.sql.functions import *
 from py4j.java_collections import MapConverter
 from delta.tables import *

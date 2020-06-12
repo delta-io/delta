@@ -16,8 +16,7 @@
 
 package example
 
-import org.apache.spark.{SparkConf, SparkContext}
-import org.apache.spark.sql.{SparkSession, SQLContext}
+import org.apache.spark.sql.SparkSession
 import io.delta.tables._
 
 import org.apache.spark.sql.functions._
