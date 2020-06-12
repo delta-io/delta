@@ -24,20 +24,17 @@ import org.apache.spark.sql.functions._
 import org.apache.commons.io.FileUtils
 import java.io.File
 
-object QuickStartMetastoreSQL {
+object QuickStartSQL {
   def main(args: Array[String]): Unit = {
     // Create Spark Conf
-    val conf = new SparkConf()
-        .setAppName("QuickStart")
-        .setMaster("local[*]")
-
-    // Enable SQL Commands and Metastore tables
-    conf.set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-    conf.set("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-    val sc = new SparkContext(conf)
-    val sqlContext = new SQLContext(sc)
-    // Create a Spark Session
-    val spark = sqlContext.sparkSession
+    val spark = SparkSession
+      .builder()
+      .appName("Streaming")
+      .master("local[*]")
+      .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+      .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+      .getOrCreate()
+    
     val tableName = "tblname"
 
     // Clear up old session

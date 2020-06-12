@@ -28,16 +28,14 @@ try:
 except:
     pass
 
-conf = SparkConf() \
-    .setAppName("quickstart") \
-    .setMaster("local[*]")
-
 # Enable SQL commands and Update/Delete/Merge for the current spark session. 
 # we need to set the following configs
-# config io.delta.sql.DeltaSparkSessionExtension -- to enable custom Delta-specific SQL commands
-conf.set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-sc = SparkContext(conf=conf)
-spark = SparkSession(sc)
+spark = SparkSession.builder \
+    .appName("quickstart") \
+    .master("local[*]") \
+    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
+    .getOrCreate()
 
 # Create a table
 print("############# Creating a table ###############")

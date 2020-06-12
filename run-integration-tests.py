@@ -24,10 +24,11 @@ from os import path
 import random
 import string
 import tempfile
+import argparse
 
 
-def run_scala_integration_tests(root_dir, version):
-    print("##### Running Scala tests on version %s #####" % str(version))
+def run_scala_integration_tests(root_dir, version, test_name):
+    print("\n\n##### Running Scala tests on version %s #####" % str(version))
     clear_artifact_cache()
     test_dir = path.join(root_dir, "examples", "scala")
     test_src_dir = path.join(test_dir, "src", "main", "scala", "example")
@@ -35,9 +36,13 @@ def run_scala_integration_tests(root_dir, version):
                     if f.endswith(".scala") and not f.startswith("_")]
     with WorkingDirectory(test_dir):
         for test_class in test_classes:
+            if test_name is not None and test_name not in test_class:
+                print("\nSkipping Scala tests in %s\n=====================" % test_class)
+                continue
+
             try:
                 cmd = ["build/sbt", "runMain example.%s" % test_class]
-                print("Running Scala tests in %s\n=====================" % test_class)
+                print("\nRunning Scala tests in %s\n=====================" % test_class)
                 print("Command: %s" % str(cmd))
                 run_cmd(cmd, stream_output=True, env={"DELTA_VERSION": str(version)})
             except:
@@ -45,8 +50,8 @@ def run_scala_integration_tests(root_dir, version):
                 raise
 
 
-def run_python_integration_tests(root_dir, version):
-    print("##### Running Python tests on version %s #####" % str(version))
+def run_python_integration_tests(root_dir, version, test_name):
+    print("\n\n##### Running Python tests on version %s #####" % str(version))
     clear_artifact_cache()
     test_dir = path.join(root_dir, path.join("examples", "python"))
     test_files = [path.join(test_dir, f) for f in os.listdir(test_dir)
@@ -54,15 +59,19 @@ def run_python_integration_tests(root_dir, version):
                   f.endswith(".py") and not f.startswith("_")]
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    package = "io.delta:delta-core_2.11:" + version
+    package = "io.delta:delta-core_2.12:" + version
     repo = 'https://dl.bintray.com/delta-io/delta'
     for test_file in test_files:
+        if test_name is not None and test_name not in test_file:
+            print("\nSkipping Python tests in %s\n=====================" % test_file)
+            continue 
+
         try:
             cmd = ["spark-submit",
                    "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
                    "--packages", package,
                    "--repositories", repo, test_file]
-            print("Running Python tests in %s\n=============" % test_file)
+            print("\nRunning Python tests in %s\n=============" % test_file)
             print("Command: %s" % str(cmd))
             run_cmd(cmd, stream_output=True)
         except:
@@ -123,16 +132,42 @@ if __name__ == "__main__":
         additionally the version can be provided as a command line argument.
         "
     """
-    root_dir = path.dirname(path.dirname(__file__))
-    # check if version is provided as an argument
-    version = '0.0.0'
-    if len(sys.argv) >= 2:
-        version = sys.argv[1]
 
     # get the version of the package
-    if version == '0.0.0':
-        with open(path.join(root_dir, "version.sbt")) as fd:
-            version = fd.readline().split('"')[1]
+    root_dir = path.dirname(path.dirname(__file__))
+    with open(path.join(root_dir, "version.sbt")) as fd:
+        default_version = fd.readline().split('"')[1]
 
-    run_scala_integration_tests(root_dir, version)
-    run_python_integration_tests(root_dir, version)
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--version",
+        required=False,
+        default=default_version,
+        help="Delta version to use to run the integration tests")
+    parser.add_argument(
+        "--python-only",
+        required=False,
+        default=False,
+        action="store_true",
+        help="Run only Python tests")
+    parser.add_argument(
+        "--scala-only",
+        required=False,
+        default=False,
+        action="store_true",
+        help="Run only Scala tests")
+    parser.add_argument(
+        "--test",
+        required=False,
+        default=None,
+        help="Run a specific test by substring-match with Scala/Python file name")
+    args = parser.parse_args()
+
+    run_python = not args.scala_only
+    run_scala = not args.python_only
+    
+    if run_scala:
+        run_scala_integration_tests(root_dir, args.version, args.test)
+    
+    if run_python:
+        run_python_integration_tests(root_dir, args.version, args.test)

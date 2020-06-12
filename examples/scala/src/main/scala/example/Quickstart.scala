@@ -26,20 +26,20 @@ import java.io.File
 
 object Quickstart {
   def main(args: Array[String]): Unit = {
-    // Create Spark Conf
-    val conf = new SparkConf()
-        .setAppName("QuickStart")
-        .setMaster("local[*]")
 
-    conf.set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")      
-    val sc = new SparkContext(conf)
-    val sqlContext = new SQLContext(sc)
-    // Create a Spark Session
-    val spark = sqlContext.sparkSession
+    val spark = SparkSession
+      .builder()
+      .appName("Streaming")
+      .master("local[*]")
+      .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+      .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+      .getOrCreate()
 
+    val file = new File("/tmp/delta-table")
+    if (file.exists()) FileUtils.deleteDirectory(file)
+    
     // Create a table
     println("Creating a table")
-    val file = new File("/tmp/delta-table")
     val path = file.getCanonicalPath
     var data = spark.range(0, 5)
     data.write.format("delta").save(path)

@@ -8,21 +8,19 @@ import threading
 
 tableName = "tbltestpython"
 
-conf = SparkConf() \
-    .setAppName("quickstart-metastore-sql") \
-    .setMaster("local[*]") 
-
 # Enable SQL/DML commands and Metastore tables for the current spark session.
 # We need to set the following configs 
 
-conf.set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-conf.set("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-sc = SparkContext(conf=conf)
-spark = SparkSession(sc)
+spark = SparkSession.builder \
+    .appName("quickstart") \
+    .master("local[*]") \
+    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
+    .getOrCreate()
 
 # Clear any previous runs
 try:
-    spark.sql("DROP TABLE " + tableName)
+    spark.sql("DROP TABLE IF EXISTS " + tableName)
 except:
     pass
 

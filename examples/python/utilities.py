@@ -22,16 +22,13 @@ from delta.tables import *
 import shutil
 import threading
 
-conf = SparkConf() \
-    .setAppName("utilities") \
-    .setMaster("local[*]")
-
-# Enable SQL and for the current spark session. we need to set the following configs
-# to enable SQL Commands
-# config io.delta.sql.DeltaSparkSessionExtension -- to enable custom Delta-specific SQL commands
-conf.set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-sc = SparkContext(conf=conf)
-spark = SparkSession(sc)
+spark = SparkSession.builder \
+    .appName("quickstart") \
+    .master("local[*]") \
+    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
+    .config("spark.sql.sources.parallelPartitionDiscovery.parallelism", "4") \
+    .getOrCreate()
 
 # Clear previous run's delta-tables
 try:
