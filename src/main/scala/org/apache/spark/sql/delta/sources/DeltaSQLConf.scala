@@ -45,6 +45,12 @@ object DeltaSQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_USER_METADATA =
+    buildConf("commitInfo.userMetadata")
+      .doc("Arbitrary user-defined metadata to include in CommitInfo. Requires commitInfo.enabled.")
+      .stringConf
+      .createOptional
+
   val DELTA_SNAPSHOT_PARTITIONS =
     buildConf("snapshotPartitions")
       .internal()
@@ -58,6 +64,20 @@ object DeltaSQLConf {
       .internal()
       .doc("Whether to check whether the partition column names have valid names, just like " +
         "the data columns.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED =
+    buildConf("stateReconstructionValidation.enabled")
+      .internal()
+      .doc("Whether to perform validation checks on the reconstructed state.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_COMMIT_VALIDATION_ENABLED =
+    buildConf("commitValidation.enabled")
+      .internal()
+      .doc("Whether to perform validation checks before commit or not.")
       .booleanConf
       .createWithDefault(true)
 

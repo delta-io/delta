@@ -933,4 +933,26 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestU
         simpleDF.union(simpleDF).filter("id % 2 == 1").select("id"))
     }
   }
+
+  test("external tables use correct path scheme") {
+    withTempDir { dir =>
+      withTable("externalTable") {
+        withSQLConf(("fs.s3.impl", classOf[S3LikeLocalFileSystem].getCanonicalName)) {
+          sql(s"CREATE TABLE externalTable USING parquet LOCATION 's3://$dir' AS SELECT 1")
+
+          // Ideally we would test a successful conversion with a remote filesystem, but there's
+          // no good way to set one up in unit tests. So instead we delete the data, and let the
+          // FileNotFoundException tell us which scheme it was using to look for it.
+          Utils.deleteRecursively(dir)
+
+          val ex = intercept[FileNotFoundException] {
+            convertToDelta("default.externalTable", None)
+          }
+
+          // If the path incorrectly used the default scheme, this would be file: at the end.
+          assert(ex.getMessage.contains(s"No file found in the directory: s3:$dir"))
+        }
+      }
+    }
+  }
 }

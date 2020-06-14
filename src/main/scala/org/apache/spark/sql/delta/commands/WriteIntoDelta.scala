@@ -63,7 +63,8 @@ case class WriteIntoDelta(
   override def run(sparkSession: SparkSession): Seq[Row] = {
     deltaLog.withNewTransaction { txn =>
       val actions = write(txn, sparkSession)
-      val operation = DeltaOperations.Write(mode, Option(partitionColumns), options.replaceWhere)
+      val operation = DeltaOperations.Write(mode, Option(partitionColumns),
+        options.replaceWhere, options.userMetadata)
       txn.commit(actions, operation)
     }
     Seq.empty

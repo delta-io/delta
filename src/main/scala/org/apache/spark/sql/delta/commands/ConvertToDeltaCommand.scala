@@ -129,7 +129,7 @@ abstract class ConvertToDeltaCommandBase(
           val table = v1.catalogTable
           // Hive adds some transient table properties which should be ignored
           val props = table.properties.filterKeys(_ != "transient_lastDdlTime")
-          Some(ConvertTarget(Some(table), table.provider, table.location.getPath, props))
+          Some(ConvertTarget(Some(table), table.provider, new Path(table.location).toString, props))
         case _: DeltaTableV2 =>
           // Already a Delta table
           None
@@ -520,7 +520,8 @@ abstract class ConvertToDeltaCommandBase(
         readVersion = None,
         isolationLevel = None,
         isBlindAppend = None,
-        metrics)
+        metrics,
+        userMetadata = None)
 
       val extraActions = Seq(commitInfo, Protocol(), metadata)
       val actions = extraActions.toIterator ++ addFiles

@@ -43,11 +43,6 @@ def main():
     with WorkingDirectory(repo_root_dir):
         run_cmd(["build/sbt", ";clean;unidoc"], stream_output=verbose)
 
-    # Generate Python docs
-    print('## Generating Python(Sphinx) docs ...')
-    with WorkingDirectory(sphinx_gen_dir):
-        run_cmd(["make", "html"], stream_output=verbose)
-
     # Update Scala docs
     print("## Patching ScalaDoc ...")
     with WorkingDirectory(scaladoc_gen_dir):
@@ -78,7 +73,7 @@ def main():
 
             # Create script elements to load new js files
             javadoc_jquery_script = \
-                js_script_start + path_to_js_file + "lib/jquery.js" + js_script_end
+                js_script_start + path_to_js_file + "lib/jquery.min.js" + js_script_end
             javadoc_api_docs_script = \
                 js_script_start + path_to_js_file + "lib/api-javadocs.js" + js_script_end
             javadoc_script_elements = javadoc_jquery_script + javadoc_api_docs_script
@@ -88,9 +83,14 @@ def main():
 
         # Patch the js and css files
         run_cmd(["mkdir", "-p", "./lib"])
-        run_cmd(["cp", scaladoc_gen_dir + "/lib/jquery.js", "./lib/"])  # copy jquery from ScalaDocs
+        run_cmd(["cp", scaladoc_gen_dir + "/lib/jquery.min.js", "./lib/"])  # copy from ScalaDocs
         run_cmd(["cp", docs_root_dir + "/api-javadocs.js", "./lib/"])   # copy new js file
         append(docs_root_dir + "/api-javadocs.css", "./stylesheet.css")  # append new styles
+
+    # Generate Python docs
+    print('## Generating Python(Sphinx) docs ...')
+    with WorkingDirectory(sphinx_gen_dir):
+        run_cmd(["make", "html"], stream_output=verbose)
 
     # Copy to final location
     log("Copying to API doc directory %s" % all_api_docs_final_dir)

@@ -495,11 +495,15 @@ object DeltaLog extends DeltaLogging {
     // - Different `scheme`
     // - Different `authority` (e.g., different user tokens in the path)
     // - Different mount point.
+    //
+    // Whether the `cached` object is newly created because of case missing.
+    var newlyCreated = false
     val cached = try {
       deltaLogCache.get(path, new Callable[DeltaLog] {
         override def call(): DeltaLog = recordDeltaOperation(
             null, "delta.log.create", Map(TAG_TAHOE_PATH -> path.getParent.toString)) {
           AnalysisHelper.allowInvokingTransformsInAnalyzer {
+            newlyCreated = true
             new DeltaLog(path, path.getParent, clock)
           }
         }
@@ -509,11 +513,17 @@ object DeltaLog extends DeltaLogging {
         throw e.getCause
     }
 
-    // Invalidate the cache if the reference is no longer valid as a result of the
-    // log being deleted.
-    if (cached.snapshot.version == -1 || cached.isValid) {
+    if (cached.snapshot.version == -1) {
+      cached
+    } else if (newlyCreated) {
+      // The DeltaLog object was not in the cache and we just created it. It should be valid.
+      cached
+    } else if (cached.isValid) {
+      // The DeltaLog object is got from the cache, we should check whether it's valid.
       cached
     } else {
+      // Invalidate the cache if the reference is no longer valid as a result of the
+      // log being deleted.
       deltaLogCache.invalidate(path)
       apply(spark, path)
     }

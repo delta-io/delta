@@ -17,6 +17,8 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.io.File
+
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -26,6 +28,7 @@ import org.scalatest.BeforeAndAfter
 
 import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row, SaveMode}
+import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
 import org.apache.spark.sql.functions.{lit, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.{PARTITION_OVERWRITE_MODE, PartitionOverwriteMode}
@@ -56,6 +59,30 @@ class DeltaInsertIntoSQLByPathSuite extends DeltaInsertIntoTests(false, true)
       sql(s"INSERT $overwrite TABLE delta.`${catalogTable.location}` SELECT * FROM $tmpView")
     }
   }
+
+  testQuietly("insertInto: cannot insert into a table that doesn't exist") {
+    import testImplicits._
+    Seq(SaveMode.Append, SaveMode.Overwrite).foreach { mode =>
+      withTempDir { dir =>
+        val t1 = s"delta.`${dir.getCanonicalPath}`"
+        val tmpView = "tmp_view"
+        withTempView(tmpView) {
+          val overwrite = if (mode == SaveMode.Overwrite) "OVERWRITE" else "INTO"
+          val df = Seq((1L, "a"), (2L, "b"), (3L, "c")).toDF("id", "data")
+          df.createOrReplaceTempView(tmpView)
+
+          intercept[AnalysisException] {
+            sql(s"INSERT $overwrite TABLE $t1 SELECT * FROM $tmpView")
+          }
+
+          assert(new File(dir, "_delta_log").mkdirs(), "Failed to create a _delta_log directory")
+          intercept[AnalysisException] {
+            sql(s"INSERT $overwrite TABLE $t1 SELECT * FROM $tmpView")
+          }
+        }
+      }
+    }
+  }
 }
 
 class DeltaInsertIntoDataFrameSuite extends DeltaInsertIntoTests(false, false)
@@ -79,6 +106,37 @@ class DeltaInsertIntoDataFrameByPathSuite extends DeltaInsertIntoTests(false, fa
     val ident = spark.sessionState.sqlParser.parseTableIdentifier(tableName)
     val catalogTable = spark.sessionState.catalog.getTableMetadata(ident)
     dfw.insertInto(s"delta.`${catalogTable.location}`")
+  }
+
+  testQuietly("insertInto: cannot insert into a table that doesn't exist") {
+    import testImplicits._
+    Seq(SaveMode.Append, SaveMode.Overwrite).foreach { mode =>
+      withTempDir { dir =>
+        val t1 = s"delta.`${dir.getCanonicalPath}`"
+        val df = Seq((1L, "a"), (2L, "b"), (3L, "c")).toDF("id", "data")
+
+        intercept[AnalysisException] {
+          df.write.mode(mode).insertInto(t1)
+        }
+
+        assert(new File(dir, "_delta_log").mkdirs(), "Failed to create a _delta_log directory")
+        intercept[AnalysisException] {
+          df.write.mode(mode).insertInto(t1)
+        }
+
+        // Test DataFrameWriterV2 as well
+        val dfW2 = df.writeTo(t1)
+        if (mode == SaveMode.Append) {
+          intercept[AnalysisException] {
+            dfW2.append()
+          }
+        } else {
+          intercept[AnalysisException] {
+            dfW2.overwrite(lit(true))
+          }
+        }
+      }
+    }
   }
 }
 

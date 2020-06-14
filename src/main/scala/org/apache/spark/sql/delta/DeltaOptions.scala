@@ -50,6 +50,7 @@ trait DeltaWriteOptions
   import DeltaOptions._
 
   val replaceWhere: Option[String] = options.get(REPLACE_WHERE_OPTION)
+  val userMetadata: Option[String] = options.get(USER_METADATA_OPTION)
 
   /**
    * Whether to add an adaptive shuffle before writing out the files to break skew, and coalesce
@@ -154,6 +155,8 @@ object DeltaOptions extends DeltaLogging {
   val MERGE_SCHEMA_OPTION = "mergeSchema"
   /** An option to allow overwriting schema and partitioning during an overwrite write operation. */
   val OVERWRITE_SCHEMA_OPTION = "overwriteSchema"
+  /** An option to specify user-defined metadata in commitInfo */
+  val USER_METADATA_OPTION = "userMetadata"
   val PARTITION_OVERWRITE_MODE = "partitionOverwriteMode"
 
   val MAX_FILES_PER_TRIGGER_OPTION = "maxFilesPerTrigger"
@@ -171,6 +174,7 @@ object DeltaOptions extends DeltaLogging {
     MERGE_SCHEMA_OPTION,
     EXCLUDE_REGEX_OPTION,
     OVERWRITE_SCHEMA_OPTION,
+    USER_METADATA_OPTION,
     MAX_FILES_PER_TRIGGER_OPTION,
     IGNORE_FILE_DELETION_OPTION,
     IGNORE_CHANGES_OPTION,
