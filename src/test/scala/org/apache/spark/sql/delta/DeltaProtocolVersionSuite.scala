@@ -74,7 +74,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       log.ensureLogDirectoryExist()
       log.store.write(
         deltaFile(log.logPath, 0),
-        Iterator(Protocol(Integer.MAX_VALUE, Integer.MAX_VALUE).json))
+        Iterator(Metadata().json, Protocol(Integer.MAX_VALUE, Integer.MAX_VALUE).json))
       intercept[InvalidProtocolVersionException] {
         spark.range(1).write.format("delta").save(path.getCanonicalPath)
       }

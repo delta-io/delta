@@ -18,9 +18,11 @@ package org.apache.spark.sql.delta.files
 
 import java.net.URI
 
-import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.actions.SingleAction.addFileEncoder
+import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
 
@@ -46,8 +48,7 @@ abstract class TahoeFileIndex(
    */
   def matchingFiles(
       partitionFilters: Seq[Expression],
-      dataFilters: Seq[Expression],
-      keepStats: Boolean = false): Seq[AddFile]
+      dataFilters: Seq[Expression]): Seq[AddFile]
 
   override def listFiles(
       partitionFilters: Seq[Expression],
@@ -119,6 +120,7 @@ case class TahoeLogFileIndex(
     override val spark: SparkSession,
     override val deltaLog: DeltaLog,
     override val path: Path,
+    schemaAtAnalysis: StructType,
     partitionFilters: Seq[Expression] = Nil,
     versionToUse: Option[Long] = None)
   extends TahoeFileIndex(spark, deltaLog, path) {
@@ -128,16 +130,27 @@ case class TahoeLogFileIndex(
   private lazy val historicalSnapshotOpt: Option[Snapshot] =
     versionToUse.map(deltaLog.getSnapshotAt(_))
 
+  private def checkSchemaOnRead: Boolean = {
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SCHEMA_ON_READ_CHECK_ENABLED)
+  }
+
   def getSnapshot(stalenessAcceptable: Boolean): Snapshot = {
-    historicalSnapshotOpt.getOrElse(deltaLog.update(stalenessAcceptable))
+    val snapshotToScan = historicalSnapshotOpt.getOrElse(deltaLog.update(stalenessAcceptable))
+    if (checkSchemaOnRead) {
+      // Ensure that the schema hasn't changed in an incompatible manner since analysis time
+      val snapshotSchema = snapshotToScan.metadata.schema
+      if (!SchemaUtils.isReadCompatible(schemaAtAnalysis, snapshotSchema)) {
+        throw DeltaErrors.schemaChangedSinceAnalysis(schemaAtAnalysis, snapshotSchema)
+      }
+    }
+    snapshotToScan
   }
 
   override def matchingFiles(
       partitionFilters: Seq[Expression],
-      dataFilters: Seq[Expression],
-      keepStats: Boolean = false): Seq[AddFile] = {
+      dataFilters: Seq[Expression]): Seq[AddFile] = {
     getSnapshot(stalenessAcceptable = false).filesForScan(
-      projection = Nil, this.partitionFilters ++ partitionFilters ++ dataFilters, keepStats).files
+      projection = Nil, this.partitionFilters ++ partitionFilters ++ dataFilters).files
   }
 
   override def inputFiles: Array[String] = {
@@ -163,6 +176,11 @@ case class TahoeLogFileIndex(
     .getOrElse(super.partitionSchema)
 }
 
+object TahoeLogFileIndex {
+  def apply(spark: SparkSession, deltaLog: DeltaLog): TahoeLogFileIndex =
+    TahoeLogFileIndex(spark, deltaLog, deltaLog.dataPath, deltaLog.snapshot.metadata.schema)
+}
+
 /**
  * A [[TahoeFileIndex]] that generates the list of files from a given list of files
  * that are within a version range of DeltaLog.
@@ -180,8 +198,7 @@ class TahoeBatchFileIndex(
 
   override def matchingFiles(
       partitionFilters: Seq[Expression],
-      dataFilters: Seq[Expression],
-      keepStats: Boolean = false): Seq[AddFile] = {
+      dataFilters: Seq[Expression]): Seq[AddFile] = {
     DeltaLog.filterFileList(
       snapshot.metadata.partitionSchema,
       spark.createDataset(addFiles)(addFileEncoder).toDF(), partitionFilters)

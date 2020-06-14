@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package test.org.apache.spark.sql.delta;
+package org.apache.spark.sql.delta;
 
 import java.io.Serializable;
 import java.util.Arrays;

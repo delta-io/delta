@@ -18,11 +18,12 @@ package org.apache.spark.sql.delta
 
 import java.util.Locale
 
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.tables.DeltaTableTestUtils
 
 import org.apache.spark.sql.{functions, Row}
 
-class UpdateScalaSuite extends UpdateSuiteBase {
+class UpdateScalaSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
 
   import testImplicits._
 

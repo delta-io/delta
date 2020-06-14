@@ -122,6 +122,16 @@ class Snapshot(
   /** The current set of actions in this [[Snapshot]]. */
   def state: Dataset[SingleAction] = cachedState.getDS
 
+  /** Helper method to log missing actions when state reconstruction checks are not enabled */
+  protected def logMissingActionWarning(action: String): Unit = {
+    logWarning(
+      s"""
+         |Found no $action in computed state, setting it to defaults. State reconstruction
+         |validation was turned off. To turn it back on set
+         |${DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key} to "true"
+        """.stripMargin)
+  }
+
   /**
    * Computes some statistics around the transaction log, therefore on the actions made on this
    * Delta table.
@@ -129,9 +139,9 @@ class Snapshot(
   protected lazy val computedState: State = {
     val implicits = spark.implicits
     import implicits._
-    state.select(
-      coalesce(last($"protocol", ignoreNulls = true), defaultProtocol()) as "protocol",
-      coalesce(last($"metaData", ignoreNulls = true), emptyMetadata()) as "metadata",
+    var _computedState = state.select(
+      last($"protocol", ignoreNulls = true) as "protocol",
+      last($"metaData", ignoreNulls = true) as "metadata",
       collect_set($"txn") as "setTransactions",
       // sum may return null for empty data set.
       coalesce(sum($"add.size"), lit(0L)) as "sizeInBytes",
@@ -141,6 +151,31 @@ class Snapshot(
       count($"remove") as "numOfRemoves",
       count($"txn") as "numOfSetTransactions"
     ).as[State](stateEncoder).first()
+    val stateReconstructionCheck = spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED)
+    if (_computedState.protocol == null) {
+      recordDeltaEvent(
+        deltaLog,
+        opType = "delta.assertions.missingAction",
+        data = Map("version" -> version.toString, "action" -> "Protocol", "source" -> "Snapshot"))
+      if (stateReconstructionCheck) {
+        throw DeltaErrors.actionNotFoundException("protocol", version)
+      }
+      logMissingActionWarning("protocol")
+      _computedState = _computedState.copy(protocol = Protocol())
+    }
+    if (_computedState.metadata == null) {
+      recordDeltaEvent(
+        deltaLog,
+        opType = "delta.assertions.missingAction",
+        data = Map("version" -> version.toString, "action" -> "Metadata", "source" -> "Metadata"))
+      if (stateReconstructionCheck) {
+        throw DeltaErrors.actionNotFoundException("metadata", version)
+      }
+      logMissingActionWarning("metadata")
+      _computedState = _computedState.copy(metadata = Metadata())
+    }
+    _computedState
   }
 
   def protocol: Protocol = computedState.protocol

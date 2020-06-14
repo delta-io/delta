@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package test.org.apache.spark.sql.delta;
+package org.apache.spark.sql.delta;
 
 import java.util.*;
 
@@ -24,16 +24,15 @@ import io.delta.tables.DeltaTable;
 import org.junit.*;
 
 import org.apache.spark.sql.*;
-import org.apache.spark.sql.test.TestSparkSession;
 import org.apache.spark.util.Utils;
 
-public class UpdateJavaSuite {
-    private transient TestSparkSession spark;
+public class UpdateJavaSuite implements DeltaSQLCommandJavaTest {
+    private transient SparkSession spark;
     private transient String tempPath;
 
     @Before
     public void setUp() {
-        spark = new TestSparkSession();
+        spark = buildSparkSession();
         tempPath = Utils.createTempDir(System.getProperty("java.io.tmpdir"), "spark").toString();
     }
 

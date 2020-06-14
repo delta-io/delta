@@ -20,20 +20,14 @@ import java.io.File
 import java.lang.{Integer => JInt}
 import java.util.Locale
 
-import scala.collection.JavaConverters._
-
-import org.apache.spark.sql.delta.commands.MergeIntoCommand
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
-import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{IntegerType, MapType, StringType, StructType}
-import org.apache.spark.status.api.v1.AccumulableInfo
 import org.apache.spark.util.Utils
-import org.apache.spark.util.kvstore.KVStore
 
 abstract class MergeIntoSuiteBase
     extends QueryTest
@@ -90,7 +84,7 @@ abstract class MergeIntoSuiteBase
   }
 
   Seq(true, false).foreach { isPartitioned =>
-    test(s"basic case, isPartitioned: $isPartitioned") {
+    test(s"basic case - merge to Delta table by path, isPartitioned: $isPartitioned") {
       withTable("source") {
         val partitions = if (isPartitioned) "key2" :: Nil else Nil
         append(Seq((2, 2), (1, 4)).toDF("key2", "value"), partitions)
@@ -114,7 +108,7 @@ abstract class MergeIntoSuiteBase
 
   Seq(true, false).foreach { skippingEnabled =>
     Seq(true, false).foreach { isPartitioned =>
-      test("basic case - merge to Delta table, " +
+      test("basic case - merge to view on a Delta table by path, " +
           s"isPartitioned: $isPartitioned skippingEnabled: $skippingEnabled") {
         withTable("delta_target", "source") {
           withSQLConf(DeltaSQLConf.DELTA_STATS_SKIPPING.key -> skippingEnabled.toString) {
@@ -137,6 +131,43 @@ abstract class MergeIntoSuiteBase
                 Row(-9, 16) :: // Insert
                 Nil)
           }
+        }
+      }
+    }
+  }
+
+  Seq(true, false).foreach { skippingEnabled =>
+    Seq(true, false).foreach { isPartitioned =>
+     test("basic case edge - merge to Delta table by name, " +
+         s"isPartitioned: $isPartitioned skippingEnabled: $skippingEnabled") {
+        withTable("delta_target", "source") {
+          withSQLConf(DeltaSQLConf.DELTA_STATS_SKIPPING.key -> skippingEnabled.toString) {
+            Seq((1, 1), (0, 3), (1, 6)).toDF("key1", "value").createOrReplaceTempView("source")
+            val partitionByClause = if (isPartitioned) "PARTITIONED BY (key2)" else ""
+            sql(
+              s"""
+                |CREATE TABLE delta_target(key2 INT, value INT)
+                |USING delta
+                |OPTIONS('path'='$tempPath')
+                |$partitionByClause
+               """.stripMargin)
+
+            append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
+
+            executeMerge(
+              target = "delta_target",
+              source = "source src",
+              condition = "src.key1 = key2 AND src.value < delta_target.value",
+              update = "key2 = 20 + key1, value = 20 + src.value",
+              insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
+
+            checkAnswer(sql("SELECT key2, value FROM delta_target"),
+              Row(2, 2) :: // No change
+                Row(21, 21) :: // Update
+                Row(-10, 13) :: // Insert
+                Row(-9, 16) :: // Insert
+                Nil)
+            }
         }
       }
     }
@@ -419,23 +450,20 @@ abstract class MergeIntoSuiteBase
     }
   }
 
-  test("Self merge") {
-    withTable("selfMergeTable") {
-      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
-      readDeltaTable(tempPath).createOrReplaceTempView("selfMergeTable")
+  test("self merge") {
+    append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
 
-      executeMerge(
-        target = "selfMergeTable as target",
-        source = "selfMergeTable as src",
-        condition = "src.key2 = target.key2",
-        update = "key2 = 20 + src.key2, value = 20 + src.value",
-        insert = "(key2, value) VALUES (src.key2 - 10, src.value + 10)")
+    executeMerge(
+      target = s"delta.`$tempPath` as target",
+      source = s"delta.`$tempPath` as src",
+      condition = "src.key2 = target.key2",
+      update = "key2 = 20 + src.key2, value = 20 + src.value",
+      insert = "(key2, value) VALUES (src.key2 - 10, src.value + 10)")
 
-      checkAnswer(readDeltaTable(tempPath),
-        Row(22, 22) :: // UPDATE
-          Row(21, 24) :: // UPDATE
-          Nil)
-    }
+    checkAnswer(readDeltaTable(tempPath),
+      Row(22, 22) :: // UPDATE
+        Row(21, 24) :: // UPDATE
+        Nil)
   }
 
   test("order by + limit in source query #1") {
@@ -553,6 +581,7 @@ abstract class MergeIntoSuiteBase
     assert(!errMsg.toLowerCase(Locale.ROOT).contains(str.toLowerCase(Locale.ROOT)))
   }
 
+
   test("Negative case - basic syntax analysis") {
     withTable("source") {
       Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value").createOrReplaceTempView("source")
@@ -568,8 +597,7 @@ abstract class MergeIntoSuiteBase
           insert = "(key2, value) VALUES (3, src.value + key2)")
       }.getMessage
 
-      errorContains(e, "Cannot resolve `key2` in INSERT clause")
-      errorContains(e, "key1") // should contain key1 as a valid column name in expressions
+      errorContains(e, "cannot resolve `key2`")
 
       // to-update columns have source table reference
       e = intercept[AnalysisException] {
@@ -880,16 +908,17 @@ abstract class MergeIntoSuiteBase
     }
   }
 
-  test("merge into cached table") {
+  test("merge into cached table edge") {
+    // Merge with a cached target only works in the join-based implementation right now
     withTable("source") {
       append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
       Seq((1, 1), (0, 3), (3, 3)).toDF("key1", "value").createOrReplaceTempView("source")
-      readDeltaTable(tempPath).cache()
-      readDeltaTable(tempPath).collect()
+      spark.table(s"delta.`$tempPath`").cache()
+      spark.table(s"delta.`$tempPath`").collect()
 
       append(Seq((100, 100), (3, 5)).toDF("key2", "value"))
       // cache is in effect, as the above change is not reflected
-      checkAnswer(readDeltaTable(tempPath), Row(2, 2) :: Row(1, 4) :: Nil)
+      checkAnswer(spark.table(s"delta.`$tempPath`"), Row(2, 2) :: Row(1, 4) :: Nil)
 
       executeMerge(
         target = s"delta.`$tempPath` as trgNew",
@@ -898,7 +927,7 @@ abstract class MergeIntoSuiteBase
         update = "value = trgNew.value + 3",
         insert = "(key2, value) VALUES (key1, src.value + 10)")
 
-      checkAnswer(readDeltaTable(tempPath),
+      checkAnswer(spark.table(s"delta.`$tempPath`"),
         Row(100, 100) :: // No change (newly inserted record)
           Row(2, 2) :: // No change
           Row(1, 7) :: // Update
@@ -1763,52 +1792,6 @@ abstract class MergeIntoSuiteBase
     update("t.part2 = 1"),
     insert("(id, part1, part2) VALUES (id, part1, part2)")
   )
-
-  test("accumulators used by MERGE should not be tracked by Spark UI") {
-    // Run a simple merge command
-    withTable("source") {
-      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
-      Seq((1, 1), (0, 3)).toDF("key1", "value").createOrReplaceTempView("source")
-
-      executeMerge(
-        target = s"delta.`$tempPath`",
-        source = "source src",
-        condition = "src.key1 = key2",
-        update = "key2 = 20 + key1, value = 20 + src.value",
-        insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
-
-      checkAnswer(readDeltaTable(tempPath),
-        Row(2, 2) :: // No change
-          Row(21, 21) :: // Update
-          Row(-10, 13) :: // Insert
-          Nil)
-    }
-
-    // Make sure all Spark events generated by the above command have been processed
-    spark.sparkContext.listenerBus.waitUntilEmpty(30000)
-
-    // Use Reflection to get `SparkContext.statusStore.store` and access all accumulators stored
-    // with Spark tasks, so that this test can be run with Apache Spark.
-    val statusStore =
-      spark.sparkContext.getClass.getMethod("statusStore").invoke(spark.sparkContext)
-    val store = statusStore.getClass.getMethod("store").invoke(statusStore).asInstanceOf[KVStore]
-    // scalastyle:off classforname
-    val iter = store
-      .view(Class.forName("org.apache.spark.status.TaskDataWrapper"))
-      .closeableIterator()
-    // scalastyle:on classforname
-    try {
-      // Collect all accumulator names tracked by Spark UI.
-      val accumNames = iter.asScala.toVector.flatMap { task =>
-        task.getClass.getMethod("accumulatorUpdates").invoke(task)
-          .asInstanceOf[Seq[AccumulableInfo]].map(_.name)
-      }.toSet
-      // Verify accumulators used by MergeIntoCommand are not tracked.
-      assert(!accumNames.contains(MergeIntoCommand.TOUCHED_FILES_ACCUM_NAME))
-    } finally {
-      iter.close()
-    }
-  }
 
   protected def testMatchedOnlyOptimization(
       name: String)(
