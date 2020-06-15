@@ -487,6 +487,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       val postCommitSnapshot = deltaLog.update()
 
       if (postCommitSnapshot.version < attemptVersion) {
+        recordDeltaEvent(deltaLog, "delta.commit.inconsistentList", data = Map(
+          "committedVersion" -> attemptVersion,
+          "currentVersion" -> postCommitSnapshot.version
+        ))
         throw new IllegalStateException(
           s"The committed version is $attemptVersion " +
             s"but the current version is ${postCommitSnapshot.version}.")
