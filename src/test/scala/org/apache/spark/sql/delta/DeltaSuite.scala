@@ -19,8 +19,10 @@ package org.apache.spark.sql.delta
 import java.io.{File, FileNotFoundException}
 import java.util.concurrent.atomic.AtomicInteger
 
+import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.SparkException
@@ -37,7 +39,8 @@ import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.util.Utils
 
 class DeltaSuite extends QueryTest
-  with SharedSparkSession  with SQLTestUtils {
+  with SharedSparkSession  with SQLTestUtils
+  with DeltaSQLCommandTest {
 
   import testImplicits._
 
@@ -756,9 +759,7 @@ class DeltaSuite extends QueryTest
 
         // The file names are opaque. To identify which one we're deleting, we ensure that only one
         // append has 2 partitions, and give them the same value so we know what was deleted.
-        val inputFiles =
-          TahoeLogFileIndex(spark, deltaLog, new Path(tempDir.getCanonicalPath))
-            .inputFiles.toSeq
+        val inputFiles = TahoeLogFileIndex(spark, deltaLog).inputFiles.toSeq
         assert(inputFiles.size == 5)
 
         val filesToDelete = inputFiles.filter(_.split("/").last.startsWith("part-00001"))
@@ -790,9 +791,7 @@ class DeltaSuite extends QueryTest
 
         // The file names are opaque. To identify which one we're deleting, we ensure that only one
         // append has 2 partitions, and give them the same value so we know what was deleted.
-        val inputFiles =
-          TahoeLogFileIndex(spark, deltaLog, new Path(tempDir.getCanonicalPath))
-            .inputFiles.toSeq
+        val inputFiles = TahoeLogFileIndex(spark, deltaLog).inputFiles.toSeq
         assert(inputFiles.size == 5)
 
         val filesToCorrupt = inputFiles.filter(_.split("/").last.startsWith("part-00001"))
@@ -821,9 +820,7 @@ class DeltaSuite extends QueryTest
         Range(0, 10).foreach(n =>
           Seq(n).toDF().write.format("delta").mode("append").save(tempDir.toString))
 
-        val inputFiles =
-          TahoeLogFileIndex(spark, deltaLog, new Path(tempDir.getCanonicalPath))
-            .inputFiles.toSeq
+        val inputFiles = TahoeLogFileIndex(spark, deltaLog).inputFiles.toSeq
 
         val filesToDelete = inputFiles.take(4)
         filesToDelete.foreach { f =>
@@ -850,9 +847,7 @@ class DeltaSuite extends QueryTest
       Range(0, 10).foreach(n =>
         Seq(n).toDF().write.format("delta").mode("append").save(tempDir.toString))
 
-      val inputFiles =
-        TahoeLogFileIndex(spark, deltaLog, new Path(tempDir.getCanonicalPath))
-          .inputFiles.toSeq
+      val inputFiles = TahoeLogFileIndex(spark, deltaLog).inputFiles.toSeq
 
       val filesToDelete = inputFiles.take(4)
       filesToDelete.foreach { f =>
@@ -1012,5 +1007,79 @@ class DeltaSuite extends QueryTest
     } finally {
       sparkContext.removeSparkListener(listener)
     }
+  }
+
+  def lastCommitInfo(dir: String): CommitInfo =
+    io.delta.tables.DeltaTable.forPath(spark, dir).history(1).as[CommitInfo].head
+
+  test("history includes user-defined metadata for DataFrame.Write API") {
+    val tempDir = Utils.createTempDir().toString
+    val df = Seq(2).toDF().write.format("delta").mode("overwrite")
+
+    df.option("userMetadata", "meta1")
+      .save(tempDir)
+
+    assert(lastCommitInfo(tempDir).userMetadata === Some("meta1"))
+
+    df.option("userMetadata", "meta2")
+      .save(tempDir)
+
+    assert(lastCommitInfo(tempDir).userMetadata === Some("meta2"))
+  }
+
+  test("history includes user-defined metadata for SQL API") {
+    val tempDir = Utils.createTempDir().toString
+    val tblName = "tblName"
+
+    withTable(tblName) {
+      withSQLConf(DeltaSQLConf.DELTA_USER_METADATA.key -> "meta1") {
+        spark.sql(s"CREATE TABLE $tblName (data STRING) USING delta LOCATION '$tempDir';")
+      }
+      assert(lastCommitInfo(tempDir).userMetadata === Some("meta1"))
+
+      withSQLConf(DeltaSQLConf.DELTA_USER_METADATA.key -> "meta2") {
+        spark.sql(s"INSERT INTO $tblName VALUES ('test');")
+      }
+      assert(lastCommitInfo(tempDir).userMetadata === Some("meta2"))
+
+      withSQLConf(DeltaSQLConf.DELTA_USER_METADATA.key -> "meta3") {
+        spark.sql(s"INSERT INTO $tblName VALUES ('test2');")
+      }
+      assert(lastCommitInfo(tempDir).userMetadata === Some("meta3"))
+    }
+  }
+
+  test("history includes user-defined metadata for DF.Write API and config setting") {
+    val tempDir = Utils.createTempDir().toString
+    val df = Seq(2).toDF().write.format("delta").mode("overwrite")
+
+    withSQLConf(DeltaSQLConf.DELTA_USER_METADATA.key -> "meta1") {
+      df.save(tempDir)
+    }
+    assert(lastCommitInfo(tempDir).userMetadata === Some("meta1"))
+
+    withSQLConf(DeltaSQLConf.DELTA_USER_METADATA.key -> "meta2") {
+      df.option("userMetadata", "optionMeta2")
+        .save(tempDir)
+    }
+    assert(lastCommitInfo(tempDir).userMetadata === Some("optionMeta2"))
+  }
+
+  test("history includes user-defined metadata for SQL + DF.Write API") {
+    val tempDir = Utils.createTempDir().toString
+    val df = Seq(2).toDF().write.format("delta").mode("overwrite")
+
+    // metadata given in `option` should beat config
+    withSQLConf(DeltaSQLConf.DELTA_USER_METADATA.key -> "meta1") {
+      df.option("userMetadata", "optionMeta1")
+        .save(tempDir)
+    }
+    assert(lastCommitInfo(tempDir).userMetadata === Some("optionMeta1"))
+
+    withSQLConf(DeltaSQLConf.DELTA_USER_METADATA.key -> "meta2") {
+      df.option("userMetadata", "optionMeta2")
+        .save(tempDir)
+    }
+    assert(lastCommitInfo(tempDir).userMetadata === Some("optionMeta2"))
   }
 }

@@ -26,6 +26,7 @@ import org.apache.spark.sql.types.StructType
 class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
 
   import testImplicits._
+
   private def basicMergeStmt(
       target: String,
       source: String,

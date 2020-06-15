@@ -20,28 +20,13 @@ import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier}
 import org.apache.spark.sql.delta.hooks.GenerateSymlinkManifest
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
+import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.execution.command.RunnableCommand
 
-trait DeltaGenerateCommandBase extends RunnableCommand {
-
-  protected def getPath(spark: SparkSession, tableId: TableIdentifier): Path = {
-    DeltaTableIdentifier(spark, tableId) match {
-      case Some(id) if id.path.isDefined => new Path(id.path.get)
-      case Some(id) =>
-        throw DeltaErrors.tableNotSupportedException("DELTA GENERATE")
-      case None =>
-        // This is not a Delta table.
-        val metadata = spark.sessionState.catalog.getTableMetadata(tableId)
-        new Path(metadata.location)
-    }
-  }
-}
-
 case class DeltaGenerateCommand(modeName: String, tableId: TableIdentifier)
-  extends DeltaGenerateCommandBase {
+  extends RunnableCommand {
 
   import DeltaGenerateCommand._
 
@@ -49,10 +34,17 @@ case class DeltaGenerateCommand(modeName: String, tableId: TableIdentifier)
     if (!modeNameToGenerationFunc.contains(modeName)) {
       throw DeltaErrors.unsupportedGenerateModeException(modeName)
     }
-    val tablePath = getPath(sparkSession, tableId)
+
+    val tablePath = DeltaTableIdentifier(sparkSession, tableId) match {
+      case Some(id) if id.path.isDefined =>
+        new Path(id.path.get)
+      case _ =>
+        new Path(sparkSession.sessionState.catalog.getTableMetadata(tableId).location)
+    }
+
     val deltaLog = DeltaLog.forTable(sparkSession, tablePath)
     if (deltaLog.snapshot.version < 0) {
-      throw new AnalysisException(s"Delta table not found at $tablePath.")
+      throw DeltaErrors.notADeltaTableException("GENERATE")
     }
     val generationFunc = modeNameToGenerationFunc(modeName)
     generationFunc(sparkSession, deltaLog)

@@ -19,49 +19,29 @@ import tempfile
 import shutil
 import os
 
-from pyspark.sql import SQLContext, functions, Row, SparkSession
-from pyspark import SparkContext, SparkConf
-
-from delta.tables import DeltaTable
-from delta.testing.utils import PySparkTestCase
+from delta.testing.utils import DeltaTestCase
 
 
-class DeltaSqlTests(PySparkTestCase):
+class DeltaSqlTests(DeltaTestCase):
 
     def setUp(self):
         super(DeltaSqlTests, self).setUp()
-        spark = SparkSession(self.sc)
-        if self.sc.version < "3.":
-            # Manually activate "DeltaSparkSessionExtension" in PySpark 2.4 in a cloned session
-            # because "spark.sql.extensions" is not picked up. (See SPARK-25003).
-            self.sc._jvm.io.delta.sql.DeltaSparkSessionExtension() \
-                .apply(spark._jsparkSession.extensions())
-            self.spark = SparkSession(self.sc, spark._jsparkSession.cloneSession())
-        else:
-            self.spark = spark
-        self.temp_path = tempfile.mkdtemp()
-        self.temp_file = os.path.join(self.temp_path, "delta_sql_test_table")
         # Create a simple Delta table inside the temp directory to test SQL commands.
         df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
-        df.write.format("delta").save(self.temp_file)
-        df.write.mode("overwrite").format("delta").save(self.temp_file)
-
-    def tearDown(self):
-        self.spark.stop()
-        shutil.rmtree(self.temp_path)
-        super(DeltaSqlTests, self).tearDown()
+        df.write.format("delta").save(self.tempFile)
+        df.write.mode("overwrite").format("delta").save(self.tempFile)
 
     def test_vacuum(self):
         self.spark.sql("set spark.databricks.delta.retentionDurationCheck.enabled = false")
         try:
-            deleted_files = self.spark.sql("VACUUM '%s' RETAIN 0 HOURS" % self.temp_file).collect()
+            deleted_files = self.spark.sql("VACUUM '%s' RETAIN 0 HOURS" % self.tempFile).collect()
             # Verify `VACUUM` did delete some data files
-            self.assertTrue(self.temp_file in deleted_files[0][0])
+            self.assertTrue(self.tempFile in deleted_files[0][0])
         finally:
             self.spark.sql("set spark.databricks.delta.retentionDurationCheck.enabled = true")
 
     def test_describe_history(self):
-        assert(len(self.spark.sql("desc history delta.`%s`" % (self.temp_file)).collect()) > 0)
+        assert(len(self.spark.sql("desc history delta.`%s`" % (self.tempFile)).collect()) > 0)
 
     def test_generate(self):
         # create a delta table
@@ -108,6 +88,53 @@ class DeltaSqlTests(PySparkTestCase):
 
         shutil.rmtree(temp_path2)
         shutil.rmtree(temp_path3)
+
+    def test_ddls(self):
+        table = "deltaTable"
+        table2 = "deltaTable2"
+        try:
+            def read_table():
+                return self.spark.sql(f"SELECT * FROM {table}")
+
+            self.spark.sql(f"DROP TABLE IF EXISTS {table}")
+            self.spark.sql(f"DROP TABLE IF EXISTS {table2}")
+
+            self.spark.sql(f"CREATE TABLE {table}(a LONG, b String NOT NULL) USING delta")
+            self.assertEqual(read_table().count(), 0)
+
+            self.__checkAnswer(
+                self.spark.sql(f"DESCRIBE TABLE {table}").select("col_name", "data_type"),
+                [("a", "bigint"), ("b", "string"), ("", ""), ("# Partitioning", ""),
+                 ("Not partitioned", "")],
+                schema=["col_name", "data_type"])
+
+            self.spark.sql(f"ALTER TABLE {table} CHANGE COLUMN a a LONG AFTER b")
+            self.assertSequenceEqual(["b", "a"], [f.name for f in read_table().schema.fields])
+
+            self.spark.sql(f"ALTER TABLE {table} ALTER COLUMN b DROP NOT NULL")
+            self.assertIn(True, [f.nullable for f in read_table().schema.fields if f.name == "b"])
+
+            self.spark.sql(f"ALTER TABLE {table} ADD COLUMNS (x LONG)")
+            self.assertIn("x", [f.name for f in read_table().schema.fields])
+
+            self.spark.sql(f"ALTER TABLE {table} SET TBLPROPERTIES ('k' = 'v')")
+            self.__checkAnswer(self.spark.sql(f"SHOW TBLPROPERTIES {table}"), [('k', 'v')])
+
+            self.spark.sql(f"ALTER TABLE {table} UNSET TBLPROPERTIES ('k')")
+            self.__checkAnswer(self.spark.sql(f"SHOW TBLPROPERTIES {table}"), [])
+
+            self.spark.sql(f"ALTER TABLE {table} RENAME TO {table2}")
+            self.assertEqual(self.spark.sql(f"SELECT * FROM {table2}").count(), 0)
+
+            test_dir = os.path.join(tempfile.mkdtemp(), table2)
+            self.spark.createDataFrame([("", 0, 0)], ["b", "a", "x"]) \
+                .write.format("delta").save(test_dir)
+
+            self.spark.sql(f"ALTER TABLE {table2} SET LOCATION '{test_dir}'")
+            self.assertEqual(self.spark.sql(f"SELECT * FROM {table2}").count(), 1)
+        finally:
+            self.spark.sql(f"DROP TABLE IF EXISTS {table}")
+            self.spark.sql(f"DROP TABLE IF EXISTS {table2}")
 
     def __checkAnswer(self, df, expectedAnswer, schema=["key", "value"]):
         if not expectedAnswer:

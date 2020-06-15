@@ -75,12 +75,35 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
     case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, _) =>
       DeltaRelation.fromV2Relation(d, dsv2)
 
-    // DML - TODO: Remove these and use stable public interfaces once they are in Spark
-    case u @ UpdateTable(table, assignments, condition) =>
+    // DML - TODO: Remove these Delta-specific DML logical plans and use Spark's plans directly
+
+    case d @ DeleteFromTable(table, condition) if d.childrenResolved =>
+      // rewrites Delta from V2 to V1
+      val newTarget = table.transformUp { case DeltaRelation(lr) => lr }
+      val indices = newTarget.collect {
+        case DeltaFullTable(index) => index
+      }
+      if (indices.isEmpty) {
+        // Not a Delta table at all, do not transform
+        d
+      } else if (indices.size == 1 && indices(0).deltaLog.snapshot.version > -1) {
+        // It is a well-defined Delta table with a schema
+        DeltaDelete(newTarget, condition)
+      } else {
+        // Not a well-defined Delta table
+        throw DeltaErrors.notADeltaSourceException("DELETE", Some(d))
+      }
+
+    case u @ UpdateTable(table, assignments, condition) if u.childrenResolved =>
       val (cols, expressions) = assignments.map(a =>
         a.key.asInstanceOf[NamedExpression] -> a.value).unzip
       // rewrites Delta from V2 to V1
       val newTable = table.transformUp { case DeltaRelation(lr) => lr }
+        newTable.collectLeaves().headOption match {
+          case Some(DeltaFullTable(index)) =>
+          case o =>
+            throw DeltaErrors.notADeltaSourceException("UPDATE", o)
+        }
       DeltaUpdateTable(newTable, cols, expressions, condition)
 
     case m@MergeIntoTable(target, source, condition, matched, notMatched) if m.childrenResolved =>
@@ -101,8 +124,8 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
             insert.condition,
             DeltaMergeIntoClause.toActions(insert.assignments))
         case other =>
-          throw new AnalysisException(
-          s"${other.prettyName} clauses cannot be part of the WHEN MATCHED clause in MERGE INTO.")
+          throw new AnalysisException(s"${other.prettyName} clauses cannot be part of the " +
+            s"WHEN NOT MATCHED clause in MERGE INTO.")
       }
       // rewrites Delta from V2 to V1
       val newTarget = target.transformUp { case DeltaRelation(lr) => lr }
@@ -116,11 +139,6 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
 
       deltaMergeResolved
 
-
-    case DeleteFromTable(table, condition) =>
-      // rewrites Delta from V2 to V1
-      val newTarget = table.transformUp { case DeltaRelation(lr) => lr }
-      DeltaDelete(newTarget, condition)
   }
 
   /**

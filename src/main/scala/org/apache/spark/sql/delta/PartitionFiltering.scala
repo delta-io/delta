@@ -21,13 +21,10 @@ import org.apache.spark.sql.delta.stats.DeltaScan
 
 import org.apache.spark.sql.catalyst.expressions._
 
-trait PartitionFiltering {
-  self: Snapshot =>
+/** Provides the capability for partition pruning when querying a Delta table. */
+trait PartitionFiltering { self: Snapshot =>
 
-  def filesForScan(
-      projection: Seq[Attribute],
-      filters: Seq[Expression],
-      keepStats: Boolean = false): DeltaScan = {
+  def filesForScan(projection: Seq[Attribute], filters: Seq[Expression]): DeltaScan = {
     implicit val enc = SingleAction.addFileEncoder
 
     val partitionFilters = filters.flatMap { filter =>

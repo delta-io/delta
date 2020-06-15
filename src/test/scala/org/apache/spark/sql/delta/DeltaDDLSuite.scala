@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.{SparkEnv, SparkException}
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.analysis.NoSuchPartitionException
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
@@ -52,7 +53,7 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
   protected def verifyNullabilityFailure(exception: AnalysisException): Unit
 
   protected def getDeltaLog(tableLocation: String): DeltaLog = {
-    DeltaLog.forTable(spark, tableLocation)
+      DeltaLog.forTable(spark, tableLocation)
   }
 
   testQuietly("create table with NOT NULL - check violation through file writing") {
@@ -438,6 +439,8 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
 
         verifyDescribeTable("delta_test")
         verifyDescribeTable(s"delta.`$path`")
+
+        assert(sql("DESCRIBE EXTENDED delta_test").collect().length > 0)
       }
     }
   }

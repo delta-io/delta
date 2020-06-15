@@ -47,13 +47,16 @@ object DeltaOperations {
         operationMetrics.contains(s)
       ).transform((_, v) => v.value.toString)
     }
+
+    val userMetadata: Option[String] = None
   }
 
   /** Recorded during batch inserts. Predicates can be provided for overwrites. */
   case class Write(
       mode: SaveMode,
       partitionBy: Option[Seq[String]] = None,
-      predicate: Option[String] = None) extends Operation("WRITE") {
+      predicate: Option[String] = None,
+      override val userMetadata: Option[String] = None) extends Operation("WRITE") {
     override val parameters: Map[String, Any] = Map("mode" -> mode.name()) ++
       partitionBy.map("partitionBy" -> JsonUtils.toJson(_)) ++
       predicate.map("predicate" -> _)
@@ -64,7 +67,8 @@ object DeltaOperations {
   case class StreamingUpdate(
       outputMode: OutputMode,
       queryId: String,
-      epochId: Long) extends Operation("STREAMING UPDATE") {
+      epochId: Long,
+      override val userMetadata: Option[String] = None) extends Operation("STREAMING UPDATE") {
     override val parameters: Map[String, Any] =
       Map("outputMode" -> outputMode.toString, "queryId" -> queryId, "epochId" -> epochId.toString)
     override val operationMetrics: Set[String] = DeltaOperationMetrics.STREAMING_UPDATE
@@ -159,7 +163,7 @@ object DeltaOperations {
         strMetrics += "numCopiedRows" -> "0"
       } else {
         strMetrics += "numCopiedRows" -> (
-          numOutputRows - strMetrics("numUpdatedRows").toInt).toString
+          numOutputRows - strMetrics("numUpdatedRows").toLong).toString
       }
       strMetrics
     }

@@ -45,6 +45,12 @@ object DeltaSQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_USER_METADATA =
+    buildConf("commitInfo.userMetadata")
+      .doc("Arbitrary user-defined metadata to include in CommitInfo. Requires commitInfo.enabled.")
+      .stringConf
+      .createOptional
+
   val DELTA_SNAPSHOT_PARTITIONS =
     buildConf("snapshotPartitions")
       .internal()
@@ -58,6 +64,31 @@ object DeltaSQLConf {
       .internal()
       .doc("Whether to check whether the partition column names have valid names, just like " +
         "the data columns.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED =
+    buildConf("stateReconstructionValidation.enabled")
+      .internal()
+      .doc("Whether to perform validation checks on the reconstructed state.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_COMMIT_VALIDATION_ENABLED =
+    buildConf("commitValidation.enabled")
+      .internal()
+      .doc("Whether to perform validation checks before commit or not.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_SCHEMA_ON_READ_CHECK_ENABLED =
+    buildConf("checkLatestSchemaOnRead")
+      .doc("In Delta, we always try to give users the latest version of their data without " +
+        "having to call REFRESH TABLE or redefine their DataFrames when used in the context of " +
+        "streaming. There is a possibility that the schema of the latest version of the table " +
+        "may be incompatible with the schema at the time of DataFrame creation. This flag " +
+        "enables a check that ensures that users won't read corrupt data if the source schema " +
+        "changes in an incompatible way.")
       .booleanConf
       .createWithDefault(true)
 

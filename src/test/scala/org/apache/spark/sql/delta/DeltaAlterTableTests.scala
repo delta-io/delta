@@ -1359,14 +1359,14 @@ trait DeltaAlterTableByNameTests extends DeltaAlterTableTests {
  */
 trait DeltaAlterTableByPathTests extends DeltaAlterTableTestBase {
   override protected def createTable(schema: String, tblProperties: Map[String, String]): String = {
-    val tmpDir = Utils.createTempDir().getCanonicalPath
-    val deltaLog = getDeltaLog(tmpDir)
-    val txn = deltaLog.startTransaction()
-    val metadata = Metadata(
-      schemaString = StructType.fromDDL(schema).json,
-      configuration = tblProperties)
-    txn.commit(metadata :: Nil, DeltaOperations.ManualUpdate)
-    s"delta.`$tmpDir`"
+      val tmpDir = Utils.createTempDir().getCanonicalPath
+      val deltaLog = getDeltaLog(tmpDir)
+      val txn = deltaLog.startTransaction()
+      val metadata = Metadata(
+        schemaString = StructType.fromDDL(schema).json,
+        configuration = tblProperties)
+      txn.commit(metadata :: Nil, DeltaOperations.ManualUpdate)
+      s"delta.`$tmpDir`"
   }
 
   override protected def createTable(df: DataFrame, partitionedBy: Seq[String]): String = {

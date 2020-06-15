@@ -16,11 +16,12 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.tables.{DeltaTable, DeltaTableTestUtils}
 
 import org.apache.spark.sql.{functions, Row}
 
-class DeleteScalaSuite extends DeleteSuiteBase {
+class DeleteScalaSuite extends DeleteSuiteBase with DeltaSQLCommandTest {
 
   import testImplicits._
 

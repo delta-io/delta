@@ -20,12 +20,14 @@ package org.apache.spark.sql.delta
 import java.io.{FileNotFoundException, IOException}
 import java.util.ConcurrentModificationException
 
-import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata}
+import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata}
+import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.schema.{Invariant, InvariantViolationException}
+import org.apache.spark.sql.delta.schema.{Invariant, InvariantViolationException, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
+import io.delta.sql.DeltaSparkSessionExtension
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.{SparkConf, SparkEnv}
@@ -118,6 +120,13 @@ object DeltaErrors
       "like to ignore updates, set the option 'ignoreChanges' to 'true'. If you would like the " +
       "data update to be reflected, please restart this query with a fresh checkpoint directory."
 
+  val EmptyCheckpointErrorMessage =
+    s"""
+       |Attempted to write an empty checkpoint without any actions. This checkpoint will not be
+       |useful in recomputing the state of the table. However this might cause other checkpoints to
+       |get deleted based on retention settings.
+     """.stripMargin
+
   /**
    * File not found hint for Delta, replacing the normal one which is inapplicable.
    *
@@ -204,6 +213,18 @@ object DeltaErrors
   def notADeltaSourceException(command: String, plan: Option[LogicalPlan] = None): Throwable = {
     val planName = if (plan.isDefined) plan.toString else ""
     new AnalysisException(s"$command destination only supports Delta sources.\n$planName")
+  }
+
+  def schemaChangedSinceAnalysis(atAnalysis: StructType, latestSchema: StructType): Throwable = {
+    val schemaDiff = SchemaUtils.reportDifferences(atAnalysis, latestSchema)
+      .map(_.replace("Specified", "Latest"))
+    new AnalysisException(
+      s"""The schema of your Delta table has changed in an incompatible way since your DataFrame or
+         |DeltaTable object was created. Please redefine your DataFrame or DeltaTable object.
+         |Changes:\n${schemaDiff.mkString("\n")}
+         |This check can be turned off by setting the session configuration key
+         |${DeltaSQLConf.DELTA_SCHEMA_ON_READ_CHECK_ENABLED.key} to false.
+       """.stripMargin)
   }
 
   def invalidColumnName(name: String): Throwable = {
@@ -431,8 +452,19 @@ object DeltaErrors
       s"Couldn't find all part files of the checkpoint version: $version", ae)
   }
 
-  def deltaVersionsNotContiguousException(deltaVersions: Seq[Long]): Throwable = {
-    new IllegalStateException(s"versions ($deltaVersions) are not contiguous")
+  def deltaVersionsNotContiguousException(
+      spark: SparkSession, deltaVersions: Seq[Long]): Throwable = {
+    new IllegalStateException(s"Versions ($deltaVersions) are not contiguous.")
+  }
+
+  def actionNotFoundException(action: String, version: Long): Throwable = {
+    new IllegalStateException(
+      s"""
+         |The $action of your Delta table couldn't be recovered while Reconstructing
+         |version: ${version.toString}. Did you manually delete files in the _delta_log directory?
+         |Set ${DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key}
+         |to "false" to skip validation.
+       """.stripMargin)
   }
 
   def schemaChangedException(oldSchema: StructType, newSchema: StructType): Throwable = {
@@ -806,6 +838,31 @@ object DeltaErrors
     new AnalysisException("Cannot describe the history of a view.")
   }
 
+  def copyIntoEncryptionOnlyS3(scheme: String): Throwable = {
+    new IllegalArgumentException(
+      s"Invalid scheme $scheme. COPY INTO source encryption is only supported for S3 paths.")
+  }
+
+  def copyIntoEncryptionSseCRequired(): Throwable = {
+    new IllegalArgumentException(
+      s"Invalid encryption type. COPY INTO source encryption must specify 'type' = 'SSE-C'.")
+  }
+
+  def copyIntoEncryptionMasterKeyRequired(): Throwable = {
+    new IllegalArgumentException(
+      s"Invalid encryption arguments. COPY INTO source encryption must specify a masterKey.")
+  }
+
+  def copyIntoCredentialsOnlyS3(scheme: String): Throwable = {
+    new IllegalArgumentException(
+      s"Invalid scheme $scheme. COPY INTO source credentials are only supported for S3 paths.")
+  }
+
+  def copyIntoCredentialsAllRequired(cause: Throwable): Throwable = {
+    new IllegalArgumentException(
+      "COPY INTO credentials must include awsKeyId, awsSecretKey, and awsSessionToken.", cause)
+  }
+
   def postCommitHookFailedException(
       failedHook: PostCommitHook,
       failedOnCommitVersion: Long,
@@ -836,6 +893,26 @@ object DeltaErrors
       s"Couldn't find column $column in:\n${schema.treeString}")
   }
 
+  def metadataAbsentException(): Throwable = {
+    new IllegalStateException(
+      s"""
+         |Couldn't find Metadata while committing the first version of the Delta table. To disable
+         |this check set ${DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key} to "false"
+       """.stripMargin)
+  }
+
+  def addFilePartitioningMismatchException(
+      addFilePartitions: Seq[String],
+      metadataPartitions: Seq[String]): Throwable = {
+    new IllegalStateException(
+      s"""
+        |The AddFile contains partitioning schema different from the table's partitioning schema
+        |expected: ${DeltaErrors.formatColumnList(metadataPartitions)}
+        |actual: ${DeltaErrors.formatColumnList(addFilePartitions)}
+        |To disable this check set ${DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key} to "false"
+      """.stripMargin)
+  }
+
   def concurrentModificationExceptionMsg(
       sparkConf: SparkConf,
       baseMessage: String,
@@ -854,6 +931,22 @@ object DeltaErrors
     s"""WARNING: The 'ignoreFileDeletion' option is deprecated. Switch to using one of
        |'ignoreDeletes' or 'ignoreChanges'. Refer to $docPage for details.
          """.stripMargin
+  }
+
+  def configureSparkSessionWithExtensionAndCatalog(originalException: Throwable): Throwable = {
+    val catalogImplConfig = SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key
+    new AnalysisException(
+      s"""This Delta operation requires the SparkSession to be configured with the
+         |DeltaSparkSessionExtension and the DeltaCatalog. Please set the necessary
+         |configurations when creating the SparkSession as shown below.
+         |
+         |  SparkSession.builder()
+         |    .option("spark.sql.extensions", "${classOf[DeltaSparkSessionExtension].getName}")
+         |    .option("$catalogImplConfig", "${classOf[DeltaCatalog].getName}"
+         |    ...
+         |    .build()
+      """.stripMargin,
+      cause = Some(originalException))
   }
 }
 

@@ -317,6 +317,28 @@ class DeltaTable(object):
         return DeltaTable(sparkSession, jdt)
 
     @classmethod
+    @since(0.7)
+    def forName(cls, sparkSession, tableOrViewName):
+        """
+        Create a DeltaTable using the given table or view name using the given SparkSession.
+
+        :param sparkSession: SparkSession to use for loading the table
+        :param tableOrViewName: name of the table or view
+        :return: loaded Delta table
+        :rtype: :py:class:`~delta.tables.DeltaTable`
+
+        Example::
+
+            deltaTable = DeltaTable.forName(spark, "tblName")
+
+        .. note:: Evolving
+        """
+        assert sparkSession is not None
+        jdt = sparkSession._sc._jvm.io.delta.tables.DeltaTable.forName(
+            sparkSession._jsparkSession, tableOrViewName)
+        return DeltaTable(sparkSession, jdt)
+
+    @classmethod
     @since(0.4)
     def isDeltaTable(cls, sparkSession, identifier):
         """
