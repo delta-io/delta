@@ -17,7 +17,7 @@
 name := "example"
 organization := "com.example"
 organizationName := "example"
-scalaVersion := "2.11.12"
+scalaVersion := "2.12.10"
 version := "0.1.0"
 
 def getDeltaVersion(): String = {
@@ -27,7 +27,7 @@ def getDeltaVersion(): String = {
     println("Using Delta version " + version)
     version
   } else {
-    "0.5.0"
+    "0.7.0"
   }
 }
 
@@ -35,5 +35,5 @@ lazy val root = (project in file("."))
   .settings(
     name := "hello-world",
     libraryDependencies += "io.delta" %% "delta-core" % getDeltaVersion(),
-    libraryDependencies += "org.apache.spark" %% "spark-sql" % "2.4.3",
+    libraryDependencies += "org.apache.spark" %% "spark-sql" % "3.0.0",
     resolvers += "Delta" at "https://dl.bintray.com/delta-io/delta/")
