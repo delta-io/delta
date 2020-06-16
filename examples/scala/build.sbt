@@ -36,5 +36,4 @@ lazy val root = (project in file("."))
     name := "hello-world",
     libraryDependencies += "io.delta" %% "delta-core" % getDeltaVersion(),
     libraryDependencies += "org.apache.spark" %% "spark-sql" % "3.0.0",
-    resolvers += "Spark 3.0 RC3 staging" at "https://repository.apache.org/content/repositories/orgapachespark-1350/",
     resolvers += "Delta" at "https://dl.bintray.com/delta-io/delta/")
