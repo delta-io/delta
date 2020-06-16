@@ -19,7 +19,7 @@ except:
 # We need to set the following configs 
 
 spark = SparkSession.builder \
-    .appName("quickstart") \
+    .appName("quickstart_sql_on_paths") \
     .master("local[*]") \
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
