@@ -436,12 +436,12 @@ A reference implementation can be found in [the catalyst package of the Apache S
 Type Name | Description
 -|-
 string| UTF-8 encoded string of characters
-long| 8-byte signed integer. Rnage: -9223372036854775808 to 9223372036854775807
+long| 8-byte signed integer. Range: -9223372036854775808 to 9223372036854775807
 integer|4-byte signed integer. Range: -2147483648 to 2147483647
 short| 2-byte signed integer numbers. Range: -32768 to 32767
 byte| 1-byte signed integer number. Range: -128 to 127
-float| 4-byte single-precision floating point numbers
-double| 8-byte double-precision floating point numbers
+float| 4-byte single-precision floating-point numbers
+double| 8-byte double-precision floating-point numbers
 boolean| `true` or `false`
 binary| A sequence of binary data.
 date| A calendar date, represented as a year-month-day triple without a timezone.
@@ -458,7 +458,7 @@ fields | An array of fields
 
 ### Struct Field
 
-A struct field represents a top level or nested column.
+A struct field represents a top-level or nested column.
 
 Field Name | Description
 -|-
