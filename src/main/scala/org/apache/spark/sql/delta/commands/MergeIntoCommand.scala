@@ -29,7 +29,7 @@ import org.apache.spark.SparkContext
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.encoders.{ExpressionEncoder, RowEncoder}
-import org.apache.spark.sql.catalyst.expressions.{Alias, And, Attribute, AttributeReference, BasePredicate, Expression, Literal, NamedExpression, Not, PredicateHelper, UnsafeProjection}
+import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.codegen._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.execution.SQLExecution
@@ -328,15 +328,15 @@ case class MergeIntoCommand(
       "fullOuter"
     }
 
-    val (targetOnlyPredicatesNullIntolerant, otherPredicates) =
+    val (targetOnlyPredicates, otherPredicates) =
       splitConjunctivePredicates(condition).partition { expr =>
-        isNullIntolerant(expr) && expr.references.subsetOf(target.outputSet)
+        expr.references.subsetOf(target.outputSet)
       }
 
     val rewriteWithUnion = isMatchedOnly &&
       spark.conf.get(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED) &&
       spark.conf.get(DeltaSQLConf.MERGE_MATCHED_ONLY_REWRITE_WITH_UNION_ENABLED) &&
-      targetOnlyPredicatesNullIntolerant.nonEmpty
+      targetOnlyPredicates.nonEmpty
 
 
     logDebug(s"""writeAllChanges using $joinType join:
@@ -368,7 +368,7 @@ case class MergeIntoCommand(
       // Especially for partition table which the targetOnlyPredicates contains partition columns.
       sourceDF.join(targetDF, new Column(otherPredicates.reduceLeftOption(And)
         .getOrElse(Literal(true, BooleanType))), joinType)
-        .filter(new Column(targetOnlyPredicatesNullIntolerant.reduceLeftOption(And)
+        .filter(new Column(targetOnlyPredicates.reduceLeftOption(And)
           .getOrElse(Literal(true, BooleanType))))
     } else {
       sourceDF.join(targetDF, new Column(condition), joinType)
@@ -428,15 +428,8 @@ case class MergeIntoCommand(
       Dataset.ofRows(spark, joinedPlan).mapPartitions(processor.processPartition)(outputRowEncoder)
     val outputDF = if (rewriteWithUnion) {
       val targetDF = Dataset.ofRows(spark, newTarget)
-      // Before adding NOT operator to targetOnlyPredicatesNullIntolerant,
-      // we should infer isNotNull for them.
-      val targetOnlyPredicatesIsNotNull = targetOnlyPredicatesNullIntolerant.toSet
-        .union(
-          constructIsNotNullConstraints(targetOnlyPredicatesNullIntolerant.toSet, target.output)
-        ).filter { c =>
-        c.references.nonEmpty && c.references.subsetOf(target.outputSet) && c.deterministic
-      }.reduceLeft(And)
-      val nonMergeDF = targetDF.filter(new Column(Not(targetOnlyPredicatesIsNotNull)))
+      val nonMergeDF = targetDF.filter(new Column(
+        Not(EqualNullSafe(targetOnlyPredicates.reduceLeft(And), Literal(true, BooleanType)))))
       mergeDF.union(nonMergeDF)
     } else {
       mergeDF
