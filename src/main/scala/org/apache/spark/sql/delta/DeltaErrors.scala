@@ -140,6 +140,16 @@ object DeltaErrors
       s"For more information, see $faqPath"
   }
 
+  def shallowCloneFileNotFoundHint(path: String): String = {
+    recordDeltaEvent(null, "delta.error.shallowCloneFileNotFound", data = path)
+    "A file referenced in the transaction log cannot be found. This can occur when data has been " +
+      "manually deleted from the file system rather than using the table `DELETE` statement. " +
+      "This table appears to be a shallow clone, if that is the case, this error can occur when " +
+      "the original table from which this table was cloned has deleted a file that the clone is " +
+      "still using. If you want any clones to be independent of the original table, use a DEEP " +
+      "clone instead."
+  }
+
   def formatColumn(colName: String): String = s"`$colName`"
 
   def formatColumnList(colNames: Seq[String]): String =

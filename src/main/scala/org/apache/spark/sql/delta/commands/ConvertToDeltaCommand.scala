@@ -352,13 +352,19 @@ abstract class ConvertToDeltaCommandBase(
       txn.updateMetadata(metadata)
 
       val addFilesIter = createDeltaActions(spark, manifest, txn, fs)
+      val metrics = Some(Map[String, String](
+        "numConvertedFiles" -> numFiles.toString
+      ))
 
-      streamWrite(
+      commitLarge(
         spark,
         txn,
+        txn.metadata,
         addFilesIter,
         getOperation(numFiles, convertProperties),
-        numFiles)
+        numFiles,
+        getContext,
+        metrics)
     } finally {
       manifest.close()
     }
@@ -486,79 +492,6 @@ abstract class ConvertToDeltaCommandBase(
       partitionColNames,
       collectStats = false,
       convertProperties.catalogTable.map(t => t.identifier.toString))
-  }
-
-  /**
-   * Create the first commit on the Delta log by directly writing an iterator of AddFiles to the
-   * LogStore. This bypasses the Delta transactional protocol, but we assume this is ok as this is
-   * the very first commit and only happens at table conversion which is a one-off process.
-   */
-  private def streamWrite(
-      spark: SparkSession,
-      txn: OptimisticTransaction,
-      addFiles: Iterator[AddFile],
-      op: DeltaOperations.Operation,
-      numFiles: Long): Long = {
-    val firstVersion = 0L
-    try {
-      val deltaLog = txn.deltaLog
-      val metadata = txn.metadata
-      val context = getContext
-      val metrics = if (spark.conf.get(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED)) {
-        Some(Map[String, String](
-          "numConvertedFiles" -> numFiles.toString
-        ))
-      } else {
-        None
-      }
-
-      val commitInfo = CommitInfo(
-        time = txn.clock.getTimeMillis(),
-        operation = op.name,
-        operationParameters = op.jsonEncodedValues,
-        context,
-        readVersion = None,
-        isolationLevel = None,
-        isBlindAppend = None,
-        metrics,
-        userMetadata = None)
-
-      val extraActions = Seq(commitInfo, Protocol(), metadata)
-      val actions = extraActions.toIterator ++ addFiles
-      deltaLog.store.write(deltaFile(deltaLog.logPath, firstVersion), actions.map(_.json))
-
-      val currentSnapshot = deltaLog.update()
-      if (currentSnapshot.version != firstVersion) {
-        throw new IllegalStateException(
-          s"The committed version is $firstVersion but the current version is " +
-            s"${currentSnapshot.version}. Please contact Databricks support.")
-      }
-
-      logInfo(s"Committed delta #$firstVersion to ${deltaLog.logPath}")
-
-      try {
-        deltaLog.checkpoint()
-      } catch {
-        case e: IllegalStateException =>
-          logWarning("Failed to checkpoint table state.", e)
-      }
-
-      firstVersion
-    } catch {
-      case e: java.nio.file.FileAlreadyExistsException =>
-        recordDeltaEvent(
-          txn.deltaLog,
-          "delta.convert.commitFailure",
-          data = Map("exception" -> Utils.exceptionString(e)))
-        throw DeltaErrors.commitAlreadyExistsException(firstVersion, txn.deltaLog.logPath)
-
-      case NonFatal(e) =>
-        recordDeltaEvent(
-          txn.deltaLog,
-          "delta.convert.commitFailure",
-          data = Map("exception" -> Utils.exceptionString(e)))
-        throw e
-    }
   }
 
   /**
