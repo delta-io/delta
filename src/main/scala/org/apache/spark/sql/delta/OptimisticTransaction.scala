@@ -100,6 +100,23 @@ object OptimisticTransaction {
   def getActive(): Option[OptimisticTransaction] = Option(active.get())
 
   /**
+   * Runs the passed block of code with the given active transaction
+   */
+  def withActive[T](activeTransaction: OptimisticTransaction)(block: => T): T = {
+    val original = getActive()
+    setActive(activeTransaction)
+    try {
+      block
+    } finally {
+      if (original.isDefined) {
+        setActive(original.get)
+      } else {
+        clearActive()
+      }
+    }
+  }
+
+  /**
    * Sets a transaction as the active transaction.
    *
    * @note This is not meant for being called directly, only from
