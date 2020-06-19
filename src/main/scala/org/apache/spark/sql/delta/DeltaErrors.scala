@@ -64,7 +64,7 @@ trait DocsPath {
    *
    * @param relativePath the relative path after the base url to access.
    * @param skipValidation whether to validate that the function generating the link is
-   *                       in the whitelist
+   *                       in the allowlist.
    * @return The entire URL of the documentation link
    */
   def generateDocsLink(
