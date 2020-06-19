@@ -368,7 +368,7 @@ class InitialSnapshot(
     val logPath: Path,
     override val deltaLog: DeltaLog,
     override val metadata: Metadata)
-  extends Snapshot(logPath, -1, LogSegment.empty, -1, deltaLog, -1, None) {
+  extends Snapshot(logPath, -1, LogSegment.empty(logPath), -1, deltaLog, -1, None) {
 
   override def state: Dataset[SingleAction] = emptyActions
   override protected lazy val computedState: Snapshot.State = {

@@ -143,12 +143,19 @@ class DeltaSuite extends QueryTest
     val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
     fs.delete(path, true)
 
-    val e = intercept[FileNotFoundException] {
+    val e = intercept[AnalysisException] {
       withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0s") {
         checkAnswer(df, Row(1) :: Nil)
       }
     }.getMessage
-    assert(e.contains("No delta log found"))
+    assert(e.contains("The schema of your Delta table has changed"))
+    val e2 = intercept[AnalysisException] {
+      withSQLConf(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key -> "0s") {
+        // Define new DataFrame
+        spark.read.format("delta").load(tempDir.toString).collect()
+      }
+    }.getMessage
+    assert(e2.contains("doesn't exist"))
   }
 
   test("append then read") {

@@ -121,7 +121,7 @@ case class DeltaTableV2(
    * paths.
    */
   def toBaseRelation: BaseRelation = {
-    if (deltaLog.snapshot.version == -1) {
+    if (!deltaLog.tableExists) {
       val id = catalogTable.map(ct => DeltaTableIdentifier(table = Some(ct.identifier)))
         .getOrElse(DeltaTableIdentifier(path = Some(path.toString)))
       throw DeltaErrors.notADeltaTableException(id)
