@@ -12,12 +12,12 @@ See the [Quick Start Guide](https://docs.delta.io/latest/quick-start.html) to ge
 
 ### Maven
 
-You include Delta Lake in your Maven project by adding it as a dependency in your POM file. Delta Lake is cross compiled with Scala versions 2.11 and 2.12; choose the version that matches your project. If you are writing a Java project, you can use either version.
+Starting from 0.7.0, Delta Lake is only available with Scala version 2.12.
 
 ```xml
 <dependency>
   <groupId>io.delta</groupId>
-  <artifactId>delta-core_2.11</artifactId>
+  <artifactId>delta-core_2.12</artifactId>
   <version>0.7.0</version>
 </dependency>
 ```
@@ -40,7 +40,7 @@ libraryDependencies += "io.delta" %% "delta-core" % "0.7.0"
 
 ### Compatibility with Apache Spark Versions
 
-Delta Lake currently requires Apache Spark 2.4.2. Earlier versions are missing [SPARK-27453](https://issues.apache.org/jira/browse/SPARK-27453), which breaks the `partitionBy` clause of the `DataFrameWriter`.
+Delta Lake currently requires Apache Spark 3.0.0
 
 ### API Compatibility
 
