@@ -108,7 +108,7 @@ def getVersion(version: String): String = {
     version.split("\\.").toList match {
         case major :: minor :: rest =>
           if (rest.head.startsWith("0")) s"$major.${minor.toInt - 1}.0"
-          else s"$major.$minor.${rest.head.toInt - 1}"
+          else s"$major.$minor.${rest.head.replaceAll("-SNAPSHOT", "").toInt - 1}"
         case _ => throw new Exception(s"Could not find previous version for $version.")
     }
 }
