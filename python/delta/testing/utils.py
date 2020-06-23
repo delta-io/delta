@@ -31,24 +31,29 @@ class DeltaTestCase(unittest.TestCase):
     def setUp(self):
         self._old_sys_path = list(sys.path)
         class_name = self.__class__.__name__
+        self.warehouse_dir = "./spark-warehouse/"
+        if os.path.exists(self.warehouse_dir) and os.path.isdir(self.warehouse_dir):
+            shutil.rmtree(self.warehouse_dir)
         # Configurations to speed up tests and reduce memory footprint
-        conf = SparkConf() \
-            .setAppName(class_name) \
-            .setMaster('local[4]') \
-            .set("spark.ui.enabled", "false") \
-            .set("spark.databricks.delta.snapshotPartitions", "2") \
-            .set("spark.sql.shuffle.partitions", "5") \
-            .set("delta.log.cacheSize", "3") \
-            .set("spark.sql.sources.parallelPartitionDiscovery.parallelism", "5")
-        conf.set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-        conf.set("spark.sql.catalog.spark_catalog",
-                 "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-        self.sc = SparkContext(conf=conf)
-        self.spark = SparkSession(self.sc)
+        self.spark = SparkSession.builder \
+            .appName(class_name) \
+            .master('local[4]') \
+            .config("spark.ui.enabled", "false") \
+            .config("spark.databricks.delta.snapshotPartitions", "2") \
+            .config("spark.sql.shuffle.partitions", "5") \
+            .config("delta.log.cacheSize", "3") \
+            .config("spark.sql.sources.parallelPartitionDiscovery.parallelism", "5") \
+            .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+            .config("spark.sql.catalog.spark_catalog",
+                    "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
+            .getOrCreate()
+        self.sc = self.spark.sparkContext
         self.tempPath = tempfile.mkdtemp()
         self.tempFile = os.path.join(self.tempPath, "tempFile")
 
     def tearDown(self):
         self.sc.stop()
         shutil.rmtree(self.tempPath)
+        if os.path.exists(self.warehouse_dir) and os.path.isdir(self.warehouse_dir):
+            shutil.rmtree(self.warehouse_dir)
         sys.path = self._old_sys_path

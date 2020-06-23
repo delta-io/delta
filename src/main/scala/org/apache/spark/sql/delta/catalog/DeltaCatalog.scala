@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.catalog
 
 import java.util
 
+// scalastyle:off import.ordering.noEmptyLine
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
@@ -106,7 +107,6 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
       partitionColumnNames = partitionColumns,
       bucketSpec = maybeBucketSpec,
       properties = tableProperties.toMap,
-      tracksPartitionsInCatalog = false,
       comment = Option(properties.get("comment")))
     // END: copy-paste from the super method finished.
 
@@ -127,26 +127,17 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
     try {
       super.loadTable(ident) match {
         case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
-          if (isPathIdentifier(ident)) {
-            // TODO: Get rid of this hack when path based tables become a first class citizen.
-            DeltaTableV2(
-              spark,
-              new Path(v1.catalogTable.location))
-          } else {
-            DeltaTableV2(
-              spark,
-              new Path(v1.catalogTable.location),
-              catalogTable = Some(v1.catalogTable),
-              tableIdentifier = Some(ident.toString))
-          }
+          DeltaTableV2(
+            spark,
+            new Path(v1.catalogTable.location),
+            catalogTable = Some(v1.catalogTable),
+            tableIdentifier = Some(ident.toString))
         case o => o
       }
     } catch {
       case _: NoSuchDatabaseException | _: NoSuchNamespaceException | _: NoSuchTableException
           if isPathIdentifier(ident) =>
-        DeltaTableV2(
-          spark,
-          new Path(ident.name()))
+        DeltaTableV2(spark, new Path(ident.name()))
     }
   }
 

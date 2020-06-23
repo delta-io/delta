@@ -29,6 +29,8 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.connector.read.streaming
+import org.apache.spark.sql.connector.read.streaming.{ReadAllAvailable, ReadLimit, ReadMaxFiles, SupportsAdmissionControl}
 import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.types.StructType
 
@@ -67,6 +69,7 @@ case class DeltaSource(
     options: DeltaOptions,
     filters: Seq[Expression] = Nil)
   extends Source
+  with SupportsAdmissionControl
   with DeltaLogging {
 
   // Deprecated. Please use `ignoreDeletes` or `ignoreChanges` from now on.
@@ -197,15 +200,20 @@ case class DeltaSource(
     }
   }
 
+  override def getDefaultReadLimit: ReadLimit = {
+    new AdmissionLimits().toReadLimit
+  }
 
-  override def getOffset: Option[Offset] = {
+  override def latestOffset(startOffset: streaming.Offset, limit: ReadLimit): streaming.Offset = {
     val currentOffset = if (previousOffset == null) {
-      getStartingOffset()
+      getStartingOffset(AdmissionLimits(limit))
     } else {
-      val last = iteratorLast(getChangesWithRateLimit(
+      val changes = getChangesWithRateLimit(
         previousOffset.reservoirVersion,
         previousOffset.index,
-        previousOffset.isStartingVersion))
+        previousOffset.isStartingVersion,
+        AdmissionLimits(limit))
+      val last = iteratorLast(changes)
       if (last.isEmpty) {
         Some(previousOffset)
       } else {
@@ -224,7 +232,12 @@ case class DeltaSource(
       }
     }
     logDebug(s"previousOffset -> currentOffset: $previousOffset -> $currentOffset")
-    currentOffset
+    currentOffset.orNull
+  }
+
+  override def getOffset: Option[Offset] = {
+    throw new UnsupportedOperationException(
+      "latestOffset(Offset, ReadLimit) should be called instead of this method")
   }
 
   private def verifyStreamHygieneAndFilterAddFiles(actions: Seq[Action]): Seq[Action] = {
@@ -332,6 +345,30 @@ case class DeltaSource(
       filesToTake -= 1
       bytesToTake -= add.get.size
       shouldAdmit
+    }
+
+    def toReadLimit: ReadLimit = {
+      if (options.maxFilesPerTrigger.isDefined && options.maxBytesPerTrigger.isDefined) {
+        CompositeLimit(
+          ReadMaxBytes(options.maxBytesPerTrigger.get),
+          ReadLimit.maxFiles(options.maxFilesPerTrigger.get).asInstanceOf[ReadMaxFiles])
+      } else if (options.maxBytesPerTrigger.isDefined) {
+        ReadMaxBytes(options.maxBytesPerTrigger.get)
+      } else {
+        ReadLimit.maxFiles(
+          options.maxFilesPerTrigger.getOrElse(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION_DEFAULT))
+      }
+    }
+  }
+
+  private object AdmissionLimits {
+    def apply(limit: ReadLimit): Option[AdmissionLimits] = limit match {
+      case _: ReadAllAvailable => None
+      case maxFiles: ReadMaxFiles => Some(new AdmissionLimits(Some(maxFiles.maxFiles())))
+      case maxBytes: ReadMaxBytes => Some(new AdmissionLimits(None, maxBytes.maxBytes))
+      case composite: CompositeLimit =>
+        Some(new AdmissionLimits(Some(composite.files.maxFiles()), composite.bytes.maxBytes))
+      case other => throw new UnsupportedOperationException(s"Unknown ReadLimit: $other")
     }
   }
 }

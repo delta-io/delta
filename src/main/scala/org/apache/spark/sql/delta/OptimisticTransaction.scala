@@ -271,6 +271,17 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   }
 
   /**
+   * Return the user-defined metadata for the operation.
+   */
+  def getUserMetadata(op: Operation): Option[String] = {
+    // option wins over config if both are set
+    op.userMetadata match {
+      case data @ Some(_) => data
+      case None => spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_USER_METADATA)
+    }
+  }
+
+  /**
    * Modifies the state of the log by adding a new commit that is based on a read at
    * the given `lastVersion`.  In the case of a conflict with a concurrent writer this
    * method will throw an exception.
@@ -315,7 +326,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
           Some(readVersion).filter(_ >= 0),
           None,
           Some(isBlindAppend),
-          getOperationMetrics(op))
+          getOperationMetrics(op),
+          getUserMetadata(op))
         finalActions = commitInfo +: finalActions
       }
 
@@ -357,25 +369,59 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
     // If the metadata has changed, add that to the set of actions
     var finalActions = newMetadata.toSeq ++ actions
     val metadataChanges = finalActions.collect { case m: Metadata => m }
-    assert(
-      metadataChanges.length <= 1,
-      "Cannot change the metadata more than once in a transaction.")
+    if (metadataChanges.length > 1) {
+      recordDeltaEvent(deltaLog, "delta.metadataCheck.multipleMetadataActions", data = Map(
+        "metadataChanges" -> metadataChanges
+      ))
+      assert(
+        metadataChanges.length <= 1, "Cannot change the metadata more than once in a transaction.")
+    }
     metadataChanges.foreach(m => verifyNewMetadata(m))
 
-    // If this is the first commit and no protocol is specified, initialize the protocol version.
     if (snapshot.version == -1) {
       deltaLog.ensureLogDirectoryExist()
+      // If this is the first commit and no protocol is specified, initialize the protocol version.
       if (!finalActions.exists(_.isInstanceOf[Protocol])) {
         finalActions = Protocol() +: finalActions
       }
+      // If this is the first commit and no metadata is specified, throw an exception
+      if (!finalActions.exists(_.isInstanceOf[Metadata])) {
+        recordDeltaEvent(deltaLog, "delta.metadataCheck.noMetadataInInitialCommit")
+        if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED)) {
+          throw DeltaErrors.metadataAbsentException()
+        }
+        logWarning(
+          s"""
+            |Detected no metadata in initial commit but commit validation was turned off. To turn
+            |it back on set ${DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED} to "true"
+          """.stripMargin)
+      }
     }
 
+    val partitionColumns = metadata.partitionColumns.toSet
     finalActions = finalActions.map {
       // Fetch global config defaults for the first commit
       case m: Metadata if snapshot.version == -1 =>
         val updatedConf = DeltaConfigs.mergeGlobalConfigs(
           spark.sessionState.conf, m.configuration, Protocol())
         m.copy(configuration = updatedConf)
+      case a: AddFile if partitionColumns != a.partitionValues.keySet =>
+        // If the partitioning in metadata does not match the partitioning in the AddFile
+        recordDeltaEvent(deltaLog, "delta.metadataCheck.partitionMismatch", data = Map(
+          "tablePartitionColumns" -> metadata.partitionColumns,
+          "filePartitionValues" -> a.partitionValues
+        ))
+        if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED)) {
+          throw DeltaErrors.addFilePartitioningMismatchException(
+            a.partitionValues.keySet.toSeq, partitionColumns.toSeq)
+        }
+        logWarning(
+          s"""
+             |Detected mismatch in partition values between AddFile and table metadata but
+             |commit validation was turned off.
+             |To turn it back on set ${DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED} to "true"
+          """.stripMargin)
+        a
       case other => other
     }
 
@@ -441,6 +487,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       val postCommitSnapshot = deltaLog.update()
 
       if (postCommitSnapshot.version < attemptVersion) {
+        recordDeltaEvent(deltaLog, "delta.commit.inconsistentList", data = Map(
+          "committedVersion" -> attemptVersion,
+          "currentVersion" -> postCommitSnapshot.version
+        ))
         throw new IllegalStateException(
           s"The committed version is $attemptVersion " +
             s"but the current version is ${postCommitSnapshot.version}.")

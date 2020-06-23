@@ -111,7 +111,7 @@ abstract class LogStoreSuiteBase extends QueryTest
 
   test("simple log store test") {
     val tempDir = Utils.createTempDir()
-    val log1 = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+    val log1 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
     assert(log1.store.getClass.getName == logStoreClassName)
 
     val txn = log1.startTransaction()
@@ -120,7 +120,7 @@ abstract class LogStoreSuiteBase extends QueryTest
     log1.checkpoint()
 
     DeltaLog.clearCache()
-    val log2 = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+    val log2 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
     assert(log2.store.getClass.getName == logStoreClassName)
 
     assert(log2.lastCheckpoint.map(_.version) === Some(0L))

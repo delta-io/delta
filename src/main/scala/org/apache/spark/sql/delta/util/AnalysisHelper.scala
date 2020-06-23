@@ -45,6 +45,23 @@ trait AnalysisHelper {
     Dataset.ofRows(sparkSession, logicalPlan)
   }
 
+  protected def improveUnsupportedOpError(f: => Unit): Unit = {
+    val possibleErrorMsgs = Seq(
+      "is only supported with v2 table", // full error: DELETE is only supported with v2 tables
+      "is not supported temporarily",    // full error: UPDATE TABLE is not supported temporarily
+      "Table does not support read",
+      "Table implementation does not support writes"
+    ).map(_.toLowerCase())
+
+    def isExtensionOrCatalogError(error: Exception): Boolean = {
+      possibleErrorMsgs.exists(m => error.getMessage().toLowerCase().contains(m))
+    }
+
+    try { f } catch {
+      case e: Exception if isExtensionOrCatalogError(e) =>
+        throw DeltaErrors.configureSparkSessionWithExtensionAndCatalog(e)
+    }
+  }
 }
 
 object AnalysisHelper {
