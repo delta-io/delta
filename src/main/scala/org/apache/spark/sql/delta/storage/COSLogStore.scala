@@ -41,16 +41,6 @@ class COSLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
   assert(hadoopConf.getBoolean("fs.cos.atomic.write", false) == true,
     "'fs.cos.atomic.write' must be set to true to use COSLogStore")
 
-  val MULTIPART_UPLOAD_THRESHOLD_KEY = "fs.cos.multipart.threshold"
-  val DEFAULT_MULTIPART_UPLOAD_THRESHOLD = Integer.MAX_VALUE
-  val FAST_UPLOAD_MULTIPART_UPLOAD_THRESHOLD_KEY = "fs.cos.multipart.size"
-  val FAST_UPLOAD_DEFAULT_MULTIPART_UPLOAD_THRESHOLD = 8388608 // 8 MiB
-
-  // atomic write is only available when the write can be done in one chunk
-  // get the relevant multipart threshold from hadoop configuration
-  val isFastUpload = hadoopConf.getBoolean("fs.cos.fast.upload", false)
-  val multipartThreshold = getMultipartThreshold()
-
   override def write(path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit = {
     val fs = path.getFileSystem(hadoopConf)
 
@@ -66,13 +56,6 @@ class COSLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
           stream.write(action)
           writeSize += action.length
         })
-        // verify the stream can be written in one chunk
-        // there is no support for atomic multipart writes
-        if (writeSize > multipartThreshold) {
-          throw new Exception(s"Atomic write failed for a write of size ${stream.size()} bytes," +
-            s"current threshold for multipart upload is ${multipartThreshold} bytes. " +
-            s"please increase the threshold '$getMultipartUploadThresholdKey'")
-        }
         stream.close()
       } catch {
           case e: IOException =>
@@ -88,25 +71,4 @@ class COSLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
   override def invalidateCache(): Unit = {}
 
   override def isPartialWriteVisible(path: Path): Boolean = false
-
-  /**
-   * @return The minimum size in bytes before we start a multipart uploads
-   */
-  protected def getMultipartThreshold(): Long = {
-    if (isFastUpload) {
-      // the configuration value is in MiB
-      hadoopConf.getLong(FAST_UPLOAD_MULTIPART_UPLOAD_THRESHOLD_KEY,
-        FAST_UPLOAD_DEFAULT_MULTIPART_UPLOAD_THRESHOLD)
-    } else {
-      hadoopConf.getLong(MULTIPART_UPLOAD_THRESHOLD_KEY, DEFAULT_MULTIPART_UPLOAD_THRESHOLD)
-    }
-  }
-
-  protected def getMultipartUploadThresholdKey() : String = {
-    if (isFastUpload) {
-      FAST_UPLOAD_MULTIPART_UPLOAD_THRESHOLD_KEY
-    } else {
-      MULTIPART_UPLOAD_THRESHOLD_KEY
-    }
-  }
 }
