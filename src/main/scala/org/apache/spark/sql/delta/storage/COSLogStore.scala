@@ -30,7 +30,7 @@ import org.apache.spark.SparkConf
  * We assume the following from COS's [[FileSystem]] implementations:
  * - Write on COS is all-or-nothing, whether overwrite or not.
  * - Write is atomic.
- *   Note: Write is atomic when using the Stocator v1.1.2+ - Storage Connector for Apache Spark
+ *   Note: Write is atomic when using the Stocator v1.1.1+ - Storage Connector for Apache Spark
  *   (https://github.com/CODAIT/stocator) by setting the configuration `fs.cos.atomic.write` to true
  *   (for more info see the documentation for Stocator)
  * - List-after-write is consistent.
