@@ -51,6 +51,16 @@ object DeltaSQLConf {
       .stringConf
       .createOptional
 
+  val DELTA_CONVERT_USE_METADATA_LOG =
+    buildConf("convert.useMetadataLog")
+      .doc(
+        """ When converting to a Parquet table that was created by Structured Streaming, whether
+        |  to use the transaction log under `_spark_metadata` as the source of truth for files
+        | contained in the table.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_SNAPSHOT_PARTITIONS =
     buildConf("snapshotPartitions")
       .internal()

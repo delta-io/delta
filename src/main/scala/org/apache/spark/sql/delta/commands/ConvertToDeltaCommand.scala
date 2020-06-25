@@ -273,7 +273,8 @@ abstract class ConvertToDeltaCommandBase(
       spark: SparkSession,
       qualifiedDir: String,
       serializableConf: SerializableConfiguration): FileManifest = {
-    if (FileStreamSink.hasMetadata(Seq(qualifiedDir), serializableConf.value, conf)) {
+    if (conf.getConf(DeltaSQLConf.DELTA_CONVERT_USE_METADATA_LOG) &&
+      FileStreamSink.hasMetadata(Seq(qualifiedDir), serializableConf.value, conf)) {
       new MetadataLogFileManifest(spark, qualifiedDir)
     } else new ManualListingFileManifest(spark, qualifiedDir, serializableConf)
   }
