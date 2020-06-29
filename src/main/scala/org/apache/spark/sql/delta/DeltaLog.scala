@@ -36,12 +36,11 @@ import org.apache.spark.sql.delta.storage.LogStoreProvider
 import com.google.common.cache.{CacheBuilder, RemovalListener, RemovalNotification}
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.SparkContext
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Cast, Expression, In, InSet, Literal}
+import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Cast, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.sources.{BaseRelation, InsertableRelation}
@@ -351,24 +350,13 @@ class DeltaLog private(
    */
   def createRelation(
       partitionFilters: Seq[Expression] = Nil,
-      timeTravel: Option[DeltaTimeTravelSpec] = None): BaseRelation = {
-
-    val versionToUse = timeTravel.map { tt =>
-      val (version, accessType) = DeltaTableUtils.resolveTimeTravelVersion(
-        spark.sessionState.conf, this, tt)
-      val source = tt.creationSource.getOrElse("unknown")
-      recordDeltaEvent(this, s"delta.timeTravel.$source", data = Map(
-        "tableVersion" -> snapshot.version,
-        "queriedVersion" -> version,
-        "accessType" -> accessType
-      ))
-      version
-    }
+      snapshotToUseOpt: Option[Snapshot] = None,
+      isTimeTravelQuery: Boolean = false): BaseRelation = {
 
     /** Used to link the files present in the table into the query planner. */
-    val snapshotToUse = versionToUse.map(getSnapshotAt(_)).getOrElse(snapshot)
+    val snapshotToUse = snapshotToUseOpt.getOrElse(snapshot)
     val fileIndex = TahoeLogFileIndex(
-      spark, this, dataPath, snapshotToUse.metadata.schema, partitionFilters, versionToUse)
+      spark, this, dataPath, snapshotToUse, partitionFilters, isTimeTravelQuery)
 
     new HadoopFsRelation(
       fileIndex,

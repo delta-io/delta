@@ -22,11 +22,16 @@ import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.util.AnalysisHelper
+import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{AnalysisException, SparkSession}
+import org.apache.spark.sql.{AnalysisException, SaveMode, SparkSession}
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, EliminateSubqueryAliases, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.{Alias, And, AnsiCast, Cast, CreateStruct, Expression, GetStructField, NamedExpression, UpCast}
-import org.apache.spark.sql.catalyst.plans.logical.{AppendData, DeleteAction, DeleteFromTable, DeltaDelete, DeltaMergeInto, DeltaMergeIntoClause, DeltaMergeIntoDeleteClause, DeltaMergeIntoInsertClause, DeltaMergeIntoUpdateClause, DeltaUpdateTable, Filter, InsertAction, InsertIntoStatement, LogicalPlan, MergeIntoTable, OverwriteByExpression, Project, SubqueryAlias, UpdateAction, UpdateTable}
+import org.apache.spark.sql.catalyst.plans.logical.{AppendData, DeleteAction, DeleteFromTable, DeltaDelete, DeltaMergeInto, DeltaMergeIntoClause, DeltaMergeIntoDeleteClause, DeltaMergeIntoInsertClause, DeltaMergeIntoUpdateClause, DeltaUpdateTable, Filter, InsertAction, InsertIntoStatement, LogicalPlan, MergeIntoTable, OverwriteByExpression, Project, UpdateAction, UpdateTable}
 import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
@@ -70,6 +75,7 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
       Filter(
         index.partitionFilters.reduce(And),
         DeltaTableUtils.replaceFileIndex(l, index.copy(partitionFilters = Nil)))
+
 
     // This rule falls back to V1 nodes, since we don't have a V2 reader for Delta right now
     case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, _) =>
@@ -140,6 +146,7 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
       deltaMergeResolved
 
   }
+
 
   /**
    * Performs the schema adjustment by adding UpCasts (which are safe) and Aliases so that we

@@ -20,10 +20,11 @@ import java.io.{File, FileNotFoundException}
 import java.util.concurrent.atomic.AtomicInteger
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.actions.CommitInfo
+import org.apache.spark.sql.delta.actions.{CommitInfo, Protocol}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.SparkException
@@ -35,8 +36,8 @@ import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.internal.SQLConf.OPTIMIZER_METADATA_ONLY
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
 
 class DeltaSuite extends QueryTest
@@ -156,7 +157,7 @@ class DeltaSuite extends QueryTest
         spark.read.format("delta").load(tempDir.toString).collect()
       }
     }.getMessage
-    assert(e2.contains("doesn't exist"))
+    assert(e2.contains("is not a Delta table"))
   }
 
   test("append then read") {
@@ -464,7 +465,7 @@ class DeltaSuite extends QueryTest
           .show()
       }
 
-      assert(e.getMessage.contains("doesn't exist"))
+      assert(e.getMessage.contains("is not a Delta table"))
       assert(e.getMessage.contains(tempDir.getCanonicalPath))
 
       assert(!tempDir.exists())
@@ -1089,5 +1090,35 @@ class DeltaSuite extends QueryTest
         .save(tempDir)
     }
     assert(lastCommitInfo(tempDir).userMetadata === Some("optionMeta2"))
+  }
+
+  test("An external write should be reflected during analysis of a path based query") {
+    val tempDir = Utils.createTempDir().toString
+    spark.range(10).coalesce(1).write.format("delta").mode("append").save(tempDir)
+    spark.range(10, 20).coalesce(1).write.format("delta").mode("append").save(tempDir)
+
+    val deltaLog = DeltaLog.forTable(spark, tempDir)
+    val snapshot = deltaLog.snapshot
+    val files = snapshot.allFiles.collect()
+
+    // Now make a commit that comes from an "external" writer that deletes existing data and
+    // changes the schema
+    val actions = Seq(
+      Protocol(),
+      snapshot.metadata.copy(schemaString = new StructType().add("data", "bigint").json)
+    ) ++ files.map(_.remove)
+    deltaLog.store.write(
+      FileNames.deltaFile(deltaLog.logPath, snapshot.version + 1),
+      actions.map(_.json).iterator)
+
+    deltaLog.store.write(
+      FileNames.deltaFile(deltaLog.logPath, snapshot.version + 2),
+      files.take(1).map(_.json).iterator)
+
+    // Since the column `data` doesn't exist in our old files, we read it as null.
+    checkAnswer(
+      spark.read.format("delta").load(tempDir),
+      Seq.fill(10)(Row(null))
+    )
   }
 }

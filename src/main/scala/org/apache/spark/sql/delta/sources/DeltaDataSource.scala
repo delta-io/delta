@@ -256,13 +256,7 @@ object DeltaDataSource extends DatabricksLogging {
     val (path, timeTravelByPath) = DeltaTableUtils.extractIfPathContainsTimeTravel(spark, userPath)
 
     val hadoopPath = new Path(path)
-    val rootPath = DeltaTableUtils.findDeltaTableRoot(spark, hadoopPath).getOrElse {
-      val fs = hadoopPath.getFileSystem(spark.sessionState.newHadoopConf())
-      if (!fs.exists(hadoopPath)) {
-        throw DeltaErrors.pathNotExistsException(path)
-      }
-      hadoopPath
-    }
+    val rootPath = DeltaTableUtils.findDeltaTableRoot(spark, hadoopPath).getOrElse(hadoopPath)
 
     val partitionFilters = if (rootPath != hadoopPath) {
       logConsole(
