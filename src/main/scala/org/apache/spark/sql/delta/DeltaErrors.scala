@@ -258,6 +258,11 @@ object DeltaErrors
       s"Please provide the path or table identifier for $operationName.")
   }
 
+  def viewInDescribeDetailException(view: TableIdentifier): Throwable = {
+    new AnalysisException(
+      s"$view is a view. DESCRIBE DETAIL is only supported for tables.")
+  }
+
   def alterTableChangeColumnException(oldColumns: String, newColumns: String): Throwable = {
     new AnalysisException(
       "ALTER TABLE CHANGE COLUMN is not supported for changing column " + oldColumns + " to "
