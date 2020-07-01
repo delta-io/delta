@@ -306,4 +306,12 @@ object DeltaSQLConf {
         """.stripMargin)
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_LAST_COMMIT_VERSION_IN_SESSION =
+    buildConf("lastCommitVersionInSession")
+      .doc("The version of the last commit made in the SparkSession for any table.")
+      .longConf
+      .checkValue(_ >= 0, "the version must be >= 0")
+      .createOptional
+
 }

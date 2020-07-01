@@ -1092,6 +1092,104 @@ class DeltaSuite extends QueryTest
     assert(lastCommitInfo(tempDir).userMetadata === Some("optionMeta2"))
   }
 
+  test("lastCommitVersionInSession - init") {
+    spark.sessionState.conf.unsetConf(DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION)
+    withTempDir { tempDir =>
+
+      assert(spark.conf.get(DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION) === None)
+
+      Seq(1).toDF
+        .write
+        .format("delta")
+        .save(tempDir.getCanonicalPath)
+
+      assert(spark.conf.get(DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION) === Some(0))
+    }
+  }
+
+  test("lastCommitVersionInSession - SQL") {
+    spark.sessionState.conf.unsetConf(DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION)
+    withTempDir { tempDir =>
+
+      val k = DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION.key
+      assert(sql(s"SET $k").head().get(1) === "<undefined>")
+
+      Seq(1).toDF
+        .write
+        .format("delta")
+        .save(tempDir.getCanonicalPath)
+
+      assert(sql(s"SET $k").head().get(1) === "0")
+    }
+  }
+
+  test("lastCommitVersionInSession - SQL only") {
+    spark.sessionState.conf.unsetConf(DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION)
+    withTable("test_table") {
+      val k = DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION.key
+      assert(sql(s"SET $k").head().get(1) === "<undefined>")
+
+      sql("CREATE TABLE test_table USING delta AS SELECT * FROM range(10)")
+      assert(sql(s"SET $k").head().get(1) === "0")
+    }
+  }
+
+  test("lastCommitVersionInSession - CONVERT TO DELTA") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath + "/table"
+      spark.range(10).write.format("parquet").save(path)
+      sql(s"CONVERT TO DELTA parquet.`$path`")
+
+      assert(spark.conf.get(DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION) === Some(0))
+    }
+  }
+
+  test("lastCommitVersionInSession - many writes") {
+    withTempDir { tempDir =>
+
+      for (i <- 0 until 10) {
+        Seq(i).toDF
+          .write
+          .mode("overwrite")
+          .format("delta")
+          .save(tempDir.getCanonicalPath)
+      }
+
+      Seq(10).toDF
+        .write
+        .format("delta")
+        .mode("append")
+        .save(tempDir.getCanonicalPath)
+
+      assert(spark.conf.get(DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION) === Some(10))
+    }
+  }
+
+  test("lastCommitVersionInSession - new thread writes") {
+    withTempDir { tempDir =>
+
+      Seq(1).toDF
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .save(tempDir.getCanonicalPath)
+
+      val t = new Thread {
+        override def run(): Unit = {
+          Seq(2).toDF
+            .write
+            .format("delta")
+            .mode("overwrite")
+            .save(tempDir.getCanonicalPath)
+        }
+      }
+
+      t.start
+      t.join
+      assert(spark.conf.get(DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION) === Some(1))
+    }
+  }
+
   test("An external write should be reflected during analysis of a path based query") {
     val tempDir = Utils.createTempDir().toString
     spark.range(10).coalesce(1).write.format("delta").mode("append").save(tempDir)

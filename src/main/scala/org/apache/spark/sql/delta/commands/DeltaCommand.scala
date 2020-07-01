@@ -22,7 +22,7 @@ import org.apache.spark.sql.delta.{ConcurrentWriteException, DeltaErrors, DeltaL
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.sources.DeltaSourceUtils
+import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
 import org.apache.hadoop.fs.Path
@@ -242,6 +242,10 @@ trait DeltaCommand extends DeltaLogging {
         deltaLog.fs.mkdirs(deltaLog.logPath)
       }
       deltaLog.store.write(deltaFile(deltaLog.logPath, attemptVersion), allActions.map(_.json))
+
+      spark.sessionState.conf.setConf(
+        DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,
+        Some(attemptVersion))
 
       val currentSnapshot = deltaLog.update()
       if (currentSnapshot.version != attemptVersion) {
