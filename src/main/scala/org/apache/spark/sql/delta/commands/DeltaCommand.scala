@@ -18,11 +18,11 @@ package org.apache.spark.sql.delta.commands
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, OptimisticTransaction, Serializable}
+import org.apache.spark.sql.delta.{ConcurrentWriteException, DeltaErrors, DeltaLog, DeltaOperations, OptimisticTransaction, Serializable}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
+import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
 import org.apache.hadoop.fs.Path
@@ -206,20 +206,21 @@ trait DeltaCommand extends DeltaLogging {
   }
 
   /**
-   * Create the first commit on the Delta log by directly writing an iterator of AddFiles to the
-   * LogStore. This bypasses the Delta transactional protocol, but we assume this is ok as this is
-   * the very first commit and only happens at table conversion which is a one-off process.
+   * Create a large commit on the Delta log by directly writing an iterator of FileActions to the
+   * LogStore. This bypasses the Delta transactional protocol, therefore we forego all optimistic
+   * concurrency benefits. We assume that transaction conflicts should be rare, because this method
+   * is typically used to create new tables.
    */
   protected def commitLarge(
       spark: SparkSession,
       txn: OptimisticTransaction,
       metadata: Metadata,
-      addFiles: Iterator[AddFile],
+      actions: Iterator[Action],
       op: DeltaOperations.Operation,
       numFiles: Long,
       context: Map[String, String],
       metrics: Option[Map[String, String]] = None): Long = {
-    val firstVersion = 0L
+    val attemptVersion = txn.readVersion + 1
     try {
       val metadata = txn.metadata
       val deltaLog = txn.deltaLog
@@ -229,27 +230,27 @@ trait DeltaCommand extends DeltaLogging {
         operation = op.name,
         operationParameters = op.jsonEncodedValues,
         context,
-        readVersion = None,
+        readVersion = Some(txn.readVersion),
         isolationLevel = Some(Serializable.toString),
         isBlindAppend = Some(false),
         metrics,
         userMetadata = txn.getUserMetadata(op))
 
       val extraActions = Seq(commitInfo, Protocol(), metadata)
-      val actions = extraActions.toIterator ++ addFiles
+      val allActions = extraActions.toIterator ++ actions
       if (txn.readVersion < 0) {
         deltaLog.fs.mkdirs(deltaLog.logPath)
       }
-      deltaLog.store.write(deltaFile(deltaLog.logPath, firstVersion), actions.map(_.json))
+      deltaLog.store.write(deltaFile(deltaLog.logPath, attemptVersion), allActions.map(_.json))
 
       val currentSnapshot = deltaLog.update()
-      if (currentSnapshot.version != firstVersion) {
+      if (currentSnapshot.version != attemptVersion) {
         throw new IllegalStateException(
-          s"The committed version is $firstVersion but the current version is " +
+          s"The committed version is $attemptVersion but the current version is " +
             s"${currentSnapshot.version}. Please contact Databricks support.")
       }
 
-      logInfo(s"Committed delta #$firstVersion to ${deltaLog.logPath}")
+      logInfo(s"Committed delta #$attemptVersion to ${deltaLog.logPath}")
 
       try {
         deltaLog.checkpoint()
@@ -258,14 +259,20 @@ trait DeltaCommand extends DeltaLogging {
           logWarning("Failed to checkpoint table state.", e)
       }
 
-      firstVersion
+      attemptVersion
     } catch {
       case e: java.nio.file.FileAlreadyExistsException =>
         recordDeltaEvent(
           txn.deltaLog,
           "delta.commitLarge.failure",
           data = Map("exception" -> Utils.exceptionString(e), "operation" -> op.name))
-        throw DeltaErrors.commitAlreadyExistsException(firstVersion, txn.deltaLog.logPath)
+        // Actions of a commit which went in before ours
+        val deltaLog = txn.deltaLog
+        val winningCommitActions =
+          deltaLog.store.read(deltaFile(deltaLog.logPath, attemptVersion)).map(Action.fromJson)
+        val commitInfo = winningCommitActions.collectFirst { case a: CommitInfo => a }
+          .map(ci => ci.copy(version = Some(attemptVersion)))
+        throw new ConcurrentWriteException(commitInfo)
 
       case NonFatal(e) =>
         recordDeltaEvent(
