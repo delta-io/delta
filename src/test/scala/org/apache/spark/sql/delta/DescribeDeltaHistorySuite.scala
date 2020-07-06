@@ -31,6 +31,7 @@ import org.apache.spark.sql.{AnalysisException, Column, DataFrame, QueryTest, Ro
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions._
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
@@ -869,8 +870,25 @@ trait DescribeDeltaHistorySuiteBase
     }
   }
 
+  test("sort and collect the DESCRIBE HISTORY result") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      Seq(1, 2, 3).toDF().write.format("delta").save(path)
+      val rows = sql(s"DESCRIBE HISTORY delta.`$path`")
+        .orderBy("version")
+        .collect()
+      assert(rows.map(_.getAs[Long]("version")).toList == 0L :: Nil)
+      withSQLConf(SQLConf.WHOLESTAGE_CODEGEN_ENABLED.key -> "false") {
+        val rows = sql(s"DESCRIBE HISTORY delta.`$path`")
+          .filter("version >= 0")
+          .orderBy("version")
+          .collect()
+        assert(rows.map(_.getAs[Long]("version")).toList == 0L :: Nil)
+      }
+    }
+  }
+
 }
 
 class DescribeDeltaHistorySuite
   extends DescribeDeltaHistorySuiteBase with DeltaSQLCommandTest
-
