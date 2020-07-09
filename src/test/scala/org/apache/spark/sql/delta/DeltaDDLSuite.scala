@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.{SparkEnv, SparkException}
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.analysis.NoSuchPartitionException
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
@@ -438,27 +439,33 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
 
         verifyDescribeTable("delta_test")
         verifyDescribeTable(s"delta.`$path`")
+
+        assert(sql("DESCRIBE EXTENDED delta_test").collect().length > 0)
       }
     }
   }
 
-  test("drop managed Delta table should invalidate DeltaLog cache") {
+  test("snapshot returned after a dropped managed table should be empty") {
     withTable("delta_test") {
       sql("CREATE TABLE delta_test USING delta AS SELECT 'foo' as a")
       val tableLocation = sql("DESC DETAIL delta_test").select("location").as[String].head()
-      val deltaLog = getDeltaLog(tableLocation)
+      val snapshotBefore = getDeltaLog(tableLocation).update()
       sql("DROP TABLE delta_test")
-      assert(deltaLog ne getDeltaLog(tableLocation))
+      val snapshotAfter = getDeltaLog(tableLocation).update()
+      assert(snapshotBefore ne snapshotAfter)
+      assert(snapshotAfter.version === -1)
     }
   }
 
-  test("rename managed Delta table should invalidate DeltaLog cache") {
+  test("snapshot returned after renaming a managed table should be empty") {
     withTable("delta_test", "delta_test2") {
       sql("CREATE TABLE delta_test USING delta AS SELECT 'foo' as a")
       val tableLocation = sql("DESC DETAIL delta_test").select("location").as[String].head()
-      val deltaLog = getDeltaLog(tableLocation)
+      val snapshotBefore = getDeltaLog(tableLocation).update()
       sql("ALTER TABLE delta_test RENAME TO delta_test2")
-      assert(deltaLog ne getDeltaLog(tableLocation))
+      val snapshotAfter = getDeltaLog(tableLocation).update()
+      assert(snapshotBefore ne snapshotAfter)
+      assert(snapshotAfter.version === -1)
     }
   }
 }

@@ -38,7 +38,7 @@ class DeltaLogSuite extends QueryTest
 
   testQuietly("checkpoint") {
     val tempDir = Utils.createTempDir()
-    val log1 = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+    val log1 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
 
     (1 to 15).foreach { i =>
       val txn = log1.startTransaction()
@@ -52,7 +52,7 @@ class DeltaLogSuite extends QueryTest
     }
 
     DeltaLog.clearCache()
-    val log2 = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+    val log2 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
     assert(log2.snapshot.version == log1.snapshot.version)
     assert(log2.snapshot.allFiles.count == 1)
   }
@@ -60,7 +60,7 @@ class DeltaLogSuite extends QueryTest
   testQuietly("SC-8078: update deleted directory") {
     withTempDir { dir =>
       val path = new Path(dir.getCanonicalPath)
-      val log = DeltaLog(spark, path)
+      val log = DeltaLog.forTable(spark, path)
 
       // Commit data so the in-memory state isn't consistent with an empty log.
       val txn = log.startTransaction()
@@ -71,16 +71,14 @@ class DeltaLogSuite extends QueryTest
       val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
       fs.delete(path, true)
 
-      val thrown = intercept[FileNotFoundException] {
-        log.update()
-      }
-      assert(thrown.getMessage().contains("No delta log found"))
+      val snapshot = log.update()
+      assert(snapshot.version === -1)
     }
   }
 
   testQuietly("update should pick up checkpoints") {
     withTempDir { tempDir =>
-      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       val checkpointInterval = log.checkpointInterval
       for (f <- 0 until (checkpointInterval * 2)) {
         val txn = log.startTransaction()
@@ -103,7 +101,7 @@ class DeltaLogSuite extends QueryTest
 
   test("update shouldn't pick up delta files earlier than checkpoint") {
     val tempDir = Utils.createTempDir()
-    val log1 = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+    val log1 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
 
     (1 to 5).foreach { i =>
       val txn = log1.startTransaction()
@@ -117,7 +115,7 @@ class DeltaLogSuite extends QueryTest
     }
 
     DeltaLog.clearCache()
-    val log2 = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+    val log2 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
 
     (6 to 15).foreach { i =>
       val txn = log1.startTransaction()
@@ -152,7 +150,7 @@ class DeltaLogSuite extends QueryTest
         new Path(fs.getScheme + ":" + dir + "/foo"),
         new Path(fs.getScheme + "://" + dir + "/foo")
       )
-      val logs = samePaths.map(DeltaLog(spark, _))
+      val logs = samePaths.map(DeltaLog.forTable(spark, _))
       logs.foreach { log =>
         assert(log eq logs.head)
       }
@@ -161,7 +159,7 @@ class DeltaLogSuite extends QueryTest
 
   testQuietly("handle corrupted '_last_checkpoint' file") {
     withTempDir { tempDir =>
-      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
 
       val checkpointInterval = log.checkpointInterval
       for (f <- 0 to checkpointInterval) {
@@ -178,7 +176,7 @@ class DeltaLogSuite extends QueryTest
 
       // Create a new DeltaLog
       DeltaLog.clearCache()
-      val log2 = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+      val log2 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       // Make sure we create a new DeltaLog in order to test the loading logic.
       assert(log ne log2)
 
@@ -303,17 +301,6 @@ class DeltaLogSuite extends QueryTest
     }
   }
 
-  test("First commit with missing metadata should throw error.") {
-    withTempDir { tempDir =>
-      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
-      val file = AddFile("abc", Map.empty, 1, 1, true)
-      val e = intercept[IllegalStateException] {
-        log.startTransaction().commit(Seq(file), DeltaOperations.ManualUpdate)
-      }
-      assert(e.getMessage === DeltaErrors.actionNotFoundException("metadata", 0).getMessage)
-    }
-  }
-
   Seq("protocol", "metadata").foreach { action =>
     test(s"state reconstruction without $action should fail") {
       withTempDir { tempDir =>
@@ -328,10 +315,16 @@ class DeltaLogSuite extends QueryTest
         log.store.write(
           FileNames.deltaFile(log.logPath, 0L),
           Iterator(selectedAction, file).map(a => JsonUtils.toJson(a.wrap)))
-        val e = intercept[IllegalStateException] {
-          log.update()
+        withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "true") {
+          val e = intercept[IllegalStateException] {
+            log.update()
+          }
+          assert(e.getMessage === DeltaErrors.actionNotFoundException(action, 0).getMessage)
         }
-        assert(e.getMessage === DeltaErrors.actionNotFoundException(action, 0).getMessage)
+        // Disable the validation check
+        withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "false") {
+          assert(log.update().version === 0L)
+        }
       }
     }
   }
@@ -388,13 +381,82 @@ class DeltaLogSuite extends QueryTest
         DeltaLog.clearCache()
 
         // Verify if the state reconstruction from the checkpoint fails.
-        withSQLConf(DeltaSQLConf.DELTA_STATE_CORRUPTION_IS_FATAL.key -> "true") {
+        withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "true") {
           val e = intercept[IllegalStateException] {
             DeltaLog.forTable(spark, tempDir).update()
           }
           assert(e.getMessage === DeltaErrors.actionNotFoundException(action, 10).getMessage)
         }
+
+        // Disable state reconstruction validation and try again
+        withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "false") {
+          assert(DeltaLog.forTable(spark, tempDir).update().version === 10)
+        }
       }
+    }
+  }
+
+  test("deleting and recreating a directory should cause the snapshot to be recomputed") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(10).write.format("delta").mode("append").save(path)
+      spark.range(10, 20).write.format("delta").mode("append").save(path)
+      val deltaLog = DeltaLog.forTable(spark, path)
+      deltaLog.checkpoint()
+      spark.range(20, 30).write.format("delta").mode("append").save(path)
+
+      // Store these for later usage
+      val actions = deltaLog.snapshot.state.collect()
+      val commitTimestamp = deltaLog.snapshot.logSegment.lastCommitTimestamp
+
+      checkAnswer(
+        spark.read.format("delta").load(path),
+        spark.range(30).toDF()
+      )
+
+      // Now let's delete the last version
+      deltaLog.store
+        .listFrom(FileNames.checksumFile(deltaLog.logPath, deltaLog.snapshot.version))
+        .foreach(f => deltaLog.fs.delete(f.getPath, false))
+
+      // Should show up to 20
+      checkAnswer(
+        spark.read.format("delta").load(path),
+        spark.range(20).toDF()
+      )
+
+      // Now let's delete the checkpoint and json file for version 1. We will try to list from
+      // version 1, but since we can't find anything, we should start listing from version 0
+      deltaLog.store
+        .listFrom(FileNames.checkpointFileSingular(deltaLog.logPath, 1))
+        .foreach(f => deltaLog.fs.delete(f.getPath, false))
+
+      checkAnswer(
+        spark.read.format("delta").load(path),
+        spark.range(10).toDF()
+      )
+
+      // Now let's delete that commit as well, and write a new first version
+      deltaLog.store
+        .listFrom(FileNames.deltaFile(deltaLog.logPath, 0))
+        .foreach(f => deltaLog.fs.delete(f.getPath, false))
+
+      assert(deltaLog.snapshot.version === 0)
+
+      deltaLog.store.write(
+        FileNames.deltaFile(deltaLog.logPath, 0),
+        actions.map(_.unwrap.json).iterator,
+        overwrite = false)
+
+      // To avoid flakiness, we manually set the modification timestamp of the file to a later
+      // second
+      new File(FileNames.deltaFile(deltaLog.logPath, 0).toUri)
+        .setLastModified(commitTimestamp + 5000)
+
+      checkAnswer(
+        spark.read.format("delta").load(path),
+        spark.range(30).toDF()
+      )
     }
   }
 }

@@ -42,9 +42,9 @@ import java.util.Locale
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.commands.DeltaGenerateCommand
+import org.apache.spark.sql.delta.commands._
 import io.delta.sql.parser.DeltaSqlBaseParser._
-import io.delta.tables.execution.{DescribeDeltaHistoryCommand, VacuumTableCommand}
+import io.delta.tables.execution.VacuumTableCommand
 import org.antlr.v4.runtime._
 import org.antlr.v4.runtime.atn.PredictionMode
 import org.antlr.v4.runtime.misc.{Interval, ParseCancellationException}
@@ -57,8 +57,6 @@ import org.apache.spark.sql.catalyst.parser.{ParseErrorListener, ParseException,
 import org.apache.spark.sql.catalyst.parser.ParserUtils.{string, withOrigin}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.trees.Origin
-import org.apache.spark.sql.delta.commands.DescribeDeltaDetailCommand
-import org.apache.spark.sql.delta.commands.ConvertToDeltaCommand
 import org.apache.spark.sql.types._
 
 /**

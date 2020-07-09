@@ -100,7 +100,7 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
       // rewrites Delta from V2 to V1
       val newTable = table.transformUp { case DeltaRelation(lr) => lr }
         newTable.collectLeaves().headOption match {
-          case Some(DeltaFullTable(index)) if index.deltaLog.snapshot.version > -1 =>
+          case Some(DeltaFullTable(index)) =>
           case o =>
             throw DeltaErrors.notADeltaSourceException("UPDATE", o)
         }
@@ -124,8 +124,8 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
             insert.condition,
             DeltaMergeIntoClause.toActions(insert.assignments))
         case other =>
-          throw new AnalysisException(
-          s"${other.prettyName} clauses cannot be part of the WHEN MATCHED clause in MERGE INTO.")
+          throw new AnalysisException(s"${other.prettyName} clauses cannot be part of the " +
+            s"WHEN NOT MATCHED clause in MERGE INTO.")
       }
       // rewrites Delta from V2 to V1
       val newTarget = target.transformUp { case DeltaRelation(lr) => lr }

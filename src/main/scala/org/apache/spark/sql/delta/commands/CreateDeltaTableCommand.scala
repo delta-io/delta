@@ -190,10 +190,7 @@ case class CreateDeltaTableCommand(
       val tableWithDefaultOptions = tableWithLocation.copy(
         schema = new StructType(),
         partitionColumnNames = Nil,
-        tracksPartitionsInCatalog =
-          tableWithLocation.partitionColumnNames.nonEmpty &&
-          sparkSession.sessionState.conf.manageFilesourcePartitions)
-
+        tracksPartitionsInCatalog = true)
       updateCatalog(sparkSession, tableWithDefaultOptions)
 
       Nil

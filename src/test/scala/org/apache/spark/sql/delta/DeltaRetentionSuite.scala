@@ -38,7 +38,8 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
   test("delete expired logs") {
     withTempDir { tempDir =>
       val clock = new ManualClock(System.currentTimeMillis())
-      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath), clock)
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
+      val logPath = new File(log.logPath.toUri)
       (1 to 5).foreach { i =>
         val txn = if (i == 1) startTxnWithManualLogCleanup(log) else log.startTransaction()
         val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
@@ -50,25 +51,25 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
         txn.commit(delete ++ file, testOp)
       }
 
-      val initialFiles = getLogFiles(tempDir)
+      val initialFiles = getLogFiles(logPath)
       // Shouldn't clean up, no checkpoint, no expired files
       log.cleanUpExpiredLogs()
 
-      assert(initialFiles === getLogFiles(tempDir))
+      assert(initialFiles === getLogFiles(logPath))
 
       clock.advance(intervalStringToMillis(DeltaConfigs.LOG_RETENTION.defaultValue) +
         intervalStringToMillis("interval 1 day"))
 
       // Shouldn't clean up, no checkpoint, although all files have expired
       log.cleanUpExpiredLogs()
-      assert(initialFiles === getLogFiles(tempDir))
+      assert(initialFiles === getLogFiles(logPath))
 
       log.checkpoint()
 
       val expectedFiles = Seq("04.json", "04.checkpoint.parquet")
       // after checkpointing, the files should be cleared
       log.cleanUpExpiredLogs()
-      val afterCleanup = getLogFiles(tempDir)
+      val afterCleanup = getLogFiles(logPath)
       assert(initialFiles !== afterCleanup)
       assert(expectedFiles.forall(suffix => afterCleanup.exists(_.getName.endsWith(suffix))),
         s"${afterCleanup.mkString("\n")}\n didn't contain files with suffixes: $expectedFiles")
@@ -78,7 +79,8 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
   test("log files being already deleted shouldn't fail log deletion job") {
     withTempDir { tempDir =>
       val clock = new ManualClock(System.currentTimeMillis())
-      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath), clock)
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
+      val logPath = new File(log.logPath.toUri)
 
       (1 to 25).foreach { i =>
         val txn = if (i == 1) startTxnWithManualLogCleanup(log) else log.startTransaction()
@@ -100,19 +102,19 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
       }
 
       // delete some files in the middle
-      getDeltaFiles(tempDir).sortBy(_.getName).slice(5, 15).foreach(_.delete())
+      getDeltaFiles(logPath).sortBy(_.getName).slice(5, 15).foreach(_.delete())
       clock.advance(intervalStringToMillis(DeltaConfigs.LOG_RETENTION.defaultValue) +
         intervalStringToMillis("interval 2 day"))
       log.cleanUpExpiredLogs()
 
       val minDeltaFile =
-        getDeltaFiles(tempDir).map(f => FileNames.deltaVersion(new Path(f.toString))).min
-      val maxChkFile = getCheckpointFiles(tempDir).map(f =>
+        getDeltaFiles(logPath).map(f => FileNames.deltaVersion(new Path(f.toString))).min
+      val maxChkFile = getCheckpointFiles(logPath).map(f =>
         FileNames.checkpointVersion(new Path(f.toString))).max
 
       assert(maxChkFile === minDeltaFile,
         "Delta files before the last checkpoint version should have been deleted")
-      assert(getCheckpointFiles(tempDir).length === 1,
+      assert(getCheckpointFiles(logPath).length === 1,
         "There should only be the last checkpoint version")
     }
   }
@@ -121,7 +123,7 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
     "RemoveFiles persist across checkpoints as tombstones if retention time hasn't expired") {
     withTempDir { tempDir =>
       val clock = new ManualClock(System.currentTimeMillis())
-      val log1 = DeltaLog(spark, new Path(tempDir.getCanonicalPath), clock)
+      val log1 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
 
       val txn = startTxnWithManualLogCleanup(log1)
       val files1 = (1 to 10).map(f => AddFile(f.toString, Map.empty, 1, 1, true))
@@ -132,7 +134,7 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
       log1.checkpoint()
 
       DeltaLog.clearCache()
-      val log2 = DeltaLog(spark, new Path(tempDir.getCanonicalPath), clock)
+      val log2 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
       assert(log2.snapshot.tombstones.count() === 4)
       assert(log2.snapshot.allFiles.count() === 6)
     }
@@ -141,7 +143,7 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
   testQuietly("RemoveFiles get deleted during checkpoint if retention time has passed") {
     withTempDir { tempDir =>
       val clock = new ManualClock(System.currentTimeMillis())
-      val log1 = DeltaLog(spark, new Path(tempDir.getCanonicalPath), clock)
+      val log1 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
 
       val txn = startTxnWithManualLogCleanup(log1)
       val files1 = (1 to 10).map(f => AddFile(f.toString, Map.empty, 1, 1, true))
@@ -156,7 +158,7 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
       log1.checkpoint()
 
       DeltaLog.clearCache()
-      val log2 = DeltaLog(spark, new Path(tempDir.getCanonicalPath), clock)
+      val log2 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
       assert(log2.snapshot.tombstones.count() === 0)
       assert(log2.snapshot.allFiles.count() === 6)
     }
@@ -165,11 +167,12 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
   test("the checkpoint file for version 0 should be cleaned") {
     withTempDir { tempDir =>
       val clock = new ManualClock(System.currentTimeMillis())
-      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath), clock)
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
+      val logPath = new File(log.logPath.toUri)
       startTxnWithManualLogCleanup(log).commit(AddFile("0", Map.empty, 1, 1, true) :: Nil, testOp)
       log.checkpoint()
 
-      val initialFiles = getLogFiles(tempDir)
+      val initialFiles = getLogFiles(logPath)
       clock.advance(intervalStringToMillis(DeltaConfigs.LOG_RETENTION.defaultValue) +
         intervalStringToMillis("interval 1 day"))
 
@@ -178,7 +181,7 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
       log.checkpoint()
 
       log.cleanUpExpiredLogs()
-      val afterCleanup = getLogFiles(tempDir)
+      val afterCleanup = getLogFiles(logPath)
       initialFiles.foreach { file =>
         assert(!afterCleanup.contains(file))
       }

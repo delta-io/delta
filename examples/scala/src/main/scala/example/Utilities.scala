@@ -30,10 +30,8 @@ object Utilities {
       .builder()
       .appName("Utilities")
       .master("local[*]")
-      // config io.delta.sql.DeltaSparkSessionExtension -
-      // to enable custom Delta-specific SQL commands
       .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-      // config parallelPartitionDiscovery.parallelism -
+      .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
       // control the parallelism for vacuum
       .config("spark.sql.sources.parallelPartitionDiscovery.parallelism", "4")
       .getOrCreate()

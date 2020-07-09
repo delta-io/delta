@@ -222,7 +222,7 @@ class DeltaMergeBuilder private(
    * @since 0.3.0
    */
   @Evolving
-  def execute(): Unit = {
+  def execute(): Unit = improveUnsupportedOpError {
     val sparkSession = targetTable.toDF.sparkSession
     val resolvedMergeInto =
       DeltaMergeInto.resolveReferences(mergePlan, sparkSession.sessionState.conf)(

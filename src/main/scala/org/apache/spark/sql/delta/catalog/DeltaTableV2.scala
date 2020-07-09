@@ -22,7 +22,7 @@ import java.{util => ju}
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTableUtils, DeltaTimeTravelSpec, Snapshot}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, DeltaTimeTravelSpec, Snapshot}
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils}
 import org.apache.hadoop.fs.Path
@@ -52,8 +52,14 @@ case class DeltaTableV2(
     tableIdentifier: Option[String] = None,
     timeTravelOpt: Option[DeltaTimeTravelSpec] = None) extends Table with SupportsWrite {
 
-  private lazy val (rootPath, partitionFilters, timeTravelByPath) =
-    DeltaDataSource.parsePathIdentifier(spark, path.toString)
+  private lazy val (rootPath, partitionFilters, timeTravelByPath) = {
+    if (catalogTable.isDefined) {
+      // Fast path for reducing path munging overhead
+      (new Path(catalogTable.get.location), Nil, None)
+    } else {
+      DeltaDataSource.parsePathIdentifier(spark, path.toString)
+    }
+  }
 
   // The loading of the DeltaLog is lazy in order to reduce the amount of FileSystem calls,
   // in cases where we will fallback to the V1 behavior.
@@ -73,11 +79,11 @@ case class DeltaTableV2(
     timeTravelOpt.orElse(timeTravelByPath)
   }
 
-  private def snapshot: Snapshot = {
+  private lazy val snapshot: Snapshot = {
     timeTravelSpec.map { spec =>
       val v = DeltaTableUtils.resolveTimeTravelVersion(spark.sessionState.conf, deltaLog, spec)
       deltaLog.getSnapshotAt(v._1)
-    }.getOrElse(deltaLog.snapshot)
+    }.getOrElse(deltaLog.update(stalenessAcceptable = true))
   }
 
   override def schema(): StructType = snapshot.schema
@@ -115,9 +121,15 @@ case class DeltaTableV2(
    * paths.
    */
   def toBaseRelation: BaseRelation = {
+    if (!deltaLog.tableExists) {
+      val id = catalogTable.map(ct => DeltaTableIdentifier(table = Some(ct.identifier)))
+        .getOrElse(DeltaTableIdentifier(path = Some(path.toString)))
+      throw DeltaErrors.notADeltaTableException(id)
+    }
     val partitionPredicates = DeltaDataSource.verifyAndCreatePartitionFilters(
-      path.toString, deltaLog, partitionFilters)
+      path.toString, deltaLog.snapshot, partitionFilters)
 
+    // TODO(burak): We should pass in the snapshot here
     deltaLog.createRelation(partitionPredicates, timeTravelSpec)
   }
 }
