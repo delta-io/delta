@@ -328,9 +328,13 @@ case class MergeIntoCommand(
       "fullOuter"
     }
 
+    // targetOnlyPredicates should not include partition columns since
+    // filesToRewrite has been filtered by partitions already
     val (targetOnlyPredicates, otherPredicates) =
       splitConjunctivePredicates(condition).partition { expr =>
-        expr.references.subsetOf(target.outputSet)
+        expr.references.subsetOf(target.outputSet) &&
+          !DeltaTableUtils.isPredicatePartitionColumnsOnly(
+            expr, deltaTxn.metadata.partitionColumns, spark)
       }
 
     val rewriteWithUnion = isMatchedOnly &&
