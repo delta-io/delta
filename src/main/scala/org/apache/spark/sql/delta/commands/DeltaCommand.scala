@@ -16,12 +16,15 @@
 
 package org.apache.spark.sql.delta.commands
 
-import org.apache.spark.sql.delta.{DeltaLog, DeltaTableUtils, OptimisticTransaction}
-import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
+import scala.util.control.NonFatal
+
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, OptimisticTransaction, Serializable}
+import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.sources.DeltaSourceUtils
+import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.util.DeltaFileOperations
+import org.apache.spark.sql.delta.util.FileNames.deltaFile
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
@@ -31,6 +34,7 @@ import org.apache.spark.sql.catalyst.expressions.{And, Expression, SubqueryExpre
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
+import org.apache.spark.util.Utils
 
 /**
  * Helper trait for all delta commands.
@@ -203,5 +207,76 @@ trait DeltaCommand extends DeltaLogging {
 
   protected def addFilterPushdown(df: DataFrame, predicates: Seq[Expression]): DataFrame = {
     predicates.reduceLeftOption(And).map(f => df.filter(Column(f))).getOrElse(df)
+  }
+
+  /**
+   * Create the first commit on the Delta log by directly writing an iterator of AddFiles to the
+   * LogStore. This bypasses the Delta transactional protocol, but we assume this is ok as this is
+   * the very first commit and only happens at table conversion which is a one-off process.
+   */
+  protected def commitLarge(
+      spark: SparkSession,
+      txn: OptimisticTransaction,
+      metadata: Metadata,
+      addFiles: Iterator[AddFile],
+      op: DeltaOperations.Operation,
+      numFiles: Long,
+      context: Map[String, String],
+      metrics: Option[Map[String, String]] = None): Long = {
+    val firstVersion = 0L
+    try {
+      val metadata = txn.metadata
+      val deltaLog = txn.deltaLog
+
+      val commitInfo = CommitInfo(
+        time = txn.clock.getTimeMillis(),
+        operation = op.name,
+        operationParameters = op.jsonEncodedValues,
+        context,
+        readVersion = None,
+        isolationLevel = Some(Serializable.toString),
+        isBlindAppend = Some(false),
+        metrics,
+        userMetadata = txn.getUserMetadata(op))
+
+      val extraActions = Seq(commitInfo, Protocol(), metadata)
+      val actions = extraActions.toIterator ++ addFiles
+      if (txn.readVersion < 0) {
+        deltaLog.fs.mkdirs(deltaLog.logPath)
+      }
+      deltaLog.store.write(deltaFile(deltaLog.logPath, firstVersion), actions.map(_.json))
+
+      val currentSnapshot = deltaLog.update()
+      if (currentSnapshot.version != firstVersion) {
+        throw new IllegalStateException(
+          s"The committed version is $firstVersion but the current version is " +
+            s"${currentSnapshot.version}. Please contact Databricks support.")
+      }
+
+      logInfo(s"Committed delta #$firstVersion to ${deltaLog.logPath}")
+
+      try {
+        deltaLog.checkpoint()
+      } catch {
+        case e: IllegalStateException =>
+          logWarning("Failed to checkpoint table state.", e)
+      }
+
+      firstVersion
+    } catch {
+      case e: java.nio.file.FileAlreadyExistsException =>
+        recordDeltaEvent(
+          txn.deltaLog,
+          "delta.commitLarge.failure",
+          data = Map("exception" -> Utils.exceptionString(e), "operation" -> op.name))
+        throw DeltaErrors.commitAlreadyExistsException(firstVersion, txn.deltaLog.logPath)
+
+      case NonFatal(e) =>
+        recordDeltaEvent(
+          txn.deltaLog,
+          "delta.commitLarge.failure",
+          data = Map("exception" -> Utils.exceptionString(e), "operation" -> op.name))
+        throw e
+    }
   }
 }

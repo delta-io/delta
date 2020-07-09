@@ -133,6 +133,11 @@ case class MergeIntoCommand(
   override def run(
     spark: SparkSession): Seq[Row] = recordDeltaOperation(targetDeltaLog, "delta.dml.merge") {
     targetDeltaLog.withNewTransaction { deltaTxn =>
+      if (target.schema.size != deltaTxn.metadata.schema.size) {
+        throw DeltaErrors.schemaChangedSinceAnalysis(
+          atAnalysis = target.schema, latestSchema = deltaTxn.metadata.schema)
+      }
+
       if (canMergeSchema) {
         updateMetadata(
           spark, deltaTxn, migratedSchema.getOrElse(target.schema),
@@ -553,8 +558,8 @@ object MergeIntoCommand {
         }
       }
 
-      val toRow = joinedRowEncoder.toRow _
-      val fromRow = outputRowEncoder.fromRow _
+      val toRow = joinedRowEncoder.createSerializer()
+      val fromRow = outputRowEncoder.createDeserializer()
       rowIterator
         .map(toRow)
         .map(processRow)

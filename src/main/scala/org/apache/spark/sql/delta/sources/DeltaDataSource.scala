@@ -165,21 +165,10 @@ class DeltaDataSource
     DeltaOptions.verifyOptions(CaseInsensitiveMap(parameters))
 
     val timeTravelByParams = DeltaDataSource.getTimeTravelVersion(parameters)
-    // TODO(burak): Move all this logic into DeltaTableV2 when Spark 3.0 is ready
-    // Handle time travel
-    val (path, partitionFilters, timeTravelByPath) =
-      DeltaDataSource.parsePathIdentifier(sqlContext.sparkSession, maybePath)
-
-    if (timeTravelByParams.isDefined && timeTravelByPath.isDefined) {
-      throw DeltaErrors.multipleTimeTravelSyntaxUsed
-    }
-
-    val deltaLog = DeltaLog.forTable(sqlContext.sparkSession, path)
-
-    val partitionPredicates =
-      DeltaDataSource.verifyAndCreatePartitionFilters(maybePath, deltaLog, partitionFilters)
-
-    deltaLog.createRelation(partitionPredicates, timeTravelByParams.orElse(timeTravelByPath))
+    DeltaTableV2(
+      sqlContext.sparkSession,
+      new Path(maybePath),
+      timeTravelOpt = timeTravelByParams).toBaseRelation
   }
 
   override def shortName(): String = {
@@ -305,10 +294,9 @@ object DeltaDataSource extends DatabricksLogging {
    */
   def verifyAndCreatePartitionFilters(
       userPath: String,
-      deltaLog: DeltaLog,
+      snapshot: Snapshot,
       partitionFilters: Seq[(String, String)]): Seq[Expression] = {
     if (partitionFilters.nonEmpty) {
-      val snapshot = deltaLog.update()
       val metadata = snapshot.metadata
 
       val badColumns = partitionFilters.map(_._1).filterNot(metadata.partitionColumns.contains)
