@@ -1862,7 +1862,8 @@ abstract class MergeIntoSuiteBase
       withSQLConf(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED.key -> "true") {
         test(s"matched only merge - null handling - $name, isPartitioned: $isPartitioned") {
           withView("sourceView") {
-            append(target.toDF("key", "value"), "key" :: Nil)
+            val partitions = if (isPartitioned) "key" :: Nil else Nil
+            append(target.toDF("key", "value"), partitions)
             source.toDF("key", "value").createOrReplaceTempView("sourceView")
 
             executeMerge(
