@@ -21,11 +21,10 @@ import java.net.URI
 import java.util.UUID
 
 import org.apache.spark.sql.delta.actions.{AddFile, InvalidProtocolVersionException, Protocol}
-import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaSQLConf}
+import org.apache.spark.sql.delta.sources.{DeltaSQLConf, DeltaSourceOffset}
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
-
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.streaming._
@@ -34,6 +33,9 @@ import org.apache.spark.sql.streaming.util.StreamManualClock
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.{ManualClock, Utils}
+
+import scala.concurrent.duration._
+import scala.language.implicitConversions
 
 class DeltaSourceSuite extends DeltaSourceSuiteBase {
 
@@ -989,6 +991,146 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase {
       } finally {
         stream.stop()
       }
+    }
+  }
+
+  /** Generate commits with the given timestamp in millis. */
+  private def generateCommits(location: String, commits: Long*): Unit = {
+    val deltaLog = DeltaLog.forTable(spark, location)
+    var startVersion = deltaLog.snapshot.version + 1
+    commits.foreach { ts =>
+      val rangeStart = startVersion * 10
+      val rangeEnd = rangeStart + 10
+      spark.range(rangeStart, rangeEnd).write.format("delta").mode("append").save(location)
+      val file = new File(FileNames.deltaFile(deltaLog.logPath, startVersion).toUri)
+      file.setLastModified(ts)
+      startVersion += 1
+    }
+  }
+
+  private implicit def durationToLong(duration: FiniteDuration): Long = {
+    duration.toMillis
+  }
+
+  test("startingVersion and startingTimestamp") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val tblLoc = inputDir.getCanonicalPath
+      val start = 1594418440842L
+      generateCommits(tblLoc, start, start + 20.minutes)
+
+      val q = spark.readStream
+        .format("delta")
+        .option("startingVersion", "0")
+        .load(inputDir.getCanonicalPath)
+        .writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start(outputDir.getCanonicalPath)
+      try {
+        q.processAllAvailable()
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getAbsolutePath),
+          (0 until 20).map(_.toLong).toDF())
+      } finally {
+        q.stop()
+      }
+
+      generateCommits(tblLoc, start + 40.minutes)
+
+      val q2 = spark.readStream
+        .format("delta")
+        .option("startingTimestamp", "2020-07-10 15:20:40")
+        .load(inputDir.getCanonicalPath)
+        .writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start(outputDir.getCanonicalPath)
+      try {
+        q2.processAllAvailable()
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getAbsolutePath),
+          (0 until 30).map(_.toLong).toDF())
+      } finally {
+        q2.stop()
+      }
+    }
+  }
+
+  test("startingVersion: invalid inputs") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val tblLoc = inputDir.getCanonicalPath
+      val start = 1594418440842L
+      generateCommits(tblLoc, start, start + 20.minutes)
+
+      val e = intercept[StreamingQueryException] {
+        spark.readStream
+          .format("delta")
+          .option("startingVersion", "-1")
+          .load(inputDir.getCanonicalPath)
+          .writeStream
+          .format("delta")
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .start(outputDir.getCanonicalPath)
+          .processAllAvailable()
+      }
+
+      assert(e.getCause.isInstanceOf[AnalysisException])
+      assert(e.getCause.getMessage.contains("Cannot time travel Delta table to version -1"))
+
+      val e2 = intercept[StreamingQueryException] {
+        spark.readStream
+          .format("delta")
+          .option("startingVersion", "5")
+          .load(inputDir.getCanonicalPath)
+          .writeStream
+          .format("delta")
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .start(outputDir.getCanonicalPath)
+          .processAllAvailable()
+      }
+
+      assert(e2.getCause.isInstanceOf[AnalysisException])
+      assert(e2.getCause.getMessage.contains("Cannot time travel Delta table to version 5"))
+    }
+  }
+
+  test("startingTimestamp: invalid inputs") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val tblLoc = inputDir.getCanonicalPath
+      val start = 1594418440842L
+      generateCommits(tblLoc, start, start + 20.minutes)
+
+      val e = intercept[StreamingQueryException] {
+        spark.readStream
+          .format("delta")
+          .option("startingTimestamp", "2019-07-10 15:20:40")
+          .load(inputDir.getCanonicalPath)
+          .writeStream
+          .format("delta")
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .start(outputDir.getCanonicalPath)
+          .processAllAvailable()
+      }
+
+      assert(e.getCause.isInstanceOf[AnalysisException])
+      assert(e.getCause.getMessage.contains("The provided timestamp (2019-07-10 15:20:40.0)" +
+        " is before the earliest version"))
+
+      val e2 = intercept[StreamingQueryException] {
+        spark.readStream
+          .format("delta")
+          .option("startingTimestamp", "2020-07-10 17:20:40")
+          .load(inputDir.getCanonicalPath)
+          .writeStream
+          .format("delta")
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .start(outputDir.getCanonicalPath)
+          .processAllAvailable()
+      }
+
+      assert(e2.getCause.isInstanceOf[AnalysisException])
+      assert(e2.getCause.getMessage.contains("The provided timestamp: 2020-07-10 17:20:40.0" +
+        " is after the latest commit timestamp"))
     }
   }
 }
