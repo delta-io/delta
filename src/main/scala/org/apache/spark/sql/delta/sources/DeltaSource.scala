@@ -19,12 +19,15 @@ package org.apache.spark.sql.delta.sources
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.FileNotFoundException
 
+import scala.util.{Failure, Success, Try}
 import scala.util.matching.Regex
+
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTableUtils, DeltaTimeTravelSpec}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
+
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
@@ -32,8 +35,6 @@ import org.apache.spark.sql.connector.read.streaming
 import org.apache.spark.sql.connector.read.streaming.{ReadAllAvailable, ReadLimit, ReadMaxFiles, SupportsAdmissionControl}
 import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.types.StructType
-
-import scala.util.{Failure, Success, Try}
 
 /**
  * A case class to help with `Dataset` operations regarding Offset indexing, representing AddFile
