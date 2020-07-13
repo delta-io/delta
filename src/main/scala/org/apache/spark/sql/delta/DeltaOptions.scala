@@ -121,6 +121,25 @@ trait DeltaReadOptions extends DeltaOptionParser {
       throw new IllegalArgumentException(
         s"Please recheck your syntax for '$EXCLUDE_REGEX_OPTION'", e)
   }
+
+  val startingVersion = options.get(STARTING_VERSION_OPTION).map{ str =>
+    Try(str.toLong).toOption.filter(_ >= 0).getOrElse{
+      throw DeltaErrors.illegalDeltaOptionException(
+        STARTING_VERSION_OPTION, str, "must be greater than or equal to zero")
+    }
+  }
+
+  val startingTimestamp = options.get(STARTING_TIMESTAMP_OPTION)
+
+  private def provideOneStartingOption(): Unit = {
+    if (startingTimestamp.isDefined && startingVersion.isDefined) {
+      throw new IllegalArgumentException(
+        s"Please either provide '$STARTING_TIMESTAMP_OPTION' or '$STARTING_VERSION_OPTION'."
+      )
+    }
+  }
+
+  provideOneStartingOption()
 }
 
 
@@ -157,6 +176,8 @@ object DeltaOptions extends DeltaLogging {
   val IGNORE_DELETES_OPTION = "ignoreDeletes"
   val OPTIMIZE_WRITE_OPTION = "optimizeWrite"
   val DATA_CHANGE_OPTION = "dataChange"
+  val STARTING_VERSION_OPTION = "startingVersion"
+  val STARTING_TIMESTAMP_OPTION = "startingTimestamp"
 
   val validOptionKeys : Set[String] = Set(
     REPLACE_WHERE_OPTION,
@@ -170,6 +191,8 @@ object DeltaOptions extends DeltaLogging {
     IGNORE_DELETES_OPTION,
     OPTIMIZE_WRITE_OPTION,
     DATA_CHANGE_OPTION,
+    STARTING_TIMESTAMP_OPTION,
+    STARTING_VERSION_OPTION,
     "queryName",
     "checkpointLocation",
     "path",

@@ -1074,8 +1074,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase {
           .processAllAvailable()
       }
 
-      assert(e.getCause.isInstanceOf[AnalysisException])
-      assert(e.getCause.getMessage.contains("Cannot time travel Delta table to version -1"))
+      assert(e.getCause.isInstanceOf[IllegalArgumentException])
+      assert(e.getCause.getMessage.contains("Invalid value '-1' for option 'startingVersion'"))
 
       val e2 = intercept[StreamingQueryException] {
         spark.readStream

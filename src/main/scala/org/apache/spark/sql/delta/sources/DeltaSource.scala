@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta.sources
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.FileNotFoundException
 
-import scala.util.{Failure, Success, Try}
 import scala.util.matching.Regex
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTableUtils, DeltaTimeTravelSpec}
@@ -30,7 +29,6 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
-import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.read.streaming
 import org.apache.spark.sql.connector.read.streaming.{ReadAllAvailable, ReadLimit, ReadMaxFiles, SupportsAdmissionControl}
 import org.apache.spark.sql.execution.streaming._
@@ -103,9 +101,6 @@ case class DeltaSource(
   // A metadata snapshot when starting the query.
   private var initialState: DeltaSourceSnapshot = null
   private var initialStateVersion: Long = -1L
-
-  final val STARTING_VERSION_KEY = "startingVersion"
-  final val STARTING_TIMESTAMP_KEY = "startingTimestamp"
 
   /**
    * Get the changes starting from (startVersion, startIndex). The start point should not be
@@ -183,7 +178,7 @@ case class DeltaSource(
   private def getStartingOffset(
       limits: Option[AdmissionLimits] = Some(new AdmissionLimits())): Option[Offset] = {
 
-    val (version, isStartingVersion) = getTimeTravelVersion(options.options) match {
+    val (version, isStartingVersion) = getStartingVersion match {
       case Some(v) => (v._1, false)
       case None => (deltaLog.snapshot.version, true)
     }
@@ -383,26 +378,20 @@ case class DeltaSource(
   }
 
   /** Extracts whether users provided the option to time travel a relation. */
-  private def getTimeTravelVersion(
-    parameters: CaseInsensitiveMap[String]): Option[(Long, String)] = {
-    val tsOpt = parameters.get(STARTING_TIMESTAMP_KEY)
-    val versionOpt = parameters.get(STARTING_VERSION_KEY)
+  private def getStartingVersion: Option[(Long, String)] = {
+    val tsOpt = options.startingTimestamp
+    val versionOpt = options.startingVersion
 
-    if (tsOpt.isDefined && versionOpt.isDefined) {
-      throw DeltaErrors.provideOneOfInTimeTravel // TODO: change error
-    } else if (tsOpt.isDefined) {
+    if (tsOpt.isDefined) {
       Some(DeltaTableUtils.resolveTimeTravelVersion(
         spark.sessionState.conf, deltaLog,
         DeltaTimeTravelSpec(Some(Literal(tsOpt.get)), None, Some("dfReader"))))
-    } else if (versionOpt.isDefined) {
-      val version = Try(versionOpt.get.toLong) match {
-        case Success(v) => v
-        case Failure(t) => throw new IllegalArgumentException(
-          s"${DeltaDataSource.TIME_TRAVEL_VERSION_KEY} needs to be a valid bigint value.", t)
-      }
+    }
+
+    if (versionOpt.isDefined) {
       Some(DeltaTableUtils.resolveTimeTravelVersion(
         spark.sessionState.conf, deltaLog,
-        DeltaTimeTravelSpec(None, Some(version), Some("dfReader"))))
+        DeltaTimeTravelSpec(None, Some(versionOpt.get), Some("dfReader"))))
     } else {
       None
     }
