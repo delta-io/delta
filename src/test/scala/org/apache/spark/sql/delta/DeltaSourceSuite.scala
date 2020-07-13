@@ -23,8 +23,10 @@ import java.util.UUID
 import org.apache.spark.sql.delta.actions.{AddFile, InvalidProtocolVersionException, Protocol}
 import org.apache.spark.sql.delta.sources.{DeltaSQLConf, DeltaSourceOffset}
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
+
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.streaming._

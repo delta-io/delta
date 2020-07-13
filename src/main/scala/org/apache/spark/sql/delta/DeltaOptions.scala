@@ -19,16 +19,15 @@ package org.apache.spark.sql.delta
 import java.util.Locale
 import java.util.regex.PatternSyntaxException
 
-import org.apache.commons.lang3.time.FastDateFormat
-
 import scala.util.Try
 import scala.util.matching.Regex
+
 import org.apache.spark.sql.delta.DeltaOptions.{DATA_CHANGE_OPTION, MERGE_SCHEMA_OPTION, OVERWRITE_SCHEMA_OPTION}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+
+import org.apache.commons.lang3.time.FastDateFormat
 import org.apache.spark.network.util.{ByteUnit, JavaUtils}
-import org.apache.spark.sql.AnalysisException
-import org.apache.spark.sql.catalyst.expressions.PreciseTimestampConversion
 import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, DateTimeUtils}
 import org.apache.spark.sql.internal.SQLConf
 
