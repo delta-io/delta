@@ -1020,7 +1020,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase {
 
       val q = spark.readStream
         .format("delta")
-        .option("startingVersion", "0")
+        .option("startingVersion", "1")
         .load(inputDir.getCanonicalPath)
         .writeStream
         .format("delta")
@@ -1131,6 +1131,22 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase {
       assert(e2.getCause.isInstanceOf[AnalysisException])
       assert(e2.getCause.getMessage.contains("The provided timestamp: 2020-07-10 17:20:40.0" +
         " is after the latest commit timestamp"))
+
+      val e3 = intercept[StreamingQueryException] {
+        spark.readStream
+          .format("delta")
+          .option("startingTimestamp", "2020-07-10")
+          .load(inputDir.getCanonicalPath)
+          .writeStream
+          .format("delta")
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .start(outputDir.getCanonicalPath)
+          .processAllAvailable()
+      }
+
+      assert(e3.getCause.isInstanceOf[IllegalArgumentException])
+      assert(e3.getCause.getMessage.contains(
+        "Invalid value '2020-07-10' for option 'startingTimestamp'"))
     }
   }
 }

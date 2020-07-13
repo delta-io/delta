@@ -19,15 +19,17 @@ package org.apache.spark.sql.delta
 import java.util.Locale
 import java.util.regex.PatternSyntaxException
 
+import org.apache.commons.lang3.time.FastDateFormat
+
 import scala.util.Try
 import scala.util.matching.Regex
-
 import org.apache.spark.sql.delta.DeltaOptions.{DATA_CHANGE_OPTION, MERGE_SCHEMA_OPTION, OVERWRITE_SCHEMA_OPTION}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-
 import org.apache.spark.network.util.{ByteUnit, JavaUtils}
-import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.AnalysisException
+import org.apache.spark.sql.catalyst.expressions.PreciseTimestampConversion
+import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, DateTimeUtils}
 import org.apache.spark.sql.internal.SQLConf
 
 
@@ -122,14 +124,26 @@ trait DeltaReadOptions extends DeltaOptionParser {
         s"Please recheck your syntax for '$EXCLUDE_REGEX_OPTION'", e)
   }
 
-  val startingVersion = options.get(STARTING_VERSION_OPTION).map{ str =>
+  val startingVersion = options.get(STARTING_VERSION_OPTION).map { str =>
     Try(str.toLong).toOption.filter(_ >= 0).getOrElse{
       throw DeltaErrors.illegalDeltaOptionException(
         STARTING_VERSION_OPTION, str, "must be greater than or equal to zero")
     }
   }
 
-  val startingTimestamp = options.get(STARTING_TIMESTAMP_OPTION)
+  val startingTimestamp = options.get(STARTING_TIMESTAMP_OPTION).map { str =>
+    val pattern = "yyyy-MM-dd HH:mm:ss"
+    try {
+      val format = FastDateFormat.getInstance(
+        pattern, DateTimeUtils.getTimeZone(sqlConf.sessionLocalTimeZone))
+      new java.sql.Timestamp(format.parse(str).getTime)
+      str
+    } catch {
+      case e: java.text.ParseException =>
+        throw DeltaErrors.illegalDeltaOptionException(
+          STARTING_TIMESTAMP_OPTION, str, s"doesn't match the expected syntax $pattern.")
+    }
+  }
 
   private def provideOneStartingOption(): Unit = {
     if (startingTimestamp.isDefined && startingVersion.isDefined) {

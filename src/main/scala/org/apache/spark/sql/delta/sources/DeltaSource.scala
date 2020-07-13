@@ -382,16 +382,11 @@ case class DeltaSource(
     val tsOpt = options.startingTimestamp
     val versionOpt = options.startingVersion
 
-    if (tsOpt.isDefined) {
+    /** DeltaOption validates input and ensures that only one is provided. */
+    if (tsOpt.isDefined || versionOpt.isDefined) {
       Some(DeltaTableUtils.resolveTimeTravelVersion(
         spark.sessionState.conf, deltaLog,
-        DeltaTimeTravelSpec(Some(Literal(tsOpt.get)), None, Some("dfReader"))))
-    }
-
-    if (versionOpt.isDefined) {
-      Some(DeltaTableUtils.resolveTimeTravelVersion(
-        spark.sessionState.conf, deltaLog,
-        DeltaTimeTravelSpec(None, Some(versionOpt.get), Some("dfReader"))))
+        DeltaTimeTravelSpec(tsOpt.map(Literal(_)), versionOpt, Some("streamSource"))))
     } else {
       None
     }
