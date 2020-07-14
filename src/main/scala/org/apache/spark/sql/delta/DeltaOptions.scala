@@ -130,19 +130,7 @@ trait DeltaReadOptions extends DeltaOptionParser {
     }
   }
 
-  val startingTimestamp = options.get(STARTING_TIMESTAMP_OPTION).map { str =>
-    val pattern = "yyyy-MM-dd HH:mm:ss"
-    try {
-      val format = FastDateFormat.getInstance(
-        pattern, DateTimeUtils.getTimeZone(sqlConf.sessionLocalTimeZone))
-      new java.sql.Timestamp(format.parse(str).getTime)
-      str
-    } catch {
-      case e: java.text.ParseException =>
-        throw DeltaErrors.illegalDeltaOptionException(
-          STARTING_TIMESTAMP_OPTION, str, s"doesn't match the expected syntax $pattern.")
-    }
-  }
+  val startingTimestamp = options.get(STARTING_TIMESTAMP_OPTION)
 
   private def provideOneStartingOption(): Unit = {
     if (startingTimestamp.isDefined && startingVersion.isDefined) {
