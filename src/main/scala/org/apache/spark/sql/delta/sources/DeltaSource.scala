@@ -386,7 +386,7 @@ case class DeltaSource(
     if (tsOpt.isDefined || versionOpt.isDefined) {
       Some(DeltaTableUtils.resolveTimeTravelVersion(
         spark.sessionState.conf, deltaLog,
-        DeltaTimeTravelSpec(tsOpt.map(Literal(_)), versionOpt, Some("streamSource"))))
+        DeltaTimeTravelSpec(tsOpt.map(Literal(_)), versionOpt, Some("deltaSource"))))
     } else {
       None
     }
