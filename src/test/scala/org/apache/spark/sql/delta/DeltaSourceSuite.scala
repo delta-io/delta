@@ -1014,7 +1014,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase {
     duration.toMillis
   }
 
-  test("startingVersion and startingTimestamp") {
+  test("startingVersion: start from version > 0") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       val tblLoc = inputDir.getCanonicalPath
       val start = 1594418440842L
@@ -1032,14 +1032,45 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase {
         q.processAllAvailable()
         checkAnswer(
           spark.read.format("delta").load(outputDir.getAbsolutePath),
+          (10 until 20).map(_.toLong).toDF())
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
+  test("startingVersion: start from initial state") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val tblLoc = inputDir.getCanonicalPath
+      val start = 1594418440842L
+      generateCommits(tblLoc, start, start + 20.minutes)
+
+      val q = spark.readStream
+        .format("delta")
+        .option("startingVersion", "0")
+        .load(inputDir.getCanonicalPath)
+        .writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start(outputDir.getCanonicalPath)
+      try {
+        q.processAllAvailable()
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getAbsolutePath),
           (0 until 20).map(_.toLong).toDF())
       } finally {
         q.stop()
       }
+    }
+  }
 
-      generateCommits(tblLoc, start + 40.minutes)
+  test("startingTimestamp: start from version > 0") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val tblLoc = inputDir.getCanonicalPath
+      val start = 1594418440842L
+      generateCommits(tblLoc, start, start + 20.minutes)
 
-      val q2 = spark.readStream
+      val q = spark.readStream
         .format("delta")
         .option("startingTimestamp", "2020-07-10 15:20:40")
         .load(inputDir.getCanonicalPath)
@@ -1048,12 +1079,12 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase {
         .option("checkpointLocation", checkpointDir.getCanonicalPath)
         .start(outputDir.getCanonicalPath)
       try {
-        q2.processAllAvailable()
+        q.processAllAvailable()
         checkAnswer(
           spark.read.format("delta").load(outputDir.getAbsolutePath),
-          (0 until 30).map(_.toLong).toDF())
+          (10 until 20).map(_.toLong).toDF())
       } finally {
-        q2.stop()
+        q.stop()
       }
     }
   }

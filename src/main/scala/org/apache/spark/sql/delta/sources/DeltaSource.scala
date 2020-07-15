@@ -185,9 +185,11 @@ case class DeltaSource(
     if (version < 0) {
       return None
     }
+    if (options.startingVersion.isDefined || options.startingTimestamp.isDefined) {
+      return Some(DeltaSourceOffset(tableId, version, -1, isStartingVersion = false))
+    }
     val last = iteratorLast(
       getChangesWithRateLimit(version, -1L, isStartingVersion = isStartingVersion, limits))
-
     if (last.isEmpty) {
       return None
     }
@@ -290,6 +292,8 @@ case class DeltaSource(
     val changes = if (start.isEmpty) {
       if (endOffset.isStartingVersion) {
         getChanges(endOffset.reservoirVersion, -1L, isStartingVersion = true)
+      } else if (options.startingVersion.isDefined || options.startingTimestamp.isDefined) {
+        getChanges(endOffset.reservoirVersion, -1L, isStartingVersion = false)
       } else {
         assert(endOffset.reservoirVersion > 0, s"invalid reservoirVersion in endOffset: $endOffset")
         // Load from snapshot `endOffset.reservoirVersion - 1L` so that `index` in `endOffset`
