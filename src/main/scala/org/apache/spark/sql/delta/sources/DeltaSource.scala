@@ -179,7 +179,7 @@ case class DeltaSource(
       limits: Option[AdmissionLimits] = Some(new AdmissionLimits())): Option[Offset] = {
 
     val (version, isStartingVersion) = getStartingVersion match {
-      case Some(v) => (v - 1, false)
+      case Some(v) => (v, false)
       case None => (deltaLog.snapshot.version, true)
     }
     if (version < 0) {
