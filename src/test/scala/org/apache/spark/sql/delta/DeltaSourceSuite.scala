@@ -1089,6 +1089,31 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase {
     }
   }
 
+  test("startingTimestamp: start from date instead of timestamp") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val tblLoc = inputDir.getCanonicalPath
+      val start = 1594796340000L // Tue Jul 14 2020 23:59:00
+      generateCommits(tblLoc, start, start + 20.minutes)
+
+      val q = spark.readStream
+        .format("delta")
+        .option("startingTimestamp", "2020-07-15")
+        .load(inputDir.getCanonicalPath)
+        .writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start(outputDir.getCanonicalPath)
+      try {
+        q.processAllAvailable()
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getAbsolutePath),
+          (0 until 20).map(_.toLong).toDF())
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
   test("startingVersion: invalid inputs") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       val tblLoc = inputDir.getCanonicalPath
