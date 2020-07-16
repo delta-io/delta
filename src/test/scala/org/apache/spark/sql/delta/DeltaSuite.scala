@@ -19,10 +19,12 @@ package org.apache.spark.sql.delta
 import java.io.{File, FileNotFoundException}
 import java.util.concurrent.atomic.AtomicInteger
 
-import org.apache.spark.sql.delta.actions.CommitInfo
+// scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.actions.{CommitInfo, Protocol}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.SparkException
@@ -34,8 +36,8 @@ import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.internal.SQLConf.OPTIMIZER_METADATA_ONLY
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
 
 class DeltaSuite extends QueryTest
@@ -155,7 +157,7 @@ class DeltaSuite extends QueryTest
         spark.read.format("delta").load(tempDir.toString).collect()
       }
     }.getMessage
-    assert(e2.contains("doesn't exist"))
+    assert(e2.contains("is not a Delta table"))
   }
 
   test("append then read") {
@@ -463,7 +465,7 @@ class DeltaSuite extends QueryTest
           .show()
       }
 
-      assert(e.getMessage.contains("doesn't exist"))
+      assert(e.getMessage.contains("is not a Delta table"))
       assert(e.getMessage.contains(tempDir.getCanonicalPath))
 
       assert(!tempDir.exists())
@@ -1088,5 +1090,133 @@ class DeltaSuite extends QueryTest
         .save(tempDir)
     }
     assert(lastCommitInfo(tempDir).userMetadata === Some("optionMeta2"))
+  }
+
+  test("lastCommitVersionInSession - init") {
+    spark.sessionState.conf.unsetConf(DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION)
+    withTempDir { tempDir =>
+
+      assert(spark.conf.get(DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION) === None)
+
+      Seq(1).toDF
+        .write
+        .format("delta")
+        .save(tempDir.getCanonicalPath)
+
+      assert(spark.conf.get(DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION) === Some(0))
+    }
+  }
+
+  test("lastCommitVersionInSession - SQL") {
+    spark.sessionState.conf.unsetConf(DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION)
+    withTempDir { tempDir =>
+
+      val k = DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION.key
+      assert(sql(s"SET $k").head().get(1) === "<undefined>")
+
+      Seq(1).toDF
+        .write
+        .format("delta")
+        .save(tempDir.getCanonicalPath)
+
+      assert(sql(s"SET $k").head().get(1) === "0")
+    }
+  }
+
+  test("lastCommitVersionInSession - SQL only") {
+    spark.sessionState.conf.unsetConf(DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION)
+    withTable("test_table") {
+      val k = DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION.key
+      assert(sql(s"SET $k").head().get(1) === "<undefined>")
+
+      sql("CREATE TABLE test_table USING delta AS SELECT * FROM range(10)")
+      assert(sql(s"SET $k").head().get(1) === "0")
+    }
+  }
+
+  test("lastCommitVersionInSession - CONVERT TO DELTA") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath + "/table"
+      spark.range(10).write.format("parquet").save(path)
+      sql(s"CONVERT TO DELTA parquet.`$path`")
+
+      assert(spark.conf.get(DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION) === Some(0))
+    }
+  }
+
+  test("lastCommitVersionInSession - many writes") {
+    withTempDir { tempDir =>
+
+      for (i <- 0 until 10) {
+        Seq(i).toDF
+          .write
+          .mode("overwrite")
+          .format("delta")
+          .save(tempDir.getCanonicalPath)
+      }
+
+      Seq(10).toDF
+        .write
+        .format("delta")
+        .mode("append")
+        .save(tempDir.getCanonicalPath)
+
+      assert(spark.conf.get(DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION) === Some(10))
+    }
+  }
+
+  test("lastCommitVersionInSession - new thread writes") {
+    withTempDir { tempDir =>
+
+      Seq(1).toDF
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .save(tempDir.getCanonicalPath)
+
+      val t = new Thread {
+        override def run(): Unit = {
+          Seq(2).toDF
+            .write
+            .format("delta")
+            .mode("overwrite")
+            .save(tempDir.getCanonicalPath)
+        }
+      }
+
+      t.start
+      t.join
+      assert(spark.conf.get(DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION) === Some(1))
+    }
+  }
+
+  test("An external write should be reflected during analysis of a path based query") {
+    val tempDir = Utils.createTempDir().toString
+    spark.range(10).coalesce(1).write.format("delta").mode("append").save(tempDir)
+    spark.range(10, 20).coalesce(1).write.format("delta").mode("append").save(tempDir)
+
+    val deltaLog = DeltaLog.forTable(spark, tempDir)
+    val snapshot = deltaLog.snapshot
+    val files = snapshot.allFiles.collect()
+
+    // Now make a commit that comes from an "external" writer that deletes existing data and
+    // changes the schema
+    val actions = Seq(
+      Protocol(),
+      snapshot.metadata.copy(schemaString = new StructType().add("data", "bigint").json)
+    ) ++ files.map(_.remove)
+    deltaLog.store.write(
+      FileNames.deltaFile(deltaLog.logPath, snapshot.version + 1),
+      actions.map(_.json).iterator)
+
+    deltaLog.store.write(
+      FileNames.deltaFile(deltaLog.logPath, snapshot.version + 2),
+      files.take(1).map(_.json).iterator)
+
+    // Since the column `data` doesn't exist in our old files, we read it as null.
+    checkAnswer(
+      spark.read.format("delta").load(tempDir),
+      Seq.fill(10)(Row(null))
+    )
   }
 }

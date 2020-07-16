@@ -500,6 +500,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
         deltaFile(deltaLog.logPath, attemptVersion),
         actions.map(_.json).toIterator)
 
+      spark.sessionState.conf.setConf(
+        DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,
+        Some(attemptVersion))
+
       val commitTime = System.nanoTime()
       val postCommitSnapshot = deltaLog.update()
 

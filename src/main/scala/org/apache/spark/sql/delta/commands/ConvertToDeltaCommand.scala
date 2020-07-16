@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.util.{DateFormatter, DeltaFileOperations, PartitionUtils, TimestampFormatter}
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
 import org.apache.spark.sql.delta.util.SerializableFileStatus
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
 import org.apache.spark.SparkException
@@ -42,6 +43,7 @@ import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog, V1Table}
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, ParquetToSparkSchemaConverter}
+import org.apache.spark.sql.execution.streaming.{FileStreamSink, MetadataLogFileIndex}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StringType, StructField, StructType}
 import org.apache.spark.util.{SerializableConfiguration, Utils}
@@ -271,7 +273,10 @@ abstract class ConvertToDeltaCommandBase(
       spark: SparkSession,
       qualifiedDir: String,
       serializableConf: SerializableConfiguration): FileManifest = {
-    new ManualListingFileManifest(spark, qualifiedDir, serializableConf)
+    if (conf.getConf(DeltaSQLConf.DELTA_CONVERT_USE_METADATA_LOG) &&
+      FileStreamSink.hasMetadata(Seq(qualifiedDir), serializableConf.value, conf)) {
+      new MetadataLogFileManifest(spark, qualifiedDir)
+    } else new ManualListingFileManifest(spark, qualifiedDir, serializableConf)
   }
 
   /**
@@ -627,6 +632,18 @@ abstract class ConvertToDeltaCommandBase(
     override def getFiles: Iterator[SerializableFileStatus] = list.toLocalIterator().asScala
 
     override def close(): Unit = list.unpersist()
+  }
+
+  /** A file manifest generated from pre-existing parquet MetadataLog. */
+  protected class MetadataLogFileManifest(
+      spark: SparkSession,
+      override val basePath: String) extends FileManifest {
+    val index = new MetadataLogFileIndex(spark, new Path(basePath), Map.empty, None)
+    override def getFiles: Iterator[SerializableFileStatus] = index.allFiles
+      .toIterator
+      .map { fs => SerializableFileStatus.fromStatus(fs) }
+
+    override def close(): Unit = {}
   }
 }
 

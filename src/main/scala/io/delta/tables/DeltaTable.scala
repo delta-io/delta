@@ -501,6 +501,7 @@ class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
   def merge(source: DataFrame, condition: Column): DeltaMergeBuilder = {
     DeltaMergeBuilder(this, source, condition)
   }
+
 }
 
 /**

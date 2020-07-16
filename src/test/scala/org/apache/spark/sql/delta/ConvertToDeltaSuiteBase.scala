@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import java.io.FileNotFoundException
+import java.io.{File, FileNotFoundException}
 
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -27,6 +27,7 @@ import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.parser.ParseException
+import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
@@ -222,6 +223,86 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaTestUtils
       assert(exception.isInstanceOf[AnalysisException] ||
         realCause.getCause.getMessage.contains("/part="),
         "Error message should contain the file name")
+    }
+  }
+
+  test("convert a streaming parquet path: use metadata") {
+    val stream = MemoryStream[Int]
+    val df = stream.toDS().toDF()
+
+    withTempDir { outputDir =>
+      val checkpoint = new File(outputDir, "_check").toString
+      val dataLocation = new File(outputDir, "data").toString
+      val options = Map("checkpointLocation" -> checkpoint)
+
+      // Add initial data to parquet file sink
+      val q = df.writeStream.options(options).format("parquet").start(dataLocation)
+      stream.addData(1, 2, 3)
+      q.processAllAvailable()
+      q.stop()
+
+      // Add non-streaming data: this should be ignored in conversion.
+      spark.range(10, 20).write.mode("append").parquet(dataLocation)
+      sql(s"CONVERT TO DELTA parquet.`$dataLocation`")
+
+      // Write data to delta
+      val q2 = df.writeStream.options(options).format("delta").start(dataLocation)
+
+      try {
+        stream.addData(4, 5, 6)
+        q2.processAllAvailable()
+
+        // Should only read streaming data.
+        checkAnswer(
+          spark.read.format("delta").load(dataLocation),
+          (1 to 6).map { Row(_) }
+        )
+      } finally {
+        q2.stop()
+      }
+    }
+  }
+
+  test("convert a streaming parquet path: ignore metadata") {
+    val stream = MemoryStream[Int]
+    val df = stream.toDS().toDF("col1")
+
+    withTempDir { outputDir =>
+      val checkpoint = new File(outputDir, "_check").toString
+      val dataLocation = new File(outputDir, "data").toString
+      val options = Map(
+        "checkpointLocation" -> checkpoint
+      )
+
+      // Add initial data to parquet file sink
+      val q = df.writeStream.options(options).format("parquet").start(dataLocation)
+      stream.addData(1 to 5)
+      q.processAllAvailable()
+      q.stop()
+
+      // Add non-streaming data: this should not be ignored in conversion.
+      spark.range(11, 21).select('id.cast("int") as 'col1)
+        .write.mode("append").parquet(dataLocation)
+
+      withSQLConf(("spark.databricks.delta.convert.useMetadataLog", "false")) {
+        sql(s"CONVERT TO DELTA parquet.`$dataLocation`")
+      }
+
+      // Write data to delta
+      val q2 = df.writeStream.options(options).format("delta").start(dataLocation)
+
+      try {
+        stream.addData(6 to 10)
+        q2.processAllAvailable()
+
+        // Should read all data not just streaming data
+        checkAnswer(
+          spark.read.format("delta").load(dataLocation),
+          (1 to 20).map { Row(_) }
+        )
+      } finally {
+        q2.stop()
+      }
     }
   }
 
