@@ -302,6 +302,33 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase {
     }
   }
 
+  test("maxFilesPerTrigger: ignored when using Trigger.Once") {
+    withTempDir { inputDir =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      (0 until 5).foreach { i =>
+        val v = Seq(i.toString).toDF
+        v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+      }
+
+      val q = spark.readStream
+        .format("delta")
+        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
+        .load(inputDir.getCanonicalPath)
+        .writeStream
+        .format("memory")
+        .trigger(Trigger.Once)
+        .queryName("triggerOnceTest")
+        .start()
+      try {
+        assert(q.awaitTermination(streamingTimeout.toMillis))
+        assert(q.recentProgress.count(_.numInputRows != 0) == 1) // only one trigger was run
+        checkAnswer(sql("SELECT * from triggerOnceTest"), (0 until 5).map(_.toString).toDF)
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
   test("maxBytesPerTrigger: process at least one file") {
     withTempDir { inputDir =>
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))

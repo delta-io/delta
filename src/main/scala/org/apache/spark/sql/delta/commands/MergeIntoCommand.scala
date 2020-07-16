@@ -580,8 +580,8 @@ object MergeIntoCommand {
         }
       }
 
-      val toRow = joinedRowEncoder.toRow _
-      val fromRow = outputRowEncoder.fromRow _
+      val toRow = joinedRowEncoder.createSerializer()
+      val fromRow = outputRowEncoder.createDeserializer()
       rowIterator
         .map(toRow)
         .map(processRow)

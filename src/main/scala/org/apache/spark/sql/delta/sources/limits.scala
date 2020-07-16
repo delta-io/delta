@@ -14,15 +14,12 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.catalyst.plans.logical
+package org.apache.spark.sql.delta.sources
 
-import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
+import org.apache.spark.sql.connector.read.streaming.{ReadLimit, ReadMaxFiles}
 
-// This only used by Delta which needs to be compatible with DBR 6 and can't use the new class
-// added in Spark 3.0: `DeleteFromTable`.
-case class DeltaDelete(
-    child: LogicalPlan,
-    condition: Option[Expression])
-  extends UnaryNode {
-  override def output: Seq[Attribute] = Seq.empty
-}
+/** A read limit that admits a soft-max of `maxBytes` per micro-batch. */
+case class ReadMaxBytes(maxBytes: Long) extends ReadLimit
+
+/** A read limit that admits the given soft-max of `bytes` or max `files`. */
+case class CompositeLimit(bytes: ReadMaxBytes, files: ReadMaxFiles) extends ReadLimit

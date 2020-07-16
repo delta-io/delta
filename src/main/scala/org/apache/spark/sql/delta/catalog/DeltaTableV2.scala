@@ -22,8 +22,9 @@ import java.{util => ju}
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTableUtils, DeltaTimeTravelSpec, Snapshot}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, DeltaTimeTravelSpec, Snapshot}
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils}
 import org.apache.hadoop.fs.Path
 
@@ -50,10 +51,19 @@ case class DeltaTableV2(
     path: Path,
     catalogTable: Option[CatalogTable] = None,
     tableIdentifier: Option[String] = None,
-    timeTravelOpt: Option[DeltaTimeTravelSpec] = None) extends Table with SupportsWrite {
+    timeTravelOpt: Option[DeltaTimeTravelSpec] = None)
+  extends Table
+  with SupportsWrite
+  with DeltaLogging {
 
-  private lazy val (rootPath, partitionFilters, timeTravelByPath) =
-    DeltaDataSource.parsePathIdentifier(spark, path.toString)
+  private lazy val (rootPath, partitionFilters, timeTravelByPath) = {
+    if (catalogTable.isDefined) {
+      // Fast path for reducing path munging overhead
+      (new Path(catalogTable.get.location), Nil, None)
+    } else {
+      DeltaDataSource.parsePathIdentifier(spark, path.toString)
+    }
+  }
 
   // The loading of the DeltaLog is lazy in order to reduce the amount of FileSystem calls,
   // in cases where we will fallback to the V1 behavior.
@@ -73,11 +83,18 @@ case class DeltaTableV2(
     timeTravelOpt.orElse(timeTravelByPath)
   }
 
-  private def snapshot: Snapshot = {
+  lazy val snapshot: Snapshot = {
     timeTravelSpec.map { spec =>
-      val v = DeltaTableUtils.resolveTimeTravelVersion(spark.sessionState.conf, deltaLog, spec)
-      deltaLog.getSnapshotAt(v._1)
-    }.getOrElse(deltaLog.snapshot)
+      val (version, accessType) = DeltaTableUtils.resolveTimeTravelVersion(
+        spark.sessionState.conf, deltaLog, spec)
+      val source = spec.creationSource.getOrElse("unknown")
+      recordDeltaEvent(deltaLog, s"delta.timeTravel.$source", data = Map(
+        "tableVersion" -> deltaLog.snapshot.version,
+        "queriedVersion" -> version,
+        "accessType" -> accessType
+      ))
+      deltaLog.getSnapshotAt(version)
+    }.getOrElse(deltaLog.update(stalenessAcceptable = true))
   }
 
   override def schema(): StructType = snapshot.schema
@@ -115,10 +132,15 @@ case class DeltaTableV2(
    * paths.
    */
   def toBaseRelation: BaseRelation = {
+    if (!deltaLog.tableExists) {
+      val id = catalogTable.map(ct => DeltaTableIdentifier(table = Some(ct.identifier)))
+        .getOrElse(DeltaTableIdentifier(path = Some(path.toString)))
+      throw DeltaErrors.notADeltaTableException(id)
+    }
     val partitionPredicates = DeltaDataSource.verifyAndCreatePartitionFilters(
-      path.toString, deltaLog, partitionFilters)
+      path.toString, snapshot, partitionFilters)
 
-    deltaLog.createRelation(partitionPredicates, timeTravelSpec)
+    deltaLog.createRelation(partitionPredicates, Some(snapshot), timeTravelSpec.isDefined)
   }
 }
 

@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.util.{DateFormatter, DeltaFileOperations, PartitionUtils, TimestampFormatter}
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
 import org.apache.spark.sql.delta.util.SerializableFileStatus
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
 import org.apache.spark.SparkException
@@ -42,6 +43,7 @@ import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog, V1Table}
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, ParquetToSparkSchemaConverter}
+import org.apache.spark.sql.execution.streaming.{FileStreamSink, MetadataLogFileIndex}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StringType, StructField, StructType}
 import org.apache.spark.util.{SerializableConfiguration, Utils}
@@ -271,7 +273,10 @@ abstract class ConvertToDeltaCommandBase(
       spark: SparkSession,
       qualifiedDir: String,
       serializableConf: SerializableConfiguration): FileManifest = {
-    new ManualListingFileManifest(spark, qualifiedDir, serializableConf)
+    if (conf.getConf(DeltaSQLConf.DELTA_CONVERT_USE_METADATA_LOG) &&
+      FileStreamSink.hasMetadata(Seq(qualifiedDir), serializableConf.value, conf)) {
+      new MetadataLogFileManifest(spark, qualifiedDir)
+    } else new ManualListingFileManifest(spark, qualifiedDir, serializableConf)
   }
 
   /**
@@ -352,13 +357,19 @@ abstract class ConvertToDeltaCommandBase(
       txn.updateMetadata(metadata)
 
       val addFilesIter = createDeltaActions(spark, manifest, txn, fs)
+      val metrics = Some(Map[String, String](
+        "numConvertedFiles" -> numFiles.toString
+      ))
 
-      streamWrite(
+      commitLarge(
         spark,
         txn,
+        txn.metadata,
         addFilesIter,
         getOperation(numFiles, convertProperties),
-        numFiles)
+        numFiles,
+        getContext,
+        metrics)
     } finally {
       manifest.close()
     }
@@ -486,78 +497,6 @@ abstract class ConvertToDeltaCommandBase(
       partitionColNames,
       collectStats = false,
       convertProperties.catalogTable.map(t => t.identifier.toString))
-  }
-
-  /**
-   * Create the first commit on the Delta log by directly writing an iterator of AddFiles to the
-   * LogStore. This bypasses the Delta transactional protocol, but we assume this is ok as this is
-   * the very first commit and only happens at table conversion which is a one-off process.
-   */
-  private def streamWrite(
-      spark: SparkSession,
-      txn: OptimisticTransaction,
-      addFiles: Iterator[AddFile],
-      op: DeltaOperations.Operation,
-      numFiles: Long): Long = {
-    val firstVersion = 0L
-    try {
-      val deltaLog = txn.deltaLog
-      val metadata = txn.metadata
-      val context = getContext
-      val metrics = if (spark.conf.get(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED)) {
-        Some(Map[String, String](
-          "numConvertedFiles" -> numFiles.toString
-        ))
-      } else {
-        None
-      }
-
-      val commitInfo = CommitInfo(
-        time = txn.clock.getTimeMillis(),
-        operation = op.name,
-        operationParameters = op.jsonEncodedValues,
-        context,
-        readVersion = None,
-        isolationLevel = None,
-        isBlindAppend = None,
-        metrics)
-
-      val extraActions = Seq(commitInfo, Protocol(), metadata)
-      val actions = extraActions.toIterator ++ addFiles
-      deltaLog.store.write(deltaFile(deltaLog.logPath, firstVersion), actions.map(_.json))
-
-      val currentSnapshot = deltaLog.update()
-      if (currentSnapshot.version != firstVersion) {
-        throw new IllegalStateException(
-          s"The committed version is $firstVersion but the current version is " +
-            s"${currentSnapshot.version}. Please contact Databricks support.")
-      }
-
-      logInfo(s"Committed delta #$firstVersion to ${deltaLog.logPath}")
-
-      try {
-        deltaLog.checkpoint()
-      } catch {
-        case e: IllegalStateException =>
-          logWarning("Failed to checkpoint table state.", e)
-      }
-
-      firstVersion
-    } catch {
-      case e: java.nio.file.FileAlreadyExistsException =>
-        recordDeltaEvent(
-          txn.deltaLog,
-          "delta.convert.commitFailure",
-          data = Map("exception" -> Utils.exceptionString(e)))
-        throw DeltaErrors.commitAlreadyExistsException(firstVersion, txn.deltaLog.logPath)
-
-      case NonFatal(e) =>
-        recordDeltaEvent(
-          txn.deltaLog,
-          "delta.convert.commitFailure",
-          data = Map("exception" -> Utils.exceptionString(e)))
-        throw e
-    }
   }
 
   /**
@@ -693,6 +632,18 @@ abstract class ConvertToDeltaCommandBase(
     override def getFiles: Iterator[SerializableFileStatus] = list.toLocalIterator().asScala
 
     override def close(): Unit = list.unpersist()
+  }
+
+  /** A file manifest generated from pre-existing parquet MetadataLog. */
+  protected class MetadataLogFileManifest(
+      spark: SparkSession,
+      override val basePath: String) extends FileManifest {
+    val index = new MetadataLogFileIndex(spark, new Path(basePath), Map.empty, None)
+    override def getFiles: Iterator[SerializableFileStatus] = index.allFiles
+      .toIterator
+      .map { fs => SerializableFileStatus.fromStatus(fs) }
+
+    override def close(): Unit = {}
   }
 }
 

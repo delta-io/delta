@@ -45,6 +45,22 @@ object DeltaSQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_USER_METADATA =
+    buildConf("commitInfo.userMetadata")
+      .doc("Arbitrary user-defined metadata to include in CommitInfo. Requires commitInfo.enabled.")
+      .stringConf
+      .createOptional
+
+  val DELTA_CONVERT_USE_METADATA_LOG =
+    buildConf("convert.useMetadataLog")
+      .doc(
+        """ When converting to a Parquet table that was created by Structured Streaming, whether
+        |  to use the transaction log under `_spark_metadata` as the source of truth for files
+        | contained in the table.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_SNAPSHOT_PARTITIONS =
     buildConf("snapshotPartitions")
       .internal()
@@ -58,6 +74,20 @@ object DeltaSQLConf {
       .internal()
       .doc("Whether to check whether the partition column names have valid names, just like " +
         "the data columns.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED =
+    buildConf("stateReconstructionValidation.enabled")
+      .internal()
+      .doc("Whether to perform validation checks on the reconstructed state.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_COMMIT_VALIDATION_ENABLED =
+    buildConf("commitValidation.enabled")
+      .internal()
+      .doc("Whether to perform validation checks before commit or not.")
       .booleanConf
       .createWithDefault(true)
 
@@ -276,4 +306,12 @@ object DeltaSQLConf {
         """.stripMargin)
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_LAST_COMMIT_VERSION_IN_SESSION =
+    buildConf("lastCommitVersionInSession")
+      .doc("The version of the last commit made in the SparkSession for any table.")
+      .longConf
+      .checkValue(_ >= 0, "the version must be >= 0")
+      .createOptional
+
 }
