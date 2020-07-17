@@ -21,7 +21,7 @@ import java.net.URI
 import java.util.UUID
 
 import org.apache.spark.sql.delta.actions.{AddFile, InvalidProtocolVersionException, Protocol}
-import org.apache.spark.sql.delta.sources.{DeltaSQLConf, DeltaSourceOffset}
+import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaSQLConf}
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 
 import org.apache.commons.io.FileUtils
@@ -1189,6 +1189,57 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase {
       assert(e2.getCause.isInstanceOf[AnalysisException])
       assert(e2.getCause.getMessage.contains("The provided timestamp: 2020-07-10 17:20:40.0" +
         " is after the latest commit timestamp"))
+    }
+  }
+
+  test("startingVersion: user defined start works with mergeSchema") {
+    withTempDir { inputDir =>
+      spark.range(10)
+        .write
+        .format("delta")
+        .mode("append")
+        .save(inputDir.getCanonicalPath)
+
+      // Change schema at version 1
+      spark.range(10, 20)
+        .withColumn("id2", 'id)
+        .write
+        .option("mergeSchema", "true")
+        .format("delta")
+        .mode("append")
+        .save(inputDir.getCanonicalPath)
+
+      // Change schema at version 2
+      spark.range(20, 30)
+        .withColumn("id2", 'id)
+        .withColumn("id3", 'id)
+        .write
+        .option("mergeSchema", "true")
+        .format("delta")
+        .mode("append")
+        .save(inputDir.getCanonicalPath)
+
+      // check answer from version 1
+      val q = spark.readStream
+        .format("delta")
+        .option("startingVersion", "1")
+        .load(inputDir.getCanonicalPath)
+        .writeStream
+        .format("memory")
+        .queryName("startingVersionTest")
+        .start()
+      try {
+        q.processAllAvailable()
+        checkAnswer(
+          sql("select * from startingVersionTest"),
+          ((10 until 20).map(x => (x.toLong, x.toLong, None.toString)) ++
+            (20 until 30).map(x => (x.toLong, x.toLong, x.toString)))
+            .toDF("id", "id2", "id3")
+            .selectExpr("id", "id2", "cast(id3 as long) as id3")
+        )
+      } finally {
+        q.stop()
+      }
     }
   }
 }

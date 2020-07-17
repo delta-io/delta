@@ -382,19 +382,17 @@ case class DeltaSource(
   }
 
   /** Extracts whether users provided the option to time travel a relation. */
-  private def getStartingVersion: Option[Long] = {
+  private lazy val getStartingVersion: Option[Long] = {
     val tsOpt = options.startingTimestamp
     val versionOpt = options.startingVersion
 
     /** DeltaOption validates input and ensures that only one is provided. */
-    lazy val result = if (tsOpt.isDefined || versionOpt.isDefined) {
+    if (tsOpt.isDefined || versionOpt.isDefined) {
       Some(DeltaTableUtils.resolveTimeTravelVersion(
         spark.sessionState.conf, deltaLog,
         DeltaTimeTravelSpec(tsOpt.map(Literal(_)), versionOpt, Some("deltaSource")))._1)
     } else {
       None
     }
-
-    result
   }
 }
