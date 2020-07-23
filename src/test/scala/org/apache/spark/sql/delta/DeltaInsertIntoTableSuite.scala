@@ -489,8 +489,7 @@ abstract class DeltaInsertIntoTests(
 
 trait InsertIntoSQLOnlyTests
     extends QueryTest
-    with SharedSparkSession
-    with BeforeAndAfter {
+    with SharedSparkSession    with BeforeAndAfter {
 
   import testImplicits._
 
@@ -768,7 +767,7 @@ trait InsertIntoSQLOnlyTests
         val t1 = "tbl"
         withTableAndData(t1) { view =>
           sql(s"CREATE TABLE $t1 (id bigint, data string, p int) " +
-              s"USING $v2Format PARTITIONED BY (id, p)")
+            s"USING $v2Format PARTITIONED BY (id, p)")
           sql(s"INSERT INTO $t1 VALUES (2L, 'dummy', 2), (4L, 'keep', 2)")
           sql(s"INSERT OVERWRITE TABLE $t1 PARTITION (id = 2, p = 2) SELECT data FROM $view")
           verifyTable(t1, Seq(

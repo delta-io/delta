@@ -153,6 +153,9 @@ object AddFile {
 
     /** [[ZCUBE_ZORDER_BY]]: ZOrdering of the corresponding ZCube */
     object ZCUBE_ZORDER_BY extends AddFile.Tags.KeyType("ZCUBE_ZORDER_BY")
+
+    /** [[ZCUBE_ZORDER_CURVE]]: Clustering strategy of the corresponding ZCube */
+    object ZCUBE_ZORDER_CURVE extends AddFile.Tags.KeyType("ZCUBE_ZORDER_CURVE")
   }
 
   /** Convert a [[Tags.KeyType]] to a string to be used in the AddMap.tags Map[String, String]. */
