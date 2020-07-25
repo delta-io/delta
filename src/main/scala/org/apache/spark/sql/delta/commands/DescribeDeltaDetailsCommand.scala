@@ -25,10 +25,11 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, ScalaReflection, TableIdentifier}
 import org.apache.spark.sql.catalyst.ScalaReflection.Schema
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.types.StructType
@@ -112,9 +113,19 @@ case class DescribeDeltaDetailCommand(
         DeltaTableIdentifier(spark, tableIdentifier.get) match {
           case Some(id) if id.path.isDefined => new Path(id.path.get) -> None
           case _ =>
-            // This is a catalog table.
-            val metadata = spark.sessionState.catalog.getTableMetadata(i)
-            new Path(metadata.location) -> Some(metadata)
+            // This should be a catalog table.
+            try {
+              val metadata = spark.sessionState.catalog.getTableMetadata(i)
+              if (metadata.tableType == CatalogTableType.VIEW) {
+                throw DeltaErrors.viewInDescribeDetailException(i)
+              }
+              new Path(metadata.location) -> Some(metadata)
+            } catch {
+              // Better error message if the user tried to DESCRIBE DETAIL a temp view.
+              case _: NoSuchTableException
+                  if spark.sessionState.catalog.getTempView(i.table).isDefined =>
+                throw DeltaErrors.viewInDescribeDetailException(i)
+            }
         }
       }
     }.getOrElse {

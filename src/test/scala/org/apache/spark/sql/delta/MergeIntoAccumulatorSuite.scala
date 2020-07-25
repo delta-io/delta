@@ -24,7 +24,6 @@ import org.apache.spark.sql.delta.commands.MergeIntoCommand
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.scheduler.{SparkListener, SparkListenerTaskEnd}
-import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.status.TaskDataWrapper
 import org.apache.spark.util.JsonProtocol
@@ -34,7 +33,9 @@ import org.apache.spark.util.JsonProtocol
  * Spark UI. These tests stay in a separated file so that we can use the package name
  * `org.apache.spark.sql.delta` to access `private[spark]` APIs.
  */
-class MergeIntoAccumulatorSuite extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
+class MergeIntoAccumulatorSuite
+  extends SharedSparkSession
+  with DeltaSQLCommandTest {
 
   import testImplicits._
 

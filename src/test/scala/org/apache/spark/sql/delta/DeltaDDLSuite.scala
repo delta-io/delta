@@ -445,23 +445,27 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
     }
   }
 
-  test("drop managed Delta table should invalidate DeltaLog cache") {
+  test("snapshot returned after a dropped managed table should be empty") {
     withTable("delta_test") {
       sql("CREATE TABLE delta_test USING delta AS SELECT 'foo' as a")
       val tableLocation = sql("DESC DETAIL delta_test").select("location").as[String].head()
-      val deltaLog = getDeltaLog(tableLocation)
+      val snapshotBefore = getDeltaLog(tableLocation).update()
       sql("DROP TABLE delta_test")
-      assert(deltaLog ne getDeltaLog(tableLocation))
+      val snapshotAfter = getDeltaLog(tableLocation).update()
+      assert(snapshotBefore ne snapshotAfter)
+      assert(snapshotAfter.version === -1)
     }
   }
 
-  test("rename managed Delta table should invalidate DeltaLog cache") {
+  test("snapshot returned after renaming a managed table should be empty") {
     withTable("delta_test", "delta_test2") {
       sql("CREATE TABLE delta_test USING delta AS SELECT 'foo' as a")
       val tableLocation = sql("DESC DETAIL delta_test").select("location").as[String].head()
-      val deltaLog = getDeltaLog(tableLocation)
+      val snapshotBefore = getDeltaLog(tableLocation).update()
       sql("ALTER TABLE delta_test RENAME TO delta_test2")
-      assert(deltaLog ne getDeltaLog(tableLocation))
+      val snapshotAfter = getDeltaLog(tableLocation).update()
+      assert(snapshotBefore ne snapshotAfter)
+      assert(snapshotAfter.version === -1)
     }
   }
 }

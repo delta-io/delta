@@ -110,23 +110,27 @@ case class CreateDeltaTableCommand(
             assertPathEmpty(sparkSession, tableWithLocation)
           }
         }
-        // We are either appending/overwriting with saveAsTable or creating a new table with CTAS
+        // We are either appending/overwriting with saveAsTable or creating a new table with CTAS or
+        // we are creating a table as part of a RunnableCommand
+        if (query.get.isInstanceOf[RunnableCommand]) {
+          query.get.asInstanceOf[RunnableCommand].run(sparkSession)
+        } else {
+          val data = Dataset.ofRows(sparkSession, query.get)
 
-        val data = Dataset.ofRows(sparkSession, query.get)
+          if (!isV1Writer) {
+            replaceMetadataIfNecessary(txn, tableWithLocation, options, query.get.schema)
+          }
+          val actions = WriteIntoDelta(
+            deltaLog = deltaLog,
+            mode = mode,
+            options,
+            partitionColumns = table.partitionColumnNames,
+            configuration = table.properties,
+            data = data).write(txn, sparkSession)
 
-        if (!isV1Writer) {
-          replaceMetadataIfNecessary(txn, tableWithLocation, options, query.get.schema)
+          val op = getOperation(txn.metadata, isManagedTable, Some(options))
+          txn.commit(actions, op)
         }
-        val actions = WriteIntoDelta(
-          deltaLog = deltaLog,
-          mode = mode,
-          options,
-          partitionColumns = table.partitionColumnNames,
-          configuration = table.properties,
-          data = data).write(txn, sparkSession)
-
-        val op = getOperation(txn.metadata, isManagedTable, Some(options))
-        txn.commit(actions, op)
       } else {
         def createTransactionLogOrVerify(): Unit = {
           if (isManagedTable) {
@@ -191,6 +195,7 @@ case class CreateDeltaTableCommand(
         schema = new StructType(),
         partitionColumnNames = Nil,
         tracksPartitionsInCatalog = true)
+      logInfo(s"Table is path-based table: $tableByPath. Update catalog with mode: $operation")
       updateCatalog(sparkSession, tableWithDefaultOptions)
 
       Nil

@@ -64,7 +64,7 @@ trait DocsPath {
    *
    * @param relativePath the relative path after the base url to access.
    * @param skipValidation whether to validate that the function generating the link is
-   *                       in the whitelist
+   *                       in the allowlist.
    * @return The entire URL of the documentation link
    */
   def generateDocsLink(
@@ -139,6 +139,7 @@ object DeltaErrors
       "manually deleted from the file system rather than using the table `DELETE` statement. " +
       s"For more information, see $faqPath"
   }
+
 
   def formatColumn(colName: String): String = s"`$colName`"
 
@@ -246,6 +247,11 @@ object DeltaErrors
   def missingTableIdentifierException(operationName: String): Throwable = {
     new AnalysisException(
       s"Please provide the path or table identifier for $operationName.")
+  }
+
+  def viewInDescribeDetailException(view: TableIdentifier): Throwable = {
+    new AnalysisException(
+      s"$view is a view. DESCRIBE DETAIL is only supported for tables.")
   }
 
   def alterTableChangeColumnException(oldColumns: String, newColumns: String): Throwable = {

@@ -100,6 +100,23 @@ object OptimisticTransaction {
   def getActive(): Option[OptimisticTransaction] = Option(active.get())
 
   /**
+   * Runs the passed block of code with the given active transaction
+   */
+  def withActive[T](activeTransaction: OptimisticTransaction)(block: => T): T = {
+    val original = getActive()
+    setActive(activeTransaction)
+    try {
+      block
+    } finally {
+      if (original.isDefined) {
+        setActive(original.get)
+      } else {
+        clearActive()
+      }
+    }
+  }
+
+  /**
    * Sets a transaction as the active transaction.
    *
    * @note This is not meant for being called directly, only from
@@ -482,6 +499,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       deltaLog.store.write(
         deltaFile(deltaLog.logPath, attemptVersion),
         actions.map(_.json).toIterator)
+
+      spark.sessionState.conf.setConf(
+        DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,
+        Some(attemptVersion))
 
       val commitTime = System.nanoTime()
       val postCommitSnapshot = deltaLog.update()

@@ -51,6 +51,16 @@ object DeltaSQLConf {
       .stringConf
       .createOptional
 
+  val DELTA_CONVERT_USE_METADATA_LOG =
+    buildConf("convert.useMetadataLog")
+      .doc(
+        """ When converting to a Parquet table that was created by Structured Streaming, whether
+        |  to use the transaction log under `_spark_metadata` as the source of truth for files
+        | contained in the table.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_SNAPSHOT_PARTITIONS =
     buildConf("snapshotPartitions")
       .internal()
@@ -296,4 +306,12 @@ object DeltaSQLConf {
         """.stripMargin)
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_LAST_COMMIT_VERSION_IN_SESSION =
+    buildConf("lastCommitVersionInSession")
+      .doc("The version of the last commit made in the SparkSession for any table.")
+      .longConf
+      .checkValue(_ >= 0, "the version must be >= 0")
+      .createOptional
+
 }
