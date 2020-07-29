@@ -184,9 +184,9 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
           .merge(source, "srcKey = trgKey")
           .execute()
       }
-      errorContains(e.getMessage, "There must be at least one WHEN clause in a MERGE query")
+      errorContains(e.getMessage, "There must be at least one WHEN clause in a MERGE statement")
 
-      // When there are 2 MATCHED clauses in a MERGE statement,
+      // When there are multiple MATCHED clauses in a MERGE statement,
       // the first MATCHED clause must have a condition
       e = intercept[AnalysisException] {
         io.delta.tables.DeltaTable.forPath(spark, tempPath)
@@ -196,56 +196,8 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
           .whenNotMatched().insertExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
           .execute()
       }
-      errorContains(e.getMessage, "the first MATCHED clause must have a condition")
-
-      // There must be at most two WHEN clauses in a MERGE statement
-      e = intercept[AnalysisException] {
-        io.delta.tables.DeltaTable.forPath(spark, tempPath)
-          .merge(source, "srcKey = trgKey")
-          .whenMatched("trgKey = 1").updateExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
-          .whenMatched("trgValue = 3").delete()
-          .whenMatched("trgValue = 2")
-          .updateExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue + 1"))
-          .whenNotMatched().insertExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
-          .execute()
-      }
-      errorContains(e.getMessage, "There must be at most two match clauses in a MERGE query")
-
-      // INSERT can appear at most once in NOT MATCHED clauses in a MERGE statement
-      e = intercept[AnalysisException] {
-        io.delta.tables.DeltaTable.forPath(spark, tempPath)
-          .merge(source, "srcKey = trgKey")
-          .whenNotMatched().insertExpr(Map("trgKey" -> "srcKey + 1", "trgValue" -> "srcValue"))
-          .whenNotMatched().insertExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
-          .execute()
-      }
-      errorContains(e.getMessage,
-        "INSERT, UPDATE and DELETE cannot appear twice in one MERGE query")
-
-      // UPDATE can appear at most once in MATCHED clauses in a MERGE statement
-      e = intercept[AnalysisException] {
-        io.delta.tables.DeltaTable.forPath(spark, tempPath)
-          .merge(source, "srcKey = trgKey")
-          .whenMatched("trgKey = 1").updateExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
-          .whenMatched("trgValue = 2")
-          .updateExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue + 1"))
-          .whenNotMatched().insertExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
-          .execute()
-      }
-      errorContains(e.getMessage,
-        "INSERT, UPDATE and DELETE cannot appear twice in one MERGE query")
-
-      // DELETE can appear at most once in MATCHED clauses in a MERGE statement
-      e = intercept[AnalysisException] {
-        io.delta.tables.DeltaTable.forPath(spark, tempPath)
-          .merge(source, "srcKey = trgKey")
-          .whenMatched("trgKey = 1").delete()
-          .whenMatched("trgValue = 2").delete()
-          .whenNotMatched().insertExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
-          .execute()
-      }
-      errorContains(e.getMessage,
-        "INSERT, UPDATE and DELETE cannot appear twice in one MERGE query")
+      errorContains(e.getMessage, "When there are more than one MATCHED clauses in a MERGE " +
+        "statement, only the last MATCHED clause can omit the condition.")
 
       e = intercept[AnalysisException] {
         io.delta.tables.DeltaTable.forPath(spark, tempPath)
@@ -330,6 +282,26 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
         .whenNotMatched().insertAll()
         .execute()
     }
+  }
+
+  test("merge clause matched and not matched can interleave") {
+    append(Seq((1, 10), (2, 20)).toDF("trgKey", "trgValue"), Nil) // target
+    val source = Seq((1, 100), (2, 200), (3, 300), (4, 400)).toDF("srcKey", "srcValue") // source
+    io.delta.tables.DeltaTable.forPath(spark, tempPath)
+      .merge(source, "srcKey = trgKey")
+      .whenMatched("trgKey = 1").updateExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
+      .whenNotMatched("srcKey = 3").insertExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
+      .whenMatched().delete()
+      .whenNotMatched().insertExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
+      .execute()
+
+    checkAnswer(
+      readDeltaTable(tempPath),
+      Row(1, 100) ::  // Update (1, 10)
+                      // Delete (2, 20)
+      Row(3, 300) ::  // Insert (3, 300)
+      Row(4, 400) ::  // Insert (4, 400)
+      Nil)
   }
 
   override protected def executeMerge(

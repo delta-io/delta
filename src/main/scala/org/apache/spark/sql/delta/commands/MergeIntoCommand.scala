@@ -43,15 +43,41 @@ import org.apache.spark.sql.types.{StructField, StructType}
 case class MergeDataRows(rows: Long)
 case class MergeDataFiles(files: Long)
 
+/**
+ * Represents the state of a single merge clause:
+ * - merge clause's (optional) predicate
+ * - action type (insert, update, delete)
+ * - action's expressions
+ */
+case class MergeClauseStats(
+    condition: Option[String],
+    actionType: String,
+    actionExpr: Array[String])
+
+object MergeClauseStats {
+  def apply(mergeClause: DeltaMergeIntoClause): MergeClauseStats = {
+    MergeClauseStats(
+      condition = mergeClause.condition.map(_.sql),
+      mergeClause.clauseType.toLowerCase(),
+      actionExpr = mergeClause.actions.map(_.sql).toArray)
+  }
+}
+
 /** State for a merge operation */
 case class MergeStats(
-    // Expressions used in MERGE
+    // Merge condition expression
     conditionExpr: String,
+
+    // Expressions used in old MERGE stats, now always Null
     updateConditionExpr: String,
     updateExprs: Array[String],
     insertConditionExpr: String,
     insertExprs: Array[String],
     deleteConditionExpr: String,
+
+    // Newer expressions used in MERGE with any number of MATCHED/NOT MATCHED
+    matchedStats: Seq[MergeClauseStats],
+    notMatchedStats: Seq[MergeClauseStats],
 
     // Data sizes of source and target at different stages of processing
     source: MergeDataRows,
@@ -65,6 +91,44 @@ case class MergeStats(
     targetRowsUpdated: Long,
     targetRowsInserted: Long,
     targetRowsDeleted: Long)
+
+object MergeStats {
+  // scalastyle:off argcount
+  /** constructor to provide default values for deprecated fields */
+  def apply(
+      conditionExpr: String,
+      matchedStats: Seq[MergeClauseStats],
+      notMatchedStats: Seq[MergeClauseStats],
+      source: MergeDataRows,
+      targetBeforeSkipping: MergeDataFiles,
+      targetAfterSkipping: MergeDataFiles,
+      targetFilesRemoved: Long,
+      targetFilesAdded: Long,
+      targetRowsCopied: Long,
+      targetRowsUpdated: Long,
+      targetRowsInserted: Long,
+      targetRowsDeleted: Long): MergeStats = {
+    MergeStats(
+      conditionExpr,
+      updateConditionExpr = null,
+      updateExprs = null,
+      insertConditionExpr = null,
+      insertExprs = null,
+      deleteConditionExpr = null,
+      matchedStats,
+      notMatchedStats,
+      source,
+      targetBeforeSkipping,
+      targetAfterSkipping,
+      targetFilesRemoved,
+      targetFilesAdded,
+      targetRowsCopied,
+      targetRowsUpdated,
+      targetRowsInserted,
+      targetRowsDeleted)
+  }
+  // scalastyle:on argcount
+}
 
 /**
  * Performs a merge of a source query/table into a Delta table.
@@ -97,7 +161,7 @@ case class MergeIntoCommand(
     @transient targetFileIndex: TahoeFileIndex,
     condition: Expression,
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
-    notMatchedClause: Option[DeltaMergeIntoInsertClause],
+    notMatchedClauses: Seq[DeltaMergeIntoInsertClause],
     migratedSchema: Option[StructType]) extends RunnableCommand
   with DeltaCommand with PredicateHelper with AnalysisHelper with ImplicitMetadataOperation {
 
@@ -110,14 +174,10 @@ case class MergeIntoCommand(
   @transient private lazy val sc: SparkContext = SparkContext.getOrCreate()
   @transient private lazy val targetDeltaLog: DeltaLog = targetFileIndex.deltaLog
 
-  /** Whether this merge statement only inserts new data. */
-  private def isInsertOnly: Boolean = matchedClauses.isEmpty && notMatchedClause.isDefined
-  private def isMatchedOnly: Boolean = notMatchedClause.isEmpty && matchedClauses.nonEmpty
-
-  lazy val updateClause: Option[DeltaMergeIntoUpdateClause] =
-    matchedClauses.collectFirst { case u: DeltaMergeIntoUpdateClause => u }
-  lazy val deleteClause: Option[DeltaMergeIntoDeleteClause] =
-    matchedClauses.collectFirst { case d: DeltaMergeIntoDeleteClause => d }
+  /** Whether this merge statement has only a single insert (NOT MATCHED) clause. */
+  private def isSingleInsertOnly: Boolean = matchedClauses.isEmpty && notMatchedClauses.length == 1
+  /** Whether this merge statement has only MATCHED clauses. */
+  private def isMatchedOnly: Boolean = notMatchedClauses.isEmpty && matchedClauses.nonEmpty
 
   override lazy val metrics = Map[String, SQLMetric](
     "numSourceRows" -> createMetric(sc, "number of source rows"),
@@ -146,7 +206,7 @@ case class MergeIntoCommand(
       }
 
       val deltaActions = {
-       if (isInsertOnly && spark.conf.get(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED)) {
+       if (isSingleInsertOnly && spark.conf.get(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED)) {
          writeInsertsOnlyWhenNoMatchedClauses(spark, deltaTxn)
        } else {
          val filesToRewrite =
@@ -162,19 +222,17 @@ case class MergeIntoCommand(
         deltaActions,
         DeltaOperations.Merge(
           Option(condition.sql),
-          updateClause.flatMap(_.condition).map(_.sql),
-          deleteClause.flatMap(_.condition).map(_.sql),
-          notMatchedClause.flatMap(_.condition).map(_.sql)))
+          matchedClauses.map(DeltaOperations.MergePredicate(_)),
+          notMatchedClauses.map(DeltaOperations.MergePredicate(_))))
 
       // Record metrics
       val stats = MergeStats(
-        // Expressions
+        // Merge Condition expression
         conditionExpr = condition.sql,
-        updateConditionExpr = updateClause.flatMap(_.condition).map(_.sql).orNull,
-        updateExprs = updateClause.map(_.actions.map(_.sql).toArray).orNull,
-        insertConditionExpr = notMatchedClause.flatMap(_.condition).map(_.sql).orNull,
-        insertExprs = notMatchedClause.map(_.actions.map(_.sql).toArray).orNull,
-        deleteConditionExpr = deleteClause.flatMap(_.condition).map(_.sql).orNull,
+
+        // MATCHED/NOT MATCHED clauses used in MERGE
+        matchedStats = matchedClauses.map(MergeClauseStats(_)),
+        notMatchedStats = notMatchedClauses.map(MergeClauseStats(_)),
 
         // Data sizes of source and target at different stages of processing
         MergeDataRows(metrics("numSourceRows").value),
@@ -265,6 +323,8 @@ case class MergeIntoCommand(
   /**
    * This is an optimization of the case when there is no update clause for the merge.
    * We perform an left anti join on the source data to find the rows to be inserted.
+   *
+   * This will currently only optimize for the case when there is a _single_ notMatchedClause.
    */
   private def writeInsertsOnlyWhenNoMatchedClauses(
       spark: SparkSession,
@@ -277,7 +337,8 @@ case class MergeIntoCommand(
     val incrInsertedCountExpr = makeMetricUpdateUDF("numTargetRowsInserted")
 
     val outputColNames = getTargetOutputCols(deltaTxn).map(_.name)
-    val outputExprs = notMatchedClause.get.resolvedActions.map(_.expr) :+ incrInsertedCountExpr
+    // we use head here since we know there is only a single notMatchedClause
+    val outputExprs = notMatchedClauses.head.resolvedActions.map(_.expr) :+ incrInsertedCountExpr
     val outputCols = outputExprs.zip(outputColNames).map { case (expr, name) =>
       new Column(Alias(expr, name)())
     }
@@ -285,7 +346,7 @@ case class MergeIntoCommand(
     // source DataFrame
     val sourceDF = Dataset.ofRows(spark, source)
       .filter(new Column(incrSourceRowCountExpr))
-      .filter(new Column(notMatchedClause.get.condition.getOrElse(Literal(true))))
+      .filter(new Column(notMatchedClauses.head.condition.getOrElse(Literal(true))))
 
     // Skip data based on the merge condition
     val conjunctivePredicates = splitConjunctivePredicates(condition)
@@ -379,25 +440,22 @@ case class MergeIntoCommand(
       resolveOnJoinedPlan(exprs)
     }
 
-    def clauseCondition(clause: Option[DeltaMergeIntoClause]): Option[Expression] = {
-      val condExprOption = clause.map(_.condition.getOrElse(Literal(true)))
-      resolveOnJoinedPlan(condExprOption.toSeq).headOption
+    def clauseCondition(clause: DeltaMergeIntoClause): Expression = {
+      // if condition is None, then expression always evaluates to true
+      val condExpr = clause.condition.getOrElse(Literal(true))
+      resolveOnJoinedPlan(Seq(condExpr)).head
     }
 
-    val matchedClause1 = matchedClauses.headOption
-    val matchedClause2 = matchedClauses.drop(1).headOption
     val joinedRowEncoder = RowEncoder(joinedPlan.schema)
     val outputRowEncoder = RowEncoder(deltaTxn.metadata.schema).resolveAndBind()
 
     val processor = new JoinedRowProcessor(
       targetRowHasNoMatch = resolveOnJoinedPlan(Seq(col(SOURCE_ROW_PRESENT_COL).isNull.expr)).head,
       sourceRowHasNoMatch = resolveOnJoinedPlan(Seq(col(TARGET_ROW_PRESENT_COL).isNull.expr)).head,
-      matchedCondition1 = clauseCondition(matchedClause1),
-      matchedOutput1 = matchedClause1.map(matchedClauseOutput),
-      matchedCondition2 = clauseCondition(matchedClause2),
-      matchedOutput2 = matchedClause2.map(matchedClauseOutput),
-      notMatchedCondition = clauseCondition(notMatchedClause),
-      notMatchedOutput = notMatchedClause.map(notMatchedClauseOutput),
+      matchedConditions = matchedClauses.map(clauseCondition),
+      matchedOutputs = matchedClauses.map(matchedClauseOutput),
+      notMatchedConditions = notMatchedClauses.map(clauseCondition),
+      notMatchedOutputs = notMatchedClauses.map(notMatchedClauseOutput),
       noopCopyOutput =
         resolveOnJoinedPlan(targetOutputCols :+ Literal(false) :+ incrNoopCountExpr),
       deleteRowOutput =
@@ -495,12 +553,10 @@ object MergeIntoCommand {
   class JoinedRowProcessor(
       targetRowHasNoMatch: Expression,
       sourceRowHasNoMatch: Expression,
-      matchedCondition1: Option[Expression],
-      matchedOutput1: Option[Seq[Expression]],
-      matchedCondition2: Option[Expression],
-      matchedOutput2: Option[Seq[Expression]],
-      notMatchedCondition: Option[Expression],
-      notMatchedOutput: Option[Seq[Expression]],
+      matchedConditions: Seq[Expression],
+      matchedOutputs: Seq[Seq[Expression]],
+      notMatchedConditions: Seq[Expression],
+      notMatchedOutputs: Seq[Seq[Expression]],
       noopCopyOutput: Seq[Expression],
       deleteRowOutput: Seq[Expression],
       joinedAttributes: Seq[Attribute],
@@ -519,12 +575,10 @@ object MergeIntoCommand {
 
       val targetRowHasNoMatchPred = generatePredicate(targetRowHasNoMatch)
       val sourceRowHasNoMatchPred = generatePredicate(sourceRowHasNoMatch)
-      val matchedPred1 = matchedCondition1.map(generatePredicate)
-      val matchedOutputProj1 = matchedOutput1.map(generateProjection)
-      val matchedPred2 = matchedCondition2.map(generatePredicate)
-      val matchedOutputProj2 = matchedOutput2.map(generateProjection)
-      val notMatchedPred = notMatchedCondition.map(generatePredicate)
-      val notMatchedProj = notMatchedOutput.map(generateProjection)
+      val matchedPreds = matchedConditions.map(generatePredicate)
+      val matchedProjs = matchedOutputs.map(generateProjection)
+      val notMatchedPreds = notMatchedConditions.map(generatePredicate)
+      val notMatchedProjs = notMatchedOutputs.map(generateProjection)
       val noopCopyProj = generateProjection(noopCopyOutput)
       val deleteRowProj = generateProjection(deleteRowOutput)
       val outputProj = UnsafeProjection.create(outputRowEncoder.schema)
@@ -536,21 +590,24 @@ object MergeIntoCommand {
         if (targetRowHasNoMatchPred.eval(inputRow)) {
           // Target row did not match any source row, so just copy it to the output
           noopCopyProj.apply(inputRow)
-        } else if (sourceRowHasNoMatchPred.eval(inputRow)) {
-          // Source row did not match with any target row, so insert the new source row
-          if (notMatchedPred.isDefined && notMatchedPred.get.eval(inputRow)) {
-            notMatchedProj.get.apply(inputRow)
-          } else {
-            deleteRowProj.apply(inputRow)
-          }
         } else {
-          // Source row matched with target row, so update the target row
-          if (matchedPred1.isDefined && matchedPred1.get.eval(inputRow)) {
-            matchedOutputProj1.get.apply(inputRow)
-          } else if (matchedPred2.isDefined && matchedPred2.get.eval(inputRow)) {
-            matchedOutputProj2.get.apply(inputRow)
+          // identify which set of clauses to execute: matched or not-matched ones
+          val (predicates, projections, noopAction) = if (sourceRowHasNoMatchPred.eval(inputRow)) {
+            // Source row did not match with any target row, so insert the new source row
+            (notMatchedPreds, notMatchedProjs, deleteRowProj)
           } else {
-            noopCopyProj(inputRow)
+            // Source row matched with target row, so update the target row
+            (matchedPreds, matchedProjs, noopCopyProj)
+          }
+
+          // find (predicate, projection) pair whose predicate satisfies inputRow
+          val pair = (predicates zip projections).find {
+            case (predicate, _) => predicate.eval(inputRow)
+          }
+
+          pair match {
+            case Some((_, projections)) => projections.apply(inputRow)
+            case None => noopAction.apply(inputRow)
           }
         }
       }

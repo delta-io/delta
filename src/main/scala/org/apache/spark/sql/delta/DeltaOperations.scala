@@ -21,6 +21,7 @@ import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.plans.logical.DeltaMergeIntoClause
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.{StructField, StructType}
@@ -132,20 +133,59 @@ object DeltaOperations {
     )
     override val operationMetrics: Set[String] = DeltaOperationMetrics.OPTIMIZE
   }
-  /** Recorded when a merge operation is committed to the table. */
+
+  /** Represents the predicates and action type (insert, update, delete) for a Merge clause */
+  case class MergePredicate(
+      predicate: Option[String],
+      actionType: String)
+
+  object MergePredicate {
+    def apply(mergeClause: DeltaMergeIntoClause): MergePredicate = {
+      MergePredicate(
+        predicate = mergeClause.condition.map(_.sql),
+        mergeClause.clauseType.toLowerCase())
+    }
+  }
+
+  /**
+   * Recorded when a merge operation is committed to the table.
+   *
+   * `updatePredicate`, `deletePredicate`, and `insertPredicate` are DEPRECATED.
+   * Only use `predicate`, `matchedPredicates`, and `notMatchedPredicates` to record the merge.
+   */
   case class Merge(
       predicate: Option[String],
       updatePredicate: Option[String],
       deletePredicate: Option[String],
-      insertPredicate: Option[String]) extends Operation("MERGE") {
+      insertPredicate: Option[String],
+      matchedPredicates: Seq[MergePredicate],
+      notMatchedPredicates: Seq[MergePredicate]) extends Operation("MERGE") {
+
     override val parameters: Map[String, Any] = {
       predicate.map("predicate" -> _).toMap ++
         updatePredicate.map("updatePredicate" -> _).toMap ++
         deletePredicate.map("deletePredicate" -> _).toMap ++
-        insertPredicate.map("insertPredicate" -> _).toMap
+        insertPredicate.map("insertPredicate" -> _).toMap +
+        ("matchedPredicates" -> JsonUtils.toJson(matchedPredicates)) +
+        ("notMatchedPredicates" -> JsonUtils.toJson(notMatchedPredicates))
     }
     override val operationMetrics: Set[String] = DeltaOperationMetrics.MERGE
   }
+
+  object Merge {
+    /** constructor to provide default values for deprecated fields */
+    def apply(
+        predicate: Option[String],
+        matchedPredicates: Seq[MergePredicate],
+        notMatchedPredicates: Seq[MergePredicate]): Merge = Merge(
+          predicate,
+          updatePredicate = None,
+          deletePredicate = None,
+          insertPredicate = None,
+          matchedPredicates,
+          notMatchedPredicates)
+  }
+
   /** Recorded when an update operation is committed to the table. */
   case class Update(predicate: Option[String]) extends Operation("UPDATE") {
     override val parameters: Map[String, Any] = predicate.map("predicate" -> _).toMap
