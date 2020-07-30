@@ -365,7 +365,7 @@ abstract class ConvertToDeltaCommandBase(
         spark,
         txn,
         txn.metadata,
-        addFilesIter,
+        Iterator.single(Protocol()) ++ addFilesIter,
         getOperation(numFiles, convertProperties),
         numFiles,
         getContext,
