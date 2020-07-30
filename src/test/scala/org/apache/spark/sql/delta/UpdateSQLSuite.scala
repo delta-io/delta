@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
-import org.apache.spark.sql.Row
+import org.apache.spark.sql.{AnalysisException, Row}
 
 class UpdateSQLSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
 
@@ -50,6 +50,24 @@ class UpdateSQLSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
       targetDF,
       set = "a.c.d = 'rand'" :: "a.c.d = 'RANDOM2'" :: Nil,
       errMsgs = "There is a conflict from these SET columns" :: Nil)
+  }
+
+  test("temporary view over delta table shouldn't break the rule of full scan") {
+    withTable("delta_table") {
+      sql(
+        s"""
+           |CREATE TABLE delta_table(key INT, value INT)
+           |USING delta
+           |OPTIONS('path'='$tempPath')
+           """.stripMargin)
+      sql("INSERT INTO delta_table VALUES (1, 1)")
+      sql("CREATE TEMPORARY VIEW temp_view AS SELECT key FROM delta_table")
+
+      val e1 = intercept[AnalysisException] (
+        sql("UPDATE temp_view SET key=2")
+      ).getMessage
+      assert(e1.contains("Expect a full scan of Delta sources, but found a partial scan."))
+    }
   }
 
   override protected def executeUpdate(
