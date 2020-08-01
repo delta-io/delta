@@ -14,8 +14,7 @@
 # limitations under the License.
 #
 
-from pyspark import SparkContext
-from pyspark.sql import Column, DataFrame, SparkSession, SQLContext, functions
+from pyspark.sql import Column, DataFrame, SparkSession, functions
 from pyspark.sql.functions import *
 from py4j.java_collections import MapConverter
 from delta.tables import *
@@ -28,14 +27,13 @@ try:
 except:
     pass
 
-# Create SparkContext
-sc = SparkContext()
-sqlContext = SQLContext(sc)
-
-spark = SparkSession \
-    .builder \
+# Enable SQL commands and Update/Delete/Merge for the current spark session.
+# we need to set the following configs
+spark = SparkSession.builder \
     .appName("quickstart") \
     .master("local[*]") \
+    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
     .getOrCreate()
 
 # Create a table

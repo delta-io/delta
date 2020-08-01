@@ -21,6 +21,7 @@ import scala.util.{Failure, Success, Try}
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.DatabricksLogging
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.PartitionUtils
@@ -33,10 +34,13 @@ import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{EqualTo, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.SubqueryAlias
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.connector.catalog.{Table, TableProvider}
+import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.execution.streaming.{Sink, Source}
 import org.apache.spark.sql.sources._
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /** A DataSource V1 for integrating Delta into Spark SQL batch and Streaming APIs. */
 class DeltaDataSource
@@ -45,6 +49,7 @@ class DeltaDataSource
   with StreamSinkProvider
   with CreatableRelationProvider
   with DataSourceRegister
+  with TableProvider
   with DeltaLogging {
 
   SparkSession.getActiveSession.foreach { spark =>
@@ -53,6 +58,19 @@ class DeltaDataSource
     spark.conf.set("spark.sql.legacy.sources.write.passPartitionByAsOptions", "true")
   }
 
+  def inferSchema: StructType = new StructType() // empty
+
+  override def inferSchema(options: CaseInsensitiveStringMap): StructType = inferSchema
+
+  override def getTable(
+      schema: StructType,
+      partitioning: Array[Transform],
+      properties: java.util.Map[String, String]): Table = {
+    val options = new CaseInsensitiveStringMap(properties)
+    val path = options.get("path")
+    if (path == null) throw DeltaErrors.pathNotSpecifiedException
+    DeltaTableV2(SparkSession.active, new Path(path))
+  }
 
   override def sourceSchema(
       sqlContext: SQLContext,
@@ -147,21 +165,10 @@ class DeltaDataSource
     DeltaOptions.verifyOptions(CaseInsensitiveMap(parameters))
 
     val timeTravelByParams = DeltaDataSource.getTimeTravelVersion(parameters)
-    // TODO(burak): Move all this logic into DeltaTableV2 when Spark 3.0 is ready
-    // Handle time travel
-    val (path, partitionFilters, timeTravelByPath) =
-      DeltaDataSource.parsePathIdentifier(sqlContext.sparkSession, maybePath)
-
-    if (timeTravelByParams.isDefined && timeTravelByPath.isDefined) {
-      throw DeltaErrors.multipleTimeTravelSyntaxUsed
-    }
-
-    val deltaLog = DeltaLog.forTable(sqlContext.sparkSession, path)
-
-    val partitionPredicates =
-      DeltaDataSource.verifyAndCreatePartitionFilters(maybePath, deltaLog, partitionFilters)
-
-    deltaLog.createRelation(partitionPredicates, timeTravelByParams.orElse(timeTravelByPath))
+    DeltaTableV2(
+      sqlContext.sparkSession,
+      new Path(maybePath),
+      timeTravelOpt = timeTravelByParams).toBaseRelation
   }
 
   override def shortName(): String = {
@@ -249,13 +256,7 @@ object DeltaDataSource extends DatabricksLogging {
     val (path, timeTravelByPath) = DeltaTableUtils.extractIfPathContainsTimeTravel(spark, userPath)
 
     val hadoopPath = new Path(path)
-    val rootPath = DeltaTableUtils.findDeltaTableRoot(spark, hadoopPath).getOrElse {
-      val fs = hadoopPath.getFileSystem(spark.sessionState.newHadoopConf())
-      if (!fs.exists(hadoopPath)) {
-        throw DeltaErrors.pathNotExistsException(path)
-      }
-      hadoopPath
-    }
+    val rootPath = DeltaTableUtils.findDeltaTableRoot(spark, hadoopPath).getOrElse(hadoopPath)
 
     val partitionFilters = if (rootPath != hadoopPath) {
       logConsole(
@@ -287,10 +288,9 @@ object DeltaDataSource extends DatabricksLogging {
    */
   def verifyAndCreatePartitionFilters(
       userPath: String,
-      deltaLog: DeltaLog,
+      snapshot: Snapshot,
       partitionFilters: Seq[(String, String)]): Seq[Expression] = {
     if (partitionFilters.nonEmpty) {
-      val snapshot = deltaLog.update()
       val metadata = snapshot.metadata
 
       val badColumns = partitionFilters.map(_._1).filterNot(metadata.partitionColumns.contains)

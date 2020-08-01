@@ -19,32 +19,25 @@ import tempfile
 import shutil
 import os
 
-from pyspark.sql import SQLContext, Row, SparkSession
+from pyspark.sql import Row
 from pyspark.sql.functions import *
 from pyspark.sql.types import *
 
 from delta.tables import *
-from delta.testing.utils import PySparkTestCase
+from delta.testing.utils import DeltaTestCase
 
 
-class DeltaTableTests(PySparkTestCase):
-
-    def setUp(self):
-        super(DeltaTableTests, self).setUp()
-        self.sqlContext = SQLContext(self.sc)
-        self.spark = SparkSession(self.sc)
-        self.tempPath = tempfile.mkdtemp()
-        self.tempFile = os.path.join(self.tempPath, "tempFile")
-
-    def tearDown(self):
-        self.spark.stop()
-        shutil.rmtree(self.tempPath)
-        super(DeltaTableTests, self).tearDown()
+class DeltaTableTests(DeltaTestCase):
 
     def test_forPath(self):
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
         dt = DeltaTable.forPath(self.spark, self.tempFile).toDF()
         self.__checkAnswer(dt, [('a', 1), ('b', 2), ('c', 3)])
+
+    def test_forName(self):
+        self.__writeAsTable([('a', 1), ('b', 2), ('c', 3)], "test")
+        df = DeltaTable.forName(self.spark, "test").toDF()
+        self.__checkAnswer(df, [('a', 1), ('b', 2), ('c', 3)])
 
     def test_alias_and_toDF(self):
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
@@ -379,6 +372,10 @@ class DeltaTableTests(PySparkTestCase):
     def __writeDeltaTable(self, datalist):
         df = self.spark.createDataFrame(datalist, ["key", "value"])
         df.write.format("delta").save(self.tempFile)
+
+    def __writeAsTable(self, datalist, tblName):
+        df = self.spark.createDataFrame(datalist, ["key", "value"])
+        df.write.format("delta").saveAsTable(tblName)
 
     def __overwriteDeltaTable(self, datalist):
         df = self.spark.createDataFrame(datalist, ["key", "value"])

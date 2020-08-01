@@ -42,16 +42,18 @@ case class VacuumTableCommand(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val pathToVacuum =
-      new Path(if (table.nonEmpty) {
+      if (path.nonEmpty) {
+        new Path(path.get)
+      } else if (table.nonEmpty) {
         DeltaTableIdentifier(sparkSession, table.get) match {
-          case Some(id) => id.path.getOrElse {
-            throw DeltaErrors.tableNotSupportedException("VACUUM")
-          }
-          case None => throw DeltaErrors.notADeltaTableException("VACUUM")
+          case Some(id) if id.path.nonEmpty =>
+            new Path(id.path.get)
+          case _ =>
+            new Path(sparkSession.sessionState.catalog.getTableMetadata(table.get).location)
         }
       } else {
-        path.get
-      })
+        throw DeltaErrors.missingTableIdentifierException("VACUUM")
+      }
     val baseDeltaPath = DeltaTableUtils.findDeltaTableRoot(sparkSession, pathToVacuum)
     if (baseDeltaPath.isDefined) {
       if (baseDeltaPath.get != pathToVacuum) {

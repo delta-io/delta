@@ -101,7 +101,7 @@ class DeltaSink(
     }
     val newFiles = txn.writeFiles(data, Some(options))
     val setTxn = SetTransaction(queryId, batchId, Some(deltaLog.clock.getTimeMillis())) :: Nil
-    val info = DeltaOperations.StreamingUpdate(outputMode, queryId, batchId)
+    val info = DeltaOperations.StreamingUpdate(outputMode, queryId, batchId, options.userMetadata)
     metrics("numRemovedFiles").set(deletedFiles.size)
     metrics("numAddedFiles").set(newFiles.size)
     metrics(DeltaOperationMetrics.EXECUTION_TIME_MS)

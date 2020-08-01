@@ -18,6 +18,12 @@ package org.apache.spark.sql.delta.sources
 
 import java.util.Locale
 
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.expressions
+import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.sources
+import org.apache.spark.sql.sources.Filter
+
 object DeltaSourceUtils {
   val NAME = "delta"
   val ALT_NAME = "delta"
@@ -34,4 +40,56 @@ object DeltaSourceUtils {
   def isDeltaTable(provider: Option[String]): Boolean = {
     provider.exists(isDeltaDataSourceName)
   }
+
+  /** Creates Spark literals from a value exposed by the public Spark API. */
+  private def createLiteral(value: Any): expressions.Literal = value match {
+    case v: String => expressions.Literal.create(v)
+    case v: Int => expressions.Literal.create(v)
+    case v: Byte => expressions.Literal.create(v)
+    case v: Short => expressions.Literal.create(v)
+    case v: Long => expressions.Literal.create(v)
+    case v: Double => expressions.Literal.create(v)
+    case v: Float => expressions.Literal.create(v)
+    case v: Boolean => expressions.Literal.create(v)
+    case v: java.sql.Date => expressions.Literal.create(v)
+    case v: java.sql.Timestamp => expressions.Literal.create(v)
+    case v: BigDecimal => expressions.Literal.create(v)
+  }
+
+  /** Translates the public Spark Filter APIs into Spark internal expressions. */
+  def translateFilters(filters: Array[Filter]): Expression = filters.map {
+    case sources.EqualTo(attribute, value) =>
+      expressions.EqualTo(UnresolvedAttribute(attribute), expressions.Literal.create(value))
+    case sources.EqualNullSafe(attribute, value) =>
+      expressions.EqualNullSafe(UnresolvedAttribute(attribute), expressions.Literal.create(value))
+    case sources.GreaterThan(attribute, value) =>
+      expressions.GreaterThan(UnresolvedAttribute(attribute), expressions.Literal.create(value))
+    case sources.GreaterThanOrEqual(attribute, value) =>
+      expressions.GreaterThanOrEqual(
+        UnresolvedAttribute(attribute), expressions.Literal.create(value))
+    case sources.LessThan(attribute, value) =>
+      expressions.LessThanOrEqual(UnresolvedAttribute(attribute), expressions.Literal.create(value))
+    case sources.LessThanOrEqual(attribute, value) =>
+      expressions.LessThanOrEqual(UnresolvedAttribute(attribute), expressions.Literal.create(value))
+    case sources.In(attribute, values) =>
+      expressions.In(UnresolvedAttribute(attribute), values.map(createLiteral))
+    case sources.IsNull(attribute) => expressions.IsNull(UnresolvedAttribute(attribute))
+    case sources.IsNotNull(attribute) => expressions.IsNotNull(UnresolvedAttribute(attribute))
+    case sources.Not(otherFilter) => expressions.Not(translateFilters(Array(otherFilter)))
+    case sources.And(filter1, filter2) =>
+      expressions.And(translateFilters(Array(filter1)), translateFilters(Array(filter2)))
+    case sources.Or(filter1, filter2) =>
+      expressions.Or(translateFilters(Array(filter1)), translateFilters(Array(filter2)))
+    case sources.StringStartsWith(attribute, value) =>
+      new expressions.Like(
+        UnresolvedAttribute(attribute), expressions.Literal.create(s"${value}%"))
+    case sources.StringEndsWith(attribute, value) =>
+      new expressions.Like(
+        UnresolvedAttribute(attribute), expressions.Literal.create(s"%${value}"))
+    case sources.StringContains(attribute, value) =>
+      new expressions.Like(
+        UnresolvedAttribute(attribute), expressions.Literal.create(s"%${value}%"))
+    case sources.AlwaysTrue() => expressions.Literal.TrueLiteral
+    case sources.AlwaysFalse() => expressions.Literal.FalseLiteral
+  }.reduce(expressions.And)
 }

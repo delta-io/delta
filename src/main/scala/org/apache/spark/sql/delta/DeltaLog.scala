@@ -36,14 +36,13 @@ import org.apache.spark.sql.delta.storage.LogStoreProvider
 import com.google.common.cache.{CacheBuilder, RemovalListener, RemovalNotification}
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.SparkContext
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
-import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Cast, Expression, In, InSet, Literal}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Cast, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
 import org.apache.spark.sql.execution.datasources._
-import org.apache.spark.sql.execution.datasources.json.JsonFileFormat
-import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.sources.{BaseRelation, InsertableRelation}
 import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.util.{Clock, SystemClock, ThreadUtils}
@@ -302,18 +301,8 @@ class DeltaLog private(
    |  Log Directory Management and Retention  |
    * ---------------------------------------- */
 
-  def isValid(): Boolean = {
-    val expectedExistingFile = deltaFile(logPath, currentSnapshot.version)
-    try {
-      store.listFrom(expectedExistingFile)
-        .take(1)
-        .exists(_.getPath.getName == expectedExistingFile.getName)
-    } catch {
-      case _: FileNotFoundException =>
-        // Parent of expectedExistingFile doesn't exist
-        false
-    }
-  }
+  /** Whether a Delta table exists at this directory. */
+  def tableExists: Boolean = snapshot.version >= 0
 
   def isSameLogAs(otherLog: DeltaLog): Boolean = this.compositeId == otherLog.compositeId
 
@@ -361,23 +350,13 @@ class DeltaLog private(
    */
   def createRelation(
       partitionFilters: Seq[Expression] = Nil,
-      timeTravel: Option[DeltaTimeTravelSpec] = None): BaseRelation = {
-
-    val versionToUse = timeTravel.map { tt =>
-      val (version, accessType) = DeltaTableUtils.resolveTimeTravelVersion(
-        spark.sessionState.conf, this, tt)
-      val source = tt.creationSource.getOrElse("unknown")
-      recordDeltaEvent(this, s"delta.timeTravel.$source", data = Map(
-        "tableVersion" -> snapshot.version,
-        "queriedVersion" -> version,
-        "accessType" -> accessType
-      ))
-      version
-    }
+      snapshotToUseOpt: Option[Snapshot] = None,
+      isTimeTravelQuery: Boolean = false): BaseRelation = {
 
     /** Used to link the files present in the table into the query planner. */
-    val fileIndex = TahoeLogFileIndex(spark, this, dataPath, partitionFilters, versionToUse)
-    val snapshotToUse = versionToUse.map(getSnapshotAt(_)).getOrElse(snapshot)
+    val snapshotToUse = snapshotToUseOpt.getOrElse(snapshot)
+    val fileIndex = TahoeLogFileIndex(
+      spark, this, dataPath, snapshotToUse, partitionFilters, isTimeTravelQuery)
 
     new HadoopFsRelation(
       fileIndex,
@@ -453,6 +432,37 @@ object DeltaLog extends DeltaLogging {
   def forTable(spark: SparkSession, dataPath: Path, clock: Clock): DeltaLog = {
     apply(spark, new Path(dataPath, "_delta_log"), clock)
   }
+
+  /** Helper for creating a log for the table. */
+  def forTable(spark: SparkSession, tableName: TableIdentifier): DeltaLog = {
+    forTable(spark, tableName, new SystemClock)
+  }
+
+  /** Helper for creating a log for the table. */
+  def forTable(spark: SparkSession, table: CatalogTable): DeltaLog = {
+    forTable(spark, table, new SystemClock)
+  }
+
+  /** Helper for creating a log for the table. */
+  def forTable(spark: SparkSession, tableName: TableIdentifier, clock: Clock): DeltaLog = {
+    val catalog = spark.sessionState.catalog
+    forTable(spark, catalog.getTableMetadata(tableName), clock)
+  }
+
+  /** Helper for creating a log for the table. */
+  def forTable(spark: SparkSession, table: CatalogTable, clock: Clock): DeltaLog = {
+    apply(spark, new Path(new Path(table.location), "_delta_log"), clock)
+  }
+
+  /** Helper for creating a log for the table. */
+  def forTable(spark: SparkSession, deltaTable: DeltaTableIdentifier): DeltaLog = {
+    if (deltaTable.path.isDefined) {
+      forTable(spark, deltaTable.path.get)
+    } else {
+      forTable(spark, deltaTable.table.get)
+    }
+  }
+
   // TODO: Don't assume the data path here.
   def apply(spark: SparkSession, rawPath: Path, clock: Clock = new SystemClock): DeltaLog = {
     val hadoopConf = spark.sessionState.newHadoopConf()
@@ -463,7 +473,7 @@ object DeltaLog extends DeltaLogging {
     // - Different `scheme`
     // - Different `authority` (e.g., different user tokens in the path)
     // - Different mount point.
-    val cached = try {
+    try {
       deltaLogCache.get(path, new Callable[DeltaLog] {
         override def call(): DeltaLog = recordDeltaOperation(
             null, "delta.log.create", Map(TAG_TAHOE_PATH -> path.getParent.toString)) {
@@ -475,15 +485,6 @@ object DeltaLog extends DeltaLogging {
     } catch {
       case e: com.google.common.util.concurrent.UncheckedExecutionException =>
         throw e.getCause
-    }
-
-    // Invalidate the cache if the reference is no longer valid as a result of the
-    // log being deleted.
-    if (cached.snapshot.version == -1 || cached.isValid) {
-      cached
-    } else {
-      deltaLogCache.invalidate(path)
-      apply(spark, path)
     }
   }
 

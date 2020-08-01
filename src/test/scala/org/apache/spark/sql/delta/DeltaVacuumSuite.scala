@@ -18,9 +18,9 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 import java.util.Locale
-import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta.DeltaOperations.{Delete, Write}
+import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.commands.VacuumCommand
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -30,6 +30,7 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.GivenWhenThen
 
 import org.apache.spark.sql.{AnalysisException, QueryTest, SaveMode}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
@@ -42,6 +43,55 @@ trait DeltaVacuumSuiteBase extends QueryTest
   with SharedSparkSession
   with GivenWhenThen
   with SQLTestUtils {
+
+  testQuietly("basic case - SQL command on path-based tables with direct 'path'") {
+    withEnvironment { (tempDir, _) =>
+      vacuumSQLTest(tablePath = tempDir.getAbsolutePath, identifier = s"'$tempDir'")
+    }
+  }
+
+  testQuietly("basic case - SQL command on path-based table with delta.`path`") {
+    withEnvironment { (tempDir, _) =>
+      vacuumSQLTest(tablePath = tempDir.getAbsolutePath, identifier = s"delta.`$tempDir`")
+    }
+  }
+
+  testQuietly("basic case - SQL command on name-based table") {
+    val tableName = "deltaTable"
+    withEnvironment { (_, _) =>
+      withTable(tableName) {
+        import testImplicits._
+        spark.emptyDataset[Int].write.format("delta").saveAsTable(tableName)
+        val tablePath =
+          new File(spark.sessionState.catalog.getTableMetadata(TableIdentifier(tableName)).location)
+        vacuumSQLTest(tablePath, tableName)
+      }
+    }
+  }
+
+  test("basic case - Scala on path-based table") {
+    withEnvironment { (tempDir, _) =>
+      import testImplicits._
+      spark.emptyDataset[Int].write.format("delta").save(tempDir.getAbsolutePath)
+      val deltaTable = io.delta.tables.DeltaTable.forPath(tempDir.getAbsolutePath)
+      vacuumScalaTest(deltaTable, tempDir.getAbsolutePath)
+    }
+  }
+
+  test("basic case - Scala on name-based table") {
+    val tableName = "deltaTable"
+    withEnvironment { (tempDir, _) =>
+      withTable(tableName) {
+        // Initialize the table so that we can create the DeltaTable object
+        import testImplicits._
+        spark.emptyDataset[Int].write.format("delta").saveAsTable(tableName)
+        val deltaTable = io.delta.tables.DeltaTable.forName(tableName)
+        val tablePath =
+          new File(spark.sessionState.catalog.getTableMetadata(TableIdentifier(tableName)).location)
+        vacuumScalaTest(deltaTable, tablePath)
+      }
+    }
+  }
 
   test("don't delete data in a non-reservoir") {
     withEnvironment { (tempDir, clock) =>
@@ -81,8 +131,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
         Metadata(schemaString = schema.json, partitionColumns = Seq("_underscore_col_"))
       txn.commit(metadata :: Nil, DeltaOperations.CreateTable(metadata, isManaged = true))
       gcTest(deltaLog, clock)(
-        CreateFile("file1.txt", commitToActionLog = true),
-        CreateFile("_underscore_col_=10/test.txt", commitToActionLog = true),
+        CreateFile("file1.txt", commitToActionLog = true, Map("_underscore_col_" -> "10")),
+        CreateFile("_underscore_col_=10/test.txt", true, Map("_underscore_col_" -> "10")),
         CheckFiles(Seq("file1.txt", "_underscore_col_=10")),
         LogicallyDeleteFile("_underscore_col_=10/test.txt"),
         AdvanceClock(defaultTombstoneInterval + 1000),
@@ -127,7 +177,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
     }
   }
 
-  testQuietly("gc test") {
+  testQuietly("correctness test") {
     withEnvironment { (tempDir, clock) =>
 
       val reservoirDir = new File(tempDir.getAbsolutePath, "reservoir")
@@ -203,11 +253,12 @@ trait DeltaVacuumSuiteBase extends QueryTest
           classOf[IllegalArgumentException],
           Seq("Retention", "less than", "0"))
       )
+      val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tempDir.getAbsolutePath)
       gcTest(deltaLog, clock)(
         CreateFile("file1.txt", commitToActionLog = true),
         CheckFiles(Seq("file1.txt")),
         ExpectFailure(
-          GCScalaApi(Seq(), Some(-2)),
+          ExecuteVacuumInScala(deltaTable, Seq(), Some(-2)),
           classOf[IllegalArgumentException],
           Seq("Retention", "less than", "0"))
       )
@@ -268,24 +319,6 @@ trait DeltaVacuumSuiteBase extends QueryTest
     }
   }
 
-  test("scala api test") {
-    withEnvironment { (tempDir, clock) =>
-      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath, clock)
-      gcTest(deltaLog, clock)(
-        CreateFile("file1.txt", commitToActionLog = true),
-        CreateFile("file2.txt", commitToActionLog = false),
-        GCScalaApi(expectedDf = Seq()),
-        CheckFiles(Seq("file1.txt")),
-        GCScalaApi(expectedDf = Seq(), retentionHours = Some(0)),
-        CheckFiles(Seq("file2.txt"), exist = false),
-        CreateFile("file2.txt", commitToActionLog = false),
-        CheckFiles(Seq("file2.txt")),
-        GCScalaApi(expectedDf = Seq(), retentionHours = Some(0)),
-        CheckFiles(Seq("file2.txt"), exist = false)
-      )
-    }
-  }
-
   protected def withEnvironment(f: (File, ManualClock) => Unit): Unit = {
     withTempDir { file =>
       val clock = new ManualClock()
@@ -308,7 +341,10 @@ trait DeltaVacuumSuiteBase extends QueryTest
    * Write a file to the given absolute or relative path. Could be inside or outside the Reservoir
    * base path. The file can be committed to the action log to be tracked, or left out for deletion.
    */
-  case class CreateFile(path: String, commitToActionLog: Boolean) extends Action
+  case class CreateFile(
+      path: String,
+      commitToActionLog: Boolean,
+      partitionValues: Map[String, String] = Map.empty) extends Action
   /** Create a directory at the given path. */
   case class CreateDirectory(path: String) extends Action
   /**
@@ -324,13 +360,24 @@ trait DeltaVacuumSuiteBase extends QueryTest
       expectedDf: Seq[String],
       retentionHours: Option[Double] = None) extends Action
   /** Garbage collect the reservoir. */
-  case class GCScalaApi(
+  case class ExecuteVacuumInScala(
+      deltaTable: io.delta.tables.DeltaTable,
       expectedDf: Seq[String],
       retentionHours: Option[Double] = None) extends Action
   /** Advance the time. */
   case class AdvanceClock(timeToAdd: Long) extends Action
   /** Execute SQL command */
-  case class ExecuteSQL(sql: String, expectedDf: Seq[String]) extends Action
+  case class ExecuteVacuumInSQL(
+      identifier: String,
+      expectedDf: Seq[String],
+      retentionHours: Option[Long] = None,
+      dryRun: Boolean = false) extends Action {
+    def sql: String = {
+      val retainStr = retentionHours.map { h => s"RETAIN $h HOURS"}.getOrElse("")
+      val dryRunStr = if (dryRun) "DRY RUN" else ""
+      s"VACUUM $identifier $retainStr $dryRunStr"
+    }
+  }
   /**
    * Expect a failure with the given exception type. Expect the given `msg` fragments as the error
    * message.
@@ -344,10 +391,11 @@ trait DeltaVacuumSuiteBase extends QueryTest
       reservoirBase: String,
       filePath: String,
       file: File,
-      clock: ManualClock): AddFile = {
+      clock: ManualClock,
+      partitionValues: Map[String, String] = Map.empty): AddFile = {
     FileUtils.write(file, "gibberish")
     file.setLastModified(clock.getTimeMillis())
-    AddFile(filePath, Map.empty, 10L, clock.getTimeMillis(), dataChange = true)
+    AddFile(filePath, partitionValues, 10L, clock.getTimeMillis(), dataChange = true)
   }
 
   protected def gcTest(deltaLog: DeltaLog, clock: ManualClock)(actions: Action*): Unit = {
@@ -355,14 +403,18 @@ trait DeltaVacuumSuiteBase extends QueryTest
     val basePath = deltaLog.dataPath.toString
     val fs = new Path(basePath).getFileSystem(spark.sessionState.newHadoopConf())
     actions.foreach {
-      case CreateFile(path, commit) =>
+      case CreateFile(path, commit, partitionValues) =>
         Given(s"*** Writing file to $path. Commit to log: $commit")
         val sanitizedPath = new Path(path).toUri.toString
         val file = new File(
           fs.makeQualified(DeltaFileOperations.absolutePath(basePath, sanitizedPath)).toUri)
         if (commit) {
+          if (!DeltaTableUtils.isDeltaTable(spark, new Path(basePath))) {
+            // initialize the table
+            deltaLog.startTransaction().commitManually()
+          }
           val txn = deltaLog.startTransaction()
-          val action = createFile(basePath, sanitizedPath, file, clock)
+          val action = createFile(basePath, sanitizedPath, file, clock, partitionValues)
           txn.commit(Seq(action), Write(SaveMode.Append))
         } else {
           createFile(basePath, path, file, clock)
@@ -385,10 +437,11 @@ trait DeltaVacuumSuiteBase extends QueryTest
         txn.registerSQLMetrics(spark, metrics)
         txn.commit(Seq(RemoveFile(path, Option(clock.getTimeMillis()))), Delete("true" :: Nil))
       // scalastyle:on
-      case ExecuteSQL(statement, expectedDf) =>
-        Given(s"*** Executing SQL: $statement")
-        val qualified = expectedDf.map(p => fs.makeQualified(new Path(p)).toString)
-        checkDatasetUnorderly(spark.sql(statement).as[String], qualified: _*)
+      case e: ExecuteVacuumInSQL =>
+        Given(s"*** Executing SQL: ${e.sql}")
+        val qualified = e.expectedDf.map(p => fs.makeQualified(new Path(p)).toString)
+        val df = spark.sql(e.sql).as[String]
+        checkDatasetUnorderly(df, qualified: _*)
       case CheckFiles(paths, exist) =>
         Given(s"*** Checking files exist=$exist")
         paths.foreach { p =>
@@ -402,9 +455,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
         val result = VacuumCommand.gc(spark, deltaLog, dryRun, retention, clock = clock)
         val qualified = expectedDf.map(p => fs.makeQualified(new Path(p)).toString)
         checkDatasetUnorderly(result.as[String], qualified: _*)
-      case GCScalaApi(expectedDf, retention) =>
+      case ExecuteVacuumInScala(deltaTable, expectedDf, retention) =>
         Given("*** Garbage collecting Reservoir using Scala")
-        val deltaTable = io.delta.tables.DeltaTable.forPath(spark, deltaLog.dataPath.toString)
         val result = if (retention.isDefined) {
           deltaTable.vacuum(retention.get)
         } else {
@@ -430,44 +482,63 @@ trait DeltaVacuumSuiteBase extends QueryTest
     }
   }
 
-  /**
-   * A basic vacuum test for different representations of a vacuum command.
-   *
-   * @param f A function to convert the file path to a representation in a vacuum command.
-   */
-  def vacuumTest(f: File => String): Unit = {
-    withEnvironment { (tempDir, clock) =>
-      val retention = defaultTombstoneInterval / 5
-      val retentionHours = TimeUnit.MILLISECONDS.toHours(retention)
-      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath, clock)
-      gcTest(deltaLog, clock)(
-        CreateFile("file1.txt", commitToActionLog = true),
-        CheckFiles(Seq("file1.txt")),
-        AdvanceClock(2000),
-        LogicallyDeleteFile("file1.txt"),
-        AdvanceClock(retention + 10000),
-        // shouldn't delete because it's a dry run
-        ExecuteSQL(
-          s"vacuum ${f(tempDir)} retain $retentionHours hours DRY RUN",
-          Seq(new File(tempDir, "file1.txt").toString)),
-        CheckFiles(Seq("file1.txt")),
-        // shouldn't delete because default period hasn't passed
-        ExecuteSQL(s"vacuum ${f(tempDir)}", Seq(tempDir.toString)),
-        CheckFiles(Seq("file1.txt")),
-        ExecuteSQL(s"vacuum ${f(tempDir)} retain $retentionHours hours",
-          Seq(tempDir.toString)),
-        CheckFiles(Seq("file1.txt"), exist = false)
-      )
-    }
+  protected def vacuumSQLTest(tablePath: String, identifier: String) {
+    val deltaLog = DeltaLog.forTable(spark, tablePath)
+    val committedFile = "committedFile.txt"
+    val notCommittedFile = "notCommittedFile.txt"
+
+    gcTest(deltaLog, new ManualClock())(
+      // Prepare the table with files with timestamp of epoch-time 0 (i.e. 01-01-1970 00:00)
+      CreateFile(committedFile, commitToActionLog = true),
+      CreateFile(notCommittedFile, commitToActionLog = false),
+      CheckFiles(Seq(committedFile, notCommittedFile)),
+
+      // Dry run should return the not committed file and but not delete files
+      ExecuteVacuumInSQL(
+        identifier,
+        expectedDf = Seq(new File(tablePath, notCommittedFile).toString),
+        dryRun = true),
+      CheckFiles(Seq(committedFile, notCommittedFile)),
+
+      // Actual run should delete the not committed file but delete the not-committed file
+      ExecuteVacuumInSQL(identifier, Seq(tablePath)),
+      CheckFiles(Seq(committedFile)),
+      CheckFiles(Seq(notCommittedFile), exist = false), // file ts older than default retention
+
+      // Logically delete the file.
+      LogicallyDeleteFile(committedFile),
+      CheckFiles(Seq(committedFile)),
+
+      // Vacuum with 0 retention should actually delete the file.
+      ExecuteVacuumInSQL(identifier, Seq(tablePath), Some(0)),
+      CheckFiles(Seq(committedFile), exist = false))
   }
 
-  testQuietly("vacuum command") {
-    vacuumTest(f => s"'${f.toString()}'")
+  protected def vacuumScalaTest(deltaTable: io.delta.tables.DeltaTable, tablePath: String) {
+    val deltaLog = DeltaLog.forTable(spark, tablePath)
+    val committedFile = "committedFile.txt"
+    val notCommittedFile = "notCommittedFile.txt"
+
+    gcTest(deltaLog, new ManualClock())(
+      // Prepare the table with files with timestamp of epoch-time 0 (i.e. 01-01-1970 00:00)
+      CreateFile(committedFile, commitToActionLog = true),
+      CreateFile(notCommittedFile, commitToActionLog = false),
+      CheckFiles(Seq(committedFile, notCommittedFile)),
+
+      // Actual run should delete the not committed file and but not delete files
+      ExecuteVacuumInScala(deltaTable, Seq()),
+      CheckFiles(Seq(committedFile)),
+      CheckFiles(Seq(notCommittedFile), exist = false), // file ts older than default retention
+
+      // Logically delete the file.
+      LogicallyDeleteFile(committedFile),
+      CheckFiles(Seq(committedFile)),
+
+      // Vacuum with 0 retention should actually delete the file.
+      ExecuteVacuumInScala(deltaTable, Seq(), Some(0)),
+      CheckFiles(Seq(committedFile), exist = false))
   }
 
-  testQuietly("vacuum command with delta table identifier") {
-    vacuumTest(f => s"delta.`${f.toString()}`")
-  }
 
   test("vacuum for a partition path") {
     withEnvironment { (tempDir, _) =>

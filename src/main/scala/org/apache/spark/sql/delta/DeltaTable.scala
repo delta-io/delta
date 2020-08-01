@@ -54,7 +54,8 @@ object DeltaTable {
  */
 object DeltaFullTable {
   def unapply(a: LogicalPlan): Option[TahoeLogFileIndex] = a match {
-    case PhysicalOperation(_, filters, DeltaTable(index: TahoeLogFileIndex)) =>
+    case PhysicalOperation(_, filters, lr @ DeltaTable(index: TahoeLogFileIndex)) =>
+      if (index.deltaLog.snapshot.version < 0) return None
       if (index.partitionFilters.isEmpty && index.versionToUse.isEmpty && filters.isEmpty) {
         Some(index)
       } else if (index.versionToUse.nonEmpty) {
@@ -65,6 +66,8 @@ object DeltaFullTable {
         throw new AnalysisException(
           s"Expect a full scan of Delta sources, but found a partial scan. path:${index.path}")
       }
+    // Convert V2 relations to V1 and perform the check
+    case DeltaRelation(lr) => unapply(lr)
     case _ =>
       None
   }

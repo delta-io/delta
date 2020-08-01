@@ -87,9 +87,10 @@ object FileNames {
   def checkpointVersion(path: Path): Long = path.getName.split("\\.")(0).toLong
 
   /**
-   * Get the version of the checkpoint, checksum or delta file. Throws an error if the log file
-   * path is unexpected. Must be used after whitelisting the list of files during a transaction
-   * log listing for forwards compatibility.
+   * Get the version of the checkpoint, checksum or delta file. Throws an error if an unexpected
+   * file type is seen. These unexpected files should be filtered out to ensure forward
+   * compatibility in cases where new file types are added, but without an explicit protocol
+   * upgrade.
    */
   def getFileVersion(path: Path): Long = {
     if (isCheckpointFile(path)) {
@@ -101,7 +102,7 @@ object FileNames {
     } else {
       // scalastyle:off throwerror
       throw new AssertionError(
-        "The file listing needs to be whitelisted to know files before this method can be called.")
+        s"Unexpected file type found in transaction log: $path")
       // scalastyle:on throwerror
     }
   }

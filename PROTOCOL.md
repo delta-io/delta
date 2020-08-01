@@ -160,6 +160,8 @@ description|`String`| User-provided description for this table
 format|[Format Struct](#Format-Specification)| Specification of the encoding for the files stored in the table
 schemaString|[Schema Struct](#Schema-Serialization-Format)| Schema of the table
 partitionColumns|`Array[String]`| An array containing the names of columns by which the data should be partitioned
+createdTime|`Option[Long]`| The time when this metadata action is created, in milliseconds since the Unix epoch
+configuration|`Map[String, String]`| A map containing configuration options for the metadata action
 
 #### Format Specification
 Field Name | Data Type | Description
@@ -274,6 +276,7 @@ Field Name | Data Type | Description
 -|-|-
 appId | String | A unique identifier for the application performing the transaction
 version | Long | An application-specific numeric identifier for this transaction
+lastUpdated | Option[Long] | The time when this transaction action is created, in milliseconds since the Unix epoch
 
 The following is an example `txn` action:
 ```
@@ -433,11 +436,12 @@ A reference implementation can be found in [the catalyst package of the Apache S
 Type Name | Description
 -|-
 string| UTF-8 encoded string of characters
+long| 8-byte signed integer. Range: -9223372036854775808 to 9223372036854775807
 integer|4-byte signed integer. Range: -2147483648 to 2147483647
 short| 2-byte signed integer numbers. Range: -32768 to 32767
 byte| 1-byte signed integer number. Range: -128 to 127
-float| 4-byte single-precision floating point numbers
-double| 8-byte double-precision floating point numbers
+float| 4-byte single-precision floating-point numbers
+double| 8-byte double-precision floating-point numbers
 boolean| `true` or `false`
 binary| A sequence of binary data.
 date| A calendar date, represented as a year-month-day triple without a timezone.
@@ -454,7 +458,7 @@ fields | An array of fields
 
 ### Struct Field
 
-A struct field represents a top level or nested column.
+A struct field represents a top-level or nested column.
 
 Field Name | Description
 -|-

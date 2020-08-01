@@ -42,30 +42,6 @@ case class DeltaUpdateTable(
 
 object DeltaUpdateTable {
 
-  /** Resolve all the references of target columns and condition using the given `resolver` */
-  def resolveReferences(
-      update: DeltaUpdateTable,
-      resolver: Expression => Expression): DeltaUpdateTable = {
-    if (update.resolved) return update
-    assert(update.child.resolved)
-
-    val DeltaUpdateTable(child, updateColumns, updateExpressions, condition) = update
-
-    val cleanedUpAttributes = updateColumns.map { unresolvedExpr =>
-      // Keep them unresolved but use the cleaned-up name parts from the resolved
-      val errMsg = s"Failed to resolve ${unresolvedExpr.sql} given columns " +
-        s"[${child.output.map(_.qualifiedName).mkString(", ")}]."
-      val resolveNameParts =
-        DeltaUpdateTable.getNameParts(resolver(unresolvedExpr), errMsg, update)
-      UnresolvedAttribute(resolveNameParts)
-    }
-
-    update.copy(
-      updateColumns = cleanedUpAttributes,
-      updateExpressions = updateExpressions.map(resolver),
-      condition = condition.map(resolver))
-  }
-
   /**
    * Extracts name parts from a resolved expression referring to a nested or non-nested column
    * - For non-nested column, the resolved expression will be like `AttributeReference(...)`.
@@ -84,18 +60,15 @@ object DeltaUpdateTable {
    *        ->  `AttributeReference(a)` ++ Seq(b, c)
    *          ->  [a, b, c]
    */
-  def getNameParts(
-      resolvedTargetCol: Expression,
-      errMsg: String,
-      errNode: LogicalPlan): Seq[String] = {
+  def getTargetColNameParts(resolvedTargetCol: Expression, errMsg: String = null): Seq[String] = {
 
     def fail(extraMsg: String): Nothing = {
-      throw new AnalysisException(
-        s"$errMsg - $extraMsg", errNode.origin.line, errNode.origin.startPosition)
+      val msg = Option(errMsg).map(_ + " - ").getOrElse("") + extraMsg
+      throw new AnalysisException(msg)
     }
 
     def extractRecursively(expr: Expression): Seq[String] = expr match {
-      case attr: AttributeReference => Seq(attr.name)
+      case attr: Attribute => Seq(attr.name)
 
       case Alias(c, _) => extractRecursively(c)
 

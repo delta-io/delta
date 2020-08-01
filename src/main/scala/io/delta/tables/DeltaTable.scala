@@ -39,7 +39,7 @@ import org.apache.spark.sql.types.StructType
  * @since 0.3.0
  */
 @Evolving
-class DeltaTable private[tables](df: => Dataset[Row], deltaLog: DeltaLog)
+class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
   extends DeltaTableOperations {
 
   /**
@@ -501,6 +501,7 @@ class DeltaTable private[tables](df: => Dataset[Row], deltaLog: DeltaLog)
   def merge(source: DataFrame, condition: Column): DeltaMergeBuilder = {
     DeltaMergeBuilder(this, source, condition)
   }
+
 }
 
 /**
@@ -636,6 +637,32 @@ object DeltaTable {
         DeltaLog.forTable(sparkSession, path))
     } else {
       throw DeltaErrors.notADeltaTableException(DeltaTableIdentifier(path = Some(path)))
+    }
+  }
+
+  /**
+   * Create a DeltaTable using the given table or view name using the given SparkSession.
+   *
+   * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   */
+  def forName(tableOrViewName: String): DeltaTable = {
+    val sparkSession = SparkSession.getActiveSession.getOrElse {
+      throw new IllegalArgumentException("Could not find active SparkSession")
+    }
+    forName(sparkSession, tableOrViewName)
+  }
+
+  /**
+   * Create a DeltaTable using the given table or view name using the given SparkSession.
+   */
+  def forName(sparkSession: SparkSession, tableName: String): DeltaTable = {
+    val tableId = sparkSession.sessionState.sqlParser.parseTableIdentifier(tableName)
+    if (DeltaTableUtils.isDeltaTable(sparkSession, tableId)) {
+      new DeltaTable(sparkSession.table(tableName), DeltaLog.forTable(sparkSession, tableId))
+    } else {
+      throw DeltaErrors.notADeltaTableException(DeltaTableIdentifier(table = Some(tableId)))
     }
   }
 

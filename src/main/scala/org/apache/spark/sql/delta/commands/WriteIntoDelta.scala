@@ -68,11 +68,13 @@ case class WriteIntoDelta(
     deltaLog.withNewTransaction { txn =>
       val startTime = System.nanoTime()
       val actions = write(txn, sparkSession)
-      val operation = DeltaOperations.Write(mode, Option(partitionColumns), options.replaceWhere)
+      val operation = DeltaOperations.Write(mode, Option(partitionColumns),
+        options.replaceWhere, options.userMetadata)
 
       metrics(DeltaOperationMetrics.EXECUTION_TIME_MS)
         .set((System.nanoTime() - startTime) / 1000 / 1000)
       txn.registerSQLMetrics(sparkSession, metrics)
+
       txn.commit(actions, operation)
     }
     Seq.empty
