@@ -125,4 +125,19 @@ class DeltaTableSuite extends QueryTest
     val e = intercept[AnalysisException] { thunk }
     assert(e.getMessage.toLowerCase(Locale.ROOT).contains(expectedMsg.toLowerCase(Locale.ROOT)))
   }
+
+  test("java serializable") {
+    import testImplicits._
+
+    withTempDir { dir =>
+      spark.range(5).write.format("delta").mode("append").save(dir.getAbsolutePath)
+      val dt = DeltaTable.forPath(dir.getAbsolutePath)
+      val x = 3
+      spark.range(5).as[Long].map{ row: Long =>
+        dt
+        row + x
+      }.show()
+
+    }
+  }
 }

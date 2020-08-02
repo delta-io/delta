@@ -40,7 +40,7 @@ import org.apache.spark.sql.types.StructType
  */
 @Evolving
 class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
-  extends DeltaTableOperations {
+  extends DeltaTableOperations with Serializable {
 
   /**
    * :: Evolving ::
