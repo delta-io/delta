@@ -129,15 +129,17 @@ class DeltaTableSuite extends QueryTest
   test("java serializable") {
     import testImplicits._
 
-    withTempDir { dir =>
-      spark.range(5).write.format("delta").mode("append").save(dir.getAbsolutePath)
-      val dt = DeltaTable.forPath(dir.getAbsolutePath)
-      val x = 3
-      spark.range(5).as[Long].map{ row: Long =>
-        dt
-        row + x
-      }.show()
+    val e = intercept[IllegalStateException] {
+      withTempDir { dir =>
+        testData.write.format("delta").mode("append").save(dir.getAbsolutePath)
+        val dt: DeltaTable = DeltaTable.forPath(dir.getAbsolutePath)
+        spark.range(5).as[Long].map{ row: Long =>
+          dt.delete()
+          row + 3
+        }.show()
 
-    }
+      }
+    }.getMessage
+    assert(e.contains("DeltaTable cannot be used in executors"))
   }
 }

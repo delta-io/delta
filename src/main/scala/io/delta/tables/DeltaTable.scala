@@ -39,8 +39,27 @@ import org.apache.spark.sql.types.StructType
  * @since 0.3.0
  */
 @Evolving
-class DeltaTable private[tables](df: Dataset[Row], deltaLog: DeltaLog)
+class DeltaTable private[tables](
+  @transient private val _df: Dataset[Row], @transient private val _deltaLog: DeltaLog)
   extends DeltaTableOperations with Serializable {
+
+  def deltaLog: DeltaLog = {
+    /** Assert the codes run in the driver. */
+    if (_deltaLog == null) {
+      throw new IllegalStateException("DeltaTable cannot be used in executors")
+    }
+
+    _deltaLog
+  }
+
+  def df: Dataset[Row] = {
+    /** Assert the codes run in the driver. */
+    if (_df == null) {
+      throw new IllegalStateException("DeltaTable cannot be used in executors")
+    }
+
+    _df
+  }
 
   /**
    * :: Evolving ::
