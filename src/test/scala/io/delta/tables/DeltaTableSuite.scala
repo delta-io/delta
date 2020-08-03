@@ -21,6 +21,7 @@ import java.util.Locale
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
+import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, QueryTest}
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -126,15 +127,15 @@ class DeltaTableSuite extends QueryTest
     assert(e.getMessage.toLowerCase(Locale.ROOT).contains(expectedMsg.toLowerCase(Locale.ROOT)))
   }
 
-  test("java serializable") {
+  test("DeltaTable is Java Serializable but cannot be used in executors") {
     import testImplicits._
 
-    val e = intercept[IllegalStateException] {
+    val e = intercept[SparkException] {
       withTempDir { dir =>
         testData.write.format("delta").mode("append").save(dir.getAbsolutePath)
         val dt: DeltaTable = DeltaTable.forPath(dir.getAbsolutePath)
         spark.range(5).as[Long].map{ row: Long =>
-          dt.delete()
+          dt.toDF
           row + 3
         }.show()
 
