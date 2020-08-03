@@ -43,7 +43,7 @@ class DeltaTable private[tables](
   @transient private val _df: Dataset[Row], @transient private val _deltaLog: DeltaLog)
   extends DeltaTableOperations with Serializable {
 
-  def deltaLog: DeltaLog = {
+  protected def deltaLog: DeltaLog = {
     /** Assert the codes run in the driver. */
     if (_deltaLog == null) {
       throw new IllegalStateException("DeltaTable cannot be used in executors")
@@ -52,7 +52,7 @@ class DeltaTable private[tables](
     _deltaLog
   }
 
-  def df: Dataset[Row] = {
+  protected def df: Dataset[Row] = {
     /** Assert the codes run in the driver. */
     if (_df == null) {
       throw new IllegalStateException("DeltaTable cannot be used in executors")
