@@ -445,8 +445,11 @@ object DeltaLog extends DeltaLogging {
 
   /** Helper for creating a log for the table. */
   def forTable(spark: SparkSession, tableName: TableIdentifier, clock: Clock): DeltaLog = {
-    val catalog = spark.sessionState.catalog
-    forTable(spark, catalog.getTableMetadata(tableName), clock)
+    if (DeltaTableIdentifier.isDeltaPath(spark, tableName)) {
+      forTable(spark, new Path(tableName.table))
+    } else {
+      forTable(spark, spark.sessionState.catalog.getTableMetadata(tableName), clock)
+    }
   }
 
   /** Helper for creating a log for the table. */
