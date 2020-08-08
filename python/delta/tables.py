@@ -14,12 +14,8 @@
 # limitations under the License.
 #
 
-import sys
-import tempfile
-from pyspark import SparkContext
 from pyspark import since
-from pyspark.sql import Column, DataFrame, SparkSession, SQLContext, functions
-from py4j.java_collections import MapConverter
+from pyspark.sql import Column, DataFrame, functions
 
 
 class DeltaTable(object):

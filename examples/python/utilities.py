@@ -14,12 +14,9 @@
 # limitations under the License.
 #
 
-from pyspark.sql import Column, DataFrame, SparkSession, functions
-from pyspark.sql.functions import *
-from py4j.java_collections import MapConverter
-from delta.tables import *
+from pyspark.sql import SparkSession
+from delta.tables import DeltaTable
 import shutil
-import threading
 
 spark = SparkSession.builder \
     .appName("utilities") \

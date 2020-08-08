@@ -15,15 +15,13 @@
 #
 
 import unittest
-import tempfile
-import shutil
 import os
 
 from pyspark.sql import Row
-from pyspark.sql.functions import *
-from pyspark.sql.types import *
+from pyspark.sql.functions import col, lit, expr
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 
-from delta.tables import *
+from delta.tables import DeltaTable
 from delta.testing.utils import DeltaTestCase
 
 

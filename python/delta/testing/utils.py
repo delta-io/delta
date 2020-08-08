@@ -20,7 +20,6 @@ import sys
 import tempfile
 import unittest
 
-from pyspark import SparkContext, SparkConf
 from pyspark.sql import SparkSession
 
 
