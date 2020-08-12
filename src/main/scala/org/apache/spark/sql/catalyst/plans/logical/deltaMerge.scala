@@ -40,8 +40,9 @@ case class DeltaMergeAction(targetColNameParts: Seq[String], expr: Expression)
   override def child: Expression = expr
   override def foldable: Boolean = false
   override def dataType: DataType = expr.dataType
-  override def sql: String = s"${targetColNameParts.mkString("`", "`.`", "`")} = ${expr.sql}"
-  override def toString: String = s"$prettyName ( $sql )"
+  override def sql: String = s"$targetColString = ${expr.sql}"
+  override def toString: String = s"$targetColString = $expr"
+  private lazy val targetColString: String = targetColNameParts.mkString("`", "`.`", "`")
 }
 
 
@@ -73,11 +74,11 @@ sealed trait DeltaMergeIntoClause extends Expression with Unevaluable {
     getClass.getSimpleName.stripPrefix("DeltaMergeInto").stripSuffix("Clause")
 
   override def toString: String = {
-    val condStr = condition.map { c => s"condition: ${c.sql}" }.getOrElse("")
-    val actionStr = if (actions.isEmpty) "" else {
-      "actions: " + actions.map(_.sql).mkString(", ")
+    val condStr = condition.map { c => s"condition: $c" }
+    val actionStr = if (actions.isEmpty) None else {
+      Some("actions: " + actions.mkString("[", ", ", "]"))
     }
-    s"$clauseType [${Seq(condStr, actionStr).mkString(", ")}]"
+    s"$clauseType " + Seq(condStr, actionStr).flatten.mkString("[", ", ", "]")
   }
 
   override def foldable: Boolean = false
@@ -398,9 +399,21 @@ object DeltaMergeInto {
     val resolvedNotMatchedClause = notMatchedClause.map {
       resolveClause(_, fakeSourcePlan)
     }
-    DeltaMergeInto(
+    val resolvedMerge = DeltaMergeInto(
       target, source, resolvedCond,
       resolvedMatchedClauses, resolvedNotMatchedClause,
       if (shouldAutoMigrate) Some(finalSchema) else None)
+
+    // Its possible that pre-resolved expressions (e.g. `sourceDF("key") = targetDF("key")`) have
+    // attribute references that are not present in the output attributes of the children (i.e.,
+    // incorrect DataFrame was used in the `df("col")` form).
+    if (resolvedMerge.missingInput.nonEmpty) {
+      val missingAttributes = resolvedMerge.missingInput.mkString(",")
+      val input = resolvedMerge.inputSet.mkString(",")
+      val msgForMissingAttributes = s"Resolved attribute(s) $missingAttributes missing " +
+        s"from $input in operator ${resolvedMerge.simpleString(SQLConf.get.maxToStringFields)}."
+      resolvedMerge.failAnalysis(msgForMissingAttributes)
+    }
+    resolvedMerge
   }
 }
