@@ -236,17 +236,6 @@ class DeltaLog private(
    |  Protocol validation  |
    * --------------------- */
 
-  private def oldProtocolMessage(protocol: Protocol): String =
-    s"WARNING: The Delta Lake table at $dataPath has version " +
-      s"${protocol.simpleString}, but the latest version is " +
-      s"${Protocol().simpleString}. To take advantage of the latest features and bug fixes, " +
-      "we recommend that you upgrade the table.\n" +
-      "First update all clusters that use this table to the latest version of Databricks " +
-      "Runtime, and then run the following command in a notebook:\n" +
-      "'%scala com.databricks.delta.Delta.upgradeTable(\"" + s"$dataPath" + "\")'\n\n" +
-      "For more information about Delta Lake table versions, see " +
-      s"${DeltaErrors.baseDocsPath(spark)}/delta/versioning.html"
-
   /**
    * If the given `protocol` is older than that of the client.
    */
@@ -272,7 +261,6 @@ class DeltaLog private(
 
     if (isProtocolOld(protocol)) {
       recordDeltaEvent(this, "delta.protocol.warning")
-      logConsole(oldProtocolMessage(protocol))
     }
   }
 
@@ -293,7 +281,6 @@ class DeltaLog private(
 
     if (logUpgradeMessage && isProtocolOld(protocol)) {
       recordDeltaEvent(this, "delta.protocol.warning")
-      logConsole(oldProtocolMessage(protocol))
     }
   }
 

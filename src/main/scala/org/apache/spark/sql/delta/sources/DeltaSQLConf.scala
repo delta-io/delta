@@ -173,6 +173,22 @@ object DeltaSQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_PROTOCOL_DEFAULT_WRITER_VERSION =
+    buildConf("protocol.minWriterVersion")
+      .doc("The default writer protocol version to create new tables with, unless a feature " +
+        "that requires a higher version for correctness is enabled.")
+      .intConf
+      .checkValues(Set(1, 2))
+      .createWithDefault(2)
+
+  val DELTA_PROTOCOL_DEFAULT_READER_VERSION =
+    buildConf("protocol.minReaderVersion")
+      .doc("The default reader protocol version to create new tables with, unless a feature " +
+        "that requires a higher version for correctness is enabled.")
+      .intConf
+      .checkValues(Set(1))
+      .createWithDefault(1)
+
 
   val DELTA_MAX_SNAPSHOT_LINEAGE_LENGTH =
     buildConf("maxSnapshotLineageLength")

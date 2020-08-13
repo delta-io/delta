@@ -162,7 +162,7 @@ class Snapshot(
         throw DeltaErrors.actionNotFoundException("protocol", version)
       }
       logMissingActionWarning("protocol")
-      _computedState = _computedState.copy(protocol = Protocol())
+      _computedState = _computedState.copy(protocol = Protocol(spark.sessionState.conf, None))
     }
     if (_computedState.metadata == null) {
       recordDeltaEvent(
@@ -349,8 +349,6 @@ object Snapshot extends DeltaLogging {
   }
 
 
-  private lazy val emptyMetadata = udf(() => Metadata())
-  private lazy val defaultProtocol = udf(() => Protocol())
   implicit private def stateEncoder: Encoder[State] = {
     _stateEncoder.copy()
   }
@@ -370,8 +368,16 @@ class InitialSnapshot(
     override val metadata: Metadata)
   extends Snapshot(logPath, -1, LogSegment.empty(logPath), -1, deltaLog, -1, None) {
 
+  def this(logPath: Path, deltaLog: DeltaLog) = this(
+    logPath,
+    deltaLog,
+    Metadata(configuration = DeltaConfigs.mergeGlobalConfigs(
+      SparkSession.active.sessionState.conf, Map.empty))
+  )
+
   override def state: Dataset[SingleAction] = emptyActions
   override protected lazy val computedState: Snapshot.State = {
-    Snapshot.State(Protocol(), metadata, Nil, 0L, 0L, 1L, 1L, 0L, 0L)
+    val protocol = Protocol.forNewTable(spark, metadata)
+    Snapshot.State(protocol, metadata, Nil, 0L, 0L, 1L, 1L, 0L, 0L)
   }
 }

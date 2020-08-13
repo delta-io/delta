@@ -20,7 +20,7 @@ package org.apache.spark.sql.delta
 import java.io.{FileNotFoundException, IOException}
 import java.util.ConcurrentModificationException
 
-import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata}
+import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -389,6 +389,17 @@ object DeltaErrors
       "likely your query is lagging behind. Please delete its checkpoint to restart" +
       " from scratch. To avoid this happening again, you can update your retention " +
       "policy of your Delta table").initCause(e)
+  }
+
+  def requireProtocolUpgrade(
+      features: Seq[String],
+      required: Protocol,
+      current: Protocol): Throwable = {
+    val featureList = features.mkString("\t - ", "\n\t -", "\n")
+    new AnalysisException(
+      s"The features listed below require a protocol version of $required " +
+        s"or above, but the protocol version of the Delta table is $current. Please upgrade " +
+        s"the protocol version of the table before setting this config.\n$featureList")
   }
 
   def multipleLoadPathsException(paths: Seq[String]): Throwable = {

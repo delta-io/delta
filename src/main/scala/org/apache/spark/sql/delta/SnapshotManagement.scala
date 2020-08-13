@@ -198,7 +198,7 @@ trait SnapshotManagement { self: DeltaLog =>
       case e: FileNotFoundException =>
         logInfo(s"Creating initial snapshot without metadata, because the directory is empty")
         // The log directory may not exist
-        new InitialSnapshot(logPath, this, Metadata())
+        new InitialSnapshot(logPath, this)
     }
   }
 
@@ -322,7 +322,7 @@ trait SnapshotManagement { self: DeltaLog =>
             val message = s"No delta log found for the Delta table at $logPath"
             logInfo(message)
             currentSnapshot.uncache()
-            currentSnapshot = new InitialSnapshot(logPath, this, Metadata())
+            currentSnapshot = new InitialSnapshot(logPath, this)
         }
         lastUpdateTimestamp = clock.getTimeMillis()
         currentSnapshot

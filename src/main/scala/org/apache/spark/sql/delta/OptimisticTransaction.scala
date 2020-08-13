@@ -159,9 +159,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   protected def spark = SparkSession.active
   protected val _spark = spark
 
-  /** The protocol of the snapshot that this transaction is reading at. */
-  val protocol = snapshot.protocol
-
   /** Tracks the appIds that have been seen by this transaction. */
   protected val readTxn = new ArrayBuffer[String]
 
@@ -180,6 +177,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   /** Stores the updated metadata (if any) that will result from this txn. */
   protected var newMetadata: Option[Metadata] = None
 
+  /** Stores the updated protocol (if any) that will result from this txn. */
+  protected var newProtocol: Option[Protocol] = None
+
   protected val txnStartNano = System.nanoTime()
   protected var commitStartNano = -1L
   protected var commitInfo: CommitInfo = _
@@ -193,19 +193,23 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   /** The version that this transaction is reading from. */
   def readVersion: Long = snapshot.version
 
-  /** For new tables, fetch global configs as metadata. */
-  val snapshotMetadata = if (readVersion == -1) {
-    val updatedConfig = DeltaConfigs.mergeGlobalConfigs(
-      spark.sessionState.conf, Map.empty, Protocol())
-    Metadata(configuration = updatedConfig)
-  } else {
-    snapshot.metadata
+  /** Creates new metadata with global Delta configuration defaults. */
+  private def withGlobalConfigDefaults(metadata: Metadata): Metadata = {
+    val conf = spark.sessionState.conf
+    metadata.copy(configuration = DeltaConfigs.mergeGlobalConfigs(
+      conf, metadata.configuration))
   }
 
   protected val postCommitHooks = new ArrayBuffer[PostCommitHook]()
 
-  /** Returns the metadata at the current point in the log. */
-  def metadata: Metadata = newMetadata.getOrElse(snapshotMetadata)
+  /** The protocol of the snapshot that this transaction is reading at. */
+  def protocol: Protocol = newProtocol.getOrElse(snapshot.protocol)
+
+  /**
+   * Returns the metadata for this transaction. The metadata refers to the metadata of the snapshot
+   * at the transaction's read version unless updated during the transaction.
+   */
+  def metadata: Metadata = newMetadata.getOrElse(snapshot.metadata)
 
   /**
    * Records an update to the metadata that should be committed with this transaction.
@@ -222,9 +226,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       "Cannot change the metadata more than once in a transaction.")
 
     val updatedMetadata = if (readVersion == -1) {
-      val updatedConfigs = DeltaConfigs.mergeGlobalConfigs(
-        spark.sessionState.conf, metadata.configuration, Protocol())
-      metadata.copy(configuration = updatedConfigs)
+      val m = withGlobalConfigDefaults(metadata)
+      newProtocol = Some(Protocol.forNewTable(spark, m))
+      m
     } else {
       metadata
     }
@@ -232,6 +236,21 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
     logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $updatedMetadata")
 
     newMetadata = Some(updatedMetadata)
+  }
+
+  /**
+   * Records an update to the metadata that should be committed with this transaction and when
+   * this transaction is logically creating a new table, e.g. replacing a previous table with new
+   * metadata. Note that this must be done before writing out any files so that file writing
+   * and checks happen with the final metadata for the table.
+   *
+   * IMPORTANT: It is the responsibility of the caller to ensure that files currently
+   * present in the table are still valid under the new metadata.
+   */
+  def updateMetadataForNewTable(metadata: Metadata): Unit = {
+    val m = withGlobalConfigDefaults(metadata)
+    newProtocol = Some(Protocol.forNewTable(spark, m))
+    updateMetadata(m)
   }
 
   protected def verifyNewMetadata(metadata: Metadata): Unit = {
@@ -253,6 +272,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
         )
         if (partitionColCheckIsFatal) throw DeltaErrors.invalidPartitionColumn(e)
     }
+    Protocol.assertProtocolRequirements(spark, metadata, protocol)
   }
 
   /** Returns files matching the given predicates. */
@@ -391,7 +411,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
     assert(!committed, "Transaction already committed.")
 
     // If the metadata has changed, add that to the set of actions
-    var finalActions = newMetadata.toSeq ++ actions
+    var finalActions = newProtocol.toSeq ++ newMetadata.toSeq ++ actions
     val metadataChanges = finalActions.collect { case m: Metadata => m }
     if (metadataChanges.length > 1) {
       recordDeltaEvent(deltaLog, "delta.metadataCheck.multipleMetadataActions", data = Map(
@@ -406,7 +426,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       deltaLog.ensureLogDirectoryExist()
       // If this is the first commit and no protocol is specified, initialize the protocol version.
       if (!finalActions.exists(_.isInstanceOf[Protocol])) {
-        finalActions = Protocol() +: finalActions
+        finalActions = protocol +: finalActions
       }
       // If this is the first commit and no metadata is specified, throw an exception
       if (!finalActions.exists(_.isInstanceOf[Metadata])) {
@@ -426,9 +446,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
     finalActions = finalActions.map {
       // Fetch global config defaults for the first commit
       case m: Metadata if snapshot.version == -1 =>
-        val updatedConf = DeltaConfigs.mergeGlobalConfigs(
-          spark.sessionState.conf, m.configuration, Protocol())
-        m.copy(configuration = updatedConf)
+        val newMeta = withGlobalConfigDefaults(m)
+        // Last line of defence
+        Protocol.assertProtocolRequirements(spark, newMeta, protocol)
+        newMeta
       case a: AddFile if partitionColumns != a.partitionValues.keySet =>
         // If the partitioning in metadata does not match the partitioning in the AddFile
         recordDeltaEvent(deltaLog, "delta.metadataCheck.partitionMismatch", data = Map(
