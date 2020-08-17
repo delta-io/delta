@@ -184,7 +184,8 @@ trait SnapshotManagement { self: DeltaLog =>
   protected def getSnapshotAtInit: Snapshot = {
     try {
       val segment = getLogSegmentFrom(lastCheckpoint)
-      val startCheckpoint = segment.checkpointVersion.map(v => s" starting from checkpoint $v")
+      val startCheckpoint = segment.checkpointVersion
+        .map(v => s" starting from checkpoint $v.").getOrElse(".")
       logInfo(s"Loading version ${segment.version}$startCheckpoint")
       val snapshot = createSnapshot(
         segment,
@@ -291,8 +292,9 @@ trait SnapshotManagement { self: DeltaLog =>
             return currentSnapshot
           }
 
-          logInfo(s"Loading version ${segment.version}" +
-            segment.checkpointVersion.map(v => s"starting from checkpoint version $v."))
+          val startingFrom = segment.checkpointVersion
+            .map(v => s" starting from checkpoint version $v.").getOrElse(".")
+          logInfo(s"Loading version ${segment.version}$startingFrom")
 
           val newSnapshot = createSnapshot(
             segment,
