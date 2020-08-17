@@ -388,7 +388,7 @@ Checkpoint files must be written in [Apache Parquet](https://parquet.apache.org/
 Commit provenance information does not need to be included in the checkpoint. All of these actions are stored as their individual columns in parquet as struct fields.
 
 Within the checkpoint, the `add` struct may contain two additional columns:
- - partitionValues_parsed: In this struct, the column names correspond to the partition columns and the values are stored in their corresponding data type. This is a **required field with the writer protocol version 3**. The `partitionValues` field must also be written while the table reader protocol version is at version 1. For example, for partition columns `year`, `month` and `event` with data types `int`, `int` and `string` respectively, the schema for this field will look like:
+ - partitionValues_parsed: In this struct, the column names correspond to the partition columns and the values are stored in their corresponding data type. This is a **required field with the writer protocol version 3 when the table is partitioned**. If the table is not partitioned, this column can be omitted. The `partitionValues` field must also be written while the table reader protocol version is at version 1. For example, for partition columns `year`, `month` and `event` with data types `int`, `int` and `string` respectively, the schema for this field will look like:
  
  ```
 |-- add: struct
