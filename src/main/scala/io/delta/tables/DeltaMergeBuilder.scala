@@ -359,7 +359,6 @@ class DeltaMergeMatchedActionBuilder private(
 
   /**
    * Delete a matched row from the table.
-   *
    * @since 0.3.0
    */
   def delete(): DeltaMergeBuilder = {
