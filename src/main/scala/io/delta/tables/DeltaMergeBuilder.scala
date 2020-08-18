@@ -357,7 +357,11 @@ class DeltaMergeMatchedActionBuilder private(
     mergeBuilder.withClause(updateClause)
   }
 
-  /** Delete a matched row from the table */
+  /**
+   * Delete a matched row from the table.
+   *
+   * @since 0.3.0
+   */
   def delete(): DeltaMergeBuilder = {
     val deleteClause = DeltaMergeIntoDeleteClause(matchCondition.map(_.expr))
     mergeBuilder.withClause(deleteClause)
