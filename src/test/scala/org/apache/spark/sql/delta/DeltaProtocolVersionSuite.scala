@@ -199,7 +199,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
-  test("creating a new table with default protocol - requiring more recent protocol version") {
+  test(
+    "creating a new table with default protocol - requiring more recent protocol version") {
     val tableName = "delta_test"
     def testTableCreation(fn: String => Unit): Unit = testCreation(tableName, 2)(fn)
 

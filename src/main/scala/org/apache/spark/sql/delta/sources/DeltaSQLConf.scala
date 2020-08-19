@@ -173,6 +173,14 @@ object DeltaSQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_MAX_RETRY_COMMIT_ATTEMPTS =
+    buildConf("maxCommitAttempts")
+      .internal()
+      .doc("The maximum number of commit attempts we will try for a single commit before failing")
+      .intConf
+      .checkValue(_ >= 0, "maxCommitAttempts has to be positive")
+      .createWithDefault(10000000)
+
   val DELTA_PROTOCOL_DEFAULT_WRITER_VERSION =
     buildConf("protocol.minWriterVersion")
       .doc("The default writer protocol version to create new tables with, unless a feature " +
