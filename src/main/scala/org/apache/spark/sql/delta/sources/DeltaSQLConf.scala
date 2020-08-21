@@ -197,6 +197,12 @@ object DeltaSQLConf {
       .checkValues(Set(1))
       .createWithDefault(1)
 
+  val DELTA_CHECKPOINT_V2_ENABLED =
+    buildConf("checkpointV2.enabled")
+      .internal()
+      .doc("Write checkpoints where the partition values are parsed according to the data type.")
+      .booleanConf
+      .createWithDefault(false)
 
   val DELTA_MAX_SNAPSHOT_LINEAGE_LENGTH =
     buildConf("maxSnapshotLineageLength")
