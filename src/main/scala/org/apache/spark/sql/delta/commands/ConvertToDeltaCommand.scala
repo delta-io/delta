@@ -357,9 +357,9 @@ abstract class ConvertToDeltaCommandBase(
       txn.updateMetadataForNewTable(metadata)
 
       val addFilesIter = createDeltaActions(spark, manifest, txn, fs)
-      val metrics = Some(Map[String, String](
+      val metrics = Map[String, String](
         "numConvertedFiles" -> numFiles.toString
-      ))
+      )
 
       commitLarge(
         spark,

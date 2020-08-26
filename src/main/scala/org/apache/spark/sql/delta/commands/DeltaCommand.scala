@@ -219,7 +219,7 @@ trait DeltaCommand extends DeltaLogging {
       op: DeltaOperations.Operation,
       numFiles: Long,
       context: Map[String, String],
-      metrics: Option[Map[String, String]] = None): Long = {
+      metrics: Map[String, String]): Long = {
     val attemptVersion = txn.readVersion + 1
     try {
       val metadata = txn.metadata
@@ -233,7 +233,7 @@ trait DeltaCommand extends DeltaLogging {
         readVersion = Some(txn.readVersion),
         isolationLevel = Some(Serializable.toString),
         isBlindAppend = Some(false),
-        metrics,
+        Some(metrics),
         userMetadata = txn.getUserMetadata(op))
 
       val extraActions = Seq(commitInfo, metadata)
