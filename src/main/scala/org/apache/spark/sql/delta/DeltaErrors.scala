@@ -36,6 +36,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
@@ -161,6 +162,15 @@ object DeltaErrors
     new InvariantViolationException(s"Column ${UnresolvedAttribute(invariant.column).name}" +
       s", which is defined as ${invariant.rule.name}, is missing from the data being " +
       s"written into the table.")
+  }
+
+  def nestedNotNullConstraint(
+      parent: String, nested: DataType, nestType: String): AnalysisException = {
+    new AnalysisException(s"The $nestType type of the field $parent contains a NOT NULL " +
+      s"constraint. Delta does not support NOT NULL constraints nested within arrays or maps. " +
+      s"To suppress this error and silently ignore the specified constraints, set " +
+      s"${DeltaSQLConf.ALLOW_UNENFORCED_NOT_NULL_CONSTRAINTS.key} = true.\n" +
+      s"Parsed $nestType type:\n${nested.prettyJson}")
   }
 
   def incorrectLogStoreImplementationException(

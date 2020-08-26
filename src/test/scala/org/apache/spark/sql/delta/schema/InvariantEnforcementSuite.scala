@@ -16,13 +16,16 @@
 
 package org.apache.spark.sql.delta.schema
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.io.File
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations}
+import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.DeltaOperations
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.schema.Invariants.{ArbitraryExpression, NotNull, PersistedExpression}
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql._
@@ -32,7 +35,9 @@ import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
 
 class InvariantEnforcementSuite extends QueryTest
-    with SharedSparkSession    with SQLTestUtils {
+    with SharedSparkSession    with DeltaSQLCommandTest
+    with SQLTestUtils {
+
 
   import testImplicits._
 
@@ -230,19 +235,6 @@ class InvariantEnforcementSuite extends QueryTest
     )
   }
 
-  testQuietly("complex type - children of array type can't be checked") {
-    val schema = new StructType()
-      .add("top", ArrayType(ArrayType(new StructType()
-        .add("key", StringType, nullable = false)
-        .add("value", IntegerType))))
-    tableWithSchema(schema) { path =>
-      spark.createDataFrame(Seq(Row(Seq(Seq(Row("a", 1)))), Row(Seq(Seq(Row(null, 2))))).asJava,
-        schema.asNullable).write.mode("append").format("delta").save(path)
-      spark.createDataFrame(Seq(Row(Seq(Seq(Row("a", 1)))), Row(null)).asJava, schema.asNullable)
-        .write.mode("append").format("delta").save(path)
-    }
-  }
-
   testQuietly("reject non-nullable array column") {
     val schema = new StructType()
       .add("top", ArrayType(ArrayType(new StructType()
@@ -421,4 +413,68 @@ class InvariantEnforcementSuite extends QueryTest
       }
     }
   }
+
+  def testUnenforcedNestedConstraints(
+      testName: String,
+      schemaString: String,
+      expectedError: String,
+      data: Row): Unit = {
+    test(testName) {
+      val nullTable = "nullTbl"
+      withTable(nullTable) {
+        // Try creating the table with the check enabled first, which should fail, then create it
+        // for real with the check off which should succeed.
+        if (expectedError != null) {
+          val ex = intercept[AnalysisException] {
+            sql(s"CREATE TABLE $nullTable ($schemaString) USING delta")
+          }
+          assert(ex.getMessage.contains(expectedError))
+        }
+        withSQLConf(("spark.databricks.delta.constraints.allowUnenforcedNotNull.enabled", "true")) {
+          sql(s"CREATE TABLE $nullTable ($schemaString) USING delta")
+        }
+
+        // Once we've created the table, writes should succeed even if they violate the constraint.
+        spark.createDataFrame(
+          Seq(data).asJava,
+          spark.table(nullTable).schema
+        ).write.mode("append").format("delta").saveAsTable(nullTable)
+
+        if (expectedError != null) {
+          val ex = intercept[AnalysisException] {
+            sql(s"REPLACE TABLE $nullTable ($schemaString) USING delta")
+          }
+          assert(ex.getMessage.contains(expectedError))
+        }
+        withSQLConf(("spark.databricks.delta.constraints.allowUnenforcedNotNull.enabled", "true")) {
+          sql(s"REPLACE TABLE $nullTable ($schemaString) USING delta")
+        }
+      }
+    }
+  }
+
+  testUnenforcedNestedConstraints(
+    "not null within array",
+    schemaString = "arr array<struct<name:string,mailbox:string NOT NULL>> NOT NULL",
+    expectedError = "The element type of the field arr contains a NOT NULL constraint.",
+    data = Row(Seq(Row("myName", null))))
+
+  testUnenforcedNestedConstraints(
+    "not null within map key",
+    schemaString = "m map<struct<name:string,mailbox:string NOT NULL>, int> NOT NULL",
+    expectedError = "The key type of the field m contains a NOT NULL constraint.",
+    data = Row(Map(Row("myName", null) -> 1)))
+
+  testUnenforcedNestedConstraints(
+    "not null within map value",
+    schemaString = "m map<int, struct<name:string,mailbox:string NOT NULL>> NOT NULL",
+    expectedError = "The value type of the field m contains a NOT NULL constraint.",
+    data = Row(Map(1 -> Row("myName", null))))
+
+  testUnenforcedNestedConstraints(
+    "not null within nested array",
+    schemaString =
+      "s struct<n:int NOT NULL, arr:array<struct<name:string,mailbox:string NOT NULL>> NOT NULL>",
+    expectedError = "The element type of the field s.arr contains a NOT NULL constraint.",
+    data = Row(Row(1, Seq(Row("myName", null)))))
 }

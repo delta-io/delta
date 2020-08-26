@@ -344,4 +344,12 @@ object DeltaSQLConf {
       .checkValue(_ >= 0, "the version must be >= 0")
       .createOptional
 
+  val ALLOW_UNENFORCED_NOT_NULL_CONSTRAINTS =
+    buildConf("constraints.allowUnenforcedNotNull.enabled")
+      .internal()
+      .doc("If enabled, NOT NULL constraints within array and map types will be permitted in " +
+        "Delta table creation, even though Delta can't enforce them.")
+      .booleanConf
+      .createWithDefault(false)
+
 }

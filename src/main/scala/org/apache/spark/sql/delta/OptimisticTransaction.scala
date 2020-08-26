@@ -226,12 +226,24 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
     assert(newMetadata.isEmpty,
       "Cannot change the metadata more than once in a transaction.")
 
+    val metadataWithFixedSchema =
+      if (snapshot.metadata.schemaString == metadata.schemaString) {
+        // Shortcut when the schema hasn't changed to avoid generating spurious schema change logs.
+        // It's fine if two different but semantically equivalent schema strings skip this special
+        // case - that indicates that something upstream attempted to do a no-op schema change, and
+        // we'll just end up doing a bit of redundant work in the else block.
+        metadata
+      } else {
+        val fixedSchema = SchemaUtils.removeUnenforceableNotNullConstraints(
+          metadata.schema, spark.sessionState.conf).json
+        metadata.copy(schemaString = fixedSchema)
+      }
     val updatedMetadata = if (readVersion == -1) {
-      val m = withGlobalConfigDefaults(metadata)
+      val m = withGlobalConfigDefaults(metadataWithFixedSchema)
       newProtocol = Some(Protocol.forNewTable(spark, m))
       m
     } else {
-      metadata
+      metadataWithFixedSchema
     }
     verifyNewMetadata(updatedMetadata)
     logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $updatedMetadata")
