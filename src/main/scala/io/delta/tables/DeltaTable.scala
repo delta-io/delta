@@ -19,6 +19,7 @@ package io.delta.tables
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import io.delta.tables.execution._
 import org.apache.hadoop.fs.Path
 
@@ -41,16 +42,16 @@ import org.apache.spark.sql.types.StructType
 @Evolving
 class DeltaTable private[tables](
     @transient private val _df: Dataset[Row],
-    @transient private val _deltaLog: DeltaLog)
+    @transient private val table: DeltaTableV2)
   extends DeltaTableOperations with Serializable {
 
   protected def deltaLog: DeltaLog = {
     /** Assert the codes run in the driver. */
-    if (_deltaLog == null) {
+    if (table == null) {
       throw new IllegalStateException("DeltaTable cannot be used in executors")
     }
 
-    _deltaLog
+    table.deltaLog
   }
 
   protected def df: Dataset[Row] = {
@@ -71,7 +72,7 @@ class DeltaTable private[tables](
    * @since 0.3.0
    */
   @Evolving
-  def as(alias: String): DeltaTable = new DeltaTable(df.as(alias), deltaLog)
+  def as(alias: String): DeltaTable = new DeltaTable(df.as(alias), table)
 
   /**
    * :: Evolving ::
@@ -652,9 +653,10 @@ object DeltaTable {
    */
   @Evolving
   def forPath(sparkSession: SparkSession, path: String): DeltaTable = {
-    if (DeltaTableUtils.isDeltaTable(sparkSession, new Path(path))) {
+    val hdpPath = new Path(path)
+    if (DeltaTableUtils.isDeltaTable(sparkSession, hdpPath)) {
       new DeltaTable(sparkSession.read.format("delta").load(path),
-        DeltaLog.forTable(sparkSession, path))
+        DeltaTableV2(sparkSession, hdpPath))
     } else {
       throw DeltaErrors.notADeltaTableException(DeltaTableIdentifier(path = Some(path)))
     }
@@ -680,7 +682,10 @@ object DeltaTable {
   def forName(sparkSession: SparkSession, tableName: String): DeltaTable = {
     val tableId = sparkSession.sessionState.sqlParser.parseTableIdentifier(tableName)
     if (DeltaTableUtils.isDeltaTable(sparkSession, tableId)) {
-      new DeltaTable(sparkSession.table(tableName), DeltaLog.forTable(sparkSession, tableId))
+      val tbl = sparkSession.sessionState.catalog.getTableMetadata(tableId)
+      new DeltaTable(
+        sparkSession.table(tableName),
+        DeltaTableV2(sparkSession, new Path(tbl.location), Some(tbl), Some(tableName)))
     } else {
       throw DeltaErrors.notADeltaTableException(DeltaTableIdentifier(table = Some(tableId)))
     }
