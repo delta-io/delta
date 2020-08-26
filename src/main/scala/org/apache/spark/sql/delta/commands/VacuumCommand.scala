@@ -119,7 +119,6 @@ object VacuumCommand extends VacuumCommandImpl {
       val hadoopConf = spark.sparkContext.broadcast(
         new SerializableConfiguration(sessionHadoopConf))
       val basePath = fs.makeQualified(path).toString
-      var isBloomFiltered = false
 
       val validFiles = snapshot.state
         .mapPartitions { actions =>
@@ -145,7 +144,7 @@ object VacuumCommand extends VacuumCommandImpl {
                 }
                 validFileOpt.toSeq.flatMap { f =>
                   // paths are relative so provide '/' as the basePath.
-                  allValidFiles(f, isBloomFiltered).flatMap { file =>
+                  allValidFiles(f).flatMap { file =>
                     val dirs = getAllSubdirs("/", file, fs)
                     dirs ++ Iterator(file)
                   }
@@ -282,7 +281,7 @@ trait VacuumCommandImpl extends DeltaCommand {
   /**
    * This is used to create the list of files we want to retain during GC.
    */
-  protected def allValidFiles(file: String, isBloomFiltered: Boolean): Seq[String] = Seq(file)
+  protected def allValidFiles(file: String): Seq[String] = Seq(file)
 }
 
 case class DeltaVacuumStats(
