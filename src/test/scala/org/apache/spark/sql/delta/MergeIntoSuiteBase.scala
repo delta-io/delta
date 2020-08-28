@@ -2216,6 +2216,72 @@ abstract class MergeIntoSuiteBase
       (5, 500)  // (5, 500) inserted
     ))
 
+  testUnlimitedClauses("conditional insert + insert")(
+    source = (1, 100) :: (2, 200) :: (3, 300) :: (4, 400) :: (5, 500) :: Nil,
+    target = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
+    mergeOn = "s.key = t.key",
+    insert(condition = "s.key < 5", values = "(key, value) VALUES (s.key, s.value)"),
+    insert(condition = null, values = "(key, value) VALUES (s.key, s.value + 1)"))(
+    result = Seq(
+      (0, 0),   // no change
+      (1, 10),  // no change
+      (2, 20),  // no change
+      (3, 30),  // no change
+      (4, 400), // (4, 400) inserted by notMatched_0
+      (5, 501)  // (5, 501) inserted by notMatched_1
+    ))
+
+  testUnlimitedClauses("2 conditional inserts")(
+    source = (1, 100) :: (2, 200) :: (3, 300) :: (4, 400) :: (5, 500) :: (6, 600) :: Nil,
+    target = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
+    mergeOn = "s.key = t.key",
+    insert(condition = "s.key < 5", values = "(key, value) VALUES (s.key, s.value)"),
+    insert(condition = "s.key = 5", values = "(key, value) VALUES (s.key, s.value + 1)"))(
+    result = Seq(
+      (0, 0),   // no change
+      (1, 10),  // no change
+      (2, 20),  // no change
+      (3, 30),  // no change
+      (4, 400), // (4, 400) inserted by notMatched_0
+      (5, 501)  // (5, 501) inserted by notMatched_1
+                // (6, 600) not inserted as not insert condition matched
+    ))
+
+  testUnlimitedClauses("update/delete (no matches) + conditional insert + insert")(
+    source = (4, 400) :: (5, 500) :: Nil,
+    target = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
+    mergeOn = "s.key = t.key",
+    update(condition = "t.key = 0", set = "key = s.key, value = s.value"),
+    delete(condition = null),
+    insert(condition = "s.key < 5", values = "(key, value) VALUES (s.key, s.value)"),
+    insert(condition = null, values = "(key, value) VALUES (s.key, s.value + 1)"))(
+    result = Seq(
+      (0, 0),   // no change
+      (1, 10),  // no change
+      (2, 20),  // no change
+      (3, 30),  // no change
+      (4, 400), // (4, 400) inserted by notMatched_0
+      (5, 501)  // (5, 501) inserted by notMatched_1
+    ))
+
+  testUnlimitedClauses("update/delete (no matches) + 2 conditional inserts")(
+    source = (4, 400) :: (5, 500) :: (6, 600)  :: Nil,
+    target = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
+    mergeOn = "s.key = t.key",
+    update(condition = "t.key = 0", set = "key = s.key, value = s.value"),
+    delete(condition = null),
+    insert(condition = "s.key < 5", values = "(key, value) VALUES (s.key, s.value)"),
+    insert(condition = "s.key = 5", values = "(key, value) VALUES (s.key, s.value + 1)"))(
+    result = Seq(
+      (0, 0),   // no change
+      (1, 10),  // no change
+      (2, 20),  // no change
+      (3, 30),  // no change
+      (4, 400), // (4, 400) inserted by notMatched_0
+      (5, 501)  // (5, 501) inserted by notMatched_1
+                // (6, 600) not inserted as not insert condition matched
+    ))
+
   testUnlimitedClauses("2 update + 2 delete + 4 insert")(
     source = (1, 100) :: (2, 200) :: (3, 300) :: (4, 400) :: (5, 500) :: (6, 600) :: (7, 700) ::
       (8, 800) :: (9, 900) :: Nil,
