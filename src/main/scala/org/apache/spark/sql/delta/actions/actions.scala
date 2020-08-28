@@ -126,7 +126,10 @@ object Protocol {
       minimumRequired = Protocol(0, minWriterVersion = 2)
       featuresUsed.append("Setting column level invariants")
     }
-    // Check for
+
+    // Check for check constraints in table properties
+    Invariants.ensureNoCheckConstraints(metadata, spark)
+
     val configs = metadata.configuration.map { case (k, v) => k.toLowerCase(Locale.ROOT) -> v }
     if (configs.contains(DeltaConfigs.IS_APPEND_ONLY.key.toLowerCase(Locale.ROOT))) {
       minimumRequired = Protocol(0, minWriterVersion = 2)

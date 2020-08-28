@@ -127,6 +127,9 @@ object DeltaConfigs extends DeltaLogging {
    */
   def validateConfigurations(configurations: Map[String, String]): Map[String, String] = {
     configurations.map {
+      case kv @ (key, value) if key.toLowerCase(Locale.ROOT).startsWith("delta.constraints.") =>
+        // This is a CHECK constraint, we should allow it.
+        kv
       case (key, value) if key.toLowerCase(Locale.ROOT).startsWith("delta.") =>
         Option(entries.get(key.toLowerCase(Locale.ROOT).stripPrefix("delta.")))
           .map(_(value))

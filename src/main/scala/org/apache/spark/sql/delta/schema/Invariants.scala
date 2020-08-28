@@ -16,9 +16,12 @@
 
 package org.apache.spark.sql.delta.schema
 
+import java.util.Locale
+
+import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.util.JsonUtils
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.types.StructType
 
@@ -85,6 +88,31 @@ object Invariants {
               "Unrecognized invariant. Please upgrade your Spark version.")
         }
         Invariant(parents :+ field.name, invariant)
+    }
+  }
+
+  /**
+   * Extract check constraints from the table properties. Note that CHECK constraint implementation
+   * is not yet complete - this method is currently used simply to determine the presence of them.
+   */
+  def getFromConfiguration(config: Map[String, String], spark: SparkSession): Seq[Invariant] = {
+    config.collect {
+      case (key, constraintText) if key.toLowerCase(Locale.ROOT).startsWith("delta.constraints.") =>
+        val constraintName = key.stripPrefix("delta.constraints.")
+        val expression = spark.sessionState.sqlParser.parseExpression(constraintText)
+        Invariant(null, ArbitraryExpression(expression))
+    }.toSeq
+  }
+
+  /**
+   * Throw an error if there are check constraints on a table, since they're not implemented yet
+   * in this version.
+   */
+  def ensureNoCheckConstraints(metadata: Metadata, spark: SparkSession): Unit = {
+    if (Invariants.getFromConfiguration(metadata.configuration, spark).nonEmpty) {
+      throw new AnalysisException(
+        "CHECK constraints are unavailable in this version of Delta Lake. " +
+          "Please upgrade to a newer version.")
     }
   }
 

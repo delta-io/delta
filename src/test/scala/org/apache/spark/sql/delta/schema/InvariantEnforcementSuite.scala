@@ -23,12 +23,14 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaOperations
-import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.schema.Invariants.{ArbitraryExpression, NotNull, PersistedExpression}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.util.FileNames
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.streaming.StreamingQueryException
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
@@ -411,6 +413,51 @@ class InvariantEnforcementSuite extends QueryTest
       intercept[SparkException] {
         Seq("e").toDF("key").write.mode("append").format("delta").save(tempDir)
       }
+    }
+  }
+
+  test("CHECK constraint can't be created through API") {
+    withTable("noCheckConstraints") {
+      spark.range(10).write.format("delta").saveAsTable("noCheckConstraints")
+      val ex = intercept[AnalysisException] {
+        spark.sql(
+          "ALTER TABLE noCheckConstraints SET TBLPROPERTIES ('delta.constraints.mychk' = '1')")
+      }
+      assert(ex.getMessage.contains(
+        "CHECK constraints are unavailable in this version of Delta Lake"))
+    }
+  }
+
+  test("CHECK constraint can't be committed in a transaction") {
+    withTable("noCheckConstraints") {
+      spark.range(10).write.format("delta").saveAsTable("noCheckConstraints")
+      val log = DeltaLog.forTable(spark, TableIdentifier("noCheckConstraints", None))
+      val txn = log.startTransaction()
+      val newMetadata = txn.metadata.copy(
+        configuration = txn.metadata.configuration + ("delta.constraints.mychk" -> "true"))
+      val ex = intercept[AnalysisException] {
+        txn.commit(Seq(newMetadata), DeltaOperations.ManualUpdate)
+      }
+      assert(ex.getMessage.contains(
+        "CHECK constraints are unavailable in this version of Delta Lake"))
+    }
+  }
+
+  test("CHECK constraint can't be written to if somehow created") {
+    withTable("noCheckConstraints") {
+      spark.range(10).write.format("delta").saveAsTable("noCheckConstraints")
+      val log = DeltaLog.forTable(spark, TableIdentifier("noCheckConstraints", None))
+      val newMetadata = log.snapshot.metadata.copy(
+        configuration = log.snapshot.metadata.configuration + ("delta.constraints.mychk" -> "true"))
+      log.store.write(
+        FileNames.deltaFile(log.logPath, 1),
+        Seq(Protocol().json, newMetadata.json).toIterator)
+      spark.read.format("delta").table("noCheckConstraints")
+      val ex = intercept[AnalysisException] {
+        spark.range(10).write.format("delta").mode("append").saveAsTable("noCheckConstraints")
+      }
+      assert(ex.getMessage.contains(
+        "CHECK constraints are unavailable in this version of Delta Lake"))
     }
   }
 
