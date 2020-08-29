@@ -61,6 +61,18 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
+  test("upgrade to a version with DeltaTable API") {
+    withTempDir { path =>
+      val log = createTableWithProtocol(Protocol(0, 0), path)
+      assert(log.snapshot.protocol == Protocol(0, 0))
+      val table = io.delta.tables.DeltaTable.forPath(spark, path.getCanonicalPath)
+      table.upgradeTableProtocol(1, 2)
+      assert(log.snapshot.protocol == Protocol(1, 2))
+      table.upgradeTableProtocol(1, 3)
+      assert(log.snapshot.protocol == Protocol(1, 3))
+    }
+  }
+
   test("overwrite keeps the same protocol version") {
     withTempDir { path =>
       val log = createTableWithProtocol(Protocol(0, 0), path)
@@ -89,11 +101,17 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
   test("can't downgrade") {
     withTempDir { path =>
-      val log = DeltaLog.forTable(spark, path)
-      assert(log.snapshot.protocol == Protocol())
-      intercept[ProtocolDowngradeException] {
-        log.upgradeProtocol(Protocol(0, 0))
+      val log = createTableWithProtocol(Protocol(1, 3), path)
+      assert(log.snapshot.protocol === Protocol(1, 3))
+      val e1 = intercept[ProtocolDowngradeException] {
+        log.upgradeProtocol(Protocol(1, 2))
       }
+      val e2 = intercept[ProtocolDowngradeException] {
+        val table = io.delta.tables.DeltaTable.forPath(spark, path.getCanonicalPath)
+        table.upgradeTableProtocol(1, 2)
+      }
+      assert(e1.getMessage === e2.getMessage)
+      assert(e1.getMessage.contains("cannot be downgraded from (1,3) to (1,2)"))
     }
   }
 
@@ -156,6 +174,18 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
+  test("can create table using the latest protocol with conf") {
+    withTempDir { dir =>
+      withSQLConf(
+        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> Action.writerVersion.toString,
+        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> Action.readerVersion.toString) {
+        sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta")
+        val deltaLog = DeltaLog.forTable(spark, dir)
+        assert(deltaLog.snapshot.protocol === Action.protocolVersion)
+      }
+    }
+  }
+
   test("creating a new table with default protocol") {
     val tableName = "delta_test"
 
@@ -167,6 +197,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         }
         assert(e.getMessage.contains("protocol version"))
         assert(e.getMessage.contains("delta.appendOnly"))
+        assert(e.getMessage.contains("upgradeTableProtocol(1, 2)"))
       }
     }
 

@@ -406,10 +406,14 @@ object DeltaErrors
       required: Protocol,
       current: Protocol): Throwable = {
     val featureList = features.mkString("\t - ", "\n\t -", "\n")
+    val readerVersion = math.max(required.minReaderVersion, current.minReaderVersion)
+    val writerVersion = math.max(required.minWriterVersion, current.minWriterVersion)
     new AnalysisException(
       s"The features listed below require a protocol version of $required " +
         s"or above, but the protocol version of the Delta table is $current. Please upgrade " +
-        s"the protocol version of the table before setting this config.\n$featureList")
+        "the protocol version of the table before setting this config using " +
+        s"`io.delta.table.DeltaTable.upgradeTableProtocol($readerVersion, $writerVersion)`." +
+        s"\n$featureList")
   }
 
   def multipleLoadPathsException(paths: Seq[String]): Throwable = {

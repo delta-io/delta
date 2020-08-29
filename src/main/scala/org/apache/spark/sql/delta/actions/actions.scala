@@ -49,13 +49,13 @@ class InvalidProtocolVersionException extends RuntimeException(
     "Please upgrade to a newer release.")
 
 class ProtocolDowngradeException(oldProtocol: Protocol, newProtocol: Protocol)
-  extends RuntimeException(
-    s"Protocol version cannot be downgraded from $oldProtocol to $newProtocol")
+  extends RuntimeException("Protocol version cannot be downgraded from " +
+    s"${oldProtocol.simpleString} to ${newProtocol.simpleString}")
 
 object Action {
   /** The maximum version of the protocol that this version of Delta understands. */
   val readerVersion = 1
-  val writerVersion = 2
+  val writerVersion = 3
   val protocolVersion: Protocol = Protocol(readerVersion, writerVersion)
 
   def fromJson(json: String): Action = {

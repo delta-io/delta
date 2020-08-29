@@ -258,10 +258,6 @@ class DeltaLog private(
           "minReaderVersion" -> protocol.minReaderVersion))
       throw new InvalidProtocolVersionException
     }
-
-    if (isProtocolOld(protocol)) {
-      recordDeltaEvent(this, "delta.protocol.warning")
-    }
   }
 
   /**
@@ -277,10 +273,6 @@ class DeltaLog private(
           "clientVersion" -> Action.writerVersion,
           "minWriterVersion" -> protocol.minWriterVersion))
       throw new InvalidProtocolVersionException
-    }
-
-    if (logUpgradeMessage && isProtocolOld(protocol)) {
-      recordDeltaEvent(this, "delta.protocol.warning")
     }
   }
 
