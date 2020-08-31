@@ -236,17 +236,6 @@ object DeltaSQLConf {
       .booleanConf
       .createWithDefault(true)
 
-  val DELTA_CHECKPOINT_PART_SIZE =
-    buildConf("checkpoint.partSize")
-      .internal()
-      .doc(
-        """The limit at which we will start parallelizing the checkpoint. We will attempt to write
-          |maximum of this many actions per checkpoint.
-        """.stripMargin)
-      .longConf
-      .checkValue(_ > 0, "The checkpoint part size needs to be a positive integer.")
-      .createWithDefault(5000000)
-
   val DELTA_SCHEMA_AUTO_MIGRATE =
     buildConf("schema.autoMerge.enabled")
       .doc("If true, enables schema merging on appends and on overwrites.")

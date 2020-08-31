@@ -731,9 +731,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase {
         Seq(i).toDF("id").write.mode("append").format("delta").save(path)
       }
       val deltaLog = DeltaLog.forTable(spark, path)
-      withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "1") {
-        deltaLog.checkpoint()
-      }
+      deltaLog.checkpoint()
       Seq(6).toDF("id").write.mode("append").format("delta").save(path)
       val checkpoints = new File(deltaLog.logPath.toUri).listFiles()
         .filter(f => FileNames.isCheckpointFile(new Path(f.getAbsolutePath)))
