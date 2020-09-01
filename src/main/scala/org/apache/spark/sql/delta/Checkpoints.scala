@@ -237,8 +237,7 @@ object Checkpoints extends DeltaLogging {
         action
       }.drop("commitInfo")
 
-    val chk = if (snapshot.protocol.minWriterVersion >= 3 ||
-        spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHECKPOINT_V2_ENABLED)) {
+    val chk = if (snapshot.protocol.minWriterVersion >= 3) {
       base.withColumn("add",
         when(col("add").isNotNull, struct(Seq(
           col("add.path"),
