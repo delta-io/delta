@@ -23,7 +23,7 @@ import java.util.Locale
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors}
-import org.apache.spark.sql.delta.schema.Invariants
+import org.apache.spark.sql.delta.schema.{Constraints, Invariants}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation.{JsonIgnore, JsonInclude}
@@ -127,8 +127,11 @@ object Protocol {
       featuresUsed.append("Setting column level invariants")
     }
 
-    // Check for check constraints in table properties
-    Invariants.ensureNoCheckConstraints(metadata, spark)
+    if (Constraints.getCheckConstraints(metadata, spark).nonEmpty) {
+      throw new AnalysisException(
+        "CHECK constraints are unavailable in this version of Delta Lake. " +
+          "Please upgrade to a newer version.")
+    }
 
     val configs = metadata.configuration.map { case (k, v) => k.toLowerCase(Locale.ROOT) -> v }
     if (configs.contains(DeltaConfigs.IS_APPEND_ONLY.key.toLowerCase(Locale.ROOT))) {

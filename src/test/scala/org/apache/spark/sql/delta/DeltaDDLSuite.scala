@@ -377,7 +377,7 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
     if (violationException == null) {
       fail("Didn't receive a InvariantViolationException.")
     }
-    assert(violationException.getMessage.contains("Invariant NOT NULL violated for column"))
+    assert(violationException.getMessage.contains("NOT NULL constraint violated for column"))
   }
 
   test("ALTER TABLE RENAME TO") {

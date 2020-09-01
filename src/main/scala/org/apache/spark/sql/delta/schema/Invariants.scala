@@ -71,13 +71,13 @@ object Invariants {
   }
 
   /** Extract invariants from the given schema */
-  def getFromSchema(schema: StructType, spark: SparkSession): Seq[Invariant] = {
+  def getFromSchema(schema: StructType, spark: SparkSession): Seq[Constraint] = {
     val columns = SchemaUtils.filterRecursively(schema, checkComplexTypes = false) { field =>
       !field.nullable || field.metadata.contains(INVARIANTS_FIELD)
     }
     columns.map {
       case (parents, field) if !field.nullable =>
-        Invariant(parents :+ field.name, NotNull)
+        Constraints.NotNull(parents :+ field.name)
       case (parents, field) =>
         val rule = field.metadata.getString(INVARIANTS_FIELD)
         val invariant = Option(JsonUtils.mapper.readValue[PersistedRule](rule).unwrap) match {
@@ -87,32 +87,7 @@ object Invariants {
             throw new UnsupportedOperationException(
               "Unrecognized invariant. Please upgrade your Spark version.")
         }
-        Invariant(parents :+ field.name, invariant)
-    }
-  }
-
-  /**
-   * Extract check constraints from the table properties. Note that CHECK constraint implementation
-   * is not yet complete - this method is currently used simply to determine the presence of them.
-   */
-  def getFromConfiguration(config: Map[String, String], spark: SparkSession): Seq[Invariant] = {
-    config.collect {
-      case (key, constraintText) if key.toLowerCase(Locale.ROOT).startsWith("delta.constraints.") =>
-        val constraintName = key.stripPrefix("delta.constraints.")
-        val expression = spark.sessionState.sqlParser.parseExpression(constraintText)
-        Invariant(null, ArbitraryExpression(expression))
-    }.toSeq
-  }
-
-  /**
-   * Throw an error if there are check constraints on a table, since they're not implemented yet
-   * in this version.
-   */
-  def ensureNoCheckConstraints(metadata: Metadata, spark: SparkSession): Unit = {
-    if (Invariants.getFromConfiguration(metadata.configuration, spark).nonEmpty) {
-      throw new AnalysisException(
-        "CHECK constraints are unavailable in this version of Delta Lake. " +
-          "Please upgrade to a newer version.")
+        Constraints.Check(invariant.name, invariant.expression)
     }
   }
 

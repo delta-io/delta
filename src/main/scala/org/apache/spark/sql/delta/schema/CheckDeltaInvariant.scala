@@ -16,37 +16,45 @@
 
 package org.apache.spark.sql.delta.schema
 
-import org.apache.spark.sql.delta.schema.Invariants.{ArbitraryExpression, NotNull}
+import org.apache.spark.sql.delta.DeltaErrors
+import org.apache.spark.sql.delta.schema.Constraints.{Check, NotNull}
 
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.expressions.{Expression, NonSQLExpression, UnaryExpression}
-import org.apache.spark.sql.catalyst.expressions.codegen.{Block, CodegenContext, ExprCode, JavaCode, TrueLiteral}
+import org.apache.spark.sql.catalyst.encoders.RowEncoder
+import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, AttributeSeq, AttributeSet, BindReferences, BoundReference, Expression, GetStructField, LeafExpression, Literal, NonSQLExpression, UnaryExpression}
+import org.apache.spark.sql.catalyst.expressions.codegen.{Block, CodegenContext, CodegenFallback, ExprCode, GenerateUnsafeProjection, JavaCode, TrueLiteral}
 import org.apache.spark.sql.catalyst.expressions.codegen.Block._
-import org.apache.spark.sql.types.{DataType, NullType}
+import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.{DataType, NullType, StructType}
 
-/** An expression that validates a specific invariant on a column, before writing into Delta. */
+/**
+ * An expression that validates a specific invariant on a column, before writing into Delta.
+ *
+ * @param child The fully resolved expression to be evaluated to check the constraint.
+ * @param columnExtractors Extractors for each referenced column. Used to generate readable errors.
+ * @param constraint The original constraint definition.
+ */
 case class CheckDeltaInvariant(
     child: Expression,
-    invariant: Invariant) extends UnaryExpression with NonSQLExpression {
+    columnExtractors: Map[String, Expression],
+    constraint: Constraint)
+  extends UnaryExpression with NonSQLExpression with CodegenFallback {
 
   override def dataType: DataType = NullType
   override def foldable: Boolean = false
   override def nullable: Boolean = true
 
-  override def flatArguments: Iterator[Any] = Iterator(child)
-
-  private def assertRule(input: InternalRow): Unit = invariant.rule match {
-    case NotNull if child.eval(input) == null =>
-      throw InvariantViolationException(invariant, "")
-    case ArbitraryExpression(expr) =>
-      val resolvedExpr = expr.transform {
-        case _: UnresolvedAttribute => child
+  private def assertRule(input: InternalRow): Unit = constraint match {
+    case n: NotNull =>
+      if (child.eval(input) == null) {
+        throw InvariantViolationException(n)
       }
-      val result = resolvedExpr.eval(input)
+    case c: Check =>
+      val result = child.eval(input)
       if (result == null || result == false) {
-        throw InvariantViolationException(
-          invariant, s"Value ${child.eval(input)} violates requirement.")
+        throw InvariantViolationException(c, columnExtractors.mapValues(_.eval(input)))
       }
   }
 
@@ -57,42 +65,58 @@ case class CheckDeltaInvariant(
 
   private def generateNotNullCode(ctx: CodegenContext): Block = {
     val childGen = child.genCode(ctx)
-    val invariantField = ctx.addReferenceObj("errMsg", invariant)
+    val invariantField = ctx.addReferenceObj("errMsg", constraint)
     code"""${childGen.code}
        |
        |if (${childGen.isNull}) {
        |  throw org.apache.spark.sql.delta.schema.InvariantViolationException.apply(
-       |    $invariantField, "");
+       |    $invariantField);
        |}
      """.stripMargin
   }
 
-  private def generateExpressionValidationCode(expr: Expression, ctx: CodegenContext): Block = {
-    val resolvedExpr = expr.transform {
-      case _: UnresolvedAttribute => child
-    }
+  private def generateColumnValuesCode(
+      colList: String, valList: String, ctx: CodegenContext): Block = {
+    val start =
+      code"""
+        |java.util.List<String> $colList = new java.util.ArrayList<String>();
+        |java.util.List<Object> $valList = new java.util.ArrayList<Object>();
+        |""".stripMargin
+    columnExtractors.map {
+      case (name, extractor) =>
+        val colValue = extractor.genCode(ctx)
+        code"""
+          |$colList.add("$name");
+          |${colValue.code}
+          |if (${colValue.isNull}) {
+          |  $valList.add(null);
+          |} else {
+          |  $valList.add(${colValue.value});
+          |}
+          |""".stripMargin
+    }.fold(start)(_ + _)
+  }
+
+  private def generateExpressionValidationCode(
+      constraintName: String, expr: Expression, ctx: CodegenContext): Block = {
     val elementValue = child.genCode(ctx)
-    val childGen = resolvedExpr.genCode(ctx)
-    val invariantField = ctx.addReferenceObj("errMsg", invariant)
-    val eValue = ctx.freshName("elementResult")
+    val invariantField = ctx.addReferenceObj("errMsg", constraint)
+    val colListName = ctx.freshName("colList")
+    val valListName = ctx.freshName("valList")
     code"""${elementValue.code}
-       |${childGen.code}
        |
-       |if (${childGen.isNull} || ${childGen.value} == false) {
-       |  Object $eValue = "null";
-       |  if (!${elementValue.isNull}) {
-       |    $eValue = (Object) ${elementValue.value};
-       |  }
+       |if (${elementValue.isNull} || ${elementValue.value} == false) {
+       |  ${generateColumnValuesCode(colListName, valListName, ctx)}
        |  throw org.apache.spark.sql.delta.schema.InvariantViolationException.apply(
-       |     $invariantField, "Value " + $eValue + " violates requirement.");
+       |     $invariantField, $colListName, $valListName);
        |}
      """.stripMargin
   }
 
   override protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode = {
-    val code = invariant.rule match {
-      case NotNull => generateNotNullCode(ctx)
-      case ArbitraryExpression(expr) => generateExpressionValidationCode(expr, ctx)
+    val code = constraint match {
+      case NotNull(_) => generateNotNullCode(ctx)
+      case Check(name, expr) => generateExpressionValidationCode(name, expr, ctx)
     }
     ev.copy(code = code, isNull = TrueLiteral, value = JavaCode.literal("null", NullType))
   }

@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.schema.{Invariant, InvariantViolationException, SchemaUtils}
+import org.apache.spark.sql.delta.schema.{Constraints, InvariantViolationException, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.sql.DeltaSparkSessionExtension
@@ -158,9 +158,9 @@ object DeltaErrors
     new AnalysisException(msg, line, startPosition, plan, cause)
   }
 
-  def notNullInvariantException(invariant: Invariant): Throwable = {
-    new InvariantViolationException(s"Column ${UnresolvedAttribute(invariant.column).name}" +
-      s", which is defined as ${invariant.rule.name}, is missing from the data being " +
+  def notNullColumnMissingException(constraint: Constraints.NotNull): Throwable = {
+    new InvariantViolationException(s"Column ${UnresolvedAttribute(constraint.column).name}" +
+      s", which has a NOT NULL constraint, is missing from the data being " +
       s"written into the table.")
   }
 

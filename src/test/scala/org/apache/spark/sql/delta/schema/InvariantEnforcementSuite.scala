@@ -21,10 +21,12 @@ import java.io.File
 
 import scala.collection.JavaConverters._
 
+ // Edge
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaOperations
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
-import org.apache.spark.sql.delta.schema.Invariants.{ArbitraryExpression, NotNull, PersistedExpression}
+import org.apache.spark.sql.delta.schema.Constraints.NotNull
+import org.apache.spark.sql.delta.schema.Invariants.PersistedExpression
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
 
@@ -59,7 +61,7 @@ class InvariantEnforcementSuite extends QueryTest
   }
 
   private def testBatchWriteRejection(
-      invariant: Invariants.Rule,
+      invariant: Constraint,
       schema: StructType,
       df: Dataset[_],
       expectedErrors: String*): Unit = {
@@ -67,25 +69,29 @@ class InvariantEnforcementSuite extends QueryTest
       val e = intercept[SparkException] {
         df.write.mode("append").format("delta").save(path)
       }
-      var violationException = e.getCause
-      while (violationException != null &&
-             !violationException.isInstanceOf[InvariantViolationException]) {
-        violationException = violationException.getCause
-      }
-      if (violationException == null) {
-        fail("Didn't receive a InvariantViolationException.")
-      }
-      assert(violationException.isInstanceOf[InvariantViolationException])
-      val error = violationException.getMessage
-      val allExpected = Seq(invariant.name) ++ expectedErrors
-      allExpected.foreach { expected =>
-        assert(error.contains(expected), s"$error didn't contain $expected")
-      }
+      checkConstraintException(e, (invariant.name +: expectedErrors): _*)
+    }
+  }
+
+  private def checkConstraintException(e: Exception, expectedErrors: String*): Unit = {
+    var violationException = e.getCause
+    while (violationException != null &&
+      !violationException.isInstanceOf[InvariantViolationException]) {
+      violationException = violationException.getCause
+    }
+    if (violationException == null) {
+      fail("Didn't receive a InvariantViolationException.", e)
+    }
+    assert(violationException.isInstanceOf[InvariantViolationException])
+    val error = violationException.getMessage
+    val allExpected = expectedErrors
+    allExpected.foreach { expected =>
+      assert(error.contains(expected), s"$error didn't contain $expected")
     }
   }
 
   private def testStreamingWriteRejection[T: Encoder](
-      invariant: Invariants.Rule,
+      invariant: Constraint,
       schema: StructType,
       toDF: MemoryStream[T] => DataFrame,
       data: Seq[T],
@@ -105,17 +111,7 @@ class InvariantEnforcementSuite extends QueryTest
           memStream.addData(data)
           stream.processAllAvailable()
         }
-        var violationException = e.getCause
-        while (violationException != null &&
-          !violationException.isInstanceOf[InvariantViolationException]) {
-          violationException = violationException.getCause
-        }
-        if (violationException == null) {
-          fail("Didn't receive a InvariantViolationException.")
-        }
-        assert(violationException.isInstanceOf[InvariantViolationException])
-        val error = violationException.getMessage
-        assert((Seq(invariant.name) ++ expectedErrors).forall(error.contains))
+        checkConstraintException(e, (invariant.name +: expectedErrors): _*)
       } finally {
         stream.stop()
       }
@@ -156,13 +152,13 @@ class InvariantEnforcementSuite extends QueryTest
       .add("key", StringType, nullable = false)
       .add("value", IntegerType)
     testBatchWriteRejection(
-      NotNull,
+      NotNull(Seq("key")),
       schema,
       Seq[(String, Int)](("a", 1), (null, 2)).toDF("key", "value"),
       "key"
     )
     testStreamingWriteRejection[(String, Int)](
-      NotNull,
+      NotNull(Seq("key")),
       schema,
       _.toDF().toDF("key", "value"),
       Seq[(String, Int)](("a", 1), (null, 2)),
@@ -175,13 +171,13 @@ class InvariantEnforcementSuite extends QueryTest
       .add("key", StringType, nullable = false)
       .add("value", IntegerType)
     testBatchWriteRejection(
-      NotNull,
+      NotNull(Seq("key")),
       schema,
       Seq[Int](1, 2).toDF("value"),
       "key"
     )
     testStreamingWriteRejection[Int](
-      NotNull,
+      NotNull(Seq("key")),
       schema,
       _.toDF().toDF("value"),
       Seq[Int](1, 2),
@@ -204,13 +200,13 @@ class InvariantEnforcementSuite extends QueryTest
       .add("key", StringType, nullable = false)
       .add("value", IntegerType)
     testBatchWriteRejection(
-      NotNull,
+      NotNull(Seq("key")),
       schema,
       Seq[Int](1, 2).toDF("value").drop("value"),
       "key"
     )
     testStreamingWriteRejection[Int](
-      NotNull,
+      NotNull(Seq("key")),
       schema,
       _.toDF().toDF("value").drop("value"),
       Seq[Int](1, 2),
@@ -224,13 +220,13 @@ class InvariantEnforcementSuite extends QueryTest
         .add("key", StringType, nullable = false)
         .add("value", IntegerType))
     testBatchWriteRejection(
-      NotNull,
+      NotNull(Seq("key")),
       schema,
       spark.createDataFrame(Seq(Row(Row("a", 1)), Row(Row(null, 2))).asJava, schema.asNullable),
       "top.key"
     )
     testBatchWriteRejection(
-      NotNull,
+      NotNull(Seq("key")),
       schema,
       spark.createDataFrame(Seq(Row(Row("a", 1)), Row(null)).asJava, schema.asNullable),
       "top.key"
@@ -243,7 +239,7 @@ class InvariantEnforcementSuite extends QueryTest
         .add("key", StringType)
         .add("value", IntegerType))), nullable = false)
     testBatchWriteRejection(
-      NotNull,
+      NotNull(Seq("top", "value")),
       schema,
       spark.createDataFrame(Seq(Row(Seq(Seq(Row("a", 1)))), Row(null)).asJava, schema.asNullable),
       "top"
@@ -252,7 +248,7 @@ class InvariantEnforcementSuite extends QueryTest
 
   testQuietly("reject expression invariant on top level column") {
     val expr = "value < 3"
-    val rule = ArbitraryExpression(spark, expr)
+    val rule = Constraints.Check("", spark.sessionState.sqlParser.parseExpression(expr))
     val metadata = new MetadataBuilder()
       .putString(Invariants.INVARIANTS_FIELD, PersistedExpression(expr).json)
       .build()
@@ -275,8 +271,8 @@ class InvariantEnforcementSuite extends QueryTest
   }
 
   testQuietly("reject expression invariant on nested column") {
-    val expr = "top.key < 3"
-    val rule = ArbitraryExpression(spark, expr)
+    val expr = "top.value < 3"
+    val rule = Constraints.Check("", spark.sessionState.sqlParser.parseExpression(expr))
     val metadata = new MetadataBuilder()
       .putString(Invariants.INVARIANTS_FIELD, PersistedExpression(expr).json)
       .build()
@@ -288,16 +284,16 @@ class InvariantEnforcementSuite extends QueryTest
       rule,
       schema,
       spark.createDataFrame(Seq(Row(Row("a", 1)), Row(Row(null, 5))).asJava, schema.asNullable),
-      "top.key", "5"
+      "top.value", "5"
     )
   }
 
   testQuietly("reject write on top level expression invariant when field is null") {
     val expr = "value < 3"
+    val rule = Constraints.Check("", spark.sessionState.sqlParser.parseExpression(expr))
     val metadata = new MetadataBuilder()
       .putString(Invariants.INVARIANTS_FIELD, PersistedExpression(expr).json)
       .build()
-    val rule = ArbitraryExpression(spark, expr)
     val schema = new StructType()
       .add("key", StringType)
       .add("value", IntegerType, nullable = true, metadata)
@@ -305,13 +301,13 @@ class InvariantEnforcementSuite extends QueryTest
       rule,
       schema,
       Seq[String]("a", "b").toDF("key"),
-      "value", "null"
+      " - value : null"
     )
     testBatchWriteRejection(
       rule,
       schema,
       Seq[(String, Integer)](("a", 1), ("b", null)).toDF("key", "value"),
-      "value", "null"
+      " - value : null"
     )
   }
 
@@ -320,7 +316,7 @@ class InvariantEnforcementSuite extends QueryTest
     val metadata = new MetadataBuilder()
       .putString(Invariants.INVARIANTS_FIELD, PersistedExpression(expr).json)
       .build()
-    val rule = ArbitraryExpression(spark, expr)
+    val rule = Constraints.Check("", spark.sessionState.sqlParser.parseExpression(expr))
     val schema = new StructType()
       .add("top", new StructType()
         .add("key", StringType)
@@ -329,7 +325,7 @@ class InvariantEnforcementSuite extends QueryTest
       rule,
       schema,
       spark.createDataFrame(Seq(Row(Row("a", 1)), Row(Row("b", null))).asJava, schema.asNullable),
-      "top.value", "null"
+      " - top.value : null"
     )
     val schema2 = new StructType()
       .add("top", new StructType()
@@ -338,7 +334,7 @@ class InvariantEnforcementSuite extends QueryTest
       rule,
       schema,
       spark.createDataFrame(Seq(Row(Row("a")), Row(Row("b"))).asJava, schema2.asNullable),
-      "top.value", "null"
+      " - top.value : null"
     )
   }
 
@@ -443,21 +439,34 @@ class InvariantEnforcementSuite extends QueryTest
     }
   }
 
-  test("CHECK constraint can't be written to if somehow created") {
-    withTable("noCheckConstraints") {
-      spark.range(10).write.format("delta").saveAsTable("noCheckConstraints")
-      val log = DeltaLog.forTable(spark, TableIdentifier("noCheckConstraints", None))
+  testQuietly("CHECK constraint is enforced if somehow created") {
+    withTable("constraint") {
+      spark.range(10).selectExpr("id AS valueA", "id AS valueB", "id AS valueC")
+        .write.format("delta").saveAsTable("constraint")
+      val log = DeltaLog.forTable(spark, TableIdentifier("constraint", None))
       val newMetadata = log.snapshot.metadata.copy(
-        configuration = log.snapshot.metadata.configuration + ("delta.constraints.mychk" -> "true"))
+        configuration = log.snapshot.metadata.configuration +
+          ("delta.constraints.mychk" -> "valueA < valueB"))
       log.store.write(
         FileNames.deltaFile(log.logPath, 1),
         Seq(Protocol().json, newMetadata.json).toIterator)
-      spark.read.format("delta").table("noCheckConstraints")
-      val ex = intercept[AnalysisException] {
-        spark.range(10).write.format("delta").mode("append").saveAsTable("noCheckConstraints")
+      val schema = spark.read.format("delta").table("constraint").schema
+      spark.sql("INSERT INTO constraint VALUES (50, 100, null)")
+      val e = intercept[SparkException] {
+        spark.sql("INSERT INTO constraint VALUES (100, 50, null)")
       }
-      assert(ex.getMessage.contains(
-        "CHECK constraints are unavailable in this version of Delta Lake"))
+      checkConstraintException(e,
+        s"""Check constraint mychk (`valueA` < `valueB`) violated by row with values:
+           | - valueA : 100
+           | - valueB : 50""".stripMargin)
+
+      val e2 = intercept[SparkException] {
+        spark.sql("INSERT INTO constraint VALUES (100, null, null)")
+      }
+      checkConstraintException(e2,
+        s"""Check constraint mychk (`valueA` < `valueB`) violated by row with values:
+           | - valueA : 100
+           | - valueB : null""".stripMargin)
     }
   }
 
@@ -466,7 +475,7 @@ class InvariantEnforcementSuite extends QueryTest
       schemaString: String,
       expectedError: String,
       data: Row): Unit = {
-    test(testName) {
+    testQuietly(testName) {
       val nullTable = "nullTbl"
       withTable(nullTable) {
         // Try creating the table with the check enabled first, which should fail, then create it
