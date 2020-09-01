@@ -127,16 +127,15 @@ object Protocol {
       featuresUsed.append("Setting column level invariants")
     }
 
-    if (Constraints.getCheckConstraints(metadata, spark).nonEmpty) {
-      throw new AnalysisException(
-        "CHECK constraints are unavailable in this version of Delta Lake. " +
-          "Please upgrade to a newer version.")
-    }
-
     val configs = metadata.configuration.map { case (k, v) => k.toLowerCase(Locale.ROOT) -> v }
     if (configs.contains(DeltaConfigs.IS_APPEND_ONLY.key.toLowerCase(Locale.ROOT))) {
       minimumRequired = Protocol(0, minWriterVersion = 2)
       featuresUsed.append(s"Append only tables (${DeltaConfigs.IS_APPEND_ONLY.key})")
+    }
+
+    if (Constraints.getCheckConstraints(metadata, spark).nonEmpty) {
+      minimumRequired = Protocol(0, minWriterVersion = 3)
+      featuresUsed.append("Setting CHECK constraints")
     }
 
     minimumRequired -> featuresUsed

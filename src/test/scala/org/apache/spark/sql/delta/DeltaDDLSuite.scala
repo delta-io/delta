@@ -76,7 +76,7 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
         val read = spark.read.format("delta").load(table.location.toString)
         checkAnswer(read, Seq(Row(1L, "a")))
 
-        intercept[SparkException] {
+        intercept[InvariantViolationException] {
           Seq((2L, null)).toDF("a", "b")
             .write.format("delta").mode("append").save(table.location.toString)
         }
@@ -184,7 +184,7 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
           sql("SELECT * FROM delta_test"),
           Seq(Row(1L, "a")))
 
-        val e = intercept[Exception] {
+        val e = intercept[InvariantViolationException] {
           sql("INSERT INTO delta_test VALUES (2, null)")
         }
         if (!e.getMessage.contains("nullable values to non-null column")) {
@@ -223,7 +223,7 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
               .add("a", "bigint")
               .add("b", "string"))
           .add("y", "bigint")
-        val e = intercept[SparkException] {
+        val e = intercept[InvariantViolationException] {
           spark.createDataFrame(
             Seq(Row(Row(2L, null), 2L)).asJava,
             schema
@@ -368,16 +368,11 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
     }
   }
 
-  private def verifyInvariantViolationException(e: Exception): Unit = {
-    var violationException = e.getCause
-    while (violationException != null &&
-      !violationException.isInstanceOf[InvariantViolationException]) {
-      violationException = violationException.getCause
-    }
-    if (violationException == null) {
+  private def verifyInvariantViolationException(e: InvariantViolationException): Unit = {
+    if (e == null) {
       fail("Didn't receive a InvariantViolationException.")
     }
-    assert(violationException.getMessage.contains("NOT NULL constraint violated for column"))
+    assert(e.getMessage.contains("NOT NULL constraint violated for column"))
   }
 
   test("ALTER TABLE RENAME TO") {

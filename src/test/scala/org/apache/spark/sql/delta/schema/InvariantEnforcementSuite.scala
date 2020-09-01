@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.DeltaOperations
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.schema.Constraints.NotNull
 import org.apache.spark.sql.delta.schema.Invariants.PersistedExpression
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
 
@@ -66,24 +67,16 @@ class InvariantEnforcementSuite extends QueryTest
       df: Dataset[_],
       expectedErrors: String*): Unit = {
     tableWithSchema(schema) { path =>
-      val e = intercept[SparkException] {
+      val e = intercept[InvariantViolationException] {
         df.write.mode("append").format("delta").save(path)
       }
       checkConstraintException(e, (invariant.name +: expectedErrors): _*)
     }
   }
 
-  private def checkConstraintException(e: Exception, expectedErrors: String*): Unit = {
-    var violationException = e.getCause
-    while (violationException != null &&
-      !violationException.isInstanceOf[InvariantViolationException]) {
-      violationException = violationException.getCause
-    }
-    if (violationException == null) {
-      fail("Didn't receive a InvariantViolationException.", e)
-    }
-    assert(violationException.isInstanceOf[InvariantViolationException])
-    val error = violationException.getMessage
+  private def checkConstraintException(
+      e: InvariantViolationException, expectedErrors: String*): Unit = {
+    val error = e.getMessage
     val allExpected = expectedErrors
     allExpected.foreach { expected =>
       assert(error.contains(expected), s"$error didn't contain $expected")
@@ -111,36 +104,13 @@ class InvariantEnforcementSuite extends QueryTest
           memStream.addData(data)
           stream.processAllAvailable()
         }
-        checkConstraintException(e, (invariant.name +: expectedErrors): _*)
-      } finally {
-        stream.stop()
-      }
-    }
-  }
+        // Produce a good error if the cause isn't the right type - just an assert makes it hard to
+        // see what the wrong exception was.
+        intercept[InvariantViolationException] { throw e.getCause }
 
-  private def testStreamingWrite[T: Encoder](
-      schema: StructType,
-      toDF: MemoryStream[T] => DataFrame,
-      data: Seq[T],
-      expected: DataFrame): Unit = {
-    withTempDir { dir =>
-      val deltaLog = DeltaLog.forTable(spark, dir)
-      val txn = deltaLog.startTransaction()
-      txn.commit(Metadata(schemaString = schema.json) :: Nil, DeltaOperations.ManualUpdate)
-      val memStream = MemoryStream[T]
-      val stream = toDF(memStream).writeStream
-        .outputMode("append")
-        .format("delta")
-        .option("checkpointLocation", new File(dir, "_checkpoint").getAbsolutePath)
-        .start(dir.getAbsolutePath)
-      try {
-        memStream.addData(data)
-        stream.processAllAvailable()
-
-        checkAnswer(
-          spark.read.format("delta").load(dir.getAbsolutePath),
-          expected
-        )
+        checkConstraintException(
+          e.getCause.asInstanceOf[InvariantViolationException],
+          (invariant.name +: expectedErrors): _*)
       } finally {
         stream.stop()
       }
@@ -384,10 +354,10 @@ class InvariantEnforcementSuite extends QueryTest
       .add("value", IntegerType, nullable = true, metadata)
     tableWithSchema(schema) { path =>
       Seq(1, 2).toDF("value").write.mode("append").format("delta").save(path)
-      intercept[SparkException] {
+      intercept[InvariantViolationException] {
         Seq(1, 4).toDF("value").write.mode("append").format("delta").save(path)
       }
-      intercept[SparkException] {
+      intercept[InvariantViolationException] {
         Seq(-1, 2).toDF("value").write.mode("append").format("delta").save(path)
       }
     }
@@ -403,16 +373,16 @@ class InvariantEnforcementSuite extends QueryTest
       .add("value", IntegerType)
     tableWithSchema(schema) { tempDir =>
       Seq("a", "b").toDF("key").write.mode("append").format("delta").save(tempDir)
-      intercept[SparkException] {
+      intercept[InvariantViolationException] {
         Seq("a", "d").toDF("key").write.mode("append").format("delta").save(tempDir)
       }
-      intercept[SparkException] {
+      intercept[InvariantViolationException] {
         Seq("e").toDF("key").write.mode("append").format("delta").save(tempDir)
       }
     }
   }
 
-  test("CHECK constraint can't be created through API") {
+  test("CHECK constraint can't be created through API by default") {
     withTable("noCheckConstraints") {
       spark.range(10).write.format("delta").saveAsTable("noCheckConstraints")
       val ex = intercept[AnalysisException] {
@@ -420,11 +390,13 @@ class InvariantEnforcementSuite extends QueryTest
           "ALTER TABLE noCheckConstraints SET TBLPROPERTIES ('delta.constraints.mychk' = '1')")
       }
       assert(ex.getMessage.contains(
-        "CHECK constraints are unavailable in this version of Delta Lake"))
+        "Protocol(0,3) or above"))
+      assert(ex.getMessage.contains(
+        "- Setting CHECK constraints"))
     }
   }
 
-  test("CHECK constraint can't be committed in a transaction") {
+  test("CHECK constraint can't be committed in a transaction by default") {
     withTable("noCheckConstraints") {
       spark.range(10).write.format("delta").saveAsTable("noCheckConstraints")
       val log = DeltaLog.forTable(spark, TableIdentifier("noCheckConstraints", None))
@@ -435,38 +407,56 @@ class InvariantEnforcementSuite extends QueryTest
         txn.commit(Seq(newMetadata), DeltaOperations.ManualUpdate)
       }
       assert(ex.getMessage.contains(
-        "CHECK constraints are unavailable in this version of Delta Lake"))
+        "Protocol(0,3) or above"))
+      assert(ex.getMessage.contains(
+        "- Setting CHECK constraints"))
     }
   }
 
   testQuietly("CHECK constraint is enforced if somehow created") {
-    withTable("constraint") {
-      spark.range(10).selectExpr("id AS valueA", "id AS valueB", "id AS valueC")
-        .write.format("delta").saveAsTable("constraint")
-      val log = DeltaLog.forTable(spark, TableIdentifier("constraint", None))
-      val newMetadata = log.snapshot.metadata.copy(
-        configuration = log.snapshot.metadata.configuration +
-          ("delta.constraints.mychk" -> "valueA < valueB"))
-      log.store.write(
-        FileNames.deltaFile(log.logPath, 1),
-        Seq(Protocol().json, newMetadata.json).toIterator)
-      val schema = spark.read.format("delta").table("constraint").schema
-      spark.sql("INSERT INTO constraint VALUES (50, 100, null)")
-      val e = intercept[SparkException] {
-        spark.sql("INSERT INTO constraint VALUES (100, 50, null)")
-      }
-      checkConstraintException(e,
-        s"""Check constraint mychk (`valueA` < `valueB`) violated by row with values:
-           | - valueA : 100
-           | - valueB : 50""".stripMargin)
+    withSQLConf((DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key, "3")) {
+      withTable("constraint") {
+        spark.range(10).selectExpr("id AS valueA", "id AS valueB", "id AS valueC")
+          .write.format("delta").saveAsTable("constraint")
+        val log = DeltaLog.forTable(spark, TableIdentifier("constraint", None))
+        val txn = log.startTransaction()
+        val newMetadata = txn.metadata.copy(
+          configuration = txn.metadata.configuration +
+            ("delta.constraints.mychk" -> "valueA < valueB"))
+        txn.commit(Seq(newMetadata), DeltaOperations.ManualUpdate)
+        spark.sql("INSERT INTO constraint VALUES (50, 100, null)")
+        val e = intercept[InvariantViolationException] {
+          spark.sql("INSERT INTO constraint VALUES (100, 50, null)")
+        }
+        checkConstraintException(e,
+          s"""Check constraint mychk (`valueA` < `valueB`) violated by row with values:
+             | - valueA : 100
+             | - valueB : 50""".stripMargin)
 
-      val e2 = intercept[SparkException] {
-        spark.sql("INSERT INTO constraint VALUES (100, null, null)")
+        val e2 = intercept[InvariantViolationException] {
+          spark.sql("INSERT INTO constraint VALUES (100, null, null)")
+        }
+        checkConstraintException(e2,
+          s"""Check constraint mychk (`valueA` < `valueB`) violated by row with values:
+             | - valueA : 100
+             | - valueB : null""".stripMargin)
       }
-      checkConstraintException(e2,
-        s"""Check constraint mychk (`valueA` < `valueB`) violated by row with values:
-           | - valueA : 100
-           | - valueB : null""".stripMargin)
+    }
+  }
+
+  test("table with CHECK constraint accepts other metadata changes") {
+    withSQLConf((DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key, "3")) {
+      withTable("constraint") {
+        spark.range(10).selectExpr("id AS valueA", "id AS valueB")
+          .write.format("delta").saveAsTable("constraint")
+        val log = DeltaLog.forTable(spark, TableIdentifier("constraint", None))
+        val txn = log.startTransaction()
+        val newMetadata = txn.metadata.copy(
+          configuration = txn.metadata.configuration +
+            ("delta.constraints.mychk" -> "valueA < valueB"))
+        txn.commit(Seq(newMetadata), DeltaOperations.ManualUpdate)
+        spark.sql("ALTER TABLE constraint ADD COLUMN valueC INT")
+      }
     }
   }
 

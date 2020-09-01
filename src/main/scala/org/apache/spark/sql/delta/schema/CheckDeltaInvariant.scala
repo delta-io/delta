@@ -75,6 +75,15 @@ case class CheckDeltaInvariant(
      """.stripMargin
   }
 
+  /**
+   * Generate the code to extract values for the columns referenced in a violated CHECK constraint.
+   * We build parallel lists of full column names and their extracted values in the row which
+   * violates the constraint, to be passed to the [[InvariantViolationException]] constructor
+   * in [[generateExpressionValidationCode()]].
+   *
+   * Note that this code is a bit expensive, so it shouldn't be run until we already
+   * know the constraint has been violated.
+   */
   private def generateColumnValuesCode(
       colList: String, valList: String, ctx: CodegenContext): Block = {
     val start =
