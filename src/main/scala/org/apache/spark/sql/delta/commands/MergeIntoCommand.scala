@@ -244,10 +244,20 @@ case class MergeIntoCommand(
 
     // Calculate frequency of matches per source row
     val matchedRowCounts = collectTouchedFiles.groupBy(ROW_ID_COL).agg(sum("one").as("count"))
-    // Even there is no update clause, we still need this inner join job to fill touchedFilesAccum,
-    // but the exception is thrown only with update clause.
-    if (matchedRowCounts.filter("count > 1").count() != 0 &&
-        (updateClause.isDefined || !isMatchedOnly)) {
+    // Get multiple matches and simultaneously collect (using touchedFilesAccum) the file names
+    val multipleMatchCount = matchedRowCounts.filter("count > 1").count()
+    // Throw error if multiple matches are ambiguous
+    val isAmbiguous = {
+      // Multiple matches are not ambiguous only when there is only one unconditional delete as
+      // all the matched row pairs in the 2nd join (see `writeAllChanges`) will get deleted.
+      val isUnconditionalDelete = matchedClauses.headOption match {
+        case Some(DeltaMergeIntoDeleteClause(None)) => true
+        case _ => false
+      }
+      !(matchedClauses.size == 1 && isUnconditionalDelete)
+    }
+
+    if (multipleMatchCount > 0 && isAmbiguous) {
       throw DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(spark)
     }
 

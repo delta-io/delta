@@ -1301,7 +1301,7 @@ abstract class MergeIntoSuiteBase
       (2, 2)    // (1, 1) deleted
     ))          // (3, 30) not inserted as not insert clause
 
-  testExtendedMerge(s"extended syntax - only delete with multiple matches")(
+  testExtendedMerge(s"extended syntax - only unconditional delete with multiple matches")(
     source = (0, 0) :: (1, 10) :: (1, 100) :: (3, 30) :: Nil,
     target = (1, 1) :: (2, 2) :: Nil,
     mergeOn = "s.key = t.key",
