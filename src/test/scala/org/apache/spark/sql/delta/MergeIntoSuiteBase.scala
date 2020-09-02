@@ -1252,6 +1252,22 @@ abstract class MergeIntoSuiteBase
     }
   }
 
+  protected def testExtendedMergeErrorOnMultipleMatches(
+      name: String)(
+      source: Seq[(Int, Int)],
+      target: Seq[(Int, Int)],
+      mergeOn: String,
+      mergeClauses: MergeClause*): Unit = {
+    test(s"extended syntax - $name") {
+      withKeyValueData(source, target) { case (sourceName, targetName) =>
+        val errMsg = intercept[UnsupportedOperationException] {
+          executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
+        }.getMessage.toLowerCase(Locale.ROOT)
+        assert(errMsg.contains("cannot perform merge as multiple source rows matched"))
+      }
+    }
+  }
+
   testExtendedMerge("only update")(
     source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
     target = (1, 1) :: (2, 2)  :: Nil,
@@ -1262,21 +1278,11 @@ abstract class MergeIntoSuiteBase
       (2, 2)
     ))
 
-
-  test(s"extended syntax - only update with multiple matches") {
-    withKeyValueData(
-      source = (0, 0) :: (1, 10) :: (1, 11) :: (2, 20) :: Nil,
-      target = (1, 1) :: (2, 2) :: Nil
-    ) { case (sourceName, targetName) =>
-      intercept[UnsupportedOperationException] {
-        executeMerge(
-          s"$targetName t",
-          s"$sourceName s",
-          "s.key = t.key",
-          update(set = "key = s.key, value = s.value"))
-      }
-    }
-  }
+  testExtendedMergeErrorOnMultipleMatches("only update with multiple matches")(
+    source = (0, 0) :: (1, 10) :: (1, 11) :: (2, 20) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    update(set = "key = s.key, value = s.value"))
 
   testExtendedMerge("only conditional update")(
     source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
@@ -1289,6 +1295,12 @@ abstract class MergeIntoSuiteBase
       (3, 3)    // not updated due to target-only condition `t.value <> 3`
     ))
 
+  testExtendedMergeErrorOnMultipleMatches("only conditional update with multiple matches")(
+    source = (0, 0) :: (1, 10) :: (1, 11) :: (2, 20) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    update(condition = "s.value = 10", set = "key = s.key, value = s.value"))
+
   testExtendedMerge("only delete")(
     source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
     target = (1, 1) :: (2, 2) :: Nil,
@@ -1298,16 +1310,16 @@ abstract class MergeIntoSuiteBase
       (2, 2)    // (1, 1) deleted
     ))          // (3, 30) not inserted as not insert clause
 
-  test(s"extended syntax - only delete with multiple matches") {
-    withKeyValueData(
-      source = (0, 0) :: (1, 10) :: (1, 100) :: (3, 30) :: Nil,
-      target = (1, 1) :: (2, 2) :: Nil
-    ) { case (sourceName, targetName) =>
-      intercept[UnsupportedOperationException] {
-        executeMerge(s"$targetName t", s"$sourceName s", "s.key = t.key", delete())
-      }
-    }
-  }
+  // This is not ambiguous even when there are multiple matches
+  testExtendedMerge(s"only delete with multiple matches")(
+    source = (0, 0) :: (1, 10) :: (1, 100) :: (3, 30) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    delete())(
+    result = Seq(
+      (2, 2)  // (1, 1) matches multiple source rows but unambiguously deleted
+    )
+  )
 
   testExtendedMerge("only conditional delete")(
     source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
@@ -1318,6 +1330,12 @@ abstract class MergeIntoSuiteBase
       (2, 2),   // not deleted due to source-only condition `s.value <> 20`
       (3, 3)    // not deleted due to target-only condition `t.value <> 3`
     ))          // (1, 1) deleted
+
+  testExtendedMergeErrorOnMultipleMatches("only conditional delete with multiple matches")(
+    source = (0, 0) :: (1, 10) :: (1, 100) :: (2, 20) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    delete(condition = "s.value = 10"))
 
   testExtendedMerge("conditional update + delete")(
     source = (0, 0) :: (1, 10) :: (2, 20) :: Nil,
@@ -1330,6 +1348,13 @@ abstract class MergeIntoSuiteBase
       (3, 3)
     ))
 
+  testExtendedMergeErrorOnMultipleMatches("conditional update + delete with multiple matches")(
+    source = (0, 0) :: (1, 10) :: (2, 20) :: (2, 200) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    update(condition = "s.value = 20", set = "key = s.key, value = s.value"),
+    delete())
+
   testExtendedMerge("conditional update + conditional delete")(
     source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
     target = (1, 1) :: (2, 2) :: (3, 3) :: (4, 4) :: Nil,
@@ -1341,6 +1366,14 @@ abstract class MergeIntoSuiteBase
       (3, 30),  // (3, 3) updated even though it matched update and delete conditions, as update 1st
       (4, 4)
     ))          // (1, 1) deleted as it matched delete condition
+
+  testExtendedMergeErrorOnMultipleMatches(
+    "conditional update + conditional delete with multiple matches")(
+    source = (0, 0) :: (1, 10) :: (1, 100) :: (2, 20) :: (2, 200) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    update(condition = "s.value = 20", set = "key = s.key, value = s.value"),
+    delete(condition = "s.value = 10"))
 
   testExtendedMerge("conditional delete + conditional update (order matters)")(
     source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
@@ -1413,6 +1446,20 @@ abstract class MergeIntoSuiteBase
       (2, 2)
     ))
 
+  testExtendedMerge(s"delete + insert with multiple matches for both") (
+    source = (1, 10) :: (1, 100) :: (3, 30) :: (3, 300) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    delete(),
+    insert(values = "(key, value) VALUES (s.key, s.value)")) (
+    result = Seq(
+               // (1, 1) matches multiple source rows but unambiguously deleted
+      (2, 2),  // existed previously
+      (3, 30), // inserted
+      (3, 300) // inserted
+    )
+  )
+
   testExtendedMerge("conditional update + conditional delete + conditional insert")(
     source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: (4, 40) :: Nil,
     target = (1, 1) :: (2, 2) :: (3, 3) :: Nil,
@@ -1425,6 +1472,15 @@ abstract class MergeIntoSuiteBase
       (3, 3),   // neither updated nor deleted as it matched neither condition
       (4, 40)   // (4, 40) inserted by condition, but not (0, 0)
     ))          // (2, 2) deleted by condition but not (1, 1) or (3, 3)
+
+  testExtendedMergeErrorOnMultipleMatches(
+    "conditional update + conditional delete + conditional insert with multiple matches")(
+    source = (0, 0) :: (1, 10) :: (1, 100) :: (2, 20) :: (2, 200) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    update(condition = "s.value = 20", set = "key = s.key, value = s.value"),
+    delete(condition = "s.value = 10"),
+    insert(condition = "s.value = 0", values = "(key, value) VALUES (s.key, s.value)"))
 
   // complex merge condition = has target-only and source-only predicates
   testExtendedMerge(
@@ -1705,14 +1761,61 @@ abstract class MergeIntoSuiteBase
   test("insert only merge - turn off feature flag") {
     withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "false") {
       withKeyValueData(
-        source = (0, 0) :: (1, 10) :: (1, 100) :: (3, 30) :: (3, 300) :: Nil,
-        target = (1, 1) :: (2, 2) :: Nil
+        source = (1, 10) :: (3, 30) :: Nil,
+        target = (1, 1) :: Nil
       ) { case (sourceName, targetName) =>
-        intercept[UnsupportedOperationException] {
-          // This is supposed to fail as the duplicated keys in source were not supported.
-          executeMerge(s"$targetName t", s"$sourceName s", "s.key = t.key",
+        executeMerge(
+          s"$targetName t",
+          s"$sourceName s",
+          "s.key = t.key",
+          insert(values = "(key, value) VALUES (s.key, s.value)"))
+
+        checkAnswer(sql(s"SELECT key, value FROM $targetName"),
+          Row(1, 1) :: Row(3, 30) :: Nil)
+
+        val metrics = spark.sql(s"DESCRIBE HISTORY $targetName LIMIT 1")
+          .select("operationMetrics")
+          .collect().head.getMap(0).asInstanceOf[Map[String, String]]
+        assert(metrics.contains("numTargetFilesRemoved"))
+        // If insert-only code path is not used, then the general code path will rewrite existing
+        // target files.
+        assert(metrics("numTargetFilesRemoved").toInt > 0)
+      }
+    }
+  }
+
+  test("insert only merge - multiple matches when feature flag off") {
+    withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "false") {
+      // Verify that in case of multiple matches, it throws error rather than producing
+      // incorrect results.
+      withKeyValueData(
+        source = (1, 10) :: (1, 100) :: (2, 20) :: Nil,
+        target = (1, 1) :: Nil
+      ) { case (sourceName, targetName) =>
+        val errMsg = intercept[UnsupportedOperationException] {
+          executeMerge(
+            s"$targetName t",
+            s"$sourceName s",
+            "s.key = t.key",
             insert(values = "(key, value) VALUES (s.key, s.value)"))
-        }
+        }.getMessage.toLowerCase(Locale.ROOT)
+        assert(errMsg.contains("cannot perform merge as multiple source rows matched"))
+      }
+
+      // Verify that in case of multiple matches, it throws error rather than producing
+      // incorrect results.
+      withKeyValueData(
+        source = (1, 10) :: (1, 100) :: (2, 20) :: (2, 200) :: Nil,
+        target = (1, 1) :: Nil
+      ) { case (sourceName, targetName) =>
+        val errMsg = intercept[UnsupportedOperationException] {
+          executeMerge(
+            s"$targetName t",
+            s"$sourceName s",
+            "s.key = t.key",
+            insert(condition = "s.value = 20", values = "(key, value) VALUES (s.key, s.value)"))
+        }.getMessage.toLowerCase(Locale.ROOT)
+        assert(errMsg.contains("cannot perform merge as multiple source rows matched"))
       }
     }
   }
