@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.execution.adaptive.DisableAdaptiveExecution
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{IntegerType, MapType, StringType, StructType}
@@ -1826,7 +1827,8 @@ abstract class MergeIntoSuiteBase
       srcRange: Range,
       expectLessFilesWithRepartition: Boolean,
       clauses: MergeClause*): Unit = {
-    test(s"merge with repartition - $name") {
+    test(s"merge with repartition - $name",
+      DisableAdaptiveExecution("AQE coalese would partition number")) {
       withTempView("source") {
         withTempDir { basePath =>
           val tgt1 = basePath + "target"
