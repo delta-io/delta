@@ -46,7 +46,7 @@ Note: if you would like to build jars using Scala 2.11, you can run the SBT comm
 
 ```
 core/target/scala-2.11/delta-core-shaded-assembly_2.11-0.1.0.jar
-hive/target/scala-2.12/hive-delta_2.11-0.1.0.jar
+hive/target/scala-2.11/hive-delta_2.11-0.1.0.jar
 ```
 
 ### Setting up Hive
