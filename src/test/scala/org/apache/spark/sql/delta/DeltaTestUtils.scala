@@ -16,8 +16,15 @@
 
 package org.apache.spark.sql.delta
 
+import scala.collection.mutable.ArrayBuffer
+
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
-import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol, SingleAction}
+import org.apache.spark.sql.delta.actions.{Action, Metadata}
+
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.execution.QueryExecution
+import org.apache.spark.sql.util.QueryExecutionListener
 
 trait DeltaTestUtilsBase {
 
@@ -31,6 +38,36 @@ trait DeltaTestUtilsBase {
       } else {
         txn.commit(actions, ManualUpdate)
       }
+    }
+  }
+
+  class LogicalPlanCapturingListener(optimized: Boolean) extends QueryExecutionListener {
+    val plans = new ArrayBuffer[LogicalPlan]
+    override def onSuccess(funcName: String, qe: QueryExecution, durationNs: Long): Unit = {
+      if (optimized) plans.append(qe.optimizedPlan) else plans.append(qe.analyzed)
+    }
+
+    override def onFailure(
+      funcName: String, qe: QueryExecution, error: Exception): Unit = {}
+  }
+
+  /**
+   * Run a thunk with physical plans for all queries captured and passed into a provided buffer.
+   */
+  def withLogicalPlansCaptured[T](
+      spark: SparkSession,
+      optimizedPlan: Boolean)(
+      thunk: => Unit): ArrayBuffer[LogicalPlan] = {
+    val planCapturingListener = new LogicalPlanCapturingListener(optimizedPlan)
+
+    spark.sparkContext.listenerBus.waitUntilEmpty(15000)
+    spark.listenerManager.register(planCapturingListener)
+    try {
+      thunk
+      spark.sparkContext.listenerBus.waitUntilEmpty(15000)
+      planCapturingListener.plans
+    } finally {
+      spark.listenerManager.unregister(planCapturingListener)
     }
   }
 }

@@ -16,18 +16,24 @@
 
 package org.apache.spark.sql.delta
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.io.File
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
 
-import org.apache.spark.sql.QueryTest
+import org.apache.spark.SparkConf
+import org.apache.spark.sql.{AnalysisException, QueryTest}
+import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
 trait DeltaProtocolVersionSuiteBase extends QueryTest
-    with SharedSparkSession {
+  with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   private lazy val testTableSchema = spark.range(1).schema
 
@@ -129,6 +135,186 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         assert(
           !p.getFileSystem(spark.sessionState.newHadoopConf).exists(p),
           s"$p should not be committed")
+      }
+    }
+  }
+
+  import testImplicits._
+  /** Creates a Delta table and checks the expected protocol version */
+  private def testCreation(tableName: String, writerVersion: Int)(fn: String => Unit): Unit = {
+    withTempDir { dir =>
+      withSQLConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1") {
+        withTable(tableName) {
+          fn(dir.getCanonicalPath)
+
+          val deltaLog = DeltaLog.forTable(spark, dir)
+          assert(deltaLog.snapshot.version === 0, "did not create a Delta table")
+          assert(deltaLog.snapshot.protocol.minWriterVersion === writerVersion)
+          assert(deltaLog.snapshot.protocol.minReaderVersion === 1)
+        }
+      }
+    }
+  }
+
+  test("creating a new table with default protocol") {
+    val tableName = "delta_test"
+
+    def testTableCreation(fn: String => Unit): Unit = {
+      testCreation(tableName, 1) { dir =>
+        fn(dir)
+        val e = intercept[AnalysisException] {
+          sql(s"ALTER TABLE delta.`$dir` SET TBLPROPERTIES ('delta.appendOnly' = 'true')")
+        }
+        assert(e.getMessage.contains("protocol version"))
+        assert(e.getMessage.contains("delta.appendOnly"))
+      }
+    }
+
+    testTableCreation { dir => spark.range(10).write.format("delta").save(dir) }
+    testTableCreation { dir =>
+      spark.range(10).write.format("delta").option("path", dir).saveAsTable(tableName)
+    }
+    testTableCreation { dir =>
+      spark.range(10).writeTo(tableName).using("delta").tableProperty("location", dir).create()
+    }
+    testTableCreation { dir =>
+      sql(s"CREATE TABLE $tableName (id bigint) USING delta LOCATION '$dir'")
+    }
+    testTableCreation { dir =>
+      sql(s"CREATE TABLE $tableName USING delta LOCATION '$dir' AS SELECT * FROM range(10)")
+    }
+    testTableCreation { dir =>
+      val stream = MemoryStream[Int]
+      stream.addData(1 to 10)
+      val q = stream.toDF().writeStream.format("delta")
+        .option("checkpointLocation", new File(dir, "_checkpoint").getCanonicalPath)
+        .start(dir)
+      q.processAllAvailable()
+      q.stop()
+    }
+
+    testTableCreation { dir =>
+      spark.range(10).write.mode("append").parquet(dir)
+      sql(s"CONVERT TO DELTA parquet.`$dir`")
+    }
+  }
+
+  test("creating a new table with default protocol - requiring more recent protocol version") {
+    val tableName = "delta_test"
+    def testTableCreation(fn: String => Unit): Unit = testCreation(tableName, 2)(fn)
+
+    testTableCreation { dir =>
+      spark.range(10).writeTo(tableName).using("delta")
+        .tableProperty("location", dir)
+        .tableProperty("delta.appendOnly", "true")
+        .create()
+    }
+    testTableCreation { dir =>
+      sql(s"CREATE TABLE $tableName (id bigint) USING delta LOCATION '$dir' " +
+        s"TBLPROPERTIES (delta.appendOnly = 'true')")
+    }
+    testTableCreation { dir =>
+      sql(s"CREATE TABLE $tableName USING delta TBLPROPERTIES (delta.appendOnly = 'true') " +
+        s"LOCATION '$dir' AS SELECT * FROM range(10)")
+    }
+    testTableCreation { dir =>
+      sql(s"CREATE TABLE $tableName (id bigint NOT NULL) USING delta LOCATION '$dir'")
+    }
+
+    withSQLConf("spark.databricks.delta.properties.defaults.appendOnly" -> "true") {
+      testTableCreation { dir => spark.range(10).write.format("delta").save(dir) }
+      testTableCreation { dir =>
+        spark.range(10).write.format("delta").option("path", dir).saveAsTable(tableName)
+      }
+      testTableCreation { dir =>
+        spark.range(10).writeTo(tableName).using("delta").tableProperty("location", dir).create()
+      }
+      testTableCreation { dir =>
+        sql(s"CREATE TABLE $tableName (id bigint) USING delta LOCATION '$dir'")
+      }
+      testTableCreation { dir =>
+        sql(s"CREATE TABLE $tableName USING delta LOCATION '$dir' AS SELECT * FROM range(10)")
+      }
+      testTableCreation { dir =>
+        val stream = MemoryStream[Int]
+        stream.addData(1 to 10)
+        val q = stream.toDF().writeStream.format("delta")
+          .option("checkpointLocation", new File(dir, "_checkpoint").getCanonicalPath)
+          .start(dir)
+        q.processAllAvailable()
+        q.stop()
+      }
+
+      testTableCreation { dir =>
+        spark.range(10).write.mode("append").parquet(dir)
+        sql(s"CONVERT TO DELTA parquet.`$dir`")
+      }
+    }
+  }
+
+  test("replacing a new table with default protocol") {
+    withTempDir { dir =>
+      // In this test we go back and forth through protocol versions, testing the various syntaxes
+      // of replacing tables
+      val tbl = "delta_test"
+      withTable(tbl) {
+        withSQLConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1") {
+          sql(s"CREATE TABLE $tbl (id bigint) USING delta LOCATION '${dir.getCanonicalPath}'")
+        }
+        val deltaLog = DeltaLog.forTable(spark, dir)
+        assert(deltaLog.snapshot.protocol.minWriterVersion === 1,
+          "Should've picked up the protocol from the configuration")
+
+        // Replace the table and make sure the config is picked up
+        withSQLConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "2") {
+          spark.range(10).writeTo(tbl).using("delta")
+            .tableProperty("location", dir.getCanonicalPath).replace()
+        }
+        assert(deltaLog.snapshot.protocol.minWriterVersion === 2,
+          "Should've picked up the protocol from the configuration")
+
+        // Replace with the old writer again
+        withSQLConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1") {
+          sql(s"REPLACE TABLE $tbl (id bigint) USING delta LOCATION '${dir.getCanonicalPath}'")
+          assert(deltaLog.snapshot.protocol.minWriterVersion === 1,
+            "Should've created a new protocol")
+
+          sql(s"CREATE OR REPLACE TABLE $tbl (id bigint NOT NULL) USING delta " +
+            s"LOCATION '${dir.getCanonicalPath}'")
+          assert(deltaLog.snapshot.protocol.minWriterVersion === 2,
+            "Invariant should require the higher protocol")
+
+          // Go back to version 1
+          sql(s"REPLACE TABLE $tbl (id bigint) USING delta LOCATION '${dir.getCanonicalPath}'")
+          assert(deltaLog.snapshot.protocol.minWriterVersion === 1,
+            "Should've created a new protocol")
+
+          // Check table properties with different syntax
+          spark.range(10).writeTo(tbl).tableProperty("location", dir.getCanonicalPath)
+            .tableProperty("delta.appendOnly", "true").using("delta").createOrReplace()
+          assert(deltaLog.snapshot.protocol.minWriterVersion === 2,
+            "appendOnly should require the higher protocol")
+        }
+      }
+    }
+  }
+
+  test("bad inputs for default protocol versions") {
+    withTempDir { path =>
+      val dir = path.getCanonicalPath
+      Seq("abc", "", "0", (Action.readerVersion + 1).toString).foreach { conf =>
+        val e = intercept[IllegalArgumentException] {
+          withSQLConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> conf) {
+            spark.range(10).write.format("delta").save(dir)
+          }
+        }
+      }
+      Seq("abc", "", "0", (Action.writerVersion + 1).toString).foreach { conf =>
+        intercept[IllegalArgumentException] {
+          withSQLConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> conf) {
+            spark.range(10).write.format("delta").save(dir)
+          }
+        }
       }
     }
   }

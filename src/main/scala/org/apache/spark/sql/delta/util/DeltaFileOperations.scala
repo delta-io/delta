@@ -204,6 +204,18 @@ object DeltaFileOperations extends DeltaLogging {
   }
 
   /**
+   * Lists the directory locally using LogStore without launching a spark job.
+   */
+  def localListDirs(
+      spark: SparkSession,
+      dirs: Seq[String],
+      recursive: Boolean = true,
+      fileFilter: String => Boolean = defaultHiddenFileFilter): Seq[SerializableFileStatus] = {
+    val logStore = LogStore(SparkEnv.get.conf, spark.sessionState.newHadoopConf)
+    listUsingLogStore(logStore, dirs.toIterator, recurse = recursive, fileFilter).toSeq
+  }
+
+  /**
    * Tries deleting a file or directory non-recursively. If the file/folder doesn't exist,
    * that's fine, a separate operation may be deleting files/folders. If a directory is non-empty,
    * we shouldn't delete it. FileSystem implementations throw an `IOException` in those cases,

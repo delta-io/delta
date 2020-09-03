@@ -21,14 +21,16 @@ import java.io.FileNotFoundException
 
 import scala.util.matching.Regex
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTableUtils, DeltaTimeTravelSpec}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
-import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
+import org.apache.spark.sql.connector.read.streaming
+import org.apache.spark.sql.connector.read.streaming.{ReadAllAvailable, ReadLimit, ReadMaxFiles, SupportsAdmissionControl}
 import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.types.StructType
 
@@ -67,6 +69,7 @@ case class DeltaSource(
     options: DeltaOptions,
     filters: Seq[Expression] = Nil)
   extends Source
+  with SupportsAdmissionControl
   with DeltaLogging {
 
   // Deprecated. Please use `ignoreDeletes` or `ignoreChanges` from now on.
@@ -174,12 +177,16 @@ case class DeltaSource(
 
   private def getStartingOffset(
       limits: Option[AdmissionLimits] = Some(new AdmissionLimits())): Option[Offset] = {
-    val version = deltaLog.snapshot.version
+
+    val (version, isStartingVersion) = getStartingVersion match {
+      case Some(v) => (v, false)
+      case None => (deltaLog.snapshot.version, true)
+    }
     if (version < 0) {
       return None
     }
     val last = iteratorLast(
-      getChangesWithRateLimit(version, -1L, isStartingVersion = true, limits))
+      getChangesWithRateLimit(version, -1L, isStartingVersion = isStartingVersion, limits))
     if (last.isEmpty) {
       return None
     }
@@ -197,15 +204,20 @@ case class DeltaSource(
     }
   }
 
+  override def getDefaultReadLimit: ReadLimit = {
+    new AdmissionLimits().toReadLimit
+  }
 
-  override def getOffset: Option[Offset] = {
+  override def latestOffset(startOffset: streaming.Offset, limit: ReadLimit): streaming.Offset = {
     val currentOffset = if (previousOffset == null) {
-      getStartingOffset()
+      getStartingOffset(AdmissionLimits(limit))
     } else {
-      val last = iteratorLast(getChangesWithRateLimit(
+      val changes = getChangesWithRateLimit(
         previousOffset.reservoirVersion,
         previousOffset.index,
-        previousOffset.isStartingVersion))
+        previousOffset.isStartingVersion,
+        AdmissionLimits(limit))
+      val last = iteratorLast(changes)
       if (last.isEmpty) {
         Some(previousOffset)
       } else {
@@ -224,7 +236,12 @@ case class DeltaSource(
       }
     }
     logDebug(s"previousOffset -> currentOffset: $previousOffset -> $currentOffset")
-    currentOffset
+    currentOffset.orNull
+  }
+
+  override def getOffset: Option[Offset] = {
+    throw new UnsupportedOperationException(
+      "latestOffset(Offset, ReadLimit) should be called instead of this method")
   }
 
   private def verifyStreamHygieneAndFilterAddFiles(actions: Seq[Action]): Seq[Action] = {
@@ -270,13 +287,18 @@ case class DeltaSource(
     val endOffset = DeltaSourceOffset(tableId, end)
     previousOffset = endOffset // For recovery
     val changes = if (start.isEmpty) {
-      if (endOffset.isStartingVersion) {
-        getChanges(endOffset.reservoirVersion, -1L, isStartingVersion = true)
-      } else {
-        assert(endOffset.reservoirVersion > 0, s"invalid reservoirVersion in endOffset: $endOffset")
-        // Load from snapshot `endOffset.reservoirVersion - 1L` so that `index` in `endOffset`
-        // is still valid.
-        getChanges(endOffset.reservoirVersion - 1L, -1L, isStartingVersion = true)
+      getStartingVersion match {
+        case Some(v) => getChanges(v, -1L, isStartingVersion = false)
+        case _ =>
+          if (endOffset.isStartingVersion) {
+            getChanges(endOffset.reservoirVersion, -1L, isStartingVersion = true)
+          } else {
+            assert(
+              endOffset.reservoirVersion > 0, s"invalid reservoirVersion in endOffset: $endOffset")
+            // Load from snapshot `endOffset.reservoirVersion - 1L` so that `index` in `endOffset`
+            // is still valid.
+            getChanges(endOffset.reservoirVersion - 1L, -1L, isStartingVersion = true)
+          }
       }
     } else {
       val startOffset = DeltaSourceOffset(tableId, start.get)
@@ -332,6 +354,45 @@ case class DeltaSource(
       filesToTake -= 1
       bytesToTake -= add.get.size
       shouldAdmit
+    }
+
+    def toReadLimit: ReadLimit = {
+      if (options.maxFilesPerTrigger.isDefined && options.maxBytesPerTrigger.isDefined) {
+        CompositeLimit(
+          ReadMaxBytes(options.maxBytesPerTrigger.get),
+          ReadLimit.maxFiles(options.maxFilesPerTrigger.get).asInstanceOf[ReadMaxFiles])
+      } else if (options.maxBytesPerTrigger.isDefined) {
+        ReadMaxBytes(options.maxBytesPerTrigger.get)
+      } else {
+        ReadLimit.maxFiles(
+          options.maxFilesPerTrigger.getOrElse(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION_DEFAULT))
+      }
+    }
+  }
+
+  private object AdmissionLimits {
+    def apply(limit: ReadLimit): Option[AdmissionLimits] = limit match {
+      case _: ReadAllAvailable => None
+      case maxFiles: ReadMaxFiles => Some(new AdmissionLimits(Some(maxFiles.maxFiles())))
+      case maxBytes: ReadMaxBytes => Some(new AdmissionLimits(None, maxBytes.maxBytes))
+      case composite: CompositeLimit =>
+        Some(new AdmissionLimits(Some(composite.files.maxFiles()), composite.bytes.maxBytes))
+      case other => throw new UnsupportedOperationException(s"Unknown ReadLimit: $other")
+    }
+  }
+
+  /** Extracts whether users provided the option to time travel a relation. */
+  private lazy val getStartingVersion: Option[Long] = {
+    val tsOpt = options.startingTimestamp
+    val versionOpt = options.startingVersion
+
+    /** DeltaOption validates input and ensures that only one is provided. */
+    if (tsOpt.isDefined || versionOpt.isDefined) {
+      Some(DeltaTableUtils.resolveTimeTravelVersion(
+        spark.sessionState.conf, deltaLog,
+        DeltaTimeTravelSpec(tsOpt.map(Literal(_)), versionOpt, Some("deltaSource")))._1)
+    } else {
+      None
     }
   }
 }

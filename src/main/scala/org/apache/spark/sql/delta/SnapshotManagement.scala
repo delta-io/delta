@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.actions.{Metadata, SingleAction}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
-import org.apache.hadoop.fs.FileStatus
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{AnalysisException, Dataset}
@@ -57,6 +57,11 @@ trait SnapshotManagement { self: DeltaLog =>
     getLogSegmentForVersion(startingCheckpoint.map(_.version))
   }
 
+  /** Get an iterator of files in the _delta_log directory starting with the startVersion. */
+  protected def listFrom(startVersion: Long): Iterator[FileStatus] = {
+    store.listFrom(checkpointPrefix(logPath, startVersion))
+  }
+
   /**
    * Get a list of files that can be used to compute a Snapshot at version `versionToLoad`, If
    * `versionToLoad` is not provided, will generate the list of files that are needed to load the
@@ -76,10 +81,9 @@ trait SnapshotManagement { self: DeltaLog =>
       startCheckpoint: Option[Long],
       versionToLoad: Option[Long] = None): LogSegment = {
 
-    val newFiles = store
-      // List from the starting checkpoint. If a checkpoint doesn't exist, this will still return
-      // deltaVersion=0.
-      .listFrom(checkpointPrefix(logPath, startCheckpoint.getOrElse(0L)))
+    // List from the starting checkpoint. If a checkpoint doesn't exist, this will still return
+    // deltaVersion=0.
+    val newFiles = listFrom(startCheckpoint.getOrElse(0L))
       // Pick up all checkpoint and delta files
       .filter { file => isCheckpointFile(file.getPath) || isDeltaFile(file.getPath) }
       // filter out files that aren't atomically visible. Checkpoint files of 0 size are invalid
@@ -90,6 +94,10 @@ trait SnapshotManagement { self: DeltaLog =>
 
     if (newFiles.isEmpty && startCheckpoint.isEmpty) {
       throw DeltaErrors.emptyDirectoryException(logPath.toString)
+    } else if (newFiles.isEmpty) {
+      // The directory may be deleted and recreated and we may have stale state in our DeltaLog
+      // singleton, so try listing from the first version
+      return getLogSegmentForVersion(None, versionToLoad)
     }
     val (checkpoints, deltas) = newFiles.partition(f => isCheckpointFile(f.getPath))
 
@@ -130,6 +138,7 @@ trait SnapshotManagement { self: DeltaLog =>
       val lastCommitTimestamp = deltas.last.getModificationTime
 
       LogSegment(
+        logPath,
         newVersion,
         deltasAfterCheckpoint,
         newCheckpointFiles,
@@ -158,6 +167,7 @@ trait SnapshotManagement { self: DeltaLog =>
 
       val latestCommit = deltas.last
       LogSegment(
+        logPath,
         deltaVersion(latestCommit.getPath), // deltas is not empty, so can call .last
         deltas,
         Nil,
@@ -174,7 +184,8 @@ trait SnapshotManagement { self: DeltaLog =>
   protected def getSnapshotAtInit: Snapshot = {
     try {
       val segment = getLogSegmentFrom(lastCheckpoint)
-      val startCheckpoint = segment.checkpointVersion.map(v => s" starting from checkpoint $v")
+      val startCheckpoint = segment.checkpointVersion
+        .map(v => s" starting from checkpoint $v.").getOrElse(".")
       logInfo(s"Loading version ${segment.version}$startCheckpoint")
       val snapshot = createSnapshot(
         segment,
@@ -188,7 +199,7 @@ trait SnapshotManagement { self: DeltaLog =>
       case e: FileNotFoundException =>
         logInfo(s"Creating initial snapshot without metadata, because the directory is empty")
         // The log directory may not exist
-        new InitialSnapshot(logPath, this, Metadata())
+        new InitialSnapshot(logPath, this)
     }
   }
 
@@ -275,14 +286,15 @@ trait SnapshotManagement { self: DeltaLog =>
       withStatusCode("DELTA", "Updating the Delta table's state") {
         try {
           val segment = getLogSegmentForVersion(currentSnapshot.logSegment.checkpointVersion)
-          if (segment.version == currentSnapshot.version) {
+          if (segment == currentSnapshot.logSegment) {
             // Exit early if there is no new file
             lastUpdateTimestamp = clock.getTimeMillis()
             return currentSnapshot
           }
 
-          logInfo(s"Loading version ${segment.version}" +
-            segment.checkpointVersion.map(v => s"starting from checkpoint version $v."))
+          val startingFrom = segment.checkpointVersion
+            .map(v => s" starting from checkpoint version $v.").getOrElse(".")
+          logInfo(s"Loading version ${segment.version}$startingFrom")
 
           val newSnapshot = createSnapshot(
             segment,
@@ -305,17 +317,14 @@ trait SnapshotManagement { self: DeltaLog =>
           currentSnapshot = newSnapshot
           logInfo(s"Updated snapshot to $newSnapshot")
         } catch {
-          case f: FileNotFoundException =>
-            val message = s"No delta log found for the Delta table at $logPath"
-            logInfo(message)
-            // When the state is empty, this is expected. The log will be lazily created when
-            // needed. When the state is not empty, it's a real issue and we can't continue
-            // to execution.
-            if (currentSnapshot.version != -1) {
-              val e = new FileNotFoundException(message)
-              e.setStackTrace(f.getStackTrace)
+          case e: FileNotFoundException =>
+            if (Option(e.getMessage).exists(_.contains("reconstruct state at version"))) {
               throw e
             }
+            val message = s"No delta log found for the Delta table at $logPath"
+            logInfo(message)
+            currentSnapshot.uncache()
+            currentSnapshot = new InitialSnapshot(logPath, this)
         }
         lastUpdateTimestamp = clock.getTimeMillis()
         currentSnapshot
@@ -366,6 +375,7 @@ object SnapshotManagement {
 /**
  * Provides information around which files in the transaction log need to be read to create
  * the given version of the log.
+ * @param logPath The path to the _delta_log directory
  * @param version The Snapshot version to generate
  * @param deltas The delta files to read
  * @param checkpoint The checkpoint file to read
@@ -375,13 +385,30 @@ object SnapshotManagement {
  *                            monotonically increasing for the commits within this segment.
  */
 case class LogSegment(
+    logPath: Path,
     version: Long,
     deltas: Seq[FileStatus],
     checkpoint: Seq[FileStatus],
     checkpointVersion: Option[Long],
-    lastCommitTimestamp: Long)
+    lastCommitTimestamp: Long) {
+
+  override def hashCode(): Int = logPath.hashCode() * 31 + (lastCommitTimestamp % 10000).toInt
+
+  /**
+   * An efficient way to check if a cached Snapshot's contents actually correspond to a new
+   * segment returned through file listing.
+   */
+  override def equals(obj: Any): Boolean = {
+    obj match {
+      case other: LogSegment =>
+        version == other.version && lastCommitTimestamp == other.lastCommitTimestamp &&
+          logPath == other.logPath
+      case _ => false
+    }
+  }
+}
 
 object LogSegment {
   /** The LogSegment for an empty transaction log directory. */
-  def empty: LogSegment = LogSegment(-1L, Nil, Nil, None, -1L)
+  def empty(path: Path): LogSegment = LogSegment(path, -1L, Nil, Nil, None, -1L)
 }

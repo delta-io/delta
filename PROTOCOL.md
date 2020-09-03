@@ -16,6 +16,8 @@
     - [Transaction Identifiers](#transaction-identifiers)
     - [Protocol Evolution](#protocol-evolution)
     - [Commit Provenance Information](#commit-provenance-information)
+- [Action Reconciliation](#action-reconciliation)
+- [Requirements for Writers](#requirements-for-writers)
 - [Appendix](#appendix)
   - [Per-file Statistics](#per-file-statistics)
   - [Partition Value Serialization](#partition-value-serialization)
@@ -26,6 +28,7 @@
     - [Array Type](#array-type)
     - [Map Type](#map-type)
     - [Example](#example)
+  - [Checkpoint Schema](#checkpoint-schema)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -97,7 +100,7 @@ An action changes one aspect of the table's state, for example, adding or removi
 Checkpoints are also stored in the `_delta_log` directory, and can be created for any version of the table.
 
 A checkpoint contains the complete replay of all actions up until this version, with invalid actions removed.
-Invalid actions are those that have been canceled out by a subsequent ones (for example removing a file that has been added), using the [rules for reconciliation](#Action Reconciliation)
+Invalid actions are those that have been canceled out by a subsequent ones (for example removing a file that has been added), using the [rules for reconciliation](#Action-Reconciliation)
 Checkpoints allow readers to short-cut the cost of reading the log up-to a given point in order to reconstruct a snapshot.
 
 By default, the reference implementation creates a checkpoint every 10 commits.
@@ -335,6 +338,23 @@ An example of storing provenance information related to an `INSERT` operation:
 }
 ```
 
+# Action Reconciliation
+A given snapshot of the table can be computed by replaying the events committed to the table in ascending order by commit version. A given snapshot of a Delta table consists of:
+ - A single `protocol` action
+ - A single `metaData` action
+ - A map from `appId` to transaction `version`
+ - A collection of `add` actions with unique `path`s
+ - A collection of `remove` actions with unique `path`s. The intersection of the paths in the `add` collection and `remove` collection must be empty. That means a file cannot exist in both the `remove` and `add` collections. The `remove` actions act as _tombstones_. 
+ 
+To achieve the requirements above, related actions from different delta files need to be reconciled with each other:
+ - The latest `protocol` action seen wins
+ - The latest `metaData` action seen wins
+ - For transaction identifiers, the latest `version` seen for a given `appId` wins
+ - All `add` actions for different paths need to be accumulated as a list. The latest `add` action (from a more recent delta file) observed for a given path wins.
+ - All `remove` actions for different paths need to be accumulated as a list. If a `remove` action is received **later** (from a more recent delta file) for the same path as an `add` operation, the corresponding `add` action should be removed from the `add` collection and the file needs to be tracked as part of the `remove` collection.
+ - If an `add` action is received **later** (from a more recent delta file) for the same path as a `remove` operation, the corresponding `remove` action should be removed from the `remove` collection and the file needs to be tracked as part of the `add` collection.
+    
+
 # Requirements for Writers
 This section documents additional requirements that writers must follow in order to preserve some of the higher level guarantees that Delta provides.
 
@@ -355,20 +375,61 @@ This section documents additional requirements that writers must follow in order
 
 ## Checkpoints
  - A checkpoint MUST only be written after the corresponding log entry has been completely written.
- - TODO(marmbrus): Describe partitioning requirements of multi-part checkpoints.
+ - When writing multi-part checkpoints, the data must be clustered (either through hash or range partitioning) by the 'path' of an added or removed file, or null otherwise. This ensures deterministic content in each part file in case of multiple attempts to write the files.
 
-# Data Files
+### Checkpoint Format
+
+Checkpoint files must be written in [Apache Parquet](https://parquet.apache.org/) format. Each row in the checkpoint corresponds to a single action. The checkpoint **must** contain all information regarding the following actions:
+ * The [protocol version](#Protocol-Evolution)
+ * The [metadata](#Change-Metadata) of the table
+ * Files that have been [added and removed](#Add-File-and-Remove-File)
+ * [Transaction identifiers](#Transaction-Identifiers)
+
+Commit provenance information does not need to be included in the checkpoint. All of these actions are stored as their individual columns in parquet as struct fields.
+
+Within the checkpoint, the `add` struct may contain two additional columns:
+ - partitionValues_parsed: In this struct, the column names correspond to the partition columns and the values are stored in their corresponding data type. This is a **required field with the writer protocol version 3 when the table is partitioned**. If the table is not partitioned, this column can be omitted. The `partitionValues` field must also be written while the table reader protocol version is at version 1. For example, for partition columns `year`, `month` and `event` with data types `int`, `int` and `string` respectively, the schema for this field will look like:
+ 
+ ```
+|-- add: struct
+|    |-- partitionValues_parsed: struct
+|    |    |-- year: int
+|    |    |-- month: int
+|    |    |-- event: string
+ ```
+ 
+ - stats_parsed: Instead of storing stats as a JSON string, the stats can be stored in their [original format](#Per-file Statistics). With the writer protocol version 2, this field can be written alongside the `stats` column on a best-effort basis, when the table property `delta.checkpoint.writeStatsAsStruct` is enabled. With the writer protocol version 3, writers are required to write this column instead of the `stats` column when available. Writers can duplicate information in the `stats` column if the table property `delta.checkpoint.writeStatsAsJson` is enabled in order to maintain compatibility with old readers.
+
+Refer to the [appendix](#checkpoint-schema) for an example on the schema of the checkpoint.
+
+## Data Files
  - Data files MUST be uniquely named and MUST NOT be overwritten. The reference implementation uses a GUID in the name to ensure this property.
 
-# Append-only Tables
+## Append-only Tables
 When the table property `delta.appendOnly` is set to `true`:
   - New log entries MUST NOT change or remove data from the table.
   - New log entries may rearrange data (i.e. `add` and `remove` actions where `dataChange=false`).
 
-# Column Invariants
+## Column Invariants
  - The schema for a given column MAY the metadata `delta.invariants`.
  - This column SHOULD be parsed as a boolean SQL expression.
  - Writers MUST abort any transaction that adds a row to the table, where a present invariant evaluates to `false` or `null`.
+
+## Writer Version Requirements
+
+The requirements of the writers according to the protocol versions are summarized in the table below. Each row inherits the requirements from the preceding row.
+
++------------------+----------------------------------------------+
+|                  | Reader Version 1                             |
++------------------+----------------------------------------------+
+| Writer Version 2 |  - Support `delta.appendOnly`                |
+|                  |  - Support column invariants                 |
++------------------+----------------------------------------------+
+| Writer Version 3 |  - Write the column `partitionValues_parsed` |
+|                  |    in the checkpoint                         |
+|                  |  - Write the column `stats_parsed` in the    |
+|                  |    checkpoint when stats are available       |
++------------------+----------------------------------------------+
 
 # Appendix
 
@@ -436,12 +497,12 @@ A reference implementation can be found in [the catalyst package of the Apache S
 Type Name | Description
 -|-
 string| UTF-8 encoded string of characters
-long| 8-byte signed integer. Rnage: -9223372036854775808 to 9223372036854775807
+long| 8-byte signed integer. Range: -9223372036854775808 to 9223372036854775807
 integer|4-byte signed integer. Range: -2147483648 to 2147483647
 short| 2-byte signed integer numbers. Range: -32768 to 32767
 byte| 1-byte signed integer number. Range: -128 to 127
-float| 4-byte single-precision floating point numbers
-double| 8-byte double-precision floating point numbers
+float| 4-byte single-precision floating-point numbers
+double| 8-byte double-precision floating-point numbers
 boolean| `true` or `false`
 binary| A sequence of binary data.
 date| A calendar date, represented as a year-month-day triple without a timezone.
@@ -458,7 +519,7 @@ fields | An array of fields
 
 ### Struct Field
 
-A struct field represents a top level or nested column.
+A struct field represents a top-level or nested column.
 
 Field Name | Description
 -|-
@@ -564,4 +625,53 @@ JSON Encoded Table Schema:
     "metadata" : { }
   } ]
 }
+```
+
+## Checkpoint Schema
+For a table with partition columns: "date", "region" of types date and string respectively and data columns: "asset", "quantity" and "is_available" with data types string, double and boolean, the checkpoint schema will look as follows:
+
+```
+|-- metaData: struct
+|    |-- id: string
+|    |-- name: string
+|    |-- description: string
+|    |-- format: struct
+|    |    |-- provider: string
+|    |    |-- options: map<string,string>
+|    |-- schemaString: string
+|    |-- partitionColumns: array<string>
+|    |-- createdTime: long
+|    |-- configuration: map<string, string>
+|-- protocol: struct
+|    |-- minReaderVersion: int
+|    |-- minWriterVersion: int
+|-- txn: struct
+|    |-- appId: string
+|    |-- version: long
+|-- add: struct
+|    |-- path: string
+|    |-- partitionValues: map<string,string>
+|    |-- size: long
+|    |-- modificationTime: long
+|    |-- dataChange: boolean
+|    |-- stats: string
+|    |-- tags: map<string,string>
+|    |-- partitionValues_parsed: struct
+|    |    |-- date: date
+|    |    |-- region: string
+|    |-- stats_parsed: struct
+|    |    |-- numRecords: long
+|    |    |-- minValues: struct
+|    |    |    |-- asset: string
+|    |    |    |-- quantity: double
+|    |    |-- maxValues: struct
+|    |    |    |-- asset: string
+|    |    |    |-- quantity: double
+|    |    |-- nullCounts: struct
+|    |    |    |-- asset: long
+|    |    |    |-- quantity: long
+|-- remove: struct
+|    |-- path: string
+|    |-- deletionTimestamp: long
+|    |-- dataChange: boolean
 ```

@@ -20,7 +20,7 @@ package org.apache.spark.sql.delta
 import java.io.{FileNotFoundException, IOException}
 import java.util.ConcurrentModificationException
 
-import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata}
+import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -64,7 +64,7 @@ trait DocsPath {
    *
    * @param relativePath the relative path after the base url to access.
    * @param skipValidation whether to validate that the function generating the link is
-   *                       in the whitelist
+   *                       in the allowlist.
    * @return The entire URL of the documentation link
    */
   def generateDocsLink(
@@ -139,6 +139,7 @@ object DeltaErrors
       "manually deleted from the file system rather than using the table `DELETE` statement. " +
       s"For more information, see $faqPath"
   }
+
 
   def formatColumn(colName: String): String = s"`$colName`"
 
@@ -246,6 +247,11 @@ object DeltaErrors
   def missingTableIdentifierException(operationName: String): Throwable = {
     new AnalysisException(
       s"Please provide the path or table identifier for $operationName.")
+  }
+
+  def viewInDescribeDetailException(view: TableIdentifier): Throwable = {
+    new AnalysisException(
+      s"$view is a view. DESCRIBE DETAIL is only supported for tables.")
   }
 
   def alterTableChangeColumnException(oldColumns: String, newColumns: String): Throwable = {
@@ -383,6 +389,17 @@ object DeltaErrors
       "likely your query is lagging behind. Please delete its checkpoint to restart" +
       " from scratch. To avoid this happening again, you can update your retention " +
       "policy of your Delta table").initCause(e)
+  }
+
+  def requireProtocolUpgrade(
+      features: Seq[String],
+      required: Protocol,
+      current: Protocol): Throwable = {
+    val featureList = features.mkString("\t - ", "\n\t -", "\n")
+    new AnalysisException(
+      s"The features listed below require a protocol version of $required " +
+        s"or above, but the protocol version of the Delta table is $current. Please upgrade " +
+        s"the protocol version of the table before setting this config.\n$featureList")
   }
 
   def multipleLoadPathsException(paths: Seq[String]): Throwable = {

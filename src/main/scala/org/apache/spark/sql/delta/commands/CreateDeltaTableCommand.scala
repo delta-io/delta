@@ -110,23 +110,27 @@ case class CreateDeltaTableCommand(
             assertPathEmpty(sparkSession, tableWithLocation)
           }
         }
-        // We are either appending/overwriting with saveAsTable or creating a new table with CTAS
+        // We are either appending/overwriting with saveAsTable or creating a new table with CTAS or
+        // we are creating a table as part of a RunnableCommand
+        if (query.get.isInstanceOf[RunnableCommand]) {
+          query.get.asInstanceOf[RunnableCommand].run(sparkSession)
+        } else {
+          val data = Dataset.ofRows(sparkSession, query.get)
 
-        val data = Dataset.ofRows(sparkSession, query.get)
+          if (!isV1Writer) {
+            replaceMetadataIfNecessary(txn, tableWithLocation, options, query.get.schema.asNullable)
+          }
+          val actions = WriteIntoDelta(
+            deltaLog = deltaLog,
+            mode = mode,
+            options,
+            partitionColumns = table.partitionColumnNames,
+            configuration = table.properties,
+            data = data).write(txn, sparkSession)
 
-        if (!isV1Writer) {
-          replaceMetadataIfNecessary(txn, tableWithLocation, options, query.get.schema)
+          val op = getOperation(txn.metadata, isManagedTable, Some(options))
+          txn.commit(actions, op)
         }
-        val actions = WriteIntoDelta(
-          deltaLog = deltaLog,
-          mode = mode,
-          options,
-          partitionColumns = table.partitionColumnNames,
-          configuration = table.properties,
-          data = data).write(txn, sparkSession)
-
-        val op = getOperation(txn.metadata, isManagedTable, Some(options))
-        txn.commit(actions, op)
       } else {
         def createTransactionLogOrVerify(): Unit = {
           if (isManagedTable) {
@@ -146,9 +150,10 @@ case class CreateDeltaTableCommand(
             // This is a user provided schema.
             // Doesn't come from a query, Follow nullability invariants.
             val newMetadata = getProvidedMetadata(table, table.schema.json)
+            txn.updateMetadataForNewTable(newMetadata)
 
             val op = getOperation(newMetadata, isManagedTable, None)
-            txn.commit(newMetadata :: Nil, op)
+            txn.commit(Nil, op)
           } else {
             verifyTableMetadata(txn, tableWithLocation)
           }
@@ -191,6 +196,7 @@ case class CreateDeltaTableCommand(
         schema = new StructType(),
         partitionColumnNames = Nil,
         tracksPartitionsInCatalog = true)
+      logInfo(s"Table is path-based table: $tableByPath. Update catalog with mode: $operation")
       updateCatalog(sparkSession, tableWithDefaultOptions)
 
       Nil
@@ -360,7 +366,7 @@ case class CreateDeltaTableCommand(
     if (txn.readVersion > -1L && isReplace && !dontOverwriteSchema) {
       // When a table already exists, and we're using the DataFrameWriterV2 API to replace
       // or createOrReplace a table, we blindly overwrite the metadata.
-      txn.updateMetadata(getProvidedMetadata(table, schema.asNullable.json))
+      txn.updateMetadataForNewTable(getProvidedMetadata(table, schema.json))
     }
   }
 

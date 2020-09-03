@@ -51,6 +51,16 @@ object DeltaSQLConf {
       .stringConf
       .createOptional
 
+  val DELTA_CONVERT_USE_METADATA_LOG =
+    buildConf("convert.useMetadataLog")
+      .doc(
+        """ When converting to a Parquet table that was created by Structured Streaming, whether
+        |  to use the transaction log under `_spark_metadata` as the source of truth for files
+        | contained in the table.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_SNAPSHOT_PARTITIONS =
     buildConf("snapshotPartitions")
       .internal()
@@ -162,6 +172,22 @@ object DeltaSQLConf {
         "snapshot isolation.")
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_PROTOCOL_DEFAULT_WRITER_VERSION =
+    buildConf("protocol.minWriterVersion")
+      .doc("The default writer protocol version to create new tables with, unless a feature " +
+        "that requires a higher version for correctness is enabled.")
+      .intConf
+      .checkValues(Set(1, 2))
+      .createWithDefault(2)
+
+  val DELTA_PROTOCOL_DEFAULT_READER_VERSION =
+    buildConf("protocol.minReaderVersion")
+      .doc("The default reader protocol version to create new tables with, unless a feature " +
+        "that requires a higher version for correctness is enabled.")
+      .intConf
+      .checkValues(Set(1))
+      .createWithDefault(1)
 
 
   val DELTA_MAX_SNAPSHOT_LINEAGE_LENGTH =
@@ -296,4 +322,12 @@ object DeltaSQLConf {
         """.stripMargin)
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_LAST_COMMIT_VERSION_IN_SESSION =
+    buildConf("lastCommitVersionInSession")
+      .doc("The version of the last commit made in the SparkSession for any table.")
+      .longConf
+      .checkValue(_ >= 0, "the version must be >= 0")
+      .createOptional
+
 }
