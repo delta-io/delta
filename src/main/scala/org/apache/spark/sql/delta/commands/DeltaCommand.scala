@@ -183,7 +183,7 @@ trait DeltaCommand extends DeltaLogging {
         case LogicalRelation(HadoopFsRelation(_, _, _, _, _, _), _, Some(_), _) =>
           true
         // could not resolve table/db
-        case UnresolvedRelation(_) =>
+        case _: UnresolvedRelation =>
           throw new NoSuchTableException(tableIdent.database.getOrElse(""), tableIdent.table)
         // other e.g. view
         case _ => true

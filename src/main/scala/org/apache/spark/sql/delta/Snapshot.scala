@@ -292,7 +292,9 @@ object Snapshot extends DeltaLogging {
   private[delta] def canonicalizePath(path: String, hadoopConf: Configuration): String = {
     val hadoopPath = new Path(new URI(path))
     if (hadoopPath.isAbsoluteAndSchemeAuthorityNull) {
+      // scalastyle:off FileSystemGet
       val fs = FileSystem.get(hadoopConf)
+      // scalastyle:on FileSystemGet
       fs.makeQualified(hadoopPath).toUri.toString
     } else {
       // return untouched if it is a relative path or is already fully qualified
