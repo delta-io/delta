@@ -1136,12 +1136,13 @@ abstract class MergeIntoSuiteBase
   }
 
   protected def testAnalysisErrorsInExtendedMerge(
-      name: String)(
+      name: String,
+      namePrefix: String = "extended syntax")(
       mergeOn: String,
       mergeClauses: MergeClause*)(
       errorStrs: Seq[String],
       notErrorStrs: Seq[String] = Nil): Unit = {
-    test(s"extended syntax analysis errors - $name") {
+    test(s"$namePrefix - analysis errors - $name") {
       withKeyValueData(
         source = Seq.empty,
         target = Seq.empty,
@@ -1227,14 +1228,15 @@ abstract class MergeIntoSuiteBase
 
 
   protected def testExtendedMerge(
-      name: String)(
+      name: String,
+      namePrefix: String = "extended syntax")(
       source: Seq[(Int, Int)],
       target: Seq[(Int, Int)],
       mergeOn: String,
       mergeClauses: MergeClause*)(
       result: Seq[(Int, Int)]): Unit = {
     Seq(true, false).foreach { isPartitioned =>
-      test(s"extended syntax - $name - isPartitioned: $isPartitioned ") {
+      test(s"$namePrefix - $name - isPartitioned: $isPartitioned ") {
         withKeyValueData(source, target, isPartitioned) { case (sourceName, targetName) =>
           withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "true") {
             executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
@@ -2125,4 +2127,164 @@ abstract class MergeIntoSuiteBase
     expectErrorContains = "cannot cast struct",
     expectErrorWithoutEvolutionContains = "cannot cast struct"
   )
+
+  /* unlimited number of merge clauses tests */
+
+  protected def testUnlimitedClauses(
+      name: String)(
+      source: Seq[(Int, Int)],
+      target: Seq[(Int, Int)],
+      mergeOn: String,
+      mergeClauses: MergeClause*)(
+      result: Seq[(Int, Int)]): Unit =
+    testExtendedMerge(name, "unlimited clauses")(source, target, mergeOn, mergeClauses : _*)(result)
+
+  protected def testAnalysisErrorsInUnlimitedClauses(
+      name: String)(
+      mergeOn: String,
+      mergeClauses: MergeClause*)(
+      errorStrs: Seq[String],
+      notErrorStrs: Seq[String] = Nil): Unit =
+    testAnalysisErrorsInExtendedMerge(name, "unlimited clauses")(mergeOn, mergeClauses : _*)(
+      errorStrs, notErrorStrs)
+
+  testUnlimitedClauses("two conditional update + two conditional delete + insert")(
+    source = (0, 0) :: (1, 100) :: (3, 300) :: (4, 400) :: (5, 500) :: Nil,
+    target = (1, 10) :: (2, 20) :: (3, 30) :: (4, 40) :: Nil,
+    mergeOn = "s.key = t.key",
+    delete(condition = "s.key < 2"),
+    delete(condition = "s.key > 4"),
+    update(condition = "s.key == 3", set = "key = s.key, value = s.value"),
+    update(condition = "s.key == 4", set = "key = s.key, value = 2 * s.value"),
+    insert(condition = null, values = "(key, value) VALUES (s.key, s.value)"))(
+    result = Seq(
+      (0, 0),    // insert (0, 0)
+                 // delete (1, 10)
+      (2, 20),   // neither updated nor deleted as it didn't match
+      (3, 300),  // update (3, 30)
+      (4, 800),  // update (4, 40)
+      (5, 500)   // insert (5, 500)
+    ))
+
+  testUnlimitedClauses("two conditional delete + conditional update + update + insert")(
+    source = (0, 0) :: (1, 100) :: (2, 200) :: (3, 300) :: (4, 400) :: Nil,
+    target = (1, 10) :: (2, 20) :: (3, 30) :: (4, 40) :: Nil,
+    mergeOn = "s.key = t.key",
+    delete(condition = "s.key < 2"),
+    delete(condition = "s.key > 3"),
+    update(condition = "s.key == 2", set = "key = s.key, value = s.value"),
+    update(condition = null, set = "key = s.key, value = 2 * s.value"),
+    insert(condition = null, values = "(key, value) VALUES (s.key, s.value)"))(
+    result = Seq(
+      (0, 0),   // insert (0, 0)
+                // delete (1, 10)
+      (2, 200), // update (2, 20)
+      (3, 600)  // update (3, 30)
+                // delete (4, 40)
+    ))
+
+  testUnlimitedClauses("conditional delete + two conditional update + two conditional insert")(
+    source = (1, 100) :: (2, 200) :: (3, 300) :: (4, 400) :: (6, 600) :: Nil,
+    target = (1, 10) :: (2, 20) :: (3, 30) :: Nil,
+    mergeOn = "s.key = t.key",
+    delete(condition = "s.key < 2"),
+    update(condition = "s.key == 2", set = "key = s.key, value = s.value"),
+    update(condition = "s.key == 3", set = "key = s.key, value = 2 * s.value"),
+    insert(condition = "s.key < 5", values = "(key, value) VALUES (s.key, s.value)"),
+    insert(condition = "s.key > 5", values = "(key, value) VALUES (s.key, 1 + s.value)"))(
+    result = Seq(
+                // delete (1, 10)
+      (2, 200), // update (2, 20)
+      (3, 600), // update (3, 30)
+      (4, 400), // insert (4, 400)
+      (6, 601)  // insert (6, 600)
+    ))
+
+  testUnlimitedClauses("conditional update + update + conditional delete + conditional insert")(
+    source = (1, 100) :: (2, 200) :: (3, 300) :: (4, 400) :: (5, 500) :: Nil,
+    target = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
+    mergeOn = "s.key = t.key",
+    update(condition = "s.key < 2", set = "key = s.key, value = s.value"),
+    update(condition = "s.key < 3", set = "key = s.key, value = 2 * s.value"),
+    delete(condition = "s.key < 4"),
+    insert(condition = "s.key > 4", values = "(key, value) VALUES (s.key, s.value)"))(
+    result = Seq(
+      (0, 0),   // no change
+      (1, 100), // (1, 10) updated by matched_0
+      (2, 400), // (2, 20) updated by matched_1
+                // (3, 30) deleted by matched_2
+      (5, 500)  // (5, 500) inserted
+    ))
+
+  testUnlimitedClauses("2 update + 2 delete + 4 insert")(
+    source = (1, 100) :: (2, 200) :: (3, 300) :: (4, 400) :: (5, 500) :: (6, 600) :: (7, 700) ::
+      (8, 800) :: (9, 900) :: Nil,
+    target = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: (4, 40) :: Nil,
+    mergeOn = "s.key = t.key",
+    update(condition = "s.key == 1", set = "key = s.key, value = s.value"),
+    delete(condition = "s.key == 2"),
+    update(condition = "s.key == 3", set = "key = s.key, value = 2 * s.value"),
+    delete(condition = null),
+    insert(condition = "s.key == 5", values = "(key, value) VALUES (s.key, s.value)"),
+    insert(condition = "s.key == 6", values = "(key, value) VALUES (s.key, 1 + s.value)"),
+    insert(condition = "s.key == 7", values = "(key, value) VALUES (s.key, 2 + s.value)"),
+    insert(condition = null, values = "(key, value) VALUES (s.key, 3 + s.value)"))(
+    result = Seq(
+      (0, 0),    // no change
+      (1, 100),  // (1, 10) updated by matched_0
+                 // (2, 20) deleted by matched_1
+      (3, 600),  // (3, 30) updated by matched_2
+                 // (4, 40) deleted by matched_3
+      (5, 500),  // (5, 500) inserted by notMatched_0
+      (6, 601),  // (6, 600) inserted by notMatched_1
+      (7, 702),  // (7, 700) inserted by notMatched_2
+      (8, 803),  // (8, 800) inserted by notMatched_3
+      (9, 903)   // (9, 900) inserted by notMatched_3
+    ))
+
+  testAnalysisErrorsInUnlimitedClauses("error on multiple insert clauses without condition")(
+    mergeOn = "s.key = t.key",
+    update(condition = "s.key == 3", set = "key = s.key, value = 2 * srcValue"),
+    insert(condition = null, values = "(key, value) VALUES (s.key, srcValue)"),
+    insert(condition = null, values = "(key, value) VALUES (s.key, 1 + srcValue)"))(
+    errorStrs = "when there are more than one not matched clauses in a merge statement, " +
+      "only the last not matched clause can omit the condition" :: Nil)
+
+  testAnalysisErrorsInUnlimitedClauses("error on multiple update clauses without condition")(
+    mergeOn = "s.key = t.key",
+    update(condition = "s.key == 3", set = "key = s.key, value = 2 * srcValue"),
+    update(condition = null, set = "key = s.key, value = 3 * srcValue"),
+    update(condition = null, set = "key = s.key, value = 4 * srcValue"),
+    insert(condition = null, values = "(key, value) VALUES (s.key, srcValue)"))(
+    errorStrs = "when there are more than one matched clauses in a merge statement, " +
+      "only the last matched clause can omit the condition" :: Nil)
+
+  testAnalysisErrorsInUnlimitedClauses("error on multiple update/delete clauses without condition")(
+    mergeOn = "s.key = t.key",
+    update(condition = "s.key == 3", set = "key = s.key, value = 2 * srcValue"),
+    delete(condition = null),
+    update(condition = null, set = "key = s.key, value = 4 * srcValue"),
+    insert(condition = null, values = "(key, value) VALUES (s.key, srcValue)"))(
+    errorStrs = "when there are more than one matched clauses in a merge statement, " +
+      "only the last matched clause can omit the condition" :: Nil)
+
+  testAnalysisErrorsInUnlimitedClauses(
+    "error on non-empty condition following empty condition for update clauses")(
+    mergeOn = "s.key = t.key",
+    update(condition = null, set = "key = s.key, value = 2 * srcValue"),
+    update(condition = "s.key < 3", set = "key = s.key, value = srcValue"),
+    insert(condition = null, values = "(key, value) VALUES (s.key, srcValue)"))(
+    errorStrs = "when there are more than one matched clauses in a merge statement, " +
+      "only the last matched clause can omit the condition" :: Nil)
+
+  testAnalysisErrorsInUnlimitedClauses(
+    "error on non-empty condition following empty condition for insert clauses")(
+    mergeOn = "s.key = t.key",
+    update(condition = null, set = "key = s.key, value = srcValue"),
+    insert(condition = null, values = "(key, value) VALUES (s.key, srcValue)"),
+    insert(condition = "s.key < 3", values = "(key, value) VALUES (s.key, 1 + srcValue)"))(
+    errorStrs = "when there are more than one not matched clauses in a merge statement, " +
+      "only the last not matched clause can omit the condition" :: Nil)
+
+  /* end unlimited number of merge clauses tests */
 }

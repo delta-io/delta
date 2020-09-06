@@ -20,8 +20,9 @@ import java.util.{HashMap, Locale}
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.schema.{Invariants, SchemaUtils}
 
-import org.apache.spark.sql.AnalysisException
+import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.util.{DateTimeConstants, IntervalUtils}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
@@ -145,34 +146,12 @@ object DeltaConfigs extends DeltaLogging {
   }
 
   /**
-   * Verify that the protocol version of the table satisfies the version requirements of all the
-   * configurations to be set.
+   * Table properties for new tables can be specified through SQL Configurations using the
+   * `sqlConfPrefix`. This method checks to see if any of the configurations exist among the SQL
+   * configurations and merges them with the user provided configurations. User provided configs
+   * take precedence.
    */
-  def verifyProtocolVersionRequirements(
-      configurations: Map[String, String],
-      current: Protocol): Unit = {
-    configurations.foreach { config =>
-      val key = config._1.toLowerCase(Locale.ROOT).stripPrefix("delta.")
-      if (entries.containsKey(key) && entries.get(key).minimumProtocolVersion.isDefined) {
-        val required = entries.get(key).minimumProtocolVersion.get
-        if (current.minWriterVersion < required.minWriterVersion ||
-          current.minReaderVersion < required.minReaderVersion) {
-          throw new AnalysisException(
-            s"Setting the Delta config ${config._1} requires a protocol version of $required " +
-            s"or above, but the protocol version of the Delta table is $current. " +
-            s"Please upgrade the protocol version of the table before setting this config.")
-        }
-      }
-    }
-  }
-
-  /**
-   * Fetch global default values from SQLConf.
-   */
-  def mergeGlobalConfigs(
-      sqlConfs: SQLConf,
-      tableConf: Map[String, String],
-      protocol: Protocol): Map[String, String] = {
+  def mergeGlobalConfigs(sqlConfs: SQLConf, tableConf: Map[String, String]): Map[String, String] = {
     import collection.JavaConverters._
 
     val globalConfs = entries.asScala.flatMap { case (key, config) =>
@@ -183,9 +162,7 @@ object DeltaConfigs extends DeltaLogging {
       }
     }
 
-    val updatedConf = globalConfs.toMap ++ tableConf
-    verifyProtocolVersionRequirements(updatedConf, protocol)
-    updatedConf
+    globalConfs.toMap ++ tableConf
   }
 
   /**

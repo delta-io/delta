@@ -23,6 +23,9 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.tables._
 
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.plans.Inner
+import org.apache.spark.sql.catalyst.plans.logical.Join
+import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
 
 class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
@@ -184,9 +187,9 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
           .merge(source, "srcKey = trgKey")
           .execute()
       }
-      errorContains(e.getMessage, "There must be at least one WHEN clause in a MERGE query")
+      errorContains(e.getMessage, "There must be at least one WHEN clause in a MERGE statement")
 
-      // When there are 2 MATCHED clauses in a MERGE statement,
+      // When there are multiple MATCHED clauses in a MERGE statement,
       // the first MATCHED clause must have a condition
       e = intercept[AnalysisException] {
         io.delta.tables.DeltaTable.forPath(spark, tempPath)
@@ -196,56 +199,8 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
           .whenNotMatched().insertExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
           .execute()
       }
-      errorContains(e.getMessage, "the first MATCHED clause must have a condition")
-
-      // There must be at most two WHEN clauses in a MERGE statement
-      e = intercept[AnalysisException] {
-        io.delta.tables.DeltaTable.forPath(spark, tempPath)
-          .merge(source, "srcKey = trgKey")
-          .whenMatched("trgKey = 1").updateExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
-          .whenMatched("trgValue = 3").delete()
-          .whenMatched("trgValue = 2")
-          .updateExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue + 1"))
-          .whenNotMatched().insertExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
-          .execute()
-      }
-      errorContains(e.getMessage, "There must be at most two match clauses in a MERGE query")
-
-      // INSERT can appear at most once in NOT MATCHED clauses in a MERGE statement
-      e = intercept[AnalysisException] {
-        io.delta.tables.DeltaTable.forPath(spark, tempPath)
-          .merge(source, "srcKey = trgKey")
-          .whenNotMatched().insertExpr(Map("trgKey" -> "srcKey + 1", "trgValue" -> "srcValue"))
-          .whenNotMatched().insertExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
-          .execute()
-      }
-      errorContains(e.getMessage,
-        "INSERT, UPDATE and DELETE cannot appear twice in one MERGE query")
-
-      // UPDATE can appear at most once in MATCHED clauses in a MERGE statement
-      e = intercept[AnalysisException] {
-        io.delta.tables.DeltaTable.forPath(spark, tempPath)
-          .merge(source, "srcKey = trgKey")
-          .whenMatched("trgKey = 1").updateExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
-          .whenMatched("trgValue = 2")
-          .updateExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue + 1"))
-          .whenNotMatched().insertExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
-          .execute()
-      }
-      errorContains(e.getMessage,
-        "INSERT, UPDATE and DELETE cannot appear twice in one MERGE query")
-
-      // DELETE can appear at most once in MATCHED clauses in a MERGE statement
-      e = intercept[AnalysisException] {
-        io.delta.tables.DeltaTable.forPath(spark, tempPath)
-          .merge(source, "srcKey = trgKey")
-          .whenMatched("trgKey = 1").delete()
-          .whenMatched("trgValue = 2").delete()
-          .whenNotMatched().insertExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
-          .execute()
-      }
-      errorContains(e.getMessage,
-        "INSERT, UPDATE and DELETE cannot appear twice in one MERGE query")
+      errorContains(e.getMessage, "When there are more than one MATCHED clauses in a MERGE " +
+        "statement, only the last MATCHED clause can omit the condition.")
 
       e = intercept[AnalysisException] {
         io.delta.tables.DeltaTable.forPath(spark, tempPath)
@@ -313,23 +268,264 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
     }
   }
 
-  test("merge without table alias with pre-computed condition") {
+  test("pre-resolved exprs: should work in all expressions in absence of duplicate refs") {
     withTempDir { dir =>
       val location = dir.getAbsolutePath
-      Seq((1, 1, 1), (2, 2, 2)).toDF("part", "id", "x").write
+      Seq((1, 1), (2, 2)).toDF("key", "value").write
         .format("delta")
-        .partitionBy("part")
         .save(location)
       val table = io.delta.tables.DeltaTable.forPath(spark, location)
-      val tableDf = table.toDF
-      val data1 = Seq((2, 2, 4), (2, 3, 6), (3, 3, 9)).toDF("part", "id", "x")
-      table.merge(
-        data1,
-        tableDf("part") === data1("part") && tableDf("id") === data1("id"))
-        .whenMatched().updateAll()
-        .whenNotMatched().insertAll()
+      val target = table.toDF
+      val source = Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value")
+
+      table.merge(source, target("key") === source("key"))
+        .whenMatched(target("key") === lit(1) && source("value") === lit(10))
+        .update(Map("value" -> (target("value") + source("value"))))
+        .whenMatched(target("key") === lit(2) && source("value") === lit(20))
+        .delete()
+        .whenNotMatched(source("key") === lit(3) && source("value") === lit(30))
+        .insert(Map("key" -> source("key"), "value" -> source("value")))
         .execute()
+
+      checkAnswer(table.toDF, Seq((1, 11), (3, 30)).toDF("key", "value"))
     }
+  }
+
+  test("pre-resolved exprs: negative cases with refs resolved to wrong Dataframes") {
+    withTempDir { dir =>
+      val location = dir.getAbsolutePath
+      Seq((1, 1), (2, 2)).toDF("key", "value").write
+        .format("delta")
+        .save(location)
+      val table = io.delta.tables.DeltaTable.forPath(spark, location)
+      val target = table.toDF
+      val source = Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value")
+      val dummyDF = Seq((0, 0)).toDF("key", "value")
+
+      def checkError(f: => Unit): Unit = {
+        val e = intercept[AnalysisException] { f }
+        Seq("Resolved attribute", "missing from").foreach { m =>
+          assert(e.getMessage.toLowerCase(Locale.ROOT).contains(m.toLowerCase(Locale.ROOT)))
+        }
+      }
+      // Merge condition
+      checkError {
+        table.merge(source, target("key") === dummyDF("key"))
+          .whenMatched().delete().execute()
+      }
+
+      // Matched clauses
+      checkError {
+        table.merge(source, target("key") === source("key"))
+          .whenMatched(dummyDF("key") === lit(1)).updateAll().execute()
+      }
+
+      checkError {
+        table.merge(source, target("key") === source("key"))
+          .whenMatched().update(Map("key" -> dummyDF("key"))).execute()
+      }
+
+      // Not matched clauses
+      checkError {
+        table.merge(source, target("key") === source("key"))
+          .whenNotMatched(dummyDF("key") === lit(1)).insertAll().execute()
+      }
+      checkError {
+        table.merge(source, target("key") === source("key"))
+          .whenNotMatched().insert(Map("key" -> dummyDF("key"))).execute()
+      }
+    }
+  }
+
+  /** Make sure the joins generated by merge do not have the duplicate AttributeReferences */
+  private def verifyNoDuplicateRefsAcrossSourceAndTarget(f: => Unit): Unit = {
+    val executedPlans = DeltaTestUtils.withLogicalPlansCaptured(spark, optimizedPlan = true) { f }
+    val plansWithInnerJoin = executedPlans.filter { p =>
+      p.collect { case b: Join if b.joinType == Inner => b }.nonEmpty
+    }
+    assert(plansWithInnerJoin.size == 1,
+      "multiple plans found with inner join\n" + plansWithInnerJoin.mkString("\n"))
+    val join = plansWithInnerJoin.head.collect { case j: Join => j }.head
+    assert(join.left.outputSet.intersect(join.right.outputSet).isEmpty)
+  }
+
+  test("self-merge: duplicate attrib refs should be removed") {
+    withTempDir { tempDir =>
+      val df = spark.range(5).selectExpr("id as key", "id as value")
+      df.write.format("delta").save(tempDir.toString)
+
+      val deltaTable = io.delta.tables.DeltaTable.forPath(tempDir.toString)
+      val target = deltaTable.toDF
+      val source = target.filter("key = 4")
+
+      val duplicateRefs =
+        target.queryExecution.analyzed.outputSet.intersect(source.queryExecution.analyzed.outputSet)
+      require(duplicateRefs.nonEmpty, "source and target were expected to have duplicate refs")
+
+      verifyNoDuplicateRefsAcrossSourceAndTarget {
+        deltaTable.as("t")
+          .merge(source.as("s"), "t.key = s.key")
+          .whenMatched()
+          .delete()
+          .execute()
+      }
+      checkAnswer(deltaTable.toDF, spark.range(4).selectExpr("id as key", "id as value"))
+    }
+  }
+
+  test(
+    "self-merge + pre-resolved exprs: merge condition fails with pre-resolved, duplicate refs") {
+    withTempDir { tempDir =>
+      val df = spark.range(5).selectExpr("id as key", "id as value")
+      df.write.format("delta").save(tempDir.toString)
+
+      val deltaTable = io.delta.tables.DeltaTable.forPath(tempDir.toString)
+      val target = deltaTable.toDF
+      val source = target.filter("key = 4")
+      val e = intercept[AnalysisException] {
+        deltaTable.merge(source, target("key") === source("key"))  // this is ambiguous
+          .whenMatched()
+          .delete()
+          .execute()
+      }
+      assert(e.getMessage.toLowerCase(Locale.ROOT).contains("ambiguous"))
+    }
+  }
+
+  test(
+    "self-merge + pre-resolved exprs: duplicate refs should resolve in not-matched clauses") {
+    withTempDir { tempDir =>
+      val df = spark.range(5).selectExpr("id as key", "id as value")
+      df.write.format("delta").save(tempDir.toString)
+
+      val deltaTable = io.delta.tables.DeltaTable.forPath(tempDir.toString)
+      val target = deltaTable.toDF
+      val source = target.filter("key = 4")
+
+      // Insert clause can refer to only source attributes, so pre-resolved references,
+      // even when written as`target("column")`, are actually unambiguous
+      verifyNoDuplicateRefsAcrossSourceAndTarget {
+        deltaTable.as("t")
+          .merge(source.as("s"), "t.key = s.key")
+          .whenNotMatched(source("value") > 0 && target("key") > 0)
+          .insert(Map("key" -> source("key"), "value" -> target("value")))
+          .whenMatched().update(Map("key" -> $"s.key")) // no-op
+          .execute()
+      }
+      // nothing should be inserted as source matches completely with target
+      checkAnswer(deltaTable.toDF, spark.range(5).selectExpr("id as key", "id as value"))
+    }
+  }
+
+  test(
+    "self-merge + pre-resolved exprs: non-duplicate but pre-resolved refs should still resolve") {
+    withTempDir { tempDir =>
+      val df = spark.range(5).selectExpr("id as key", "id as value")
+      df.write.format("delta").save(tempDir.toString)
+
+      val deltaTable = io.delta.tables.DeltaTable.forPath(tempDir.toString)
+      val target = deltaTable.toDF
+      val source = target.filter("key = 0").drop("value")
+        .withColumn("value", col("key") + lit(0))
+        .withColumn("other", lit(0))
+      // source is just one row (key, value, other) = (4, 4, 0)
+
+      // `value` should not be duplicate ref as its recreated in the source and have different
+      // exprIds than the target value.
+      val duplicateRefs =
+        target.queryExecution.analyzed.outputSet.intersect(source.queryExecution.analyzed.outputSet)
+      require(duplicateRefs.map(_.name).toSet == Set("key"),
+        "unexpected duplicate refs, should be only 'key': " + duplicateRefs)
+
+      // So both `source("value")` and `target("value")` are not ambiguous.
+      // `source("other")` is obviously not ambiguous.
+      verifyNoDuplicateRefsAcrossSourceAndTarget {
+        deltaTable.as("t")
+          .merge(
+            source.as("s"),
+            expr("t.key = s.key") && source("other") === 0 && target("value") === 4)
+          .whenMatched(source("value") > 0 && target("value") > 0 && source("other") === 0)
+          .update(Map(
+            "key" -> expr("s.key"),
+            "value" -> (target("value") + source("value") + source("other"))))
+          .whenNotMatched(source("value") > 0 && source("other") === 0)
+          .insert(Map(
+            "key" -> expr("s.key"),
+            "value" -> (source("value") + source("other"))))
+          .execute()
+      }
+      // key = 4 should be updated to same values, and nothing should be inserted
+      checkAnswer(deltaTable.toDF, spark.range(5).selectExpr("id as key", "id as value"))
+    }
+  }
+
+  test("self-merge + pre-resolved exprs: negative cases in matched clauses with duplicate refs") {
+    // Only matched clauses can have attribute references from both source and target, hence
+    // pre-resolved expression can be ambiguous in presence of duplicate references from self-merge
+    withTempDir { tempDir =>
+      val df = spark.range(5).selectExpr("id as key", "id as value")
+      df.write.format("delta").save(tempDir.toString)
+
+      val deltaTable = io.delta.tables.DeltaTable.forPath(tempDir.toString)
+      val target = deltaTable.toDF
+      val source = target.filter("key = 4")
+
+      def checkError(f: => Unit): Unit = {
+        val e = intercept[AnalysisException] { f }
+        assert(e.getMessage.toLowerCase(Locale.ROOT).contains("ambiguous"))
+      }
+
+      checkError {
+        deltaTable
+          .merge(source, target("key") === source("key"))  // this is ambiguous
+          .whenMatched()
+          .delete()
+          .execute()
+      }
+
+      // Update
+      checkError {
+        deltaTable.as("t").merge(source.as("s"), "t.key = s.key")
+          .whenMatched(target("key") === functions.lit(4))  // can map to either key column
+          .updateAll()
+          .execute()
+      }
+
+      checkError {
+        deltaTable.as("t").merge(source.as("s"), "t.key = s.key")
+          .whenMatched()
+          .update(Map("value" -> target("value").plus(1)))  // can map to either value column
+          .execute()
+      }
+
+      // Delete
+      checkError {
+        deltaTable.as("t").merge(source.as("s"), "t.key = s.key")
+          .whenMatched(target("key") === functions.lit(4))  // can map to either key column
+          .delete()
+          .execute()
+      }
+    }
+  }
+
+  test("merge clause matched and not matched can interleave") {
+    append(Seq((1, 10), (2, 20)).toDF("trgKey", "trgValue"), Nil) // target
+    val source = Seq((1, 100), (2, 200), (3, 300), (4, 400)).toDF("srcKey", "srcValue") // source
+    io.delta.tables.DeltaTable.forPath(spark, tempPath)
+      .merge(source, "srcKey = trgKey")
+      .whenMatched("trgKey = 1").updateExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
+      .whenNotMatched("srcKey = 3").insertExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
+      .whenMatched().delete()
+      .whenNotMatched().insertExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
+      .execute()
+
+    checkAnswer(
+      readDeltaTable(tempPath),
+      Row(1, 100) ::  // Update (1, 10)
+                      // Delete (2, 20)
+      Row(3, 300) ::  // Insert (3, 300)
+      Row(4, 400) ::  // Insert (4, 400)
+      Nil)
   }
 
   override protected def executeMerge(

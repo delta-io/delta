@@ -118,7 +118,7 @@ case class CreateDeltaTableCommand(
           val data = Dataset.ofRows(sparkSession, query.get)
 
           if (!isV1Writer) {
-            replaceMetadataIfNecessary(txn, tableWithLocation, options, query.get.schema)
+            replaceMetadataIfNecessary(txn, tableWithLocation, options, query.get.schema.asNullable)
           }
           val actions = WriteIntoDelta(
             deltaLog = deltaLog,
@@ -150,9 +150,10 @@ case class CreateDeltaTableCommand(
             // This is a user provided schema.
             // Doesn't come from a query, Follow nullability invariants.
             val newMetadata = getProvidedMetadata(table, table.schema.json)
+            txn.updateMetadataForNewTable(newMetadata)
 
             val op = getOperation(newMetadata, isManagedTable, None)
-            txn.commit(newMetadata :: Nil, op)
+            txn.commit(Nil, op)
           } else {
             verifyTableMetadata(txn, tableWithLocation)
           }
@@ -365,7 +366,7 @@ case class CreateDeltaTableCommand(
     if (txn.readVersion > -1L && isReplace && !dontOverwriteSchema) {
       // When a table already exists, and we're using the DataFrameWriterV2 API to replace
       // or createOrReplace a table, we blindly overwrite the metadata.
-      txn.updateMetadata(getProvidedMetadata(table, schema.asNullable.json))
+      txn.updateMetadataForNewTable(getProvidedMetadata(table, schema.json))
     }
   }
 

@@ -23,10 +23,12 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, DeltaTableUtils}
+import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
 import org.apache.spark.sql.delta.commands.{AlterTableAddColumnsDeltaCommand, AlterTableChangeColumnDeltaCommand, AlterTableSetLocationDeltaCommand, AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand, CreateDeltaTableCommand, TableCreationModes}
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException, UnresolvedAttribute}
@@ -42,7 +44,6 @@ import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.InsertableRelation
 import org.apache.spark.sql.types.{StructField, StructType}
-import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
  * A Catalog extension which can properly handle the interaction between the HiveMetaStore and
@@ -50,7 +51,8 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  */
 class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
   with StagingTableCatalog
-  with SupportsPathIdentifier {
+  with SupportsPathIdentifier
+  with Logging {
 
   def this() = {
     this(SparkSession.active)
@@ -137,6 +139,10 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
     } catch {
       case _: NoSuchDatabaseException | _: NoSuchNamespaceException | _: NoSuchTableException
           if isPathIdentifier(ident) =>
+        DeltaTableV2(spark, new Path(ident.name()))
+      case e: AnalysisException if gluePermissionError(e) && isPathIdentifier(ident) =>
+        logWarning("Received an access denied error from Glue. Assuming this " +
+          s"identifier ($ident) is path based.", e)
         DeltaTableV2(spark, new Path(ident.name()))
     }
   }

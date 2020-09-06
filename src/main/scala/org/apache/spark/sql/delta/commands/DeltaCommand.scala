@@ -236,7 +236,7 @@ trait DeltaCommand extends DeltaLogging {
         metrics,
         userMetadata = txn.getUserMetadata(op))
 
-      val extraActions = Seq(commitInfo, Protocol(), metadata)
+      val extraActions = Seq(commitInfo, metadata)
       val allActions = extraActions.toIterator ++ actions
       if (txn.readVersion < 0) {
         deltaLog.fs.mkdirs(deltaLog.logPath)

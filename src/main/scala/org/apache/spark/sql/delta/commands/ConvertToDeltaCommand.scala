@@ -354,7 +354,7 @@ abstract class ConvertToDeltaCommandBase(
         schemaString = schema.json,
         partitionColumns = partitionColNames,
         configuration = convertProperties.properties)
-      txn.updateMetadata(metadata)
+      txn.updateMetadataForNewTable(metadata)
 
       val addFilesIter = createDeltaActions(spark, manifest, txn, fs)
       val metrics = Some(Map[String, String](
@@ -365,7 +365,7 @@ abstract class ConvertToDeltaCommandBase(
         spark,
         txn,
         txn.metadata,
-        addFilesIter,
+        Iterator.single(txn.protocol) ++ addFilesIter,
         getOperation(numFiles, convertProperties),
         numFiles,
         getContext,
