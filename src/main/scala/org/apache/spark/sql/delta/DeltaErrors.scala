@@ -112,21 +112,28 @@ object DeltaErrors
 
   val faqRelativePath: String = "/delta-intro.html#frequently-asked-questions"
 
-  val DeltaSourceIgnoreDeleteErrorMessage =
-    "Detected deleted data from streaming source. This is currently not supported. If you'd like " +
-      "to ignore deletes, set the option 'ignoreDeletes' to 'true'."
-
-  val DeltaSourceIgnoreChangesErrorMessage =
-    "Detected a data update in the source table. This is currently not supported. If you'd " +
-      "like to ignore updates, set the option 'ignoreChanges' to 'true'. If you would like the " +
-      "data update to be reflected, please restart this query with a fresh checkpoint directory."
-
   val EmptyCheckpointErrorMessage =
     s"""
        |Attempted to write an empty checkpoint without any actions. This checkpoint will not be
        |useful in recomputing the state of the table. However this might cause other checkpoints to
        |get deleted based on retention settings.
      """.stripMargin
+
+  def deltaSourceIgnoreDeleteError(version: Long, removedFile: String): Throwable = {
+    new UnsupportedOperationException(
+      s"Detected deleted data (for example $removedFile) from streaming source at " +
+        s"version $version. This is currently not supported. If you'd like to ignore deletes, " +
+        "set the option 'ignoreDeletes' to 'true'.")
+  }
+
+  def deltaSourceIgnoreChangesError(version: Long, removedFile: String): Throwable = {
+    new UnsupportedOperationException(
+      s"Detected a data update (for example $removedFile) in the source table at version " +
+        s"$version. This is currently not supported. If you'd like to ignore updates, set the " +
+        "option 'ignoreChanges' to 'true'. If you would like the data update to be reflected, " +
+        "please restart this query with a fresh checkpoint directory."
+    )
+  }
 
   /**
    * File not found hint for Delta, replacing the normal one which is inapplicable.

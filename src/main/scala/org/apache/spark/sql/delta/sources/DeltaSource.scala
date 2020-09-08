@@ -114,7 +114,7 @@ case class DeltaSource(
     /** Returns matching files that were added on or after startVersion among delta logs. */
     def filterAndIndexDeltaLogs(startVersion: Long): Iterator[IndexedFile] = {
       deltaLog.getChanges(startVersion).flatMap { case (version, actions) =>
-        val addFiles = verifyStreamHygieneAndFilterAddFiles(actions)
+        val addFiles = verifyStreamHygieneAndFilterAddFiles(actions, version)
         Iterator.single(IndexedFile(version, -1, null)) ++ addFiles
           .map(_.asInstanceOf[AddFile])
           .zipWithIndex.map { case (action, index) =>
@@ -244,9 +244,11 @@ case class DeltaSource(
       "latestOffset(Offset, ReadLimit) should be called instead of this method")
   }
 
-  private def verifyStreamHygieneAndFilterAddFiles(actions: Seq[Action]): Seq[Action] = {
+  private def verifyStreamHygieneAndFilterAddFiles(
+    actions: Seq[Action],
+    version: Long): Seq[Action] = {
     var seenFileAdd = false
-    var seenFileRemove = false
+    var removeFileActionPath: Option[String] = None
     val filteredActions = actions.filter {
       case a: AddFile if a.dataChange =>
         seenFileAdd = true
@@ -255,7 +257,9 @@ case class DeltaSource(
         // Created by a data compaction
         false
       case r: RemoveFile if r.dataChange =>
-        seenFileRemove = true
+        if (removeFileActionPath.isEmpty) {
+          removeFileActionPath = Some(r.path)
+        }
         false
       case _: RemoveFile =>
         false
@@ -272,11 +276,11 @@ case class DeltaSource(
       case null => // Some crazy future feature. Ignore
         false
     }
-    if (seenFileRemove) {
+    if (removeFileActionPath.isDefined) {
       if (seenFileAdd && !ignoreChanges) {
-        throw new UnsupportedOperationException(DeltaErrors.DeltaSourceIgnoreChangesErrorMessage)
+        throw DeltaErrors.deltaSourceIgnoreChangesError(version, removeFileActionPath.get)
       } else if (!seenFileAdd && !ignoreDeletes) {
-        throw new UnsupportedOperationException(DeltaErrors.DeltaSourceIgnoreDeleteErrorMessage)
+        throw DeltaErrors.deltaSourceIgnoreDeleteError(version, removeFileActionPath.get)
       }
     }
 

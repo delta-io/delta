@@ -25,6 +25,7 @@ import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.actions.{AddFile, InvalidProtocolVersionException, Protocol}
 import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaSQLConf}
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
@@ -38,7 +39,7 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.{ManualClock, Utils}
 
-class DeltaSourceSuite extends DeltaSourceSuiteBase {
+class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
 
   import testImplicits._
 
@@ -1237,6 +1238,82 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase {
       } finally {
         q.stop()
       }
+    }
+  }
+
+  testQuietly("SC-46515: deltaSourceIgnoreChangesError contains removeFile, version") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
+      val df = spark.readStream.format("delta").load(inputDir.toString)
+      df.writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.toString)
+        .start(outputDir.toString)
+        .processAllAvailable()
+
+      // Overwrite values, causing AddFile & RemoveFile actions to be triggered
+      Seq(1, 2, 3).toDF("x")
+        .write
+        .mode("overwrite")
+        .format("delta")
+        .save(inputDir.toString)
+
+      val e = intercept[StreamingQueryException] {
+        val q = df.writeStream
+          .format("delta")
+          .option("checkpointLocation", checkpointDir.toString)
+          // DeltaOptions.IGNORE_CHANGES_OPTION is false by default
+          .start(outputDir.toString)
+
+        try {
+          q.processAllAvailable()
+        } finally {
+          q.stop()
+        }
+      }
+
+      assert(e.getCause.isInstanceOf[UnsupportedOperationException])
+      assert(e.getCause.getMessage.contains(
+        "This is currently not supported. If you'd like to ignore updates, set the option " +
+          "'ignoreChanges' to 'true'."))
+      assert(e.getCause.getMessage.contains("for example"))
+      assert(e.getCause.getMessage.contains("version"))
+    }
+  }
+
+  testQuietly("SC-46515: deltaSourceIgnoreDeleteError contains removeFile, version") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
+      val df = spark.readStream.format("delta").load(inputDir.toString)
+      df.writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.toString)
+        .start(outputDir.toString)
+        .processAllAvailable()
+
+      // Delete the table, causing only RemoveFile (not AddFile) actions to be triggered
+      io.delta.tables.DeltaTable.forPath(spark, inputDir.getAbsolutePath).delete()
+
+      val e = intercept[StreamingQueryException] {
+        val q = df.writeStream
+          .format("delta")
+          .option("checkpointLocation", checkpointDir.toString)
+          // DeltaOptions.IGNORE_DELETES_OPTION is false by default
+          .start(outputDir.toString)
+
+        try {
+          q.processAllAvailable()
+        } finally {
+          q.stop()
+        }
+      }
+
+      assert(e.getCause.isInstanceOf[UnsupportedOperationException])
+      assert(e.getCause.getMessage.contains(
+        "This is currently not supported. If you'd like to ignore deletes, set the option " +
+          "'ignoreDeletes' to 'true'."))
+      assert(e.getCause.getMessage.contains("for example"))
+      assert(e.getCause.getMessage.contains("version"))
     }
   }
 }
