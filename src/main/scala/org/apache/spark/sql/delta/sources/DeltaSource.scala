@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.sources
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.FileNotFoundException
+import java.sql.Timestamp
 
 import scala.util.matching.Regex
 
@@ -26,6 +27,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.util.{DateTimeUtils, TimestampFormatter}
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
@@ -385,16 +387,47 @@ case class DeltaSource(
     }
   }
 
-  /** Extracts whether users provided the option to time travel a relation. */
+  /**
+   * Extracts whether users provided the option to time travel a relation. If a query restarts from
+   * a checkpoint and the checkpoint has recorded the offset, this method should never been called.
+   */
   private lazy val getStartingVersion: Option[Long] = {
-    val tsOpt = options.startingTimestamp
-    val versionOpt = options.startingVersion
-
     /** DeltaOption validates input and ensures that only one is provided. */
-    if (tsOpt.isDefined || versionOpt.isDefined) {
-      Some(DeltaTableUtils.resolveTimeTravelVersion(
-        spark.sessionState.conf, deltaLog,
-        DeltaTimeTravelSpec(tsOpt.map(Literal(_)), versionOpt, Some("deltaSource")))._1)
+    if (options.startingVersion.isDefined) {
+      val v = options.startingVersion.get
+      // when starting from a given version, we don't need the snapshot of this version. So
+      // `mustBeRecreatable` is set to `false`.
+      deltaLog.history.checkVersionExists(v, mustBeRecreatable = false)
+      Some(v)
+    } else if (options.startingTimestamp.isDefined) {
+      val tt: DeltaTimeTravelSpec = DeltaTimeTravelSpec(
+        timestamp = options.startingTimestamp.map(Literal(_)),
+        version = None,
+        creationSource = Some("deltaSource"))
+      val tz = spark.sessionState.conf.sessionLocalTimeZone
+      val timestamp = tt.getTimestamp(tz)
+      val commit = deltaLog.history.getActiveCommitAtTime(
+        timestamp,
+        canReturnLastCommit = true,
+        mustBeRecreatable = false,
+        canReturnEarliestCommit = true)
+      if (commit.timestamp >= timestamp.getTime) {
+        // Find the commit at the `timestamp` or the earliest commit
+        Some(commit.version)
+      } else {
+        // commit.timestamp is not the same, so this commit is a commit before the timestamp and
+        // the next version if exists should be the earliest commit after the timestamp.
+        // Note: `getActiveCommitAtTime` has called `update`, so we don't need to call it again.
+        if (commit.version + 1 <= deltaLog.snapshot.version) {
+          Some(commit.version + 1)
+        } else {
+          val commitTs = new Timestamp(commit.timestamp)
+          val timestampFormatter = TimestampFormatter(DateTimeUtils.getTimeZone(tz))
+          val tsString = DateTimeUtils.timestampToString(
+            timestampFormatter, DateTimeUtils.fromJavaTimestamp(commitTs))
+          throw DeltaErrors.timestampGreaterThanLatestCommit(timestamp, commitTs, tsString)
+        }
+      }
     } else {
       None
     }

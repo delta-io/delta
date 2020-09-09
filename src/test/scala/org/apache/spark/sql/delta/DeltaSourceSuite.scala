@@ -1012,181 +1012,226 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
     duration.toMillis
   }
 
-  test("startingVersion: start from version > 0") {
-    withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      val tblLoc = inputDir.getCanonicalPath
-      val start = 1594418440842L
-      generateCommits(tblLoc, start, start + 20.minutes)
+  /** Disable log cleanup to avoid deleting logs we are testing. */
+  private def disableLogCleanup(tablePath: String): Unit = {
+    sql(s"alter table delta.`$tablePath` " +
+      s"set tblproperties (${DeltaConfigs.ENABLE_EXPIRED_LOG_CLEANUP.key} = false)")
+  }
 
-      val q = spark.readStream
-        .format("delta")
-        .option("startingVersion", "1")
-        .load(inputDir.getCanonicalPath)
-        .writeStream
-        .format("delta")
-        .option("checkpointLocation", checkpointDir.getCanonicalPath)
-        .start(outputDir.getCanonicalPath)
-      try {
-        q.processAllAvailable()
+  testQuietly("startingVersion") {
+    withTempDir { tableDir =>
+      val tablePath = tableDir.getCanonicalPath
+      val start = 1594795800000L
+      generateCommits(tablePath, start, start + 20.minutes)
+
+      def testStartingVersion(startingVersion: Long): Unit = {
+        val q = spark.readStream
+          .format("delta")
+          .option("startingVersion", startingVersion)
+          .load(tablePath)
+          .writeStream
+          .format("memory")
+          .queryName("startingVersion_test")
+          .start()
+        try {
+          q.processAllAvailable()
+        } finally {
+          q.stop()
+        }
+      }
+
+      for ((startingVersion, expected) <- Seq(
+        0 -> (0 until 20),
+        1 -> (10 until 20))
+      ) {
+        withTempView("startingVersion_test") {
+          testStartingVersion(startingVersion)
+          checkAnswer(
+            spark.table("startingVersion_test"),
+            expected.map(_.toLong).toDF())
+        }
+      }
+
+      assert(intercept[StreamingQueryException] {
+        testStartingVersion(-1)
+      }.getMessage.contains("Invalid value '-1' for option 'startingVersion'"))
+      assert(intercept[StreamingQueryException] {
+        testStartingVersion(2)
+      }.getMessage.contains("Cannot time travel Delta table to version 2"))
+
+      // Create a checkpoint at version 2 and delete version 0
+      disableLogCleanup(tablePath)
+      val deltaLog = DeltaLog.forTable(spark, tablePath)
+      assert(deltaLog.update().version == 2)
+      deltaLog.checkpoint()
+      new File(FileNames.deltaFile(deltaLog.logPath, 0).toUri).delete()
+
+      // Cannot start from version 0
+      assert(intercept[StreamingQueryException] {
+        testStartingVersion(0)
+      }.getMessage.contains("Cannot time travel Delta table to version 0"))
+
+      // Can start from version 1 even if it's not recreatable
+      withTempView("startingVersion_test") {
+        testStartingVersion(1L)
         checkAnswer(
-          spark.read.format("delta").load(outputDir.getAbsolutePath),
+          spark.table("startingVersion_test"),
           (10 until 20).map(_.toLong).toDF())
-      } finally {
-        q.stop()
       }
     }
   }
 
-  test("startingVersion: start from initial state") {
+  testQuietly("startingVersion should be ignored when restarting from a checkpoint") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      val tblLoc = inputDir.getCanonicalPath
-      val start = 1594418440842L
-      generateCommits(tblLoc, start, start + 20.minutes)
+      val start = 1594795800000L
+      generateCommits(inputDir.getCanonicalPath, start, start + 20.minutes)
 
-      val q = spark.readStream
-        .format("delta")
-        .option("startingVersion", "0")
-        .load(inputDir.getCanonicalPath)
-        .writeStream
-        .format("delta")
-        .option("checkpointLocation", checkpointDir.getCanonicalPath)
-        .start(outputDir.getCanonicalPath)
+      def testStartingVersion(
+          startingVersion: Long,
+          checkpointLocation: String = checkpointDir.getCanonicalPath): Unit = {
+        val q = spark.readStream
+          .format("delta")
+          .option("startingVersion", startingVersion)
+          .load(inputDir.getCanonicalPath)
+          .writeStream
+          .format("delta")
+          .option("checkpointLocation", checkpointLocation)
+          .start(outputDir.getCanonicalPath)
+        try {
+          q.processAllAvailable()
+        } finally {
+          q.stop()
+        }
+      }
+
+      testStartingVersion(1L)
+      checkAnswer(
+        spark.read.format("delta").load(outputDir.getCanonicalPath),
+        (10 until 20).map(_.toLong).toDF())
+
+      // Add two new commits
+      generateCommits(inputDir.getCanonicalPath, start + 40.minutes)
+      disableLogCleanup(inputDir.getCanonicalPath)
+      val deltaLog = DeltaLog.forTable(spark, inputDir.getCanonicalPath)
+      assert(deltaLog.update().version == 3)
+      deltaLog.checkpoint()
+
+      // Make the streaming query move forward. When we restart here, we still need to touch
+      // `DeltaSource.getStartingVersion` because the engine will call `getBatch` that was committed
+      // (start is None) during the restart.
+      testStartingVersion(1L)
+      checkAnswer(
+        spark.read.format("delta").load(outputDir.getCanonicalPath),
+        (10 until 30).map(_.toLong).toDF())
+
+      // Add one commit and delete version 0 and version 1
+      generateCommits(inputDir.getCanonicalPath, start + 60.minutes)
+      (0 to 1).foreach { v =>
+        new File(FileNames.deltaFile(deltaLog.logPath, v).toUri).delete()
+      }
+
+      // Although version 1 has been deleted, restarting the query should still work as we have
+      // processed files in version 1. In other words, query restart should ignore "startingVersion"
+      testStartingVersion(1L)
+      checkAnswer(
+        spark.read.format("delta").load(outputDir.getCanonicalPath),
+        ((10 until 30) ++ (40 until 50)).map(_.toLong).toDF()) // the gap caused by "alter table"
+
+      // But if we start a new query, it should fail.
+      val newCheckpointDir = Utils.createTempDir()
       try {
-        q.processAllAvailable()
-        checkAnswer(
-          spark.read.format("delta").load(outputDir.getAbsolutePath),
-          (0 until 20).map(_.toLong).toDF())
+        assert(intercept[StreamingQueryException] {
+          testStartingVersion(1L, newCheckpointDir.getCanonicalPath)
+        }.getMessage.contains("[2, 4]"))
       } finally {
-        q.stop()
+        Utils.deleteRecursively(newCheckpointDir)
       }
     }
   }
 
-  test("startingTimestamp: start from version > 0") {
-    withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      val tblLoc = inputDir.getCanonicalPath
-      val start = 1594418440842L
-      generateCommits(tblLoc, start, start + 20.minutes)
+  testQuietly("startingTimestamp") {
+    withTempDir { tableDir =>
+      val tablePath = tableDir.getCanonicalPath
+      val start = 1594795800000L // 2020-07-14 23:50:00 PDT
+      generateCommits(tablePath, start, start + 20.minutes)
 
-      val q = spark.readStream
-        .format("delta")
-        .option("startingTimestamp", "2020-07-10 15:20:40")
-        .load(inputDir.getCanonicalPath)
-        .writeStream
-        .format("delta")
-        .option("checkpointLocation", checkpointDir.getCanonicalPath)
-        .start(outputDir.getCanonicalPath)
-      try {
-        q.processAllAvailable()
+      def testStartingTimestamp(startingTimestamp: String): Unit = {
+        val q = spark.readStream
+          .format("delta")
+          .option("startingTimestamp", startingTimestamp)
+          .load(tablePath)
+          .writeStream
+          .format("memory")
+          .queryName("startingTimestamp_test")
+          .start()
+        try {
+          q.processAllAvailable()
+        } finally {
+          q.stop()
+        }
+      }
+
+      for ((startingTimestamp, expected) <- Seq(
+        "2020-07-14" -> (0 until 20),
+        "2020-07-14 23:40:00" -> (0 until 20),
+        "2020-07-14 23:50:00" -> (0 until 20), // the timestamp of version 0
+        "2020-07-14 23:50:01" -> (10 until 20),
+        "2020-07-15" -> (10 until 20),
+        "2020-07-15 00:00:00" -> (10 until 20),
+        "2020-07-15 00:10:00" -> (10 until 20)) // the timestamp of version 1
+      ) {
+        withTempView("startingTimestamp_test") {
+          testStartingTimestamp(startingTimestamp)
+          checkAnswer(
+            spark.table("startingTimestamp_test"),
+            expected.map(_.toLong).toDF())
+        }
+      }
+      assert(intercept[StreamingQueryException] {
+        testStartingTimestamp("2020-07-15 00:10:01")
+      }.getMessage.contains("The provided timestamp (2020-07-15 00:10:01.0) " +
+        "is after the latest version"))
+      assert(intercept[StreamingQueryException] {
+        testStartingTimestamp("2020-07-16")
+      }.getMessage.contains("The provided timestamp (2020-07-16 00:00:00.0) " +
+        "is after the latest version"))
+
+      // Create a checkpoint at version 2 and delete version 0
+      disableLogCleanup(tablePath)
+      val deltaLog = DeltaLog.forTable(spark, tablePath)
+      assert(deltaLog.update().version == 2)
+      deltaLog.checkpoint()
+      new File(FileNames.deltaFile(deltaLog.logPath, 0).toUri).delete()
+
+      // Can start from version 1 even if it's not recreatable
+      withTempView("startingTimestamp_test") {
+        testStartingTimestamp("2020-07-14")
         checkAnswer(
-          spark.read.format("delta").load(outputDir.getAbsolutePath),
+          spark.table("startingTimestamp_test"),
           (10 until 20).map(_.toLong).toDF())
-      } finally {
-        q.stop()
       }
     }
   }
 
-  test("startingTimestamp: start from date instead of timestamp") {
-    withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      val tblLoc = inputDir.getCanonicalPath
-      val start = 1594796340000L // Tue Jul 14 2020 23:59:00
-      generateCommits(tblLoc, start, start + 20.minutes)
-
+  testQuietly("startingVersion and startingTimestamp are both set") {
+    withTempDir { tableDir =>
+      val tablePath = tableDir.getCanonicalPath
+      generateCommits(tablePath, 0)
       val q = spark.readStream
         .format("delta")
+        .option("startingVersion", 0L)
         .option("startingTimestamp", "2020-07-15")
-        .load(inputDir.getCanonicalPath)
+        .load(tablePath)
         .writeStream
-        .format("delta")
-        .option("checkpointLocation", checkpointDir.getCanonicalPath)
-        .start(outputDir.getCanonicalPath)
+        .format("console")
+        .start()
       try {
-        q.processAllAvailable()
-        checkAnswer(
-          spark.read.format("delta").load(outputDir.getAbsolutePath),
-          (0 until 20).map(_.toLong).toDF())
+        assert(intercept[StreamingQueryException] {
+          q.processAllAvailable()
+        }.getMessage.contains("Please either provide 'startingVersion' or 'startingTimestamp'"))
       } finally {
         q.stop()
       }
-    }
-  }
-
-  test("startingVersion: invalid inputs") {
-    withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      val tblLoc = inputDir.getCanonicalPath
-      val start = 1594418440842L
-      generateCommits(tblLoc, start, start + 20.minutes)
-
-      val e = intercept[StreamingQueryException] {
-        spark.readStream
-          .format("delta")
-          .option("startingVersion", "-1")
-          .load(inputDir.getCanonicalPath)
-          .writeStream
-          .format("delta")
-          .option("checkpointLocation", checkpointDir.getCanonicalPath)
-          .start(outputDir.getCanonicalPath)
-          .processAllAvailable()
-      }
-
-      assert(e.getCause.isInstanceOf[IllegalArgumentException])
-      assert(e.getCause.getMessage.contains("Invalid value '-1' for option 'startingVersion'"))
-
-      val e2 = intercept[StreamingQueryException] {
-        spark.readStream
-          .format("delta")
-          .option("startingVersion", "5")
-          .load(inputDir.getCanonicalPath)
-          .writeStream
-          .format("delta")
-          .option("checkpointLocation", checkpointDir.getCanonicalPath)
-          .start(outputDir.getCanonicalPath)
-          .processAllAvailable()
-      }
-
-      assert(e2.getCause.isInstanceOf[AnalysisException])
-      assert(e2.getCause.getMessage.contains("Cannot time travel Delta table to version 5"))
-    }
-  }
-
-  test("startingTimestamp: invalid inputs") {
-    withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      val tblLoc = inputDir.getCanonicalPath
-      val start = 1594418440842L
-      generateCommits(tblLoc, start, start + 20.minutes)
-
-      val e = intercept[StreamingQueryException] {
-        spark.readStream
-          .format("delta")
-          .option("startingTimestamp", "2019-07-10 15:20:40")
-          .load(inputDir.getCanonicalPath)
-          .writeStream
-          .format("delta")
-          .option("checkpointLocation", checkpointDir.getCanonicalPath)
-          .start(outputDir.getCanonicalPath)
-          .processAllAvailable()
-      }
-
-      assert(e.getCause.isInstanceOf[AnalysisException])
-      assert(e.getCause.getMessage.contains("The provided timestamp (2019-07-10 15:20:40.0)" +
-        " is before the earliest version"))
-
-      val e2 = intercept[StreamingQueryException] {
-        spark.readStream
-          .format("delta")
-          .option("startingTimestamp", "2020-07-10 17:20:40")
-          .load(inputDir.getCanonicalPath)
-          .writeStream
-          .format("delta")
-          .option("checkpointLocation", checkpointDir.getCanonicalPath)
-          .start(outputDir.getCanonicalPath)
-          .processAllAvailable()
-      }
-
-      assert(e2.getCause.isInstanceOf[AnalysisException])
-      assert(e2.getCause.getMessage.contains("The provided timestamp: 2020-07-10 17:20:40.0" +
-        " is after the latest commit timestamp"))
     }
   }
 

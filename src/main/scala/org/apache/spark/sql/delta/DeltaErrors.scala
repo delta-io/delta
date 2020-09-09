@@ -474,6 +474,12 @@ object DeltaErrors
       s"Invalid value '$input' for option '$name', $explain")
   }
 
+  def startingVersionAndTimestampBothSetException(
+      versionOptKey: String,
+      timestampOptKey: String): Throwable = {
+    new IllegalArgumentException(s"Please either provide '$versionOptKey' or '$timestampOptKey'")
+  }
+
   def unrecognizedLogFile(path: Path): Throwable = {
     new UnsupportedOperationException(s"Unrecognized log file $path")
   }
@@ -778,6 +784,16 @@ object DeltaErrors
     new AnalysisException(
       s"""The provided timestamp ($userTimestamp) is before the earliest version available to this
          |table ($commitTs). Please use a timestamp after $timestampString.
+         """.stripMargin)
+  }
+
+  def timestampGreaterThanLatestCommit(
+      userTimestamp: java.sql.Timestamp,
+      commitTs: java.sql.Timestamp,
+      timestampString: String): Throwable = {
+    new AnalysisException(
+      s"""The provided timestamp ($userTimestamp) is after the latest version available to this
+         |table ($commitTs). Please use a timestamp before or at $timestampString.
          """.stripMargin)
   }
 

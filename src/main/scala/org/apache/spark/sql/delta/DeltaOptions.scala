@@ -133,9 +133,9 @@ trait DeltaReadOptions extends DeltaOptionParser {
 
   private def provideOneStartingOption(): Unit = {
     if (startingTimestamp.isDefined && startingVersion.isDefined) {
-      throw new IllegalArgumentException(
-        s"Please either provide '$STARTING_TIMESTAMP_OPTION' or '$STARTING_VERSION_OPTION'."
-      )
+      throw DeltaErrors.startingVersionAndTimestampBothSetException(
+        STARTING_VERSION_OPTION,
+        STARTING_TIMESTAMP_OPTION)
     }
   }
 
