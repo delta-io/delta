@@ -247,7 +247,7 @@ class Snapshot(
   /**
    * Loads the file indices into a Dataset that can be used for LogReplay.
    */
-  private def loadActions: Dataset[SingleAction] = {
+  protected def loadActions: Dataset[SingleAction] = {
     val dfs = fileIndices.map { index => Dataset[SingleAction](spark, indexToRelation(index)) }
     dfs.reduceOption(_.union(_)).getOrElse(emptyActions)
   }
