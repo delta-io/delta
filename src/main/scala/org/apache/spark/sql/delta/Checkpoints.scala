@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.FileNotFoundException
 import java.util.UUID
 
+import scala.collection.mutable
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.actions.{Action, Metadata, SingleAction}
@@ -32,7 +33,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
 import org.apache.hadoop.mapreduce.{Job, TaskType}
 
-import org.apache.spark.sql.{Column, SparkSession}
+import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.functions.{col, struct, when}
@@ -237,21 +238,7 @@ object Checkpoints extends DeltaLogging {
         action
       }.drop("commitInfo")
 
-    val chk = if (snapshot.protocol.minWriterVersion >= 3) {
-      base.withColumn("add",
-        when(col("add").isNotNull, struct(Seq(
-          col("add.path"),
-          col("add.partitionValues"),
-          col("add.size"),
-          col("add.modificationTime"),
-          col("add.dataChange"), // actually not really useful here
-          col("add.tags")) ++
-          CheckpointV2.extractPartitionValues(snapshot.metadata.partitionSchema).toSeq: _*
-        ))
-      )
-    } else {
-      base
-    }
+    val chk = buildCheckpoint(base, snapshot)
     val schema = chk.schema.asNullable
 
     val (factory, serConf) = {
@@ -335,11 +322,41 @@ object Checkpoints extends DeltaLogging {
     }
     CheckpointMetaData(snapshot.version, checkpointSize.value, None)
   }
+
+  /**
+   * Modify the contents of the add column based on the table properties
+   */
+  private[delta] def buildCheckpoint(state: DataFrame, snapshot: Snapshot): DataFrame = {
+    val additionalCols = new mutable.ArrayBuffer[Column]()
+    if (DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_JSON.fromMetaData(snapshot.metadata)) {
+      additionalCols += col("add.stats").as("stats")
+    }
+    val sessionConf = state.sparkSession.sessionState.conf
+    // We provide fine grained control using the session conf for now, until users explicitly
+    // opt in our out of the struct conf.
+    val includeStructColumns = DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT
+      .fromMetaData(snapshot.metadata)
+      .getOrElse(sessionConf.getConf(DeltaSQLConf.DELTA_CHECKPOINT_V2_ENABLED))
+    if (includeStructColumns) {
+      additionalCols ++= CheckpointV2.extractPartitionValues(snapshot.metadata.partitionSchema)
+    }
+    state.withColumn("add",
+      when(col("add").isNotNull, struct(Seq(
+        col("add.path"),
+        col("add.partitionValues"),
+        col("add.size"),
+        col("add.modificationTime"),
+        col("add.dataChange"), // actually not really useful here
+        col("add.tags")) ++
+        additionalCols: _*
+      ))
+    )
+  }
 }
 
 /**
- * Utility methods for generating and using V2 checkpoints. V2 checkpoints have partition values
- * as nested fields of the `add` column instead of as a string to string map.
+ * Utility methods for generating and using V2 checkpoints. V2 checkpoints have partition values and
+ * statistics as struct fields of the `add` column.
  */
 object CheckpointV2 {
   val PARTITIONS_COL_NAME = "partitionValues_parsed"

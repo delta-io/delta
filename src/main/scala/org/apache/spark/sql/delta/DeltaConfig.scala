@@ -364,4 +364,26 @@ object DeltaConfigs extends DeltaLogging {
     _ => true,
     "needs to be a boolean.")
 
+  /**
+   * When enabled, we will write file statistics in the checkpoint in JSON format as the "stats"
+   * column.
+   */
+  val CHECKPOINT_WRITE_STATS_AS_JSON = buildConfig[Boolean](
+    "checkpoint.writeStatsAsJson",
+    "true",
+    _.toBoolean,
+    _ => true,
+    "needs to be a boolean.")
+
+  /**
+   * When enabled, we will write file statistics in the checkpoint in the struct format in the
+   * "stats_parsed" column. We will also write partition values as a struct as
+   * "partitionValues_parsed".
+   */
+  val CHECKPOINT_WRITE_STATS_AS_STRUCT = buildConfig[Option[Boolean]](
+    "checkpoint.writeStatsAsStruct",
+    null,
+    v => Option(v).map(_.toBoolean),
+    _ => true,
+    "needs to be a boolean.")
 }
