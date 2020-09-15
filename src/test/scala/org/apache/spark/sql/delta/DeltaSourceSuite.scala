@@ -30,7 +30,7 @@ import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
 
-import org.apache.spark.sql.AnalysisException
+import org.apache.spark.sql.{AnalysisException, Row}
 import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.streaming.{OutputMode, StreamingQueryException, Trigger}
@@ -1237,51 +1237,181 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
 
   test("startingVersion: user defined start works with mergeSchema") {
     withTempDir { inputDir =>
-      spark.range(10)
-        .write
-        .format("delta")
-        .mode("append")
-        .save(inputDir.getCanonicalPath)
+      withTempView("startingVersionTest") {
+        spark.range(10)
+          .write
+          .format("delta")
+          .mode("append")
+          .save(inputDir.getCanonicalPath)
 
-      // Change schema at version 1
-      spark.range(10, 20)
-        .withColumn("id2", 'id)
-        .write
-        .option("mergeSchema", "true")
-        .format("delta")
-        .mode("append")
-        .save(inputDir.getCanonicalPath)
+        // Change schema at version 1
+        spark.range(10, 20)
+          .withColumn("id2", 'id)
+          .write
+          .option("mergeSchema", "true")
+          .format("delta")
+          .mode("append")
+          .save(inputDir.getCanonicalPath)
 
-      // Change schema at version 2
-      spark.range(20, 30)
-        .withColumn("id2", 'id)
-        .withColumn("id3", 'id)
-        .write
-        .option("mergeSchema", "true")
-        .format("delta")
-        .mode("append")
-        .save(inputDir.getCanonicalPath)
+        // Change schema at version 2
+        spark.range(20, 30)
+          .withColumn("id2", 'id)
+          .withColumn("id3", 'id)
+          .write
+          .option("mergeSchema", "true")
+          .format("delta")
+          .mode("append")
+          .save(inputDir.getCanonicalPath)
 
-      // check answer from version 1
-      val q = spark.readStream
-        .format("delta")
-        .option("startingVersion", "1")
-        .load(inputDir.getCanonicalPath)
-        .writeStream
-        .format("memory")
-        .queryName("startingVersionTest")
-        .start()
-      try {
-        q.processAllAvailable()
-        checkAnswer(
-          sql("select * from startingVersionTest"),
-          ((10 until 20).map(x => (x.toLong, x.toLong, None.toString)) ++
-            (20 until 30).map(x => (x.toLong, x.toLong, x.toString)))
-            .toDF("id", "id2", "id3")
-            .selectExpr("id", "id2", "cast(id3 as long) as id3")
-        )
-      } finally {
-        q.stop()
+        // check answer from version 1
+        val q = spark.readStream
+          .format("delta")
+          .option("startingVersion", "1")
+          .load(inputDir.getCanonicalPath)
+          .writeStream
+          .format("memory")
+          .queryName("startingVersionTest")
+          .start()
+        try {
+          q.processAllAvailable()
+          checkAnswer(
+            sql("select * from startingVersionTest"),
+            ((10 until 20).map(x => (x.toLong, x.toLong, None.toString)) ++
+              (20 until 30).map(x => (x.toLong, x.toLong, x.toString)))
+              .toDF("id", "id2", "id3")
+              .selectExpr("id", "id2", "cast(id3 as long) as id3")
+          )
+        } finally {
+          q.stop()
+        }
+      }
+    }
+  }
+
+  test("startingVersion latest") {
+    withTempDir { dir =>
+      withTempView("startingVersionTest") {
+        val path = dir.getAbsolutePath
+        spark.range(0, 10).write.format("delta").save(path)
+        val q = spark.readStream
+          .format("delta")
+          .option("startingVersion", "latest")
+          .load(path)
+          .writeStream
+          .format("memory")
+          .queryName("startingVersionLatest")
+          .start()
+        try {
+          // Starting from latest shouldn't include any data at first, even the most recent version.
+          q.processAllAvailable()
+          checkAnswer(sql("select * from startingVersionLatest"), Seq.empty)
+
+          // After we add some batches the stream should continue as normal.
+          spark.range(10, 15).write.format("delta").mode("append").save(path)
+          q.processAllAvailable()
+          checkAnswer(sql("select * from startingVersionLatest"), (10 until 15).map(Row(_)))
+          spark.range(15, 20).write.format("delta").mode("append").save(path)
+          spark.range(20, 25).write.format("delta").mode("append").save(path)
+          q.processAllAvailable()
+          checkAnswer(sql("select * from startingVersionLatest"), (10 until 25).map(Row(_)))
+        } finally {
+          q.stop()
+        }
+      }
+    }
+  }
+
+  test("startingVersion latest defined before started") {
+    withTempDir { dir =>
+      withTempView("startingVersionTest") {
+        val path = dir.getAbsolutePath
+        spark.range(0, 10).write.format("delta").save(path)
+        // Define the stream, but don't start it, before a second write. The startingVersion
+        // latest should be resolved when the query *starts*, so there'll be no data even though
+        // some was added after the stream was defined.
+        val streamDef = spark.readStream
+          .format("delta")
+          .option("startingVersion", "latest")
+          .load(path)
+          .writeStream
+          .format("memory")
+          .queryName("startingVersionLatest")
+        spark.range(10, 20).write.format("delta").mode("append").save(path)
+        val q = streamDef.start()
+
+        try {
+          q.processAllAvailable()
+          checkAnswer(sql("select * from startingVersionLatest"), Seq.empty)
+          spark.range(20, 25).write.format("delta").mode("append").save(path)
+          q.processAllAvailable()
+          checkAnswer(sql("select * from startingVersionLatest"), (20 until 25).map(Row(_)))
+        } finally {
+          q.stop()
+        }
+      }
+    }
+  }
+
+  test("startingVersion latest works on defined but empty table") {
+    withTempDir { dir =>
+      withTempView("startingVersionTest") {
+        val path = dir.getAbsolutePath
+        spark.range(0).write.format("delta").save(path)
+        val streamDef = spark.readStream
+          .format("delta")
+          .option("startingVersion", "latest")
+          .load(path)
+          .writeStream
+          .format("memory")
+          .queryName("startingVersionLatest")
+        val q = streamDef.start()
+
+        try {
+          q.processAllAvailable()
+          checkAnswer(sql("select * from startingVersionLatest"), Seq.empty)
+          spark.range(0, 5).write.format("delta").mode("append").save(path)
+          q.processAllAvailable()
+          checkAnswer(sql("select * from startingVersionLatest"), (0 until 5).map(Row(_)))
+        } finally {
+          q.stop()
+        }
+      }
+    }
+  }
+
+  test("startingVersion latest calls update when starting") {
+    withTempDir { dir =>
+      withTempView("startingVersionTest") {
+        val path = dir.getAbsolutePath
+        spark.range(0).write.format("delta").save(path)
+
+        val streamDef = spark.readStream
+          .format("delta")
+          .option("startingVersion", "latest")
+          .load(path)
+          .writeStream
+          .format("memory")
+          .queryName("startingVersionLatest")
+        val log = DeltaLog.forTable(spark, path)
+        val originalSnapshot = log.snapshot
+
+        // We write out some new data, and then do a dirty reflection hack to produce an un-updated
+        // Delta log. The stream should still update when started and not produce any data.
+        spark.range(10).write.format("delta").mode("append").save(path)
+        // The field is actually declared in the SnapshotManagement trait, but because traits don't
+        // exist in the JVM DeltaLog is where it ends up in reflection.
+        val snapshotField = classOf[DeltaLog].getDeclaredField("currentSnapshot")
+        snapshotField.setAccessible(true)
+        snapshotField.set(log, originalSnapshot)
+
+        val q = streamDef.start()
+
+        try {
+          q.processAllAvailable()
+          checkAnswer(sql("select * from startingVersionLatest"), Seq.empty)
+        } finally {
+          q.stop()
+        }
       }
     }
   }

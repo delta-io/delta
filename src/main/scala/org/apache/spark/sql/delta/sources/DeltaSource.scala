@@ -22,7 +22,7 @@ import java.sql.Timestamp
 
 import scala.util.matching.Regex
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTableUtils, DeltaTimeTravelSpec}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTableUtils, DeltaTimeTravelSpec, StartingVersion, StartingVersionLatest}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -394,10 +394,15 @@ case class DeltaSource(
   private lazy val getStartingVersion: Option[Long] = {
     /** DeltaOption validates input and ensures that only one is provided. */
     if (options.startingVersion.isDefined) {
-      val v = options.startingVersion.get
-      // when starting from a given version, we don't need the snapshot of this version. So
-      // `mustBeRecreatable` is set to `false`.
-      deltaLog.history.checkVersionExists(v, mustBeRecreatable = false)
+      val v = options.startingVersion.get match {
+        case StartingVersionLatest =>
+          deltaLog.update().version + 1
+        case StartingVersion(version) =>
+          // when starting from a given version, we don't need the snapshot of this version. So
+          // `mustBeRecreatable` is set to `false`.
+          deltaLog.history.checkVersionExists(version, mustBeRecreatable = false)
+          version
+      }
       Some(v)
     } else if (options.startingTimestamp.isDefined) {
       val tt: DeltaTimeTravelSpec = DeltaTimeTravelSpec(
