@@ -45,6 +45,27 @@ class DeltaInsertIntoSQLSuite extends DeltaInsertIntoTests(false, true)
       sql(s"INSERT $overwrite TABLE $tableName SELECT * FROM $tmpView")
     }
   }
+
+  test("normalize query columns should consider duplicated constant") {
+    withTable("t1", "t2") {
+      sql("CREATE TABLE t1 (a int, b int, c int) USING delta PARTITIONED BY (b, c)")
+      sql("INSERT OVERWRITE TABLE t1 PARTITION (c=2) SELECT 3, 2")
+      checkAnswer(
+        sql("SELECT * FROM t1"),
+        Row(3, 2, 2) :: Nil
+      )
+      sql("INSERT OVERWRITE TABLE t1 PARTITION (b=2, c=2) SELECT 3")
+      checkAnswer(
+        sql("SELECT * FROM t1"),
+        Row(3, 2, 2) :: Nil
+      )
+      sql("INSERT OVERWRITE TABLE t1 PARTITION (b=2, c) SELECT 3, 2")
+      checkAnswer(
+        sql("SELECT * FROM t1"),
+        Row(3, 2, 2) :: Nil
+      )
+    }
+  }
 }
 
 class DeltaInsertIntoSQLByPathSuite extends DeltaInsertIntoTests(false, true)

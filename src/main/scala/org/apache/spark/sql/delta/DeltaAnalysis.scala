@@ -28,7 +28,7 @@ import org.apache.spark.sql.{AnalysisException, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, EliminateSubqueryAliases, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
-import org.apache.spark.sql.catalyst.expressions.{Alias, And, AnsiCast, Cast, CreateStruct, Expression, GetStructField, NamedExpression, UpCast}
+import org.apache.spark.sql.catalyst.expressions.{Alias, And, AnsiCast, AttributeReference, Cast, CreateStruct, Expression, GetStructField, NamedExpression, UpCast}
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, DeleteAction, DeleteFromTable, DeltaDelete, DeltaMergeInto, DeltaMergeIntoClause, DeltaMergeIntoDeleteClause, DeltaMergeIntoInsertClause, DeltaMergeIntoUpdateClause, DeltaUpdateTable, Filter, InsertAction, InsertIntoStatement, LocalRelation, LogicalPlan, MergeIntoTable, OverwriteByExpression, Project, UpdateAction, UpdateTable}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
@@ -158,15 +158,21 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
     val project = query.output.zipWithIndex.map { case (attr, i) =>
       if (i < targetAttrs.length) {
         val targetAttr = targetAttrs(i)
-        val expr = (attr.dataType, targetAttr.dataType) match {
+        (attr.dataType, targetAttr.dataType) match {
           case (s, t) if s == t =>
-            attr
+            attr match {
+              case AttributeReference(name, _, _, _) if name == targetAttr.name =>
+                attr
+              case _ =>
+                Alias(attr, targetAttr.name)(explicitMetadata = Option(targetAttr.metadata))
+            }
           case (s: StructType, t: StructType) if s != t =>
-            addCastsToStructs(target.name(), attr, s, t)
+            val expr = addCastsToStructs(target.name(), attr, s, t)
+            Alias(expr, targetAttr.name)(explicitMetadata = Option(targetAttr.metadata))
           case _ =>
-            getCastFunction(attr, targetAttr.dataType)
+            val expr = getCastFunction(attr, targetAttr.dataType)
+            Alias(expr, targetAttr.name)(explicitMetadata = Option(targetAttr.metadata))
         }
-        Alias(expr, targetAttr.name)(explicitMetadata = Option(targetAttr.metadata))
       } else {
         attr
       }
