@@ -314,22 +314,34 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val q = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
-        .load(inputDir.getCanonicalPath)
-        .writeStream
-        .format("memory")
-        .trigger(Trigger.Once)
-        .queryName("triggerOnceTest")
-        .start()
-      try {
-        assert(q.awaitTermination(streamingTimeout.toMillis))
-        assert(q.recentProgress.count(_.numInputRows != 0) == 1) // only one trigger was run
-        checkAnswer(sql("SELECT * from triggerOnceTest"), (0 until 5).map(_.toString).toDF)
-      } finally {
-        q.stop()
+      def runTriggerOnceAndVerifyResult(expected: Seq[Int]): Unit = {
+        val q = spark.readStream
+          .format("delta")
+          .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
+          .load(inputDir.getCanonicalPath)
+          .writeStream
+          .format("memory")
+          .trigger(Trigger.Once)
+          .queryName("triggerOnceTest")
+          .start()
+        try {
+          assert(q.awaitTermination(streamingTimeout.toMillis))
+          assert(q.recentProgress.count(_.numInputRows != 0) == 1) // only one trigger was run
+          checkAnswer(sql("SELECT * from triggerOnceTest"), expected.map(_.toString).toDF)
+        } finally {
+          q.stop()
+        }
       }
+
+      runTriggerOnceAndVerifyResult(0 until 5)
+
+      // Write more data and start a second batch.
+      (5 until 10).foreach { i =>
+        val v = Seq(i.toString).toDF
+        v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+      }
+      // Verify we can see all of latest data.
+      runTriggerOnceAndVerifyResult(0 until 10)
     }
   }
 
