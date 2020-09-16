@@ -64,8 +64,8 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
       if query.resolved && needsSchemaAdjustment(d.name(), query, d.schema()) =>
       val projection = normalizeQueryColumns(query, d)
       if (projection != query) {
-        val aliases = AttributeMap(query.output.zip(projection.output).filter {
-          case (l: AttributeReference, r: AttributeReference) => !l.sameRef(r)
+        val aliases = AttributeMap(query.output.zip(projection.output).collect {
+          case (l: AttributeReference, r: AttributeReference) if !l.sameRef(r) => (l, r)
         })
         val newDeleteExpr = deleteExpr.transformUp {
           case a: AttributeReference => aliases.getOrElse(a, a)
