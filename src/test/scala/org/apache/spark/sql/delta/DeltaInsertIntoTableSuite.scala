@@ -46,23 +46,23 @@ class DeltaInsertIntoSQLSuite extends DeltaInsertIntoTests(false, true)
     }
   }
 
-  test("normalize query columns should consider duplicated constant") {
-    withTable("t1", "t2") {
+  test("insert overwrite should work with selecting constants") {
+    withTable("t1") {
       sql("CREATE TABLE t1 (a int, b int, c int) USING delta PARTITIONED BY (b, c)")
-      sql("INSERT OVERWRITE TABLE t1 PARTITION (c=2) SELECT 3, 2")
+      sql("INSERT OVERWRITE TABLE t1 PARTITION (c=3) SELECT 1, 2")
       checkAnswer(
         sql("SELECT * FROM t1"),
-        Row(3, 2, 2) :: Nil
+        Row(1, 2, 3) :: Nil
       )
-      sql("INSERT OVERWRITE TABLE t1 PARTITION (b=2, c=2) SELECT 3")
+      sql("INSERT OVERWRITE TABLE t1 PARTITION (b=2, c=3) SELECT 1")
       checkAnswer(
         sql("SELECT * FROM t1"),
-        Row(3, 2, 2) :: Nil
+        Row(1, 2, 3) :: Nil
       )
-      sql("INSERT OVERWRITE TABLE t1 PARTITION (b=2, c) SELECT 3, 2")
+      sql("INSERT OVERWRITE TABLE t1 PARTITION (b=2, c) SELECT 1, 3")
       checkAnswer(
         sql("SELECT * FROM t1"),
-        Row(3, 2, 2) :: Nil
+        Row(1, 2, 3) :: Nil
       )
     }
   }
