@@ -64,8 +64,8 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
       if query.resolved && needsSchemaAdjustment(d.name(), query, d.schema()) =>
       val projection = normalizeQueryColumns(query, d)
       if (projection != query) {
-        val aliases = AttributeMap(projection.projectList.collect {
-          case a @ Alias(child: AttributeReference, _) => (child, a.toAttribute)
+        val aliases = AttributeMap(query.output.zip(projection.output).filter {
+          case (l: AttributeReference, r: AttributeReference) => !l.sameRef(r)
         })
         val newDeleteExpr = deleteExpr.transformUp {
           case a: AttributeReference => aliases.getOrElse(a, a)
@@ -158,7 +158,7 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
    * Performs the schema adjustment by adding UpCasts (which are safe) and Aliases so that we
    * can check if the by-ordinal schema of the insert query matches our Delta table.
    */
-  private def normalizeQueryColumns(query: LogicalPlan, target: DeltaTableV2): Project = {
+  private def normalizeQueryColumns(query: LogicalPlan, target: DeltaTableV2): LogicalPlan = {
     val targetAttrs = target.schema()
     // always add a Cast. it will be removed in the optimizer if it is unnecessary.
     val project = query.output.zipWithIndex.map { case (attr, i) =>
