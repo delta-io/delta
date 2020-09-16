@@ -28,7 +28,7 @@ import org.apache.spark.sql.{AnalysisException, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, EliminateSubqueryAliases, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
-import org.apache.spark.sql.catalyst.expressions.{Alias, And, AnsiCast, AttributeReference, Cast, CreateStruct, Expression, GetStructField, NamedExpression, UpCast}
+import org.apache.spark.sql.catalyst.expressions.{Alias, And, AnsiCast, AttributeMap, AttributeReference, Cast, CreateStruct, Expression, GetStructField, NamedExpression, UpCast}
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, DeleteAction, DeleteFromTable, DeltaDelete, DeltaMergeInto, DeltaMergeIntoClause, DeltaMergeIntoDeleteClause, DeltaMergeIntoInsertClause, DeltaMergeIntoUpdateClause, DeltaUpdateTable, Filter, InsertAction, InsertIntoStatement, LocalRelation, LogicalPlan, MergeIntoTable, OverwriteByExpression, Project, UpdateAction, UpdateTable}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
@@ -59,14 +59,20 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
       }
 
     // INSERT OVERWRITE by ordinal
-    case a @ OverwriteByExpression(
-        DataSourceV2Relation(d: DeltaTableV2, _, _, _, _), _, query, _, false)
+    case o @ OverwriteByExpression(
+        DataSourceV2Relation(d: DeltaTableV2, _, _, _, _), deleteExpr, query, _, false)
       if query.resolved && needsSchemaAdjustment(d.name(), query, d.schema()) =>
       val projection = normalizeQueryColumns(query, d)
       if (projection != query) {
-        a.copy(query = projection)
+        val aliases = AttributeMap(projection.projectList.collect {
+          case a @ Alias(child: AttributeReference, _) => (child, a.toAttribute)
+        })
+        val newDeleteExpr = deleteExpr.transformUp {
+          case a: AttributeReference => aliases.getOrElse(a, a)
+        }
+        o.copy(deleteExpr = newDeleteExpr, query = projection)
       } else {
-        a
+        o
       }
 
     // Pull out the partition filter that may be part of the FileIndex. This can happen when someone
@@ -152,27 +158,21 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
    * Performs the schema adjustment by adding UpCasts (which are safe) and Aliases so that we
    * can check if the by-ordinal schema of the insert query matches our Delta table.
    */
-  private def normalizeQueryColumns(query: LogicalPlan, target: DeltaTableV2): LogicalPlan = {
+  private def normalizeQueryColumns(query: LogicalPlan, target: DeltaTableV2): Project = {
     val targetAttrs = target.schema()
     // always add a Cast. it will be removed in the optimizer if it is unnecessary.
     val project = query.output.zipWithIndex.map { case (attr, i) =>
       if (i < targetAttrs.length) {
         val targetAttr = targetAttrs(i)
-        (attr.dataType, targetAttr.dataType) match {
+        val expr = (attr.dataType, targetAttr.dataType) match {
           case (s, t) if s == t =>
-            attr match {
-              case AttributeReference(name, _, _, _) if name == targetAttr.name =>
-                attr
-              case _ =>
-                Alias(attr, targetAttr.name)(explicitMetadata = Option(targetAttr.metadata))
-            }
+            attr
           case (s: StructType, t: StructType) if s != t =>
-            val expr = addCastsToStructs(target.name(), attr, s, t)
-            Alias(expr, targetAttr.name)(explicitMetadata = Option(targetAttr.metadata))
+            addCastsToStructs(target.name(), attr, s, t)
           case _ =>
-            val expr = getCastFunction(attr, targetAttr.dataType)
-            Alias(expr, targetAttr.name)(explicitMetadata = Option(targetAttr.metadata))
+            getCastFunction(attr, targetAttr.dataType)
         }
+        Alias(expr, targetAttr.name)(explicitMetadata = Option(targetAttr.metadata))
       } else {
         attr
       }
