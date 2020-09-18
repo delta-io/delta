@@ -230,6 +230,14 @@ object DeltaSQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_VACUUM_PARALLEL_DELETE_ENABLED =
+    buildConf("vacuum.parallelDelete.enabled")
+      .doc("Enables parallelizing the deletion of files during a vacuum command. Enabling " +
+        "may result hitting rate limits on some storage backends. When enabled, parallelization " +
+        "is controlled by the default number of shuffle partitions.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_SCHEMA_AUTO_MIGRATE =
     buildConf("schema.autoMerge.enabled")
       .doc("If true, enables schema merging on appends and on overwrites.")
