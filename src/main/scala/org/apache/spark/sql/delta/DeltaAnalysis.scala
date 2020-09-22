@@ -221,7 +221,7 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
       case (StructField(name, nested: StructType, _, metadata), i) if i < target.length =>
         target(i).dataType match {
           case t: StructType =>
-            val subField = Alias(GetStructField(parent, i, Option(name)), name)(
+            val subField = Alias(GetStructField(parent, i, Option(name)), target(i).name)(
               explicitMetadata = Option(metadata))
             addCastsToStructs(tableName, subField, nested, t)
           case o =>

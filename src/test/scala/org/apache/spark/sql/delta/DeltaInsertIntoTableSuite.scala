@@ -485,6 +485,18 @@ abstract class DeltaInsertIntoTests(
       verifyTable(t1, df)
     }
   }
+
+  test("insert nested struct from view into delta") {
+    withTable("testNestedStruct") {
+      sql(s"CREATE TABLE testNestedStruct " +
+        s" (num INT, text STRING, s STRUCT<a:STRING, s2: STRUCT<c:STRING,d:STRING>, b:STRING>)" +
+        s" USING DELTA")
+      val data = sql(s"SELECT 1, 'a', struct('a', struct('c', 'd'), 'b')")
+      doInsert("testNestedStruct", data)
+      verifyTable("testNestedStruct",
+        sql(s"SELECT 1 AS num, 'a' AS text, struct('a', struct('c', 'd') AS s2, 'b') AS s"))
+    }
+  }
 }
 
 trait InsertIntoSQLOnlyTests
@@ -778,6 +790,16 @@ trait InsertIntoSQLOnlyTests
         }
       }
     }
+
+    test("insert nested struct literal into delta") {
+      withTable("insertNestedTest") {
+        sql(s"CREATE TABLE insertNestedTest " +
+          s" (num INT, text STRING, s STRUCT<a:STRING, s2: STRUCT<c:STRING,d:STRING>, b:STRING>)" +
+          s" USING DELTA")
+        sql(s"INSERT INTO insertNestedTest VALUES (1, 'a', struct('a', struct('c', 'd'), 'b'))")
+      }
+    }
+
   }
 
   // END Apache Spark tests
