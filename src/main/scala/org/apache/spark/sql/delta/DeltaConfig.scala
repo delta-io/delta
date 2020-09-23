@@ -20,7 +20,7 @@ import java.util.{HashMap, Locale}
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.schema.{Invariants, SchemaUtils}
+import org.apache.spark.sql.delta.schema.SchemaUtils
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.util.{DateTimeConstants, IntervalUtils}

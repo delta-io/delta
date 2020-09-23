@@ -20,6 +20,7 @@ import scala.collection.mutable.ListBuffer
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.constraints.{Constraints, DeltaInvariantCheckerExec}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf

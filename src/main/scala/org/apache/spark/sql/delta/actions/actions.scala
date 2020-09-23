@@ -23,7 +23,7 @@ import java.util.Locale
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors}
-import org.apache.spark.sql.delta.schema.{Constraints, Invariants}
+import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation.{JsonIgnore, JsonInclude}

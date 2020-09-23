@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.constraints.Constraint
 import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.SaveMode
@@ -331,6 +332,22 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = Map(
       "oldSchema" -> JsonUtils.toJson(oldSchema),
       "newSchema" -> JsonUtils.toJson(newSchema))
+  }
+
+  case class AddConstraint(
+      constraintName: String, expr: String) extends Operation("ADD CONSTRAINT") {
+    override val parameters: Map[String, Any] = Map("name" -> constraintName, "expr" -> expr)
+  }
+
+  case class DropConstraint(
+      constraintName: String, expr: Option[String]) extends Operation("DROP CONSTRAINT") {
+    override val parameters: Map[String, Any] = {
+      expr.map { e =>
+        Map("name" -> constraintName, "expr" -> e, "existed" -> "true")
+      }.getOrElse {
+        Map("name" -> constraintName, "existed" -> "false")
+      }
+    }
   }
 
 

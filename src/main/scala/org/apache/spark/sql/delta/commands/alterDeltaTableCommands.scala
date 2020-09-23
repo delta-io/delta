@@ -19,16 +19,19 @@ package org.apache.spark.sql.delta.commands
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.schema.SchemaUtils.transformColumnsStructs
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
+import org.apache.spark.sql.{AnalysisException, Column, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
-import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, QualifiedColType}
+import org.apache.spark.sql.catalyst.expressions.{Expression, IsUnknown, Not, Or}
+import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, LogicalPlan, QualifiedColType}
 import org.apache.spark.sql.connector.catalog.TableChange.{After, ColumnPosition, First}
 import org.apache.spark.sql.execution.command.{DDLUtils, RunnableCommand}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
@@ -458,5 +461,84 @@ case class AlterTableSetLocationDeltaCommand(
       oldMetadata: actions.Metadata, newMetadata: actions.Metadata): Boolean = {
     oldMetadata.schema == newMetadata.schema &&
       oldMetadata.partitionSchema == newMetadata.partitionSchema
+  }
+}
+
+/**
+ * Command to add a constraint to a Delta table. Currently only CHECK constraints are supported.
+ *
+ * Adding a constraint will scan all data in the table to verify the constraint currently holds.
+ *
+ * @param table The table to which the constraint should be added.
+ * @param name The name of the new constraint.
+ * @param exprText The contents of the new CHECK constraint, to be parsed and evaluated.
+ */
+case class AlterTableAddConstraintDeltaCommand(
+    table: DeltaTableV2,
+    name: String,
+    exprText: String)
+  extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+
+  override def run(sparkSession: SparkSession): Seq[Row] = {
+    val deltaLog = table.deltaLog
+    recordDeltaOperation(deltaLog, "delta.ddl.alter.addConstraint") {
+      val txn = startTransaction()
+
+      Constraints.getExprTextByName(name, txn.metadata, sparkSession).foreach { oldExpr =>
+        throw DeltaErrors.constraintAlreadyExists(name, oldExpr)
+      }
+
+      val newMetadata = txn.metadata.copy(
+        configuration = txn.metadata.configuration +
+          (Constraints.checkConstraintPropertyName(name) -> exprText)
+      )
+      Protocol.assertProtocolRequirements(sparkSession, newMetadata, txn.protocol)
+
+      val expr = sparkSession.sessionState.sqlParser.parseExpression(exprText)
+      if (expr.dataType != BooleanType) {
+        throw DeltaErrors.checkConstraintNotBoolean(name, exprText)
+      }
+
+      val df = txn.snapshot.deltaLog.createDataFrame(txn.snapshot, txn.filterFiles())
+      val n = df.where(new Column(Or(Not(expr), IsUnknown(expr)))).count()
+
+      if (n > 0) {
+        throw DeltaErrors.newConstraintViolated(n, table.name(), exprText)
+      }
+
+      txn.commit(newMetadata :: Nil, DeltaOperations.AddConstraint(name, exprText))
+    }
+    Seq()
+  }
+}
+
+/**
+ * Command to drop a constraint from a Delta table. No-op if a constraint with the given name
+ * doesn't exist.
+ *
+ * Currently only CHECK constraints are supported.
+ *
+ * @param table The table from which the constraint should be dropped
+ * @param name The name of the constraint to drop
+ */
+case class AlterTableDropConstraintDeltaCommand(
+    table: DeltaTableV2,
+    name: String)
+  extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+
+  override def run(sparkSession: SparkSession): Seq[Row] = {
+    val deltaLog = table.deltaLog
+    recordDeltaOperation(deltaLog, "delta.ddl.alter.dropConstraint") {
+      val txn = startTransaction()
+
+      val oldExprText = Constraints.getExprTextByName(name, txn.metadata, sparkSession)
+      val newMetadata = txn.metadata.copy(
+        configuration = txn.metadata.configuration - Constraints.checkConstraintPropertyName(name))
+      Protocol.assertProtocolRequirements(sparkSession, newMetadata, txn.protocol)
+
+      txn.commit(newMetadata :: Nil, DeltaOperations.DropConstraint(name, oldExprText))
+    }
+
+    Seq()
   }
 }

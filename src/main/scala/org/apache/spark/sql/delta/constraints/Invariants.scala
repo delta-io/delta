@@ -14,14 +14,12 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.schema
+package org.apache.spark.sql.delta.constraints
 
-import java.util.Locale
-
-import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.util.JsonUtils
 
-import org.apache.spark.sql.{AnalysisException, SparkSession}
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.types.StructType
 

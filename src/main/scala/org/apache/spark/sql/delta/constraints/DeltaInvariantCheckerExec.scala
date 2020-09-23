@@ -14,22 +14,23 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.schema
+package org.apache.spark.sql.delta.constraints
 
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.DeltaErrors
-import org.apache.spark.sql.delta.schema.Constraints.{Check, NotNull}
+import org.apache.spark.sql.delta.constraints.Constraints.{Check, NotNull}
+import org.apache.spark.sql.delta.schema.SchemaUtils
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.encoders.RowEncoder
-import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, BindReferences, Expression, GetStructField, Literal, SortOrder}
+import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedExtractValue}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, BindReferences, Expression, ExtractValue, GetStructField, Literal, SortOrder}
 import org.apache.spark.sql.catalyst.expressions.codegen.GenerateUnsafeProjection
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.{SparkPlan, UnaryExecNode}
-import org.apache.spark.sql.types.{NullType, StructType}
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.StructType
 
 /**
  * A physical operator that validates records, before they are written into Delta. Each row
@@ -88,11 +89,13 @@ case class DeltaInvariantCheckerExec(
             throw DeltaErrors.notNullColumnMissingException(n)
           }
         case Check(name, expr) =>
-          expr.transform {
+          expr.transformUp {
             case a: UnresolvedAttribute =>
               val ex = buildExtractor(a.nameParts).getOrElse(Literal(null))
               columnExtractors(a.name) = ex
               ex
+            case UnresolvedExtractValue(child, fieldExpr) if child.resolved =>
+              ExtractValue(child, fieldExpr, SQLConf.get.resolver)
           }
       }
       CheckDeltaInvariant(resolvedExpr, columnExtractors.toMap, constraint)

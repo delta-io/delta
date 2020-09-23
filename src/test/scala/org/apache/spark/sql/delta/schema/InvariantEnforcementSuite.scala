@@ -25,8 +25,9 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaOperations
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
-import org.apache.spark.sql.delta.schema.Constraints.NotNull
-import org.apache.spark.sql.delta.schema.Invariants.PersistedExpression
+import org.apache.spark.sql.delta.constraints.{Constraint, Constraints, Invariants}
+import org.apache.spark.sql.delta.constraints.Constraints.NotNull
+import org.apache.spark.sql.delta.constraints.Invariants.PersistedExpression
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
@@ -429,7 +430,7 @@ class InvariantEnforcementSuite extends QueryTest
           spark.sql("INSERT INTO constraint VALUES (100, 50, null)")
         }
         checkConstraintException(e,
-          s"""Check constraint mychk (`valueA` < `valueB`) violated by row with values:
+          s"""CHECK constraint mychk (`valueA` < `valueB`) violated by row with values:
              | - valueA : 100
              | - valueB : 50""".stripMargin)
 
@@ -437,7 +438,7 @@ class InvariantEnforcementSuite extends QueryTest
           spark.sql("INSERT INTO constraint VALUES (100, null, null)")
         }
         checkConstraintException(e2,
-          s"""Check constraint mychk (`valueA` < `valueB`) violated by row with values:
+          s"""CHECK constraint mychk (`valueA` < `valueB`) violated by row with values:
              | - valueA : 100
              | - valueB : null""".stripMargin)
       }

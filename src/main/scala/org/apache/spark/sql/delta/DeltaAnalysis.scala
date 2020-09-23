@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -29,10 +30,10 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, EliminateSubqueryAliases, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.{Alias, And, AnsiCast, Cast, CreateStruct, Expression, GetStructField, NamedExpression, UpCast}
-import org.apache.spark.sql.catalyst.plans.logical.{AppendData, DeleteAction, DeleteFromTable, DeltaDelete, DeltaMergeInto, DeltaMergeIntoClause, DeltaMergeIntoDeleteClause, DeltaMergeIntoInsertClause, DeltaMergeIntoUpdateClause, DeltaUpdateTable, Filter, InsertAction, InsertIntoStatement, LocalRelation, LogicalPlan, MergeIntoTable, OverwriteByExpression, Project, UpdateAction, UpdateTable}
+import org.apache.spark.sql.catalyst.plans.logical.{AlterTable, AlterTableAddConstraintStatement, AlterTableDropConstraintStatement, AppendData, DeleteAction, DeleteFromTable, DeltaDelete, DeltaMergeInto, DeltaMergeIntoClause, DeltaMergeIntoDeleteClause, DeltaMergeIntoInsertClause, DeltaMergeIntoUpdateClause, DeltaUpdateTable, Filter, InsertAction, InsertIntoStatement, LocalRelation, LogicalPlan, MergeIntoTable, OverwriteByExpression, Project, UpdateAction, UpdateTable}
 import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
-import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.internal.SQLConf
@@ -44,6 +45,8 @@ import org.apache.spark.sql.types.{DataType, StructField, StructType}
  */
 class DeltaAnalysis(session: SparkSession, conf: SQLConf)
   extends Rule[LogicalPlan] with AnalysisHelper with DeltaLogging {
+
+  import session.sessionState.analyzer.SessionCatalogAndIdentifier
 
   type CastFunction = (Expression, DataType) => Expression
 
@@ -144,6 +147,22 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
         DeltaMergeInto.resolveReferences(deltaMerge, conf)(tryResolveReferences(session) _)
 
       deltaMergeResolved
+
+    case AlterTableAddConstraintStatement(
+          original @ SessionCatalogAndIdentifier(catalog, ident), constraintName, expr) =>
+      CatalogV2Util.createAlterTable(
+        original,
+        catalog,
+        ident.namespace() :+ ident.name(),
+        Seq(AddConstraint(constraintName, expr)))
+
+    case AlterTableDropConstraintStatement(
+        original @ SessionCatalogAndIdentifier(catalog, ident), constraintName) =>
+      CatalogV2Util.createAlterTable(
+        original,
+        catalog,
+        ident.namespace() :+ ident.name(),
+        Seq(DropConstraint(constraintName)))
 
   }
 

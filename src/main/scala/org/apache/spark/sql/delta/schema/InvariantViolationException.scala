@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta.schema
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.constraints.Constraints
+
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 
@@ -44,7 +46,7 @@ object InvariantViolationException {
         s" - $column : $value"
     }.mkString("\n")
     new InvariantViolationException(
-      s"Check constraint ${constraint.name} ${constraint.expression.sql} " +
+      s"CHECK constraint ${constraint.name} ${constraint.expression.sql} " +
         s"violated by row with values:\n$valueLines")
   }
 

@@ -25,6 +25,8 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, DeltaTableUtils}
 import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
 import org.apache.spark.sql.delta.commands.{AlterTableAddColumnsDeltaCommand, AlterTableChangeColumnDeltaCommand, AlterTableSetLocationDeltaCommand, AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand, CreateDeltaTableCommand, TableCreationModes}
+import org.apache.spark.sql.delta.commands.{AlterTableAddConstraintDeltaCommand, AlterTableDropConstraintDeltaCommand}
+import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.hadoop.fs.Path
 
@@ -444,6 +446,18 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
         AlterTableSetLocationDeltaCommand(
           table,
           locations.head.asInstanceOf[SetProperty].value()).run(spark)
+
+      case (t, constraints) if t == classOf[AddConstraint] =>
+        constraints.foreach { constraint =>
+          val c = constraint.asInstanceOf[AddConstraint]
+          AlterTableAddConstraintDeltaCommand(table, c.constraintName, c.expr).run(spark)
+        }
+
+      case (t, constraints) if t == classOf[DropConstraint] =>
+        constraints.foreach { constraint =>
+          val c = constraint.asInstanceOf[DropConstraint]
+          AlterTableDropConstraintDeltaCommand(table, c.constraintName).run(spark)
+        }
     }
 
     columnUpdates.foreach { case (fieldNames, (newField, newPositionOpt)) =>

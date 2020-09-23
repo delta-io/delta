@@ -22,9 +22,10 @@ import java.util.ConcurrentModificationException
 
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
+import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.schema.{Constraints, InvariantViolationException, SchemaUtils}
+import org.apache.spark.sql.delta.schema.{InvariantViolationException, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.sql.DeltaSparkSessionExtension
@@ -178,6 +179,20 @@ object DeltaErrors
       s"To suppress this error and silently ignore the specified constraints, set " +
       s"${DeltaSQLConf.ALLOW_UNENFORCED_NOT_NULL_CONSTRAINTS.key} = true.\n" +
       s"Parsed $nestType type:\n${nested.prettyJson}")
+  }
+
+  def constraintAlreadyExists(name: String, oldExpr: String): AnalysisException = {
+    new AnalysisException(
+      s"Constraint '$name' already exists as a CHECK constraint. Please delete the old " +
+        s"constraint first.\nOld constraint:\n${oldExpr}")
+  }
+
+  def checkConstraintNotBoolean(name: String, expr: String): AnalysisException = {
+    new AnalysisException(s"CHECK constraint '$name' ($expr) should be a boolean expression.'")
+  }
+
+  def newConstraintViolated(num: Long, tableName: String, expr: String): AnalysisException = {
+    new AnalysisException(s"$num rows in $tableName violate the new CHECK constraint ($expr)")
   }
 
   def incorrectLogStoreImplementationException(
