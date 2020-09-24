@@ -122,20 +122,22 @@ trait DeltaReadOptions extends DeltaOptionParser {
         s"Please recheck your syntax for '$EXCLUDE_REGEX_OPTION'", e)
   }
 
-  val startingVersion = options.get(STARTING_VERSION_OPTION).map { str =>
-    Try(str.toLong).toOption.filter(_ >= 0).getOrElse{
-      throw DeltaErrors.illegalDeltaOptionException(
-        STARTING_VERSION_OPTION, str, "must be greater than or equal to zero")
-    }
+  val startingVersion: Option[DeltaStartingVersion] = options.get(STARTING_VERSION_OPTION).map {
+    case "latest" => StartingVersionLatest
+    case str =>
+      Try(str.toLong).toOption.filter(_ >= 0).map(StartingVersion).getOrElse{
+        throw DeltaErrors.illegalDeltaOptionException(
+          STARTING_VERSION_OPTION, str, "must be greater than or equal to zero")
+      }
   }
 
   val startingTimestamp = options.get(STARTING_TIMESTAMP_OPTION)
 
   private def provideOneStartingOption(): Unit = {
     if (startingTimestamp.isDefined && startingVersion.isDefined) {
-      throw new IllegalArgumentException(
-        s"Please either provide '$STARTING_TIMESTAMP_OPTION' or '$STARTING_VERSION_OPTION'."
-      )
+      throw DeltaErrors.startingVersionAndTimestampBothSetException(
+        STARTING_VERSION_OPTION,
+        STARTING_TIMESTAMP_OPTION)
     }
   }
 
@@ -212,3 +214,10 @@ object DeltaOptions extends DeltaLogging {
     }
   }
 }
+
+/**
+ * Definitions for the starting version of a Delta stream.
+ */
+sealed trait DeltaStartingVersion
+case object StartingVersionLatest extends DeltaStartingVersion
+case class StartingVersion(version: Long) extends DeltaStartingVersion

@@ -247,7 +247,7 @@ class Snapshot(
   /**
    * Loads the file indices into a Dataset that can be used for LogReplay.
    */
-  private def loadActions: Dataset[SingleAction] = {
+  protected def loadActions: Dataset[SingleAction] = {
     val dfs = fileIndices.map { index => Dataset[SingleAction](spark, indexToRelation(index)) }
     dfs.reduceOption(_.union(_)).getOrElse(emptyActions)
   }
@@ -292,7 +292,9 @@ object Snapshot extends DeltaLogging {
   private[delta] def canonicalizePath(path: String, hadoopConf: Configuration): String = {
     val hadoopPath = new Path(new URI(path))
     if (hadoopPath.isAbsoluteAndSchemeAuthorityNull) {
+      // scalastyle:off FileSystemGet
       val fs = FileSystem.get(hadoopConf)
+      // scalastyle:on FileSystemGet
       fs.makeQualified(hadoopPath).toUri.toString
     } else {
       // return untouched if it is a relative path or is already fully qualified

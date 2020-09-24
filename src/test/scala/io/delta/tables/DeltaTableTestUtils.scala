@@ -17,11 +17,14 @@
 package io.delta.tables
 
 import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 
 import org.apache.spark.sql.DataFrame
 
 object DeltaTableTestUtils {
 
   /** A utility method to access the private constructor of [[DeltaTable]] in tests. */
-  def createTable(df: DataFrame, deltaLog: DeltaLog): DeltaTable = new DeltaTable(df, deltaLog)
+  def createTable(df: DataFrame, deltaLog: DeltaLog): DeltaTable = {
+    new DeltaTable(df, DeltaTableV2(df.sparkSession, deltaLog.dataPath))
+  }
 }

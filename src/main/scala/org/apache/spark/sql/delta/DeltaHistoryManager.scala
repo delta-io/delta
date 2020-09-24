@@ -104,11 +104,14 @@ class DeltaHistoryManager(
    * @param canReturnLastCommit Whether we can return the latest version of the table if the
    *                            provided timestamp is after the latest commit
    * @param mustBeRecreatable Whether the state at the given commit should be recreatable
+   * @param canReturnEarliestCommit Whether we can return the earliest commit if no such commit
+   *                                exists.
    */
   def getActiveCommitAtTime(
       timestamp: Timestamp,
       canReturnLastCommit: Boolean,
-      mustBeRecreatable: Boolean = true): Commit = {
+      mustBeRecreatable: Boolean = true,
+      canReturnEarliestCommit: Boolean = false): Commit = {
     val time = timestamp.getTime
     val earliest = if (mustBeRecreatable) getEarliestReproducibleCommit else getEarliestDeltaFile
     val latestVersion = deltaLog.update().version
@@ -128,7 +131,7 @@ class DeltaHistoryManager(
       DateTimeUtils.getTimeZone(SQLConf.get.sessionLocalTimeZone))
     val tsString = DateTimeUtils.timestampToString(
       timestampFormatter, DateTimeUtils.fromJavaTimestamp(commitTs))
-    if (commit.timestamp > time) {
+    if (commit.timestamp > time && !canReturnEarliestCommit) {
       throw DeltaErrors.timestampEarlierThanCommitRetention(timestamp, commitTs, tsString)
     } else if (commit.version == latestVersion && !canReturnLastCommit) {
       if (commit.timestamp < time) {
@@ -138,9 +141,12 @@ class DeltaHistoryManager(
     commit
   }
 
-  /** Check whether the given version can be recreated by replaying the DeltaLog. */
-  def checkVersionExists(version: Long): Unit = {
-    val earliest = getEarliestReproducibleCommit
+  /**
+   * Check whether the given version exists.
+   * @param mustBeRecreatable whether the snapshot of this version needs to be recreated.
+   */
+  def checkVersionExists(version: Long, mustBeRecreatable: Boolean = true): Unit = {
+    val earliest = if (mustBeRecreatable) getEarliestReproducibleCommit else getEarliestDeltaFile
     val latest = deltaLog.update().version
     if (version < earliest || version > latest) {
       throw DeltaErrors.versionNotExistException(version, earliest, latest)

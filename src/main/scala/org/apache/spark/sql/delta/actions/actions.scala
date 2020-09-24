@@ -23,7 +23,7 @@ import java.util.Locale
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors}
-import org.apache.spark.sql.delta.schema.Invariants
+import org.apache.spark.sql.delta.schema.{Constraints, Invariants}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation.{JsonIgnore, JsonInclude}
@@ -49,13 +49,13 @@ class InvalidProtocolVersionException extends RuntimeException(
     "Please upgrade to a newer release.")
 
 class ProtocolDowngradeException(oldProtocol: Protocol, newProtocol: Protocol)
-  extends RuntimeException(
-    s"Protocol version cannot be downgraded from $oldProtocol to $newProtocol")
+  extends RuntimeException("Protocol version cannot be downgraded from " +
+    s"${oldProtocol.simpleString} to ${newProtocol.simpleString}")
 
 object Action {
   /** The maximum version of the protocol that this version of Delta understands. */
   val readerVersion = 1
-  val writerVersion = 2
+  val writerVersion = 3
   val protocolVersion: Protocol = Protocol(readerVersion, writerVersion)
 
   def fromJson(json: String): Action = {
@@ -126,11 +126,16 @@ object Protocol {
       minimumRequired = Protocol(0, minWriterVersion = 2)
       featuresUsed.append("Setting column level invariants")
     }
-    // Check for
+
     val configs = metadata.configuration.map { case (k, v) => k.toLowerCase(Locale.ROOT) -> v }
     if (configs.contains(DeltaConfigs.IS_APPEND_ONLY.key.toLowerCase(Locale.ROOT))) {
       minimumRequired = Protocol(0, minWriterVersion = 2)
       featuresUsed.append(s"Append only tables (${DeltaConfigs.IS_APPEND_ONLY.key})")
+    }
+
+    if (Constraints.getCheckConstraints(metadata, spark).nonEmpty) {
+      minimumRequired = Protocol(0, minWriterVersion = 3)
+      featuresUsed.append("Setting CHECK constraints")
     }
 
     minimumRequired -> featuresUsed

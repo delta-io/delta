@@ -16,9 +16,12 @@
 
 package org.apache.spark.sql.delta.schema
 
+import java.util.Locale
+
+import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.util.JsonUtils
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.types.StructType
 
@@ -68,13 +71,13 @@ object Invariants {
   }
 
   /** Extract invariants from the given schema */
-  def getFromSchema(schema: StructType, spark: SparkSession): Seq[Invariant] = {
+  def getFromSchema(schema: StructType, spark: SparkSession): Seq[Constraint] = {
     val columns = SchemaUtils.filterRecursively(schema, checkComplexTypes = false) { field =>
       !field.nullable || field.metadata.contains(INVARIANTS_FIELD)
     }
     columns.map {
       case (parents, field) if !field.nullable =>
-        Invariant(parents :+ field.name, NotNull)
+        Constraints.NotNull(parents :+ field.name)
       case (parents, field) =>
         val rule = field.metadata.getString(INVARIANTS_FIELD)
         val invariant = Option(JsonUtils.mapper.readValue[PersistedRule](rule).unwrap) match {
@@ -84,7 +87,7 @@ object Invariants {
             throw new UnsupportedOperationException(
               "Unrecognized invariant. Please upgrade your Spark version.")
         }
-        Invariant(parents :+ field.name, invariant)
+        Constraints.Check(invariant.name, invariant.expression)
     }
   }
 

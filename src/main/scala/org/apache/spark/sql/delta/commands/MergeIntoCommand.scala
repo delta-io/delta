@@ -152,7 +152,7 @@ object MergeStats {
  * @param targetFileIndex   TahoeFileIndex of the target table
  * @param condition         Condition for a source row to match with a target row
  * @param matchedClauses    All info related to matched clauses.
- * @param notMatchedClause  All info related to not matched clause.
+ * @param notMatchedClauses  All info related to not matched clause.
  * @param migratedSchema    The final schema of the target - may be changed by schema evolution.
  */
 case class MergeIntoCommand(
@@ -302,7 +302,22 @@ case class MergeIntoCommand(
 
     // Calculate frequency of matches per source row
     val matchedRowCounts = collectTouchedFiles.groupBy(ROW_ID_COL).agg(sum("one").as("count"))
-    if (matchedRowCounts.filter("count > 1").count() != 0) {
+
+    // Get multiple matches and simultaneously collect (using touchedFilesAccum) the file names
+    val multipleMatchCount = matchedRowCounts.filter("count > 1").count()
+
+    // Throw error if multiple matches are ambiguous or cannot be computed correctly.
+    val canBeComputedUnambiguously = {
+      // Multiple matches are not ambiguous when there is only one unconditional delete as
+      // all the matched row pairs in the 2nd join in `writeAllChanges` will get deleted.
+      val isUnconditionalDelete = matchedClauses.headOption match {
+        case Some(DeltaMergeIntoDeleteClause(None)) => true
+        case _ => false
+      }
+      matchedClauses.size == 1 && isUnconditionalDelete
+    }
+
+    if (multipleMatchCount > 0 && !canBeComputedUnambiguously) {
       throw DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(spark)
     }
 

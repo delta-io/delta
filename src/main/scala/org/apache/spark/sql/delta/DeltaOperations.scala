@@ -420,4 +420,13 @@ private[delta] object DeltaOperationMetrics {
     "numUpdatedRows", // number of rows updated
     "numCopiedRows" // number of rows just copied over in the process of updating files.
   )
+
+  val CLONE = Set(
+    "sourceTableSize", // size in bytes of source table at version
+    "sourceNumOfFiles", // number of files in source table at version
+    "numRemovedFiles", // number of files removed from target table if delta table was replaced
+    "numCopiedFiles", // number of files that were cloned - 0 for shallow tables
+    "removedFilesSize", // size in bytes of files removed from an existing Delta table if one exists
+    "copiedFilesSize" // size of files copied - 0 for shallow tables
+  )
 }

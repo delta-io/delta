@@ -1,10 +1,5 @@
 
-from pyspark.sql import Column, DataFrame, SparkSession, functions
-from pyspark.sql.functions import *
-from py4j.java_collections import MapConverter
-from delta.tables import *
-import shutil
-import threading
+from pyspark.sql import SparkSession
 
 tableName = "tbltestpython"
 

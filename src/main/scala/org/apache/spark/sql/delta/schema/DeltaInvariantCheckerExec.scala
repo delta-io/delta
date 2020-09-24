@@ -16,11 +16,15 @@
 
 package org.apache.spark.sql.delta.schema
 
+import scala.collection.mutable
+
 import org.apache.spark.sql.delta.DeltaErrors
-import org.apache.spark.sql.delta.schema.Invariants.NotNull
+import org.apache.spark.sql.delta.schema.Constraints.{Check, NotNull}
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, BindReferences, Expression, GetStructField, Literal, SortOrder}
 import org.apache.spark.sql.catalyst.expressions.codegen.GenerateUnsafeProjection
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
@@ -33,36 +37,25 @@ import org.apache.spark.sql.types.{NullType, StructType}
  */
 case class DeltaInvariantCheckerExec(
     child: SparkPlan,
-    invariants: Seq[Invariant]) extends UnaryExecNode {
+    constraints: Seq[Constraint]) extends UnaryExecNode {
 
   override def output: Seq[Attribute] = child.output
 
-  private def isNullNotOkay(invariant: Invariant): Boolean = invariant.rule match {
-    case NotNull => true
-    case _ => false
-  }
-
-  /** Build extractors to access the column an invariant is defined on. */
-  private def buildExtractors(invariant: Invariant): Option[Expression] = {
-    assert(invariant.column.nonEmpty)
-    val topLevelColumn = invariant.column.head
+  /** Build the extractor for a particular column. */
+  private def buildExtractor(column: Seq[String]): Option[Expression] = {
+    assert(column.nonEmpty)
+    val topLevelColumn = column.head
     val topLevelRefOpt = output.collectFirst {
       case a: AttributeReference if SchemaUtils.DELTA_COL_RESOLVER(a.name, topLevelColumn) => a
     }
-    val rejectColumnNotFound = isNullNotOkay(invariant)
-    if (topLevelRefOpt.isEmpty) {
-      if (rejectColumnNotFound) {
-        throw DeltaErrors.notNullInvariantException(invariant)
-      }
-    }
 
-    if (invariant.column.length == 1) {
+    if (column.length == 1) {
       topLevelRefOpt.map(BindReferences.bindReference[Expression](_, output))
     } else {
       topLevelRefOpt.flatMap { topLevelRef =>
         val boundTopLevel = BindReferences.bindReference[Expression](topLevelRef, output)
         try {
-          val nested = invariant.column.tail.foldLeft(boundTopLevel) { case (e, fieldName) =>
+          val nested = column.tail.foldLeft(boundTopLevel) { case (e, fieldName) =>
             e.dataType match {
               case StructType(fields) =>
                 val ordinal = fields.indexWhere(f =>
@@ -79,19 +72,30 @@ case class DeltaInvariantCheckerExec(
           }
           Some(nested)
         } catch {
-          case i: IndexOutOfBoundsException if rejectColumnNotFound =>
-            throw InvariantViolationException(invariant, i.getMessage)
-          case _: IndexOutOfBoundsException if !rejectColumnNotFound =>
-            None
+          case _: IndexOutOfBoundsException => None
         }
       }
     }
   }
 
   override protected def doExecute(): RDD[InternalRow] = {
-    if (invariants.isEmpty) return child.execute()
-    val boundRefs = invariants.map { invariant =>
-      CheckDeltaInvariant(buildExtractors(invariant).getOrElse(Literal(null, NullType)), invariant)
+    if (constraints.isEmpty) return child.execute()
+    val boundRefs = constraints.map { constraint =>
+      val columnExtractors = mutable.Map[String, Expression]()
+      val resolvedExpr = constraint match {
+        case n @ NotNull(column) =>
+          buildExtractor(column).getOrElse {
+            throw DeltaErrors.notNullColumnMissingException(n)
+          }
+        case Check(name, expr) =>
+          expr.transform {
+            case a: UnresolvedAttribute =>
+              val ex = buildExtractor(a.nameParts).getOrElse(Literal(null))
+              columnExtractors(a.name) = ex
+              ex
+          }
+      }
+      CheckDeltaInvariant(resolvedExpr, columnExtractors.toMap, constraint)
     }
 
     child.execute().mapPartitionsInternal { rows =>

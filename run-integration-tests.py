@@ -17,13 +17,8 @@
 #
 
 import os
-import sys
-import fnmatch
 import subprocess
 from os import path
-import random
-import string
-import tempfile
 import argparse
 
 

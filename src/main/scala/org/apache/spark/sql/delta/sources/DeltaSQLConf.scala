@@ -173,12 +173,20 @@ object DeltaSQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_MAX_RETRY_COMMIT_ATTEMPTS =
+    buildConf("maxCommitAttempts")
+      .internal()
+      .doc("The maximum number of commit attempts we will try for a single commit before failing")
+      .intConf
+      .checkValue(_ >= 0, "maxCommitAttempts has to be positive")
+      .createWithDefault(10000000)
+
   val DELTA_PROTOCOL_DEFAULT_WRITER_VERSION =
     buildConf("protocol.minWriterVersion")
       .doc("The default writer protocol version to create new tables with, unless a feature " +
         "that requires a higher version for correctness is enabled.")
       .intConf
-      .checkValues(Set(1, 2))
+      .checkValues(Set(1, 2, 3))
       .createWithDefault(2)
 
   val DELTA_PROTOCOL_DEFAULT_READER_VERSION =
@@ -221,17 +229,6 @@ object DeltaSQLConf {
         "period, which may end up corrupting the Delta Log.")
       .booleanConf
       .createWithDefault(true)
-
-  val DELTA_CHECKPOINT_PART_SIZE =
-    buildConf("checkpoint.partSize")
-      .internal()
-      .doc(
-        """The limit at which we will start parallelizing the checkpoint. We will attempt to write
-          |maximum of this many actions per checkpoint.
-        """.stripMargin)
-      .longConf
-      .checkValue(_ > 0, "The checkpoint part size needs to be a positive integer.")
-      .createWithDefault(5000000)
 
   val DELTA_SCHEMA_AUTO_MIGRATE =
     buildConf("schema.autoMerge.enabled")
@@ -329,5 +326,26 @@ object DeltaSQLConf {
       .longConf
       .checkValue(_ >= 0, "the version must be >= 0")
       .createOptional
+
+  val ALLOW_UNENFORCED_NOT_NULL_CONSTRAINTS =
+    buildConf("constraints.allowUnenforcedNotNull.enabled")
+      .internal()
+      .doc("If enabled, NOT NULL constraints within array and map types will be permitted in " +
+        "Delta table creation, even though Delta can't enforce them.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_CHECKPOINT_V2_ENABLED =
+    buildConf("checkpointV2.enabled")
+      .internal()
+      .doc("Write checkpoints where the partition values are parsed according to the data type.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_WRITE_CHECKSUM_ENABLED =
+    buildConf("writeChecksumFile.enabled")
+      .doc("Whether the checksum file can be written.")
+      .booleanConf
+      .createWithDefault(true)
 
 }

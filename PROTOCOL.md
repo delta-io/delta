@@ -387,8 +387,8 @@ Checkpoint files must be written in [Apache Parquet](https://parquet.apache.org/
 
 Commit provenance information does not need to be included in the checkpoint. All of these actions are stored as their individual columns in parquet as struct fields.
 
-Within the checkpoint, the `add` struct may contain two additional columns:
- - partitionValues_parsed: In this struct, the column names correspond to the partition columns and the values are stored in their corresponding data type. This is a **required field with the writer protocol version 3 when the table is partitioned**. If the table is not partitioned, this column can be omitted. The `partitionValues` field must also be written while the table reader protocol version is at version 1. For example, for partition columns `year`, `month` and `event` with data types `int`, `int` and `string` respectively, the schema for this field will look like:
+Within the checkpoint, the `add` struct may or may not contain the following columns based on the configuration of the table:
+ - partitionValues_parsed: In this struct, the column names correspond to the partition columns and the values are stored in their corresponding data type. This is a required field when the table is partitioned and the table property `delta.checkpoint.writeStatsAsStruct` is set to `true`. If the table is not partitioned, this column can be omitted. For example, for partition columns `year`, `month` and `event` with data types `int`, `int` and `string` respectively, the schema for this field will look like:
  
  ```
 |-- add: struct
@@ -397,8 +397,9 @@ Within the checkpoint, the `add` struct may contain two additional columns:
 |    |    |-- month: int
 |    |    |-- event: string
  ```
- 
- - stats_parsed: Instead of storing stats as a JSON string, the stats can be stored in their [original format](#Per-file Statistics). With the writer protocol version 2, this field can be written alongside the `stats` column on a best-effort basis, when the table property `delta.checkpoint.writeStatsAsStruct` is enabled. With the writer protocol version 3, writers are required to write this column instead of the `stats` column when available. Writers can duplicate information in the `stats` column if the table property `delta.checkpoint.writeStatsAsJson` is enabled in order to maintain compatibility with old readers.
+
+ - stats: Column level statistics can be stored as a JSON string in the checkpoint. This field needs to be written when statistics are available and the table property: `delta.checkpoint.writeStatsAsJson` is set to `true` (which is the default). When this property is set to `false`, this field should be omitted from the checkpoint.
+ - stats_parsed: The stats can be stored in their [original format](#Per-file Statistics). This field needs to be written when statistics are available and the table property: `delta.checkpoint.writeStatsAsStruct` is set to `true`. When this property is set to `false` (which is the default), this field should be omitted from the checkpoint.
 
 Refer to the [appendix](#checkpoint-schema) for an example on the schema of the checkpoint.
 
@@ -425,10 +426,10 @@ The requirements of the writers according to the protocol versions are summarize
 | Writer Version 2 |  - Support `delta.appendOnly`                |
 |                  |  - Support column invariants                 |
 +------------------+----------------------------------------------+
-| Writer Version 3 |  - Write the column `partitionValues_parsed` |
-|                  |    in the checkpoint                         |
-|                  |  - Write the column `stats_parsed` in the    |
-|                  |    checkpoint when stats are available       |
+| Writer Version 3 |  - Enforce:                                  |
+|                  |    - `delta.checkpoint.writeStatsAsJson`     |
+|                  |    - `delta.checkpoint.writeStatsAsStruct`   |
+|                  |    - `CHECK` constraints                     |
 +------------------+----------------------------------------------+
 
 # Appendix
