@@ -129,10 +129,12 @@ case class UpdateCommand(
       }.asNondeterministic()
       val filesToRewrite =
         withStatusCode("DELTA", s"Finding files to rewrite for UPDATE operation") {
-          data.filter(new Column(updateCondition))
-            .filter(updatedRowUdf())
-            .select(input_file_name())
-            .distinct().as[String].collect()
+          withJobDescription("Update filter-files", sparkSession) {
+            data.filter(new Column(updateCondition))
+              .filter(updatedRowUdf())
+              .select(input_file_name())
+              .distinct().as[String].collect()
+          }
         }
 
       scanTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
@@ -149,8 +151,10 @@ case class UpdateCommand(
           removeFilesFromPaths(deltaLog, nameToAddFile, filesToRewrite, operationTimestamp)
         val rewrittenFiles =
           withStatusCode("DELTA", s"Rewriting ${filesToRewrite.size} files for UPDATE operation") {
-            rewriteFiles(sparkSession, txn, tahoeFileIndex.path,
-              filesToRewrite, nameToAddFile, updateCondition)
+            withJobDescription("Update write-files", sparkSession) {
+              rewriteFiles(sparkSession, txn, tahoeFileIndex.path,
+                filesToRewrite, nameToAddFile, updateCondition)
+            }
           }
 
         numRewrittenFiles = rewrittenFiles.size

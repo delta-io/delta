@@ -138,7 +138,7 @@ class Snapshot(
    * Computes some statistics around the transaction log, therefore on the actions made on this
    * Delta table.
    */
-  protected lazy val computedState: State = {
+  protected lazy val computedState: State = withJobDescription("Snapshot read", spark) {
     val implicits = spark.implicits
     import implicits._
     var _computedState = state.select(

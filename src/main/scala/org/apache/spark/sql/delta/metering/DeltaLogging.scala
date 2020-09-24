@@ -18,10 +18,11 @@ package org.apache.spark.sql.delta.metering
 
 import scala.util.Try
 import scala.util.control.NonFatal
-
 import com.databricks.spark.util.{DatabricksLogging, OpType, TagDefinition}
 import com.databricks.spark.util.MetricDefinitions.{EVENT_LOGGING_FAILURE, EVENT_TAHOE}
 import com.databricks.spark.util.TagDefinitions.{TAG_OP_TYPE, TAG_TAHOE_ID, TAG_TAHOE_PATH}
+import org.apache.spark.SparkContext
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.util.DeltaProgressReporter
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -101,5 +102,24 @@ trait DeltaLogging
     recordOperation(
       new OpType(opType, ""),
       extraTags = tableTags ++ tags) {thunk}
+  }
+  /**
+   * Wrap various delta operations to provide a more meaningful name in Spark UI
+   * @param desc a short description of the operation
+   */
+  def withJobDescription[U](desc: String, session: SparkSession)(body: => U): U = {
+    val sc = session.sparkContext
+    val oldDesc = sc.getLocalProperty(SparkContext.SPARK_JOB_DESCRIPTION)
+    val suffix = if (oldDesc == null) {
+      ""
+    } else {
+      s" $oldDesc:"
+    }
+    try {
+      sc.setJobDescription(s"Delta:$suffix $desc")
+      body
+    } finally {
+      sc.setJobDescription(oldDesc)
+    }
   }
 }
