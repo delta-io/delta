@@ -165,7 +165,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
 
   /**
    * Tracks the data that could have been seen by recording the partition
-   * predicates by which files have been queried by by this transaction.
+   * predicates by which files have been queried by this transaction.
    */
   protected val readPredicates = new ArrayBuffer[Expression]
 
