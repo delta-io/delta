@@ -29,8 +29,8 @@ import org.apache.spark.sql.{AnalysisException, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, EliminateSubqueryAliases, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
-import org.apache.spark.sql.catalyst.expressions.{Alias, And, AnsiCast, Cast, CreateStruct, Expression, GetStructField, NamedExpression, UpCast}
-import org.apache.spark.sql.catalyst.plans.logical.{AlterTable, AlterTableAddConstraintStatement, AlterTableDropConstraintStatement, AppendData, DeleteAction, DeleteFromTable, DeltaDelete, DeltaMergeInto, DeltaMergeIntoClause, DeltaMergeIntoDeleteClause, DeltaMergeIntoInsertClause, DeltaMergeIntoUpdateClause, DeltaUpdateTable, Filter, InsertAction, InsertIntoStatement, LocalRelation, LogicalPlan, MergeIntoTable, OverwriteByExpression, Project, UpdateAction, UpdateTable}
+import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
@@ -62,14 +62,20 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
       }
 
     // INSERT OVERWRITE by ordinal
-    case a @ OverwriteByExpression(
-        DataSourceV2Relation(d: DeltaTableV2, _, _, _, _), _, query, _, false)
+    case o @ OverwriteByExpression(
+        DataSourceV2Relation(d: DeltaTableV2, _, _, _, _), deleteExpr, query, _, false)
       if query.resolved && needsSchemaAdjustment(d.name(), query, d.schema()) =>
       val projection = normalizeQueryColumns(query, d)
       if (projection != query) {
-        a.copy(query = projection)
+        val aliases = AttributeMap(query.output.zip(projection.output).collect {
+          case (l: AttributeReference, r: AttributeReference) if !l.sameRef(r) => (l, r)
+        })
+        val newDeleteExpr = deleteExpr.transformUp {
+          case a: AttributeReference => aliases.getOrElse(a, a)
+        }
+        o.copy(deleteExpr = newDeleteExpr, query = projection)
       } else {
-        a
+        o
       }
 
     // Pull out the partition filter that may be part of the FileIndex. This can happen when someone
