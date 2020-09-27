@@ -19,17 +19,14 @@ package org.apache.spark.sql.delta.util
 import java.io.{FileNotFoundException, IOException}
 import java.net.URI
 import java.util.Locale
-
 import scala.util.Random
 import scala.util.control.NonFatal
-
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.storage.LogStore
+import org.apache.spark.sql.delta.storage.{LogFileMetaParser, LogStore}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 import org.apache.parquet.format.converter.ParquetMetadataConverter.SKIP_ROW_GROUPS
 import org.apache.parquet.hadoop.{Footer, ParquetFileReader}
-
 import org.apache.spark.{SparkEnv, TaskContext}
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.{Dataset, SparkSession}
@@ -146,7 +143,7 @@ object DeltaFileOperations extends DeltaLogging {
    * "a/b".
    */
   private def listUsingLogStore(
-      logStore: LogStore,
+      logStore: LogFileMetaParser,
       subDirs: Iterator[String],
       recurse: Boolean,
       hiddenFileNameFilter: String => Boolean,
@@ -155,11 +152,10 @@ object DeltaFileOperations extends DeltaLogging {
     def list(dir: String, tries: Int): Iterator[SerializableFileStatus] = {
       logInfo(s"Listing $dir")
       try {
-
         val path = if (listAsDirectories) new Path(dir, "\u0000") else new Path(dir + "\u0000")
-        logStore.listFrom(path)
-          .filterNot(f => hiddenFileNameFilter(f.getPath.getName))
-          .map(SerializableFileStatus.fromStatus)
+        logStore.listFilesFrom(path)
+          .filterNot(f => hiddenFileNameFilter(f.fileStatus.getPath.getName))
+          .map(f => SerializableFileStatus.fromStatus(f.fileStatus))
       } catch {
         case NonFatal(e) if isThrottlingError(e) && tries > 0 =>
           randomBackoff("listing", e)
@@ -183,7 +179,7 @@ object DeltaFileOperations extends DeltaLogging {
 
   /** Given an iterator of files and directories, recurse directories with its contents. */
   private def recurseDirectories(
-      logStore: LogStore,
+      logStore: LogFileMetaParser,
       filesAndDirs: Iterator[SerializableFileStatus],
       hiddenFileNameFilter: String => Boolean): Iterator[SerializableFileStatus] = {
     filesAndDirs.flatMap {
@@ -230,12 +226,14 @@ object DeltaFileOperations extends DeltaLogging {
     val listParallelism = fileListingParallelism.getOrElse(spark.sparkContext.defaultParallelism)
     val dirsAndFiles = spark.sparkContext.parallelize(subDirs).mapPartitions { dirs =>
       val logStore = LogStore(SparkEnv.get.conf, hadoopConf.value.value)
-      listUsingLogStore(logStore, dirs, recurse = false, hiddenFileNameFilter, listAsDirectories)
+      val logFileHandler = LogFileMetaParser(SparkEnv.get.conf, hadoopConf.value.value, logStore)
+      listUsingLogStore(logFileHandler, dirs, recurse = false, hiddenFileNameFilter)
     }.repartition(listParallelism) // Initial list of subDirs may be small
 
     val allDirsAndFiles = dirsAndFiles.mapPartitions { firstLevelDirsAndFiles =>
       val logStore = LogStore(SparkEnv.get.conf, hadoopConf.value.value)
-      recurseDirectories(logStore, firstLevelDirsAndFiles, hiddenFileNameFilter)
+      val logFileHandler = LogFileMetaParser(SparkEnv.get.conf, hadoopConf.value.value, logStore)
+      recurseDirectories(logFileHandler, firstLevelDirsAndFiles, hiddenFileNameFilter)
     }
     spark.createDataset(allDirsAndFiles)
   }
@@ -277,12 +275,16 @@ object DeltaFileOperations extends DeltaLogging {
    * from LogStore.
    */
   def localListDirs(
-      spark: SparkSession,
-      dirs: Seq[String],
-      recursive: Boolean = true,
-      fileFilter: String => Boolean = defaultHiddenFileFilter): Iterator[SerializableFileStatus] = {
-    val logStore = LogStore(SparkEnv.get.conf, spark.sessionState.newHadoopConf)
-    listUsingLogStore(logStore, dirs.toIterator, recurse = recursive, fileFilter)
+                     spark: SparkSession,
+                     dirs: Seq[String],
+                     recursive: Boolean = true,
+                     fileFilter: String => Boolean = defaultHiddenFileFilter):
+  Iterator[SerializableFileStatus] = {
+    val hadoopConfig = spark.sessionState.newHadoopConf
+    val sparkConf = SparkEnv.get.conf
+    val logStore = LogStore(sparkConf, hadoopConfig)
+    val logFileHandler = LogFileMetaParser(sparkConf, hadoopConfig, logStore)
+    listUsingLogStore(logFileHandler, dirs.toIterator, recurse = recursive, fileFilter)
   }
 
   /**
@@ -291,14 +293,18 @@ object DeltaFileOperations extends DeltaLogging {
    * Listed locally using LogStore without launching a spark job. Returns an iterator from LogStore.
    */
   def localListFrom(
-    spark: SparkSession,
-    listFilename: String,
-    topDir: String,
-    recursive: Boolean = true,
-    fileFilter: String => Boolean = defaultHiddenFileFilter): Iterator[SerializableFileStatus] = {
-    val logStore = LogStore(SparkEnv.get.conf, spark.sessionState.newHadoopConf)
+                     spark: SparkSession,
+                     listFilename: String,
+                     topDir: String,
+                     recursive: Boolean = true,
+                     fileFilter: String => Boolean = defaultHiddenFileFilter):
+  Iterator[SerializableFileStatus] = {
+    val hadoopConfig = spark.sessionState.newHadoopConf
+    val sparkConf = SparkEnv.get.conf
+    val logStore = LogStore(sparkConf, hadoopConfig)
+    val logFileHandler = LogFileMetaParser(sparkConf, hadoopConfig, logStore)
     val listDirs = getAllTopComponents(new Path(listFilename), new Path(topDir))
-    listUsingLogStore(logStore, listDirs.toIterator, recurse = recursive, fileFilter,
+    listUsingLogStore(logFileHandler, listDirs.toIterator, recurse = recursive, fileFilter,
       listAsDirectories = false)
   }
 

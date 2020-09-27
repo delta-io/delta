@@ -19,18 +19,17 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.FileNotFoundException
 import java.sql.Timestamp
-
 import scala.collection.mutable
-
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, CommitMarker}
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.storage.LogStore
+import org.apache.spark.sql.delta.storage.{LogFileMetaParser, LogStore}
 import org.apache.spark.sql.delta.util.{DateTimeUtils, FileNames, TimestampFormatter}
-import org.apache.spark.sql.delta.util.FileNames._
+import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.{FileStatus, Path}
-
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.delta.storage.LogFileMeta.{isCheckpointFile, isDeltaFile}
+import org.apache.spark.sql.delta.util.FileNames.deltaFile
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.util.SerializableConfiguration
 
@@ -122,7 +121,10 @@ class DeltaHistoryManager(
     val commit = if (latestVersion - earliest > 2 * maxKeysPerList) {
       parallelSearch(time, earliest, latestVersion + 1)
     } else {
-      val commits = getCommits(deltaLog.store, deltaLog.logPath, earliest, Some(latestVersion + 1))
+      val commits = getCommits(deltaLog.logFileHandler,
+        deltaLog.logPath,
+        earliest,
+        Some(latestVersion + 1))
       // If it returns empty, we will fail below with `timestampEarlierThanCommitRetention`.
       lastCommitBeforeTimestamp(commits, time).getOrElse(commits.head)
     }
@@ -180,13 +182,14 @@ class DeltaHistoryManager(
    * This value must be used as a lower bound.
    */
   private def getEarliestDeltaFile: Long = {
-    val earliestVersionOpt = deltaLog.store.listFrom(FileNames.deltaFile(deltaLog.logPath, 0))
-      .filter(f => FileNames.isDeltaFile(f.getPath))
-      .take(1).toArray.headOption
+    val earliestVersionOpt = deltaLog.logFileHandler
+      .listFilesFrom(FileNames.deltaFile(deltaLog.logPath, 0))
+      .filter(isDeltaFile)
+      .take(1).map(_.version).toArray.headOption
     if (earliestVersionOpt.isEmpty) {
       throw DeltaErrors.noHistoryFound(deltaLog.logPath)
     }
-    FileNames.deltaVersion(earliestVersionOpt.get.getPath)
+    earliestVersionOpt.get
   }
 
   /**
@@ -199,8 +202,8 @@ class DeltaHistoryManager(
    * commits are contiguous.
    */
   private[delta] def getEarliestReproducibleCommit: Long = {
-    val files = deltaLog.store.listFrom(FileNames.deltaFile(deltaLog.logPath, 0))
-      .filter(f => FileNames.isDeltaFile(f.getPath) || FileNames.isCheckpointFile(f.getPath))
+    val files = deltaLog.logFileHandler.listFilesFrom(FileNames.deltaFile(deltaLog.logPath, 0))
+      .filter(f => isDeltaFile(f) || isCheckpointFile(f))
 
     // A map of checkpoint version and number of parts, to number of parts observed
     val checkpointMap = new scala.collection.mutable.HashMap[(Long, Int), Int]()
@@ -211,9 +214,9 @@ class DeltaHistoryManager(
     // Checkpoint files come before deltas, so when we see a checkpoint, we remember it and
     // return it once we detect that we've seen a smaller or equal delta version.
     while (files.hasNext) {
-      val nextFilePath = files.next().getPath
-      if (FileNames.isDeltaFile(nextFilePath)) {
-        val version = FileNames.deltaVersion(nextFilePath)
+      val nextFilePath = files.next()
+      if (isDeltaFile(nextFilePath)) {
+        val version = nextFilePath.version
         if (version == 0L) return version
         smallestDeltaVersion = math.min(version, smallestDeltaVersion)
 
@@ -222,9 +225,9 @@ class DeltaHistoryManager(
         if (lastCompleteCheckpoint.exists(_ >= smallestDeltaVersion - 1)) {
           return lastCompleteCheckpoint.get
         }
-      } else if (FileNames.isCheckpointFile(nextFilePath)) {
-        val checkpointVersion = FileNames.checkpointVersion(nextFilePath)
-        val parts = FileNames.numCheckpointParts(nextFilePath)
+      } else if (isCheckpointFile(nextFilePath)) {
+        val checkpointVersion = nextFilePath.version
+        val parts = nextFilePath.numParts
         if (parts.isEmpty) {
           lastCompleteCheckpoint = Some(checkpointVersion)
         } else {
@@ -280,15 +283,15 @@ object DeltaHistoryManager extends DeltaLogging {
    * Exposed for tests.
    */
   private[delta] def getCommits(
-      logStore: LogStore,
-      logPath: Path,
-      start: Long,
-      end: Option[Long] = None): Array[Commit] = {
+                                 logStore: LogFileMetaParser,
+                                 logPath: Path,
+                                 start: Long,
+                                 end: Option[Long] = None): Array[Commit] = {
     val until = end.getOrElse(Long.MaxValue)
-    val commits = logStore.listFrom(deltaFile(logPath, start))
-      .filter(f => isDeltaFile(f.getPath))
+    val commits = logStore.listFilesFrom(deltaFile(logPath, start))
+      .filter(isDeltaFile)
       .map { fileStatus =>
-        Commit(deltaVersion(fileStatus.getPath), fileStatus.getModificationTime)
+        Commit(fileStatus.version, fileStatus.fileStatus.getModificationTime)
       }
       .takeWhile(_.version < until)
 
@@ -362,10 +365,11 @@ object DeltaHistoryManager extends DeltaLogging {
     import spark.implicits._
     val possibleCommits = spark.range(start, end, step).mapPartitions { startVersions =>
       val logStore = LogStore(SparkEnv.get.conf, conf.value)
+      val logFileHandler = LogFileMetaParser(SparkEnv.get.conf, conf.value, logStore)
       val basePath = new Path(logPath)
       startVersions.map { startVersion =>
         val commits = getCommits(
-          logStore, basePath, startVersion, Some(math.min(startVersion + step, end)))
+          logFileHandler, basePath, startVersion, Some(math.min(startVersion + step, end)))
         lastCommitBeforeTimestamp(commits, time).getOrElse(commits.head)
       }
     }.collect()
