@@ -97,7 +97,6 @@ case class CreateDeltaTableCommand(
     val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
     recordDeltaOperation(deltaLog, "delta.ddl.createTable") {
       val txn = deltaLog.startTransaction()
-
       if (query.isDefined) {
         // If the mode is Ignore or ErrorIfExists, the table must not exist, or we would return
         // earlier. And the data should not exist either, to match the behavior of
@@ -112,24 +111,40 @@ case class CreateDeltaTableCommand(
         }
         // We are either appending/overwriting with saveAsTable or creating a new table with CTAS or
         // we are creating a table as part of a RunnableCommand
-        if (query.get.isInstanceOf[RunnableCommand]) {
-          query.get.asInstanceOf[RunnableCommand].run(sparkSession)
-        } else {
-          val data = Dataset.ofRows(sparkSession, query.get)
+        query.get match {
+          case writer: WriteIntoDelta =>
+            // In the V2 Writer, methods like "replace" and "createOrReplace" implicitly mean that
+            // the metadata should be changed. This wasn't the behavior for DataFrameWriterV1.
+            if (!isV1Writer) {
+              replaceMetadataIfNecessary(
+                txn, tableWithLocation, options, writer.data.schema.asNullable)
+            }
+            val actions = writer.write(txn, sparkSession)
+            val op = getOperation(txn.metadata, isManagedTable, Some(options))
+            txn.commit(actions, op)
+          case cmd: RunnableCommand =>
+            cmd.run(sparkSession)
+          case other =>
+            // When using V1 APIs, the `other` plan is not yet optimized, therefore, it is safe
+            // to once again go through analysis
+            val data = Dataset.ofRows(sparkSession, other)
 
-          if (!isV1Writer) {
-            replaceMetadataIfNecessary(txn, tableWithLocation, options, query.get.schema.asNullable)
-          }
-          val actions = WriteIntoDelta(
-            deltaLog = deltaLog,
-            mode = mode,
-            options,
-            partitionColumns = table.partitionColumnNames,
-            configuration = table.properties,
-            data = data).write(txn, sparkSession)
+            // In the V2 Writer, methods like "replace" and "createOrReplace" implicitly mean that
+            // the metadata should be changed. This wasn't the behavior for DataFrameWriterV1.
+            if (!isV1Writer) {
+              replaceMetadataIfNecessary(
+                txn, tableWithLocation, options, other.schema.asNullable)
+            }
+            val actions = WriteIntoDelta(
+              deltaLog = deltaLog,
+              mode = mode,
+              options,
+              partitionColumns = table.partitionColumnNames,
+              configuration = table.properties,
+              data = data).write(txn, sparkSession)
 
-          val op = getOperation(txn.metadata, isManagedTable, Some(options))
-          txn.commit(actions, op)
+            val op = getOperation(txn.metadata, isManagedTable, Some(options))
+            txn.commit(actions, op)
         }
       } else {
         def createTransactionLogOrVerify(): Unit = {

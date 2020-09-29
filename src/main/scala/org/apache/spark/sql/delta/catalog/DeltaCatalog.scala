@@ -23,9 +23,10 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, DeltaTableUtils}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
 import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
 import org.apache.spark.sql.delta.commands.{AlterTableAddColumnsDeltaCommand, AlterTableChangeColumnDeltaCommand, AlterTableSetLocationDeltaCommand, AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand, CreateDeltaTableCommand, TableCreationModes}
-import org.apache.spark.sql.delta.commands.{AlterTableAddConstraintDeltaCommand, AlterTableDropConstraintDeltaCommand}
+import org.apache.spark.sql.delta.commands.{AlterTableAddConstraintDeltaCommand, AlterTableDropConstraintDeltaCommand, WriteIntoDelta}
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.hadoop.fs.Path
@@ -77,7 +78,7 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
       schema: StructType,
       partitions: Array[Transform],
       properties: util.Map[String, String],
-      sourceQuery: Option[LogicalPlan],
+      sourceQuery: Option[DataFrame],
       operation: TableCreationModes.CreationMode): Table = {
     // These two keys are properties in data source v2 but not in v1, so we have to filter
     // them out. Otherwise property consistency checks will fail.
@@ -97,13 +98,16 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
     } else {
       Option(properties.get("location"))
     }
+    val locUriOpt = location.map(CatalogUtils.stringToURI)
     val storage = DataSource.buildStorageFormatFromOptions(tableProperties.toMap)
-      .copy(locationUri = location.map(CatalogUtils.stringToURI))
+      .copy(locationUri = locUriOpt)
     val tableType =
       if (location.isDefined) CatalogTableType.EXTERNAL else CatalogTableType.MANAGED
+    val id = TableIdentifier(ident.name(), ident.namespace().lastOption)
+    val loc = new Path(locUriOpt.getOrElse(spark.sessionState.catalog.defaultTablePath(id)))
 
     val tableDesc = new CatalogTable(
-      identifier = TableIdentifier(ident.name(), ident.namespace().lastOption),
+      identifier = id,
       tableType = tableType,
       storage = storage,
       schema = schema,
@@ -116,11 +120,22 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
 
     val withDb = verifyTableAndSolidify(tableDesc, None)
     ParquetSchemaConverter.checkFieldNames(tableDesc.schema.fieldNames)
+
+    val writer = sourceQuery.map { df =>
+      WriteIntoDelta(
+        DeltaLog.forTable(spark, loc),
+        operation.mode,
+        new DeltaOptions(withDb.storage.properties, spark.sessionState.conf),
+        withDb.partitionColumnNames,
+        withDb.properties,
+        df)
+    }
+
     CreateDeltaTableCommand(
       withDb,
       getExistingTableIfExists(tableDesc),
       operation.mode,
-      sourceQuery,
+      writer,
       operation,
       tableByPath = isByPath).run(spark)
 
@@ -309,7 +324,7 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
         schema,
         partitions,
         writeOptions.asJava,
-        asSelectQuery.map(_.queryExecution.analyzed),
+        asSelectQuery,
         operation)
     }
 
