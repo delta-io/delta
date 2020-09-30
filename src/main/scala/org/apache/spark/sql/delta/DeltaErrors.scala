@@ -191,8 +191,14 @@ object DeltaErrors
     new AnalysisException(s"CHECK constraint '$name' ($expr) should be a boolean expression.'")
   }
 
-  def newConstraintViolated(num: Long, tableName: String, expr: String): AnalysisException = {
+  def newCheckConstraintViolated(num: Long, tableName: String, expr: String): AnalysisException = {
     new AnalysisException(s"$num rows in $tableName violate the new CHECK constraint ($expr)")
+  }
+
+  def newNotNullViolated(
+      num: Long, tableName: String, col: UnresolvedAttribute): AnalysisException = {
+    new AnalysisException(
+      s"$num rows in $tableName violate the new NOT NULL constraint on ${col.name}")
   }
 
   def incorrectLogStoreImplementationException(

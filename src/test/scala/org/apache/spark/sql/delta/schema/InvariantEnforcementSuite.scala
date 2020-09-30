@@ -524,4 +524,5 @@ class InvariantEnforcementSuite extends QueryTest
       "s struct<n:int NOT NULL, arr:array<struct<name:string,mailbox:string NOT NULL>> NOT NULL>",
     expectedError = "The element type of the field s.arr contains a NOT NULL constraint.",
     data = Row(Row(1, Seq(Row("myName", null)))))
+
 }

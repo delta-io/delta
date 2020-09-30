@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.commands
 
+// scalastyle:off import.ordering.noEmptyLine
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta._
@@ -30,7 +31,7 @@ import org.apache.spark.sql.{AnalysisException, Column, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
-import org.apache.spark.sql.catalyst.expressions.{Expression, IsUnknown, Not, Or}
+import org.apache.spark.sql.catalyst.expressions.{Expression, IsNotNull, IsNull, IsUnknown, Not, Or}
 import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, LogicalPlan, QualifiedColType}
 import org.apache.spark.sql.connector.catalog.TableChange.{After, ColumnPosition, First}
 import org.apache.spark.sql.execution.command.{DDLUtils, RunnableCommand}
@@ -246,7 +247,7 @@ case class AlterTableChangeColumnDeltaCommand(
       val newSchema = transformColumnsStructs(oldSchema, columnName) {
         case (`columnPath`, struct @ StructType(fields), _) =>
           val oldColumn = struct(columnName)
-          verifyColumnChange(struct(columnName), resolver)
+          verifyColumnChange(struct(columnName), resolver, txn)
 
           // Take the comment, nullability and data type from newField
           val newField = newColumn.getComment().map(oldColumn.withComment).getOrElse(oldColumn)
@@ -318,13 +319,17 @@ case class AlterTableChangeColumnDeltaCommand(
 
   /**
    * Given two columns, verify whether replacing the original column with the new column is a valid
-   * operation
+   * operation.
+   *
+   * Note that this requires a full table scan in the case of SET NOT NULL to verify that all
+   * existing values are valid.
    *
    * @param originalField The existing column
    */
   private def verifyColumnChange(
       originalField: StructField,
-      resolver: Resolver): Unit = {
+      resolver: Resolver,
+      txn: OptimisticTransaction): Unit = {
 
     originalField.dataType match {
       case same if same == newColumn.dataType =>
@@ -352,8 +357,17 @@ case class AlterTableChangeColumnDeltaCommand(
 
     if (columnName != newColumn.name ||
       SchemaUtils.canChangeDataType(originalField.dataType, newColumn.dataType, resolver,
-        columnPath :+ originalField.name).nonEmpty ||
-      (originalField.nullable && !newColumn.nullable)) {
+        columnPath :+ originalField.name).nonEmpty) {
+      throw DeltaErrors.alterTableChangeColumnException(
+        s"'${UnresolvedAttribute(columnPath :+ originalField.name).name}' with type " +
+          s"'${originalField.dataType}" +
+          s" (nullable = ${originalField.nullable})'",
+        s"'${UnresolvedAttribute(Seq(newColumn.name)).name}' with type " +
+          s"'${newColumn.dataType}" +
+          s" (nullable = ${newColumn.nullable})'")
+    }
+
+    if (originalField.nullable && !newColumn.nullable) {
       throw DeltaErrors.alterTableChangeColumnException(
         s"'${UnresolvedAttribute(columnPath :+ originalField.name).name}' with type " +
           s"'${originalField.dataType}" +
@@ -503,7 +517,7 @@ case class AlterTableAddConstraintDeltaCommand(
       val n = df.where(new Column(Or(Not(expr), IsUnknown(expr)))).count()
 
       if (n > 0) {
-        throw DeltaErrors.newConstraintViolated(n, table.name(), exprText)
+        throw DeltaErrors.newCheckConstraintViolated(n, table.name(), exprText)
       }
 
       txn.commit(newMetadata :: Nil, DeltaOperations.AddConstraint(name, exprText))
