@@ -445,7 +445,7 @@ object DeltaErrors
   }
 
   def multipleLoadPathsException(paths: Seq[String]): Throwable = {
-    throw new AnalysisException(
+    new AnalysisException(
       s"""
         |Delta Lake does not support multiple input paths in the load() API.
         |paths: ${paths.mkString("[", ",", "]")}. To build a single DataFrame by loading
@@ -832,7 +832,7 @@ object DeltaErrors
   }
 
   def versionNotExistException(userVersion: Long, earliest: Long, latest: Long): Throwable = {
-    throw new AnalysisException(s"Cannot time travel Delta table to version $userVersion. " +
+    new AnalysisException(s"Cannot time travel Delta table to version $userVersion. " +
       s"Available versions: [$earliest, $latest].")
   }
 
@@ -906,7 +906,7 @@ object DeltaErrors
   }
 
   def setLocationNotSupportedOnPathIdentifiers(): Throwable = {
-    throw new AnalysisException("Cannot change the location of a path based table.")
+    new AnalysisException("Cannot change the location of a path based table.")
   }
 
   def describeViewHistory: Throwable = {
@@ -959,12 +959,12 @@ object DeltaErrors
   }
 
   def illegalUsageException(option: String, operation: String): Throwable = {
-    throw new IllegalArgumentException(
+    new IllegalArgumentException(
       s"The usage of $option is not allowed when $operation a Delta table.")
   }
 
   def columnNotInSchemaException(column: String, schema: StructType): Throwable = {
-    throw new AnalysisException(
+    new AnalysisException(
       s"Couldn't find column $column in:\n${schema.treeString}")
   }
 
