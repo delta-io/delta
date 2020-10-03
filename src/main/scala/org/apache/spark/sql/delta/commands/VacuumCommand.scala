@@ -21,8 +21,6 @@ import java.net.URI
 import java.util.Date
 import java.util.concurrent.TimeUnit
 
-import scala.collection.JavaConverters._
-
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{FileAction, RemoveFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -30,9 +28,11 @@ import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.DeltaFileOperations.tryDeleteNonRecursive
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.{FileSystem, Path}
-
-import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
+import org.apache.spark.broadcast.Broadcast
+import org.apache.spark.sql.{DataFrame, Dataset, Encoders, SparkSession}
 import org.apache.spark.util.{Clock, SerializableConfiguration, SystemClock}
+
+import scala.Iterator
 
 /**
  * Vacuums the table by clearing all untracked files and folders within this table.
@@ -224,7 +224,7 @@ object VacuumCommand extends VacuumCommandImpl {
         }
         logInfo(s"Deleting untracked files and empty directories in $path")
 
-        val filesDeleted = delete(diff, fs)
+        val filesDeleted = delete(diff, path.toString, hadoopConf)
 
         val stats = DeltaVacuumStats(
           isDryRun = false,
@@ -270,9 +270,15 @@ trait VacuumCommandImpl extends DeltaCommand {
   /**
    * Attempts to delete the list of candidate files. Returns the number of files deleted.
    */
-  protected def delete(diff: Dataset[String], fs: FileSystem): Long = {
-    val fileResultSet = diff.toLocalIterator().asScala
-    fileResultSet.map(p => stringToPath(p)).count(f => tryDeleteNonRecursive(fs, f))
+  protected def delete(diff: Dataset[String],
+                       path: String,
+                       hadoopConf: Broadcast[SerializableConfiguration]): Long = {
+    diff.mapPartitions { fileResultSet =>
+      val fs = new Path(path).getFileSystem(hadoopConf.value.value)
+      val counts = fileResultSet.map(p => new Path(new URI(p)))
+        .count(f => tryDeleteNonRecursive(fs, f))
+      Iterator.single(counts)
+    }(Encoders.scalaInt).collect().sum
   }
 
   protected def stringToPath(path: String): Path = new Path(new URI(path))
