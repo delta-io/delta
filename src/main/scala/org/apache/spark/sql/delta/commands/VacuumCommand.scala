@@ -278,7 +278,7 @@ trait VacuumCommandImpl extends DeltaCommand {
       val counts = fileResultSet.map(p => new Path(new URI(p)))
         .count(f => tryDeleteNonRecursive(fs, f))
       Iterator.single(counts)
-    }(Encoders.scalaInt).collect().sum
+    }(Encoders.scalaInt).reduce(_ + _)
   }
 
   protected def stringToPath(path: String): Path = new Path(new URI(path))
