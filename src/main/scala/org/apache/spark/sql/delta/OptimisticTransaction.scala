@@ -380,7 +380,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
           op.jsonEncodedValues,
           Map.empty,
           Some(readVersion).filter(_ >= 0),
-          None,
+          Option(isolationLevelToUse.toString),
           Some(isBlindAppend),
           getOperationMetrics(op),
           getUserMetadata(op))
@@ -623,7 +623,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       numFilesTotal = postCommitSnapshot.numOfFiles,
       sizeInBytesTotal = postCommitSnapshot.sizeInBytes,
       protocol = postCommitSnapshot.protocol,
-      info = Option(commitInfo).map(_.copy(readVersion = None, isolationLevel = None)).orNull,
+      info = Option(commitInfo)
+        .map(_.copy(readVersion = None, isolationLevel = Option(isolationLevel.toString))).orNull,
       newMetadata = newMetadata,
       numAbsolutePaths,
       numDistinctPartitionsInAdd = distinctPartitions.size,
