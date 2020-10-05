@@ -433,7 +433,7 @@ object DeltaErrors
       features: Seq[String],
       required: Protocol,
       current: Protocol): Throwable = {
-    val featureList = features.mkString("\t - ", "\n\t -", "\n")
+    val featureList = features.mkString("\t - ", "\n\t - ", "\n")
     val readerVersion = math.max(required.minReaderVersion, current.minReaderVersion)
     val writerVersion = math.max(required.minWriterVersion, current.minWriterVersion)
     new AnalysisException(
