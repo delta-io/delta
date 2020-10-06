@@ -197,11 +197,8 @@ class DeltaLog private(
    */
   def upgradeProtocol(newVersion: Protocol = Protocol()): Unit = {
     val currentVersion = snapshot.protocol
-    if (newVersion.minReaderVersion < currentVersion.minReaderVersion ||
-        newVersion.minWriterVersion < currentVersion.minWriterVersion) {
-      throw new ProtocolDowngradeException(currentVersion, newVersion)
-    } else if (newVersion.minReaderVersion == currentVersion.minReaderVersion &&
-               newVersion.minWriterVersion == currentVersion.minWriterVersion) {
+    if (newVersion.minReaderVersion == currentVersion.minReaderVersion &&
+        newVersion.minWriterVersion == currentVersion.minWriterVersion) {
       logConsole(s"Table $dataPath is already at protocol version $newVersion.")
       return
     }

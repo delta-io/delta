@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.net.URI
 import java.nio.file.FileAlreadyExistsException
-import java.util.ConcurrentModificationException
+import java.util.{ConcurrentModificationException, Locale}
 import java.util.concurrent.TimeUnit.NANOSECONDS
 
 import scala.collection.mutable
@@ -185,6 +185,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   protected var commitStartNano = -1L
   protected var commitInfo: CommitInfo = _
 
+  // Whether this transaction is creating a new table.
+  private var isCreatingNewTable: Boolean = false
+
   /**
    * Tracks the start time since we started trying to write a particular commit.
    * Used for logging duration of retried transactions.
@@ -240,15 +243,34 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       }
     val updatedMetadata = if (readVersion == -1) {
       val m = withGlobalConfigDefaults(metadataWithFixedSchema)
+      isCreatingNewTable = true
       newProtocol = Some(Protocol.forNewTable(spark, m))
       m
     } else {
       metadataWithFixedSchema
     }
-    verifyNewMetadata(updatedMetadata)
-    logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $updatedMetadata")
+    // Remove the protocol version properties
+    val configs = updatedMetadata.configuration.filter {
+      case (Protocol.MIN_READER_VERSION_PROP, value) =>
+        if (!isCreatingNewTable) {
+          newProtocol = Some(protocol.copy(
+            minReaderVersion = Protocol.getVersion(Protocol.MIN_READER_VERSION_PROP, value)))
+        }
+        false
+      case (Protocol.MIN_WRITER_VERSION_PROP, value) =>
+        if (!isCreatingNewTable) {
+          newProtocol = Some(protocol.copy(
+            minWriterVersion = Protocol.getVersion(Protocol.MIN_WRITER_VERSION_PROP, value)))
+        }
+        false
+      case _ => true
+    }
+    val noProtocolVersions = updatedMetadata.copy(configuration = configs)
 
-    newMetadata = Some(updatedMetadata)
+    verifyNewMetadata(noProtocolVersions)
+    logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $noProtocolVersions")
+
+    newMetadata = Some(noProtocolVersions)
   }
 
   /**
@@ -263,6 +285,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   def updateMetadataForNewTable(metadata: Metadata): Unit = {
     val m = withGlobalConfigDefaults(metadata)
     newProtocol = Some(Protocol.forNewTable(spark, m))
+    isCreatingNewTable = true
     updateMetadata(m)
   }
 
@@ -285,7 +308,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
         )
         if (partitionColCheckIsFatal) throw DeltaErrors.invalidPartitionColumn(e)
     }
-    Protocol.assertProtocolRequirements(spark, metadata, protocol)
+    val needsProtocolUpdate = Protocol.checkProtocolRequirements(spark, metadata, protocol)
+    if (needsProtocolUpdate.isDefined) {
+      newProtocol = needsProtocolUpdate
+    }
   }
 
   /** Returns files matching the given predicates. */
@@ -427,7 +453,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
     assert(!committed, "Transaction already committed.")
 
     // If the metadata has changed, add that to the set of actions
-    var finalActions = newProtocol.toSeq ++ newMetadata.toSeq ++ actions
+    var finalActions = newMetadata.toSeq ++ actions
     val metadataChanges = finalActions.collect { case m: Metadata => m }
     if (metadataChanges.length > 1) {
       recordDeltaEvent(deltaLog, "delta.metadataCheck.multipleMetadataActions", data = Map(
@@ -437,6 +463,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
         metadataChanges.length <= 1, "Cannot change the metadata more than once in a transaction.")
     }
     metadataChanges.foreach(m => verifyNewMetadata(m))
+    finalActions = newProtocol.toSeq ++ finalActions
 
     if (snapshot.version == -1) {
       deltaLog.ensureLogDirectoryExist()
@@ -460,12 +487,18 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
 
     val partitionColumns = metadata.partitionColumns.toSet
     finalActions = finalActions.map {
-      // Fetch global config defaults for the first commit
-      case m: Metadata if snapshot.version == -1 =>
-        val newMeta = withGlobalConfigDefaults(m)
-        // Last line of defence
-        Protocol.assertProtocolRequirements(spark, newMeta, protocol)
-        newMeta
+      case newVersion: Protocol =>
+        require(newVersion.minReaderVersion > 0, "The reader version needs to be greater than 0")
+        require(newVersion.minWriterVersion > 0, "The writer version needs to be greater than 0")
+        if (!isCreatingNewTable) {
+          val currentVersion = snapshot.protocol
+          if (newVersion.minReaderVersion < currentVersion.minReaderVersion ||
+              newVersion.minWriterVersion < currentVersion.minWriterVersion) {
+            throw new ProtocolDowngradeException(currentVersion, newVersion)
+          }
+        }
+        newVersion
+
       case a: AddFile if partitionColumns != a.partitionValues.keySet =>
         // If the partitioning in metadata does not match the partitioning in the AddFile
         recordDeltaEvent(deltaLog, "delta.metadataCheck.partitionMismatch", data = Map(

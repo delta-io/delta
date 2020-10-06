@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.util.{HashMap, Locale}
 
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 
@@ -212,6 +212,30 @@ object DeltaConfigs extends DeltaLogging {
   def isValidIntervalConfigValue(i: CalendarInterval): Boolean = {
     i.months == 0 && getMicroSeconds(i) >= 0
   }
+
+  /**
+   * The protocol reader version modelled as a table property. This property is *not* stored as
+   * a table property in the `Metadata` action. It is stored as its own action. Having it modelled
+   * as a table property makes it easier to upgrade, and view the version.
+   */
+  val MIN_READER_VERSION = buildConfig[Int](
+    "minReaderVersion",
+    Action.readerVersion.toString,
+    _.toInt,
+    v => v > 0 && v <= Action.readerVersion,
+    s"needs to be an integer between [1, ${Action.readerVersion}].")
+
+  /**
+   * The protocol reader version modelled as a table property. This property is *not* stored as
+   * a table property in the `Metadata` action. It is stored as its own action. Having it modelled
+   * as a table property makes it easier to upgrade, and view the version.
+   */
+  val MIN_WRITER_VERSION = buildConfig[Int](
+    "minWriterVersion",
+    Action.writerVersion.toString,
+    _.toInt,
+    v => v > 0 && v <= Action.writerVersion,
+    s"needs to be an integer between [1, ${Action.writerVersion}].")
 
   /**
    * The shortest duration we have to keep delta files around before deleting them. We can only

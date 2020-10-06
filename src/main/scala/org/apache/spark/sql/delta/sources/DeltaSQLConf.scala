@@ -182,7 +182,7 @@ object DeltaSQLConf {
       .createWithDefault(10000000)
 
   val DELTA_PROTOCOL_DEFAULT_WRITER_VERSION =
-    buildConf("protocol.minWriterVersion")
+    buildConf("properties.defaults.minWriterVersion")
       .doc("The default writer protocol version to create new tables with, unless a feature " +
         "that requires a higher version for correctness is enabled.")
       .intConf
@@ -190,7 +190,7 @@ object DeltaSQLConf {
       .createWithDefault(2)
 
   val DELTA_PROTOCOL_DEFAULT_READER_VERSION =
-    buildConf("protocol.minReaderVersion")
+    buildConf("properties.defaults.minReaderVersion")
       .doc("The default reader protocol version to create new tables with, unless a feature " +
         "that requires a higher version for correctness is enabled.")
       .intConf

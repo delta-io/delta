@@ -94,22 +94,31 @@ case class Protocol(
 }
 
 object Protocol {
-  def apply(conf: SQLConf, requiredProtocol: Option[Protocol]): Protocol = {
-    val reader = math.max(
-      requiredProtocol.map(_.minReaderVersion).getOrElse(0),
-      conf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION)
-    )
-    val writer = math.max(
-      requiredProtocol.map(_.minWriterVersion).getOrElse(0),
-      conf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION)
-    )
-    Protocol(minReaderVersion = reader, minWriterVersion = writer)
+  val MIN_READER_VERSION_PROP = "delta.minReaderVersion"
+  val MIN_WRITER_VERSION_PROP = "delta.minWriterVersion"
+
+  def apply(spark: SparkSession, metadataOpt: Option[Metadata]): Protocol = {
+    val conf = spark.sessionState.conf
+    val minimumOpt = metadataOpt.map(m => requiredMinimumProtocol(spark, m)._1)
+    val configs = metadataOpt.map(_.configuration.map {
+      case (k, v) => k.toLowerCase(Locale.ROOT) -> v }
+    ).getOrElse(Map.empty[String, String])
+    // Check if the protocol version is provided as a table property, or get it from the SQL confs
+    val readerVersion = configs.get(MIN_READER_VERSION_PROP.toLowerCase(Locale.ROOT))
+      .map(getVersion(MIN_READER_VERSION_PROP, _))
+      .getOrElse(conf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION))
+    val writerVersion = configs.get(MIN_WRITER_VERSION_PROP.toLowerCase(Locale.ROOT))
+      .map(getVersion(MIN_WRITER_VERSION_PROP, _))
+      .getOrElse(conf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION))
+
+    Protocol(
+      minReaderVersion = math.max(minimumOpt.map(_.minReaderVersion).getOrElse(0), readerVersion),
+      minWriterVersion = math.max(minimumOpt.map(_.minWriterVersion).getOrElse(0), writerVersion))
   }
 
   /** Picks the protocol version for a new table given potential feature usage. */
   def forNewTable(spark: SparkSession, metadata: Metadata): Protocol = {
-    val requiredProtocol = requiredMinimumProtocol(spark, metadata)._1
-    Protocol(spark.sessionState.conf, Some(requiredProtocol))
+    Protocol(spark, Some(metadata))
   }
 
   /**
@@ -141,18 +150,36 @@ object Protocol {
     minimumRequired -> featuresUsed
   }
 
+  /** Cast the table property for the protocol version to an integer. */
+  def getVersion(key: String, value: String): Int = {
+    try value.toInt catch {
+      case n: NumberFormatException =>
+        throw new IllegalArgumentException(
+          s"Protocol property $key needs to be an integer. Found $value", n)
+    }
+  }
+
   /**
    * Verify that the protocol version of the table satisfies the version requirements of all the
-   * configurations to be set for the table.
+   * configurations to be set for the table. Returns the minimum required protocol if not.
    */
-  def assertProtocolRequirements(
+  def checkProtocolRequirements(
       spark: SparkSession,
       metadata: Metadata,
-      current: Protocol): Unit = {
+      current: Protocol): Option[Protocol] = {
+    assert(!metadata.configuration.contains(MIN_READER_VERSION_PROP), s"Should not have the " +
+      s"protocol version ($MIN_READER_VERSION_PROP) as part of table properties")
+    assert(!metadata.configuration.contains(MIN_WRITER_VERSION_PROP), s"Should not have the " +
+      s"protocol version ($MIN_WRITER_VERSION_PROP) as part of table properties")
     val (required, features) = requiredMinimumProtocol(spark, metadata)
     if (current.minWriterVersion < required.minWriterVersion ||
         current.minReaderVersion < required.minReaderVersion) {
-      throw DeltaErrors.requireProtocolUpgrade(features, required, current)
+      Some(required.copy(
+        minReaderVersion = math.max(current.minReaderVersion, required.minReaderVersion),
+        minWriterVersion = math.max(current.minWriterVersion, required.minWriterVersion))
+      )
+    } else {
+      None
     }
   }
 }

@@ -17,6 +17,8 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.util.Locale
+
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta._
@@ -73,6 +75,12 @@ case class AlterTableSetPropertiesDeltaCommand(
       val txn = startTransaction()
 
       val metadata = txn.metadata
+      configuration.foreach {
+        case (k, _) if k.toLowerCase(Locale.ROOT).startsWith("delta.constraints.") =>
+          throw DeltaErrors.useAddConstraints
+        case _ =>
+          // do nothing
+      }
       val newMetadata = metadata.copy(configuration = metadata.configuration ++ configuration)
       txn.updateMetadata(newMetadata)
       txn.commit(Nil, DeltaOperations.SetTableProperties(configuration))
@@ -506,7 +514,6 @@ case class AlterTableAddConstraintDeltaCommand(
         configuration = txn.metadata.configuration +
           (Constraints.checkConstraintPropertyName(name) -> exprText)
       )
-      Protocol.assertProtocolRequirements(sparkSession, newMetadata, txn.protocol)
 
       val expr = sparkSession.sessionState.sqlParser.parseExpression(exprText)
       if (expr.dataType != BooleanType) {
@@ -548,7 +555,6 @@ case class AlterTableDropConstraintDeltaCommand(
       val oldExprText = Constraints.getExprTextByName(name, txn.metadata, sparkSession)
       val newMetadata = txn.metadata.copy(
         configuration = txn.metadata.configuration - Constraints.checkConstraintPropertyName(name))
-      Protocol.assertProtocolRequirements(sparkSession, newMetadata, txn.protocol)
 
       txn.commit(newMetadata :: Nil, DeltaOperations.DropConstraint(name, oldExprText))
     }
