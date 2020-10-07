@@ -519,12 +519,17 @@ case class AlterTableAddConstraintDeltaCommand(
       if (expr.dataType != BooleanType) {
         throw DeltaErrors.checkConstraintNotBoolean(name, exprText)
       }
+      logInfo(s"Checking that $exprText is satisfied for existing data. " +
+        "This will require a full table scan.")
+      recordDeltaOperation(
+          txn.snapshot.deltaLog,
+          "delta.ddl.alter.addConstraint.checkExisting") {
+        val df = txn.snapshot.deltaLog.createDataFrame(txn.snapshot, txn.filterFiles())
+        val n = df.where(new Column(Or(Not(expr), IsUnknown(expr)))).count()
 
-      val df = txn.snapshot.deltaLog.createDataFrame(txn.snapshot, txn.filterFiles())
-      val n = df.where(new Column(Or(Not(expr), IsUnknown(expr)))).count()
-
-      if (n > 0) {
-        throw DeltaErrors.newCheckConstraintViolated(n, table.name(), exprText)
+        if (n > 0) {
+          throw DeltaErrors.newCheckConstraintViolated(n, table.name(), exprText)
+        }
       }
 
       txn.commit(newMetadata :: Nil, DeltaOperations.AddConstraint(name, exprText))
