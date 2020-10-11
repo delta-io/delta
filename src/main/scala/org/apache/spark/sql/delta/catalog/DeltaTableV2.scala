@@ -119,7 +119,7 @@ case class DeltaTableV2(
   ).asJava
 
   override def newWriteBuilder(info: LogicalWriteInfo): WriteBuilder = {
-    new WriteIntoDeltaBuilder(deltaLog, info.options)
+    new WriteIntoDeltaBuilder(this, deltaLog, info.options)
   }
 
   /**
@@ -155,6 +155,7 @@ case class DeltaTableV2(
 }
 
 private class WriteIntoDeltaBuilder(
+    table : DeltaTableV2,
     log: DeltaLog,
     writeOptions: CaseInsensitiveStringMap)
   extends WriteBuilder with V1WriteBuilder with SupportsOverwrite with SupportsTruncate {
@@ -190,7 +191,8 @@ private class WriteIntoDeltaBuilder(
           new DeltaOptions(options.toMap, session.sessionState.conf),
           Nil,
           log.snapshot.metadata.configuration,
-          data).run(session)
+          data,
+          catalogTable = table.catalogTable).run(session)
 
         // TODO: Push this to Apache Spark
         // Re-cache all cached plans(including this relation itself, if it's cached) that refer

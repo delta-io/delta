@@ -20,8 +20,9 @@ package org.apache.spark.sql.delta.commands
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{Action, AddFile}
 import org.apache.spark.sql.delta.schema.ImplicitMetadataOperation
-
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.execution.command.RunnableCommand
 
 /**
@@ -43,12 +44,13 @@ import org.apache.spark.sql.execution.command.RunnableCommand
  * replace data that matches a predicate.
  */
 case class WriteIntoDelta(
-    deltaLog: DeltaLog,
-    mode: SaveMode,
-    options: DeltaOptions,
-    partitionColumns: Seq[String],
-    configuration: Map[String, String],
-    data: DataFrame)
+     deltaLog: DeltaLog,
+     mode: SaveMode,
+     options: DeltaOptions,
+     partitionColumns: Seq[String],
+     configuration: Map[String, String],
+     data: DataFrame,
+     catalogTable: Option[CatalogTable] = None)
   extends RunnableCommand
   with ImplicitMetadataOperation
   with DeltaCommand {
@@ -83,7 +85,8 @@ case class WriteIntoDelta(
       }
     }
     val rearrangeOnly = options.rearrangeOnly
-    updateMetadata(txn, data, partitionColumns, configuration, isOverwriteOperation, rearrangeOnly)
+    updateMetadata(txn, data, partitionColumns, configuration, catalogTable,
+      isOverwriteOperation, rearrangeOnly)
 
     // Validate partition predicates
     val replaceWhere = options.replaceWhere

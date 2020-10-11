@@ -77,10 +77,12 @@ object DeltaTableIdentifier extends Logging {
    */
   def isDeltaPath(spark: SparkSession, identifier: TableIdentifier): Boolean = {
     val catalog = spark.sessionState.catalog
-    def tableIsTemporaryTable = catalog.isTemporaryTable(identifier)
+    def tableIsTemporaryTable : Boolean = catalog.isTemporaryTable(identifier)
     def tableExists: Boolean = {
       try {
-        catalog.databaseExists(identifier.database.get) && catalog.tableExists(identifier)
+        identifier.database.isDefined &&
+          catalog.databaseExists(identifier.database.get) &&
+          catalog.tableExists(identifier)
       } catch {
         case e: AnalysisException if gluePermissionError(e) =>
           logWarning("Received an access denied error from Glue. Will check to see if this " +
@@ -90,7 +92,11 @@ object DeltaTableIdentifier extends Logging {
     }
 
     spark.sessionState.conf.runSQLonFile &&
-      DeltaSourceUtils.isDeltaTable(identifier.database) &&
+      ( DeltaSourceUtils.isDeltaTable(identifier.database) ||
+        (catalog.tableExists(identifier) &&
+          DeltaSourceUtils.isDeltaTable(catalog.getTableMetadata(identifier))
+        )
+      ) &&
       !tableIsTemporaryTable &&
       !tableExists &&
       new Path(identifier.table).isAbsolute

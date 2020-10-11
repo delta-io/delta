@@ -19,10 +19,8 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Metadata
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.sql._
@@ -51,7 +49,8 @@ case class CreateDeltaTableCommand(
     mode: SaveMode,
     query: Option[LogicalPlan],
     operation: TableCreationModes.CreationMode = TableCreationModes.Create,
-    tableByPath: Boolean = false)
+    tableByPath: Boolean = false,
+    isHiveProvider: Boolean)
   extends RunnableCommand
   with DeltaLogging {
 
@@ -100,7 +99,7 @@ case class CreateDeltaTableCommand(
     val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
     recordDeltaOperation(deltaLog, "delta.ddl.createTable") {
       val txn = deltaLog.startTransaction()
-      if (query.isDefined) {
+      val schema : StructType = if (query.isDefined) {
         // If the mode is Ignore or ErrorIfExists, the table must not exist, or we would return
         // earlier. And the data should not exist either, to match the behavior of
         // Ignore/ErrorIfExists mode. This means the table path should not exist or is empty.
@@ -149,8 +148,9 @@ case class CreateDeltaTableCommand(
             val op = getOperation(txn.metadata, isManagedTable, Some(options))
             txn.commit(actions, op)
         }
+        txn.metadata.schema
       } else {
-        def createTransactionLogOrVerify(): Unit = {
+        def createTransactionLogOrVerify(): StructType = {
           if (isManagedTable) {
             // When creating a managed table, the table path should not exist or is empty, or
             // users would be surprised to see the data, or see the data directory being dropped
@@ -172,8 +172,10 @@ case class CreateDeltaTableCommand(
 
             val op = getOperation(newMetadata, isManagedTable, None)
             txn.commit(Nil, op)
+            newMetadata.schema
           } else {
             verifyTableMetadata(txn, tableWithLocation)
+            txn.metadata.schema
           }
         }
         // We are defining a table using the Create or Replace Table statements.
@@ -202,6 +204,7 @@ case class CreateDeltaTableCommand(
 
             val op = getOperation(txn.metadata, isManagedTable, None)
             txn.commit(removes, op)
+            txn.metadata.schema
         }
       }
 
@@ -210,9 +213,9 @@ case class CreateDeltaTableCommand(
       // if it already exists.
       // Note that someone may have dropped and recreated the table in a separate location in the
       // meantime... Unfortunately we can't do anything there at the moment, because Hive sucks.
-      logInfo(s"Table is path-based table: $tableByPath. Update catalog with mode: $operation")
-      updateCatalog(sparkSession, tableWithLocation, deltaLog.snapshot)
 
+      logInfo(s"Table is path-based table: $tableByPath. Update catalog with mode: $operation")
+      updateCatalog(sparkSession, tableWithLocation.copy(schema = schema), deltaLog.snapshot)
       Nil
     }
   }
@@ -293,7 +296,8 @@ case class CreateDeltaTableCommand(
           path, tableDesc.partitionColumnNames, existingMetadata.partitionColumns)
       }
 
-      if (tableDesc.properties.nonEmpty && tableDesc.properties != existingMetadata.configuration) {
+      val filteredTableDesc = tableDesc.properties.filter(p => !p._1.equals("storage_handler"))
+      if (filteredTableDesc.nonEmpty && filteredTableDesc != existingMetadata.configuration) {
         throw DeltaErrors.createTableWithDifferentPropertiesException(
           path, tableDesc.properties, existingMetadata.configuration)
       }
@@ -365,11 +369,18 @@ case class CreateDeltaTableCommand(
 
   /** Clean up the information we pass on to store in the catalog. */
   private def cleanupTableDefinition(table: CatalogTable, snapshot: Snapshot): CatalogTable = {
-    table.copy(
-      schema = new StructType(),
-      properties = Map.empty,
-      partitionColumnNames = Nil,
-      tracksPartitionsInCatalog = true)
+    if (isHiveProvider) {
+      table.copy(
+        schema = table.schema,
+        partitionColumnNames = Nil,
+        tracksPartitionsInCatalog = true)
+    } else {
+      table.copy(
+        schema = new StructType(),
+        properties = Map.empty,
+        partitionColumnNames = Nil,
+        tracksPartitionsInCatalog = true)
+    }
   }
 
   /**

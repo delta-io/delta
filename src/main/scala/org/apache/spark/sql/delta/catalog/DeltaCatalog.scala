@@ -16,14 +16,16 @@
 
 package org.apache.spark.sql.delta.catalog
 
+import java.net.URI
 import java.util
+
 
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.JavaConverters._
 import scala.collection.mutable
-
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, DeltaTableUtils}
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
+import org.apache.spark.sql.catalyst.catalog.CatalogStorageFormat
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, DeltaTableUtils}
 import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
 import org.apache.spark.sql.delta.commands.{AlterTableAddColumnsDeltaCommand, AlterTableChangeColumnDeltaCommand, AlterTableSetLocationDeltaCommand, AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand, CreateDeltaTableCommand, TableCreationModes}
 import org.apache.spark.sql.delta.commands.{AlterTableAddConstraintDeltaCommand, AlterTableDropConstraintDeltaCommand, WriteIntoDelta}
@@ -60,6 +62,20 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
   def this() = {
     this(SparkSession.active)
   }
+
+  def isHiveProvider : Boolean = "hive".equals(getProvider)
+
+  protected def getProvider : String = "delta"
+
+  protected def getStorage(tableProperties : Map[String, String],
+                           location : Option[URI]) : CatalogStorageFormat =
+    DataSource.buildStorageFormatFromOptions(tableProperties)
+      .copy(locationUri = location)
+
+
+  protected def getTableProperties(tableProperties : Map[String, String]) : Map[String, String] =
+    tableProperties
+
 
   /**
    * Creates a Delta table
@@ -99,8 +115,6 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
       Option(properties.get("location"))
     }
     val locUriOpt = location.map(CatalogUtils.stringToURI)
-    val storage = DataSource.buildStorageFormatFromOptions(tableProperties.toMap)
-      .copy(locationUri = locUriOpt)
     val tableType =
       if (location.isDefined) CatalogTableType.EXTERNAL else CatalogTableType.MANAGED
     val id = TableIdentifier(ident.name(), ident.namespace().lastOption)
@@ -109,12 +123,12 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
     val tableDesc = new CatalogTable(
       identifier = id,
       tableType = tableType,
-      storage = storage,
+      storage = getStorage(tableProperties.toMap, locUriOpt),
       schema = schema,
-      provider = Some("delta"),
+      provider = Some(getProvider),
       partitionColumnNames = partitionColumns,
       bucketSpec = maybeBucketSpec,
-      properties = tableProperties.toMap,
+      properties = getTableProperties(tableProperties.toMap),
       comment = Option(properties.get("comment")))
     // END: copy-paste from the super method finished.
 
@@ -137,7 +151,8 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
       operation.mode,
       writer,
       operation,
-      tableByPath = isByPath).run(spark)
+      tableByPath = isByPath,
+      isHiveProvider).run(spark)
 
     loadTable(ident)
   }
@@ -385,7 +400,8 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
               col.isNullable,
               Option(col.comment()),
               Option(col.position()))
-          }).run(spark)
+          },
+          isHiveProvider).run(spark)
 
       case (t, newProperties) if t == classOf[SetProperty] =>
         AlterTableSetPropertiesDeltaCommand(
@@ -393,15 +409,16 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
           DeltaConfigs.validateConfigurations(
             newProperties.asInstanceOf[Seq[SetProperty]].map { prop =>
               prop.property() -> prop.value()
-            }.toMap)
-        ).run(spark)
+            }.toMap),
+          isHiveProvider).run(spark)
 
       case (t, oldProperties) if t == classOf[RemoveProperty] =>
         AlterTableUnsetPropertiesDeltaCommand(
           table,
           oldProperties.asInstanceOf[Seq[RemoveProperty]].map(_.property()),
           // Data source V2 REMOVE PROPERTY is always IF EXISTS.
-          ifExists = true).run(spark)
+          ifExists = true,
+          isHiveProvider).run(spark)
 
       case (t, columnChanges) if classOf[ColumnChange].isAssignableFrom(t) =>
         def getColumn(fieldNames: Seq[String]): (StructField, Option[ColumnPosition]) = {
@@ -460,18 +477,22 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
         }
         AlterTableSetLocationDeltaCommand(
           table,
-          locations.head.asInstanceOf[SetProperty].value()).run(spark)
+          locations.head.asInstanceOf[SetProperty].value(),
+          isHiveProvider).run(spark)
 
       case (t, constraints) if t == classOf[AddConstraint] =>
         constraints.foreach { constraint =>
           val c = constraint.asInstanceOf[AddConstraint]
-          AlterTableAddConstraintDeltaCommand(table, c.constraintName, c.expr).run(spark)
+          AlterTableAddConstraintDeltaCommand(table,
+            c.constraintName,
+            c.expr,
+            isHiveProvider).run(spark)
         }
 
       case (t, constraints) if t == classOf[DropConstraint] =>
         constraints.foreach { constraint =>
           val c = constraint.asInstanceOf[DropConstraint]
-          AlterTableDropConstraintDeltaCommand(table, c.constraintName).run(spark)
+          AlterTableDropConstraintDeltaCommand(table, c.constraintName, isHiveProvider).run(spark)
         }
     }
 
@@ -481,7 +502,8 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
         fieldNames.dropRight(1),
         fieldNames.last,
         newField,
-        newPositionOpt).run(spark)
+        newPositionOpt,
+        isHiveProvider).run(spark)
     }
 
     loadTable(ident)

@@ -16,11 +16,11 @@
 
 package org.apache.spark.sql.delta.schema
 
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.PartitionUtils
-
 import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.types.StructType
 
@@ -48,15 +48,16 @@ trait ImplicitMetadataOperation extends DeltaLogging {
   }
 
   protected final def updateMetadata(
-      txn: OptimisticTransaction,
-      data: Dataset[_],
-      partitionColumns: Seq[String],
-      configuration: Map[String, String],
-      isOverwriteMode: Boolean,
-      rearrangeOnly: Boolean = false): Unit = {
-    updateMetadata(
-      data.sparkSession, txn, data.schema, partitionColumns,
-      configuration, isOverwriteMode, rearrangeOnly)
+    txn: OptimisticTransaction,
+    data: Dataset[_],
+    partitionColumns: Seq[String],
+    configuration: Map[String, String],
+    catalogTable: Option[CatalogTable],
+    isOverwriteMode: Boolean,
+    rearrangeOnly: Boolean = false
+    ): Unit = {
+    updateMetadata(data.sparkSession, txn, data.schema, partitionColumns, configuration,
+      isOverwriteMode, rearrangeOnly, catalogTable)
   }
 
   protected final def updateMetadata(
@@ -66,7 +67,8 @@ trait ImplicitMetadataOperation extends DeltaLogging {
       partitionColumns: Seq[String],
       configuration: Map[String, String],
       isOverwriteMode: Boolean,
-      rearrangeOnly: Boolean): Unit = {
+      rearrangeOnly: Boolean,
+      catalogTable: Option[CatalogTable]): Unit = {
     val dataSchema = schema.asNullable
     val mergedSchema = if (isOverwriteMode && canOverwriteSchema) {
       dataSchema
@@ -121,6 +123,13 @@ trait ImplicitMetadataOperation extends DeltaLogging {
         throw DeltaErrors.unexpectedDataChangeException("Change the Delta table schema")
       }
       txn.updateMetadata(txn.metadata.copy(schemaString = mergedSchema.json))
+      if (catalogTable.isDefined && catalogTable.get.provider.contains("hive")) {
+        spark.sessionState.catalog.alterTable(
+          catalogTable.get.copy(
+            schema = txn.metadata.schema
+          )
+        )
+      }
     } else if (isNewSchema || isNewPartitioning) {
       recordDeltaEvent(txn.deltaLog, "delta.schemaValidation.failure")
       val errorBuilder = new MetadataMismatchErrorBuilder

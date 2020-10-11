@@ -19,24 +19,23 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
 
-import scala.util.control.NonFatal
+import io.delta.hive.DeltaStorageHandler
 
+import scala.util.control.NonFatal
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.schema.SchemaUtils.transformColumnsStructs
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-
 import org.apache.spark.sql.{AnalysisException, Column, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
-import org.apache.spark.sql.catalyst.expressions.{Expression, IsNotNull, IsNull, IsUnknown, Not, Or}
-import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, LogicalPlan, QualifiedColType}
+import org.apache.spark.sql.catalyst.expressions.{IsUnknown, Not, Or}
+import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, QualifiedColType}
 import org.apache.spark.sql.connector.catalog.TableChange.{After, ColumnPosition, First}
-import org.apache.spark.sql.execution.command.{DDLUtils, RunnableCommand}
+import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
 import org.apache.spark.sql.types._
 
@@ -44,6 +43,8 @@ import org.apache.spark.sql.types._
  * A super trait for alter table commands that modify Delta tables.
  */
 trait AlterDeltaTableCommand extends DeltaCommand {
+
+  def isHiveProvider : Boolean
 
   def table: DeltaTableV2
 
@@ -66,7 +67,8 @@ trait AlterDeltaTableCommand extends DeltaCommand {
  */
 case class AlterTableSetPropertiesDeltaCommand(
     table: DeltaTableV2,
-    configuration: Map[String, String])
+    configuration: Map[String, String],
+    isHiveProvider: Boolean)
   extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -84,7 +86,17 @@ case class AlterTableSetPropertiesDeltaCommand(
       val newMetadata = metadata.copy(configuration = metadata.configuration ++ configuration)
       txn.updateMetadata(newMetadata)
       txn.commit(Nil, DeltaOperations.SetTableProperties(configuration))
-
+      if (isHiveProvider) {
+        val catalog = sparkSession.sessionState.catalog
+        val identifier = sparkSession.sessionState.sqlParser
+          .parseTableIdentifier(table.tableIdentifier.get)
+        val catalogTable = catalog.getTableMetadata(identifier)
+        sparkSession.sessionState.catalog.alterTable(
+          catalogTable.copy(
+            properties = catalogTable.properties ++ configuration
+          )
+        )
+      }
       Seq.empty[Row]
     }
   }
@@ -103,7 +115,8 @@ case class AlterTableSetPropertiesDeltaCommand(
 case class AlterTableUnsetPropertiesDeltaCommand(
     table: DeltaTableV2,
     propKeys: Seq[String],
-    ifExists: Boolean)
+    ifExists: Boolean,
+    isHiveProvider: Boolean)
   extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -128,7 +141,18 @@ case class AlterTableUnsetPropertiesDeltaCommand(
       val newMetadata = metadata.copy(configuration = newConfiguration)
       txn.updateMetadata(newMetadata)
       txn.commit(Nil, DeltaOperations.UnsetTableProperties(normalizedKeys, ifExists))
-
+      if (isHiveProvider) {
+        val catalog = sparkSession.sessionState.catalog
+        val identifier = sparkSession.sessionState.sqlParser
+          .parseTableIdentifier(table.tableIdentifier.get)
+        val catalogTable = catalog.getTableMetadata(identifier)
+        sparkSession.sessionState.catalog.alterTable(
+          catalogTable.copy(
+            properties = newConfiguration +
+              ("storage_handler" -> classOf[DeltaStorageHandler].getCanonicalName)
+          )
+        )
+      }
       Seq.empty[Row]
     }
   }
@@ -144,7 +168,8 @@ case class AlterTableUnsetPropertiesDeltaCommand(
 */
 case class AlterTableAddColumnsDeltaCommand(
     table: DeltaTableV2,
-    colsToAddWithPosition: Seq[QualifiedColType])
+    colsToAddWithPosition: Seq[QualifiedColType],
+    isHiveProvider: Boolean)
   extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -198,7 +223,17 @@ case class AlterTableAddColumnsDeltaCommand(
             DeltaOperations.QualifiedColTypeWithPositionForLog(
               path, col, colPosition.map(_.toString))
         }))
-
+      if (isHiveProvider) {
+        val catalog = sparkSession.sessionState.catalog
+        val identifier = sparkSession.sessionState.sqlParser
+          .parseTableIdentifier(table.tableIdentifier.get)
+        val catalogTable = catalog.getTableMetadata(identifier)
+        sparkSession.sessionState.catalog.alterTable(
+          catalogTable.copy(
+            schema = newSchema
+          )
+        )
+      }
       Seq.empty[Row]
     }
   }
@@ -238,7 +273,8 @@ case class AlterTableChangeColumnDeltaCommand(
     columnPath: Seq[String],
     columnName: String,
     newColumn: StructField,
-    colPosition: Option[ColumnPosition])
+    colPosition: Option[ColumnPosition],
+    isHiveProvider: Boolean)
   extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -281,7 +317,17 @@ case class AlterTableChangeColumnDeltaCommand(
       txn.updateMetadata(newMetadata)
       txn.commit(Nil, DeltaOperations.ChangeColumn(
         columnPath, columnName, newColumn, colPosition.map(_.toString)))
-
+      if (isHiveProvider) {
+        val catalog = sparkSession.sessionState.catalog
+        val identifier = sparkSession.sessionState.sqlParser
+          .parseTableIdentifier(table.tableIdentifier.get)
+        val catalogTable = catalog.getTableMetadata(identifier)
+        sparkSession.sessionState.catalog.alterTable(
+          catalogTable.copy(
+            schema = newSchema
+          )
+        )
+      }
       Seq.empty[Row]
     }
   }
@@ -327,10 +373,7 @@ case class AlterTableChangeColumnDeltaCommand(
 
   /**
    * Given two columns, verify whether replacing the original column with the new column is a valid
-   * operation.
-   *
-   * Note that this requires a full table scan in the case of SET NOT NULL to verify that all
-   * existing values are valid.
+   * operation
    *
    * @param originalField The existing column
    */
@@ -398,7 +441,8 @@ case class AlterTableChangeColumnDeltaCommand(
  */
 case class AlterTableReplaceColumnsDeltaCommand(
     table: DeltaTableV2,
-    columns: Seq[StructField])
+    columns: Seq[StructField],
+    isHiveProvider: Boolean)
   extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -426,7 +470,17 @@ case class AlterTableReplaceColumnsDeltaCommand(
       val newMetadata = metadata.copy(schemaString = newSchema.json)
       txn.updateMetadata(newMetadata)
       txn.commit(Nil, DeltaOperations.ReplaceColumns(columns))
-
+      if (isHiveProvider) {
+        val catalog = sparkSession.sessionState.catalog
+        val identifier = sparkSession.sessionState.sqlParser
+          .parseTableIdentifier(table.tableIdentifier.get)
+        val catalogTable = catalog.getTableMetadata(identifier)
+        sparkSession.sessionState.catalog.alterTable(
+          catalogTable.copy(
+            schema = newSchema
+          )
+        )
+      }
       Seq.empty[Row]
     }
   }
@@ -447,7 +501,8 @@ case class AlterTableReplaceColumnsDeltaCommand(
  */
 case class AlterTableSetLocationDeltaCommand(
     table: DeltaTableV2,
-    location: String)
+    location: String,
+    isHiveProvider: Boolean)
   extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -498,7 +553,8 @@ case class AlterTableSetLocationDeltaCommand(
 case class AlterTableAddConstraintDeltaCommand(
     table: DeltaTableV2,
     name: String,
-    exprText: String)
+    exprText: String,
+    isHiveProvider: Boolean)
   extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -549,7 +605,8 @@ case class AlterTableAddConstraintDeltaCommand(
  */
 case class AlterTableDropConstraintDeltaCommand(
     table: DeltaTableV2,
-    name: String)
+    name: String,
+    isHiveProvider: Boolean)
   extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {

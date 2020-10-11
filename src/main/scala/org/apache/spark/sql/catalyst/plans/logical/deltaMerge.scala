@@ -19,13 +19,13 @@ package org.apache.spark.sql.catalyst.plans.logical
 import java.util.Locale
 
 import scala.collection.mutable
-
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis._
-import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, Expression, Literal, UnaryExpression}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, Expression, Literal, UnaryExpression, Unevaluable}
 import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, ExprCode}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{ByteType, DataType, IntegerType, ShortType, StructField, StructType}
@@ -212,7 +212,8 @@ case class DeltaMergeInto(
     condition: Expression,
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
     notMatchedClauses: Seq[DeltaMergeIntoInsertClause],
-    migratedSchema: Option[StructType] = None) extends Command {
+    migratedSchema: Option[StructType] = None,
+    catalogTable: Option[CatalogTable] = None) extends Command {
 
   (matchedClauses ++ notMatchedClauses).foreach(_.verifyActions())
 
@@ -261,7 +262,7 @@ object DeltaMergeInto {
       resolveExpr: (Expression, LogicalPlan) => Expression): DeltaMergeInto = {
 
     val DeltaMergeInto(
-        target, source, condition, matchedClauses, notMatchedClause, migratedSchema) =
+        target, source, condition, matchedClauses, notMatchedClause, migratedSchema, catalogTable) =
       merge
 
     // We must do manual resolution as the expressions in different clauses of the MERGE have
