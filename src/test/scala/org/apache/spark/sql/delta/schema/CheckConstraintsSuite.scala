@@ -205,6 +205,54 @@ class CheckConstraintsSuite extends QueryTest
     }
   }
 
+  testQuietly("constraint on builtin methods") {
+    withTestTable { table =>
+      sql(s"ALTER TABLE $table ADD CONSTRAINT textSize CHECK (LENGTH(text) < 10)")
+      sql(s"INSERT INTO $table VALUES (11, 'abcdefg')")
+      val e = intercept[InvariantViolationException] {
+        sql(s"INSERT INTO $table VALUES (12, 'abcdefghijklmnop')")
+      }
+      assert(e.getMessage.contains("constraint textsize (LENGTH(`text`) < 10) violated by row"))
+    }
+  }
+
+  testQuietly("constraint with implicit casts") {
+    withTestTable { table =>
+      sql(s"ALTER TABLE $table ADD CONSTRAINT maxWithImplicitCast CHECK (num < '10')")
+      val e = intercept[InvariantViolationException] {
+        sql(s"INSERT INTO $table VALUES (11, 'data')")
+      }
+      assert(e.getMessage.contains("constraint maxwithimplicitcast (`num` < '10') violated by row"))
+    }
+  }
+
+  testQuietly("constraint with nested parentheses") {
+    withTestTable { table =>
+      sql(s"ALTER TABLE $table ADD CONSTRAINT maxWithParens " +
+        s"CHECK (( (num < '10') AND ((LENGTH(text)) < 100) ))")
+      val e = intercept[InvariantViolationException] {
+        sql(s"INSERT INTO $table VALUES (11, 'data')")
+      }
+      assert(e.getMessage.contains(
+        "constraint maxwithparens ((`num` < '10') AND (LENGTH(`text`) < 100)) violated by row"))
+    }
+  }
+
+  testQuietly("constraint with analyzer-evaluated expressions") {
+    withTestTable { table =>
+      // We use current_timestamp() as the most convenient analyzer-evaluated expression - of course
+      // in a realistic use case it'd probably not be right to add a constraint on a
+      // nondeterministic expression.
+      sql(s"ALTER TABLE $table ADD CONSTRAINT maxWithAnalyzerEval " +
+        s"CHECK (num < unix_timestamp())")
+      val e = intercept[InvariantViolationException] {
+        sql(s"INSERT INTO $table VALUES (${Int.MaxValue}, 'data')")
+      }
+      assert(e.getMessage.contains(
+        "maxwithanalyzereval (`num` < unix_timestamp()) violated by row"))
+    }
+  }
+
   testQuietly("constraints with nulls") {
     withSQLConf((DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key, "3")) {
       withTable("checkConstraintsTest") {

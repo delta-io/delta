@@ -23,10 +23,13 @@ import org.apache.spark.sql.delta.constraints.Constraints.{Check, NotNull}
 import org.apache.spark.sql.delta.schema.SchemaUtils
 
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedExtractValue}
+import org.apache.spark.sql.catalyst.analysis.{Analyzer, TypeCoercion, UnresolvedAttribute, UnresolvedExtractValue, UnresolvedFunction}
+import org.apache.spark.sql.catalyst.analysis.TypeCoercion.ImplicitTypeCasts
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, BindReferences, Expression, ExtractValue, GetStructField, Literal, SortOrder}
 import org.apache.spark.sql.catalyst.expressions.codegen.GenerateUnsafeProjection
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.{SparkPlan, UnaryExecNode}
 import org.apache.spark.sql.internal.SQLConf
@@ -38,7 +41,8 @@ import org.apache.spark.sql.types.StructType
  */
 case class DeltaInvariantCheckerExec(
     child: SparkPlan,
-    constraints: Seq[Constraint]) extends UnaryExecNode {
+    constraints: Seq[Constraint],
+    @transient spark: SparkSession) extends UnaryExecNode {
 
   override def output: Seq[Attribute] = child.output
 
@@ -83,22 +87,34 @@ case class DeltaInvariantCheckerExec(
     if (constraints.isEmpty) return child.execute()
     val boundRefs = constraints.map { constraint =>
       val columnExtractors = mutable.Map[String, Expression]()
-      val resolvedExpr = constraint match {
+      val executableExpr = constraint match {
         case n @ NotNull(column) =>
           buildExtractor(column).getOrElse {
             throw DeltaErrors.notNullColumnMissingException(n)
           }
         case Check(name, expr) =>
-          expr.transformUp {
+          // We need to do two stages of resolution here:
+          //  * Build the extractors to evaluate attribute references against input InternalRows.
+          //  * Do logical analysis to handle nested field extractions, functions, etc.
+
+          val attributesExtracted = expr.transformUp {
             case a: UnresolvedAttribute =>
               val ex = buildExtractor(a.nameParts).getOrElse(Literal(null))
               columnExtractors(a.name) = ex
               ex
-            case UnresolvedExtractValue(child, fieldExpr) if child.resolved =>
-              ExtractValue(child, fieldExpr, SQLConf.get.resolver)
+          }
+
+          val wrappedPlan: LogicalPlan = ExpressionLogicalPlanWrapper(attributesExtracted)
+          spark.sessionState.analyzer.execute(wrappedPlan) match {
+            case ExpressionLogicalPlanWrapper(e) => e
+            // This should never happen.
+            case plan => throw new IllegalStateException(
+              "Applying type casting resulted in a bad plan rather than a simple expression.\n" +
+              s"Plan:${plan.prettyJson}\n")
           }
       }
-      CheckDeltaInvariant(resolvedExpr, columnExtractors.toMap, constraint)
+
+      CheckDeltaInvariant(executableExpr, columnExtractors.toMap, constraint)
     }
 
     child.execute().mapPartitionsInternal { rows =>
