@@ -10,11 +10,11 @@ The founding technical charter can be found [here](https://delta.io/wp-content/u
 
 # Communication
 Before starting work on a major feature, please reach out to us via GitHub, Slack, email, etc. We will make sure no one else is already working on it and ask you to open a GitHub issue.
-A "major feature" is defined as any change that is > 100 LOC altered (not including tests), or changes any user-facing behavior.
-We will use the GitHub issue to discuss the feature and come to agreement.
-This is to prevent your time being wasted, as well as ours.
-The GitHub review process for major features is also important so that organizations with commit access can come to agreement on design.
-If it is appropriate to write a design document, the document must be hosted either in the GitHub tracking issue, or linked to from the issue and hosted in a world-readable location.
+A "major feature" is defined as any change that is > 100 LOC altered (not including tests) or changes any user-facing behavior.
+We will use the GitHub issue to discuss the feature and come to an agreement.
+This is to prevent your time from being wasted, as well as ours.
+The GitHub review process for major features is also important so that organizations with commit access can come to an agreement on the design.
+If it is appropriate to write a design document, the document must be hosted either in the GitHub tracking issue or linked to from the issue and hosted in a world-readable location.
 Specifically, if the goal is to add a new extension, please read the extension policy.
 Small patches and bug fixes don't need prior communication.
 
@@ -41,20 +41,19 @@ Developer's Certificate of Origin 1.1
 
 By making a contribution to this project, I certify that:
 
-(a) The contribution was created in whole or in part by me and I
-    have the right to submit it under the open source license
+(a) The contribution was created in whole or in part by me, and I
+    have the right to submit it under the open-source license
     indicated in the file; or
 
 (b) The contribution is based upon previous work that, to the best
     of my knowledge, is covered under an appropriate open source
     license and I have the right under that license to submit that
     work with modifications, whether created in whole or in part
-    by me, under the same open source license (unless I am
+    by me, under the same open-source license (unless I am
     permitted to submit under a different license), as indicated
     in the file; or
 
-(c) The contribution was provided directly to me by some other
-    person who certified (a), (b) or (c) and I have not modified
+(c) The contribution was provided directly to me by someone who certified (a), (b), or (c) and I have not modified
     it.
 
 (d) I understand and agree that this project and the contribution
