@@ -132,10 +132,11 @@ class DeltaHistoryManager(
     val tsString = DateTimeUtils.timestampToString(
       timestampFormatter, DateTimeUtils.fromJavaTimestamp(commitTs))
     if (commit.timestamp > time && !canReturnEarliestCommit) {
-      throw DeltaErrors.timestampEarlierThanCommitRetention(timestamp, commitTs, tsString)
+      throw DeltaErrors.TimestampEarlierThanCommitRetentionException(timestamp, commitTs, tsString)
     } else if (commit.version == latestVersion && !canReturnLastCommit) {
       if (commit.timestamp < time) {
-        throw DeltaErrors.temporallyUnstableInput(timestamp, commitTs, tsString, commit.version)
+        throw DeltaErrors.TemporallyUnstableInputException(
+          timestamp, commitTs, tsString, commit.version)
       }
     }
     commit
@@ -149,7 +150,7 @@ class DeltaHistoryManager(
     val earliest = if (mustBeRecreatable) getEarliestReproducibleCommit else getEarliestDeltaFile
     val latest = deltaLog.update().version
     if (version < earliest || version > latest) {
-      throw DeltaErrors.versionNotExistException(version, earliest, latest)
+      throw VersionNotFoundException(version, earliest, latest)
     }
   }
 

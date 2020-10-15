@@ -48,15 +48,6 @@ class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession
 abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
   import testImplicits._
 
-  /**
-   * Tests that are meant for OSS only and should be ignored by runtime.
-   * For OSS, we use a copybara rule to replace "testOssOnly" with "test".
-   */
-  protected def test(testName: String, testTags: org.scalatest.Tag*)
-                           (testFun: => Any): Unit = {
-    ignore(testName + " (Delta OSS only)", testTags: _*)(testFun)
-  }
-
   protected def verifyDescribeTable(tblName: String): Unit
 
   protected def verifyNullabilityFailure(exception: AnalysisException): Unit

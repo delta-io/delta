@@ -787,15 +787,13 @@ object DeltaErrors
     new AnalysisException(s"No reproducible commits found at $logPath")
   }
 
-  def timestampEarlierThanCommitRetention(
+  case class TimestampEarlierThanCommitRetentionException(
       userTimestamp: java.sql.Timestamp,
       commitTs: java.sql.Timestamp,
-      timestampString: String): Throwable = {
-    new AnalysisException(
-      s"""The provided timestamp ($userTimestamp) is before the earliest version available to this
+      timestampString: String) extends AnalysisException(
+    s"""The provided timestamp ($userTimestamp) is before the earliest version available to this
          |table ($commitTs). Please use a timestamp after $timestampString.
          """.stripMargin)
-  }
 
   def timestampGreaterThanLatestCommit(
       userTimestamp: java.sql.Timestamp,
@@ -807,23 +805,17 @@ object DeltaErrors
          """.stripMargin)
   }
 
-  def temporallyUnstableInput(
+  case class TemporallyUnstableInputException(
       userTimestamp: java.sql.Timestamp,
       commitTs: java.sql.Timestamp,
       timestampString: String,
-      commitVersion: Long): Throwable = {
-    new AnalysisException(
-      s"""The provided timestamp: $userTimestamp is after the latest commit timestamp of
+      commitVersion: Long) extends AnalysisException(
+    s"""The provided timestamp: $userTimestamp is after the latest commit timestamp of
          |$commitTs. If you wish to query this version of the table, please either provide
          |the version with "VERSION AS OF $commitVersion" or use the exact timestamp
          |of the last commit: "TIMESTAMP AS OF '$timestampString'".
        """.stripMargin)
-  }
 
-  def versionNotExistException(userVersion: Long, earliest: Long, latest: Long): Throwable = {
-    new AnalysisException(s"Cannot time travel Delta table to version $userVersion. " +
-      s"Available versions: [$earliest, $latest].")
-  }
 
   def timeTravelNotSupportedException: Throwable = {
     new AnalysisException("Cannot time travel views, subqueries or streams.")
@@ -1056,6 +1048,20 @@ class ConcurrentWriteException(
     conflictingCommit: Option[CommitInfo]) extends DeltaConcurrentModificationException(
   s"A concurrent transaction has written new data since the current transaction " +
     s"read the table. Please try the operation again.", conflictingCommit)
+
+/**
+ * Thrown when time travelling to a version that does not exist in the Delta Log.
+ * @param userVersion - the version time travelling to
+ * @param earliest - earliest version available in the Delta Log
+ * @param latest - The latest version available in the Delta Log
+ */
+case class VersionNotFoundException(
+    userVersion: Long,
+    earliest: Long,
+    latest: Long) extends AnalysisException(
+      s"Cannot time travel Delta table to version $userVersion. " +
+      s"Available versions: [$earliest, $latest]."
+    )
 
 /**
  * Thrown when the metadata of the Delta table has changed between the time of read
