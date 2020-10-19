@@ -50,6 +50,7 @@ import org.apache.spark.util.{SerializableConfiguration, Utils}
  * @param timestamp The timestamp of the latest commit in milliseconds. Can also be set to -1 if the
  *                  timestamp of the commit is unknown or the table has not been initialized, i.e.
  *                  `version = -1`.
+ *
  */
 class Snapshot(
     val path: Path,
