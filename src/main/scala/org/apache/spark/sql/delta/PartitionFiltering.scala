@@ -31,7 +31,7 @@ trait PartitionFiltering { self: Snapshot =>
       DeltaTableUtils.splitMetadataAndDataPredicates(filter, metadata.partitionColumns, spark)._1
     }
 
-    val files = withJobDescription("partition filter-files", spark) {
+    val files = withJobDescription("Filtering files for query", spark) {
       DeltaLog.filterFileList(
         metadata.partitionSchema,
         allFiles.toDF(),

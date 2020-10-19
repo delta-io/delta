@@ -136,7 +136,7 @@ case class DeleteCommand(
               if (numTouchedFiles == 0) {
                 Array.empty[String]
               } else {
-                withJobDescription("Delete filter-files", sparkSession) {
+                withJobDescription("Finding files to delete", sparkSession) {
                   data
                     .filter(new Column(cond))
                     .filter(deletedRowUdf())
@@ -166,7 +166,7 @@ case class DeleteCommand(
 
             val rewrittenFiles = withStatusCode(
               "DELTA", s"Rewriting ${filesToRewrite.size} files for DELETE operation") {
-              withJobDescription("Delete write-data", sparkSession) {
+              withJobDescription("Writing files without deleted records", sparkSession) {
                 txn.writeFiles(updatedDF)
               }
             }

@@ -251,17 +251,17 @@ case class MergeIntoCommand(
 
       val deltaActions = {
        if (isSingleInsertOnly && spark.conf.get(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED)) {
-         withJobDescription("MergeInto write-data-insert", spark) {
+         withJobDescription("Writing merged data (insert-only)", spark) {
            writeInsertsOnlyWhenNoMatchedClauses(spark, deltaTxn)
          }
        } else {
          val filesToRewrite =
            recordDeltaOperation(targetDeltaLog, "delta.dml.merge.findTouchedFiles") {
-             withJobDescription("MergeInto filter-files", spark) {
+             withJobDescription("Filtering files for merge", spark) {
                findTouchedFiles(spark, deltaTxn)
              }
            }
-         val newWrittenFiles = withJobDescription("MergeInto write-data", spark) {
+         val newWrittenFiles = withJobDescription("Writing merged data", spark) {
            writeAllChanges(spark, deltaTxn, filesToRewrite)
          }
          filesToRewrite.map(_.remove) ++ newWrittenFiles

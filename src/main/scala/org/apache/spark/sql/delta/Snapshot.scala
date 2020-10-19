@@ -138,47 +138,48 @@ class Snapshot(
    * Computes some statistics around the transaction log, therefore on the actions made on this
    * Delta table.
    */
-  protected lazy val computedState: State = withJobDescription("Snapshot read", spark) {
-    val implicits = spark.implicits
-    import implicits._
-    var _computedState = state.select(
-      last($"protocol", ignoreNulls = true) as "protocol",
-      last($"metaData", ignoreNulls = true) as "metadata",
-      collect_set($"txn") as "setTransactions",
-      // sum may return null for empty data set.
-      coalesce(sum($"add.size"), lit(0L)) as "sizeInBytes",
-      count($"add") as "numOfFiles",
-      count($"metaData") as "numOfMetadata",
-      count($"protocol") as "numOfProtocol",
-      count($"remove") as "numOfRemoves",
-      count($"txn") as "numOfSetTransactions"
-    ).as[State](stateEncoder).first()
-    val stateReconstructionCheck = spark.sessionState.conf.getConf(
-      DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED)
-    if (_computedState.protocol == null) {
-      recordDeltaEvent(
-        deltaLog,
-        opType = "delta.assertions.missingAction",
-        data = Map("version" -> version.toString, "action" -> "Protocol", "source" -> "Snapshot"))
-      if (stateReconstructionCheck) {
-        throw DeltaErrors.actionNotFoundException("protocol", version)
+  protected lazy val computedState: State =
+    withJobDescription("Compute snapshot for version: $version", spark) {
+      val implicits = spark.implicits
+      import implicits._
+      var _computedState = state.select(
+        last($"protocol", ignoreNulls = true) as "protocol",
+        last($"metaData", ignoreNulls = true) as "metadata",
+        collect_set($"txn") as "setTransactions",
+        // sum may return null for empty data set.
+        coalesce(sum($"add.size"), lit(0L)) as "sizeInBytes",
+        count($"add") as "numOfFiles",
+        count($"metaData") as "numOfMetadata",
+        count($"protocol") as "numOfProtocol",
+        count($"remove") as "numOfRemoves",
+        count($"txn") as "numOfSetTransactions"
+      ).as[State](stateEncoder).first()
+      val stateReconstructionCheck = spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED)
+      if (_computedState.protocol == null) {
+        recordDeltaEvent(
+          deltaLog,
+          opType = "delta.assertions.missingAction",
+          data = Map("version" -> version.toString, "action" -> "Protocol", "source" -> "Snapshot"))
+        if (stateReconstructionCheck) {
+          throw DeltaErrors.actionNotFoundException("protocol", version)
+        }
+        logMissingActionWarning("protocol")
+        _computedState = _computedState.copy(protocol = Protocol(spark, None))
       }
-      logMissingActionWarning("protocol")
-      _computedState = _computedState.copy(protocol = Protocol(spark, None))
-    }
-    if (_computedState.metadata == null) {
-      recordDeltaEvent(
-        deltaLog,
-        opType = "delta.assertions.missingAction",
-        data = Map("version" -> version.toString, "action" -> "Metadata", "source" -> "Metadata"))
-      if (stateReconstructionCheck) {
-        throw DeltaErrors.actionNotFoundException("metadata", version)
+      if (_computedState.metadata == null) {
+        recordDeltaEvent(
+          deltaLog,
+          opType = "delta.assertions.missingAction",
+          data = Map("version" -> version.toString, "action" -> "Metadata", "source" -> "Metadata"))
+        if (stateReconstructionCheck) {
+          throw DeltaErrors.actionNotFoundException("metadata", version)
+        }
+        logMissingActionWarning("metadata")
+        _computedState = _computedState.copy(metadata = Metadata())
       }
-      logMissingActionWarning("metadata")
-      _computedState = _computedState.copy(metadata = Metadata())
+      _computedState
     }
-    _computedState
-  }
 
   def protocol: Protocol = computedState.protocol
   def metadata: Metadata = computedState.metadata
