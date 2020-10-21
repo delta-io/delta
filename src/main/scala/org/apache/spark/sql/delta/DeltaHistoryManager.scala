@@ -251,14 +251,16 @@ class DeltaHistoryManager(
 object DeltaHistoryManager extends DeltaLogging {
   /** Get the persisted commit info for the given delta file. */
   private def getCommitInfo(logStore: LogStore, basePath: Path, version: Long): CommitInfo = {
-    val info = logStore.read(FileNames.deltaFile(basePath, version))
-      .iterator
-      .map(Action.fromJson)
-      .collectFirst { case c: CommitInfo => c }
-    if (info.isEmpty) {
-      CommitInfo.empty(Some(version))
-    } else {
-      info.head.copy(version = Some(version))
+    val logs = logStore.readAsIterator(FileNames.deltaFile(basePath, version))
+    try {
+      val info = logs.map(Action.fromJson).collectFirst { case c: CommitInfo => c }
+      if (info.isEmpty) {
+        CommitInfo.empty(Some(version))
+      } else {
+        info.head.copy(version = Some(version))
+      }
+    } finally {
+      logs.close()
     }
   }
 

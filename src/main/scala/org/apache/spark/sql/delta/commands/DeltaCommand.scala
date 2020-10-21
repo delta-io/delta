@@ -284,11 +284,15 @@ trait DeltaCommand extends DeltaLogging {
           data = Map("exception" -> Utils.exceptionString(e), "operation" -> op.name))
         // Actions of a commit which went in before ours
         val deltaLog = txn.deltaLog
-        val winningCommitActions =
-          deltaLog.store.read(deltaFile(deltaLog.logPath, attemptVersion)).map(Action.fromJson)
-        val commitInfo = winningCommitActions.collectFirst { case a: CommitInfo => a }
-          .map(ci => ci.copy(version = Some(attemptVersion)))
-        throw new ConcurrentWriteException(commitInfo)
+        val logs = deltaLog.store.readAsIterator(deltaFile(deltaLog.logPath, attemptVersion))
+        try {
+          val winningCommitActions = logs.map(Action.fromJson)
+          val commitInfo = winningCommitActions.collectFirst { case a: CommitInfo => a }
+            .map(ci => ci.copy(version = Some(attemptVersion)))
+          throw new ConcurrentWriteException(commitInfo)
+        } finally {
+          logs.close()
+        }
 
       case NonFatal(e) =>
         recordDeltaEvent(
