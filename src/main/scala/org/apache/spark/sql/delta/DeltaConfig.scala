@@ -60,6 +60,11 @@ case class DeltaConfig[T](
     validate(value)
     key -> value
   }
+
+  /**
+   * SQL configuration to set for ensuring that all newly created tables have this table property.
+   */
+  def defaultTablePropertyKey: String = DeltaConfigs.sqlConfPrefix + key.stripPrefix("delta.")
 }
 
 /**
