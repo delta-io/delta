@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import scala.collection.JavaConverters._
+
 // scalastyle:off import.ordering.noEmptyLine
 import scala.util.control.NonFatal
 
@@ -25,6 +27,7 @@ import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.sources.DeltaDataSource
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import org.apache.hadoop.fs.Path
 
@@ -41,6 +44,7 @@ import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
  * Analysis rules for Delta. Currently, these rules enable schema enforcement / evolution with
@@ -90,8 +94,8 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
 
 
     // This rule falls back to V1 nodes, since we don't have a V2 reader for Delta right now
-    case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, _) =>
-      DeltaRelation.fromV2Relation(d, dsv2)
+    case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, options) =>
+      DeltaRelation.fromV2Relation(d, dsv2, options)
 
     // DML - TODO: Remove these Delta-specific DML logical plans and use Spark's plans directly
 
@@ -278,13 +282,17 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
 /** Matchers for dealing with a Delta table. */
 object DeltaRelation {
   def unapply(plan: LogicalPlan): Option[LogicalRelation] = plan match {
-    case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, _) => Some(fromV2Relation(d, dsv2))
+    case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, options) =>
+      Some(fromV2Relation(d, dsv2, options))
     case lr @ DeltaTable(_) => Some(lr)
     case _ => None
   }
 
-  def fromV2Relation(d: DeltaTableV2, v2Relation: DataSourceV2Relation): LogicalRelation = {
-    val relation = d.toBaseRelation
+  def fromV2Relation(
+      d: DeltaTableV2,
+      v2Relation: DataSourceV2Relation,
+      options: CaseInsensitiveStringMap): LogicalRelation = {
+    val relation = d.withOptions(options.asScala.toMap).toBaseRelation
     LogicalRelation(relation, v2Relation.output, d.catalogTable, isStreaming = false)
   }
 }

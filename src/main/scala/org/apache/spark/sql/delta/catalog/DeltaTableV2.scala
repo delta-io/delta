@@ -145,6 +145,21 @@ case class DeltaTableV2(
 
     deltaLog.createRelation(partitionPredicates, Some(snapshot), timeTravelSpec.isDefined)
   }
+
+  /**
+   * Check the passed in options and existing timeTravelOpt, set new time travel by options.
+   */
+  def withOptions(options: Map[String, String]): DeltaTableV2 = {
+    val ttSpec = DeltaDataSource.getTimeTravelVersion(options)
+    if (timeTravelOpt.nonEmpty && ttSpec.nonEmpty) {
+      throw DeltaErrors.multipleTimeTravelSyntaxUsed
+    }
+    if (timeTravelOpt.isEmpty && ttSpec.nonEmpty) {
+      copy(timeTravelOpt = ttSpec)
+    } else {
+      this
+    }
+  }
 }
 
 private class WriteIntoDeltaBuilder(
