@@ -240,7 +240,9 @@ public class IndexPredicateAnalyzer {
         }
 
         if (exprNodeColDescs.size() != 1) {
-            LOG.info("Pushed down expr should only have one column, while it is " + StringUtils.join(exprNodeColDescs.toArray()));
+            if (LOG.isInfoEnabled()) {
+                LOG.info("Pushed down expr should only have one column, while it is " + StringUtils.join(exprNodeColDescs.toArray()));
+            }
             return expr;
         }
 
@@ -248,7 +250,9 @@ public class IndexPredicateAnalyzer {
 
         Set<String> allowed = columnToUDFs.get(columnDesc.getColumn());
         if (allowed == null) {
-            LOG.info("This column " + columnDesc.getColumn() + " is not allowed to pushed down to delta...");
+            if (LOG.isInfoEnabled()) {
+                LOG.info("This column " + columnDesc.getColumn() + " is not allowed to pushed down to delta...");
+            }
             return expr;
         }
 
@@ -257,13 +261,17 @@ public class IndexPredicateAnalyzer {
             udfClassName = ((GenericUDFBridge) genericUDF).getUdfClassName();
         }
         if (!allowed.contains(udfClassName)) {
-            LOG.info("This udf " + genericUDF.getUdfName() + " is not allowed to pushed down to delta...");
+            if (LOG.isInfoEnabled()) {
+                LOG.info("This udf " + genericUDF.getUdfName() + " is not allowed to pushed down to delta...");
+            }
             return expr;
         }
 
         if (!udfClassName.equals("org.apache.hadoop.hive.ql.udf.generic.GenericUDFIn")
                 && exprConstantColDescs.size() > 1) {
-            LOG.info("There should be one constant in this udf(" + udfClassName + ") except UDFIn");
+            if (LOG.isInfoEnabled()) {
+                LOG.info("There should be one constant in this udf(" + udfClassName + ") except UDFIn");
+            }
             return expr;
         }
 

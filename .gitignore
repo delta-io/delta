@@ -31,7 +31,6 @@ build/apache-maven*
 build/scala*
 build/zinc*
 cache
-checkpoint
 conf/*.cmd
 conf/*.conf
 conf/*.properties

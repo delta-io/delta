@@ -32,8 +32,7 @@ import org.apache.hadoop.hive.ql.session.SessionState
 
 import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.DeltaHelper
+import org.apache.spark.sql.delta.{DeltaLog, SparkSessionHelper}
 // scalastyle:off funsuite
 import org.scalatest.{BeforeAndAfterAll, FunSuite}
 
@@ -121,11 +120,11 @@ trait HiveTest extends FunSuite with BeforeAndAfterAll {
            |
            |$query
            |
-           |Expected:
+           |Expected (length ${expectedAnswer.length}):
            |
            |${expectedAnswer.mkString("\n")}
            |
-           |Actual:
+           |Actual (length ${actualAnswer.length}):
            |
            |${actualAnswer.mkString("\n")}
            |
@@ -169,7 +168,7 @@ trait HiveTest extends FunSuite with BeforeAndAfterAll {
   }
 
   protected def withSparkSession(f: SparkSession => Unit): Unit = {
-    val spark = DeltaHelper.spark
+    val spark = SparkSessionHelper.spark
     try f(spark) finally {
       // Clean up resources so that we can use new DeltaLog and SparkSession
       spark.stop()

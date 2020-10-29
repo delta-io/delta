@@ -29,7 +29,6 @@ import org.apache.hadoop.io.{ArrayWritable, NullWritable, Writable}
 import org.apache.hadoop.mapred._
 import org.apache.hadoop.mapreduce.security.TokenCache
 import org.apache.parquet.hadoop.ParquetInputFormat
-import org.apache.spark.sql.delta.DeltaHelper
 import org.slf4j.LoggerFactory
 
 /**

@@ -20,6 +20,7 @@ import java.util.{ArrayList => JArrayList}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
+
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.hive.metastore.HiveMetaHook
 import org.apache.hadoop.hive.metastore.MetaStoreUtils
@@ -41,7 +42,6 @@ import org.apache.hadoop.hive.serde2.AbstractSerDe
 import org.apache.hadoop.hive.serde2.Deserializer
 import org.apache.hadoop.hive.serde2.typeinfo.{StructTypeInfo, TypeInfo, TypeInfoFactory, TypeInfoUtils}
 import org.apache.hadoop.mapred.{InputFormat, JobConf, OutputFormat}
-import org.apache.spark.sql.delta.{DeltaHelper, DeltaPushFilter}
 import org.slf4j.LoggerFactory
 
 class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook
@@ -74,8 +74,8 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook
     val hiveSchema = TypeInfoFactory.getStructTypeInfo(columnNames, columnTypes)
       .asInstanceOf[StructTypeInfo]
     val rootPath = tableProps.getProperty(META_TABLE_LOCATION)
-    val snapshot = DeltaHelper.loadDeltaLatestSnapshot(new Path(rootPath))
-    DeltaHelper.checkTableSchema(snapshot.metadata.schema, hiveSchema)
+    val snapshot = DeltaHelper.loadDeltaLatestSnapshot(getConf, new Path(rootPath))
+    DeltaHelper.checkTableSchema(snapshot.getMetadata.getSchema, hiveSchema)
     jobProperties.put(DELTA_TABLE_PATH, rootPath)
     jobProperties.put(DELTA_TABLE_SCHEMA, hiveSchema.toString)
   }
@@ -87,9 +87,10 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook
     // Get the delta root path
     val deltaRootPath = jobConf.get(META_TABLE_LOCATION)
     // Get the partitionColumns of Delta
-    val partitionColumns = DeltaHelper.getPartitionCols(new Path(deltaRootPath))
-    LOG.info("delta partitionColumns is " + partitionColumns.mkString(", "))
-
+    val partitionColumns = DeltaHelper.getPartitionCols(jobConf, new Path(deltaRootPath))
+    if (LOG.isInfoEnabled) {
+      LOG.info("delta partitionColumns is " + partitionColumns.mkString(", "))
+    }
     val analyzer = newIndexPredicateAnalyzer(partitionColumns)
 
     val conditions = new java.util.ArrayList[IndexSearchCondition]()
@@ -104,10 +105,11 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook
         extractStorageHandlerCondition(analyzer, searchConditions, pushedPredicate)
     }
 
-    LOG.info("pushedPredicate:" +
-      (if (pushedPredicate == null) "null" else pushedPredicate.getExprString()) +
-      ",residualPredicate" + residualPredicate)
-
+    if (LOG.isInfoEnabled) {
+      LOG.info("pushedPredicate:" +
+        (if (pushedPredicate == null) "null" else pushedPredicate.getExprString()) +
+        ",residualPredicate" + residualPredicate)
+    }
     val decomposedPredicate = new DecomposedPredicate()
     decomposedPredicate.pushedPredicate = pushedPredicate
     decomposedPredicate.residualPredicate = residualPredicate
@@ -118,7 +120,7 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook
     val analyzer = new IndexPredicateAnalyzer()
     for (col <- partitionColumns) {
       // Supported filter exprs on partition column to be pushed down to delta
-      analyzer.addComparisonOp(col, DeltaPushFilter.supportedPushDownUDFs: _*)
+      analyzer.addComparisonOp(col, SUPPORTED_PUSH_DOWN_UDFS: _*)
     }
     analyzer
   }
@@ -186,7 +188,7 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook
       throw new MetaException("table location should be set when creating a Delta table")
     }
 
-    val snapshot = DeltaHelper.loadDeltaLatestSnapshot(new Path(deltaRootString))
+    val snapshot = DeltaHelper.loadDeltaLatestSnapshot(getConf, new Path(deltaRootString))
 
     // Extract the table schema in Hive to compare it with the latest table schema in Delta logs,
     // and fail the query if it was changed.
@@ -199,7 +201,7 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook
     }
     val hiveSchema = TypeInfoFactory.getStructTypeInfo(columnNames, columnTypes)
       .asInstanceOf[StructTypeInfo]
-    DeltaHelper.checkTableSchema(snapshot.metadata.schema, hiveSchema)
+    DeltaHelper.checkTableSchema(snapshot.getMetadata.getSchema, hiveSchema)
     tbl.getParameters.put("spark.sql.sources.provider", "DELTA")
     tbl.getSd.getSerdeInfo.getParameters.put("path", deltaRootString)
   }
@@ -235,4 +237,16 @@ object DeltaStorageHandler {
    * The Hive table schema passing into `JobConf` so that `DeltaLog` can be accessed everywhere.
    */
   val DELTA_TABLE_SCHEMA = "delta.table.schema"
+
+  val SUPPORTED_PUSH_DOWN_UDFS = Array(
+    "org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPEqual",
+    "org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPEqualOrGreaterThan",
+    "org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPEqualOrLessThan",
+    "org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPLessThan",
+    "org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPGreaterThan",
+    "org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPNotEqual",
+    "org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPEqualNS",
+    "org.apache.hadoop.hive.ql.udf.UDFLike",
+    "org.apache.hadoop.hive.ql.udf.generic.GenericUDFIn"
+  )
 }
