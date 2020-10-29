@@ -115,7 +115,7 @@ case class DeltaSource(
 
     /** Returns matching files that were added on or after startVersion among delta logs. */
     def filterAndIndexDeltaLogs(startVersion: Long): Iterator[IndexedFile] = {
-      deltaLog.getChanges(startVersion).flatMap { case (version, actions) =>
+      deltaLog.getChanges(startVersion, options.failOnDataLoss).flatMap { case (version, actions) =>
         val addFiles = verifyStreamHygieneAndFilterAddFiles(actions, version)
         Iterator.single(IndexedFile(version, -1, null)) ++ addFiles
           .map(_.asInstanceOf[AddFile])

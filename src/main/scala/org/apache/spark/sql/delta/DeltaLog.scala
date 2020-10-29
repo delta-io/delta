@@ -219,12 +219,20 @@ class DeltaLog private(
    * Get all actions starting from "startVersion" (inclusive). If `startVersion` doesn't exist,
    * return an empty Iterator.
    */
-  def getChanges(startVersion: Long): Iterator[(Long, Seq[Action])] = {
+  def getChanges(
+      startVersion: Long,
+      failOnDataLoss: Boolean = false): Iterator[(Long, Seq[Action])] = {
     val deltas = store.listFrom(deltaFile(logPath, startVersion))
       .filter(f => isDeltaFile(f.getPath))
+    // Subtract 1 to ensure that we have the same check for the inclusive startVersion
+    var lastSeenVersion = startVersion - 1
     deltas.map { status =>
       val p = status.getPath
       val version = deltaVersion(p)
+      if (failOnDataLoss && version > lastSeenVersion + 1) {
+        throw DeltaErrors.failOnDataLossException(lastSeenVersion + 1, version)
+      }
+      lastSeenVersion = version
       (version, store.read(p).map(Action.fromJson))
     }
   }
