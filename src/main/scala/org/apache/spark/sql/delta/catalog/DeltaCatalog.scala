@@ -295,7 +295,7 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
       }
       if (!DeltaSourceUtils.isDeltaTable(oldTable.provider)) {
         throw new AnalysisException(s"${table.identifier} is not a Delta table. Please drop this " +
-          "table first if you would like to create it with Delta Lake.")
+          "table first if you would like to recreate it with Delta Lake.")
       }
       Some(oldTable)
     } else {

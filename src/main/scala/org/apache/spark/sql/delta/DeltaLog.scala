@@ -181,8 +181,7 @@ class DeltaLog private(
    */
   def withNewTransaction[T](thunk: OptimisticTransaction => T): T = {
     try {
-      update()
-      val txn = new OptimisticTransaction(this)
+      val txn = startTransaction()
       OptimisticTransaction.setActive(txn)
       thunk(txn)
     } finally {
@@ -438,7 +437,8 @@ object DeltaLog extends DeltaLogging {
 
   /** Helper for creating a log for the table. */
   def forTable(spark: SparkSession, table: CatalogTable, clock: Clock): DeltaLog = {
-    apply(spark, new Path(new Path(table.location), "_delta_log"), clock)
+    val log = apply(spark, new Path(new Path(table.location), "_delta_log"), clock)
+    log
   }
 
   /** Helper for creating a log for the table. */

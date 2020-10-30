@@ -22,8 +22,7 @@ import java.{util => ju}
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, DeltaTimeTravelSpec, Snapshot}
-import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, DeltaTimeTravelSpec, Snapshot}
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils}
@@ -107,18 +106,11 @@ case class DeltaTableV2(
   }
 
   override def properties(): ju.Map[String, String] = {
-    val base = new ju.HashMap[String, String]()
-    snapshot.metadata.configuration.foreach { case (k, v) =>
-      if (k != "path") {
-        base.put(k, v)
-      }
-    }
+    val base = snapshot.getProperties
     base.put(TableCatalog.PROP_PROVIDER, "delta")
     base.put(TableCatalog.PROP_LOCATION, CatalogUtils.URIToString(path.toUri))
     Option(snapshot.metadata.description).foreach(base.put(TableCatalog.PROP_COMMENT, _))
-    base.put(Protocol.MIN_READER_VERSION_PROP, snapshot.protocol.minReaderVersion.toString)
-    base.put(Protocol.MIN_WRITER_VERSION_PROP, snapshot.protocol.minWriterVersion.toString)
-    base
+    base.asJava
   }
 
   override def capabilities(): ju.Set[TableCapability] = Set(

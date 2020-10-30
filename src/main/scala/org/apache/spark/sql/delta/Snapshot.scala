@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.net.URI
 
+import scala.collection.mutable
+
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -214,6 +216,19 @@ class Snapshot(
 
   /** Number of columns to collect stats on for data skipping */
   lazy val numIndexedCols: Int = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(metadata)
+
+  /** Return the set of properties of the table. */
+  def getProperties: mutable.HashMap[String, String] = {
+    val base = new mutable.HashMap[String, String]()
+    metadata.configuration.foreach { case (k, v) =>
+      if (k != "path") {
+        base.put(k, v)
+      }
+    }
+    base.put(Protocol.MIN_READER_VERSION_PROP, protocol.minReaderVersion.toString)
+    base.put(Protocol.MIN_WRITER_VERSION_PROP, protocol.minWriterVersion.toString)
+    base
+  }
 
   // Given the list of files from `LogSegment`, create respective file indices to help create
   // a DataFrame and short-circuit the many file existence and partition schema inference checks

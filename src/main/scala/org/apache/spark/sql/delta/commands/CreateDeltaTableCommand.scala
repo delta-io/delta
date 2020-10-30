@@ -16,10 +16,13 @@
 
 package org.apache.spark.sql.delta.commands
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.sql._
@@ -207,12 +210,8 @@ case class CreateDeltaTableCommand(
       // if it already exists.
       // Note that someone may have dropped and recreated the table in a separate location in the
       // meantime... Unfortunately we can't do anything there at the moment, because Hive sucks.
-      val tableWithDefaultOptions = tableWithLocation.copy(
-        schema = new StructType(),
-        partitionColumnNames = Nil,
-        tracksPartitionsInCatalog = true)
       logInfo(s"Table is path-based table: $tableByPath. Update catalog with mode: $operation")
-      updateCatalog(sparkSession, tableWithDefaultOptions)
+      updateCatalog(sparkSession, tableWithLocation, deltaLog.snapshot)
 
       Nil
     }
@@ -338,25 +337,39 @@ case class CreateDeltaTableCommand(
    * on the table operation, and whether we have reached here through legacy code or DataSourceV2
    * code paths.
    */
-  private def updateCatalog(spark: SparkSession, table: CatalogTable): Unit = operation match {
-    case _ if tableByPath => // do nothing with the metastore if this is by path
-    case TableCreationModes.Create =>
-      spark.sessionState.catalog.createTable(
-        table,
-        ignoreIfExists = existingTableOpt.isDefined,
-        validateLocation = false)
-    case TableCreationModes.Replace if existingTableOpt.isDefined =>
-      spark.sessionState.catalog.alterTable(table)
-    case TableCreationModes.Replace =>
-      val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
-      throw new CannotReplaceMissingTableException(ident)
-    case TableCreationModes.CreateOrReplace if existingTableOpt.isDefined =>
-      spark.sessionState.catalog.alterTable(table)
-    case TableCreationModes.CreateOrReplace =>
-      spark.sessionState.catalog.createTable(
-        table,
-        ignoreIfExists = false,
-        validateLocation = false)
+  private def updateCatalog(
+      spark: SparkSession,
+      table: CatalogTable,
+      snapshot: Snapshot): Unit = {
+    val cleaned = cleanupTableDefinition(table, snapshot)
+    operation match {
+      case _ if tableByPath => // do nothing with the metastore if this is by path
+      case TableCreationModes.Create =>
+        spark.sessionState.catalog.createTable(
+          cleaned,
+          ignoreIfExists = existingTableOpt.isDefined,
+          validateLocation = false)
+      case TableCreationModes.Replace | TableCreationModes.CreateOrReplace
+          if existingTableOpt.isDefined =>
+        spark.sessionState.catalog.alterTable(table)
+      case TableCreationModes.Replace =>
+        val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
+        throw new CannotReplaceMissingTableException(ident)
+      case TableCreationModes.CreateOrReplace =>
+        spark.sessionState.catalog.createTable(
+          cleaned,
+          ignoreIfExists = false,
+          validateLocation = false)
+    }
+  }
+
+  /** Clean up the information we pass on to store in the catalog. */
+  private def cleanupTableDefinition(table: CatalogTable, snapshot: Snapshot): CatalogTable = {
+    table.copy(
+      schema = new StructType(),
+      properties = Map.empty,
+      partitionColumnNames = Nil,
+      tracksPartitionsInCatalog = true)
   }
 
   /**

@@ -72,6 +72,7 @@ case class DeltaConfig[T](
  */
 object DeltaConfigs extends DeltaLogging {
 
+
   /**
    * Convert a string to [[CalendarInterval]]. This method is case-insensitive and will throw
    * [[IllegalArgumentException]] when the input string is not a valid interval.
