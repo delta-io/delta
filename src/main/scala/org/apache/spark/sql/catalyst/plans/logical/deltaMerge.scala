@@ -23,22 +23,38 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.AnalysisException
+import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis._
-import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, Expression, Literal, UnaryExpression, Unevaluable}
+import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, Expression, Literal, UnaryExpression}
+import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, ExprCode}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{ByteType, DataType, IntegerType, ShortType, StructField, StructType}
+
+/**
+ * A copy of Spark SQL Unevaluable for cross-version compatibility. In 3.0, implementers of
+ * the original Unevaluable must explicitly override foldable to false; in 3.1 onwards, this
+ * explicit override is invalid.
+ */
+trait DeltaUnevaluable extends Expression {
+  final override def foldable: Boolean = false
+
+  final override def eval(input: InternalRow = null): Any =
+    throw new UnsupportedOperationException(s"Cannot evaluate expression: $this")
+
+  final override protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode =
+    throw new UnsupportedOperationException(s"Cannot generate code for expression: $this")
+}
 
 /**
  * Represents an action in MERGE's UPDATE or INSERT clause where a target columns is assigned the
  * value of an expression
  * @param targetColNameParts The name parts of the target column. This is a sequence to support
  *                           nested fields as targets.
- * @param expr Expression to generate the value of the target column.
+ * @param expr Expression to generate the value of the target column.o
  */
 case class DeltaMergeAction(targetColNameParts: Seq[String], expr: Expression)
-  extends UnaryExpression with Unevaluable {
+  extends UnaryExpression with DeltaUnevaluable {
   override def child: Expression = expr
-  override def foldable: Boolean = false
   override def dataType: DataType = expr.dataType
   override def sql: String = s"$targetColString = ${expr.sql}"
   override def toString: String = s"$targetColString = $expr"
@@ -50,7 +66,7 @@ case class DeltaMergeAction(targetColNameParts: Seq[String], expr: Expression)
  * Trait that represents a WHEN clause in MERGE. See [[DeltaMergeInto]]. It extends [[Expression]]
  * so that Catalyst can find all the expressions in the clause implementations.
  */
-sealed trait DeltaMergeIntoClause extends Expression with Unevaluable {
+sealed trait DeltaMergeIntoClause extends Expression with DeltaUnevaluable {
   /** Optional condition of the clause */
   def condition: Option[Expression]
 
@@ -81,7 +97,6 @@ sealed trait DeltaMergeIntoClause extends Expression with Unevaluable {
     s"$clauseType " + Seq(condStr, actionStr).flatten.mkString("[", ", ", "]")
   }
 
-  override def foldable: Boolean = false
   override def nullable: Boolean = false
   override def dataType: DataType = null
   override def children: Seq[Expression] = condition.toSeq ++ actions

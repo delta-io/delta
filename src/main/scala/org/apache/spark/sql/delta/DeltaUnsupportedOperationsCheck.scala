@@ -25,7 +25,6 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, LogicalPlan, OverwriteByExpression, V2WriteCommand}
 import org.apache.spark.sql.execution.command._
-import org.apache.spark.sql.execution.datasources.RefreshTable
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 
 /**
