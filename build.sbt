@@ -24,7 +24,7 @@ crossScalaVersions := Seq("2.12.8", "2.11.12")
 
 val sparkVersion = "2.4.3"
 val hadoopVersion = "2.7.2"
-val hiveVersion = "2.3.3"
+val hiveVersion = "2.3.7"
 val deltaVersion = "0.5.0"
 
 lazy val commonSettings = Seq(
@@ -57,17 +57,24 @@ lazy val hive = (project in file("hive")) dependsOn(standalone) settings (
   // any runtime dependencies.
   libraryDependencies ++= Seq(
     "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided",
-    "org.apache.hive" % "hive-exec" % hiveVersion % "provided" excludeAll(
+    "org.apache.parquet" % "parquet-hadoop" % "1.10.1" % "provided",
+    "org.apache.hive" % "hive-exec" % hiveVersion % "provided" classifier "core" excludeAll(
       ExclusionRule(organization = "org.apache.spark"),
       ExclusionRule(organization = "org.apache.parquet"),
       ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm"),
       ExclusionRule(organization = "com.google.protobuf")
+    ),
+    "org.apache.hive" % "hive-metastore" % hiveVersion % "provided"  excludeAll(
+      ExclusionRule(organization = "org.apache.spark"),
+      ExclusionRule(organization = "org.apache.parquet"),
+      ExclusionRule("org.apache.hive", "hive-exec")
     ),
     "org.apache.hive" % "hive-cli" % hiveVersion % "test" excludeAll(
       ExclusionRule(organization = "org.apache.spark"),
       ExclusionRule(organization = "org.apache.parquet"),
       ExclusionRule("ch.qos.logback", "logback-classic"),
       ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm"),
+      ExclusionRule("org.apache.hive", "hive-exec"),
       ExclusionRule(organization = "com.google.protobuf")
     ),
     "org.scalatest" %% "scalatest" % "3.0.5" % "test",
@@ -110,18 +117,24 @@ lazy val hiveTez = (project in file("hive-tez")) dependsOn(hive % "test->test") 
   name := "hive-tez",
   commonSettings,
   libraryDependencies ++= Seq(
-    "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided"  excludeAll (
+    "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided" excludeAll (
       ExclusionRule(organization = "com.google.protobuf")
       ),
     "org.apache.parquet" % "parquet-hadoop" % "1.10.1" excludeAll(
       ExclusionRule("org.apache.hadoop", "hadoop-client")
       ),
     "com.google.protobuf" % "protobuf-java" % "2.5.0",
-    "org.apache.hive" % "hive-exec" % hiveVersion % "provided" excludeAll(
+    "org.apache.hive" % "hive-exec" % hiveVersion % "provided" classifier "core" excludeAll(
       ExclusionRule(organization = "org.apache.spark"),
       ExclusionRule(organization = "org.apache.parquet"),
       ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm"),
       ExclusionRule(organization = "com.google.protobuf")
+    ),
+    "org.jodd" % "jodd-core" % "3.5.2",
+    "org.apache.hive" % "hive-metastore" % hiveVersion % "provided" excludeAll(
+      ExclusionRule(organization = "org.apache.spark"),
+      ExclusionRule(organization = "org.apache.parquet"),
+      ExclusionRule("org.apache.hive", "hive-exec")
     ),
     "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "test" classifier "tests",
     "org.apache.hadoop" % "hadoop-mapreduce-client-hs" % hadoopVersion % "test",
@@ -132,6 +145,7 @@ lazy val hiveTez = (project in file("hive-tez")) dependsOn(hive % "test->test") 
       ExclusionRule(organization = "org.apache.parquet"),
       ExclusionRule("ch.qos.logback", "logback-classic"),
       ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm"),
+      ExclusionRule("org.apache.hive", "hive-exec"),
       ExclusionRule(organization = "com.google.protobuf")
     ),
     "org.apache.hadoop" % "hadoop-yarn-common" % hadoopVersion % "test",
@@ -152,18 +166,17 @@ lazy val standalone = (project in file("standalone")) settings (
   unmanagedResourceDirectories in Test += file("golden-tables/src/test/resources"),
   libraryDependencies ++= Seq(
     "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided",
-    "org.apache.parquet" % "parquet-hadoop" % "1.10.1" excludeAll(
-      ExclusionRule("org.apache.hadoop", "hadoop-client")
-      ),
-    "com.github.mjakubowski84" %% "parquet4s-core" % "1.2.1" excludeAll(
+    "org.apache.parquet" % "parquet-hadoop" % "1.10.1" % "provided",
+    "com.github.mjakubowski84" %% "parquet4s-core" % "1.2.1" excludeAll (
+      ExclusionRule("org.slf4j", "slf4j-api"),
       ExclusionRule("org.apache.parquet", "parquet-hadoop")
-      ),
+    ),
     "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.6.7.1",
     "org.json4s" %% "json4s-jackson" % "3.5.3" excludeAll (
       ExclusionRule("com.fasterxml.jackson.core"),
       ExclusionRule("com.fasterxml.jackson.module")
     ),
-    "org.scalatest" %% "scalatest" % "3.0.8" % "test"
+    "org.scalatest" %% "scalatest" % "3.0.5" % "test"
   )
 )
 
