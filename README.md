@@ -12,16 +12,11 @@ This is the repository for Delta Lake Connectors. It includes a library for quer
 
 The project is compiled using [SBT](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.html). It has the following subprojects.
 
-## Delta uber jar
-
-This project generates a single uber jar containing Delta Lake and all it transitive dependencies (except Hadoop and its dependencies).
-- Most of the dependencies are shaded to avoid version conflicts. See the file build.sbt for details on what are not shaded.
-- Hadoop and its dependencies is not included in the jar because they are expected to be present in the deployment environment.
-- To generate the uber jar, run `build/sbt core/compile`
-- To test the uber jar, run `build/sbt coreTest/test`
+## Delta Standalone Reader
+TODO
 
 ## Hive connector
-This project contains all the codes needed to make Hive read Delta Lake tables. The connector has two JARs `delta-core-shaded-assembly_<scala_version>-0.1.0.jar` and `hive-delta_<scala_version>-0.1.0.jar`. You can use either Scala 2.11 or 2.12. The released JARs are available in the [releases](https://github.com/delta-io/connectors/releases) page. Please download the JARs for the corresponding Scala version you would like to use.
+This project contains all the codes needed to make Hive read Delta Lake tables. The connector has one JAR `hive-delta-assembly_<scala_version>-0.2.0.jar`. You can use either Scala 2.11 or 2.12. The released JARs are available in the [releases](https://github.com/delta-io/connectors/releases) page. Please download the JARs for the corresponding Scala version you would like to use.
 
 You can also use the following instructions to build them.
 
@@ -33,20 +28,18 @@ Please skip this section if you have downloaded the connector JARs.
 - To test the project, run `build/sbt hive/test`
 - To generate the connector jar run `build/sbt hive/package`
 
-The above commands will generate two JARs in the following paths.
+The above commands will generate the following JAR:
 
 ```
-core/target/scala-2.12/delta-core-shaded-assembly_2.12-0.1.0.jar
-hive/target/scala-2.12/hive-delta_2.12-0.1.0.jar
+hive/target/scala-2.12/hive-delta-assembly_2.12-0.2.0.jar
 ```
 
-These two JARs include the Hive connector and all its dependencies. They need to be put in Hive’s classpath.
+This JAR includes the Hive connector and all its dependencies. They need to be put in Hive’s classpath.
 
-Note: if you would like to build jars using Scala 2.11, you can run the SBT command `build/sbt "++ 2.11.12 hive/package"` and the generated JARS will be in the following paths.
+Note: if you would like to build using Scala 2.11, you can run the SBT command `build/sbt "++ 2.11.12 hive/package"` to generate the following JAR:
 
 ```
-core/target/scala-2.11/delta-core-shaded-assembly_2.11-0.1.0.jar
-hive/target/scala-2.11/hive-delta_2.11-0.1.0.jar
+hive/target/scala-2.11/hive-delta-assembly_2.11-0.2.0.jar
 ```
 
 ### Setting up Hive

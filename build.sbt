@@ -83,7 +83,14 @@ lazy val hive = (project in file("hive")) dependsOn(standalone) settings (
     "org.apache.spark" %% "spark-catalyst" % sparkVersion % "test" classifier "tests",
     "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
     "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests"
-  )
+  ),
+
+  /** Hive assembly jar. Build with `assembly` command */
+  logLevel in assembly := Level.Info,
+  test in assembly := {},
+  assemblyJarName in assembly := s"${name.value}-assembly_${scalaBinaryVersion.value}-${version.value}.jar"
+  // default merge strategy
+  // no shading
 )
 
 lazy val hiveMR = (project in file("hive-mr")) dependsOn(hive % "test->test") settings (
