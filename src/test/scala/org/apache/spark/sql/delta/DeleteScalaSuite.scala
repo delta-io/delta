@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import io.delta.tables.{DeltaTable, DeltaTableTestUtils}
+import io.delta.tables.DeltaTableTestUtils
 
 import org.apache.spark.sql.{functions, Row}
 
@@ -63,7 +63,7 @@ class DeleteScalaSuite extends DeleteSuiteBase with DeltaSQLCommandTest {
       }
     }
 
-    val deltaTable: DeltaTable = {
+    val deltaTable: io.delta.tables.DeltaTable = {
       val (tableNameOrPath, optionalAlias) = parse(target)
       val isPath: Boolean = tableNameOrPath.startsWith("delta.")
       val table = if (isPath) {

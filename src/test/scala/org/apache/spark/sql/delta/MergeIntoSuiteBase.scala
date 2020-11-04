@@ -20,6 +20,8 @@ import java.io.File
 import java.lang.{Integer => JInt}
 import java.util.Locale
 
+import scala.language.implicitConversions
+
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.scalatest.BeforeAndAfterEach
 

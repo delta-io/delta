@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 
+import scala.language.postfixOps
+
 import org.apache.spark.sql.delta.actions.{Action, AddFile, RemoveFile}
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path

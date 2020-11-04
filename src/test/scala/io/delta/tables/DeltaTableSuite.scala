@@ -18,6 +18,8 @@ package io.delta.tables
 
 import java.util.Locale
 
+import scala.language.postfixOps
+
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
@@ -135,7 +137,7 @@ class DeltaTableSuite extends QueryTest
       testData.write.format("delta").mode("append").save(dir.getAbsolutePath)
       val dt: DeltaTable = DeltaTable.forPath(dir.getAbsolutePath)
       spark.range(5).as[Long].map{ row: Long =>
-        dt
+        val foo = dt
         row + 3
       }.count()
     }
