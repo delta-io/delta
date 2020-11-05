@@ -103,23 +103,4 @@ trait DeltaLogging
       new OpType(opType, ""),
       extraTags = tableTags ++ tags) {thunk}
   }
-  /**
-   * Wrap various delta operations to provide a more meaningful name in Spark UI
-   * @param desc a short description of the operation
-   */
-  def withJobDescription[U](desc: String, session: SparkSession)(body: => U): U = {
-    val sc = session.sparkContext
-    val oldDesc = sc.getLocalProperty(SparkContext.SPARK_JOB_DESCRIPTION)
-    val suffix = if (oldDesc == null) {
-      ""
-    } else {
-      s" $oldDesc:"
-    }
-    try {
-      sc.setJobDescription(s"Delta:$suffix $desc")
-      body
-    } finally {
-      sc.setJobDescription(oldDesc)
-    }
-  }
 }

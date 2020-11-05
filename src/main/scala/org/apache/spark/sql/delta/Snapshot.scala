@@ -140,7 +140,7 @@ class Snapshot(
    * Delta table.
    */
   protected lazy val computedState: State =
-    withJobDescription("Compute snapshot for version: $version", spark) {
+    withStatusCode("DELTA", s"Compute snapshot for version: $version") {
       val implicits = spark.implicits
       import implicits._
       var _computedState = state.select(
