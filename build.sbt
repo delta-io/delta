@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import ReleaseTransformations._
+
 parallelExecution in ThisBuild := false
 scalastyleConfig in ThisBuild := baseDirectory.value / "scalastyle-config.xml"
 
@@ -88,9 +90,16 @@ lazy val hive = (project in file("hive")) dependsOn(standalone) settings (
   /** Hive assembly jar. Build with `assembly` command */
   logLevel in assembly := Level.Info,
   test in assembly := {},
-  assemblyJarName in assembly := s"${name.value}-assembly_${scalaBinaryVersion.value}-${version.value}.jar"
+  assemblyJarName in assembly := s"${name.value}-assembly_${scalaBinaryVersion.value}-${version.value}.jar",
   // default merge strategy
-  // no shading
+  assemblyShadeRules in assembly := Seq(
+    /**
+     * Hive 2.3.7 uses an old paranamer version that doesn't support Scala 2.12
+     * (https://issues.apache.org/jira/browse/SPARK-22128), so we need to shade our own paranamer
+     * version to avoid conflicts.
+     */
+    ShadeRule.rename("com.thoughtworks.paranamer.**" -> "shadedelta.@0").inAll
+    )
 )
 
 lazy val hiveMR = (project in file("hive-mr")) dependsOn(hive % "test->test") settings (
@@ -167,25 +176,101 @@ lazy val hiveTez = (project in file("hive-tez")) dependsOn(hive % "test->test") 
   )
 )
 
-lazy val standalone = (project in file("standalone")) settings (
-  name := "standalone",
-  commonSettings,
-  unmanagedResourceDirectories in Test += file("golden-tables/src/test/resources"),
-  libraryDependencies ++= Seq(
-    "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided",
-    "org.apache.parquet" % "parquet-hadoop" % "1.10.1" % "provided",
-    "com.github.mjakubowski84" %% "parquet4s-core" % "1.2.1" excludeAll (
-      ExclusionRule("org.slf4j", "slf4j-api"),
-      ExclusionRule("org.apache.parquet", "parquet-hadoop")
+lazy val standalone = (project in file("standalone"))
+  .settings(
+    name := "standalone",
+    commonSettings,
+    unmanagedResourceDirectories in Test += file("golden-tables/src/test/resources"),
+    libraryDependencies ++= Seq(
+      "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided",
+      "org.apache.parquet" % "parquet-hadoop" % "1.10.1" % "provided",
+      "com.github.mjakubowski84" %% "parquet4s-core" % "1.2.1" excludeAll (
+        ExclusionRule("org.slf4j", "slf4j-api"),
+        ExclusionRule("org.apache.parquet", "parquet-hadoop")
+      ),
+      "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.6.7.1",
+      "org.json4s" %% "json4s-jackson" % "3.5.3" excludeAll (
+        ExclusionRule("com.fasterxml.jackson.core"),
+        ExclusionRule("com.fasterxml.jackson.module")
+      ),
+      "org.scalatest" %% "scalatest" % "3.0.5" % "test"
+    ))
+
+  /**
+   * Unidoc settings
+   * Generate javadoc with `unidoc` command, outputs to `standalone/target/javaunidoc`
+   */
+  .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin)
+  .settings(
+    javacOptions in (JavaUnidoc, unidoc) := Seq(
+      "-public",
+      "-windowtitle", "Delta Standalone Reader " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
+      "-noqualifier", "java.lang",
+      "-tag", "return:X",
+      // `doclint` is disabled on Circle CI. Need to enable it manually to test our javadoc.
+      "-Xdoclint:all"
     ),
-    "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.6.7.1",
-    "org.json4s" %% "json4s-jackson" % "3.5.3" excludeAll (
-      ExclusionRule("com.fasterxml.jackson.core"),
-      ExclusionRule("com.fasterxml.jackson.module")
-    ),
-    "org.scalatest" %% "scalatest" % "3.0.5" % "test"
+    unidocAllSources in(JavaUnidoc, unidoc) := {
+      (unidocAllSources in(JavaUnidoc, unidoc)).value
+        // ignore any internal Scala code
+        .map(_.filterNot(_.getName.contains("$")))
+        .map(_.filterNot(_.getCanonicalPath.contains("/internal/")))
+        // ignore project `hive` which depends on this project
+        .map(_.filterNot(_.getCanonicalPath.contains("/hive/")))
+    },
+    // Ensure unidoc is run with tests. Must be cleaned before test for unidoc to be generated.
+    (test in Test) := ((test in Test) dependsOn unidoc.in(Compile)).value
   )
-)
+
+  /**
+   * Release settings
+   */
+  .settings(
+    publishMavenStyle := true,
+    releaseCrossBuild := true,
+    licenses += ("Apache-2.0", url("http://www.apache.org/licenses/LICENSE-2.0")),
+    pomExtra :=
+      <url>https://github.com/delta-io/connectors</url>
+        <scm>
+          <url>git@github.com:delta-io/connectors.git</url>
+          <connection>scm:git:git@github.com:delta-io/connectors.git</connection>
+        </scm>
+        <developers>
+          <developer>
+            <id>tdas</id>
+            <name>Tathagata Das</name>
+            <url>https://github.com/tdas</url>
+          </developer>
+          <developer>
+            <id>scottsand-db</id>
+            <name>Scott Sandre</name>
+            <url>https://github.com/scottsand-db</url>
+          </developer>
+          <developer>
+            <id>windpiger</id>
+            <name>Jun Song</name>
+            <url>https://github.com/windpiger</url>
+          </developer>
+          <developer>
+            <id>zsxwing</id>
+            <name>Shixiong Zhu</name>
+            <url>https://github.com/zsxwing</url>
+          </developer>
+        </developers>,
+    bintrayOrganization := Some("delta-io"),
+    bintrayRepository := "delta",
+    releaseProcess := Seq[ReleaseStep](
+      checkSnapshotDependencies,
+      inquireVersions,
+      runTest,
+      setReleaseVersion,
+      commitReleaseVersion,
+      tagRelease,
+      publishArtifacts,
+      setNextVersion,
+      commitNextVersion
+    )
+  )
 
 lazy val goldenTables = (project in file("golden-tables")) settings (
   name := "golden-tables",
