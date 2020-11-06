@@ -23,7 +23,7 @@ import org.apache.hadoop.fs.Path
 import io.delta.standalone.types.StructType
 
 /** A holder object for Delta errors. */
-private [internal] object DeltaErrors {
+private[internal] object DeltaErrors {
 
   /** Thrown when the protocol version of a table is greater than supported by this client. */
   case class InvalidProtocolVersionException(

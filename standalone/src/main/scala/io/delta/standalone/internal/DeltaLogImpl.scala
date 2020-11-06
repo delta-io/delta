@@ -60,7 +60,7 @@ private[internal] class DeltaLogImpl private(
   }
 }
 
-object DeltaLogImpl {
+private[standalone] object DeltaLogImpl {
   def forTable(hadoopConf: Configuration, dataPath: String): DeltaLogImpl = {
     apply(hadoopConf, new Path(dataPath, "_delta_log"))
   }

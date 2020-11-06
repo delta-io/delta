@@ -33,7 +33,7 @@ import io.delta.standalone.internal.util.FileNames._
  * @param parts the number of parts when the checkpoint has multiple parts. None if this is a
  *              singular checkpoint
  */
-case class CheckpointMetaData(
+private case class CheckpointMetaData(
     version: Long,
     size: Long,
     parts: Option[Int])
@@ -42,7 +42,7 @@ case class CheckpointMetaData(
  * A class to help with comparing checkpoints with each other, where we may have had concurrent
  * writers that checkpoint with different number of parts.
  */
-case class CheckpointInstance(
+private[internal] case class CheckpointInstance(
     version: Long,
     numParts: Option[Int]) extends Ordered[CheckpointInstance] {
 
@@ -79,7 +79,7 @@ case class CheckpointInstance(
   }
 }
 
-object CheckpointInstance {
+private[internal] object CheckpointInstance {
   def apply(path: Path): CheckpointInstance = {
     CheckpointInstance(checkpointVersion(path), numCheckpointParts(path))
   }

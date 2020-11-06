@@ -254,7 +254,7 @@ private[internal] trait SnapshotManagement { self: DeltaLogImpl =>
  *                            unadjusted, we mean that the commit timestamps may not necessarily be
  *                            monotonically increasing for the commits within this segment.
  */
-case class LogSegment(
+private[internal] case class LogSegment(
     logPath: Path,
     version: Long,
     deltas: Seq[FileStatus],
@@ -262,7 +262,7 @@ case class LogSegment(
     checkpointVersion: Option[Long],
     lastCommitTimestamp: Long)
 
-object LogSegment {
+private[internal] object LogSegment {
 
   /** The LogSegment for an empty transaction log directory. */
   def empty(path: Path): LogSegment = LogSegment(path, -1L, Nil, Nil, None, -1L)

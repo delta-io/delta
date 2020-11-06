@@ -154,7 +154,7 @@ private[internal] class SnapshotImpl(
   assertProtocolRead()
 }
 
-object SnapshotImpl {
+private[internal] object SnapshotImpl {
   /** Canonicalize the paths for Actions. */
   def canonicalizePath(path: String, hadoopConf: Configuration): String = {
     val hadoopPath = new Path(new URI(path))
@@ -195,7 +195,7 @@ object SnapshotImpl {
  * @param logPath the path to transaction log
  * @param deltaLog the delta log object
  */
-class InitialSnapshotImpl(
+private class InitialSnapshotImpl(
     override val hadoopConf: Configuration,
     val logPath: Path,
     override val deltaLog: DeltaLogImpl)
