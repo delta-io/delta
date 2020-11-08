@@ -1036,4 +1036,19 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestU
       }
     }
   }
+
+  test("can convert a partition-like table path") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      writeFiles(path, simpleDF, partCols = Seq("key1", "key2"))
+
+      val basePath = s"$path/key1=1/"
+      convertToDelta(s"parquet.`$basePath`", Some("key2 string"))
+
+      checkAnswer(
+        sql(s"select id from delta.`$basePath` where key2 = '1'"),
+        simpleDF.filter("id % 2 == 1").filter("id % 3 == 1").select("id"))
+    }
+  }
+
 }

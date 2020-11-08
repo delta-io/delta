@@ -17,9 +17,7 @@
 #
 
 import os
-import fnmatch
 import subprocess
-import sys
 import shutil
 from os import path
 

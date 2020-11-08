@@ -14,17 +14,16 @@
  * limitations under the License.
  */
 
-package io.delta.tables
+package org.apache.spark.sql.delta.constraints
 
-import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 
-import org.apache.spark.sql.DataFrame
+/**
+ * A dummy wrapper for expressions so we can pass them to the [[Analyzer]].
+ */
+private[constraints] case class ExpressionLogicalPlanWrapper(e: Expression) extends LogicalPlan {
+  override def children: Seq[LogicalPlan] = Seq.empty
 
-object DeltaTableTestUtils {
-
-  /** A utility method to access the private constructor of [[DeltaTable]] in tests. */
-  def createTable(df: DataFrame, deltaLog: DeltaLog): DeltaTable = {
-    new DeltaTable(df, DeltaTableV2(df.sparkSession, deltaLog.dataPath))
-  }
+  override def output: Seq[Attribute] = Seq.empty
 }

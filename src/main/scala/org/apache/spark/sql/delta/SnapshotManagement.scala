@@ -184,7 +184,8 @@ trait SnapshotManagement { self: DeltaLog =>
   protected def getSnapshotAtInit: Snapshot = {
     try {
       val segment = getLogSegmentFrom(lastCheckpoint)
-      val startCheckpoint = segment.checkpointVersion.map(v => s" starting from checkpoint $v")
+      val startCheckpoint = segment.checkpointVersion
+        .map(v => s" starting from checkpoint $v.").getOrElse(".")
       logInfo(s"Loading version ${segment.version}$startCheckpoint")
       val snapshot = createSnapshot(
         segment,
@@ -198,7 +199,7 @@ trait SnapshotManagement { self: DeltaLog =>
       case e: FileNotFoundException =>
         logInfo(s"Creating initial snapshot without metadata, because the directory is empty")
         // The log directory may not exist
-        new InitialSnapshot(logPath, this, Metadata())
+        new InitialSnapshot(logPath, this)
     }
   }
 
@@ -291,8 +292,9 @@ trait SnapshotManagement { self: DeltaLog =>
             return currentSnapshot
           }
 
-          logInfo(s"Loading version ${segment.version}" +
-            segment.checkpointVersion.map(v => s"starting from checkpoint version $v."))
+          val startingFrom = segment.checkpointVersion
+            .map(v => s" starting from checkpoint version $v.").getOrElse(".")
+          logInfo(s"Loading version ${segment.version}$startingFrom")
 
           val newSnapshot = createSnapshot(
             segment,
@@ -322,7 +324,7 @@ trait SnapshotManagement { self: DeltaLog =>
             val message = s"No delta log found for the Delta table at $logPath"
             logInfo(message)
             currentSnapshot.uncache()
-            currentSnapshot = new InitialSnapshot(logPath, this, Metadata())
+            currentSnapshot = new InitialSnapshot(logPath, this)
         }
         lastUpdateTimestamp = clock.getTimeMillis()
         currentSnapshot

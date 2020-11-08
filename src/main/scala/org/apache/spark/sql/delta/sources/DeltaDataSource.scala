@@ -52,12 +52,6 @@ class DeltaDataSource
   with TableProvider
   with DeltaLogging {
 
-  SparkSession.getActiveSession.foreach { spark =>
-    // Enable "passPartitionByAsOptions" to support "write.partitionBy(...)"
-    // TODO Remove this when upgrading to Spark 3.0.0
-    spark.conf.set("spark.sql.legacy.sources.write.passPartitionByAsOptions", "true")
-  }
-
   def inferSchema: StructType = new StructType() // empty
 
   override def inferSchema(options: CaseInsensitiveStringMap): StructType = inferSchema

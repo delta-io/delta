@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.storage._
-import org.apache.hadoop.fs.{Path, RawLocalFileSystem}
+import org.apache.hadoop.fs.{FileSystem, Path, RawLocalFileSystem}
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
@@ -72,7 +72,9 @@ abstract class LogStoreSuiteBase extends QueryTest
     store.write(deltas(1), Iterator("one"))
 
     assert(store.read(deltas.head) == Seq("zero", "none"))
+    assert(store.readAsIterator(deltas.head).toSeq == Seq("zero", "none"))
     assert(store.read(deltas(1)) == Seq("one"))
+    assert(store.readAsIterator(deltas(1)).toSeq == Seq("one"))
 
     assertNoLeakedCrcFiles(tempDir)
   }
@@ -162,6 +164,31 @@ abstract class LogStoreSuiteBase extends QueryTest
         logStore.checkpoint()
         val expectedNumOfRename = if (shouldUseRenameToWriteCheckpoint) 1 else 0
         assert(TrackingRenameFileSystem.numOfRename === expectedNumOfRename)
+      }
+    }
+  }
+
+  test("readAsIterator should be lazy") {
+    withTempDir { tempDir =>
+      val store = createLogStore(spark)
+      val testFile = new File(tempDir, "readAsIterator").getCanonicalPath
+      store.write(testFile, Iterator("foo", "bar"))
+
+      withSQLConf(
+          "fs.fake.impl" -> classOf[FakeFileSystem].getName,
+          "fs.fake.impl.disable.cache" -> "true") {
+        val fsStats = FileSystem.getStatistics("fake", classOf[FakeFileSystem])
+        fsStats.reset()
+        val iter = store.readAsIterator(s"fake:///$testFile")
+        try {
+          // We should not read any date when creating the iterator.
+          assert(fsStats.getBytesRead == 0)
+          assert(iter.toList == "foo" :: "bar" :: Nil)
+          // Verify we are using the correct Statistics instance.
+          assert(fsStats.getBytesRead == 8)
+        } finally {
+          iter.close()
+        }
       }
     }
   }

@@ -15,15 +15,13 @@
 #
 
 import unittest
-import tempfile
-import shutil
 import os
 
 from pyspark.sql import Row
-from pyspark.sql.functions import *
-from pyspark.sql.types import *
+from pyspark.sql.functions import col, lit, expr
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 
-from delta.tables import *
+from delta.tables import DeltaTable
 from delta.testing.utils import DeltaTestCase
 
 
@@ -351,6 +349,43 @@ class DeltaTableTests(DeltaTestCase):
         df.write.format("delta").save(tempFile2)
         self.assertEqual(DeltaTable.isDeltaTable(self.spark, self.tempFile), False)
         self.assertEqual(DeltaTable.isDeltaTable(self.spark, tempFile2), True)
+
+    def test_protocolUpgrade(self):
+        try:
+            self.spark.conf.set('spark.databricks.delta.minWriterVersion', '2')
+            self.spark.conf.set('spark.databricks.delta.minReaderVersion', '1')
+            self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
+            dt = DeltaTable.forPath(self.spark, self.tempFile)
+            dt.upgradeTableProtocol(1, 3)
+        finally:
+            self.spark.conf.unset('spark.databricks.delta.minWriterVersion')
+            self.spark.conf.unset('spark.databricks.delta.minReaderVersion')
+
+        # cannot downgrade once upgraded
+        failed = False
+        try:
+            dt.upgradeTableProtocol(1, 2)
+        except:
+            failed = True
+        self.assertTrue(failed, "The upgrade should have failed, because downgrades aren't allowed")
+
+        # bad args
+        with self.assertRaisesRegex(ValueError, "readerVersion"):
+            dt.upgradeTableProtocol("abc", 3)
+        with self.assertRaisesRegex(ValueError, "readerVersion"):
+            dt.upgradeTableProtocol([1], 3)
+        with self.assertRaisesRegex(ValueError, "readerVersion"):
+            dt.upgradeTableProtocol([], 3)
+        with self.assertRaisesRegex(ValueError, "readerVersion"):
+            dt.upgradeTableProtocol({}, 3)
+        with self.assertRaisesRegex(ValueError, "writerVersion"):
+            dt.upgradeTableProtocol(1, "abc")
+        with self.assertRaisesRegex(ValueError, "writerVersion"):
+            dt.upgradeTableProtocol(1, [3])
+        with self.assertRaisesRegex(ValueError, "writerVersion"):
+            dt.upgradeTableProtocol(1, [])
+        with self.assertRaisesRegex(ValueError, "writerVersion"):
+            dt.upgradeTableProtocol(1, {})
 
     def __checkAnswer(self, df, expectedAnswer, schema=["key", "value"]):
         if not expectedAnswer:

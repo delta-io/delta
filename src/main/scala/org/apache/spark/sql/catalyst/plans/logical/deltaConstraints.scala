@@ -14,17 +14,19 @@
  * limitations under the License.
  */
 
-package io.delta.tables
+package org.apache.spark.sql.catalyst.plans.logical
 
-import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
+/**
+ * ALTER TABLE ... ADD CONSTRAINT command, as parsed from SQL
+ */
+case class AlterTableAddConstraintStatement(
+    tableName: Seq[String],
+    constraintName: String,
+    expr: String) extends ParsedStatement
 
-import org.apache.spark.sql.DataFrame
-
-object DeltaTableTestUtils {
-
-  /** A utility method to access the private constructor of [[DeltaTable]] in tests. */
-  def createTable(df: DataFrame, deltaLog: DeltaLog): DeltaTable = {
-    new DeltaTable(df, DeltaTableV2(df.sparkSession, deltaLog.dataPath))
-  }
-}
+/**
+ * ALTER TABLE ... DROP CONSTRAINT command, as parsed from SQL
+ */
+case class AlterTableDropConstraintStatement(
+    tableName: Seq[String],
+    constraintName: String) extends ParsedStatement

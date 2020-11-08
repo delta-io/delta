@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.util.DeltaFileOperations.tryDeleteNonRecursive
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.{FileSystem, Path}
 
+import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 import org.apache.spark.util.{Clock, SerializableConfiguration, SystemClock}
 
@@ -43,7 +44,7 @@ import org.apache.spark.util.{Clock, SerializableConfiguration, SystemClock}
  * will be ignored. Then we take a diff of the files and delete directories that were already empty,
  * and all files that are within the table that are no longer tracked.
  */
-object VacuumCommand extends VacuumCommandImpl {
+object VacuumCommand extends VacuumCommandImpl with Serializable {
 
   /**
    * Additional check on retention duration to prevent people from shooting themselves in the foot.
@@ -120,6 +121,8 @@ object VacuumCommand extends VacuumCommandImpl {
         new SerializableConfiguration(sessionHadoopConf))
       val basePath = fs.makeQualified(path).toString
       var isBloomFiltered = false
+      val parallelDeleteEnabled =
+        spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_PARALLEL_DELETE_ENABLED)
 
       val validFiles = snapshot.state
         .mapPartitions { actions =>
@@ -224,7 +227,7 @@ object VacuumCommand extends VacuumCommandImpl {
         }
         logInfo(s"Deleting untracked files and empty directories in $path")
 
-        val filesDeleted = delete(diff, fs)
+        val filesDeleted = delete(diff, spark, basePath, hadoopConf, parallelDeleteEnabled)
 
         val stats = DeltaVacuumStats(
           isDryRun = false,
@@ -270,9 +273,25 @@ trait VacuumCommandImpl extends DeltaCommand {
   /**
    * Attempts to delete the list of candidate files. Returns the number of files deleted.
    */
-  protected def delete(diff: Dataset[String], fs: FileSystem): Long = {
-    val fileResultSet = diff.toLocalIterator().asScala
-    fileResultSet.map(p => stringToPath(p)).count(f => tryDeleteNonRecursive(fs, f))
+  protected def delete(
+      diff: Dataset[String],
+      spark: SparkSession,
+      basePath: String,
+      hadoopConf: Broadcast[SerializableConfiguration],
+      parallel: Boolean): Long = {
+    import spark.implicits._
+    if (parallel) {
+      diff.mapPartitions { files =>
+        val fs = new Path(basePath).getFileSystem(hadoopConf.value.value)
+        val filesDeletedPerPartition =
+          files.map(p => stringToPath(p)).count(f => tryDeleteNonRecursive(fs, f))
+        Iterator(filesDeletedPerPartition)
+      }.reduce(_ + _)
+    } else {
+      val fs = new Path(basePath).getFileSystem(hadoopConf.value.value)
+      val fileResultSet = diff.toLocalIterator().asScala
+      fileResultSet.map(p => stringToPath(p)).count(f => tryDeleteNonRecursive(fs, f))
+    }
   }
 
   protected def stringToPath(path: String): Path = new Path(new URI(path))

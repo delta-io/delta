@@ -41,11 +41,50 @@ import org.apache.spark.util.Utils
  */
 trait LogStore {
 
-  /** Read the given `path` */
+  /**
+   * Load the given file and return a `Seq` of lines. The line break will be removed from each
+   * line. This method will load the entire file into the memory. Call `readAsIterator` if possible
+   * as its implementation may be more efficient.
+   */
   final def read(path: String): Seq[String] = read(new Path(path))
 
-  /** Read the given `path` */
+  /**
+   * Load the given file and return a `Seq` of lines. The line break will be removed from each
+   * line. This method will load the entire file into the memory. Call `readAsIterator` if possible
+   * as its implementation may be more efficient.
+   */
   def read(path: Path): Seq[String]
+
+  /**
+   * Load the given file and return an iterator of lines. The line break will be removed from each
+   * line. The default implementation calls `read` to load the entire file into the memory.
+   * An implementation should provide a more efficient approach if possible. For example, the file
+   * content can be loaded on demand.
+   */
+  final def readAsIterator(path: String): ClosableIterator[String] = {
+    readAsIterator(new Path(path))
+  }
+
+  /**
+   * Load the given file and return an iterator of lines. The line break will be removed from each
+   * line. The default implementation calls `read` to load the entire file into the memory.
+   * An implementation should provide a more efficient approach if possible. For example, the file
+   * content can be loaded on demand.
+   *
+   * Note: the returned [[ClosableIterator]] should be closed when it's no longer used to avoid
+   * resource leak.
+   */
+  def readAsIterator(path: Path): ClosableIterator[String] = {
+    val iter = read(path).iterator
+    new ClosableIterator[String] {
+
+      override def hasNext: Boolean = iter.hasNext
+
+      override def next(): String = iter.next()
+
+      override def close(): Unit = {}
+    }
+  }
 
   /**
    * Write the given `actions` to the given `path` without overwriting any existing file.

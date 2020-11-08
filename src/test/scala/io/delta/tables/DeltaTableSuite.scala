@@ -21,6 +21,7 @@ import java.util.Locale
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
+import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, QueryTest}
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -124,5 +125,32 @@ class DeltaTableSuite extends QueryTest
   def testError(expectedMsg: String)(thunk: => Unit): Unit = {
     val e = intercept[AnalysisException] { thunk }
     assert(e.getMessage.toLowerCase(Locale.ROOT).contains(expectedMsg.toLowerCase(Locale.ROOT)))
+  }
+
+  test("DeltaTable is Java Serializable but cannot be used in executors") {
+    import testImplicits._
+
+    // DeltaTable can be passed to executor without method calls.
+    withTempDir { dir =>
+      testData.write.format("delta").mode("append").save(dir.getAbsolutePath)
+      val dt: DeltaTable = DeltaTable.forPath(dir.getAbsolutePath)
+      spark.range(5).as[Long].map{ row: Long =>
+        dt
+        row + 3
+      }.count()
+    }
+
+    // DeltaTable can be passed to executor but method call causes exception.
+    val e = intercept[SparkException] {
+      withTempDir { dir =>
+        testData.write.format("delta").mode("append").save(dir.getAbsolutePath)
+        val dt: DeltaTable = DeltaTable.forPath(dir.getAbsolutePath)
+        spark.range(5).as[Long].map{ row: Long =>
+          dt.toDF
+          row + 3
+        }.count()
+      }
+    }.getMessage
+    assert(e.contains("DeltaTable cannot be used in executors"))
   }
 }
