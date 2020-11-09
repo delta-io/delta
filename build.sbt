@@ -18,11 +18,10 @@ import ReleaseTransformations._
 
 parallelExecution in ThisBuild := false
 scalastyleConfig in ThisBuild := baseDirectory.value / "scalastyle-config.xml"
+crossScalaVersions in ThisBuild := Seq("2.12.8", "2.11.12")
 
 lazy val compileScalastyle = taskKey[Unit]("compileScalastyle")
 lazy val testScalastyle = taskKey[Unit]("testScalastyle")
-
-crossScalaVersions := Seq("2.12.8", "2.11.12")
 
 val sparkVersion = "2.4.3"
 val hadoopVersion = "2.7.2"
@@ -51,9 +50,82 @@ lazy val commonSettings = Seq(
   (test in Test) := ((test in Test) dependsOn testScalastyle).value
 )
 
+lazy val releaseSettings = Seq(
+  publishMavenStyle := true,
+  releaseCrossBuild := true,
+  licenses += ("Apache-2.0", url("http://www.apache.org/licenses/LICENSE-2.0")),
+  pomExtra :=
+    <url>https://github.com/delta-io/connectors</url>
+      <scm>
+        <url>git@github.com:delta-io/connectors.git</url>
+        <connection>scm:git:git@github.com:delta-io/connectors.git</connection>
+      </scm>
+      <developers>
+        <developer>
+          <id>tdas</id>
+          <name>Tathagata Das</name>
+          <url>https://github.com/tdas</url>
+        </developer>
+        <developer>
+          <id>scottsand-db</id>
+          <name>Scott Sandre</name>
+          <url>https://github.com/scottsand-db</url>
+        </developer>
+        <developer>
+          <id>windpiger</id>
+          <name>Jun Song</name>
+          <url>https://github.com/windpiger</url>
+        </developer>
+        <developer>
+          <id>zsxwing</id>
+          <name>Shixiong Zhu</name>
+          <url>https://github.com/zsxwing</url>
+        </developer>
+      </developers>,
+  bintrayOrganization := Some("delta-io"),
+  bintrayRepository := "delta",
+  releaseProcess := Seq[ReleaseStep](
+    checkSnapshotDependencies,
+    inquireVersions,
+    runTest,
+    setReleaseVersion,
+    commitReleaseVersion,
+    tagRelease,
+    publishArtifacts,
+    setNextVersion,
+    commitNextVersion
+  )
+)
+
+lazy val skipReleaseSettings = Seq(
+  publishArtifact := false,
+  publish := ()
+)
+
+// Don't release the root project
+publishArtifact := false
+
+publish := ()
+
+// Looks some of release settings should be set for the root project as well.
+releaseCrossBuild := true
+
+releaseProcess := Seq[ReleaseStep](
+  checkSnapshotDependencies,
+  inquireVersions,
+  runTest,
+  setReleaseVersion,
+  commitReleaseVersion,
+  tagRelease,
+  publishArtifacts,
+  setNextVersion,
+  commitNextVersion
+)
+
 lazy val hive = (project in file("hive")) dependsOn(standalone) settings (
-  name := "hive-delta",
+  name := "delta-hive",
   commonSettings,
+  releaseSettings,
 
   // Minimal dependencies to compile the codes. This project doesn't run any tests so we don't need
   // any runtime dependencies.
@@ -105,6 +177,7 @@ lazy val hive = (project in file("hive")) dependsOn(standalone) settings (
 lazy val hiveMR = (project in file("hive-mr")) dependsOn(hive % "test->test") settings (
   name := "hive-mr",
   commonSettings,
+  skipReleaseSettings,
   libraryDependencies ++= Seq(
     "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided",
     "org.apache.hive" % "hive-exec" % hiveVersion % "provided" excludeAll(
@@ -132,6 +205,7 @@ lazy val hiveMR = (project in file("hive-mr")) dependsOn(hive % "test->test") se
 lazy val hiveTez = (project in file("hive-tez")) dependsOn(hive % "test->test") settings (
   name := "hive-tez",
   commonSettings,
+  skipReleaseSettings,
   libraryDependencies ++= Seq(
     "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided" excludeAll (
       ExclusionRule(organization = "com.google.protobuf")
@@ -178,7 +252,7 @@ lazy val hiveTez = (project in file("hive-tez")) dependsOn(hive % "test->test") 
 
 lazy val standalone = (project in file("standalone"))
   .settings(
-    name := "standalone",
+    name := "delta-standalone",
     commonSettings,
     unmanagedResourceDirectories in Test += file("golden-tables/src/test/resources"),
     libraryDependencies ++= Seq(
@@ -221,60 +295,12 @@ lazy val standalone = (project in file("standalone"))
     // Ensure unidoc is run with tests. Must be cleaned before test for unidoc to be generated.
     (test in Test) := ((test in Test) dependsOn unidoc.in(Compile)).value
   )
-
-  /**
-   * Release settings
-   */
-  .settings(
-    publishMavenStyle := true,
-    releaseCrossBuild := true,
-    licenses += ("Apache-2.0", url("http://www.apache.org/licenses/LICENSE-2.0")),
-    pomExtra :=
-      <url>https://github.com/delta-io/connectors</url>
-        <scm>
-          <url>git@github.com:delta-io/connectors.git</url>
-          <connection>scm:git:git@github.com:delta-io/connectors.git</connection>
-        </scm>
-        <developers>
-          <developer>
-            <id>tdas</id>
-            <name>Tathagata Das</name>
-            <url>https://github.com/tdas</url>
-          </developer>
-          <developer>
-            <id>scottsand-db</id>
-            <name>Scott Sandre</name>
-            <url>https://github.com/scottsand-db</url>
-          </developer>
-          <developer>
-            <id>windpiger</id>
-            <name>Jun Song</name>
-            <url>https://github.com/windpiger</url>
-          </developer>
-          <developer>
-            <id>zsxwing</id>
-            <name>Shixiong Zhu</name>
-            <url>https://github.com/zsxwing</url>
-          </developer>
-        </developers>,
-    bintrayOrganization := Some("delta-io"),
-    bintrayRepository := "delta",
-    releaseProcess := Seq[ReleaseStep](
-      checkSnapshotDependencies,
-      inquireVersions,
-      runTest,
-      setReleaseVersion,
-      commitReleaseVersion,
-      tagRelease,
-      publishArtifacts,
-      setNextVersion,
-      commitNextVersion
-    )
-  )
+  .settings(releaseSettings)
 
 lazy val goldenTables = (project in file("golden-tables")) settings (
   name := "golden-tables",
   commonSettings,
+  skipReleaseSettings,
   libraryDependencies ++= Seq(
     // Test Dependencies
     "org.scalatest" %% "scalatest" % "3.0.5" % "test",

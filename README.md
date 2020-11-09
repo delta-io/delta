@@ -14,12 +14,13 @@ The project is compiled using [SBT](https://www.scala-sbt.org/1.x/docs/Command-L
 
 ## Delta Standalone Reader
 Delta Standalone Reader is a JVM library to read Delta Lake tables. Unlike https://github.com/delta-io/delta, this project doesn't use Spark to read tables and it has only a few transitive dependencies. It can be used to any application that cannot use a Spark cluster.
-- To compile the project, run build/sbt standalone/compile
-- To test the project, run build/sbt standalone/test
-- To generate the uber JAR, run build/sbt standalone/package
+- To compile the project, run `build/sbt standalone/compile`
+- To test the project, run `build/sbt standalone/test`
+- To generate the JAR, run `build/sbt standalone/package`
 
 ### How to use it
 You can add the Delta Standalone Reader library as a dependency using your favorite build tool.
+
 #### Maven
 Scala 2.12:
 ```xml
@@ -45,35 +46,35 @@ libraryDependencies += "io.delta" %% "delta-standalone" % "0.2.0"
 ```
 
 ## Hive connector
-This project contains all the codes needed to make Hive read Delta Lake tables. The connector has one JAR `hive-delta-assembly_<scala_version>-0.2.0.jar`. You can use either Scala 2.11 or 2.12. The released JARs are available in the [releases](https://github.com/delta-io/connectors/releases) page. Please download the JARs for the corresponding Scala version you would like to use.
+This project is a library to make Hive read Delta Lake tables. The project provides a uber JAR `delta-hive-assembly_<scala_version>-0.2.0.jar` to use in Hive. You can use either Scala 2.11 or 2.12. The released JARs are available in the [releases](https://github.com/delta-io/connectors/releases) page. Please download the uber JAR for the corresponding Scala version you would like to use.
 
-You can also use the following instructions to build them.
+You can also use the following instructions to build it as well.
 
-### Build JARs
+### Build the uber JAR
 
 Please skip this section if you have downloaded the connector JARs.
 
 - To compile the project, run `build/sbt hive/compile`
 - To test the project, run `build/sbt hive/test`
-- To generate the connector JAR run `build/sbt hive/package`
+- To generate the uber JAR that contains all libraries needed for Hive, run `build/sbt hive/assembly`
 
 The above commands will generate the following JAR:
 
 ```
-hive/target/scala-2.12/hive-delta-assembly_2.12-0.2.0.jar
+hive/target/scala-2.12/delta-hive-assembly_2.12-0.2.0.jar
 ```
 
-This JAR includes the Hive connector and all its dependencies. They need to be put in Hive’s classpath.
+This uber JAR includes the Hive connector and all its dependencies. They need to be put in Hive’s classpath.
 
-Note: if you would like to build using Scala 2.11, you can run the SBT command `build/sbt "++ 2.11.12 hive/package"` to generate the following JAR:
+Note: if you would like to build using Scala 2.11, you can run the SBT command `build/sbt "++ 2.11.12 hive/assembly"` to generate the following JAR:
 
 ```
-hive/target/scala-2.11/hive-delta-assembly_2.11-0.2.0.jar
+hive/target/scala-2.11/delta-hive-assembly_2.11-0.2.0.jar
 ```
 
 ### Setting up Hive
 
-This sections describes how to set up Hive to load the Delta Hive connector.
+This section describes how to set up Hive to load the Delta Hive connector.
 
 Before starting your Hive CLI or running your Hive script, add the following special Hive config to the `hive-site.xml` file (Its location is `/etc/hive/conf/hive-site.xml` in a EMR cluster).
 
@@ -95,7 +96,7 @@ SET hive.input.format=io.delta.hive.HiveInputFormat;
 SET hive.tez.input.format=io.delta.hive.HiveInputFormat;
 ```
 
-The second step is to upload the above two JARs to the machine that runs Hive. Finally, add the paths of the JARs toHive’s environment variable, `HIVE_AUX_JARS_PATH`. You can find this environment variable in the `hive-env.sh` file, whose location is `/etc/hive/conf/hive-env.sh` on an EMR cluster. This setting will tell Hive where to find the connector JARs.
+The second step is to upload the above uber JAR to the machine that runs Hive. Finally, add the path of the uber JAR to Hive’s environment variable, `HIVE_AUX_JARS_PATH`. You can find this environment variable in the `hive-env.sh` file, whose location is `/etc/hive/conf/hive-env.sh` on an EMR cluster. This setting will tell Hive where to find the connector JAR.
 
 ### Create a Hive table
 
