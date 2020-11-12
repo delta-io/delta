@@ -20,13 +20,12 @@ import java.io.{File, IOException}
 import java.net.URI
 
 import scala.collection.mutable.ArrayBuffer
-
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.storage._
 import org.apache.hadoop.fs.{FileSystem, Path, RawLocalFileSystem}
-
+import org.apache.spark.SparkContext
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
@@ -37,6 +36,8 @@ abstract class LogStoreSuiteBase extends QueryTest
 
   def logStoreClassName: String
 
+  def fsUriPrefix: String
+
   protected override def sparkConf = {
     super.sparkConf.set(logStoreClassConfKey, logStoreClassName)
   }
@@ -44,6 +45,15 @@ abstract class LogStoreSuiteBase extends QueryTest
   test("instantiation through SparkConf") {
     assert(spark.sparkContext.getConf.get(logStoreClassConfKey) == logStoreClassName)
     assert(LogStore(spark.sparkContext).getClass.getName == logStoreClassName)
+  }
+
+  test("instantiation through FS URI") {
+    val conf = spark.sparkContext.getConf.remove(logStoreClassConfKey)
+    assert(LogStore(
+      new Path(s"$fsUriPrefix://some/log/dir"),
+      conf,
+      spark.sessionState.newHadoopConf()
+    ).getClass.getName == logStoreClassName)
   }
 
   test("read / write") {
@@ -198,6 +208,8 @@ class AzureLogStoreSuite extends LogStoreSuiteBase {
 
   override val logStoreClassName: String = classOf[AzureLogStore].getName
 
+  override val fsUriPrefix = "adls"
+
   testHadoopConf(
     expectedErrMsg = "No FileSystem for scheme: fake",
     "fs.fake.impl" -> classOf[FakeFileSystem].getName,
@@ -206,9 +218,21 @@ class AzureLogStoreSuite extends LogStoreSuiteBase {
   protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 
+class S3LogStoreSuite extends LogStoreSuiteBase {
+
+  override val logStoreClassName: String = classOf[S3SingleDriverLogStore].getName
+
+  override val fsUriPrefix = "s3"
+
+  override protected def shouldUseRenameToWriteCheckpoint: Boolean = false
+}
+
 class HDFSLogStoreSuite extends LogStoreSuiteBase {
 
   override val logStoreClassName: String = classOf[HDFSLogStore].getName
+
+  override val fsUriPrefix = "hdfs"
+
   // HDFSLogStore is based on FileContext APIs and hence requires AbstractFileSystem-based
   // implementations.
   testHadoopConf(
@@ -274,6 +298,8 @@ class HDFSLogStoreSuite extends LogStoreSuiteBase {
 class LocalLogStoreSuite extends LogStoreSuiteBase {
 
   override val logStoreClassName: String = classOf[LocalLogStore].getName
+
+  override val fsUriPrefix = "file"
 
   testHadoopConf(
     expectedErrMsg = "No FileSystem for scheme: fake",

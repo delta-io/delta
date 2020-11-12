@@ -75,7 +75,7 @@ class DeltaLog private(
   protected def spark = SparkSession.active
 
   /** Used to read and write physical log files and checkpoints. */
-  lazy val store = createLogStore(spark)
+  lazy val store = createLogStore(logPath, spark)
   /** Direct access to the underlying storage system. */
   private[delta] lazy val fs = logPath.getFileSystem(spark.sessionState.newHadoopConf)
 

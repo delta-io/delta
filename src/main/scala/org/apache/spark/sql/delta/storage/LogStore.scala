@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.storage
 
-import org.apache.spark.sql.delta.DeltaLog
+import org.apache.commons.lang3.StringUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -139,27 +139,60 @@ object LogStore extends LogStoreProvider
   with Logging {
 
   def apply(sc: SparkContext): LogStore = {
-    apply(sc.getConf, sc.hadoopConfiguration)
+    createLogStore(None, sc.getConf, sc.hadoopConfiguration)
   }
 
   def apply(sparkConf: SparkConf, hadoopConf: Configuration): LogStore = {
-    createLogStore(sparkConf, hadoopConf)
+    createLogStore(None, sparkConf, hadoopConf)
+  }
+
+  def apply(logPath: Path, sc: SparkContext): LogStore = {
+    apply(logPath, sc.getConf, sc.hadoopConfiguration)
+  }
+
+  def apply(logPath: Path, sparkConf: SparkConf, hadoopConf: Configuration): LogStore = {
+    createLogStore(Some(logPath), sparkConf, hadoopConf)
   }
 }
 
 trait LogStoreProvider {
   val logStoreClassConfKey: String = "spark.delta.logStore.class"
-  val defaultLogStoreClass: String = classOf[HDFSLogStore].getName
+  val defaultLogStoreClass: Class[HDFSLogStore] = classOf[HDFSLogStore]
 
   def createLogStore(spark: SparkSession): LogStore = {
     val sc = spark.sparkContext
-    createLogStore(sc.getConf, sc.hadoopConfiguration)
+    createLogStore(None, sc.getConf, sc.hadoopConfiguration)
   }
 
-  def createLogStore(sparkConf: SparkConf, hadoopConf: Configuration): LogStore = {
-    val logStoreClassName = sparkConf.get(logStoreClassConfKey, defaultLogStoreClass)
-    val logStoreClass = Utils.classForName(logStoreClassName)
+  def createLogStore(logPath: Path, spark: SparkSession): LogStore = {
+    val sc = spark.sparkContext
+    createLogStore(Some(logPath), sc.getConf, sc.hadoopConfiguration)
+  }
+
+  def createLogStore(logPath: Option[Path], sparkConf: SparkConf,
+    hadoopConf: Configuration): LogStore = {
+
+    val storeClass: Class[_ <: LogStore] = if (sparkConf.contains(logStoreClassConfKey)) {
+      Utils.classForName(sparkConf.get(logStoreClassConfKey))
+    } else if (logPath.isDefined) {
+      val protocol = StringUtils.substringBefore(logPath.get.toUri.toString, ":")
+      protocol match {
+        case "hdfs" => classOf[HDFSLogStore]
+        case "adls" => classOf[AzureLogStore]
+        case "s3" | "s3n" | "s3a" => classOf[S3SingleDriverLogStore]
+        case "file" => classOf[LocalLogStore]
+        case _ => defaultLogStoreClass // unrecognized protocol; fall back to default class
+      }
+    } else {
+      defaultLogStoreClass
+    }
+
+    createForClass(storeClass, sparkConf, hadoopConf)
+  }
+
+  private def createForClass(logStoreClass: Class[_ <: LogStore], sparkConf: SparkConf,
+    hadoopConf: Configuration): LogStore = {
     logStoreClass.getConstructor(classOf[SparkConf], classOf[Configuration])
-      .newInstance(sparkConf, hadoopConf).asInstanceOf[LogStore]
+        .newInstance(sparkConf, hadoopConf)
   }
 }

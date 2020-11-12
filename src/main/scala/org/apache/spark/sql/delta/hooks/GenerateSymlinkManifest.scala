@@ -236,7 +236,8 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
     import spark.implicits._
 
     val tableAbsPathForManifest =
-      LogStore(spark.sparkContext).resolvePathOnPhysicalStorage(deltaLogDataPath).toString
+      LogStore(deltaLogDataPath, spark.sparkContext)
+          .resolvePathOnPhysicalStorage(deltaLogDataPath).toString
 
     /** Write the data file relative paths to manifestDirAbsPath/manifest as absolute paths */
     def writeSingleManifestFile(
@@ -250,7 +251,7 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
       val manifestContent = dataFileRelativePaths.map { relativePath =>
         DeltaFileOperations.absolutePath(tableAbsPathForManifest, relativePath).toString
       }
-      val logStore = LogStore(SparkEnv.get.conf, hadoopConf.value)
+      val logStore = LogStore(new Path(manifestDirAbsPath), SparkEnv.get.conf, hadoopConf.value)
       logStore.write(manifestFilePath, manifestContent, overwrite = true)
     }
 
