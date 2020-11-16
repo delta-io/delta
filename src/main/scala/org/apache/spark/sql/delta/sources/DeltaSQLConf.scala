@@ -356,4 +356,12 @@ object DeltaSQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME =
+    buildConf("resolveMergeUpdateStructsByName.enabled")
+      .internal()
+      .doc("Whether to resolve structs by name in UPDATE operations of UPDATE and MERGE INTO " +
+        "commands. If disabled, Delta will revert to the legacy behavior of resolving by position.")
+      .booleanConf
+      .createWithDefault(true)
+
 }

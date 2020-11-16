@@ -16,8 +16,11 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+
 import org.apache.spark.sql.catalyst.analysis.{CastSupport, Resolver}
-import org.apache.spark.sql.catalyst.expressions.{Alias, CreateNamedStruct, Expression, GetStructField, Literal, NamedExpression}
+import org.apache.spark.sql.catalyst.expressions.{Alias, Cast, CreateNamedStruct, Expression, ExtractValue, GetStructField, Literal, NamedExpression}
 import org.apache.spark.sql.types._
 
 /**
@@ -33,12 +36,37 @@ trait UpdateExpressionsSupport extends CastSupport {
    */
   case class UpdateOperation(targetColNameParts: Seq[String], updateExpr: Expression)
 
-  protected def castIfNeeded(child: Expression, dataType: DataType): Expression = {
-    child match {
+  protected def castIfNeeded(fromExpression: Expression, dataType: DataType): Expression = {
+    fromExpression match {
       // Need to deal with NullType here, as some types cannot be casted from NullType, e.g.,
       // StructType.
       case Literal(nul, NullType) => Literal(nul, dataType)
-      case otherExpr => if (child.dataType != dataType) cast(child, dataType) else child
+      case otherExpr =>
+        val resolveStructsByName =
+          conf.getConf(DeltaSQLConf.DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME)
+
+        (fromExpression.dataType, dataType) match {
+          case (from: StructType, to: StructType)
+              if !DataType.equalsIgnoreCaseAndNullability(from, to) && resolveStructsByName =>
+            // To do the cast, we need the same length and names of fields, possibly in a different
+            // order.
+            if (from.length != to.length ||
+                from.exists { f => !to.exists(_.name.equalsIgnoreCase(f.name))}) {
+              throw DeltaErrors.updateSchemaMismatchExpression(from, to)
+            }
+
+            val nameMappedStruct = CreateNamedStruct(to.flatMap { field =>
+              val fieldNameLit = Literal(field.name)
+              val extractedField =
+                ExtractValue(fromExpression, fieldNameLit, SchemaUtils.DELTA_COL_RESOLVER)
+              Seq(fieldNameLit, castIfNeeded(extractedField, field.dataType))
+            })
+
+            nameMappedStruct
+
+          case (from, to) if (from != to) => cast(fromExpression, dataType)
+          case _ => fromExpression
+        }
     }
   }
 

@@ -972,6 +972,11 @@ object DeltaErrors
        """.stripMargin)
   }
 
+  def updateSchemaMismatchExpression(from: StructType, to: StructType): Throwable = {
+    new AnalysisException(s"Cannot cast ${from.catalogString} to ${to.catalogString}. All nested " +
+      s"columns must match.")
+  }
+
   def addFilePartitioningMismatchException(
       addFilePartitions: Seq[String],
       metadataPartitions: Seq[String]): Throwable = {
