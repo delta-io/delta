@@ -312,8 +312,7 @@ trait SnapshotManagement { self: DeltaLog =>
             "nextSnapshotMetadata" -> newSnapshot.metadata))
         }
 
-        currentSnapshot.uncache()
-        currentSnapshot = newSnapshot
+        replaceSnapshot(newSnapshot)
         logInfo(s"Updated snapshot to $newSnapshot")
       } catch {
         case e: FileNotFoundException =>
@@ -322,12 +321,20 @@ trait SnapshotManagement { self: DeltaLog =>
           }
           val message = s"No delta log found for the Delta table at $logPath"
           logInfo(message)
-          currentSnapshot.uncache()
-          currentSnapshot = new InitialSnapshot(logPath, this)
+          replaceSnapshot(new InitialSnapshot(logPath, this))
       }
       lastUpdateTimestamp = clock.getTimeMillis()
       currentSnapshot
     }
+
+  /** Replace the given snapshot with the provided one. */
+  protected def replaceSnapshot(newSnapshot: Snapshot): Unit = {
+    if (!deltaLogLock.isHeldByCurrentThread) {
+      recordDeltaEvent(this, "delta.update.unsafeReplace")
+    }
+    currentSnapshot.uncache()
+    currentSnapshot = newSnapshot
+  }
 
   /** Get the snapshot at `version`. */
   def getSnapshotAt(
