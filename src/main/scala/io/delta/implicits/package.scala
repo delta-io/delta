@@ -19,7 +19,7 @@ package io.delta
 import org.apache.spark.sql.{DataFrame, DataFrameReader, DataFrameWriter}
 import org.apache.spark.sql.streaming.{DataStreamReader, DataStreamWriter, StreamingQuery}
 
-package object sources {
+package object implicits {
 
   /**
    * Extends the DataFrameReader API by adding a delta function

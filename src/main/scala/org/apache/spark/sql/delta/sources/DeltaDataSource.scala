@@ -41,7 +41,6 @@ import org.apache.spark.sql.sources._
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
-import org.apache.spark.sql.streaming.{DataStreamReader, DataStreamWriter, StreamingQuery}
 
 /** A DataSource V1 for integrating Delta into Spark SQL batch and Streaming APIs. */
 class DeltaDataSource
