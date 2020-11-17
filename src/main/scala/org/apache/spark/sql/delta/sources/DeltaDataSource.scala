@@ -334,17 +334,23 @@ object DeltaDataSource extends DatabricksLogging {
 
   /**
    * Extends the DataFrameReader API by adding a delta function
-   * Usage: spark.read.delta(path)
+   * Usage:
+   * {{{
+   * spark.read.delta(path)
+   * }}}
    */
-  implicit class DeltaDataFrameReader(val dfReader: DataFrameReader) extends AnyVal {
+  implicit class DeltaDataFrameReader(val reader: DataFrameReader) extends AnyVal {
     def delta(path: String): DataFrame = {
-      dfReader.format("delta").load(path)
+      reader.format("delta").load(path)
     }
   }
 
   /**
    * Extends the DataFrameReader API by adding a delta function
    * Usage: spark.readStream.delta(path)
+   * {{{
+   * spark.readStream.delta(path)
+   * }}}
    */
   implicit class DeltaStreamReader(val dataStreamReader: DataStreamReader) extends AnyVal {
     def delta(path: String): DataFrame = {
@@ -354,7 +360,10 @@ object DeltaDataSource extends DatabricksLogging {
 
   /**
    * Extends the DataFrameWriter API by adding a delta function
-   * Usage: df.write.delta(path)
+   * Usage:
+   * {{{
+   * df.write.delta(path)
+   * }}}
    */
   implicit class DeltaWriter[T](val dfWriter: DataFrameWriter[T]) extends AnyVal {
     def delta(output: String): Unit = {
@@ -364,7 +373,10 @@ object DeltaDataSource extends DatabricksLogging {
 
   /**
    * Extends the DataStreamWriter API by adding a delta function
-   * Usage: ds.writeStream.delta(path)
+   * Usage:
+   * {{{
+   * ds.writeStream.delta(path)
+   * }}}
    */
   implicit class DeltaStreamWriter[T](val dataStreamWriter: DataStreamWriter[T]) extends AnyVal {
     def delta(path: String): StreamingQuery = {
