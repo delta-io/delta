@@ -35,7 +35,6 @@ import org.apache.spark.sql.streaming.util.StreamManualClock
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.{ManualClock, Utils}
-import io.delta.sources._
 
 class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
 
