@@ -333,63 +333,40 @@ object DeltaDataSource extends DatabricksLogging {
   }
 
   /**
-   * Allows to extend the DataFrameReader API by adding a delta function
-   * @param dfReader
+   * Extends the DataFrameReader API by adding a delta function
+   * Usage: spark.read.delta(path)
    */
   implicit class DeltaDataFrameReader(val dfReader: DataFrameReader) extends AnyVal {
-
-    /**
-     * delta lake users can now read data as follows: spark.read.delta(path)
-     * @param path
-     * @return
-     */
     def delta(path: String): DataFrame = {
       dfReader.format("delta").load(path)
     }
   }
 
   /**
-   * Allows to extend the DataFrameReader API by adding a delta function
-   * @param dfReader
+   * Extends the DataFrameReader API by adding a delta function
+   * Usage: spark.readStream.delta(path)
    */
   implicit class DeltaStreamReader(val dataStreamReader: DataStreamReader) extends AnyVal {
-
-    /**
-     * delta lake users can now read data as follows: spark.readStream.delta(path)
-     * @param path
-     * @return
-     */
     def delta(path: String): DataFrame = {
       dataStreamReader.format("delta").load(path)
     }
   }
 
   /**
-   * Allows to extend the DataFrameWriter API by adding a delta function
-   * @param dfWriter
+   * Extends the DataFrameWriter API by adding a delta function
+   * Usage: df.write.delta(path)
    */
   implicit class DeltaWriter[T](val dfWriter: DataFrameWriter[T]) extends AnyVal {
-
-    /**
-     * delta lake users can now write data as follows: df.write.delta(path)
-     * @param output
-     */
     def delta(output: String): Unit = {
       dfWriter.format("delta").save(output)
     }
   }
 
   /**
-   * Allows to extend the DataStreamWriter API by adding a delta function
-   * @param dfReader
+   * Extends the DataStreamWriter API by adding a delta function
+   * Usage: ds.writeStream.delta(path)
    */
   implicit class DeltaStreamWriter[T](val dataStreamWriter: DataStreamWriter[T]) extends AnyVal {
-
-    /**
-     * delta lake users can now write stream as follows: ds.writeStream.delta(path)
-     * @param path
-     * @return
-     */
     def delta(path: String): StreamingQuery = {
       dataStreamWriter.format("delta").start(path)
     }
