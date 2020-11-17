@@ -35,7 +35,7 @@ import org.apache.spark.sql.streaming.util.StreamManualClock
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.{ManualClock, Utils}
-import org.apache.spark.sql.delta.sources.DeltaDataSource._
+import io.delta.sources._
 
 class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
 
@@ -973,70 +973,6 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
       } finally {
         stream.stop()
       }
-    }
-  }
-
-  test("Read data using the .delta() method extended from the DataFrameReader API") {
-    withTempDir { tempDir =>
-      Seq(1, 2, 3).toDF().write.delta(tempDir.getCanonicalPath)
-
-      val df = spark.read.delta(tempDir.toString)
-      val expectedRows = Seq(Row(1), Row(2), Row(3))
-      checkAnswer(df, expectedRows)
-    }
-  }
-
-  test("Write data using the .delta() method extended from the DataFrameWriter API") {
-    withTempDir { tempDir =>
-      Seq(1, 2, 3).toDF().write.delta(tempDir.getCanonicalPath)
-
-      val df = spark.read.format("delta").load(tempDir.toString)
-      val expectedRows = Seq(Row(1), Row(2), Row(3))
-      checkAnswer(df, expectedRows)
-    }
-  }
-
-  test("read stream using the .delta() method extended from the DataStreamReader API") {
-    withTempDir { inputDir =>
-      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
-      withMetadata(deltaLog, StructType.fromDDL("value STRING"))
-
-      val df = spark.readStream
-        .delta(inputDir.getCanonicalPath)
-
-      testStream(df)(
-        AddToReservoir(inputDir, Seq("item1", "item2").toDF),
-        AssertOnQuery { q => q.processAllAvailable(); true },
-        CheckAnswer("item1", "item2"),
-        StopStream,
-        AddToReservoir(inputDir, Seq("item3", "item4").toDF),
-        StartStream(),
-        AssertOnQuery { q => q.processAllAvailable(); true },
-        CheckAnswer("item1", "item2", "item3", "item4"),
-        AddToReservoir(inputDir, Seq("item5").toDF),
-        AssertOnQuery { q => q.processAllAvailable(); true },
-        CheckAnswer("item1", "item2", "item3", "item4", "item5")
-      )
-    }
-  }
-
-  test("write stream using the .delta() method extended from DataStreamWriter API") {
-    withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      Seq(1, 2, 3).toDF().write.format("delta").save(inputDir.toString)
-
-      val df = spark.readStream.format("delta").load(inputDir.toString)
-
-      val stream = df.writeStream
-        .option("checkpointLocation", checkpointDir.toString)
-        .delta(outputDir.toString)
-
-      stream.processAllAvailable()
-      stream.stop()
-
-      val writtenStreamDf = spark.read.format("delta").load(outputDir.toString)
-      val expectedRows = Seq(Row(1), Row(2), Row(3))
-
-      checkAnswer(writtenStreamDf, expectedRows)
     }
   }
 
