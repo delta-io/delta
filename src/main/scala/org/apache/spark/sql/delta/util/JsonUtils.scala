@@ -23,10 +23,13 @@ import com.fasterxml.jackson.module.scala.{DefaultScalaModule, ScalaObjectMapper
 /** Useful json functions used around the Delta codebase. */
 object JsonUtils {
   /** Used to convert between classes and JSON. */
-  val mapper = new ObjectMapper with ScalaObjectMapper
-  mapper.setSerializationInclusion(Include.NON_ABSENT)
-  mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
-  mapper.registerModule(DefaultScalaModule)
+  lazy val mapper = {
+    val _mapper = new ObjectMapper with ScalaObjectMapper
+    _mapper.setSerializationInclusion(Include.NON_ABSENT)
+    _mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+    _mapper.registerModule(DefaultScalaModule)
+    _mapper
+  }
 
   def toJson[T: Manifest](obj: T): String = {
     mapper.writeValueAsString(obj)
