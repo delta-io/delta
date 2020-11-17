@@ -22,12 +22,12 @@ import org.apache.spark.sql.streaming.{DataStreamReader, DataStreamWriter, Strea
 package object sources {
 
   /**
-    * Extends the DataFrameReader API by adding a delta function
-    * Usage:
-    * {{{
-    * spark.read.delta(path)
-    * }}}
-    */
+   * Extends the DataFrameReader API by adding a delta function
+   * Usage:
+   * {{{
+   * spark.read.delta(path)
+   * }}}
+   */
   implicit class DeltaDataFrameReader(val reader: DataFrameReader) extends AnyVal {
     def delta(path: String): DataFrame = {
       reader.format("delta").load(path)
@@ -35,12 +35,12 @@ package object sources {
   }
 
   /**
-    * Extends the DataStreamReader API by adding a delta function
-    * Usage:
-    * {{{
-    * spark.readStream.delta(path)
-    * }}}
-    */
+   * Extends the DataStreamReader API by adding a delta function
+   * Usage:
+   * {{{
+   * spark.readStream.delta(path)
+   * }}}
+   */
   implicit class DeltaDataStreamReader(val dataStreamReader: DataStreamReader) extends AnyVal {
     def delta(path: String): DataFrame = {
       dataStreamReader.format("delta").load(path)
@@ -48,12 +48,12 @@ package object sources {
   }
 
   /**
-    * Extends the DataFrameWriter API by adding a delta function
-    * Usage:
-    * {{{
-    * df.write.delta(path)
-    * }}}
-    */
+   * Extends the DataFrameWriter API by adding a delta function
+   * Usage:
+   * {{{
+   * df.write.delta(path)
+   * }}}
+   */
   implicit class DeltaDataFrameWriter[T](val dfWriter: DataFrameWriter[T]) extends AnyVal {
     def delta(output: String): Unit = {
       dfWriter.format("delta").save(output)
@@ -61,12 +61,12 @@ package object sources {
   }
 
   /**
-    * Extends the DataStreamWriter API by adding a delta function
-    * Usage:
-    * {{{
-    * ds.writeStream.delta(path)
-    * }}}
-    */
+   * Extends the DataStreamWriter API by adding a delta function
+   * Usage:
+   * {{{
+   * ds.writeStream.delta(path)
+   * }}}
+   */
   implicit class DeltaDataStreamWriter[T]
   (val dataStreamWriter: DataStreamWriter[T]) extends AnyVal {
     def delta(path: String): StreamingQuery = {
