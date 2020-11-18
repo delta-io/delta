@@ -19,8 +19,11 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.lang.{Integer => JInt}
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
+import org.apache.spark.scheduler.{SparkListener, SparkListenerEvent}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.execution.ui.SparkListenerSQLExecutionStart
 import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
@@ -2232,6 +2235,49 @@ abstract class MergeIntoSuiteBase
     expectErrorContains = "cannot cast struct",
     expectErrorWithoutEvolutionContains = "cannot cast struct"
   )
+
+  test("Apply filter pushdown to the inner join to avoid to scan all rows in parquet files") {
+    def checkPredicatePushdown(physicalPlanDescription: String): Boolean = {
+      physicalPlanDescription.contains(
+        "PushedFilters: [IsNotNull(key), EqualTo(key,2)]"
+      )
+    }
+
+    var isPushdown = false
+    val listener = new SparkListener {
+      override def onOtherEvent(event: SparkListenerEvent): Unit = event match {
+        case e: SparkListenerSQLExecutionStart =>
+          if (!isPushdown) { // apply once
+            isPushdown = checkPredicatePushdown(e.physicalPlanDescription)
+          }
+        case _ => // Ignore
+      }
+    }
+
+    val source = Seq((1, 10), (2, 20), (3, 30))
+    val target = Seq((1, 1), (2, 2))
+    withView("sourceView") {
+      append(target.toDF("key", "value"))
+      source.toDF("key", "value").createOrReplaceTempView("sourceView")
+
+      spark.sparkContext.addSparkListener(listener)
+      executeMerge(
+        tgt = s"delta.`$tempPath` as t",
+        src = "sourceView s",
+        cond = "s.key = t.key AND t.key = 2",
+        update("t.value = s.value"))
+      spark.sparkContext.listenerBus.waitUntilEmpty(TimeUnit.SECONDS.toMillis(10))
+      spark.sparkContext.removeSparkListener(listener)
+      assert(isPushdown)
+
+      checkAnswer(
+        readDeltaTable(tempPath),
+        Seq((1, 1), (2, 20)).map { r => Row(r._1, r._2) }
+      )
+
+      Utils.deleteRecursively(new File(tempPath))
+    }
+  }
 
   /* unlimited number of merge clauses tests */
 
