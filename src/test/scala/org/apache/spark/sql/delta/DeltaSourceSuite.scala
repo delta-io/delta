@@ -1637,6 +1637,29 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
       assert(spark.read.format("delta").load(targetData.getCanonicalPath).count() === 30)
     }
   }
+
+  test("make sure that the delta sources works fine") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+
+      import io.delta.implicits._
+
+      Seq(1, 2, 3).toDF().write.delta(inputDir.toString)
+
+      val df = spark.readStream.delta(inputDir.toString)
+
+      val stream = df.writeStream
+        .option("checkpointLocation", checkpointDir.toString)
+        .delta(outputDir.toString)
+
+      stream.processAllAvailable()
+      stream.stop()
+
+      val writtenStreamDf = spark.read.delta(outputDir.toString)
+      val expectedRows = Seq(Row(1), Row(2), Row(3))
+
+      checkAnswer(writtenStreamDf, expectedRows)
+    }
+  }
 }
 
 /**
