@@ -21,6 +21,7 @@ import java.io.File
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.AddFile
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql._
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions.col

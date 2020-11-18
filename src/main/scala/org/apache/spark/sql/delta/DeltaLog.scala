@@ -36,12 +36,11 @@ import org.apache.spark.sql.delta.storage.LogStoreProvider
 import com.google.common.cache.{CacheBuilder, RemovalListener, RemovalNotification}
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.SparkContext
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Cast, Expression, In, InSet, Literal}
+import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Cast, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.sources.{BaseRelation, InsertableRelation}
@@ -182,8 +181,7 @@ class DeltaLog private(
    */
   def withNewTransaction[T](thunk: OptimisticTransaction => T): T = {
     try {
-      update()
-      val txn = new OptimisticTransaction(this)
+      val txn = startTransaction()
       OptimisticTransaction.setActive(txn)
       thunk(txn)
     } finally {
@@ -198,11 +196,8 @@ class DeltaLog private(
    */
   def upgradeProtocol(newVersion: Protocol = Protocol()): Unit = {
     val currentVersion = snapshot.protocol
-    if (newVersion.minReaderVersion < currentVersion.minReaderVersion ||
-        newVersion.minWriterVersion < currentVersion.minWriterVersion) {
-      throw new ProtocolDowngradeException(currentVersion, newVersion)
-    } else if (newVersion.minReaderVersion == currentVersion.minReaderVersion &&
-               newVersion.minWriterVersion == currentVersion.minWriterVersion) {
+    if (newVersion.minReaderVersion == currentVersion.minReaderVersion &&
+        newVersion.minWriterVersion == currentVersion.minWriterVersion) {
       logConsole(s"Table $dataPath is already at protocol version $newVersion.")
       return
     }
@@ -223,12 +218,20 @@ class DeltaLog private(
    * Get all actions starting from "startVersion" (inclusive). If `startVersion` doesn't exist,
    * return an empty Iterator.
    */
-  def getChanges(startVersion: Long): Iterator[(Long, Seq[Action])] = {
+  def getChanges(
+      startVersion: Long,
+      failOnDataLoss: Boolean = false): Iterator[(Long, Seq[Action])] = {
     val deltas = store.listFrom(deltaFile(logPath, startVersion))
       .filter(f => isDeltaFile(f.getPath))
+    // Subtract 1 to ensure that we have the same check for the inclusive startVersion
+    var lastSeenVersion = startVersion - 1
     deltas.map { status =>
       val p = status.getPath
       val version = deltaVersion(p)
+      if (failOnDataLoss && version > lastSeenVersion + 1) {
+        throw DeltaErrors.failOnDataLossException(lastSeenVersion + 1, version)
+      }
+      lastSeenVersion = version
       (version, store.read(p).map(Action.fromJson))
     }
   }
@@ -236,17 +239,6 @@ class DeltaLog private(
   /* --------------------- *
    |  Protocol validation  |
    * --------------------- */
-
-  private def oldProtocolMessage(protocol: Protocol): String =
-    s"WARNING: The Delta Lake table at $dataPath has version " +
-      s"${protocol.simpleString}, but the latest version is " +
-      s"${Protocol().simpleString}. To take advantage of the latest features and bug fixes, " +
-      "we recommend that you upgrade the table.\n" +
-      "First update all clusters that use this table to the latest version of Databricks " +
-      "Runtime, and then run the following command in a notebook:\n" +
-      "'%scala com.databricks.delta.Delta.upgradeTable(\"" + s"$dataPath" + "\")'\n\n" +
-      "For more information about Delta Lake table versions, see " +
-      s"${DeltaErrors.baseDocsPath(spark)}/delta/versioning.html"
 
   /**
    * If the given `protocol` is older than that of the client.
@@ -270,11 +262,6 @@ class DeltaLog private(
           "minReaderVersion" -> protocol.minReaderVersion))
       throw new InvalidProtocolVersionException
     }
-
-    if (isProtocolOld(protocol)) {
-      recordDeltaEvent(this, "delta.protocol.warning")
-      logConsole(oldProtocolMessage(protocol))
-    }
   }
 
   /**
@@ -290,11 +277,6 @@ class DeltaLog private(
           "clientVersion" -> Action.writerVersion,
           "minWriterVersion" -> protocol.minWriterVersion))
       throw new InvalidProtocolVersionException
-    }
-
-    if (logUpgradeMessage && isProtocolOld(protocol)) {
-      recordDeltaEvent(this, "delta.protocol.warning")
-      logConsole(oldProtocolMessage(protocol))
     }
   }
 
@@ -351,24 +333,13 @@ class DeltaLog private(
    */
   def createRelation(
       partitionFilters: Seq[Expression] = Nil,
-      timeTravel: Option[DeltaTimeTravelSpec] = None): BaseRelation = {
-
-    val versionToUse = timeTravel.map { tt =>
-      val (version, accessType) = DeltaTableUtils.resolveTimeTravelVersion(
-        spark.sessionState.conf, this, tt)
-      val source = tt.creationSource.getOrElse("unknown")
-      recordDeltaEvent(this, s"delta.timeTravel.$source", data = Map(
-        "tableVersion" -> snapshot.version,
-        "queriedVersion" -> version,
-        "accessType" -> accessType
-      ))
-      version
-    }
+      snapshotToUseOpt: Option[Snapshot] = None,
+      isTimeTravelQuery: Boolean = false): BaseRelation = {
 
     /** Used to link the files present in the table into the query planner. */
-    val snapshotToUse = versionToUse.map(getSnapshotAt(_)).getOrElse(snapshot)
+    val snapshotToUse = snapshotToUseOpt.getOrElse(snapshot)
     val fileIndex = TahoeLogFileIndex(
-      spark, this, dataPath, snapshotToUse.metadata.schema, partitionFilters, versionToUse)
+      spark, this, dataPath, snapshotToUse, partitionFilters, isTimeTravelQuery)
 
     new HadoopFsRelation(
       fileIndex,
@@ -457,13 +428,17 @@ object DeltaLog extends DeltaLogging {
 
   /** Helper for creating a log for the table. */
   def forTable(spark: SparkSession, tableName: TableIdentifier, clock: Clock): DeltaLog = {
-    val catalog = spark.sessionState.catalog
-    forTable(spark, catalog.getTableMetadata(tableName), clock)
+    if (DeltaTableIdentifier.isDeltaPath(spark, tableName)) {
+      forTable(spark, new Path(tableName.table))
+    } else {
+      forTable(spark, spark.sessionState.catalog.getTableMetadata(tableName), clock)
+    }
   }
 
   /** Helper for creating a log for the table. */
   def forTable(spark: SparkSession, table: CatalogTable, clock: Clock): DeltaLog = {
-    apply(spark, new Path(new Path(table.location), "_delta_log"), clock)
+    val log = apply(spark, new Path(new Path(table.location), "_delta_log"), clock)
+    log
   }
 
   /** Helper for creating a log for the table. */

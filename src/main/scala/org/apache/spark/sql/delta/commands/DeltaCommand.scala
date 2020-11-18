@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.commands
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, OptimisticTransaction, Serializable}
+import org.apache.spark.sql.delta.{ConcurrentWriteException, DeltaErrors, DeltaLog, DeltaOperations, OptimisticTransaction, Serializable}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -183,7 +183,7 @@ trait DeltaCommand extends DeltaLogging {
         case LogicalRelation(HadoopFsRelation(_, _, _, _, _, _), _, Some(_), _) =>
           true
         // could not resolve table/db
-        case UnresolvedRelation(_) =>
+        case _: UnresolvedRelation =>
           throw new NoSuchTableException(tableIdent.database.getOrElse(""), tableIdent.table)
         // other e.g. view
         case _ => true
@@ -209,21 +209,43 @@ trait DeltaCommand extends DeltaLogging {
     predicates.reduceLeftOption(And).map(f => df.filter(Column(f))).getOrElse(df)
   }
 
+  /** Update the table now that the commit has been made, and write a checkpoint. */
+  protected def updateAndCheckpoint(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      commitSize: Int,
+      attemptVersion: Long): Unit = {
+    val currentSnapshot = deltaLog.update()
+    if (currentSnapshot.version != attemptVersion) {
+      throw new IllegalStateException(
+        s"The committed version is $attemptVersion but the current version is " +
+          s"${currentSnapshot.version}. Please contact Databricks support.")
+    }
+
+    logInfo(s"Committed delta #$attemptVersion to ${deltaLog.logPath}. Wrote $commitSize actions.")
+
+    try {
+      deltaLog.checkpoint()
+    } catch {
+      case e: IllegalStateException =>
+        logWarning("Failed to checkpoint table state.", e)
+    }
+  }
+
   /**
-   * Create the first commit on the Delta log by directly writing an iterator of AddFiles to the
-   * LogStore. This bypasses the Delta transactional protocol, but we assume this is ok as this is
-   * the very first commit and only happens at table conversion which is a one-off process.
+   * Create a large commit on the Delta log by directly writing an iterator of FileActions to the
+   * LogStore. This bypasses the Delta transactional protocol, therefore we forego all optimistic
+   * concurrency benefits. We assume that transaction conflicts should be rare, because this method
+   * is typically used to create new tables.
    */
   protected def commitLarge(
       spark: SparkSession,
       txn: OptimisticTransaction,
-      metadata: Metadata,
-      addFiles: Iterator[AddFile],
+      actions: Iterator[Action],
       op: DeltaOperations.Operation,
-      numFiles: Long,
       context: Map[String, String],
-      metrics: Option[Map[String, String]] = None): Long = {
-    val firstVersion = 0L
+      metrics: Map[String, String]): Long = {
+    val attemptVersion = txn.readVersion + 1
     try {
       val metadata = txn.metadata
       val deltaLog = txn.deltaLog
@@ -233,43 +255,48 @@ trait DeltaCommand extends DeltaLogging {
         operation = op.name,
         operationParameters = op.jsonEncodedValues,
         context,
-        readVersion = None,
+        readVersion = Some(txn.readVersion),
         isolationLevel = Some(Serializable.toString),
         isBlindAppend = Some(false),
-        metrics,
+        Some(metrics),
         userMetadata = txn.getUserMetadata(op))
 
-      val extraActions = Seq(commitInfo, Protocol(), metadata)
-      val actions = extraActions.toIterator ++ addFiles
+      val extraActions = Seq(commitInfo, metadata)
+      // We don't expect commits to have more than 2 billion actions
+      var commitSize: Int = 0
+      val allActions = (extraActions.toIterator ++ actions).map { a =>
+        commitSize += 1
+        a
+      }
       if (txn.readVersion < 0) {
         deltaLog.fs.mkdirs(deltaLog.logPath)
       }
-      deltaLog.store.write(deltaFile(deltaLog.logPath, firstVersion), actions.map(_.json))
+      deltaLog.store.write(deltaFile(deltaLog.logPath, attemptVersion), allActions.map(_.json))
 
-      val currentSnapshot = deltaLog.update()
-      if (currentSnapshot.version != firstVersion) {
-        throw new IllegalStateException(
-          s"The committed version is $firstVersion but the current version is " +
-            s"${currentSnapshot.version}. Please contact Databricks support.")
-      }
+      spark.sessionState.conf.setConf(
+        DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,
+        Some(attemptVersion))
 
-      logInfo(s"Committed delta #$firstVersion to ${deltaLog.logPath}")
+      updateAndCheckpoint(spark, deltaLog, commitSize, attemptVersion)
 
-      try {
-        deltaLog.checkpoint()
-      } catch {
-        case e: IllegalStateException =>
-          logWarning("Failed to checkpoint table state.", e)
-      }
-
-      firstVersion
+      attemptVersion
     } catch {
       case e: java.nio.file.FileAlreadyExistsException =>
         recordDeltaEvent(
           txn.deltaLog,
           "delta.commitLarge.failure",
           data = Map("exception" -> Utils.exceptionString(e), "operation" -> op.name))
-        throw DeltaErrors.commitAlreadyExistsException(firstVersion, txn.deltaLog.logPath)
+        // Actions of a commit which went in before ours
+        val deltaLog = txn.deltaLog
+        val logs = deltaLog.store.readAsIterator(deltaFile(deltaLog.logPath, attemptVersion))
+        try {
+          val winningCommitActions = logs.map(Action.fromJson)
+          val commitInfo = winningCommitActions.collectFirst { case a: CommitInfo => a }
+            .map(ci => ci.copy(version = Some(attemptVersion)))
+          throw new ConcurrentWriteException(commitInfo)
+        } finally {
+          logs.close()
+        }
 
       case NonFatal(e) =>
         recordDeltaEvent(

@@ -21,7 +21,7 @@ import java.io.FileNotFoundException
 
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
-import org.apache.spark.sql.{DataFrame, QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
@@ -155,6 +155,26 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
         sql(s"DESCRIBE DETAIL '$tempDir'"),
         Seq(null),
         Seq("name"))
+    }
+  }
+
+  test("SC-37296: describe detail on temp view") {
+    val view = "detailTestView"
+    withTempView(view) {
+      spark.range(10).createOrReplaceTempView(view)
+      val e = intercept[AnalysisException] { sql(s"DESCRIBE DETAIL $view") }
+      assert(e.getMessage.contains(
+        "`detailTestView` is a view. DESCRIBE DETAIL is only supported for tables."))
+    }
+  }
+
+  test("SC-37296: describe detail on permanent view") {
+    val view = "detailTestView"
+    withView(view) {
+      sql(s"CREATE VIEW $view AS SELECT 1")
+      val e = intercept[AnalysisException] { sql(s"DESCRIBE DETAIL $view") }
+      assert(e.getMessage.contains(
+        "`detailTestView` is a view. DESCRIBE DETAIL is only supported for tables."))
     }
   }
 }

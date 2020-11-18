@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
+// scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.DebugFilesystem // EDGE
 import org.apache.spark.sql.functions.typedLit
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SQLTestUtils
@@ -39,6 +41,7 @@ class EvolvabilitySuite extends EvolvabilitySuiteBase with SQLTestUtils {
   }
 
   testQuietly("future proofing against new features") {
+
     val tempDir = Utils.createTempDir().toString
     Seq(1, 2, 3).toDF().write.format("delta").save(tempDir)
 

@@ -21,12 +21,15 @@ import scala.collection.mutable
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.DeltaErrors
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
 import org.apache.spark.sql.functions.{col, struct}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
 object SchemaUtils {
@@ -959,5 +962,54 @@ object SchemaUtils {
     // The method checkFieldNames doesn't have a valid regex to search for '\n'. That should be
     // fixed in Apache Spark, and we can remove this additional check here.
     names.find(_.contains("\n")).foreach(col => throw DeltaErrors.invalidColumnName(col))
+  }
+
+  /**
+   * Go through the schema to look for unenforceable NOT NULL constraints. By default we'll throw
+   * when they're encountered, but if this is suppressed through SQLConf they'll just be silently
+   * removed.
+   *
+   * Note that this should only be applied to schemas created from explicit user DDL - in other
+   * scenarios, the nullability information may be inaccurate and Delta should always coerce the
+   * nullability flag to true.
+   */
+  def removeUnenforceableNotNullConstraints(schema: StructType, conf: SQLConf): StructType = {
+    val allowUnenforceableNotNulls =
+      conf.getConf(DeltaSQLConf.ALLOW_UNENFORCED_NOT_NULL_CONSTRAINTS)
+
+    def checkField(path: Seq[String], f: StructField, r: Resolver): StructField = f match {
+      case StructField(name, ArrayType(elementType, containsNull), nullable, metadata) =>
+        val nullableElementType = SchemaUtils.typeAsNullable(elementType)
+        if (elementType != nullableElementType && !allowUnenforceableNotNulls) {
+          throw DeltaErrors.nestedNotNullConstraint(
+            prettyFieldName(path :+ f.name), elementType, nestType = "element")
+        }
+        StructField(
+          name, ArrayType(nullableElementType, containsNull), nullable, metadata)
+
+      case f @ StructField(
+          name, MapType(keyType, valueType, containsNull), nullable, metadata) =>
+        val nullableKeyType = SchemaUtils.typeAsNullable(keyType)
+        val nullableValueType = SchemaUtils.typeAsNullable(valueType)
+
+        if (keyType != nullableKeyType && !allowUnenforceableNotNulls) {
+          throw DeltaErrors.nestedNotNullConstraint(
+            prettyFieldName(path :+ f.name), keyType, nestType = "key")
+        }
+        if (valueType != nullableValueType && !allowUnenforceableNotNulls) {
+          throw DeltaErrors.nestedNotNullConstraint(
+            prettyFieldName(path :+ f.name), valueType, nestType = "value")
+        }
+
+        StructField(
+          name,
+          MapType(nullableKeyType, nullableValueType, containsNull),
+          nullable,
+          metadata)
+
+      case s: StructField => s
+    }
+
+    SchemaUtils.transformColumns(schema)(checkField)
   }
 }

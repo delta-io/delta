@@ -18,10 +18,11 @@ package org.apache.spark.sql.delta
 
 import java.util.{HashMap, Locale}
 
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.schema.SchemaUtils
 
-import org.apache.spark.sql.AnalysisException
+import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.util.{DateTimeConstants, IntervalUtils}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
@@ -59,12 +60,18 @@ case class DeltaConfig[T](
     validate(value)
     key -> value
   }
+
+  /**
+   * SQL configuration to set for ensuring that all newly created tables have this table property.
+   */
+  def defaultTablePropertyKey: String = DeltaConfigs.sqlConfPrefix + key.stripPrefix("delta.")
 }
 
 /**
  * Contains list of reservoir configs and validation checks.
  */
 object DeltaConfigs extends DeltaLogging {
+
 
   /**
    * Convert a string to [[CalendarInterval]]. This method is case-insensitive and will throw
@@ -126,6 +133,9 @@ object DeltaConfigs extends DeltaLogging {
    */
   def validateConfigurations(configurations: Map[String, String]): Map[String, String] = {
     configurations.map {
+      case kv @ (key, value) if key.toLowerCase(Locale.ROOT).startsWith("delta.constraints.") =>
+        // This is a CHECK constraint, we should allow it.
+        kv
       case (key, value) if key.toLowerCase(Locale.ROOT).startsWith("delta.") =>
         Option(entries.get(key.toLowerCase(Locale.ROOT).stripPrefix("delta.")))
           .map(_(value))
@@ -145,34 +155,12 @@ object DeltaConfigs extends DeltaLogging {
   }
 
   /**
-   * Verify that the protocol version of the table satisfies the version requirements of all the
-   * configurations to be set.
+   * Table properties for new tables can be specified through SQL Configurations using the
+   * `sqlConfPrefix`. This method checks to see if any of the configurations exist among the SQL
+   * configurations and merges them with the user provided configurations. User provided configs
+   * take precedence.
    */
-  def verifyProtocolVersionRequirements(
-      configurations: Map[String, String],
-      current: Protocol): Unit = {
-    configurations.foreach { config =>
-      val key = config._1.toLowerCase(Locale.ROOT).stripPrefix("delta.")
-      if (entries.containsKey(key) && entries.get(key).minimumProtocolVersion.isDefined) {
-        val required = entries.get(key).minimumProtocolVersion.get
-        if (current.minWriterVersion < required.minWriterVersion ||
-          current.minReaderVersion < required.minReaderVersion) {
-          throw new AnalysisException(
-            s"Setting the Delta config ${config._1} requires a protocol version of $required " +
-            s"or above, but the protocol version of the Delta table is $current. " +
-            s"Please upgrade the protocol version of the table before setting this config.")
-        }
-      }
-    }
-  }
-
-  /**
-   * Fetch global default values from SQLConf.
-   */
-  def mergeGlobalConfigs(
-      sqlConfs: SQLConf,
-      tableConf: Map[String, String],
-      protocol: Protocol): Map[String, String] = {
+  def mergeGlobalConfigs(sqlConfs: SQLConf, tableConf: Map[String, String]): Map[String, String] = {
     import collection.JavaConverters._
 
     val globalConfs = entries.asScala.flatMap { case (key, config) =>
@@ -183,9 +171,7 @@ object DeltaConfigs extends DeltaLogging {
       }
     }
 
-    val updatedConf = globalConfs.toMap ++ tableConf
-    verifyProtocolVersionRequirements(updatedConf, protocol)
-    updatedConf
+    globalConfs.toMap ++ tableConf
   }
 
   /**
@@ -232,6 +218,30 @@ object DeltaConfigs extends DeltaLogging {
   def isValidIntervalConfigValue(i: CalendarInterval): Boolean = {
     i.months == 0 && getMicroSeconds(i) >= 0
   }
+
+  /**
+   * The protocol reader version modelled as a table property. This property is *not* stored as
+   * a table property in the `Metadata` action. It is stored as its own action. Having it modelled
+   * as a table property makes it easier to upgrade, and view the version.
+   */
+  val MIN_READER_VERSION = buildConfig[Int](
+    "minReaderVersion",
+    Action.readerVersion.toString,
+    _.toInt,
+    v => v > 0 && v <= Action.readerVersion,
+    s"needs to be an integer between [1, ${Action.readerVersion}].")
+
+  /**
+   * The protocol reader version modelled as a table property. This property is *not* stored as
+   * a table property in the `Metadata` action. It is stored as its own action. Having it modelled
+   * as a table property makes it easier to upgrade, and view the version.
+   */
+  val MIN_WRITER_VERSION = buildConfig[Int](
+    "minWriterVersion",
+    Action.writerVersion.toString,
+    _.toInt,
+    v => v > 0 && v <= Action.writerVersion,
+    s"needs to be an integer between [1, ${Action.writerVersion}].")
 
   /**
    * The shortest duration we have to keep delta files around before deleting them. We can only
@@ -384,4 +394,26 @@ object DeltaConfigs extends DeltaLogging {
     _ => true,
     "needs to be a boolean.")
 
+  /**
+   * When enabled, we will write file statistics in the checkpoint in JSON format as the "stats"
+   * column.
+   */
+  val CHECKPOINT_WRITE_STATS_AS_JSON = buildConfig[Boolean](
+    "checkpoint.writeStatsAsJson",
+    "true",
+    _.toBoolean,
+    _ => true,
+    "needs to be a boolean.")
+
+  /**
+   * When enabled, we will write file statistics in the checkpoint in the struct format in the
+   * "stats_parsed" column. We will also write partition values as a struct as
+   * "partitionValues_parsed".
+   */
+  val CHECKPOINT_WRITE_STATS_AS_STRUCT = buildConfig[Option[Boolean]](
+    "checkpoint.writeStatsAsStruct",
+    null,
+    v => Option(v).map(_.toBoolean),
+    _ => true,
+    "needs to be a boolean.")
 }

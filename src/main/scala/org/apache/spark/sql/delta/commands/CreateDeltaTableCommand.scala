@@ -16,10 +16,13 @@
 
 package org.apache.spark.sql.delta.commands
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.sql._
@@ -97,7 +100,6 @@ case class CreateDeltaTableCommand(
     val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
     recordDeltaOperation(deltaLog, "delta.ddl.createTable") {
       val txn = deltaLog.startTransaction()
-
       if (query.isDefined) {
         // If the mode is Ignore or ErrorIfExists, the table must not exist, or we would return
         // earlier. And the data should not exist either, to match the behavior of
@@ -110,23 +112,43 @@ case class CreateDeltaTableCommand(
             assertPathEmpty(sparkSession, tableWithLocation)
           }
         }
-        // We are either appending/overwriting with saveAsTable or creating a new table with CTAS
+        // We are either appending/overwriting with saveAsTable or creating a new table with CTAS or
+        // we are creating a table as part of a RunnableCommand
+        query.get match {
+          case writer: WriteIntoDelta =>
+            // In the V2 Writer, methods like "replace" and "createOrReplace" implicitly mean that
+            // the metadata should be changed. This wasn't the behavior for DataFrameWriterV1.
+            if (!isV1Writer) {
+              replaceMetadataIfNecessary(
+                txn, tableWithLocation, options, writer.data.schema.asNullable)
+            }
+            val actions = writer.write(txn, sparkSession)
+            val op = getOperation(txn.metadata, isManagedTable, Some(options))
+            txn.commit(actions, op)
+          case cmd: RunnableCommand =>
+            cmd.run(sparkSession)
+          case other =>
+            // When using V1 APIs, the `other` plan is not yet optimized, therefore, it is safe
+            // to once again go through analysis
+            val data = Dataset.ofRows(sparkSession, other)
 
-        val data = Dataset.ofRows(sparkSession, query.get)
+            // In the V2 Writer, methods like "replace" and "createOrReplace" implicitly mean that
+            // the metadata should be changed. This wasn't the behavior for DataFrameWriterV1.
+            if (!isV1Writer) {
+              replaceMetadataIfNecessary(
+                txn, tableWithLocation, options, other.schema.asNullable)
+            }
+            val actions = WriteIntoDelta(
+              deltaLog = deltaLog,
+              mode = mode,
+              options,
+              partitionColumns = table.partitionColumnNames,
+              configuration = table.properties,
+              data = data).write(txn, sparkSession)
 
-        if (!isV1Writer) {
-          replaceMetadataIfNecessary(txn, tableWithLocation, options, query.get.schema)
+            val op = getOperation(txn.metadata, isManagedTable, Some(options))
+            txn.commit(actions, op)
         }
-        val actions = WriteIntoDelta(
-          deltaLog = deltaLog,
-          mode = mode,
-          options,
-          partitionColumns = table.partitionColumnNames,
-          configuration = table.properties,
-          data = data).write(txn, sparkSession)
-
-        val op = getOperation(txn.metadata, isManagedTable, Some(options))
-        txn.commit(actions, op)
       } else {
         def createTransactionLogOrVerify(): Unit = {
           if (isManagedTable) {
@@ -146,9 +168,10 @@ case class CreateDeltaTableCommand(
             // This is a user provided schema.
             // Doesn't come from a query, Follow nullability invariants.
             val newMetadata = getProvidedMetadata(table, table.schema.json)
+            txn.updateMetadataForNewTable(newMetadata)
 
             val op = getOperation(newMetadata, isManagedTable, None)
-            txn.commit(newMetadata :: Nil, op)
+            txn.commit(Nil, op)
           } else {
             verifyTableMetadata(txn, tableWithLocation)
           }
@@ -187,11 +210,8 @@ case class CreateDeltaTableCommand(
       // if it already exists.
       // Note that someone may have dropped and recreated the table in a separate location in the
       // meantime... Unfortunately we can't do anything there at the moment, because Hive sucks.
-      val tableWithDefaultOptions = tableWithLocation.copy(
-        schema = new StructType(),
-        partitionColumnNames = Nil,
-        tracksPartitionsInCatalog = true)
-      updateCatalog(sparkSession, tableWithDefaultOptions)
+      logInfo(s"Table is path-based table: $tableByPath. Update catalog with mode: $operation")
+      updateCatalog(sparkSession, tableWithLocation, deltaLog.snapshot)
 
       Nil
     }
@@ -317,25 +337,39 @@ case class CreateDeltaTableCommand(
    * on the table operation, and whether we have reached here through legacy code or DataSourceV2
    * code paths.
    */
-  private def updateCatalog(spark: SparkSession, table: CatalogTable): Unit = operation match {
-    case _ if tableByPath => // do nothing with the metastore if this is by path
-    case TableCreationModes.Create =>
-      spark.sessionState.catalog.createTable(
-        table,
-        ignoreIfExists = existingTableOpt.isDefined,
-        validateLocation = false)
-    case TableCreationModes.Replace if existingTableOpt.isDefined =>
-      spark.sessionState.catalog.alterTable(table)
-    case TableCreationModes.Replace =>
-      val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
-      throw new CannotReplaceMissingTableException(ident)
-    case TableCreationModes.CreateOrReplace if existingTableOpt.isDefined =>
-      spark.sessionState.catalog.alterTable(table)
-    case TableCreationModes.CreateOrReplace =>
-      spark.sessionState.catalog.createTable(
-        table,
-        ignoreIfExists = false,
-        validateLocation = false)
+  private def updateCatalog(
+      spark: SparkSession,
+      table: CatalogTable,
+      snapshot: Snapshot): Unit = {
+    val cleaned = cleanupTableDefinition(table, snapshot)
+    operation match {
+      case _ if tableByPath => // do nothing with the metastore if this is by path
+      case TableCreationModes.Create =>
+        spark.sessionState.catalog.createTable(
+          cleaned,
+          ignoreIfExists = existingTableOpt.isDefined,
+          validateLocation = false)
+      case TableCreationModes.Replace | TableCreationModes.CreateOrReplace
+          if existingTableOpt.isDefined =>
+        spark.sessionState.catalog.alterTable(table)
+      case TableCreationModes.Replace =>
+        val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
+        throw new CannotReplaceMissingTableException(ident)
+      case TableCreationModes.CreateOrReplace =>
+        spark.sessionState.catalog.createTable(
+          cleaned,
+          ignoreIfExists = false,
+          validateLocation = false)
+    }
+  }
+
+  /** Clean up the information we pass on to store in the catalog. */
+  private def cleanupTableDefinition(table: CatalogTable, snapshot: Snapshot): CatalogTable = {
+    table.copy(
+      schema = new StructType(),
+      properties = Map.empty,
+      partitionColumnNames = Nil,
+      tracksPartitionsInCatalog = true)
   }
 
   /**
@@ -360,7 +394,7 @@ case class CreateDeltaTableCommand(
     if (txn.readVersion > -1L && isReplace && !dontOverwriteSchema) {
       // When a table already exists, and we're using the DataFrameWriterV2 API to replace
       // or createOrReplace a table, we blindly overwrite the metadata.
-      txn.updateMetadata(getProvidedMetadata(table, schema.asNullable.json))
+      txn.updateMetadataForNewTable(getProvidedMetadata(table, schema.json))
     }
   }
 
