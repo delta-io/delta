@@ -17,12 +17,8 @@
 #
 
 import os
-import fnmatch
 import subprocess
 from os import path
-import random
-import string
-import tempfile
 
 
 def run_sbt_tests(root_dir):

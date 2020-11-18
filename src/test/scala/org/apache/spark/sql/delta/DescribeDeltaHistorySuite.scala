@@ -390,6 +390,7 @@ trait DescribeDeltaHistorySuiteBase
   }
 
   test("operations - streaming append with transaction ids") {
+
     val tempDir = Utils.createTempDir().toString
     val checkpoint = Utils.createTempDir().toString
 

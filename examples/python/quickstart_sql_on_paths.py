@@ -1,12 +1,6 @@
 
-from pyspark.sql import Column, DataFrame, SparkSession, functions
-from pyspark.sql.functions import *
-from py4j.java_collections import MapConverter
-from delta.tables import *
+from pyspark.sql import SparkSession
 import shutil
-import threading
-import tempfile
-import os
 
 table_dir = "/tmp/delta-table"
 # Clear any previous runs

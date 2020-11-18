@@ -80,6 +80,10 @@ statement
         (LIMIT limit=INTEGER_VALUE)?                                    #describeDeltaHistory
     | CONVERT TO DELTA table=qualifiedName
         (PARTITIONED BY '(' colTypeList ')')?                           #convert
+    | ALTER TABLE table=qualifiedName ADD CONSTRAINT name=identifier
+      constraint                                                        #addTableConstraint
+    | ALTER TABLE table=qualifiedName
+        DROP CONSTRAINT (IF EXISTS)? name=identifier                    #dropTableConstraint
     | .*?                                                               #passThrough
     ;
 
@@ -119,27 +123,44 @@ number
     | MINUS? BIGDECIMAL_LITERAL       #bigDecimalLiteral
     ;
 
+constraint
+    : CHECK '(' checkExprToken+ ')'                                 #checkConstraint
+    ;
+
+// We don't have an expression rule in our grammar here, so we just grab the tokens and defer
+// parsing them to later.
+checkExprToken
+    :  .+?
+    ;
+
 // Add keywords here so that people's queries don't break if they have a column name as one of
 // these tokens
 nonReserved
     : VACUUM | RETAIN | HOURS | DRY | RUN
     | CONVERT | TO | DELTA | PARTITIONED | BY
     | DESC | DESCRIBE | LIMIT | DETAIL
-    | GENERATE | FOR | TABLE
+    | GENERATE | FOR | TABLE | CHECK | EXISTS
     ;
 
 // Define how the keywords above should appear in a user's SQL statement.
+ADD: 'ADD';
+ALTER: 'ALTER';
 BY: 'BY';
+CHECK: 'CHECK';
 COMMENT: 'COMMENT';
+CONSTRAINT: 'CONSTRAINT';
 CONVERT: 'CONVERT';
 DELTA: 'DELTA';
 DESC: 'DESC';
 DESCRIBE: 'DESCRIBE';
 DETAIL: 'DETAIL';
+DROP: 'DROP';
+EXISTS: 'EXISTS';
 GENERATE: 'GENERATE';
 DRY: 'DRY';
 HISTORY: 'HISTORY';
 HOURS: 'HOURS';
+IF: 'IF';
 LIMIT: 'LIMIT';
 MINUS: '-';
 NOT: 'NOT' | '!';
@@ -151,6 +172,18 @@ RETAIN: 'RETAIN';
 RUN: 'RUN';
 TO: 'TO';
 VACUUM: 'VACUUM';
+
+// Multi-character operator tokens need to be defined even though we don't explicitly reference
+// them so that they can be recognized as single tokens when parsing. If we split them up and
+// end up with expression text like 'a ! = b', Spark won't be able to parse '! =' back into the
+// != operator.
+EQ  : '=' | '==';
+NSEQ: '<=>';
+NEQ : '<>';
+NEQJ: '!=';
+LTE : '<=' | '!>';
+GTE : '>=' | '!<';
+CONCAT_PIPE: '||';
 
 STRING
     : '\'' ( ~('\''|'\\') | ('\\' .) )* '\''

@@ -17,9 +17,11 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.sql.{AnalysisException, Row}
+import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.types.StructType
 
@@ -59,6 +61,52 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
 
     val merge = s"MERGE INTO $tgt USING $src ON $cond\n" + clauses.map(_.sql).mkString("\n")
     sql(merge)
+  }
+
+  override protected def testUnlimitedClauses(
+      name: String)(
+      source: Seq[(Int, Int)],
+      target: Seq[(Int, Int)],
+      mergeOn: String,
+      mergeClauses: MergeClause*)(
+      result: Seq[(Int, Int)]): Unit = {
+    Seq(true, false).foreach { isPartitioned =>
+      ignore(s"unlimited clauses - $name - isPartitioned: $isPartitioned ") {
+        withKeyValueData(source, target, isPartitioned) { case (sourceName, targetName) =>
+          withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "true") {
+            executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
+          }
+          val deltaPath = if (targetName.startsWith("delta.`")) {
+            targetName.stripPrefix("delta.`").stripSuffix("`")
+          } else targetName
+          checkAnswer(
+            readDeltaTable(deltaPath),
+            result.map { case (k, v) => Row(k, v) })
+        }
+      }
+    }
+  }
+
+  override protected def testAnalysisErrorsInUnlimitedClauses(
+      name: String)(
+      mergeOn: String,
+      mergeClauses: MergeClause*)(
+      errorStrs: Seq[String],
+      notErrorStrs: Seq[String] = Nil): Unit = {
+    ignore(s"unlimited caluses - analysis errors - $name") {
+      withKeyValueData(
+        source = Seq.empty,
+        target = Seq.empty,
+        sourceKeyValueNames = ("key", "srcValue"),
+        targetKeyValueNames = ("key", "tgtValue")
+      ) { case (sourceName, targetName) =>
+        val errMsg = intercept[AnalysisException] {
+          executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
+        }.getMessage
+        errorStrs.foreach { s => errorContains(errMsg, s) }
+        notErrorStrs.foreach { s => errorNotContains(errMsg, s) }
+      }
+    }
   }
 
   test("CTE as a source in MERGE") {
@@ -177,6 +225,89 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
           Row(10, 10) :: // Insert
           Nil)
       }
+    }
+  }
+
+  test("negative case - omit multiple insert conditions") {
+    withTable("source") {
+      Seq((1, 1), (0, 3)).toDF("srcKey", "srcValue").write.saveAsTable("source")
+      append(Seq((2, 2), (1, 4)).toDF("trgKey", "trgValue"))
+
+      // TODO: In DBR we throw AnalysisException, but in OSS Delta we throw ParseException.
+      //       The error message is also slightly different. Here we just catch general Exception.
+      //       We should update this test when OSS delta upgrades to Spark 3.1.
+
+      // only the last NOT MATCHED clause can omit the condition
+      val e = intercept[Exception](
+        sql(s"""
+          |MERGE INTO delta.`$tempPath`
+          |USING source
+          |ON srcKey = trgKey
+          |WHEN NOT MATCHED THEN
+          |  INSERT (trgValue, trgKey) VALUES (srcValue, srcKey + 1)
+          |WHEN NOT MATCHED THEN
+          |  INSERT (trgValue, trgKey) VALUES (srcValue, srcKey)
+        """.stripMargin))
+      assert(e.getMessage.contains("only the last NOT MATCHED clause can omit the condition") ||
+        e.getMessage.contains("There should be at most 1 'WHEN NOT MATCHED' clause"))
+    }
+  }
+
+  // TODO: remove after Delta runs on Spark 3.1 which has unlimited clause support
+  test("negative case - too many clauses") {
+    withTable("source") {
+      Seq((1, 1), (0, 3)).toDF("srcKey", "srcValue").write.saveAsTable("source")
+      append(Seq((2, 2), (1, 4)).toDF("trgKey", "trgValue"))
+
+      // More than 2 match clauses are not allowed
+      var e = intercept[ParseException](
+        sql(s"""
+          |MERGE INTO delta.`$tempPath`
+          |USING source
+          |ON srcKey = trgKey
+          |WHEN MATCHED AND trgKey = 1 THEN
+          |  UPDATE SET trgKey = srcKey, trgValue = srcValue
+          |WHEN MATCHED AND trgValue = 2 THEN
+          |  UPDATE SET trgKey = srcKey, trgValue = srcValue + 1
+          |WHEN MATCHED AND trgValue = 3 THEN
+          |  DELETE
+          |WHEN NOT MATCHED THEN
+          |  INSERT (trgValue, trgKey) VALUES (srcValue, srcKey)
+        """.stripMargin))
+      assert(e.getMessage.contains("There must be at most two match clauses in a MERGE query") ||
+        e.getMessage.contains("There should be at most 2 'WHEN MATCHED' clauses"))
+
+      // Multiple update actions not allowed
+      e = intercept[ParseException](
+        sql(s"""
+          |MERGE INTO delta.`$tempPath`
+          |USING source
+          |ON srcKey = trgKey
+          |WHEN MATCHED AND trgKey = 1 THEN
+          |  UPDATE SET trgKey = srcKey, trgValue = srcValue
+          |WHEN MATCHED AND trgValue = 2 THEN
+          |  UPDATE SET trgKey = srcKey, trgValue = srcValue + 1
+          |WHEN NOT MATCHED THEN
+          |  INSERT (trgValue, trgKey) VALUES (srcValue, srcKey)
+        """.stripMargin))
+      assert(e.getMessage.contains("INSERT, UPDATE and DELETE cannot appear twice") ||
+        e.getMessage.contains("UPDATE and DELETE can appear at most once in MATCHED clauses"))
+
+      // Multiple delete actions not allowed
+      e = intercept[ParseException](
+        sql(s"""
+          |MERGE INTO delta.`$tempPath`
+          |USING source
+          |ON srcKey = trgKey
+          |WHEN MATCHED AND trgKey = 1 THEN
+          |  DELETE
+          |WHEN MATCHED AND trgValue = 2 THEN
+          |  DELETE
+          |WHEN NOT MATCHED THEN
+          |  INSERT (trgValue, trgKey) VALUES (srcValue, srcKey)
+        """.stripMargin))
+      assert(e.getMessage.contains("INSERT, UPDATE and DELETE cannot appear twice") ||
+        e.getMessage.contains("UPDATE and DELETE can appear at most once in MATCHED clauses"))
     }
   }
 }

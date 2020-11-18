@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.net.URI
 
+import scala.collection.mutable
+
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -162,7 +164,7 @@ class Snapshot(
         throw DeltaErrors.actionNotFoundException("protocol", version)
       }
       logMissingActionWarning("protocol")
-      _computedState = _computedState.copy(protocol = Protocol())
+      _computedState = _computedState.copy(protocol = Protocol(spark, None))
     }
     if (_computedState.metadata == null) {
       recordDeltaEvent(
@@ -215,6 +217,19 @@ class Snapshot(
   /** Number of columns to collect stats on for data skipping */
   lazy val numIndexedCols: Int = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(metadata)
 
+  /** Return the set of properties of the table. */
+  def getProperties: mutable.HashMap[String, String] = {
+    val base = new mutable.HashMap[String, String]()
+    metadata.configuration.foreach { case (k, v) =>
+      if (k != "path") {
+        base.put(k, v)
+      }
+    }
+    base.put(Protocol.MIN_READER_VERSION_PROP, protocol.minReaderVersion.toString)
+    base.put(Protocol.MIN_WRITER_VERSION_PROP, protocol.minWriterVersion.toString)
+    base
+  }
+
   // Given the list of files from `LogSegment`, create respective file indices to help create
   // a DataFrame and short-circuit the many file existence and partition schema inference checks
   // that exist in DataSource.resolveRelation().
@@ -247,7 +262,7 @@ class Snapshot(
   /**
    * Loads the file indices into a Dataset that can be used for LogReplay.
    */
-  private def loadActions: Dataset[SingleAction] = {
+  protected def loadActions: Dataset[SingleAction] = {
     val dfs = fileIndices.map { index => Dataset[SingleAction](spark, indexToRelation(index)) }
     dfs.reduceOption(_.union(_)).getOrElse(emptyActions)
   }
@@ -292,7 +307,9 @@ object Snapshot extends DeltaLogging {
   private[delta] def canonicalizePath(path: String, hadoopConf: Configuration): String = {
     val hadoopPath = new Path(new URI(path))
     if (hadoopPath.isAbsoluteAndSchemeAuthorityNull) {
+      // scalastyle:off FileSystemGet
       val fs = FileSystem.get(hadoopConf)
+      // scalastyle:on FileSystemGet
       fs.makeQualified(hadoopPath).toUri.toString
     } else {
       // return untouched if it is a relative path or is already fully qualified
@@ -349,8 +366,6 @@ object Snapshot extends DeltaLogging {
   }
 
 
-  private lazy val emptyMetadata = udf(() => Metadata())
-  private lazy val defaultProtocol = udf(() => Protocol())
   implicit private def stateEncoder: Encoder[State] = {
     _stateEncoder.copy()
   }
@@ -370,8 +385,16 @@ class InitialSnapshot(
     override val metadata: Metadata)
   extends Snapshot(logPath, -1, LogSegment.empty(logPath), -1, deltaLog, -1, None) {
 
+  def this(logPath: Path, deltaLog: DeltaLog) = this(
+    logPath,
+    deltaLog,
+    Metadata(configuration = DeltaConfigs.mergeGlobalConfigs(
+      SparkSession.active.sessionState.conf, Map.empty))
+  )
+
   override def state: Dataset[SingleAction] = emptyActions
   override protected lazy val computedState: Snapshot.State = {
-    Snapshot.State(Protocol(), metadata, Nil, 0L, 0L, 1L, 1L, 0L, 0L)
+    val protocol = Protocol.forNewTable(spark, metadata)
+    Snapshot.State(protocol, metadata, Nil, 0L, 0L, 1L, 1L, 0L, 0L)
   }
 }
