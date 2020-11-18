@@ -31,16 +31,14 @@ import org.apache.spark.SparkContext
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.encoders.{ExpressionEncoder, RowEncoder}
-import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, Expression, Literal, PredicateHelper, UnsafeProjection}
-import org.apache.spark.sql.catalyst.expressions.BasePredicate
-import org.apache.spark.sql.catalyst.expressions.NamedExpression
+import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.codegen._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.types.{StructField, StructType}
+import org.apache.spark.sql.types.{BooleanType, StructField, StructType}
 
 case class MergeDataSizes(
   @JsonDeserialize(contentAs = classOf[java.lang.Long])
@@ -453,6 +451,21 @@ case class MergeIntoCommand(
       "fullOuter"
     }
 
+    // targetOnlyPredicates should not include partition columns since
+    // filesToRewrite has been filtered by partitions already
+    val (targetOnlyPredicates, otherPredicates) =
+      splitConjunctivePredicates(condition).partition { expr =>
+        expr.references.subsetOf(target.outputSet) &&
+          !DeltaTableUtils.isPredicatePartitionColumnsOnly(
+            expr, deltaTxn.metadata.partitionColumns, spark)
+      }
+
+    val rewriteWithUnion = isMatchedOnly &&
+      spark.conf.get(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED) &&
+      spark.conf.get(DeltaSQLConf.MERGE_MATCHED_ONLY_REWRITE_WITH_UNION_ENABLED) &&
+      targetOnlyPredicates.nonEmpty
+
+
     logDebug(s"""writeAllChanges using $joinType join:
                 |  source.output: ${source.outputSet}
                 |  target.output: ${target.outputSet}
@@ -471,11 +484,20 @@ case class MergeIntoCommand(
     // with value `true`, one to each side of the join. Whether this field is null or not after
     // the outer join, will allow us to identify whether the resultant joined row was a
     // matched inner result or an unmatched result with null on one side.
-    val joinedDF = {
-      val sourceDF = Dataset.ofRows(spark, source)
-        .withColumn(SOURCE_ROW_PRESENT_COL, new Column(incrSourceRowCountExpr))
-      val targetDF = Dataset.ofRows(spark, newTarget)
-        .withColumn(TARGET_ROW_PRESENT_COL, lit(true))
+    val sourceDF = Dataset.ofRows(spark, source)
+      .withColumn(SOURCE_ROW_PRESENT_COL, new Column(incrSourceRowCountExpr))
+    val targetDF = Dataset.ofRows(spark, newTarget)
+      .withColumn(TARGET_ROW_PRESENT_COL, lit(true))
+    val joinedDF = if (rewriteWithUnion) {
+      // Remove target only predicates to filter conditions instead of join conditions
+      // in right outer join, then union back these rows here we filtered out.
+      // This rewriting could highly reduce the size of shuffle data.
+      // Especially for partition table which the targetOnlyPredicates contains partition columns.
+      sourceDF.join(targetDF, new Column(otherPredicates.reduceLeftOption(And)
+        .getOrElse(Literal(true, BooleanType))), joinType)
+        .filter(new Column(targetOnlyPredicates.reduceLeftOption(And)
+          .getOrElse(Literal(true, BooleanType))))
+    } else {
       sourceDF.join(targetDF, new Column(condition), joinType)
     }
 
@@ -526,8 +548,17 @@ case class MergeIntoCommand(
       joinedRowEncoder = joinedRowEncoder,
       outputRowEncoder = outputRowEncoder)
 
-    val outputDF =
+    val mergeDF =
       Dataset.ofRows(spark, joinedPlan).mapPartitions(processor.processPartition)(outputRowEncoder)
+    val outputDF = if (rewriteWithUnion) {
+      val targetDF = Dataset.ofRows(spark, newTarget)
+      val nonMergeDF = targetDF.filter(new Column(
+        Not(EqualNullSafe(targetOnlyPredicates.reduceLeft(And), Literal(true, BooleanType)))))
+      mergeDF.union(nonMergeDF)
+    } else {
+      mergeDF
+    }
+
     logDebug("writeAllChanges: join output plan:\n" + outputDF.queryExecution)
 
     // Write to Delta

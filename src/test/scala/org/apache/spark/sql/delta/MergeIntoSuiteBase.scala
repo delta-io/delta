@@ -19,10 +19,14 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.lang.{Integer => JInt}
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.scalatest.BeforeAndAfterEach
 
+import org.apache.spark.scheduler.{SparkListener, SparkListenerEvent}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.execution.SparkPlanInfo
+import org.apache.spark.sql.execution.ui.SparkListenerSQLExecutionStart
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.execution.adaptive.DisableAdaptiveExecution
 import org.apache.spark.sql.internal.SQLConf
@@ -903,6 +907,22 @@ abstract class MergeIntoSuiteBase
 
     append(target.toDF(targetKeyValueNames._1, targetKeyValueNames._2),
       if (isKeyPartitioned) Seq(targetKeyValueNames._1) else Nil)
+    withTempView("source") {
+      source.toDF(sourceKeyValueNames._1, sourceKeyValueNames._2).createOrReplaceTempView("source")
+      thunk("source", s"delta.`$tempPath`")
+    }
+  }
+
+  protected def withKeyValueStringData(
+      source: Seq[(Int, String)],
+      target: Seq[(Int, String, Int)],
+      isKeyPartitioned: Boolean = false,
+      sourceKeyValueNames: (String, String) = ("key", "value"),
+      targetKeyValueNames: (String, String, String) = ("key", "value", "part"))(
+      thunk: (String, String) => Unit = null): Unit = {
+
+    append(target.toDF(targetKeyValueNames._1, targetKeyValueNames._2, targetKeyValueNames._3),
+      if (isKeyPartitioned) Seq(targetKeyValueNames._3) else Nil)
     withTempView("source") {
       source.toDF(sourceKeyValueNames._1, sourceKeyValueNames._2).createOrReplaceTempView("source")
       thunk("source", s"delta.`$tempPath`")
@@ -1957,6 +1977,113 @@ abstract class MergeIntoSuiteBase
     result = Seq(
       (1, 100), // updated
       (3, 30)   // existed previously
+    )
+  )
+
+  protected def testMatchedOnlyOptimizationRewriteWithUnion(
+      name: String)(
+      source: Seq[(Int, String)],
+      target: Seq[(Int, String, Int)],
+      mergeOn: String,
+      mergeClauses: MergeClause*) (
+      result: Seq[(Int, String, Int)],
+      expectedRewrite: Boolean = true): Unit = {
+    Seq(true, false).foreach { rewriteWithUnionEnabled =>
+      Seq(true, false).foreach { isPartitioned =>
+        val s = if (rewriteWithUnionEnabled) "enabled" else "disabled"
+        test(s"matched only merge rewrite with union: " +
+          s"$s - $name - isPartitioned: $isPartitioned ") {
+
+          def containsUnion(sparkPlanInfo: SparkPlanInfo): Boolean = {
+            sparkPlanInfo.nodeName match {
+              case "Union" => true
+              case _ if sparkPlanInfo.children.isEmpty => false
+              case _ => sparkPlanInfo.children.forall(containsUnion)
+            }
+          }
+          var planRewrittenByUnion = false
+          val listener = new SparkListener {
+            override def onOtherEvent(event: SparkListenerEvent): Unit = event match {
+              case e: SparkListenerSQLExecutionStart =>
+                if (!planRewrittenByUnion) { // apply once
+                  planRewrittenByUnion = containsUnion(e.sparkPlanInfo)
+                }
+              case _ => // Ignore
+            }
+          }
+
+          withKeyValueStringData(source, target, isPartitioned) { case (sourceName, targetName) =>
+            withSQLConf(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED.key -> "true",
+              DeltaSQLConf.MERGE_MATCHED_ONLY_REWRITE_WITH_UNION_ENABLED.key
+                -> s"$rewriteWithUnionEnabled") {
+              spark.sparkContext.addSparkListener(listener)
+              executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
+              spark.sparkContext.listenerBus.waitUntilEmpty(TimeUnit.SECONDS.toMillis(10))
+              spark.sparkContext.removeSparkListener(listener)
+              if (rewriteWithUnionEnabled) {
+                // assert plan contains UNION when enable rewrite
+                // and the target only predicate is in the partition columns
+                assert(planRewrittenByUnion === expectedRewrite)
+              } else {
+                assert(!planRewrittenByUnion)
+              }
+              planRewrittenByUnion = false // reset
+            }
+            val deltaPath = if (targetName.startsWith("delta.`")) {
+              targetName.stripPrefix("delta.`").stripSuffix("`")
+            } else targetName
+            checkAnswer(
+              readDeltaTable(deltaPath),
+              result.map { case (k, v, p) => Row(k, v, p) })
+          }
+        }
+      }
+    }
+  }
+
+  testMatchedOnlyOptimizationRewriteWithUnion("with update") (
+    source = Seq((1, "100"), (3, "300"), (5, "500")),
+    target = Seq((1, "10", 1), (2, "20", 2), (3, "30", 3)),
+    mergeOn = "s.key = t.key AND t.key % 2 = 1",
+    update("t.key = s.key, t.value = s.value")) (
+    result = Seq(
+      (1, "100", 1), // updated
+      (2, "20", 2), // existed previously
+      (3, "300", 3) // updated
+    )
+  )
+
+  testMatchedOnlyOptimizationRewriteWithUnion("with delete") (
+    source = Seq((1, "100"), (3, "300"), (5, "500")),
+    target = Seq((1, "10", 1), (2, "20", 2), (3, "30", 3)),
+    mergeOn = "s.key = t.key AND t.key % 2 = 1",
+    delete()) (
+    result = Seq(
+      (2, "20", 2) // existed previously
+    )
+  )
+
+  testMatchedOnlyOptimizationRewriteWithUnion("with update and delete")(
+    source = Seq((1, "100"), (3, "300"), (5, "500")),
+    target = Seq((1, "10", 1), (3, "30", 3), (5, "30", 5)),
+    mergeOn = "s.key = t.key",
+    update("t.value = s.value", "t.key < 3"), delete("t.key > 3")) (
+    result = Seq(
+      (1, "100", 1), // updated
+      (3, "30", 3)   // existed previously
+    ),
+    expectedRewrite = false // no target only predicates in mergeOn
+  )
+
+  testMatchedOnlyOptimizationRewriteWithUnion("with non-NullIntolerant") (
+    source = Seq((1, "100"), (3, "300"), (5, "500")),
+    target = Seq((1, "10", 1), (2, null, 2), (3, "30", 3)),
+    mergeOn = "s.key = t.key AND round(t.value) < 100",
+    update("t.key = s.key, t.value = s.value")) (
+    result = Seq(
+      (1, "100", 1), // updated
+      (2, null, 2), // existed previously
+      (3, "300", 3) // updated
     )
   )
 
