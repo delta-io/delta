@@ -20,11 +20,14 @@ import scala.collection.mutable.ListBuffer
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.constraints.{Constraints, DeltaInvariantCheckerExec}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.SparkException
 import org.apache.spark.sql.Dataset
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
 import org.apache.spark.sql.execution._
@@ -129,7 +132,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
     val committer = getCommitter(outputPath)
 
-    val invariants = Invariants.getFromSchema(metadata.schema, spark)
+    val constraints = Constraints.getAll(metadata, spark)
 
     SQLExecution.withNewExecutionId(queryExecution) {
       val outputSpec = FileFormatWriter.OutputSpec(
@@ -137,7 +140,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         Map.empty,
         output)
 
-      val physicalPlan = DeltaInvariantCheckerExec(queryExecution.executedPlan, invariants)
+      val physicalPlan =
+        DeltaInvariantCheckerExec(queryExecution.executedPlan, constraints, spark)
 
       val statsTrackers: ListBuffer[WriteJobStatsTracker] = ListBuffer()
 
@@ -149,17 +153,28 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         statsTrackers.append(basicWriteJobStatsTracker)
       }
 
-      FileFormatWriter.write(
-        sparkSession = spark,
-        plan = physicalPlan,
-        fileFormat = snapshot.fileFormat, // TODO doesn't support changing formats.
-        committer = committer,
-        outputSpec = outputSpec,
-        hadoopConf = spark.sessionState.newHadoopConfWithOptions(metadata.configuration),
-        partitionColumns = partitioningColumns,
-        bucketSpec = None,
-        statsTrackers = statsTrackers,
-        options = Map.empty)
+      try {
+        FileFormatWriter.write(
+          sparkSession = spark,
+          plan = physicalPlan,
+          fileFormat = snapshot.fileFormat, // TODO doesn't support changing formats.
+          committer = committer,
+          outputSpec = outputSpec,
+          hadoopConf = spark.sessionState.newHadoopConfWithOptions(metadata.configuration),
+          partitionColumns = partitioningColumns,
+          bucketSpec = None,
+          statsTrackers = statsTrackers,
+          options = Map.empty)
+      } catch {
+        case s: SparkException =>
+          // Pull an InvariantViolationException up to the top level if it was the root cause.
+          val violationException = ExceptionUtils.getRootCause(s)
+          if (violationException.isInstanceOf[InvariantViolationException]) {
+            throw violationException
+          } else {
+            throw s
+          }
+      }
     }
 
     committer.addedStatuses

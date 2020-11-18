@@ -40,6 +40,16 @@ import org.apache.spark.util.SerializableConfiguration
  */
 object GenerateSymlinkManifest extends GenerateSymlinkManifestImpl
 
+// A separate singleton to avoid creating encoders from scratch every time
+object GenerateSymlinkManifestUtils extends DeltaLogging {
+  private[hooks] lazy val mapEncoder = try {
+    ExpressionEncoder[Map[String, String]]()
+  } catch {
+    case e: Throwable =>
+      logError(e.getMessage, e)
+      throw e
+  }
+}
 
 trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with Serializable {
   val CONFIG_NAME_ROOT = "compatibility.symlinkFormatManifest"
@@ -96,8 +106,8 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
       val partitionValuesOfRemovedFiles =
         txnReadSnapshot.allFiles.join(removedFileNames, "path").select("partitionValues").persist()
       try {
-        val partitionsOfRemovedFiles =
-          partitionValuesOfRemovedFiles.as[Map[String, String]].collect().toSet
+        val partitionsOfRemovedFiles = partitionValuesOfRemovedFiles
+          .as[Map[String, String]](GenerateSymlinkManifestUtils.mapEncoder).collect().toSet
 
         // Get the files present in the updated partitions
         val partitionsUpdated: Set[Map[String, String]] =

@@ -242,6 +242,26 @@ trait DeltaVacuumSuiteBase extends QueryTest
     }
   }
 
+  test("parallel file delete") {
+    withEnvironment { (tempDir, clock) =>
+      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath, clock)
+      withSQLConf("spark.databricks.delta.vacuum.parallelDelete.enabled" -> "true") {
+        gcTest(deltaLog, clock)(
+          CreateFile("file1.txt", commitToActionLog = true),
+          CreateFile("file2.txt", commitToActionLog = true),
+          LogicallyDeleteFile("file1.txt"),
+          CheckFiles(Seq("file1.txt", "file2.txt")),
+          AdvanceClock(defaultTombstoneInterval + 1000),
+          GC(dryRun = false, Seq(tempDir)),
+          CheckFiles(Seq("file1.txt"), exist = false),
+          CheckFiles(Seq("file2.txt")),
+          GC(dryRun = false, Seq(tempDir)), // shouldn't throw an error with no files to delete
+          CheckFiles(Seq("file2.txt"))
+        )
+      }
+    }
+  }
+
   test("retention duration must be greater than 0") {
     withEnvironment { (tempDir, clock) =>
       val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath, clock)

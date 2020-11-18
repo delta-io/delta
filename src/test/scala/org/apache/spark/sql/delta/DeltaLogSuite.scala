@@ -355,7 +355,8 @@ class DeltaLogSuite extends QueryTest
             } else {
               "metadata"
             }
-            val corruptedCheckpointData = spark.read.parquet(checkpointPath.toString)
+            val corruptedCheckpointData = spark.read.schema(SingleAction.encoder.schema)
+              .parquet(checkpointPath.toString)
               .where(s"add is not null or $takeAction is not null")
               .as[SingleAction].collect()
 

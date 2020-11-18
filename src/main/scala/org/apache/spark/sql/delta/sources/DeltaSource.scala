@@ -18,17 +18,19 @@ package org.apache.spark.sql.delta.sources
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.FileNotFoundException
+import java.sql.Timestamp
 
 import scala.util.matching.Regex
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTableUtils, DeltaTimeTravelSpec, StartingVersion, StartingVersionLatest}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.util.{DateTimeUtils, TimestampFormatter}
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
-import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.connector.read.streaming
 import org.apache.spark.sql.connector.read.streaming.{ReadAllAvailable, ReadLimit, ReadMaxFiles, SupportsAdmissionControl}
 import org.apache.spark.sql.execution.streaming._
@@ -113,8 +115,8 @@ case class DeltaSource(
 
     /** Returns matching files that were added on or after startVersion among delta logs. */
     def filterAndIndexDeltaLogs(startVersion: Long): Iterator[IndexedFile] = {
-      deltaLog.getChanges(startVersion).flatMap { case (version, actions) =>
-        val addFiles = verifyStreamHygieneAndFilterAddFiles(actions)
+      deltaLog.getChanges(startVersion, options.failOnDataLoss).flatMap { case (version, actions) =>
+        val addFiles = verifyStreamHygieneAndFilterAddFiles(actions, version)
         Iterator.single(IndexedFile(version, -1, null)) ++ addFiles
           .map(_.asInstanceOf[AddFile])
           .zipWithIndex.map { case (action, index) =>
@@ -177,12 +179,16 @@ case class DeltaSource(
 
   private def getStartingOffset(
       limits: Option[AdmissionLimits] = Some(new AdmissionLimits())): Option[Offset] = {
-    val version = deltaLog.snapshot.version
+
+    val (version, isStartingVersion) = getStartingVersion match {
+      case Some(v) => (v, false)
+      case None => (deltaLog.snapshot.version, true)
+    }
     if (version < 0) {
       return None
     }
     val last = iteratorLast(
-      getChangesWithRateLimit(version, -1L, isStartingVersion = true, limits))
+      getChangesWithRateLimit(version, -1L, isStartingVersion = isStartingVersion, limits))
     if (last.isEmpty) {
       return None
     }
@@ -240,9 +246,11 @@ case class DeltaSource(
       "latestOffset(Offset, ReadLimit) should be called instead of this method")
   }
 
-  private def verifyStreamHygieneAndFilterAddFiles(actions: Seq[Action]): Seq[Action] = {
+  private def verifyStreamHygieneAndFilterAddFiles(
+    actions: Seq[Action],
+    version: Long): Seq[Action] = {
     var seenFileAdd = false
-    var seenFileRemove = false
+    var removeFileActionPath: Option[String] = None
     val filteredActions = actions.filter {
       case a: AddFile if a.dataChange =>
         seenFileAdd = true
@@ -251,7 +259,9 @@ case class DeltaSource(
         // Created by a data compaction
         false
       case r: RemoveFile if r.dataChange =>
-        seenFileRemove = true
+        if (removeFileActionPath.isEmpty) {
+          removeFileActionPath = Some(r.path)
+        }
         false
       case _: RemoveFile =>
         false
@@ -268,11 +278,11 @@ case class DeltaSource(
       case null => // Some crazy future feature. Ignore
         false
     }
-    if (seenFileRemove) {
+    if (removeFileActionPath.isDefined) {
       if (seenFileAdd && !ignoreChanges) {
-        throw new UnsupportedOperationException(DeltaErrors.DeltaSourceIgnoreChangesErrorMessage)
+        throw DeltaErrors.deltaSourceIgnoreChangesError(version, removeFileActionPath.get)
       } else if (!seenFileAdd && !ignoreDeletes) {
-        throw new UnsupportedOperationException(DeltaErrors.DeltaSourceIgnoreDeleteErrorMessage)
+        throw DeltaErrors.deltaSourceIgnoreDeleteError(version, removeFileActionPath.get)
       }
     }
 
@@ -283,13 +293,18 @@ case class DeltaSource(
     val endOffset = DeltaSourceOffset(tableId, end)
     previousOffset = endOffset // For recovery
     val changes = if (start.isEmpty) {
-      if (endOffset.isStartingVersion) {
-        getChanges(endOffset.reservoirVersion, -1L, isStartingVersion = true)
-      } else {
-        assert(endOffset.reservoirVersion > 0, s"invalid reservoirVersion in endOffset: $endOffset")
-        // Load from snapshot `endOffset.reservoirVersion - 1L` so that `index` in `endOffset`
-        // is still valid.
-        getChanges(endOffset.reservoirVersion - 1L, -1L, isStartingVersion = true)
+      getStartingVersion match {
+        case Some(v) => getChanges(v, -1L, isStartingVersion = false)
+        case _ =>
+          if (endOffset.isStartingVersion) {
+            getChanges(endOffset.reservoirVersion, -1L, isStartingVersion = true)
+          } else {
+            assert(
+              endOffset.reservoirVersion > 0, s"invalid reservoirVersion in endOffset: $endOffset")
+            // Load from snapshot `endOffset.reservoirVersion - 1L` so that `index` in `endOffset`
+            // is still valid.
+            getChanges(endOffset.reservoirVersion - 1L, -1L, isStartingVersion = true)
+          }
       }
     } else {
       val startOffset = DeltaSourceOffset(tableId, start.get)
@@ -369,6 +384,57 @@ case class DeltaSource(
       case composite: CompositeLimit =>
         Some(new AdmissionLimits(Some(composite.files.maxFiles()), composite.bytes.maxBytes))
       case other => throw new UnsupportedOperationException(s"Unknown ReadLimit: $other")
+    }
+  }
+
+  /**
+   * Extracts whether users provided the option to time travel a relation. If a query restarts from
+   * a checkpoint and the checkpoint has recorded the offset, this method should never been called.
+   */
+  private lazy val getStartingVersion: Option[Long] = {
+    /** DeltaOption validates input and ensures that only one is provided. */
+    if (options.startingVersion.isDefined) {
+      val v = options.startingVersion.get match {
+        case StartingVersionLatest =>
+          deltaLog.update().version + 1
+        case StartingVersion(version) =>
+          // when starting from a given version, we don't need the snapshot of this version. So
+          // `mustBeRecreatable` is set to `false`.
+          deltaLog.history.checkVersionExists(version, mustBeRecreatable = false)
+          version
+      }
+      Some(v)
+    } else if (options.startingTimestamp.isDefined) {
+      val tt: DeltaTimeTravelSpec = DeltaTimeTravelSpec(
+        timestamp = options.startingTimestamp.map(Literal(_)),
+        version = None,
+        creationSource = Some("deltaSource"))
+      val tz = spark.sessionState.conf.sessionLocalTimeZone
+      val timestamp = tt.getTimestamp(tz)
+      val commit = deltaLog.history.getActiveCommitAtTime(
+        timestamp,
+        canReturnLastCommit = true,
+        mustBeRecreatable = false,
+        canReturnEarliestCommit = true)
+      if (commit.timestamp >= timestamp.getTime) {
+        // Find the commit at the `timestamp` or the earliest commit
+        Some(commit.version)
+      } else {
+        // commit.timestamp is not the same, so this commit is a commit before the timestamp and
+        // the next version if exists should be the earliest commit after the timestamp.
+        // Note: `getActiveCommitAtTime` has called `update`, so we don't need to call it again.
+        if (commit.version + 1 <= deltaLog.snapshot.version) {
+          Some(commit.version + 1)
+        } else {
+          val commitTs = new Timestamp(commit.timestamp)
+          val timestampFormatter = TimestampFormatter(DateTimeUtils.getTimeZone(tz))
+          val tsString = DateTimeUtils.timestampToString(
+            timestampFormatter, DateTimeUtils.fromJavaTimestamp(commitTs))
+          throw DeltaErrors.timestampGreaterThanLatestCommit(timestamp, commitTs, tsString)
+        }
+      }
+    } else {
+      None
     }
   }
 }

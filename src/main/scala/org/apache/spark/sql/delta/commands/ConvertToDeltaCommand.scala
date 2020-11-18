@@ -354,20 +354,18 @@ abstract class ConvertToDeltaCommandBase(
         schemaString = schema.json,
         partitionColumns = partitionColNames,
         configuration = convertProperties.properties)
-      txn.updateMetadata(metadata)
+      txn.updateMetadataForNewTable(metadata)
 
       val addFilesIter = createDeltaActions(spark, manifest, txn, fs)
-      val metrics = Some(Map[String, String](
+      val metrics = Map[String, String](
         "numConvertedFiles" -> numFiles.toString
-      ))
+      )
 
       commitLarge(
         spark,
         txn,
-        txn.metadata,
-        addFilesIter,
+        Iterator.single(txn.protocol) ++ addFilesIter,
         getOperation(numFiles, convertProperties),
-        numFiles,
         getContext,
         metrics)
     } finally {
@@ -397,7 +395,7 @@ abstract class ConvertToDeltaCommandBase(
     val (partitionOpt, _) = PartitionUtils.parsePartition(
       dir,
       typeInference = false,
-      basePaths = Set.empty,
+      basePaths = Set(basePath),
       userSpecifiedDataTypes = Map.empty,
       validatePartitionColumns = false,
       java.util.TimeZone.getDefault,
