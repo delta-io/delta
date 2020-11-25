@@ -603,8 +603,6 @@ object SchemaUtils {
     }
   }
 
-  // TODO @pranavanand: This method is no longer being used by AlterTable. If transformColumnsStruct
-  // works sufficiently, remove this method
   /**
    * Drop from the specified `position` in `schema` and return with the original column.
    * @param position A Seq of ordinals on where this column should go. It is a Seq to denote
