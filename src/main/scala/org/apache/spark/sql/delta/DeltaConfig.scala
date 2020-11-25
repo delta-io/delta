@@ -366,10 +366,10 @@ object DeltaConfigs extends DeltaLogging {
   /**
    * Whether this table will automagically optimize the layout of files during writes.
    */
-  val AUTO_OPTIMIZE = buildConfig[Boolean](
+  val AUTO_OPTIMIZE = buildConfig[Option[Boolean]](
     "autoOptimize",
-    "false",
-    _.toBoolean,
+    null,
+    v => Option(v).map(_.toBoolean),
     _ => true,
     "needs to be a boolean.")
 
