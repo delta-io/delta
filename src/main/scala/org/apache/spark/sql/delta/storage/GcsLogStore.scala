@@ -35,14 +35,14 @@ import org.apache.spark.internal.Logging
  *
  * 2. Consistent Listing: Gcs guarantees strong consistency for both object and
  * bucket listing operations.
+ * https://cloud.google.com/storage/docs/consistency
  *
  * 3. Mutual Exclusion: Preconditions are used to handle race conditions.
  *
- * Refer https://cloud.google.com/storage/docs/consistency for 1 and 2.
- *
  * Regarding file creation, this implementation:
  * - Throws [[FileAlreadyExistsException]] if file exists and overwrite is false.
- * - Opens a stream to write to gcs which can fail due to race conditions.
+ * - Opens a stream to write to gcs otherwise.
+ * - Assumes file writing to be all-or-nothing, irrespective of overwrite option.
  */
 class GcsLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
   extends HadoopFileSystemLogStore(sparkConf, defaultHadoopConf) with Logging {
@@ -66,19 +66,23 @@ class GcsLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
   }
 
   private def writeObject(path: Path, fs: FileSystem, actions: Iterator[String]): Unit = {
+    var streamClosed = false // This flag is to avoid double close
     val stream = fs.create(path, true)
     try {
       actions.map(_ + "\n").map(_.getBytes(UTF_8)).foreach(stream.write)
       stream.close()
+      streamClosed = true
     } catch {
       // Gcs uses preconditions that guarantee that object will be created iff it doesn't exist.
       // Reference: https://cloud.google.com/storage/docs/generations-preconditions
-      case e: IOException if e.getMessage.contains(preconditionFailedExceptionMessage) =>
+      case e: IOException if e.getCause.getMessage.contains(preconditionFailedExceptionMessage) =>
         val newException = new FileAlreadyExistsException(path.toString, null, e.getMessage)
-        logError(newException.getMessage, newException.getCause)
+        logError(newException.getMessage, e.getCause)
         throw newException
     } finally {
-      stream.close()
+      if (!streamClosed) {
+        stream.close()
+      }
     }
   }
 
