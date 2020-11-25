@@ -280,7 +280,7 @@ class GcsLogStoreSuite extends LogStoreSuiteBase {
     "fs.fake.impl" -> classOf[FakeFileSystem].getName,
     "fs.fake.impl.disable.cache" -> "true")
 
-  protected def shouldUseRenameToWriteCheckpoint: Boolean = true
+  protected def shouldUseRenameToWriteCheckpoint: Boolean = false
 }
 
 class LocalLogStoreSuite extends LogStoreSuiteBase {

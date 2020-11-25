@@ -27,13 +27,13 @@ import org.apache.spark.SparkConf
 import org.apache.spark.internal.Logging
 
 /**
- * The [[LogStore]] implementation for Gcs, which uses gcs-connector to
+ * The [[LogStore]] implementation for GCS, which uses gcs-connector to
  * provide the necessary atomic and durability guarantees:
  *
  * 1. Atomic Visibility: Read/read-after-metadata-update/delete are strongly
- * consistent for gcs.
+ * consistent for GCS.
  *
- * 2. Consistent Listing: Gcs guarantees strong consistency for both object and
+ * 2. Consistent Listing: GCS guarantees strong consistency for both object and
  * bucket listing operations.
  * https://cloud.google.com/storage/docs/consistency
  *
@@ -41,52 +41,41 @@ import org.apache.spark.internal.Logging
  *
  * Regarding file creation, this implementation:
  * - Throws [[FileAlreadyExistsException]] if file exists and overwrite is false.
- * - Opens a stream to write to gcs otherwise.
+ * - Opens a stream to write to GCS otherwise.
  * - Assumes file writing to be all-or-nothing, irrespective of overwrite option.
  */
 class GcsLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
   extends HadoopFileSystemLogStore(sparkConf, defaultHadoopConf) with Logging {
 
-  protected def getFileContext(path: Path): FileContext = {
-    FileContext.getFileContext(path.toUri, getHadoopConfiguration)
-  }
-
   val preconditionFailedExceptionMessage = "412 Precondition Failed"
 
   def write(path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit = {
     val fs = path.getFileSystem(getHadoopConfiguration)
-    if (!fs.exists(path.getParent)) {
-      throw new FileNotFoundException(s"No such file or directory: ${path.getParent}")
-    }
 
-    if (fs.exists(path) && !overwrite) {
+    if (!overwrite && fs.exists(path)) {
       throw new FileAlreadyExistsException(path.toString)
     }
     writeObject(path, fs, actions)
   }
 
   private def writeObject(path: Path, fs: FileSystem, actions: Iterator[String]): Unit = {
-    var streamClosed = false // This flag is to avoid double close
     val stream = fs.create(path, true)
     try {
-      actions.map(_ + "\n").map(_.getBytes(UTF_8)).foreach(stream.write)
-      stream.close()
-      streamClosed = true
+      try {
+        actions.map(_ + "\n").map(_.getBytes(UTF_8)).foreach(stream.write)
+      } finally {
+        stream.close()
+      }
     } catch {
-      // Gcs uses preconditions that guarantee that object will be created iff it doesn't exist.
+      // GCS uses preconditions that guarantee that object will be created iff it doesn't exist.
       // Reference: https://cloud.google.com/storage/docs/generations-preconditions
       case e: IOException if e.getCause.getMessage.contains(preconditionFailedExceptionMessage) =>
         val newException = new FileAlreadyExistsException(path.toString, null, e.getMessage)
-        logError(newException.getMessage, e.getCause)
         throw newException
-    } finally {
-      if (!streamClosed) {
-        stream.close()
-      }
     }
   }
 
   override def invalidateCache(): Unit = {}
 
-  override def isPartialWriteVisible(path: Path): Boolean = true
+  override def isPartialWriteVisible(path: Path): Boolean = false
 }
