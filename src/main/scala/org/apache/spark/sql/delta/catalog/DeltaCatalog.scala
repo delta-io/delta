@@ -127,7 +127,7 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
         operation.mode,
         new DeltaOptions(withDb.storage.properties, spark.sessionState.conf),
         withDb.partitionColumnNames,
-        withDb.properties,
+        withDb.properties + ("comment" -> properties.get("comment")),
         df)
     }
 

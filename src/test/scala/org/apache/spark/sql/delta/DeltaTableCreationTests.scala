@@ -107,6 +107,16 @@ trait DeltaTableCreationTests
     assert(externalTable.partitionColumnNames.isEmpty)
   }
 
+  protected def checkResult(
+    result: DataFrame,
+    expected: Seq[Any],
+    columns: Seq[String]): Unit = {
+    checkAnswer(
+      result.select(columns.head, columns.tail: _*),
+      Seq(Row(expected: _*))
+    )
+  }
+
   Seq("partitioned" -> Seq("v2"), "non-partitioned" -> Nil).foreach { case (isPartitioned, cols) =>
     SaveMode.values().foreach { saveMode =>
       test(s"saveAsTable to a new table (managed) - $isPartitioned, saveMode: $saveMode") {
@@ -1687,6 +1697,135 @@ class DeltaTableCreationSuite
         }
         assert(e.getMessage.contains("cannot be replaced as it did not exist"))
       }
+    }
+  }
+
+  test("Create a table without comment") {
+    withTempDir { dir =>
+      val table = "delta_without_comment"
+      withTable(table) {
+        sql(s"CREATE TABLE $table (col string) USING delta LOCATION '${dir.getAbsolutePath}'")
+        checkResult(
+          sql(s"DESCRIBE DETAIL $table"),
+          Seq("delta", null),
+          Seq("format", "description"))
+      }
+    }
+  }
+
+  test("Create a table with comment") {
+    val table = "delta_with_comment"
+    withTempDir { dir =>
+      withTable(table) {
+        sql(
+          s"""
+             |CREATE TABLE $table (col string)
+             |USING delta
+             |COMMENT 'This is my table'
+             |LOCATION '${dir.getAbsolutePath}'
+            """.stripMargin)
+        checkResult(
+          sql(s"DESCRIBE DETAIL $table"),
+          Seq("delta", "This is my table"),
+          Seq("format", "description"))
+      }
+    }
+  }
+
+  test("Replace a table without comment") {
+    withTempDir { dir =>
+      val table = "replace_table_without_comment"
+      val location = dir.getAbsolutePath
+      withTable(table) {
+        sql(s"CREATE TABLE $table (col string) USING delta COMMENT 'Table' LOCATION '$location'")
+        sql(s"REPLACE TABLE $table (col string) USING delta LOCATION '$location'")
+        checkResult(
+          sql(s"DESCRIBE DETAIL $table"),
+          Seq("delta", null),
+          Seq("format", "description"))
+      }
+    }
+  }
+
+  test("Replace a table with comment") {
+    withTempDir { dir =>
+      val table = "replace_table_with_comment"
+      val location = dir.getAbsolutePath
+      withTable(table) {
+        sql(s"CREATE TABLE $table (col string) USING delta LOCATION '$location'")
+        sql(
+          s"""
+             |REPLACE TABLE $table (col string)
+             |USING delta
+             |COMMENT 'This is my table'
+             |LOCATION '$location'
+            """.stripMargin)
+        checkResult(
+          sql(s"DESCRIBE DETAIL $table"),
+          Seq("delta", "This is my table"),
+          Seq("format", "description"))
+      }
+    }
+  }
+
+  test("CTAS a table without comment") {
+    val table = "ctas_without_comment"
+    withTable(table) {
+      sql(s"CREATE TABLE $table USING delta AS SELECT * FROM range(10)")
+      checkResult(
+        sql(s"DESCRIBE DETAIL $table"),
+        Seq("delta", null),
+        Seq("format", "description"))
+    }
+  }
+
+  test("CTAS a table with comment") {
+    val table = "ctas_with_comment"
+    withTable(table) {
+      sql(
+        s"""CREATE TABLE $table
+           |USING delta
+           |COMMENT 'This table is created with existing data'
+           |AS SELECT * FROM range(10)
+          """.stripMargin)
+      checkResult(
+        sql(s"DESCRIBE DETAIL $table"),
+        Seq("delta", "This table is created with existing data"),
+        Seq("format", "description"))
+    }
+  }
+
+  test("Replace CTAS a table without comment") {
+    val table = "replace_ctas_without_comment"
+    withTable(table) {
+      sql(
+        s"""CREATE TABLE $table
+           |USING delta
+           |COMMENT 'This table is created with existing data'
+           |AS SELECT * FROM range(10)
+          """.stripMargin)
+      sql(s"REPLACE TABLE $table USING delta AS SELECT * FROM range(10)")
+      checkResult(
+        sql(s"DESCRIBE DETAIL $table"),
+        Seq("delta", null),
+        Seq("format", "description"))
+    }
+  }
+
+  test("Replace CTAS a table with comment") {
+    val table = "replace_ctas_with_comment"
+    withTable(table) {
+      sql(s"CREATE TABLE $table USING delta COMMENT 'a' AS SELECT * FROM range(10)")
+      sql(
+        s"""REPLACE TABLE $table
+           |USING delta
+           |COMMENT 'This table is created with existing data'
+           |AS SELECT * FROM range(10)
+          """.stripMargin)
+      checkResult(
+        sql(s"DESCRIBE DETAIL $table"),
+        Seq("delta", "This table is created with existing data"),
+        Seq("format", "description"))
     }
   }
 }

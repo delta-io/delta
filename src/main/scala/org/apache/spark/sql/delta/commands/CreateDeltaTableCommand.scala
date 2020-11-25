@@ -138,12 +138,13 @@ case class CreateDeltaTableCommand(
               replaceMetadataIfNecessary(
                 txn, tableWithLocation, options, other.schema.asNullable)
             }
+
             val actions = WriteIntoDelta(
               deltaLog = deltaLog,
               mode = mode,
               options,
               partitionColumns = table.partitionColumnNames,
-              configuration = table.properties,
+              configuration = table.properties + ("comment" -> table.comment.orNull),
               data = data).write(txn, sparkSession)
 
             val op = getOperation(txn.metadata, isManagedTable, Some(options))
@@ -199,7 +200,6 @@ case class CreateDeltaTableCommand(
             // Truncate the table
             val operationTimestamp = System.currentTimeMillis()
             val removes = txn.filterFiles().map(_.removeWithTimestamp(operationTimestamp))
-
             val op = getOperation(txn.metadata, isManagedTable, None)
             txn.commit(removes, op)
         }
