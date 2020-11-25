@@ -104,22 +104,15 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     partitionColumns
   }
 
-  def writeFiles(data: Dataset[_]): Seq[AddFile] = writeFiles(data, None, isOptimize = false)
-
-  def writeFiles(data: Dataset[_], writeOptions: Option[DeltaOptions]): Seq[AddFile] =
-    writeFiles(data, writeOptions, isOptimize = false)
-
-  def writeFiles(data: Dataset[_], isOptimize: Boolean): Seq[AddFile] =
-    writeFiles(data, None, isOptimize = isOptimize)
+  def writeFiles(data: Dataset[_], writeOptions: Option[DeltaOptions]): Seq[AddFile] = {
+    writeFiles(data)
+  }
 
   /**
    * Writes out the dataframe after performing schema validation. Returns a list of
    * actions to append these files to the reservoir.
    */
-  def writeFiles(
-      data: Dataset[_],
-      writeOptions: Option[DeltaOptions],
-      isOptimize: Boolean): Seq[AddFile] = {
+  def writeFiles(data: Dataset[_]): Seq[AddFile] = {
     hasWritten = true
 
     val spark = data.sparkSession
