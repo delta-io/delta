@@ -40,8 +40,8 @@ import org.apache.spark.internal.Logging
  * 3. Mutual Exclusion: Preconditions are used to handle race conditions.
  *
  * Regarding file creation, this implementation:
- * - Throws [[FileAlreadyExistsException]] if file exists and overwrite is false.
  * - Opens a stream to write to GCS otherwise.
+ * - Throws [[FileAlreadyExistsException]] if file exists and overwrite is false.
  * - Assumes file writing to be all-or-nothing, irrespective of overwrite option.
  */
 class GcsLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
@@ -52,26 +52,30 @@ class GcsLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
   def write(path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit = {
     val fs = path.getFileSystem(getHadoopConfiguration)
 
-    if (!overwrite && fs.exists(path)) {
+    // This is needed for the tests to throw error with local file system.
+    if (fs.isInstanceOf[LocalFileSystem] && !overwrite && fs.exists(path)) {
       throw new FileAlreadyExistsException(path.toString)
     }
-    writeObject(path, fs, actions)
-  }
 
-  private def writeObject(path: Path, fs: FileSystem, actions: Iterator[String]): Unit = {
-    val stream = fs.create(path, true)
     try {
+      // If overwrite=false and path already exists, gcs-connector will throw
+      // org.apache.hadoop.fs.FileAlreadyExistsException after fs.create is invoked.
+      // This should be mapped to java.nio.file.FileAlreadyExistsException.
+      val stream = fs.create(path, overwrite)
       try {
         actions.map(_ + "\n").map(_.getBytes(UTF_8)).foreach(stream.write)
       } finally {
         stream.close()
       }
     } catch {
-      // GCS uses preconditions that guarantee that object will be created iff it doesn't exist.
+      case _: org.apache.hadoop.fs.FileAlreadyExistsException =>
+        throw new FileAlreadyExistsException(path.toString)
+      // GCS uses preconditions to handle race conditions for multiple writers.
+      // If path gets created between fs.create and stream.close by an external
+      // agent or race conditions. Then this block will execute.
       // Reference: https://cloud.google.com/storage/docs/generations-preconditions
       case e: IOException if e.getCause.getMessage.contains(preconditionFailedExceptionMessage) =>
-        val newException = new FileAlreadyExistsException(path.toString, null, e.getMessage)
-        throw newException
+        throw e
     }
   }
 
