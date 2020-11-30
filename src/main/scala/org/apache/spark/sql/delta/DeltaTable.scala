@@ -77,7 +77,7 @@ object DeltaTableUtils extends PredicateHelper
   with DeltaLogging {
 
   /** Check whether this table is a Delta table based on information from the Catalog. */
-  def isDeltaTable(table: CatalogTable): Boolean = DeltaSourceUtils.isDeltaTable(table.provider)
+  def isDeltaTable(table: CatalogTable): Boolean = DeltaSourceUtils.isDeltaTable(table)
 
   /**
    * Check whether the provided table name is a Delta table based on information from the Catalog.

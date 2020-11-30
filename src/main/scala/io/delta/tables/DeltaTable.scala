@@ -17,16 +17,15 @@
 package io.delta.tables
 
 import scala.collection.JavaConverters._
-
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import io.delta.tables.execution._
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.annotation._
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -95,6 +94,16 @@ class DeltaTable private[tables](
    */
   @Evolving
   def toDF: Dataset[Row] = df
+
+  /**
+   * :: Evolving ::
+   *
+   * Get if exists the catalog of the table
+   *
+   * @since 0.8.0
+   */
+  @Evolving
+  def catalogTable: Option[CatalogTable] = table.catalogTable
 
   /**
    * :: Evolving ::

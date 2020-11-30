@@ -36,6 +36,9 @@ import org.apache.spark.sql.catalyst.expressions.BasePredicate
 import org.apache.spark.sql.catalyst.expressions.NamedExpression
 import org.apache.spark.sql.catalyst.expressions.codegen._
 import org.apache.spark.sql.catalyst.plans.logical._
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchTableException}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
@@ -196,7 +199,8 @@ case class MergeIntoCommand(
     condition: Expression,
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
     notMatchedClauses: Seq[DeltaMergeIntoInsertClause],
-    migratedSchema: Option[StructType]) extends RunnableCommand
+    migratedSchema: Option[StructType],
+    catalogTable: Option[CatalogTable] = None) extends RunnableCommand
   with DeltaCommand with PredicateHelper with AnalysisHelper with ImplicitMetadataOperation {
 
   import SQLMetrics._
@@ -243,10 +247,30 @@ case class MergeIntoCommand(
       }
 
       if (canMergeSchema) {
-        updateMetadata(
-          spark, deltaTxn, migratedSchema.getOrElse(target.schema),
+        val tableCatalog = if (catalogTable.isDefined) {
+          Some(catalogTable.get)
+        } else {
+          target match {
+            case subquery: SubqueryAlias =>
+              subquery.child match {
+                case child : SubqueryAlias =>
+                  val database = child.identifier.qualifier.find(q => !q.equals("spark_catalog"))
+                  try {
+                    val identifier = TableIdentifier(child.identifier.name, database)
+                    Some(spark.sessionState.catalog.getTableMetadata(identifier))
+                  } catch {
+                    case _ : NoSuchDatabaseException => None
+                    case _ : NoSuchTableException => None
+                    case e : Exception => throw e;
+                  }
+                case _ => None
+              }
+            case _ => None
+          }
+        }
+        updateMetadata(spark, deltaTxn, migratedSchema.getOrElse(target.schema),
           deltaTxn.metadata.partitionColumns, deltaTxn.metadata.configuration,
-          isOverwriteMode = false, rearrangeOnly = false)
+          isOverwriteMode = false, rearrangeOnly = false, tableCatalog)
       }
 
       val deltaActions = {

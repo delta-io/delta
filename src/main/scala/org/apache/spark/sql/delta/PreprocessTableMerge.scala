@@ -19,16 +19,16 @@ package org.apache.spark.sql.delta
 import java.util.Locale
 
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
-
 import org.apache.spark.sql.AnalysisException
-import org.apache.spark.sql.catalyst.analysis.{EliminateSubqueryAliases, UnresolvedAttribute}
-import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Expression, Literal, SubqueryExpression}
+import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, Literal, SubqueryExpression}
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.internal.SQLConf
 
-case class PreprocessTableMerge(conf: SQLConf)
+case class PreprocessTableMerge(conf: SQLConf, catalogTable: Option[CatalogTable] = None)
   extends Rule[LogicalPlan] with UpdateExpressionsSupport {
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
@@ -36,7 +36,8 @@ case class PreprocessTableMerge(conf: SQLConf)
   }
 
   def apply(mergeInto: DeltaMergeInto): MergeIntoCommand = {
-    val DeltaMergeInto(target, source, condition, matched, notMatched, migratedSchema) = mergeInto
+    val DeltaMergeInto(target, source, condition, matched, notMatched,
+      migratedSchema, catalogTable) = mergeInto
 
     def checkCondition(cond: Expression, conditionName: String): Unit = {
       if (!cond.deterministic) {
@@ -179,7 +180,7 @@ case class PreprocessTableMerge(conf: SQLConf)
     }
 
     MergeIntoCommand(
-      source, target, tahoeFileIndex, condition,
-      processedMatched, processedNotMatched, migratedSchema)
+      source, target, tahoeFileIndex, condition, processedMatched,
+      processedNotMatched, migratedSchema, catalogTable)
   }
 }

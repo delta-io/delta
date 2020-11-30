@@ -18,7 +18,9 @@ package org.apache.spark.sql.delta.sources
 
 import java.util.Locale
 
+import io.delta.hive.DeltaStorageHandler
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.sources
@@ -40,6 +42,15 @@ object DeltaSourceUtils {
   def isDeltaTable(provider: Option[String]): Boolean = {
     provider.exists(isDeltaDataSourceName)
   }
+
+  def isDeltaTable(table: CatalogTable): Boolean = {
+    table.provider.exists(isDeltaDataSourceName) ||
+      (table.provider.exists(name => name.toLowerCase(Locale.ROOT) == "hive") &&
+        table.properties.get("storage_handler")
+          .exists(p => classOf[DeltaStorageHandler].getCanonicalName.equals(p))
+        )
+  }
+
 
   /** Creates Spark literals from a value exposed by the public Spark API. */
   private def createLiteral(value: Any): expressions.Literal = value match {

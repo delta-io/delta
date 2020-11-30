@@ -82,7 +82,9 @@ class DeltaSink(
       data,
       partitionColumns,
       configuration = Map.empty,
-      outputMode == OutputMode.Complete())
+      None,
+      outputMode == OutputMode.Complete()
+    )
 
     val currentVersion = txn.txnVersion(queryId)
     if (currentVersion >= batchId) {
