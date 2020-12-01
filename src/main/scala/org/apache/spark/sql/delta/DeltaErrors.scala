@@ -448,6 +448,11 @@ object DeltaErrors
       "policy of your Delta table").initCause(e)
   }
 
+  def checkpointNonExistTable(path: Path): Throwable = {
+    new IllegalStateException(s"Cannot checkpoint a non-exist table $path. Did you manually " +
+      s"delete files in the _delta_log directory?")
+  }
+
   def multipleLoadPathsException(paths: Seq[String]): Throwable = {
     new AnalysisException(
       s"""
