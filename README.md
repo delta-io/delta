@@ -13,7 +13,7 @@ This is the repository for Delta Lake Connectors. It includes a library for quer
 The project is compiled using [SBT](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.html). It has the following subprojects.
 
 ## Delta Standalone Reader
-Delta Standalone Reader is a JVM library to read Delta Lake tables. Unlike https://github.com/delta-io/delta, this project doesn't use Spark to read tables and it has only a few transitive dependencies. It can be used to any application that cannot use a Spark cluster.
+Delta Standalone Reader is a JVM library to read Delta Lake tables. Unlike https://github.com/delta-io/delta, this project doesn't use Spark to read tables and it has only a few transitive dependencies. It can be used by any application that cannot use a Spark cluster.
 - To compile the project, run `build/sbt standalone/compile`
 - To test the project, run `build/sbt standalone/test`
 - To generate the JAR, run `build/sbt standalone/package`
@@ -76,7 +76,9 @@ hive/target/scala-2.11/delta-hive-assembly_2.11-0.2.0.jar
 
 This section describes how to set up Hive to load the Delta Hive connector.
 
-Before starting your Hive CLI or running your Hive script, add the following special Hive config to the `hive-site.xml` file (Its location is `/etc/hive/conf/hive-site.xml` in a EMR cluster).
+#### Configure Input Formats
+
+Before starting your Hive CLI or running your Hive script, add the following special Hive config to the `hive-site.xml` file. (Its location is `/etc/hive/conf/hive-site.xml` in an EMR cluster).
 
 ```xml
 <property>
@@ -96,7 +98,20 @@ SET hive.input.format=io.delta.hive.HiveInputFormat;
 SET hive.tez.input.format=io.delta.hive.HiveInputFormat;
 ```
 
-The second step is to upload the above uber JAR to the machine that runs Hive. Finally, add the path of the uber JAR to Hive’s environment variable, `HIVE_AUX_JARS_PATH`. You can find this environment variable in the `hive-env.sh` file, whose location is `/etc/hive/conf/hive-env.sh` on an EMR cluster. This setting will tell Hive where to find the connector JAR.
+#### Add Hive uber JAR
+
+The second step is to upload the above uber JAR to the machine that runs Hive. Next, make the JAR accessible to Hive. There are several ways to do this, listed below. To verify that the JAR was properly added, run `LIST JARS;` in the Hive CLI.
+
+- in the Hive CLI, run `ADD JAR <path-to-jar>;`
+- add the uber JAR to a folder already pointed to by the `HIVE_AUX_JARS_PATH` environmental variable
+- modify the same `hive-site.xml` file as above, and add the following. (Note that this has to be done before you start the Hive CLI)
+```xml
+<property>
+  <name>hive.aux.jars.path</name>
+  <value>path_to_uber_jar</value>
+</property>
+```
+- add the path of the uber JAR to Hive’s environment variable, `HIVE_AUX_JARS_PATH`. You can find this environment variable in the `hive-env.sh` file, whose location is `/etc/hive/conf/hive-env.sh` on an EMR cluster. This setting will tell Hive where to find the connector JAR. Ensure you source the script with `source /etc/hive/conf/hive-env.sh`.
 
 ### Create a Hive table
 

@@ -40,10 +40,13 @@ import org.apache.spark.sql.types._
 
 /**
  * This is a special class to generate golden tables for other projects. Run the following commands
- * to re-generate all golden tables.
+ * to re-generate all golden tables:
  * ```
  * GENERATE_GOLDEN_TABLES=1 build/sbt 'goldenTables/test'
  * ```
+ *
+ * After generating golden tables, ensure to package or test project `standalone`, otherwise the
+ * test resources won't be available when running tests with IntelliJ.
  */
 class GoldenTables extends QueryTest with SharedSparkSession {
 
