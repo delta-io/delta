@@ -68,25 +68,25 @@ class GcsLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
         stream.close()
       }
     } catch {
-      case _: org.apache.hadoop.fs.FileAlreadyExistsException =>
-        throw new FileAlreadyExistsException(path.toString)
+      case e: org.apache.hadoop.fs.FileAlreadyExistsException =>
+        throw new FileAlreadyExistsException(path.toString).initCause(e.getCause)
       // GCS uses preconditions to handle race conditions for multiple writers.
       // If path gets created between fs.create and stream.close by an external
       // agent or race conditions. Then this block will execute.
       // Reference: https://cloud.google.com/storage/docs/generations-preconditions
-      case e: IOException if inspectCausalChainForPreconditionFailure(e) =>
+      case e: IOException if isPreconditionFailure(e) =>
         if (!overwrite) {
           throw new FileAlreadyExistsException(path.toString).initCause(e.getCause)
         }
     }
   }
 
-  private def inspectCausalChainForPreconditionFailure(x: Throwable): Boolean = {
+  private def isPreconditionFailure(x: Throwable): Boolean = {
     Throwables.getCausalChain(x)
       .stream()
-      .filter(p => p != null
-        && p.getMessage != null
-        && p.getMessage.contains(preconditionFailedExceptionMessage))
+      .filter(p => p != null)
+      .filter(p => p.getMessage != null)
+      .filter(p => p.getMessage.contains(preconditionFailedExceptionMessage))
       .findFirst
       .isPresent;
   }
