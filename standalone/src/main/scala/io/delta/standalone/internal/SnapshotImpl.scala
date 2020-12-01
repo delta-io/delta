@@ -139,7 +139,7 @@ private[internal] class SnapshotImpl(
    * Asserts that the client is up to date with the protocol and allowed
    * to read the table that is using this Snapshot's `protocol`.
    */
-  def assertProtocolRead(): Unit = {
+  private def assertProtocolRead(): Unit = {
     if (null != protocolScala) {
       val clientVersion = Action.readerVersion
       val tblVersion = protocolScala.minReaderVersion

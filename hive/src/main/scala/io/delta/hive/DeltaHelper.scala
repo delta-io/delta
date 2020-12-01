@@ -339,7 +339,8 @@ object DeltaHelper {
     val numPartitionColumns = partitionValues.size
     assert(
       numPartitionColumns == partitionSchema.size,
-      s"the size of partition schema is not the same as $partitionValues")
+      s"the size (${partitionSchema.size}) of the partition schema ($partitionSchema) is not the " +
+      s"same as the size ($numPartitionColumns) of the partition values ($partitionValues)")
     val partNames = new java.util.ArrayList[String](numPartitionColumns)
     val partValues = new java.util.ArrayList[Object](numPartitionColumns)
     val partObjectInspectors = new java.util.ArrayList[ObjectInspector](numPartitionColumns)
