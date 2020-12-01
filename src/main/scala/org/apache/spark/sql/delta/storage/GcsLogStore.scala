@@ -20,9 +20,9 @@ import java.io.{IOException, _}
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.FileAlreadyExistsException
 
+import com.google.common.base.Throwables
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs._
-
 import org.apache.spark.SparkConf
 import org.apache.spark.internal.Logging
 
@@ -74,9 +74,21 @@ class GcsLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
       // If path gets created between fs.create and stream.close by an external
       // agent or race conditions. Then this block will execute.
       // Reference: https://cloud.google.com/storage/docs/generations-preconditions
-      case e: IOException if e.getCause.getMessage.contains(preconditionFailedExceptionMessage) =>
-        throw e
+      case e: IOException if inspectCausalChainForPreconditionFailure(e) =>
+        if (!overwrite) {
+          throw new FileAlreadyExistsException(path.toString).initCause(e.getCause)
+        }
     }
+  }
+
+  private def inspectCausalChainForPreconditionFailure(x: Throwable): Boolean = {
+    Throwables.getCausalChain(x)
+      .stream()
+      .filter(p => p != null
+        && p.getMessage != null
+        && p.getMessage.contains(preconditionFailedExceptionMessage))
+      .findFirst
+      .isPresent;
   }
 
   override def invalidateCache(): Unit = {}
