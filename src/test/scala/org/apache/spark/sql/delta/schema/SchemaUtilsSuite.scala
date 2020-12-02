@@ -1042,7 +1042,7 @@ class SchemaUtilsSuite extends QueryTest
     assert(mergeSchemas(update, base) === update)
   }
 
-  test("schema merging performs upcast between ByteType, ShortType, and LongType") {
+  test("schema merging performs upcast between ByteType, ShortType, and IntegerType") {
     val byteType = new StructType().add("top", ByteType)
     val shortType = new StructType().add("top", ShortType)
     val intType = new StructType().add("top", IntegerType)
@@ -1066,6 +1066,24 @@ class SchemaUtilsSuite extends QueryTest
     val arrInt = new StructType().add("top", new ArrayType(IntegerType, true))
     val arrShort = new StructType().add("top", new ArrayType(ShortType, true))
     assert(mergeSchemas(arrInt, arrShort) === arrInt)
+  }
+
+  test("schema merging allows upcasting to LongType with allowImplicitConversions") {
+    val byteType = new StructType().add("top", ByteType)
+    val shortType = new StructType().add("top", ShortType)
+    val intType = new StructType().add("top", IntegerType)
+    val longType = new StructType().add("top", LongType)
+
+    Seq(byteType, shortType, intType).foreach { sourceType =>
+      assert(
+        longType === SchemaUtils.mergeSchemas(
+          longType, sourceType, allowImplicitConversions = true))
+      val e = intercept[AnalysisException] {
+        SchemaUtils.mergeSchemas(longType, sourceType)
+      }
+      assert(e.getMessage.contains(
+        s"Failed to merge incompatible data types LongType and ${sourceType.head.dataType}"))
+    }
   }
 
   test("Upcast between ByteType, ShortType and IntegerType is OK for parquet") {

@@ -18,15 +18,20 @@ package org.apache.spark.sql.delta
 
 import java.util.Locale
 
+import scala.collection.mutable
+
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
+import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.AnalysisException
-import org.apache.spark.sql.catalyst.analysis.{EliminateSubqueryAliases, UnresolvedAttribute}
-import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Expression, Literal, SubqueryExpression}
+import org.apache.spark.sql.catalyst.analysis.{EliminateSubqueryAliases, TypeCoercion, UnresolvedAttribute}
+import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Cast, Expression, Literal, SubqueryExpression}
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.{StructField, StructType}
 
 case class PreprocessTableMerge(conf: SQLConf)
   extends Rule[LogicalPlan] with UpdateExpressionsSupport {
@@ -36,8 +41,7 @@ case class PreprocessTableMerge(conf: SQLConf)
   }
 
   def apply(mergeInto: DeltaMergeInto): MergeIntoCommand = {
-    val DeltaMergeInto(target, source, condition, matched, notMatched, migratedSchema) = mergeInto
-
+    val DeltaMergeInto(target, source, condition, matched, notMatched) = mergeInto
     def checkCondition(cond: Expression, conditionName: String): Unit = {
       if (!cond.deterministic) {
         throw DeltaErrors.nonDeterministicNotSupportedException(
@@ -56,6 +60,18 @@ case class PreprocessTableMerge(conf: SQLConf)
     checkCondition(condition, "search")
     (matched ++ notMatched).filter(_.condition.nonEmpty).foreach { clause =>
       checkCondition(clause.condition.get, clause.clauseType.toUpperCase(Locale.ROOT))
+    }
+
+    val shouldAutoMigrate = conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE)
+    // Migrated schema to be used for schema evolution.
+    val finalSchema = if (shouldAutoMigrate) {
+      // The implicit conversions flag allows any type to be merged from source to target if Spark
+      // SQL considers the source type implicitly castable to the target. Normally, mergeSchemas
+      // enforces Parquet-level write compatibility, which would mean an INT source can't be merged
+      // into a LONG target.
+      SchemaUtils.mergeSchemas(target.schema, source.schema, allowImplicitConversions = true)
+    } else {
+      target.schema
     }
 
     val processedMatched = matched.map {
@@ -93,12 +109,13 @@ case class PreprocessTableMerge(conf: SQLConf)
           UpdateOperation(Seq(col.name), Literal(null, col.dataType))
         }
 
-        // Get expressions for the final schema for alignment. We must use the attribute in the
-        // target plan where it exists - for new columns we just construct an attribute reference
-        // to be filled in later once we evolve.
+        // Get expressions for the final schema for alignment. Note that attributes which already
+        // exist in the target need to use the same expression ID, even if the schema will evolve.
         val finalSchemaExprs =
-          migratedSchema.getOrElse(target.schema).map { field =>
-            target.resolve(Seq(field.name), conf.resolver).getOrElse {
+          finalSchema.map { field =>
+            target.resolve(Seq(field.name), conf.resolver).map { r =>
+              AttributeReference(field.name, field.dataType)(r.exprId)
+            }.getOrElse {
               AttributeReference(field.name, field.dataType)()
             }
           }
@@ -154,12 +171,16 @@ case class PreprocessTableMerge(conf: SQLConf)
 
       // Reorder actions by the target column order, with columns to be schema evolved that
       // aren't currently in the target at the end.
-      val finalSchema = migratedSchema.getOrElse(target.schema)
       val alignedActions: Seq[DeltaMergeAction] = finalSchema.map { targetAttrib =>
         (m.resolvedActions ++ newActionsFromTargetSchema ++ newActionsFromUpdate).find { a =>
           conf.resolver(targetAttrib.name, a.targetColNameParts.head)
         }.map { a =>
-          DeltaMergeAction(Seq(targetAttrib.name), castIfNeeded(a.expr, targetAttrib.dataType))
+          DeltaMergeAction(
+            Seq(targetAttrib.name),
+            castIfNeeded(
+              a.expr,
+              targetAttrib.dataType,
+              allowStructEvolution = shouldAutoMigrate))
         }.getOrElse {
           // If a target table column was not found in the INSERT columns and expressions,
           // then throw exception as there must be an expression to set every target column.
@@ -180,6 +201,6 @@ case class PreprocessTableMerge(conf: SQLConf)
 
     MergeIntoCommand(
       source, target, tahoeFileIndex, condition,
-      processedMatched, processedNotMatched, migratedSchema)
+      processedMatched, processedNotMatched, Some(finalSchema))
   }
 }

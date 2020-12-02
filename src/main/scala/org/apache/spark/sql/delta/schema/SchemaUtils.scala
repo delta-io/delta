@@ -24,7 +24,8 @@ import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
+import org.apache.spark.sql.catalyst.analysis.{Resolver, TypeCoercion, UnresolvedAttribute}
+import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
@@ -754,8 +755,21 @@ object SchemaUtils {
    *
    * Schema merging occurs in a case insensitive manner. Hence, column names that only differ
    * by case are not accepted in the `dataSchema`.
+   *
+   * @param tableSchema The current schema of the table.
+   * @param dataSchema The schema of the new data being written.
+   * @param allowImplicitConversions Whether to allow Spark SQL implicit conversions. By default,
+   *                                 we merge according to Parquet write compatibility - for
+   *                                 example, an integer type data field will throw when merged to a
+   *                                 string type table field, because int and string aren't stored
+   *                                 the same way in Parquet files. With this flag enabled, the
+   *                                 merge will succeed, because once we get to write time Spark SQL
+   *                                 will support implicitly converting the int to a string.
    */
-  def mergeSchemas(tableSchema: StructType, dataSchema: StructType): StructType = {
+  def mergeSchemas(
+      tableSchema: StructType,
+      dataSchema: StructType,
+      allowImplicitConversions: Boolean = false): StructType = {
     checkColumnNameDuplication(dataSchema, "in the data to save")
     def merge(current: DataType, update: DataType): DataType = {
       (current, update) match {
@@ -799,6 +813,13 @@ object SchemaUtils {
             merge(currentKeyType, updateKeyType),
             merge(currentElementType, updateElementType),
             currentContainsNull)
+
+        // If implicit conversions are allowed, that means we can use any valid implicit cast to
+        // perform the merge.
+        case (current, update)
+            if allowImplicitConversions && typeForImplicitCast(update, current).isDefined =>
+          typeForImplicitCast(update, current).get
+
         case (DecimalType.Fixed(leftPrecision, leftScale),
               DecimalType.Fixed(rightPrecision, rightScale)) =>
           if ((leftPrecision == rightPrecision) && (leftScale == rightScale)) {
@@ -839,6 +860,15 @@ object SchemaUtils {
       }
     }
     merge(tableSchema, dataSchema).asInstanceOf[StructType]
+  }
+
+  /**
+   * Try to cast the source data type to the target type, returning the final type or None if
+   * there's no valid cast.
+   */
+  private def typeForImplicitCast(sourceType: DataType, targetType: DataType): Option[DataType] = {
+    TypeCoercion.ImplicitTypeCasts.implicitCast(Literal.default(sourceType), targetType)
+      .map(_.dataType)
   }
 
   private def toFieldMap(fields: Seq[StructField]): Map[String, StructField] = {

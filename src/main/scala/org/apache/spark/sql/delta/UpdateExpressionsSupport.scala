@@ -20,7 +20,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.catalyst.analysis.{CastSupport, Resolver}
-import org.apache.spark.sql.catalyst.expressions.{Alias, Cast, CreateNamedStruct, Expression, ExtractValue, GetStructField, Literal, NamedExpression}
+import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Cast, CreateNamedStruct, Expression, ExtractValue, GetStructField, Literal, NamedExpression}
 import org.apache.spark.sql.types._
 
 /**
@@ -36,7 +36,21 @@ trait UpdateExpressionsSupport extends CastSupport {
    */
   case class UpdateOperation(targetColNameParts: Seq[String], updateExpr: Expression)
 
-  protected def castIfNeeded(fromExpression: Expression, dataType: DataType): Expression = {
+  /**
+   * Add a cast to the child expression if it differs from the specified data type. Note that
+   * structs here are cast by name, rather than the Spark SQL default of casting by position.
+   *
+   * @param fromExpression the expression to cast
+   * @param dataType The data type to cast to.
+   * @param allowStructEvolution Whether to allow structs to evolve. When this is false (default),
+   *                             struct casting will throw an error if there's any mismatch between
+   *                             column names. For example, (b, c, a) -> (a, b, c) is always a valid
+   *                             cast, but (a, b) -> (a, b, c) is valid only with this flag set.
+   */
+  protected def castIfNeeded(
+      fromExpression: Expression,
+      dataType: DataType,
+      allowStructEvolution: Boolean = false): Expression = {
     fromExpression match {
       // Need to deal with NullType here, as some types cannot be casted from NullType, e.g.,
       // StructType.
@@ -48,21 +62,37 @@ trait UpdateExpressionsSupport extends CastSupport {
         (fromExpression.dataType, dataType) match {
           case (from: StructType, to: StructType)
               if !DataType.equalsIgnoreCaseAndNullability(from, to) && resolveStructsByName =>
-            // To do the cast, we need the same length and names of fields, possibly in a different
-            // order.
-            if (from.length != to.length ||
-                from.exists { f => !to.exists(_.name.equalsIgnoreCase(f.name))}) {
+            // All from fields must be present in the final schema, or we'll silently lose data.
+            if (from.exists { f => !to.exists(_.name.equalsIgnoreCase(f.name))}) {
+              throw DeltaErrors.updateSchemaMismatchExpression(from, to)
+            }
+
+            // If struct evolution isn't allowed, the field count also has to match, since we can't
+            // add columns.
+            if (from.length != to.length && !allowStructEvolution) {
               throw DeltaErrors.updateSchemaMismatchExpression(from, to)
             }
 
             val nameMappedStruct = CreateNamedStruct(to.flatMap { field =>
               val fieldNameLit = Literal(field.name)
-              val extractedField =
-                ExtractValue(fromExpression, fieldNameLit, SchemaUtils.DELTA_COL_RESOLVER)
+              val extractedField = from
+                .find { f => SchemaUtils.DELTA_COL_RESOLVER(f.name, field.name) }
+                .map { _ =>
+                  ExtractValue(fromExpression, fieldNameLit, SchemaUtils.DELTA_COL_RESOLVER)
+                }.getOrElse {
+                  // This shouldn't be possible - if all columns aren't present when struct
+                  // evolution is disabled, we should have thrown an error earlier.
+                  if (!allowStructEvolution) {
+                    throw new IllegalStateException(
+                      s"Field $field could not be found when extracting references.",
+                      DeltaErrors.updateSchemaMismatchExpression(from, to))
+                  }
+                  Literal(null)
+                }
               Seq(fieldNameLit, castIfNeeded(extractedField, field.dataType))
             })
 
-            nameMappedStruct
+            cast(nameMappedStruct, to.asNullable)
 
           case (from, to) if (from != to) => cast(fromExpression, dataType)
           case _ => fromExpression

@@ -19,13 +19,14 @@ package org.apache.spark.sql.catalyst.plans.logical
 import java.util.Locale
 
 import scala.collection.mutable
+import scala.util.Try
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis._
-import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, Expression, Literal, UnaryExpression}
+import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, CreateStruct, Expression, ExtractValue, GetStructField, Literal, NamedExpression, UnaryExpression, Unevaluable}
 import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, ExprCode}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{ByteType, DataType, IntegerType, ShortType, StructField, StructType}
@@ -211,8 +212,7 @@ case class DeltaMergeInto(
     source: LogicalPlan,
     condition: Expression,
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
-    notMatchedClauses: Seq[DeltaMergeIntoInsertClause],
-    migratedSchema: Option[StructType] = None) extends Command {
+    notMatchedClauses: Seq[DeltaMergeIntoInsertClause]) extends Command {
 
   (matchedClauses ++ notMatchedClauses).foreach(_.verifyActions())
 
@@ -253,16 +253,13 @@ object DeltaMergeInto {
       source,
       condition,
       whenClauses.collect { case x: DeltaMergeIntoMatchedClause => x },
-      whenClauses.collect { case x: DeltaMergeIntoInsertClause => x },
-      None)
+      whenClauses.collect { case x: DeltaMergeIntoInsertClause => x })
   }
 
   def resolveReferences(merge: DeltaMergeInto, conf: SQLConf)(
       resolveExpr: (Expression, LogicalPlan) => Expression): DeltaMergeInto = {
 
-    val DeltaMergeInto(
-        target, source, condition, matchedClauses, notMatchedClause, migratedSchema) =
-      merge
+    val DeltaMergeInto(target, source, condition, matchedClauses, notMatchedClause) = merge
 
     // We must do manual resolution as the expressions in different clauses of the MERGE have
     // visibility of the source, the target or both. Additionally, the resolution logic operates
@@ -288,28 +285,7 @@ object DeltaMergeInto {
       resolvedExpr
     }
 
-
     val shouldAutoMigrate = conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE)
-    // Migrated schema to be used for schema evolution.
-    val finalSchema = if (shouldAutoMigrate) {
-      // We can't just use the merge method in StructType, because it doesn't account
-      // for possible implicit conversions. Instead, we use the target schema for all
-      // existing columns and the source schema only for new ones.
-      val targetSchema = target.schema
-      val migratedSchema = mutable.ListBuffer[StructField]()
-      targetSchema.foreach(migratedSchema.append(_))
-
-      source.schema.foreach { col =>
-        val isInTarget = targetSchema.exists { targetCol =>
-          target.conf.resolver(targetCol.name, col.name)
-        }
-        if (!isInTarget) { migratedSchema.append(col) }
-      }
-
-      StructType(migratedSchema)
-    } else {
-      target.schema
-    }
 
     /**
      * Resolves a clause using the given plan (used for resolving the action exprs) and
@@ -336,46 +312,37 @@ object DeltaMergeInto {
             clause match {
               case _: DeltaMergeIntoInsertClause =>
                 // Expand `*` into seq of [ `columnName = sourceColumnBySameName` ] for every source
-                // and target column name. Columns that exist only in the target are set to null,
-                // and columns that exist only in the source will be added later through
-                // schema evolution.
-                finalSchema.map { col =>
-                  // Construct an action that sets the target column to either the source column if
-                  // it's present or NULL otherwise.
-                  val sourceExpr = source.output.find { a =>
-                    conf.resolver(a.name, col.name)
-                  }.getOrElse {
-                    Alias(Literal.create(null, col.dataType), col.name)()
-                  }
-
-                  DeltaMergeAction(Seq(col.name), sourceExpr)
+                // column name. Target columns not present in the source will be filled in
+                // with null later.
+                source.output.map { attr =>
+                  DeltaMergeAction(Seq(attr.name), attr)
                 }
-              case clause: DeltaMergeIntoUpdateClause =>
+              case _: DeltaMergeIntoUpdateClause =>
                 // Expand `*` into seq of [ `columnName = sourceColumnBySameName` ] for every source
-                // and target column name. Columns that exist only in the target are set to
-                // themselves to produce a no-op, and columns that exist only in the source will be
-                // added later through schema evolution.
-                finalSchema.map { col =>
-                  // Construct an action that sets the target column to the source column if present
-                  // or the current column value otherwise. (The no-op action is required because
-                  // later code will assume actions are present for all target columns.)
-                  val sourceExpr = source.output.find { a =>
-                    conf.resolver(a.name, col.name)
-                  }.orElse {
-                    target.output.find { a =>
-                      conf.resolver(a.name, col.name)
-                    }
-                  }.getOrElse {
-                    // This shouldn't be able to happen - every column in the merged result has
-                    // gotta resolve in either the target or the source.
-                    clause.failAnalysis(
-                      s"cannot expand $col from merged schema ${finalSchema.prettyJson} in " +
-                        s"UPDATE *, given source ${source.output}, " +
-                        s"target ${target.output}")
+                // column name. Target columns not present in the source will be filled in with
+                // no-op actions later.
+                // Nested columns are unfolded to accommodate the case where a source struct has a
+                // subset of the nested columns in the target. If a source struct (a, b) is writing
+                // into a target (a, b, c), the final struct after filling in the no-op actions will
+                // be (s.a, s.b, t.c).
+                def getActions(
+                    currSchema: StructType, qualifier: Seq[String]): Seq[DeltaMergeAction] = {
+                  currSchema.flatMap {
+                    case StructField(name, struct: StructType, _, _) =>
+                      getActions(struct, qualifier :+ name)
+                    case StructField(name, _, _, _) =>
+                      val nameParts = qualifier :+ name
+                      val sourceExpr = source.resolve(nameParts, conf.resolver).getOrElse {
+                        // This shouldn't be able to happen - we're coming from within the source
+                        throw new IllegalArgumentException(
+                          s"Couldn't resolve qualified source column" +
+                            s"${UnresolvedAttribute(nameParts).name} within the source query. " +
+                            s"Please contact Databricks support.")
+                      }
+                      Seq(DeltaMergeAction(nameParts, sourceExpr))
                   }
-
-                  DeltaMergeAction(Seq(col.name), sourceExpr)
                 }
+                getActions(source.schema, Seq.empty)
             }
 
           // For actions like `UPDATE SET x = a, y = b` or `INSERT (x, y) VALUES (a, b)`
@@ -416,8 +383,7 @@ object DeltaMergeInto {
     }
     val resolvedMerge = DeltaMergeInto(
       target, source, resolvedCond,
-      resolvedMatchedClauses, resolvedNotMatchedClause,
-      if (shouldAutoMigrate) Some(finalSchema) else None)
+      resolvedMatchedClauses, resolvedNotMatchedClause)
 
     // Its possible that pre-resolved expressions (e.g. `sourceDF("key") = targetDF("key")`) have
     // attribute references that are not present in the output attributes of the children (i.e.,
