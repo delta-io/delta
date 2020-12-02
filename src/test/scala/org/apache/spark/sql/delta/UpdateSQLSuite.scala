@@ -52,6 +52,36 @@ class UpdateSQLSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
       errMsgs = "There is a conflict from these SET columns" :: Nil)
   }
 
+  test("scalar-subquery in update set clause") {
+    withTable("source") {
+      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
+      Seq((0, 3), (1, 5)).toDF("key1", "value").createOrReplaceTempView("source")
+      sql(
+        s"""
+          |UPDATE delta.`$tempPath` as t
+          |SET t.value = (SELECT max(s.value) FROM source s)
+          |""".stripMargin)
+      checkAnswer(readDeltaTable(tempPath),
+        Row(1, 5) ::
+          Row(2, 5) ::
+          Nil)
+      sql(
+        s"""
+          |UPDATE delta.`$tempPath` as t
+          |SET t.value =
+          | (
+          |   SELECT sum(s.value * s.value)
+          |   FROM source s WHERE s.key1 = t.key2
+          | )
+          |WHERE t.key2 = 1
+          |""".stripMargin)
+      checkAnswer(readDeltaTable(tempPath),
+        Row(1, 25) ::
+          Row(2, 5) ::
+          Nil)
+    }
+  }
+
   override protected def executeUpdate(
       target: String,
       set: String,

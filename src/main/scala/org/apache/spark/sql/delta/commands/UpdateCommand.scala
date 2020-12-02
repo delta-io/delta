@@ -25,7 +25,7 @@ import org.apache.spark.SparkContext
 import org.apache.spark.sql.{Column, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Alias, Expression, If, Literal}
 import org.apache.spark.sql.catalyst.plans.QueryPlan
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, SupportsSubquery}
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
@@ -47,7 +47,7 @@ case class UpdateCommand(
     target: LogicalPlan,
     updateExpressions: Seq[Expression],
     condition: Option[Expression])
-  extends RunnableCommand with DeltaCommand {
+  extends RunnableCommand with DeltaCommand with SupportsSubquery {
 
   override def innerChildren: Seq[QueryPlan[_]] = Seq(target)
 
