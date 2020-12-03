@@ -41,7 +41,7 @@ case class PreprocessTableMerge(conf: SQLConf)
   }
 
   def apply(mergeInto: DeltaMergeInto): MergeIntoCommand = {
-    val DeltaMergeInto(target, source, condition, matched, notMatched) = mergeInto
+    val DeltaMergeInto(target, source, condition, matched, notMatched, migrateSchema) = mergeInto
     def checkCondition(cond: Expression, conditionName: String): Unit = {
       if (!cond.deterministic) {
         throw DeltaErrors.nonDeterministicNotSupportedException(
@@ -62,8 +62,7 @@ case class PreprocessTableMerge(conf: SQLConf)
       checkCondition(clause.condition.get, clause.clauseType.toUpperCase(Locale.ROOT))
     }
 
-    val shouldAutoMigrate = conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE)
-    // Migrated schema to be used for schema evolution.
+    val shouldAutoMigrate = conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE) && migrateSchema
     val finalSchema = if (shouldAutoMigrate) {
       // The implicit conversions flag allows any type to be merged from source to target if Spark
       // SQL considers the source type implicitly castable to the target. Normally, mergeSchemas

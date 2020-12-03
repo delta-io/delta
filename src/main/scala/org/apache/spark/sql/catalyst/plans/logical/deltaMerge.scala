@@ -212,7 +212,8 @@ case class DeltaMergeInto(
     source: LogicalPlan,
     condition: Expression,
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
-    notMatchedClauses: Seq[DeltaMergeIntoInsertClause]) extends Command {
+    notMatchedClauses: Seq[DeltaMergeIntoInsertClause],
+    migrateSchema: Boolean) extends Command {
 
   (matchedClauses ++ notMatchedClauses).foreach(_.verifyActions())
 
@@ -253,13 +254,14 @@ object DeltaMergeInto {
       source,
       condition,
       whenClauses.collect { case x: DeltaMergeIntoMatchedClause => x },
-      whenClauses.collect { case x: DeltaMergeIntoInsertClause => x })
+      whenClauses.collect { case x: DeltaMergeIntoInsertClause => x },
+      migrateSchema = false)
   }
 
   def resolveReferences(merge: DeltaMergeInto, conf: SQLConf)(
       resolveExpr: (Expression, LogicalPlan) => Expression): DeltaMergeInto = {
 
-    val DeltaMergeInto(target, source, condition, matchedClauses, notMatchedClause) = merge
+    val DeltaMergeInto(target, source, condition, matchedClauses, notMatchedClause, _) = merge
 
     // We must do manual resolution as the expressions in different clauses of the MERGE have
     // visibility of the source, the target or both. Additionally, the resolution logic operates
@@ -285,7 +287,7 @@ object DeltaMergeInto {
       resolvedExpr
     }
 
-    val shouldAutoMigrate = conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE)
+    val canAutoMigrate = conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE)
 
     /**
      * Resolves a clause using the given plan (used for resolving the action exprs) and
@@ -297,7 +299,7 @@ object DeltaMergeInto {
       val resolvedActions: Seq[DeltaMergeAction] = clause.actions.flatMap { action =>
         action match {
           // For actions like `UPDATE SET *` or `INSERT *`
-          case _: UnresolvedStar if !shouldAutoMigrate =>
+          case _: UnresolvedStar if !canAutoMigrate =>
             // Expand `*` into seq of [ `columnName = sourceColumnBySameName` ] for every target
             // column name. The target columns do not need resolution. The right hand side
             // expression (i.e. sourceColumnBySameName) needs to be resolved only by the source
@@ -308,7 +310,7 @@ object DeltaMergeInto {
                 fakeSourcePlan, s"$typ clause")
               DeltaMergeAction(Seq(tgtColName), resolvedExpr)
             }
-          case _: UnresolvedStar if shouldAutoMigrate =>
+          case _: UnresolvedStar if canAutoMigrate =>
             clause match {
               case _: DeltaMergeIntoInsertClause =>
                 // Expand `*` into seq of [ `columnName = sourceColumnBySameName` ] for every source
@@ -381,9 +383,12 @@ object DeltaMergeInto {
     val resolvedNotMatchedClause = notMatchedClause.map {
       resolveClause(_, fakeSourcePlan)
     }
+    val containsStarAction =
+      (matchedClauses ++ notMatchedClause).flatMap(_.actions).exists(_.isInstanceOf[UnresolvedStar])
     val resolvedMerge = DeltaMergeInto(
       target, source, resolvedCond,
-      resolvedMatchedClauses, resolvedNotMatchedClause)
+      resolvedMatchedClauses, resolvedNotMatchedClause,
+      migrateSchema = canAutoMigrate && containsStarAction)
 
     // Its possible that pre-resolved expressions (e.g. `sourceDF("key") = targetDF("key")`) have
     // attribute references that are not present in the output attributes of the children (i.e.,

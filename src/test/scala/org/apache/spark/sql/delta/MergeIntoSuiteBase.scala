@@ -2245,6 +2245,16 @@ abstract class MergeIntoSuiteBase
       .toDF("key", "value", "extra")
   )
 
+  testEvolution("explicitly update one column")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, 1), (2, 2, 2)).toDF("key", "value", "extra"),
+    update = "value = s.value",
+    // Both results should be the same - we're checking that no evolution logic triggers
+    // even though there's an extra source column.
+    expected = ((0, 0) +: (1, 1) +: (3, 30) +: Nil).toDF("key", "value"),
+    expectedWithoutEvolution = ((0, 0) +: (1, 1) +: (3, 30) +: Nil).toDF("key", "value")
+  )
+
   testEvolution("new column with update non-* and insert *")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1, 1), (2, 2, 2)).toDF("key", "value", "extra"),
