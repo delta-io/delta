@@ -26,7 +26,7 @@ import org.scalatest.BeforeAndAfter
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, CreateTableWriter, Dataset, QueryTest, Row}
-import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, NoSuchTableException, TableAlreadyExistsException}
+import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, TableAlreadyExistsException}
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, Table, TableCatalog}
 import org.apache.spark.sql.connector.expressions._
 import org.apache.spark.sql.functions._
@@ -102,7 +102,7 @@ trait OpenSourceDataFrameWriterV2Tests
   }
 
   test("Append: fail if table does not exist") {
-    val exc = intercept[NoSuchTableException] {
+    val exc = intercept[AnalysisException] {
       spark.table("source").writeTo("table_name").append()
     }
 
@@ -168,7 +168,7 @@ trait OpenSourceDataFrameWriterV2Tests
   }
 
   test("Overwrite: fail if table does not exist") {
-    val exc = intercept[NoSuchTableException] {
+    val exc = intercept[AnalysisException] {
       spark.table("source").writeTo("table_name").overwrite(lit(true))
     }
 
@@ -233,7 +233,7 @@ trait OpenSourceDataFrameWriterV2Tests
   }
 
   test("OverwritePartitions: fail if table does not exist") {
-    val exc = intercept[NoSuchTableException] {
+    val exc = intercept[AnalysisException] {
       spark.table("source").writeTo("table_name").overwritePartitions()
     }
 
