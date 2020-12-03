@@ -14,11 +14,12 @@
  * limitations under the License.
  */
 
-package io.delta.tables;
+package org.apache.spark.sql.delta;
 
 import java.util.Arrays;
 import java.util.List;
 
+import io.delta.tables.DeltaTable;
 import org.apache.spark.sql.test.*;
 import org.apache.spark.sql.*;
 
