@@ -21,6 +21,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.catalyst.analysis.{CastSupport, Resolver}
 import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Cast, CreateNamedStruct, Expression, ExtractValue, GetStructField, Literal, NamedExpression}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
 /**
@@ -28,6 +29,8 @@ import org.apache.spark.sql.types._
  * nested fields.
  */
 trait UpdateExpressionsSupport extends CastSupport {
+
+  def conf: SQLConf
 
   /**
    * Specifies an operation that updates a target column with the given expression.
