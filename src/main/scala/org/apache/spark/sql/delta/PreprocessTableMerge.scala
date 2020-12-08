@@ -33,7 +33,7 @@ import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StructField, StructType}
 
-case class PreprocessTableMerge(override val conf: SQLConf)
+case class PreprocessTableMerge(conf: SQLConf)
   extends Rule[LogicalPlan] with UpdateExpressionsSupport {
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
