@@ -18,15 +18,16 @@ package io.delta.hive
 
 import java.net.URI
 import java.util.Locale
+import java.util.concurrent.{Callable, TimeUnit}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.util.control.NonFatal
 
+import com.google.common.cache.{Cache, CacheBuilder}
 import io.delta.standalone.actions.AddFile
 import io.delta.standalone.types._
 import io.delta.standalone.{DeltaLog, Snapshot}
-
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{BlockLocation, FileStatus, FileSystem, LocatedFileStatus, Path}
 import org.apache.hadoop.hive.metastore.api.MetaException
@@ -110,9 +111,17 @@ object DeltaHelper {
 
   def loadDeltaLatestSnapshot(hadoopConf: Configuration, rootPath: Path): Snapshot = {
     val loadStartMs = System.currentTimeMillis()
-    val snapshot = DeltaLog.forTable(hadoopConf, rootPath).update()
+    val deltaLog = deltaLogCache.get(rootPath, new Callable[DeltaLog] {
+      override def call(): DeltaLog = {
+        if (LOG.isInfoEnabled) {
+          LOG.info(s"DeltaLog for table ${rootPath.getName} was not cached. Loading log now.")
+        }
+        DeltaLog.forTable(hadoopConf, rootPath)
+      }
+    })
+    val snapshot = deltaLog.update()
     val loadEndMs = System.currentTimeMillis()
-    logOperationDuration("loading snapshot", rootPath, snapshot, loadEndMs - loadStartMs)
+    logOperationDuration("loading log & snapshot", rootPath, snapshot, loadEndMs - loadStartMs)
     if (snapshot.getVersion < 0) {
       throw new MetaException(
         s"${hideUserInfoInPath(rootPath)} does not exist or it's not a Delta table")
@@ -133,6 +142,11 @@ object DeltaHelper {
         diffs.mkString("\n"))
     }
   }
+
+  private val deltaLogCache: Cache[Path, DeltaLog] = CacheBuilder.newBuilder()
+    .expireAfterAccess(60, TimeUnit.MINUTES)
+    .maximumSize(1)
+    .build[Path, DeltaLog]
 
   /**
    * Convert an [[AddFile]] to Hadoop's [[FileStatus]].
@@ -312,7 +326,7 @@ object DeltaHelper {
    * Evaluate the partition filter and return `AddFile`s which should be read after pruning
    * partitions.
    */
-  def prunePartitions(
+  private def prunePartitions(
       serializedFilterExpr: String,
       partitionSchema: Seq[StructField],
       addFiles: Seq[AddFile]): Seq[AddFile] = {
