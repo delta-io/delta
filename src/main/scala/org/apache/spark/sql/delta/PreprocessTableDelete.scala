@@ -27,7 +27,7 @@ import org.apache.spark.sql.internal.SQLConf
 /**
  * Preprocess the [[DeltaDelete]] plan to convert to [[DeleteCommand]].
  */
-case class PreprocessTableDelete(conf: SQLConf) extends Rule[LogicalPlan] {
+case class PreprocessTableDelete(override val conf: SQLConf) extends Rule[LogicalPlan] {
 
   override def apply(plan: LogicalPlan): LogicalPlan = {
     plan.resolveOperators {
