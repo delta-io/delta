@@ -1,9 +1,6 @@
 package io.delta.standalone.actions;
 
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 
 import io.delta.standalone.types.StructType;
 
@@ -105,5 +102,27 @@ public final class Metadata {
      */
     public StructType getSchema() {
         return schema;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Metadata metadata = (Metadata) o;
+        return Objects.equals(id, metadata.id) &&
+                Objects.equals(name, metadata.name) &&
+                Objects.equals(description, metadata.description) &&
+                Objects.equals(format, metadata.format) &&
+                Objects.equals(schemaString, metadata.schemaString) &&
+                Objects.equals(partitionColumns, metadata.partitionColumns) &&
+                Objects.equals(configuration, metadata.configuration) &&
+                Objects.equals(createdTime, metadata.createdTime) &&
+                Objects.equals(schema, metadata.schema);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(id, name, description, format, schemaString, partitionColumns,
+                configuration, createdTime, schema);
     }
 }

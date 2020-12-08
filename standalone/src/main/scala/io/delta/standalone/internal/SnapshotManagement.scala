@@ -47,14 +47,12 @@ private[internal] trait SnapshotManagement { self: DeltaLogImpl =>
   }
 
   def getSnapshotForVersionAsOf(version: Long): SnapshotImpl = {
-    val historyManager = DeltaHistoryManager(self)
-    historyManager.checkVersionExists(version)
+    history.checkVersionExists(version)
     getSnapshotAt(version)
   }
 
   def getSnapshotForTimestampAsOf(timestamp: Long): SnapshotImpl = {
-    val historyManager = DeltaHistoryManager(self)
-    val latestCommit = historyManager.getActiveCommitAtTime(new Timestamp(timestamp))
+    val latestCommit = history.getActiveCommitAtTime(new Timestamp(timestamp))
     getSnapshotAt(latestCommit.version)
   }
 

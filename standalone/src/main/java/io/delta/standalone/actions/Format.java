@@ -2,6 +2,7 @@ package io.delta.standalone.actions;
 
 import java.util.Collections;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * A specification of the encoding for the files stored in a table.
@@ -28,5 +29,19 @@ public final class Format {
      */
     public Map<String, String> getOptions() {
         return Collections.unmodifiableMap(options);
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Format format = (Format) o;
+        return Objects.equals(provider, format.provider) &&
+                Objects.equals(options, format.options);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(provider, options);
     }
 }

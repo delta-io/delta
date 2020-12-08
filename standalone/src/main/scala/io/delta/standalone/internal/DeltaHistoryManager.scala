@@ -19,8 +19,7 @@ package io.delta.standalone.internal
 import java.sql.Timestamp
 
 import org.apache.hadoop.fs.Path
-
-import io.delta.standalone.internal.actions.CommitMarker
+import io.delta.standalone.internal.actions.{Action, CommitInfo, CommitMarker}
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.util.FileNames
 import io.delta.standalone.internal.storage.ReadOnlyLogStore
@@ -32,6 +31,19 @@ import io.delta.standalone.internal.storage.ReadOnlyLogStore
  * @param deltaLog the transaction log of this table
  */
 private[internal] case class DeltaHistoryManager(deltaLog: DeltaLogImpl) {
+
+  /** Get the persisted commit info for the given delta file. */
+  def getCommitInfo(version: Long): CommitInfo = {
+    val info = deltaLog.store.read(FileNames.deltaFile(deltaLog.logPath, version))
+      .iterator
+      .map(Action.fromJson)
+      .collectFirst { case c: CommitInfo => c }
+    if (info.isEmpty) {
+      CommitInfo.empty(Some(version))
+    } else {
+      info.head.copy(version = Some(version))
+    }
+  }
 
   /**
    * Check whether the given version can be recreated by replaying the DeltaLog.

@@ -1,7 +1,10 @@
 package io.delta.standalone;
 
 import java.io.File;
+import java.util.List;
+import java.util.Optional;
 
+import io.delta.standalone.actions.CommitInfo;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 
@@ -46,6 +49,14 @@ public interface DeltaLog {
      * @throws IllegalArgumentException if the {@code timestamp} is before the earliest possible snapshot or after the latest possible snapshot
      */
     Snapshot getSnapshotForTimestampAsOf(long timestamp);
+
+    /**
+     * Retrieve a CommitInfo at a desired log version.
+     *
+     * @param version  the CommitInfo version to retrieve
+     * @return the CommitInfo at the provided {@code version}
+     */
+    CommitInfo getCommitInfoAt(long version);
 
     /**
      * @return the path to the {@code _delta_log} files for this log

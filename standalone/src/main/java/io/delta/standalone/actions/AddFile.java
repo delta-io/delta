@@ -4,6 +4,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Collections;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Adds a new file to the table. The path of a file acts as the primary key for
@@ -93,5 +94,24 @@ public final class AddFile {
      */
     public Map<String, String> getTags() {
         return Collections.unmodifiableMap(tags);
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        AddFile addFile = (AddFile) o;
+        return size == addFile.size &&
+                modificationTime == addFile.modificationTime &&
+                dataChange == addFile.dataChange &&
+                Objects.equals(path, addFile.path) &&
+                Objects.equals(partitionValues, addFile.partitionValues) &&
+                Objects.equals(stats, addFile.stats) &&
+                Objects.equals(tags, addFile.tags);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(path, partitionValues, size, modificationTime, dataChange, stats, tags);
     }
 }

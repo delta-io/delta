@@ -17,10 +17,12 @@
 package io.delta.standalone.internal.actions
 
 import java.net.URI
+import java.sql.Timestamp
 
 import com.fasterxml.jackson.annotation.{JsonIgnore, JsonInclude, JsonRawValue}
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize
-
+import com.fasterxml.jackson.core.JsonGenerator
+import com.fasterxml.jackson.databind.{JsonSerializer, SerializerProvider}
+import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 import io.delta.standalone.types.StructType
 import io.delta.standalone.internal.util.{DataTypeParser, JsonUtils}
 
@@ -162,12 +164,66 @@ private[internal] trait CommitMarker {
   def getVersion: Long
 }
 
+/**
+ * Holds provenance information about changes to the table. This [[Action]]
+ * is not stored in the checkpoint and has reduced compatibility guarantees.
+ * Information stored in it is best effort (i.e. can be falsified by the writer).
+ */
+private[internal] case class CommitInfo(
+    // The commit version should be left unfilled during commit(). When reading a delta file, we can
+    // infer the commit version from the file name and fill in this field then.
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    version: Option[Long],
+    timestamp: Timestamp,
+    userId: Option[String],
+    userName: Option[String],
+    operation: String,
+    @JsonSerialize(using = classOf[JsonMapSerializer])
+    operationParameters: Map[String, String],
+    job: Option[JobInfo],
+    notebook: Option[NotebookInfo],
+    clusterId: Option[String],
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    readVersion: Option[Long],
+    isolationLevel: Option[String],
+    /** Whether this commit has blindly appended without caring about existing files */
+    isBlindAppend: Option[Boolean],
+    operationMetrics: Option[Map[String, String]],
+    userMetadata: Option[String]) extends Action with CommitMarker {
+  override def wrap: SingleAction = SingleAction(commitInfo = this)
+
+  override def withTimestamp(timestamp: Long): CommitInfo = {
+    this.copy(timestamp = new Timestamp(timestamp))
+  }
+
+  override def getTimestamp: Long = timestamp.getTime
+  @JsonIgnore
+  override def getVersion: Long = version.get
+}
+
+private[internal] object CommitInfo {
+  def empty(version: Option[Long] = None): CommitInfo = {
+    CommitInfo(version, null, None, None, null, null, None, None,
+      None, None, None, None, None, None)
+  }
+}
+
+private[internal] case class JobInfo(
+    jobId: String,
+    jobName: String,
+    runId: String,
+    jobOwnerId: String,
+    triggerType: String)
+
+private[internal] case class NotebookInfo(notebookId: String)
+
 /** A serialization helper to create a common action envelope. */
 private[internal] case class SingleAction(
     add: AddFile = null,
     remove: RemoveFile = null,
     metaData: Metadata = null,
-    protocol: Protocol = null) {
+    protocol: Protocol = null,
+    commitInfo: CommitInfo = null) {
 
   def unwrap: Action = {
     if (add != null) {
@@ -178,8 +234,30 @@ private[internal] case class SingleAction(
       metaData
     } else if (protocol != null) {
       protocol
+    } else if (commitInfo != null) {
+      commitInfo
     } else {
       null
     }
+  }
+}
+
+/** Serializes Maps containing JSON strings without extra escaping. */
+class JsonMapSerializer extends JsonSerializer[Map[String, String]] {
+  def serialize(
+      parameters: Map[String, String],
+      jgen: JsonGenerator,
+      provider: SerializerProvider): Unit = {
+    jgen.writeStartObject()
+    parameters.foreach { case (key, value) =>
+      if (value == null) {
+        jgen.writeNullField(key)
+      } else {
+        jgen.writeFieldName(key)
+        // Write value as raw data, since it's already JSON text
+        jgen.writeRawValue(value)
+      }
+    }
+    jgen.writeEndObject()
   }
 }

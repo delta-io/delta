@@ -32,7 +32,7 @@ import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction}
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
-import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol, RemoveFile, SingleAction}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, JobInfo, Metadata, NotebookInfo, Protocol, RemoveFile, SingleAction}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.spark.sql.test.SharedSparkSession
@@ -45,7 +45,12 @@ import org.apache.spark.sql.types._
  * GENERATE_GOLDEN_TABLES=1 build/sbt 'goldenTables/test'
  * ```
  *
- * After generating golden tables, ensure to package or test project `standalone`, otherwise the
+ * To generate a single table (that is specified below) run:
+ * ```
+ * GENERATE_GOLDEN_TABLES=1 build/sbt 'goldenTables/test-only *GoldenTables -- -z tbl_name'
+ * ```
+ *
+ * After generating golden tables, ensure to package or test project standalone`, otherwise the
  * test resources won't be available when running tests with IntelliJ.
  */
 class GoldenTables extends QueryTest with SharedSparkSession {
@@ -335,6 +340,41 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       // Protocol reader version explicitly set too high
       // Also include a Metadata
       Iterator(Protocol(99), Metadata(), file).map(a => JsonUtils.toJson(a.wrap)))
+  }
+
+  /** TEST: DeltaLogSuite > get commit info */
+  generateGoldenTable("deltalog-commit-info") { tablePath =>
+    val log = DeltaLog.forTable(spark, new Path(tablePath))
+    assert(new File(log.logPath.toUri).mkdirs())
+
+    val commitInfoFile = CommitInfo(
+      Some(0),
+      new Timestamp(1540415658000L),
+      Some("user_0"),
+      Some("username_0"),
+      "WRITE",
+      Map("test" -> "\"test\""),
+      Some(JobInfo("job_id_0", "job_name_0", "run_id_0", "job_owner_0", "trigger_type_0")),
+      Some(NotebookInfo("notebook_id_0")),
+      Some("cluster_id_0"),
+      Some(-1),
+      Some("default"),
+      Some(true)
+    )
+
+    /**
+     * NOTE:
+     * Due to versioning conflicts between DeltaOSS and the Delta version used here, this
+     * CommitInfo is missing two fields. If you re-build this table and get test errors, append to
+     * the end of the commitInfo object in file
+     * src/test/resources/golden/deltalog-commit-info/_delta_log/00000000000000000000.json this:
+     * "operationMetrics":{"test":"test"},"userMetadata":"foo"
+     */
+
+    val addFile = AddFile("abc", Map.empty, 1, 1, true)
+    log.store.write(
+      FileNames.deltaFile(log.logPath, 0L),
+      Iterator(Metadata(), Protocol(), commitInfoFile, addFile).map(a => JsonUtils.toJson(a.wrap)))
   }
 
   ///////////////////////////////////////////////////////////////////////////
