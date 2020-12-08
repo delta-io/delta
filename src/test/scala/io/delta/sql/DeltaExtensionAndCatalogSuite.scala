@@ -72,6 +72,16 @@ class DeltaExtensionAndCatalogSuite extends SparkFunSuite {
     }
   }
 
+  test("DeltaCatalog class should be initialized correctly") {
+    withSparkSession(
+      SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key ->
+        classOf[org.apache.spark.sql.delta.catalog.DeltaCatalog].getName
+    ) { spark =>
+      val v2Catalog = spark.sessionState.analyzer.catalogManager.catalog("spark_catalog")
+      assert(v2Catalog.isInstanceOf[org.apache.spark.sql.delta.catalog.DeltaCatalog])
+    }
+  }
+
   private def withSparkSession(configs: (String, String)*)(f: SparkSession => Unit): Unit = {
     var builder = SparkSession.builder()
       .appName("DeltaSparkSessionExtensionSuite")

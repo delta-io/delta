@@ -544,6 +544,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
     }
   }
 
+  private def lockCommitIfEnabled[T](body: => T): T = {
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_LOCK_ENABLED)) {
+      deltaLog.lockInterruptibly(body)
+    } else {
+      body
+    }
+  }
+
   /**
    * Commit `actions` using `attemptVersion` version number. If there are any conflicts that are
    * found, we will retry a fixed number of times.
@@ -553,7 +561,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   protected def doCommitRetryIteratively(
       attemptVersion: Long,
       actions: Seq[Action],
-      isolationLevel: IsolationLevel): Long = deltaLog.lockInterruptibly {
+      isolationLevel: IsolationLevel): Long = lockCommitIfEnabled {
 
     var tryCommit = true
     var commitVersion = attemptVersion

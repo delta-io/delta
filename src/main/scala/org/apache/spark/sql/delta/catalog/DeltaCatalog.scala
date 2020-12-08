@@ -52,14 +52,12 @@ import org.apache.spark.sql.types.{StructField, StructType}
  * A Catalog extension which can properly handle the interaction between the HiveMetaStore and
  * Delta tables. It delegates all operations DataSources other than Delta to the SparkCatalog.
  */
-class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
+class DeltaCatalog extends DelegatingCatalogExtension
   with StagingTableCatalog
   with SupportsPathIdentifier
   with Logging {
 
-  def this() = {
-    this(SparkSession.active)
-  }
+  val spark = SparkSession.active
 
   /**
    * Creates a Delta table
