@@ -51,7 +51,7 @@ private[internal] object DataTypeParser {
   private val nonDecimalNameToType = {
     Seq(new NullType, new DateType, new TimestampType, new BinaryType, new IntegerType,
       new BooleanType, new LongType, new DoubleType, new FloatType, new ShortType, new ByteType,
-      new StringType, new  CalendarIntervalType).map(t => t.getTypeName -> t).toMap
+      new StringType).map(t => t.getTypeName -> t).toMap
   }
 
   def fromJson(json: String): DataType = parseDataType(parse(json))

@@ -91,6 +91,10 @@ private[internal] object DeltaErrors {
       s"Available versions: [$earliest, $latest].")
   }
 
+  def nullValueFoundForPrimitiveTypes(fieldName: String): Throwable = {
+    new NullPointerException(s"Read a null value for field $fieldName which is a primitive type")
+  }
+
   def nullValueFoundForNonNullSchemaField(fieldName: String, schema: StructType): Throwable = {
     new NullPointerException(s"Read a null value for field $fieldName, yet schema indicates " +
       s"that this field can't be null. Schema: ${schema.getTreeString}")

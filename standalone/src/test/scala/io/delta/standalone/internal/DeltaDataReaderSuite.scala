@@ -48,22 +48,49 @@ class DeltaDataReaderSuite extends FunSuite {
     withLogForGoldenTable("data-reader-primitives") { log =>
       val recordIter = log.snapshot().open()
       var count = 0
+      var checkNulls = false
       while (recordIter.hasNext) {
         val row = recordIter.next()
-        val i = row.getInt("as_int")
-        assert(row.getLong("as_long") == i.longValue)
-        assert(row.getByte("as_byte") == i.toByte)
-        assert(row.getShort("as_short") == i.shortValue)
-        assert(row.getBoolean("as_boolean") == (i % 2 == 0))
-        assert(row.getFloat("as_float") == i.floatValue)
-        assert(row.getDouble("as_double") == i.doubleValue)
-        assert(row.getString("as_string") == i.toString)
-        assert(row.getBinary("as_binary") sameElements Array[Byte](i.toByte, i.toByte))
-        assert(row.getBigDecimal("as_big_decimal") == new JBigDecimal(i))
+        if (row.isNullAt("as_int")) {
+          assert(row.isNullAt("as_int"))
+          intercept[NullPointerException](row.getInt("as_int"))
+          assert(row.isNullAt("as_long"))
+          intercept[NullPointerException](row.getInt("as_long"))
+          assert(row.isNullAt("as_byte"))
+          intercept[NullPointerException](row.getInt("as_byte"))
+          assert(row.isNullAt("as_short"))
+          intercept[NullPointerException](row.getInt("as_short"))
+          assert(row.isNullAt("as_boolean"))
+          intercept[NullPointerException](row.getInt("as_boolean"))
+          assert(row.isNullAt("as_float"))
+          intercept[NullPointerException](row.getInt("as_float"))
+          assert(row.isNullAt("as_double"))
+          intercept[NullPointerException](row.getInt("as_double"))
+          assert(row.isNullAt("as_string"))
+          assert(row.getString("as_string") == null)
+          assert(row.isNullAt("as_binary"))
+          assert(row.getBinary("as_binary") == null)
+          assert(row.isNullAt("as_big_decimal"))
+          assert(row.getBigDecimal("as_big_decimal") == null)
+          checkNulls = true
+        } else {
+          val i = row.getInt("as_int")
+          assert(row.getLong("as_long") == i.longValue)
+          assert(row.getByte("as_byte") == i.toByte)
+          assert(row.getShort("as_short") == i.shortValue)
+          assert(row.getBoolean("as_boolean") == (i % 2 == 0))
+          assert(row.getFloat("as_float") == i.floatValue)
+          assert(row.getDouble("as_double") == i.doubleValue)
+          assert(row.getString("as_string") == i.toString)
+          assert(row.getBinary("as_binary") sameElements Array[Byte](i.toByte, i.toByte))
+          assert(row.getBigDecimal("as_big_decimal") == new JBigDecimal(i))
+        }
         count += 1
       }
 
-      assert(count == 10)
+      assert(count == 11)
+      assert(checkNulls, "didn't check null values for primitive types. " +
+        "Please check if the generated table is correct")
     }
   }
 

@@ -38,6 +38,8 @@
 
 package io.delta.standalone.types;
 
+import java.util.Objects;
+
 /**
  * The data type representing {@code java.math.BigDecimal} values.
  * A Decimal that must have fixed precision (the maximum number of digits) and scale (the number
@@ -70,5 +72,19 @@ public final class DecimalType extends DataType {
      */
     public int getScale() {
         return scale;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        DecimalType that = (DecimalType) o;
+        return precision == that.precision &&
+                scale == that.scale;
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(super.hashCode(), precision, scale);
     }
 }

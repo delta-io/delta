@@ -1,3 +1,18 @@
+/*
+ * Copyright (2020) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package io.delta.standalone.data;
 
 import java.math.BigDecimal;
@@ -11,12 +26,15 @@ import io.delta.standalone.types.StructType;
 
 /**
  * Represents one row of data containing a non-empty collection of {@code fieldName - value} pairs.
- * <p>
- * Allows retrieval of values only through {@code fieldName} lookup. For example: {@code int x = getInt("int_field")}.
- * <p>
- * It is valid to retrieve a value that is {@code null} only if the schema field is nullable.
- * <p>
- * Immutable and <b>NOT</b> thread safe.
+ * It provides APIs to allow retrieval of values through {@code fieldName} lookup. For example,
+ *
+ * <pre>{@code
+ *   if (row.isNullAt("int_field")) {
+ *     // handle the null value.
+ *   } else {
+ *     int x = getInt("int_field");
+ *   }
+ * }</pre>
  *
  * @see StructType StructType
  * @see StructField StructField
@@ -24,24 +42,29 @@ import io.delta.standalone.types.StructType;
 public interface RowRecord {
 
     /**
-     * @return the schema for this RowRecord
+     * @return the schema for this {@link RowRecord}
      */
     StructType getSchema();
 
     /**
-     * @return the number of elements in this RowRecord
+     * @return the number of elements in this {@link RowRecord}
      */
     int getLength();
+
+    /**
+     * @param fieldName  name of field/column, not {@code null}
+     * @return whether the value of field {@code fieldName} is {@code null}
+     */
+    boolean isNullAt(String fieldName);
 
     /**
      * Retrieves value from data record and returns the value as a primitive int.
      *
      * @param fieldName  name of field/column, not {@code null}
-     * @return the value for field {@code fieldName} as a primitive int. {@code null} only if
-     *         {@code null} value read and field is nullable.
+     * @return the value for field {@code fieldName} as a primitive int
      * @throws IllegalArgumentException if {@code fieldName} does not exist in this schema
      * @throws ClassCastException if data type does not match
-     * @throws NullPointerException if field is not nullable and {@code null} data value read
+     * @throws NullPointerException if {@code null} data value read
      */
     int getInt(String fieldName);
 
@@ -49,11 +72,10 @@ public interface RowRecord {
      * Retrieves value from data record and returns the value as a primitive long.
      *
      * @param fieldName  name of field/column, not {@code null}
-     * @return the value for field {@code fieldName} as a primitive long. {@code null} only if
-     *         {@code null} value read and field is nullable.
+     * @return the value for field {@code fieldName} as a primitive long
      * @throws IllegalArgumentException if {@code fieldName} does not exist in this schema
      * @throws ClassCastException if data type does not match
-     * @throws NullPointerException if field is not nullable and {@code null} data value read
+     * @throws NullPointerException if {@code null} data value read
      */
     long getLong(String fieldName);
 
@@ -61,11 +83,10 @@ public interface RowRecord {
      * Retrieves value from data record and returns the value as a primitive byte.
      *
      * @param fieldName  name of field/column, not {@code null}
-     * @return the value for field {@code fieldName} as a primitive byte. {@code null} only if
-     *         {@code null} value read and field is nullable.
+     * @return the value for field {@code fieldName} as a primitive byte
      * @throws IllegalArgumentException if {@code fieldName} does not exist in this schema
      * @throws ClassCastException if data type does not match
-     * @throws NullPointerException if field is not nullable and {@code null} data value read
+     * @throws NullPointerException if {@code null} data value read
      */
     byte getByte(String fieldName);
 
@@ -73,11 +94,10 @@ public interface RowRecord {
      * Retrieves value from data record and returns the value as a primitive short.
      *
      * @param fieldName  name of field/column, not {@code null}
-     * @return the value for field {@code fieldName} as a primitive short. {@code null} only if
-     *         {@code null} value read and field is nullable.
+     * @return the value for field {@code fieldName} as a primitive short
      * @throws IllegalArgumentException if {@code fieldName} does not exist in this schema
      * @throws ClassCastException if data type does not match
-     * @throws NullPointerException if field is not nullable and {@code null} data value read
+     * @throws NullPointerException if {@code null} data value read
      */
     short getShort(String fieldName);
 
@@ -85,11 +105,10 @@ public interface RowRecord {
      * Retrieves value from data record and returns the value as a primitive boolean.
      *
      * @param fieldName  name of field/column, not {@code null}
-     * @return the value for field {@code fieldName} as a primitive boolean. {@code null} only if
-     *         {@code null} value read and field is nullable.
+     * @return the value for field {@code fieldName} as a primitive boolean
      * @throws IllegalArgumentException if {@code fieldName} does not exist in this schema
      * @throws ClassCastException if data type does not match
-     * @throws NullPointerException if field is not nullable and {@code null} data value read
+     * @throws NullPointerException if {@code null} data value read
      */
     boolean getBoolean(String fieldName);
 
@@ -97,11 +116,10 @@ public interface RowRecord {
      * Retrieves value from data record and returns the value as a primitive float.
      *
      * @param fieldName  name of field/column, not {@code null}
-     * @return the value for field {@code fieldName} as a primitive float. {@code null} only if
-     *         {@code null} value read and field is nullable.
+     * @return the value for field {@code fieldName} as a primitive float
      * @throws IllegalArgumentException if {@code fieldName} does not exist in this schema
      * @throws ClassCastException if data type does not match
-     * @throws NullPointerException if field is not nullable and {@code null} data value read
+     * @throws NullPointerException if {@code null} data value read
      */
     float getFloat(String fieldName);
 
@@ -109,11 +127,10 @@ public interface RowRecord {
      * Retrieves value from data record and returns the value as a primitive double.
      *
      * @param fieldName  name of field/column, not {@code null}
-     * @return the value for field {@code fieldName} as a primitive double. {@code null} only if
-     *         {@code null} value read and field is nullable.
+     * @return the value for field {@code fieldName} as a primitive double
      * @throws IllegalArgumentException if {@code fieldName} does not exist in this schema
      * @throws ClassCastException if data type does not match
-     * @throws NullPointerException if field is not nullable and {@code null} data value read
+     * @throws NullPointerException if {@code null} data value read
      */
     double getDouble(String fieldName);
 

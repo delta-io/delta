@@ -38,6 +38,8 @@
 
 package io.delta.standalone.types;
 
+import java.util.Objects;
+
 /**
  * The data type for collections of multiple values.
  */
@@ -75,5 +77,19 @@ public final class ArrayType extends DataType {
         final String nextPrefix = prefix + "    |";
         builder.append(String.format("%s-- element: %s (containsNull = %b)\n", prefix, elementType.getTypeName(), containsNull));
         DataType.buildFormattedString(elementType, nextPrefix, builder);
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        ArrayType arrayType = (ArrayType) o;
+        return containsNull == arrayType.containsNull &&
+                Objects.equals(elementType, arrayType.elementType);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(elementType, containsNull);
     }
 }

@@ -38,6 +38,8 @@
 
 package io.delta.standalone.types;
 
+import java.util.Objects;
+
 /**
  * The data type for Maps. Keys in a map are not allowed to have {@code null} values.
  */
@@ -81,10 +83,25 @@ public final class MapType extends DataType {
     /**
      * Builds a readable {@code String} representation of this {@code MapType}.
      */
-    public void buildFormattedString(String prefix, StringBuilder builder) {
+    protected void buildFormattedString(String prefix, StringBuilder builder) {
         final String nextPrefix = prefix + "    |";
         builder.append(String.format("%s-- key: %s\n", prefix, keyType.getTypeName()));
         DataType.buildFormattedString(keyType, nextPrefix, builder);
         builder.append(String.format("%s-- value: %s (valueContainsNull = %b)\n", prefix, valueType.getTypeName(), valueContainsNull));
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        MapType mapType = (MapType) o;
+        return valueContainsNull == mapType.valueContainsNull &&
+                Objects.equals(keyType, mapType.keyType) &&
+                Objects.equals(valueType, mapType.valueType);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(keyType, valueType, valueContainsNull);
     }
 }

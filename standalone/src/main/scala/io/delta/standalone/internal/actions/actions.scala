@@ -243,7 +243,7 @@ private[internal] case class SingleAction(
 }
 
 /** Serializes Maps containing JSON strings without extra escaping. */
-class JsonMapSerializer extends JsonSerializer[Map[String, String]] {
+private[internal] class JsonMapSerializer extends JsonSerializer[Map[String, String]] {
   def serialize(
       parameters: Map[String, String],
       jgen: JsonGenerator,

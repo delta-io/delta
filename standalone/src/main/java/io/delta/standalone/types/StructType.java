@@ -43,7 +43,7 @@ import java.util.HashMap;
 
 /**
  * The data type representing a table's schema, consisting of a collection of
- * fields (that is, {@code fieldName} to {@code fieldDataType} pairs).
+ * fields (that is, {@code fieldName} to {@code dataType} pairs).
  *
  * @see StructField StructField
  */
@@ -52,9 +52,11 @@ public final class StructType extends DataType {
     private final HashMap<String, StructField> nameToField;
 
     public StructType(StructField[] fields) {
-        this.fields = fields;
+        if (fields.length == 0) {
+            throw new IllegalArgumentException("a StructType must have at least one field");
+        }
 
-        // generate name -> field map
+        this.fields = fields;
         this.nameToField = new HashMap<>();
         Arrays.stream(fields).forEach(field -> nameToField.put(field.getName(), field));
     }
@@ -74,8 +76,8 @@ public final class StructType extends DataType {
     }
 
     /**
-     * @param fieldName  the name of the desired {@code StructField}, not null
-     * @return the {@code StructField} with the given name, not null
+     * @param fieldName  the name of the desired {@link StructField}, not null
+     * @return the {@code link} with the given name, not null
      * @throws IllegalArgumentException if a field with the given name does not exist
      */
     public StructField get(String fieldName) {

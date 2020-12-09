@@ -31,6 +31,7 @@ import io.delta.standalone.internal.util.FileNames
 import io.delta.standalone.internal.util.GoldenTableUtils._
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.Path
 
 // scalastyle:off funsuite
 import org.scalatest.FunSuite
@@ -100,7 +101,7 @@ class DeltaTimeTravelSuite extends FunSuite {
       val tempDir = Files.createTempDirectory(UUID.randomUUID().toString).toFile
       try {
         FileUtils.copyDirectory(new File(tablePath), tempDir)
-        val log = DeltaLog.forTable(new Configuration(), tempDir)
+        val log = DeltaLog.forTable(new Configuration(), tempDir.getCanonicalPath)
 
         // Correct cases
         verifySnapshot(log.getSnapshotForVersionAsOf(0), data_files_version_0, 0)
@@ -120,11 +121,12 @@ class DeltaTimeTravelSuite extends FunSuite {
         assert(e2.getMessage == DeltaErrors.versionNotExistException(-1, 0, 2).getMessage)
 
         // Error case - not reproducible
-        new File(FileNames.deltaFile(log.getLogPath, 0).toUri).delete()
+        val logPath = new Path(log.getPath, "_delta_log")
+        new File(FileNames.deltaFile(logPath, 0).toUri).delete()
         val e3 = intercept[RuntimeException] {
           log.getSnapshotForVersionAsOf(0)
         }
-        assert(e3.getMessage == DeltaErrors.noReproducibleHistoryFound(log.getLogPath).getMessage)
+        assert(e3.getMessage == DeltaErrors.noReproducibleHistoryFound(logPath).getMessage)
       } finally {
         FileUtils.deleteDirectory(tempDir)
       }

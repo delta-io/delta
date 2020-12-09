@@ -1,3 +1,18 @@
+/*
+ * Copyright (2020) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package io.delta.standalone.actions;
 
 import java.net.URI;
@@ -7,9 +22,13 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Adds a new file to the table. The path of a file acts as the primary key for
- * the entry in the set of files. When multiple {@code AddFile} actions are
- * seen with the same {@code path} only the metadata from the last one is kept.
+ * Represents an action that adds a new file to the table. The path of a file acts as the primary
+ * key for the entry in the set of files.
+ *
+ * Note: since actions within a given Delta file are not guaranteed to be applied in order, it is
+ * not valid for multiple file operations with the same path to exist in a single version.
+ *
+ * @see  <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md">Delta Transaction Log Protocol</a>
  */
 public final class AddFile {
     private final String path;
@@ -33,24 +52,18 @@ public final class AddFile {
     }
 
     /**
-     * @return the relative path, from the root of the table, to the data file
-     *         that should be added to the table
+     * @return the relative path or the absolute path that should be added to the table. If it's a
+     *         relative path, it's relative to the root of the table. Note: the path is encoded and
+     *         should be decoded by {@code new java.net.URI(path)} when using it.
      */
     public String getPath() {
         return path;
     }
 
     /**
-     * @return the URI for the data file that this {@code AddFile} represents
-     * @throws URISyntaxException if path violates <a href="https://www.ietf.org/rfc/rfc2396.txt">RFC 2396</a>
-     */
-    public URI getPathAsUri() throws URISyntaxException {
-        return new URI(path);
-    }
-
-    /**
      * @return an unmodifiable {@code Map} from partition column to value for
-     *         this file
+     *         this file. Partition values are stored as strings, using the following formats.
+     *         An empty string for any type translates to a null partition value.
      * @see <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#Partition-Value-Serialization" target="_blank">Delta Protocol Partition Value Serialization</a>
      */
     public Map<String, String> getPartitionValues() {
@@ -73,8 +86,9 @@ public final class AddFile {
     }
 
     /**
-     * @return whether any data was changed as a result of this file being
-     *         created
+     * @return whether any data was changed as a result of this file being created. When
+     *         {@code false} the file must already be present in the table or the records in the
+     *         added file must be contained in one or more remove actions in the same version
      */
     public boolean isDataChange() {
         return dataChange;
@@ -89,8 +103,7 @@ public final class AddFile {
     }
 
     /**
-     * @return an unmodifiable {@code Map} of user-defined metadata for this
-     *         file
+     * @return an unmodifiable {@code Map} containing metadata about this file
      */
     public Map<String, String> getTags() {
         return Collections.unmodifiableMap(tags);

@@ -488,6 +488,10 @@ class GoldenTables extends QueryTest with SharedSparkSession {
         i.toString, Array[Byte](i.toByte, i.toByte), new JBigDecimal(i))
     }
 
+    def createRowWithNullValues(): Row = {
+      Row(null, null, null, null, null, null, null, null, null, null)
+    }
+
     val schema = new StructType()
       .add("as_int", IntegerType)
       .add("as_long", LongType)
@@ -500,7 +504,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       .add("as_binary", BinaryType)
       .add("as_big_decimal", DecimalType(1, 0))
 
-    val data = (0 until 10).map(createRow)
+    val data = createRowWithNullValues() +: (0 until 10).map(createRow)
     writeDataWithSchema(tablePath, data, schema)
   }
 

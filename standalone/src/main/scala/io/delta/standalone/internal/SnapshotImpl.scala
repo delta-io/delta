@@ -54,17 +54,11 @@ private[internal] class SnapshotImpl(
   // Public API Methods
   ///////////////////////////////////////////////////////////////////////////
 
-  override def getAllFiles: java.util.List[AddFileJ] =
-    state.activeFiles.values.map(ConversionUtils.convertAddFile).toList.asJava
-
-  override def getNumOfFiles: Int = state.activeFiles.size
+  override def getAllFiles: java.util.List[AddFileJ] = activeFiles
 
   override def getMetadata: MetadataJ = ConversionUtils.convertMetadata(state.metadata)
 
-  override def getPath: Path = path
   override def getVersion: Long = version
-  override def getDeltaLog: DeltaLog = deltaLog
-  override def getTimestamp: Long = timestamp
 
   override def open(): CloseableIterator[RowParquetRecordJ] =
     CloseableParquetDataIterator(
@@ -134,6 +128,9 @@ private[internal] class SnapshotImpl(
       replay.numProtocol
     )
   }
+
+  private lazy val activeFiles =
+    state.activeFiles.values.map(ConversionUtils.convertAddFile).toList.asJava
 
   /**
    * Asserts that the client is up to date with the protocol and allowed

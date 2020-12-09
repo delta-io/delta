@@ -84,6 +84,8 @@ private[internal] case class RowParquetRecordImpl(
 
   override def getLength: Int = record.length
 
+  override def isNullAt(fieldName: String): Boolean = record.get(fieldName) == NullValue
+
   override def getInt(fieldName: String): Int = getAs[Int](fieldName)
 
   override def getLong(fieldName: String): Long = getAs[Long](fieldName)
@@ -137,6 +139,11 @@ private[internal] case class RowParquetRecordImpl(
       throw DeltaErrors.nullValueFoundForNonNullSchemaField(fieldName, schema)
     }
 
+    if (primitiveDecodeMap.contains(schemaField.getDataType.getTypeName)
+      && parquetVal == NullValue) {
+      throw DeltaErrors.nullValueFoundForPrimitiveTypes(fieldName)
+    }
+
     decode(schemaField.getDataType, parquetVal).asInstanceOf[T]
   }
 
@@ -147,6 +154,10 @@ private[internal] case class RowParquetRecordImpl(
     val elemTypeName = elemType.getTypeName
     if (primitiveDecodeMap.contains(elemTypeName)) {
       return primitiveDecodeMap(elemTypeName).decode(parquetVal, codecConf)
+    }
+
+    if (primitiveNullableDecodeMap.contains(elemTypeName)) {
+      return primitiveNullableDecodeMap(elemTypeName).decode(parquetVal, codecConf)
     }
 
     (elemType, parquetVal) match {
@@ -276,7 +287,10 @@ private[internal] case class RowParquetRecordImpl(
     new ShortType().getTypeName -> ValueCodec.shortCodec,
     new BooleanType().getTypeName -> ValueCodec.booleanCodec,
     new FloatType().getTypeName -> ValueCodec.floatCodec,
-    new DoubleType().getTypeName -> ValueCodec.doubleCodec,
+    new DoubleType().getTypeName -> ValueCodec.doubleCodec
+  )
+
+  private val primitiveNullableDecodeMap = Map(
     new StringType().getTypeName -> ValueCodec.stringCodec,
     new BinaryType().getTypeName -> ValueCodec.arrayCodec[Byte, Array],
     new DecimalType(1, 1).getTypeName -> customDecimalCodec,

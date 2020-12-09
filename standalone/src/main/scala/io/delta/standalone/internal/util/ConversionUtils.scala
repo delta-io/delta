@@ -74,7 +74,6 @@ private[internal] object ConversionUtils {
       internal.name,
       internal.description,
       convertFormat(internal.format),
-      internal.schemaString,
       internal.partitionColumns.toList.asJava,
       internal.configuration.asJava,
       toJavaLongOptional(internal.createdTime),

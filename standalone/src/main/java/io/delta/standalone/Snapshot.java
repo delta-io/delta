@@ -1,3 +1,18 @@
+/*
+ * Copyright (2020) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package io.delta.standalone;
 
 import java.util.List;
@@ -7,13 +22,12 @@ import io.delta.standalone.actions.Metadata;
 import io.delta.standalone.data.CloseableIterator;
 import io.delta.standalone.data.RowRecord;
 
-import org.apache.hadoop.fs.Path;
-
 /**
- * An immutable snapshot of the state of the log at some delta version. Internally
- * this class manages the replay of actions stored in checkpoint or delta files.
- * <p>
- * After resolving any new actions, it recalculates the transaction state and metadata.
+ * {@link Snapshot} provides APIs to access the Delta table state (such as table metadata, active
+ * files) at some version.
+ *
+ * See <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md">Delta Transaction Log Protocol</a>
+ * for more details about the transaction logs.
  */
 public interface Snapshot {
 
@@ -23,14 +37,9 @@ public interface Snapshot {
     List<AddFile> getAllFiles();
 
     /**
-     * @return the metadata for this snapshot
+     * @return the table metadata for this snapshot
      */
     Metadata getMetadata();
-
-    /**
-     * @return the path to the log for this snapshot
-     */
-    Path getPath();
 
     /**
      * @return the version for this snapshot
@@ -38,31 +47,10 @@ public interface Snapshot {
     long getVersion();
 
     /**
-     * @return the {@code DeltaLog} instance for this snapshot
-     */
-    DeltaLog getDeltaLog();
-
-    /**
-     * @return the timestamp of the latest commit in milliseconds. Can also be to -1 if the
-     *         timestamp of the commit is unknown or the table has not been initialized (that is,
-     *         the version is set to -1).
-     */
-    long getTimestamp();
-
-    /**
-     * @return the number of files present in this snapshot
-     */
-    int getNumOfFiles();
-
-    /**
-     * Creates a new {@code CloseableIterator<RowRecord>} which can iterate over data located in this
-     * snapshot's {@code DeltaLog.dataPath}. Iterates file by file, row by row.
-     * <p>
-     * This does not iterate over snapshot metadata/log files. To do that, use {@code getAllFiles}.
-     * <p>
-     * Provides no iteration ordering guarantee among data files.
+     * Creates a {@link CloseableIterator} which can iterate over data belonging to this snapshot.
+     * It provides no iteration ordering guarantee among data.
      *
-     * @return the new iterator
+     * @return a {@link CloseableIterator} to iterate over data
      */
     CloseableIterator<RowRecord> open();
 }

@@ -298,7 +298,7 @@ object DeltaHelper {
     if (LOG.isInfoEnabled) {
       LOG.info(s"Delta Lake table '${hideUserInfoInPath(path)}' (" +
         s"version: ${snapshot.getVersion}, " +
-        s"add: ${snapshot.getNumOfFiles}, " +
+        s"add: ${snapshot.getAllFiles.size}, " +
         s"partitions: ${snapshot.getMetadata.getPartitionColumns.asScala.mkString("[", ", ", "]")}"
         + s") spent ${durationMs} ms on $ops.")
     }

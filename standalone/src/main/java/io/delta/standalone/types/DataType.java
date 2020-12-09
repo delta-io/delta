@@ -39,6 +39,7 @@
 package io.delta.standalone.types;
 
 import java.util.Locale;
+import java.util.Objects;
 
 /**
  * The base type of all {@code io.delta.standalone} data types.
@@ -91,6 +92,11 @@ public abstract class DataType {
         if (o == null || getClass() != o.getClass()) return false;
         DataType that = (DataType) o;
         return getTypeName().equals(that.getTypeName());
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(getTypeName());
     }
 
     private String stripSuffix(String orig, String suffix) {

@@ -50,7 +50,6 @@ class DeltaLogSuite extends FunSuite {
     withLogForGoldenTable("checkpoint") { log =>
       assert(log.snapshot.getVersion == 14)
       assert(log.snapshot.getAllFiles.size == 1)
-      assert(log.snapshot.getNumOfFiles == 1)
     }
   }
 
@@ -75,14 +74,14 @@ class DeltaLogSuite extends FunSuite {
     // Append data0
     var data0_files: Array[File] = Array.empty
     withLogForGoldenTable("snapshot-data0") { log =>
-      data0_files = getDirDataFiles(log.getDataPath.toString) // data0 files
+      data0_files = getDirDataFiles(log.getPath.toString) // data0 files
       verifySnapshot(log.snapshot(), data0_files, 0)
     }
 
     // Append data1
     var data0_data1_files: Array[File] = Array.empty
     withLogForGoldenTable("snapshot-data1") { log =>
-      data0_data1_files = getDirDataFiles(log.getDataPath.toString) // data0 & data1 files
+      data0_data1_files = getDirDataFiles(log.getPath.toString) // data0 & data1 files
       verifySnapshot(log.snapshot(), data0_data1_files, 1)
     }
 
@@ -90,7 +89,7 @@ class DeltaLogSuite extends FunSuite {
     var data2_files: Array[File] = Array.empty
     withLogForGoldenTable("snapshot-data2") { log =>
       // we have overwritten files for data0 & data1; only data2 files should remain
-      data2_files = getDirDataFiles(log.getDataPath.toString)
+      data2_files = getDirDataFiles(log.getPath.toString)
         .filterNot(f => data0_data1_files.exists(_.getName == f.getName))
       verifySnapshot(log.snapshot(), data2_files, 2)
     }
@@ -98,7 +97,7 @@ class DeltaLogSuite extends FunSuite {
     // Append data3
     withLogForGoldenTable("snapshot-data3") { log =>
       // we have overwritten files for data0 & data1; only data2 & data3 files should remain
-      val data2_data3_files = getDirDataFiles(log.getDataPath.toString)
+      val data2_data3_files = getDirDataFiles(log.getPath.toString)
         .filterNot(f => data0_data1_files.exists(_.getName == f.getName))
       verifySnapshot(log.snapshot(), data2_data3_files, 3)
     }
@@ -107,7 +106,7 @@ class DeltaLogSuite extends FunSuite {
     withLogForGoldenTable("snapshot-data2-deleted") { log =>
       // we have overwritten files for data0 & data1, and deleted data2 files; only data3 files
       // should remain
-      val data3_files = getDirDataFiles(log.getDataPath.toString)
+      val data3_files = getDirDataFiles(log.getPath.toString)
         .filterNot(f => data0_data1_files.exists(_.getName == f.getName))
         .filterNot(f => data2_files.exists(_.getName == f.getName))
       verifySnapshot(log.snapshot(), data3_files, 4)
@@ -115,7 +114,7 @@ class DeltaLogSuite extends FunSuite {
 
     // Repartition into 2 files
     withLogForGoldenTable("snapshot-repartitioned") { log =>
-      assert(log.snapshot().getNumOfFiles == 2)
+      assert(log.snapshot().getAllFiles.size == 2)
       assert(log.snapshot().getVersion == 5)
     }
 
@@ -123,7 +122,7 @@ class DeltaLogSuite extends FunSuite {
     withLogForGoldenTable("snapshot-vacuumed") { log =>
       // all remaining dir data files should be needed for current snapshot version
       // vacuum doesn't change the snapshot version
-      verifySnapshot(log.snapshot(), getDirDataFiles(log.getDataPath.toString), 5)
+      verifySnapshot(log.snapshot(), getDirDataFiles(log.getPath.toString), 5)
     }
   }
 
@@ -132,7 +131,7 @@ class DeltaLogSuite extends FunSuite {
       val tempDir = Files.createTempDirectory(UUID.randomUUID().toString).toFile
       try {
         FileUtils.copyDirectory(new File(tablePath), tempDir)
-        val log = DeltaLog.forTable(new Configuration(), tempDir)
+        val log = DeltaLog.forTable(new Configuration(), tempDir.getCanonicalPath)
         FileUtils.deleteDirectory(tempDir)
         assert(log.update().getVersion == -1)
       } finally {
@@ -153,7 +152,7 @@ class DeltaLogSuite extends FunSuite {
       fs.create(log1.LAST_CHECKPOINT, true /* overwrite */).close()
 
       // Create a new DeltaLog
-      val log2 = DeltaLogImpl.forTable(new Configuration(), new Path(log1.getDataPath.toString))
+      val log2 = DeltaLogImpl.forTable(new Configuration(), new Path(log1.getPath.toString))
 
       // Make sure we create a new DeltaLog in order to test the loading logic.
       assert(log1 ne log2)
@@ -166,24 +165,24 @@ class DeltaLogSuite extends FunSuite {
   test("paths should be canonicalized - normal characters") {
     withLogForGoldenTable("canonicalized-paths-normal-a") { log =>
       assert(log.update().getVersion == 1)
-      assert(log.snapshot.getNumOfFiles == 0)
+      assert(log.snapshot.getAllFiles.size == 0)
     }
 
     withLogForGoldenTable("canonicalized-paths-normal-b") { log =>
       assert(log.update().getVersion == 1)
-      assert(log.snapshot.getNumOfFiles == 0)
+      assert(log.snapshot.getAllFiles.size == 0)
     }
   }
 
   test("paths should be canonicalized - special characters") {
     withLogForGoldenTable("canonicalized-paths-special-a") { log =>
       assert(log.update().getVersion == 1)
-      assert(log.snapshot.getNumOfFiles == 0)
+      assert(log.snapshot.getAllFiles.size == 0)
     }
 
     withLogForGoldenTable("canonicalized-paths-special-b") { log =>
       assert(log.update().getVersion == 1)
-      assert(log.snapshot.getNumOfFiles == 0)
+      assert(log.snapshot.getAllFiles.size == 0)
     }
   }
 

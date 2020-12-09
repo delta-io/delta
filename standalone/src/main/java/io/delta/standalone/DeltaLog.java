@@ -1,8 +1,19 @@
+/*
+ * Copyright (2020) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package io.delta.standalone;
-
-import java.io.File;
-import java.util.List;
-import java.util.Optional;
 
 import io.delta.standalone.actions.CommitInfo;
 import org.apache.hadoop.conf.Configuration;
@@ -11,28 +22,33 @@ import org.apache.hadoop.fs.Path;
 import io.delta.standalone.internal.DeltaLogImpl;
 
 /**
- * Used to query (read-only) the current state of the log.
- * <p>
- * Internally, this class implements an optimistic concurrency control
- * algorithm to handle multiple readers or writers. Any single read
- * is guaranteed to see a consistent snapshot of the table.
+ * {@link DeltaLog} is the representation of the transaction logs of a Delta table. It provides APIs
+ * to access the states of a Delta table.
+ *
+ * You can use the following codes to create a {@link DeltaLog} instance.
+ * <pre>{@code
+ *   Configuration conf = ... // Create your own Hadoop Configuration instance
+ *   DeltaLog deltaLog = DeltaLog.forTable(conf, "/the/delta/table/path");
+ * }</pre>
  */
 public interface DeltaLog {
 
     /**
-     * @return the current snapshot. Note this does not automatically call {@code update}.
+     * @return the current {@link Snapshot} of the Delta table. You may need to call
+     * {@link #update()} to access the latest snapshot if the current snapshot is stale.
      */
     Snapshot snapshot();
 
     /**
-     * Update DeltaLog by applying the new delta files if any.
+     * Bring {@link DeltaLog}'s current {@link Snapshot} to the latest state if there are any new
+     * transaction logs.
      *
-     * @return the updated snapshot
+     * @return the latest snapshot after applying the new transaction logs.
      */
     Snapshot update();
 
     /**
-     * Travel back in time to the snapshot with the provided {@code version} number.
+     * Travel back in time to the {@link Snapshot} with the provided {@code version} number.
      *
      * @param version  the snapshot version to generate
      * @return the snapshot at the provided {@code version}
@@ -41,9 +57,9 @@ public interface DeltaLog {
     Snapshot getSnapshotForVersionAsOf(long version);
 
     /**
-     * Travel back in time to the latest snapshot that was generated at or before {@code timestamp}.
+     * Travel back in time to the latest {@link Snapshot} that was generated at or before {@code timestamp}.
      *
-     * @param timestamp  the number of miliseconds since midnight, January 1, 1970 UTC
+     * @param timestamp  the number of milliseconds since midnight, January 1, 1970 UTC
      * @return the snapshot nearest to, but not after, the provided {@code timestamp}
      * @throws RuntimeException if the snapshot is unable to be recreated
      * @throws IllegalArgumentException if the {@code timestamp} is before the earliest possible snapshot or after the latest possible snapshot
@@ -51,53 +67,33 @@ public interface DeltaLog {
     Snapshot getSnapshotForTimestampAsOf(long timestamp);
 
     /**
-     * Retrieve a CommitInfo at a desired log version.
-     *
-     * @param version  the CommitInfo version to retrieve
-     * @return the CommitInfo at the provided {@code version}
+     * @param version  the commit version to retrieve {@link CommitInfo}
+     * @return the {@link CommitInfo} of the commit at the provided version.
      */
     CommitInfo getCommitInfoAt(long version);
 
-    /**
-     * @return the path to the {@code _delta_log} files for this log
-     */
-    Path getLogPath();
+    /** @return the path of the Delta table. */
+    Path getPath();
 
     /**
-     * @return the path to the data files for this log
-     */
-    Path getDataPath();
-
-    /**
-     * Helper for creating a log when it is stored at the root of the data.
+     * Create a {@link DeltaLog} instance representing the table located at the provided {@code path}.
      *
-     * @param hadoopConf  Hadoop Configuration for this log
-     * @param dataPath  the path to the data files for this log
-     * @return the new instance of {@code DeltaLog} for the provided {@code dataPath}
+     * @param hadoopConf  Hadoop {@code Configuration} to use when accessing the Delta table
+     * @param path  the path to the Delta table
+     * @return the {@code DeltaLog} for the provided {@code path}
      */
-    static DeltaLog forTable(Configuration hadoopConf, String dataPath) {
-        return DeltaLogImpl.forTable(hadoopConf, dataPath);
+    static DeltaLog forTable(Configuration hadoopConf, String path) {
+        return DeltaLogImpl.forTable(hadoopConf, path);
     }
 
     /**
-     * Helper for creating a log when it is stored at the root of the data.
+     * Create a {@link DeltaLog} instance representing the table located at the provide {@code path}.
      *
-     * @param hadoopConf  Hadoop Configuration for this log
-     * @param dataPath  the path to the data files for this log
-     * @return the new instance of {@code DeltaLog} for the provided {@code dataPath}
+     * @param hadoopConf  Hadoop {@code Configuration} to use when accessing the Delta table
+     * @param path  the path to the Delta table
+     * @return the {@code DeltaLog} for the provided {@code path}
      */
-    static DeltaLog forTable(Configuration hadoopConf, File dataPath) {
-        return DeltaLogImpl.forTable(hadoopConf, dataPath);
-    }
-
-    /**
-     * Helper for creating a log when it is stored at the root of the data.
-     *
-     * @param hadoopConf  Hadoop Configuration for this log
-     * @param dataPath  the path to the data files for this log
-     * @return the new instance of {@code DeltaLog} for the provided {@code dataPath}
-     */
-    static DeltaLog forTable(Configuration hadoopConf, Path dataPath) {
-        return DeltaLogImpl.forTable(hadoopConf, dataPath);
+    static DeltaLog forTable(Configuration hadoopConf, Path path) {
+        return DeltaLogImpl.forTable(hadoopConf, path);
     }
 }

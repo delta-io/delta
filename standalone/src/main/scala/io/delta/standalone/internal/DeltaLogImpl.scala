@@ -46,9 +46,7 @@ private[internal] class DeltaLogImpl private(
   /** Delta History Manager containing version and commit history. */
   protected lazy val history = DeltaHistoryManager(this)
 
-  override def getLogPath: Path = logPath
-
-  override def getDataPath: Path = dataPath
+  override def getPath: Path = dataPath
 
   override def getCommitInfoAt(version: Long): CommitInfoJ = {
     history.checkVersionExists(version)

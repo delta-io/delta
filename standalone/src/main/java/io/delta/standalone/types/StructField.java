@@ -38,8 +38,10 @@
 
 package io.delta.standalone.types;
 
+import java.util.Objects;
+
 /**
- * A field inside a {@code StructType}.
+ * A field inside a {@link StructType}.
  */
 public final class StructField {
     private final String name;
@@ -82,7 +84,7 @@ public final class StructField {
     }
 
     /**
-     * @return {@code true} if this field as have a {@code null} value, else {@code false}
+     * @return whether this field allows to have a {@code null} value.
      */
     public boolean isNullable() {
         return nullable;
@@ -103,5 +105,10 @@ public final class StructField {
         if (o == null || getClass() != o.getClass()) return false;
         StructField that = (StructField) o;
         return name.equals(that.name) && dataType.equals(that.dataType) && nullable == that.nullable;
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(name, dataType, nullable);
     }
 }
