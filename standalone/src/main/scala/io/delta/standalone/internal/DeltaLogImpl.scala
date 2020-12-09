@@ -72,10 +72,6 @@ private[standalone] object DeltaLogImpl {
     apply(hadoopConf, new Path(dataPath, "_delta_log"))
   }
 
-  def forTable(hadoopConf: Configuration, dataPath: File): DeltaLogImpl = {
-    apply(hadoopConf, new Path(dataPath.getAbsolutePath, "_delta_log"))
-  }
-
   def forTable(hadoopConf: Configuration, dataPath: Path): DeltaLogImpl = {
     apply(hadoopConf, new Path(dataPath, "_delta_log"))
   }
