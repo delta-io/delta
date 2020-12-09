@@ -304,11 +304,11 @@ lazy val goldenTables = (project in file("golden-tables")) settings (
   libraryDependencies ++= Seq(
     // Test Dependencies
     "org.scalatest" %% "scalatest" % "3.0.5" % "test",
-    "org.apache.spark" %% "spark-sql" % sparkVersion % "test",
-    "io.delta" %% "delta-core" % deltaVersion % "test",
+    "org.apache.spark" % "spark-sql_2.12" % "3.0.0" % "test",
+    "io.delta" % "delta-core_2.12" % "0.7.0" % "test",
     "commons-io" % "commons-io" % "2.8.0" % "test",
-    "org.apache.spark" %% "spark-catalyst" % sparkVersion % "test" classifier "tests",
-    "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
-    "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests"
+    "org.apache.spark" % "spark-catalyst_2.12" % "3.0.0" % "test" classifier "tests",
+    "org.apache.spark" % "spark-core_2.12" % "3.0.0" % "test" classifier "tests",
+    "org.apache.spark" % "spark-sql_2.12" % "3.0.0" % "test" classifier "tests"
   )
 )
