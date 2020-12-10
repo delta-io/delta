@@ -29,6 +29,18 @@ import io.delta.standalone.internal.actions.{AddFile, CommitInfo, Format, JobInf
  */
 private[internal] object ConversionUtils {
 
+  /**
+   * This is a workaround for a known issue in Scala 2.11: `asJava` doesn't handle `null`.
+   * See https://github.com/scala/scala/pull/4343
+   */
+  private def mapAsJava[K, V](map: Map[K, V]): java.util.Map[K, V] = {
+    if (map == null) {
+      null
+    } else {
+      map.asJava
+    }
+  }
+
   private def toJavaLongOptional(opt: Option[Long]): OptionalJ[java.lang.Long] = opt match {
     case Some(v) => OptionalJ.ofNullable(v)
     case None => OptionalJ.empty()
@@ -62,7 +74,7 @@ private[internal] object ConversionUtils {
       internal.modificationTime,
       internal.dataChange,
       internal.stats,
-      internal.tags.asJava)
+      mapAsJava(internal.tags))
   }
 
   /**

@@ -50,6 +50,7 @@ class DeltaLogSuite extends FunSuite {
     withLogForGoldenTable("checkpoint") { log =>
       assert(log.snapshot.getVersion == 14)
       assert(log.snapshot.getAllFiles.size == 1)
+      log.snapshot.getAllFiles.hashCode()
     }
   }
 
