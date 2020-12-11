@@ -85,6 +85,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case TableCatalog.PROP_PROVIDER => false
       case TableCatalog.PROP_COMMENT => false
       case TableCatalog.PROP_OWNER => false
+      // TODO: use TableCatalog.PROP_EXTERNAL after Spark 3.1.0 is released.
+      case "external" => false
       case "path" => false
       case _ => true
     }
