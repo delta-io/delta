@@ -59,20 +59,21 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperatorsDown {
     // INSERT INTO by ordinal
-    case a @ AppendData(DataSourceV2Relation(d: DeltaTableV2, _, _, _, _), query, _, false)
-      if query.resolved && needsSchemaAdjustment(d.name(), query, d.schema()) =>
-      val projection = normalizeQueryColumns(query, d)
+    case a @ AppendData(r @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, _), query, _, false)
+      if query.resolved && needsSchemaAdjustment(d.name(), query, r.schema) =>
+      val projection = resolveQueryColumns(query, r.output, d.name())
       if (projection != query) {
-        a.copy(query = projection)
+        val cleanedTable = r.copy(output = r.output.map(CharVarcharUtils.cleanAttrMetadata))
+        a.copy(query = projection, table = cleanedTable)
       } else {
         a
       }
 
     // INSERT OVERWRITE by ordinal
     case o @ OverwriteByExpression(
-        DataSourceV2Relation(d: DeltaTableV2, _, _, _, _), deleteExpr, query, _, false)
-      if query.resolved && needsSchemaAdjustment(d.name(), query, d.schema()) =>
-      val projection = normalizeQueryColumns(query, d)
+        r @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, _), deleteExpr, query, _, false)
+      if query.resolved && needsSchemaAdjustment(d.name(), query, r.schema) =>
+      val projection = resolveQueryColumns(query, r.output, d.name())
       if (projection != query) {
         val aliases = AttributeMap(query.output.zip(projection.output).collect {
           case (l: AttributeReference, r: AttributeReference) if !l.sameRef(r) => (l, r)
@@ -80,7 +81,8 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
         val newDeleteExpr = deleteExpr.transformUp {
           case a: AttributeReference => aliases.getOrElse(a, a)
         }
-        o.copy(deleteExpr = newDeleteExpr, query = projection)
+        val cleanedTable = r.copy(output = r.output.map(CharVarcharUtils.cleanAttrMetadata))
+        o.copy(deleteExpr = newDeleteExpr, query = projection, table = cleanedTable)
       } else {
         o
       }
@@ -183,9 +185,11 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
   /**
    * Performs the schema adjustment by adding UpCasts (which are safe) and Aliases so that we
    * can check if the by-ordinal schema of the insert query matches our Delta table.
+   * The schema adjustment also include string length check if it's written into a char/varchar
+   * type column/field.
    */
-  private def normalizeQueryColumns(query: LogicalPlan, target: DeltaTableV2): LogicalPlan = {
-    val targetAttrs = target.schema()
+  private def resolveQueryColumns(
+      query: LogicalPlan, targetAttrs: Seq[Attribute], tblName: String): LogicalPlan = {
     // always add a Cast. it will be removed in the optimizer if it is unnecessary.
     val project = query.output.zipWithIndex.map { case (attr, i) =>
       if (i < targetAttrs.length) {
@@ -194,11 +198,12 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
           case (s, t) if s == t =>
             attr
           case (s: StructType, t: StructType) if s != t =>
-            addCastsToStructs(target.name(), attr, s, t)
+            addCastsToStructs(tblName, attr, s, t)
           case _ =>
             getCastFunction(attr, targetAttr.dataType)
         }
-        Alias(expr, targetAttr.name)(explicitMetadata = Option(targetAttr.metadata))
+        val strLenChecked = CharVarcharUtils.stringLengthCheck(expr, targetAttr)
+        Alias(strLenChecked, targetAttr.name)(explicitMetadata = Option(targetAttr.metadata))
       } else {
         attr
       }
@@ -222,8 +227,17 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
     // Now we should try our best to match everything that already exists, and leave the rest
     // for schema evolution to WriteIntoDelta
     val existingSchemaOutput = output.take(schema.length)
+    val rawSchema = getRawSchema(schema)
     existingSchemaOutput.map(_.name) != schema.map(_.name) ||
-      !SchemaUtils.isReadCompatible(schema.asNullable, existingSchemaOutput.toStructType)
+      !SchemaUtils.isReadCompatible(rawSchema.asNullable, existingSchemaOutput.toStructType)
+  }
+
+  private def getRawSchema(schema: StructType): StructType = {
+    StructType(schema.map { field =>
+      CharVarcharUtils.getRawType(field.metadata).map {
+        rawType => field.copy(dataType = rawType)
+      }.getOrElse(field)
+    })
   }
 
   // Get cast operation for the level of strictness in the schema a user asked for
