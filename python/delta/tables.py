@@ -271,7 +271,6 @@ class DeltaTable(object):
         :type sparkSession: pyspark.sql.SparkSession
         :param identifier: Parquet table identifier formatted as "parquet.`path`"
         :type identifier: str
-        :param partitionSchema:
         :param partitionSchema: Hive DDL formatted string, or pyspark.sql.types.StructType
         :return: DeltaTable representing the converted Delta table
         :rtype: :py:class:`~delta.tables.DeltaTable`
