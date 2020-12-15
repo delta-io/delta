@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
-import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, Metadata, RemoveFile, SetTransaction}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, ChangeFile, FileAction, Metadata, RemoveFile, SetTransaction}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
@@ -590,6 +590,7 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
     fileActions.map {
       case a: AddFile => a.copy(dataChange = false)
       case r: RemoveFile => r.copy(dataChange = false)
+      case cdc: ChangeFile => cdc // change files are always dataChange = false
     }
   }
 

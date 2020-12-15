@@ -59,6 +59,7 @@ class InMemoryLogReplay(minFileRetentionTimestamp: Long) {
         activeFiles.remove(remove.pathAsUri)
         tombstones(remove.pathAsUri) = remove.copy(dataChange = false)
       case ci: CommitInfo => // do nothing
+      case cdc: ChangeFile => // do nothing
       case null => // Some crazy future feature. Ignore
     }
   }

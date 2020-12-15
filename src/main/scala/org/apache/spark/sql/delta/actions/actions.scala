@@ -278,6 +278,13 @@ case class RemoveFile(
 }
 // scalastyle:on
 
+case class ChangeFile(path: String) extends FileAction {
+  override val dataChange = false
+
+  override def wrap: SingleAction = SingleAction(cdc = this)
+}
+
+
 case class Format(
     provider: String = "parquet",
     options: Map[String, String] = Map.empty)
@@ -449,6 +456,7 @@ case class SingleAction(
     remove: RemoveFile = null,
     metaData: Metadata = null,
     protocol: Protocol = null,
+    cdc: ChangeFile = null,
     commitInfo: CommitInfo = null) {
 
   def unwrap: Action = {
@@ -462,6 +470,8 @@ case class SingleAction(
       txn
     } else if (protocol != null) {
       protocol
+    } else if (cdc != null) {
+      cdc
     } else if (commitInfo != null) {
       commitInfo
     } else {
