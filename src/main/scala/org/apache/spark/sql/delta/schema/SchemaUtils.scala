@@ -136,6 +136,23 @@ object SchemaUtils {
   }
 
   /**
+   * Drops null types from the schema if they exist. We do not recurse into Array and Map types,
+   * because we do not expect null types to exist in those columns, as Delta doesn't allow it during
+   * writes.
+   */
+  def dropNullTypeColumns(schema: StructType): StructType = {
+    def recurseAndRemove(struct: StructType): Seq[StructField] = {
+      struct.flatMap {
+        case sf @ StructField(_, s: StructType, _, _) =>
+          Some(sf.copy(dataType = StructType(recurseAndRemove(s))))
+        case StructField(_, n: NullType, _, _) => None
+        case other => Some(other)
+      }
+    }
+    StructType(recurseAndRemove(schema))
+  }
+
+  /**
    * Returns all column names in this schema as a flat list. For example, a schema like:
    *   | - a
    *   | | - 1
