@@ -910,6 +910,16 @@ object DeltaErrors
     new AnalysisException("Cannot change the location of a path based table.")
   }
 
+  def useSetLocation(): Throwable = {
+    new AnalysisException(
+      "Cannot change the 'location' of the Delta table using SET TBLPROPERTIES. Please use " +
+      "ALTER TABLE SET LOCATION instead.")
+  }
+
+  def cannotChangeProvider(): Throwable = {
+    new AnalysisException("'provider' is a reserved table property, and cannot be altered.")
+  }
+
   def describeViewHistory: Throwable = {
     new AnalysisException("Cannot describe the history of a view.")
   }
