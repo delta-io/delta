@@ -278,7 +278,12 @@ case class RemoveFile(
 }
 // scalastyle:on
 
-case class ChangeFile(path: String) extends FileAction {
+/**
+ * A change file containing CDC data for the Delta version it's within. Non-CDC readers should
+ * ignore this, CDC readers should scan all ChangeFiles in a version rather than computing
+ * changes from AddFile and RemoveFile actions.
+ */
+case class ChangeFile(path: String, size: Long) extends FileAction {
   override val dataChange = false
 
   override def wrap: SingleAction = SingleAction(cdc = this)

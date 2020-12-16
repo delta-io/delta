@@ -20,7 +20,7 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.actions.{AddFile, FileAction}
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.schema.ImplicitMetadataOperation
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -382,7 +382,7 @@ case class MergeIntoCommand(
   private def writeInsertsOnlyWhenNoMatchedClauses(
       spark: SparkSession,
       deltaTxn: OptimisticTransaction
-    ): Seq[AddFile] = withStatusCode("DELTA", s"Writing new files " +
+    ): Seq[FileAction] = withStatusCode("DELTA", s"Writing new files " +
     s"for insert-only MERGE operation") {
 
     // UDFs to update metrics
@@ -428,8 +428,7 @@ case class MergeIntoCommand(
     metrics("numTargetFilesRemoved") += 0
     metrics("numTargetBytesRemoved") += 0
     metrics("numTargetPartitionsRemovedFrom") += 0
-    val (addedBytes, addedPartitions) =
-      totalBytesAndDistinctPartitionValues(newFiles)
+    val (addedBytes, addedPartitions) = totalBytesAndDistinctPartitionValues(newFiles)
     metrics("numTargetFilesAdded") += newFiles.size
     metrics("numTargetBytesAdded") += addedBytes
     metrics("numTargetPartitionsAddedTo") += addedPartitions
@@ -444,7 +443,7 @@ case class MergeIntoCommand(
     spark: SparkSession,
     deltaTxn: OptimisticTransaction,
     filesToRewrite: Seq[AddFile]
-  ): Seq[AddFile] = {
+  ): Seq[FileAction] = {
     val targetOutputCols = getTargetOutputCols(deltaTxn)
 
     // Generate a new logical plan that has same output attributes exprIds as the target plan.
@@ -696,11 +695,11 @@ object MergeIntoCommand {
     }
   }
 
-  /** Count the number of distinct partition values in the given AddFiles. */
-  def totalBytesAndDistinctPartitionValues(files: Seq[AddFile]): (Long, Int) = {
+  /** Count the number of distinct partition values among the AddFiles in the given set. */
+  def totalBytesAndDistinctPartitionValues(files: Seq[FileAction]): (Long, Int) = {
     val distinctValues = new mutable.HashSet[Map[String, String]]()
     var bytes = 0L
-    val iter = files.iterator
+    val iter = files.collect { case a: AddFile => a }.iterator
     while (iter.hasNext) {
       val file = iter.next()
       distinctValues += file.partitionValues
