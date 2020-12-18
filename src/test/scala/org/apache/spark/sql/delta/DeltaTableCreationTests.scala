@@ -1536,7 +1536,8 @@ trait DeltaTableCreationTests
           s"LOCATION '${path.getAbsolutePath}'")
         checkAnswer(spark.table("t2"), Row(1, "a"))
         // Table properties should not be changed to empty.
-        assert(getTableProperties("t2") == Map("delta.randomizeFilePrefixes" -> "true"))
+        assert(getTableProperties("t2").filter(_._1 != "Type") ==
+          Map("delta.randomizeFilePrefixes" -> "true"))
 
         // CREATE TABLE with the same schema but no partitioning fails.
         val e0 = intercept[AnalysisException] {

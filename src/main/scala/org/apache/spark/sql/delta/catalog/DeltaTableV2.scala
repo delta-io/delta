@@ -110,6 +110,9 @@ case class DeltaTableV2(
     base.put(TableCatalog.PROP_PROVIDER, "delta")
     base.put(TableCatalog.PROP_LOCATION, CatalogUtils.URIToString(path.toUri))
     Option(snapshot.metadata.description).foreach(base.put(TableCatalog.PROP_COMMENT, _))
+    // this reports whether the table is an external or managed catalog table as
+    // the old DescribeTable command would
+    catalogTable.foreach(table => base.put("Type", table.tableType.name))
     base.asJava
   }
 

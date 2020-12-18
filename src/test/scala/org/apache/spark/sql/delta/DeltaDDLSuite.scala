@@ -19,8 +19,10 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.schema.InvariantViolationException
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
@@ -55,6 +57,7 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
   protected def getDeltaLog(tableLocation: String): DeltaLog = {
       DeltaLog.forTable(spark, tableLocation)
   }
+
 
   testQuietly("create table with NOT NULL - check violation through file writing") {
     withTempDir { dir =>
@@ -464,4 +467,5 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
       assert(snapshotAfter.version === -1)
     }
   }
+
 }

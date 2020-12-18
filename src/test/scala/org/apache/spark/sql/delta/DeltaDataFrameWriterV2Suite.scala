@@ -61,8 +61,9 @@ trait OpenSourceDataFrameWriterV2Tests
   }
 
   protected def getProperties(table: Table): Map[String, String] = {
+    val reservedProp = CatalogV2Util.TABLE_RESERVED_PROPERTIES :+ "Type"
     table.properties().asScala.toMap
-      .filterKeys(!CatalogV2Util.TABLE_RESERVED_PROPERTIES.contains(_))
+      .filterKeys(!reservedProp.contains(_))
       .filterKeys(k =>
         k != Protocol.MIN_READER_VERSION_PROP &&  k != Protocol.MIN_WRITER_VERSION_PROP)
   }
