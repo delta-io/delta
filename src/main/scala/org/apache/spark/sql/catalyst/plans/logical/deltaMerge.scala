@@ -18,18 +18,15 @@ package org.apache.spark.sql.catalyst.plans.logical
 
 import java.util.Locale
 
-import scala.collection.mutable
-import scala.util.Try
-
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis._
-import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, CreateStruct, Expression, ExtractValue, GetStructField, Literal, NamedExpression, UnaryExpression, Unevaluable}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, UnaryExpression}
 import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, ExprCode}
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{ByteType, DataType, IntegerType, ShortType, StructField, StructType}
+import org.apache.spark.sql.types.{DataType, StructField, StructType}
 
 /**
  * A copy of Spark SQL Unevaluable for cross-version compatibility. In 3.0, implementers of
