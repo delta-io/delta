@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.ResolvedTable
+import org.apache.spark.sql.catalyst.catalog.CatalogTableType
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, LogicalPlan, OverwriteByExpression, V2WriteCommand}
 import org.apache.spark.sql.execution.command._
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
@@ -53,6 +54,22 @@ case class DeltaUnsupportedOperationsCheck(spark: SparkSession)
     case c: CreateTableLikeCommand =>
       recordDeltaEvent(null, "delta.unsupported.createLike")
       fail(operation = "CREATE TABLE LIKE", c.sourceTable)
+
+      def targetTableProvider: String = {
+        val catalog = spark.sessionState.catalog
+        val sourceTableDesc = catalog.getTempViewOrPermanentTableMetadata(c.sourceTable)
+        if (c.provider.isDefined) {
+          c.provider.get
+        } else if (sourceTableDesc.tableType == CatalogTableType.VIEW) {
+          spark.sessionState.conf.defaultDataSourceName
+        } else if (c.fileFormat.inputFormat.isDefined) {
+          DDLUtils.HIVE_PROVIDER
+        } else {
+          sourceTableDesc.provider.getOrElse(spark.sessionState.conf.defaultDataSourceName)
+        }
+      }
+
+      fail(operation = "CREATE TABLE LIKE", targetTableProvider)
 
     case a: AnalyzePartitionCommand =>
       recordDeltaEvent(null, "delta.unsupported.analyzePartition")
