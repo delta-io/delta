@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.schema
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
 
 import org.scalatest.GivenWhenThen
@@ -921,6 +922,7 @@ class SchemaUtilsSuite extends QueryTest
         .add("y", IntegerType))
     assert(normalizeColumnNames(schema, df).schema.fieldNames === Seq("a", "b"))
   }
+
 
   ////////////////////////////
   // mergeSchemas

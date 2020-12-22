@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.schema
 
+// scalastyle:off import.ordering.noEmptyLine
 import scala.collection.Set._
 import scala.collection.mutable
 import scala.util.control.NonFatal
@@ -234,11 +235,14 @@ object SchemaUtils {
 
       val baseFields = toFieldMap(baseSchema)
       val aliasExpressions = dataSchema.map { field =>
-        val originalCase = baseFields.getOrElse(field.name,
-          throw new AnalysisException(
-            s"Can't resolve column ${field.name} in ${baseSchema.treeString}"))
-        if (originalCase.name != field.name) {
-          functions.col(field.name).as(originalCase.name)
+        val originalCase: String = baseFields.get(field.name) match {
+          case Some(original) => original.name
+          case None =>
+            throw new AnalysisException(
+              s"Can't resolve column ${field.name} in ${baseSchema.treeString}")
+        }
+        if (originalCase != field.name) {
+          functions.col(field.name).as(originalCase)
         } else {
           functions.col(field.name)
         }
