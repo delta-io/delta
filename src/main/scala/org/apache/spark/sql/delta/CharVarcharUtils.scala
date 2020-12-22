@@ -18,15 +18,18 @@ package org.apache.spark.sql.delta
 
 import scala.collection.mutable
 
+import org.apache.spark.internal.Logging
+import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.codegen._
 import org.apache.spark.sql.catalyst.expressions.codegen.Block._
 import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
 // TODO: remove this file from Delta lake when Spark 3.1 is released.
-object CharVarcharUtils {
+object CharVarcharUtils extends Logging {
 
   private val CHAR_VARCHAR_TYPE_STRING_METADATA_KEY = "__CHAR_VARCHAR_TYPE_STRING"
 
@@ -60,6 +63,23 @@ object CharVarcharUtils {
     case _ => false
   }
 
+  private def charVarcharAsString: Boolean = {
+    SQLConf.get.getConfString("spark.sql.legacy.charVarcharAsString", "false").toBoolean
+  }
+
+  /**
+   * Validate the given [[DataType]] to fail if it is char or varchar types or contains nested ones
+   */
+  def failIfHasCharVarchar(dt: DataType): DataType = {
+    if (!charVarcharAsString && hasCharVarchar(dt)) {
+      throw new AnalysisException("char/varchar type can only be used in the table schema. " +
+        s"You can set spark.sql.legacy.charVarcharAsString to true, so that Spark" +
+        s" treat them as string type as same as Spark 3.0 and earlier")
+    } else {
+      replaceCharVarcharWithString(dt)
+    }
+  }
+
   /**
    * Replaces CharType/VarcharType with StringType recursively in the given data type.
    */
@@ -78,6 +98,24 @@ object CharVarcharUtils {
   }
 
   /**
+   * Replaces CharType/VarcharType with StringType recursively in the given data type, with a
+   * warning message if it has char or varchar types
+   */
+  def replaceCharVarcharWithStringForCast(dt: DataType): DataType = {
+    if (charVarcharAsString) {
+      replaceCharVarcharWithString(dt)
+    } else if (hasCharVarchar(dt)) {
+      logWarning("The Spark cast operator does not support char/varchar type and simply treats" +
+        " them as string type. Please use string type directly to avoid confusion. Otherwise," +
+        s" you can set spark.sql.legacy.charVarcharAsString to true, so that Spark treat" +
+        s" them as string type as same as Spark 3.0 and earlier")
+      replaceCharVarcharWithString(dt)
+    } else {
+      dt
+    }
+  }
+
+  /**
    * Removes the metadata entry that contains the original type string of CharType/VarcharType from
    * the given attribute's metadata.
    */
@@ -93,7 +131,7 @@ object CharVarcharUtils {
    */
   def getRawType(metadata: Metadata): Option[DataType] = {
     if (metadata.contains(CHAR_VARCHAR_TYPE_STRING_METADATA_KEY)) {
-      Some(CatalystSqlParser.parseRawDataType(
+      Some(CatalystSqlParser.parseDataType(
         metadata.getString(CHAR_VARCHAR_TYPE_STRING_METADATA_KEY)))
     } else {
       None
@@ -165,9 +203,9 @@ object CharVarcharUtils {
 
   private def raiseError(expr: Expression, typeName: String, length: Int): Expression = {
     val errorMsg = Concat(Seq(
-      Literal("input string '"),
-      expr,
-      Literal(s"' exceeds $typeName type length limitation: $length")))
+      Literal("input string of length "),
+      Cast(Length(expr), StringType),
+      Literal(s" exceeds $typeName type length limitation: $length")))
     Cast(RaiseErrorCopy(errorMsg), StringType)
   }
 
