@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.Path
 import org.scalatest.Tag
@@ -105,7 +106,7 @@ trait DeltaDDLUsingPathTests extends QueryTest
     val ex = intercept[AnalysisException] {
       spark.table(s"delta.`/path/to/delta`")
     }
-    assert(ex.getMessage.contains("/path/to/delta doesn't exist"))
+    assert(ex.getMessage.contains("/path/to/delta` is not a Delta table"))
 
     withSQLConf(SQLConf.RUN_SQL_ON_FILES.key -> "false") {
       val ex = intercept[AnalysisException] {

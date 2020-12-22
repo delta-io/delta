@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta
 
 import java.io.{File, FileNotFoundException}
 
+import scala.language.postfixOps
+
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions._
@@ -71,10 +73,8 @@ class DeltaLogSuite extends QueryTest
       val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
       fs.delete(path, true)
 
-      val thrown = intercept[FileNotFoundException] {
-        log.update()
-      }
-      assert(thrown.getMessage().contains("No delta log found"))
+      val snapshot = log.update()
+      assert(snapshot.version === -1)
     }
   }
 
@@ -357,7 +357,8 @@ class DeltaLogSuite extends QueryTest
             } else {
               "metadata"
             }
-            val corruptedCheckpointData = spark.read.parquet(checkpointPath.toString)
+            val corruptedCheckpointData = spark.read.schema(SingleAction.encoder.schema)
+              .parquet(checkpointPath.toString)
               .where(s"add is not null or $takeAction is not null")
               .as[SingleAction].collect()
 
@@ -395,6 +396,70 @@ class DeltaLogSuite extends QueryTest
           assert(DeltaLog.forTable(spark, tempDir).update().version === 10)
         }
       }
+    }
+  }
+
+  test("deleting and recreating a directory should cause the snapshot to be recomputed") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(10).write.format("delta").mode("append").save(path)
+      spark.range(10, 20).write.format("delta").mode("append").save(path)
+      val deltaLog = DeltaLog.forTable(spark, path)
+      deltaLog.checkpoint()
+      spark.range(20, 30).write.format("delta").mode("append").save(path)
+
+      // Store these for later usage
+      val actions = deltaLog.snapshot.state.collect()
+      val commitTimestamp = deltaLog.snapshot.logSegment.lastCommitTimestamp
+
+      checkAnswer(
+        spark.read.format("delta").load(path),
+        spark.range(30).toDF()
+      )
+
+      // Now let's delete the last version
+      deltaLog.store
+        .listFrom(FileNames.checksumFile(deltaLog.logPath, deltaLog.snapshot.version))
+        .foreach(f => deltaLog.fs.delete(f.getPath, false))
+
+      // Should show up to 20
+      checkAnswer(
+        spark.read.format("delta").load(path),
+        spark.range(20).toDF()
+      )
+
+      // Now let's delete the checkpoint and json file for version 1. We will try to list from
+      // version 1, but since we can't find anything, we should start listing from version 0
+      deltaLog.store
+        .listFrom(FileNames.checkpointFileSingular(deltaLog.logPath, 1))
+        .foreach(f => deltaLog.fs.delete(f.getPath, false))
+
+      checkAnswer(
+        spark.read.format("delta").load(path),
+        spark.range(10).toDF()
+      )
+
+      // Now let's delete that commit as well, and write a new first version
+      deltaLog.store
+        .listFrom(FileNames.deltaFile(deltaLog.logPath, 0))
+        .foreach(f => deltaLog.fs.delete(f.getPath, false))
+
+      assert(deltaLog.snapshot.version === 0)
+
+      deltaLog.store.write(
+        FileNames.deltaFile(deltaLog.logPath, 0),
+        actions.map(_.unwrap.json).iterator,
+        overwrite = false)
+
+      // To avoid flakiness, we manually set the modification timestamp of the file to a later
+      // second
+      new File(FileNames.deltaFile(deltaLog.logPath, 0).toUri)
+        .setLastModified(commitTimestamp + 5000)
+
+      checkAnswer(
+        spark.read.format("delta").load(path),
+        spark.range(30).toDF()
+      )
     }
   }
 }

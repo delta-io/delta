@@ -14,42 +14,23 @@
 # limitations under the License.
 #
 
-from pyspark import SparkContext
-from pyspark.sql import Column, DataFrame, SparkSession, SQLContext, functions
-from pyspark.sql.functions import *
-from py4j.java_collections import MapConverter
-from delta.tables import *
+from pyspark.sql import SparkSession
+from delta.tables import DeltaTable
 import shutil
-import threading
+
+spark = SparkSession.builder \
+    .appName("utilities") \
+    .master("local[*]") \
+    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
+    .config("spark.sql.sources.parallelPartitionDiscovery.parallelism", "4") \
+    .getOrCreate()
 
 # Clear previous run's delta-tables
 try:
     shutil.rmtree("/tmp/delta-table")
 except:
     pass
-
-# Create SparkContext
-sc = SparkContext()
-sqlContext = SQLContext(sc)
-
-# Enable SQL for the current spark session. we need to set the following configs to enable SQL
-# Commands
-# config io.delta.sql.DeltaSparkSessionExtension -- to enable custom Delta-specific SQL commands
-# config parallelPartitionDiscovery.parallelism -- control the parallelism for vacuum
-spark = SparkSession \
-    .builder \
-    .appName("utilities") \
-    .master("local[*]") \
-    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
-    .config("spark.sql.sources.parallelPartitionDiscovery.parallelism", "8") \
-    .getOrCreate()
-
-# Apache Spark 2.4.x has a known issue (SPARK-25003) that requires explicit activation
-# of the extension and cloning of the session. This will unnecessary in Apache Spark 3.x.
-if spark.sparkContext.version < "3.":
-    spark.sparkContext._jvm.io.delta.sql.DeltaSparkSessionExtension() \
-        .apply(spark._jsparkSession.extensions())
-    spark = SparkSession(spark.sparkContext, spark._jsparkSession.cloneSession())
 
 # Create a table
 print("########### Create a Parquet table ##############")

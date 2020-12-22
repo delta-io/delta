@@ -32,14 +32,19 @@ object Streaming {
       .builder()
       .appName("Streaming")
       .master("local[*]")
+      .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+      .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
       .getOrCreate()
 
     import spark.implicits._
 
+    val exampleDir = new File("/tmp/delta-streaming/")
+    if (exampleDir.exists()) FileUtils.deleteDirectory(exampleDir)
+
     println("=== Section 1: write and read delta table using batch queries, and initialize table for later sections")
     // Create a table
     val data = spark.range(0, 5)
-    val path = new File("/tmp/delta-table").getAbsolutePath
+    val path = new File("/tmp/delta-streaming/delta-table").getAbsolutePath
     data.write.format("delta").save(path)
 
     // Read table
@@ -49,8 +54,8 @@ object Streaming {
 
     println("=== Section 2: write and read delta using structured streaming")
     val streamingDf = spark.readStream.format("rate").load()
-    val tablePath2 = new File("/tmp/delta-table2").getCanonicalPath
-    val checkpointPath = new File("/tmp/checkpoint").getCanonicalPath
+    val tablePath2 = new File("/tmp/delta-streaming/delta-table2").getCanonicalPath
+    val checkpointPath = new File("/tmp/delta-streaming/checkpoint").getCanonicalPath
     val stream = streamingDf
       .select($"value" as "id")
       .writeStream
@@ -113,8 +118,8 @@ object Streaming {
     // Streaming append and concurrent repartition using  data change = false
     // tbl1 is the sink and tbl2 is the source
     println("############ Streaming appends with concurrent table repartition  ##########")
-    val tbl1 = "/tmp/delta-table4"
-    val tbl2 = "/tmp/delta-table5"
+    val tbl1 = "/tmp/delta-streaming/delta-table4"
+    val tbl2 = "/tmp/delta-streaming/delta-table5"
     val numRows = 10
     spark.range(numRows).write.mode("overwrite").format("delta").save(tbl1)
     spark.read.format("delta").load(tbl1).show()
@@ -123,23 +128,22 @@ object Streaming {
     // Start reading tbl2 as a stream and do a streaming write to tbl1
     // Prior to Delta 0.5.0 this would throw StreamingQueryException: Detected a data update in the source table. This is currently not supported.
     val stream4 = spark.readStream.format("delta").load(tbl2).writeStream.format("delta")
-      .option("checkpointLocation", new File("/tmp/checkpoint/tbl1").getCanonicalPath)
+      .option("checkpointLocation", new File("/tmp/delta-streaming/checkpoint/tbl1").getCanonicalPath)
       .outputMode("append")
       .start(tbl1)
-
+    
+    Thread.sleep(10 * 1000)
     // repartition table while streaming job is running
     spark.read.format("delta").load(tbl2).repartition(10).write.format("delta").mode("overwrite").option("dataChange", "false").save(tbl2)
 
-    stream4.awaitTermination(10)
+    stream4.awaitTermination(5 * 1000)
     stream4.stop()
     println("######### After streaming write #########")
     spark.read.format("delta").load(tbl1).show()
 
     println("=== In the end, clean all paths")
     // Cleanup
-    Seq(path, tbl1, tbl2, "/tmp/checkpoint/tbl1", tablePath2).foreach { path =>
-    	FileUtils.deleteDirectory(new File(path))
-    }
+    if (exampleDir.exists()) FileUtils.deleteDirectory(exampleDir)
     spark.stop()
   }
 }

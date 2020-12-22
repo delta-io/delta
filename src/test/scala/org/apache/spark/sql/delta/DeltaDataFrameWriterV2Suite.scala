@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.catalog.{DeltaCatalog, DeltaTableV2}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.scalatest.BeforeAndAfter
@@ -60,8 +61,10 @@ trait OpenSourceDataFrameWriterV2Tests
   }
 
   protected def getProperties(table: Table): Map[String, String] = {
-    table.properties().asScala.toMap.filterKeys(
-      !CatalogV2Util.TABLE_RESERVED_PROPERTIES.contains(_))
+    table.properties().asScala.toMap
+      .filterKeys(!CatalogV2Util.TABLE_RESERVED_PROPERTIES.contains(_))
+      .filterKeys(k =>
+        k != Protocol.MIN_READER_VERSION_PROP &&  k != Protocol.MIN_WRITER_VERSION_PROP)
   }
 
   test("Append: basic append") {

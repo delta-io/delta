@@ -118,10 +118,15 @@ class DeltaSqlTests(DeltaTestCase):
             self.assertIn("x", [f.name for f in read_table().schema.fields])
 
             self.spark.sql(f"ALTER TABLE {table} SET TBLPROPERTIES ('k' = 'v')")
-            self.__checkAnswer(self.spark.sql(f"SHOW TBLPROPERTIES {table}"), [('k', 'v')])
+            self.__checkAnswer(self.spark.sql(f"SHOW TBLPROPERTIES {table}"),
+                               [('k', 'v'),
+                                ('delta.minReaderVersion', '1'),
+                                ('delta.minWriterVersion', '2')])
 
             self.spark.sql(f"ALTER TABLE {table} UNSET TBLPROPERTIES ('k')")
-            self.__checkAnswer(self.spark.sql(f"SHOW TBLPROPERTIES {table}"), [])
+            self.__checkAnswer(self.spark.sql(f"SHOW TBLPROPERTIES {table}"),
+                               [('delta.minReaderVersion', '1'),
+                                ('delta.minWriterVersion', '2')])
 
             self.spark.sql(f"ALTER TABLE {table} RENAME TO {table2}")
             self.assertEqual(self.spark.sql(f"SELECT * FROM {table2}").count(), 0)

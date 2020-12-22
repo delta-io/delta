@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.util.Locale
 
+import scala.language.implicitConversions
+
 import org.apache.spark.sql.delta.DeltaOperations.{Delete, Write}
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, RemoveFile}
@@ -239,6 +241,26 @@ trait DeltaVacuumSuiteBase extends QueryTest
         AdvanceClock(defaultTombstoneInterval * 2),
         CheckFiles(Seq("file1.txt", externalFile))
       )
+    }
+  }
+
+  test("parallel file delete") {
+    withEnvironment { (tempDir, clock) =>
+      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath, clock)
+      withSQLConf("spark.databricks.delta.vacuum.parallelDelete.enabled" -> "true") {
+        gcTest(deltaLog, clock)(
+          CreateFile("file1.txt", commitToActionLog = true),
+          CreateFile("file2.txt", commitToActionLog = true),
+          LogicallyDeleteFile("file1.txt"),
+          CheckFiles(Seq("file1.txt", "file2.txt")),
+          AdvanceClock(defaultTombstoneInterval + 1000),
+          GC(dryRun = false, Seq(tempDir)),
+          CheckFiles(Seq("file1.txt"), exist = false),
+          CheckFiles(Seq("file2.txt")),
+          GC(dryRun = false, Seq(tempDir)), // shouldn't throw an error with no files to delete
+          CheckFiles(Seq("file2.txt"))
+        )
+      }
     }
   }
 

@@ -19,7 +19,7 @@ package org.apache.spark.sql.catalyst.plans.logical
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 
 // This only used by Delta which needs to be compatible with DBR 6 and can't use the new class
-// added in the master branch: `DeleteFromTable`.
+// added in Spark 3.0: `DeleteFromTable`.
 case class DeltaDelete(
     child: LogicalPlan,
     condition: Option[Expression])

@@ -126,11 +126,35 @@ trait DeltaReadOptions extends DeltaOptionParser {
 
   val ignoreDeletes = options.get(IGNORE_DELETES_OPTION).exists(toBoolean(_, IGNORE_DELETES_OPTION))
 
+  val failOnDataLoss = options.get(FAIL_ON_DATA_LOSS_OPTION)
+    .forall(toBoolean(_, FAIL_ON_DATA_LOSS_OPTION)) // thanks to forall: by default true
+
   val excludeRegex: Option[Regex] = try options.get(EXCLUDE_REGEX_OPTION).map(_.r) catch {
     case e: PatternSyntaxException =>
       throw new IllegalArgumentException(
         s"Please recheck your syntax for '$EXCLUDE_REGEX_OPTION'", e)
   }
+
+  val startingVersion: Option[DeltaStartingVersion] = options.get(STARTING_VERSION_OPTION).map {
+    case "latest" => StartingVersionLatest
+    case str =>
+      Try(str.toLong).toOption.filter(_ >= 0).map(StartingVersion).getOrElse{
+        throw DeltaErrors.illegalDeltaOptionException(
+          STARTING_VERSION_OPTION, str, "must be greater than or equal to zero")
+      }
+  }
+
+  val startingTimestamp = options.get(STARTING_TIMESTAMP_OPTION)
+
+  private def provideOneStartingOption(): Unit = {
+    if (startingTimestamp.isDefined && startingVersion.isDefined) {
+      throw DeltaErrors.startingVersionAndTimestampBothSetException(
+        STARTING_VERSION_OPTION,
+        STARTING_TIMESTAMP_OPTION)
+    }
+  }
+
+  provideOneStartingOption()
 }
 
 
@@ -166,8 +190,11 @@ object DeltaOptions extends DeltaLogging {
   val IGNORE_FILE_DELETION_OPTION = "ignoreFileDeletion"
   val IGNORE_CHANGES_OPTION = "ignoreChanges"
   val IGNORE_DELETES_OPTION = "ignoreDeletes"
+  val FAIL_ON_DATA_LOSS_OPTION = "failOnDataLoss"
   val OPTIMIZE_WRITE_OPTION = "optimizeWrite"
   val DATA_CHANGE_OPTION = "dataChange"
+  val STARTING_VERSION_OPTION = "startingVersion"
+  val STARTING_TIMESTAMP_OPTION = "startingTimestamp"
 
   val validOptionKeys : Set[String] = Set(
     REPLACE_WHERE_OPTION,
@@ -179,8 +206,11 @@ object DeltaOptions extends DeltaLogging {
     IGNORE_FILE_DELETION_OPTION,
     IGNORE_CHANGES_OPTION,
     IGNORE_DELETES_OPTION,
+    FAIL_ON_DATA_LOSS_OPTION,
     OPTIMIZE_WRITE_OPTION,
     DATA_CHANGE_OPTION,
+    STARTING_TIMESTAMP_OPTION,
+    STARTING_VERSION_OPTION,
     "queryName",
     "checkpointLocation",
     "path",
@@ -200,3 +230,10 @@ object DeltaOptions extends DeltaLogging {
     }
   }
 }
+
+/**
+ * Definitions for the starting version of a Delta stream.
+ */
+sealed trait DeltaStartingVersion
+case object StartingVersionLatest extends DeltaStartingVersion
+case class StartingVersion(version: Long) extends DeltaStartingVersion

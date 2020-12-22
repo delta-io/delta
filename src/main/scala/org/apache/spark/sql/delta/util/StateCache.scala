@@ -35,9 +35,12 @@ trait StateCache {
   protected def spark: SparkSession
 
   /** If state RDDs for this snapshot should still be cached. */
-  private var isCached = true
+  private var _isCached = true
   /** A list of RDDs that we need to uncache when we are done with this snapshot. */
   private val cached = ArrayBuffer[RDD[_]]()
+
+  /** Method to expose the value of _isCached for testing. */
+  private[delta] def isCached: Boolean = _isCached
 
   class CachedDS[A](ds: Dataset[A], name: String) {
     // While we cache RDD to avoid re-computation in different spark sessions, `Dataset` can only be
@@ -100,7 +103,7 @@ trait StateCache {
   /** Drop any cached data for this [[Snapshot]]. */
   def uncache(): Unit = cached.synchronized {
     if (isCached) {
-      isCached = false
+      _isCached = false
       cached.foreach(_.unpersist(blocking = false))
     }
   }
