@@ -253,8 +253,8 @@ class DeltaSuite extends QueryTest
         .option(DeltaOptions.REPLACE_WHERE_OPTION, "not_a_column = true")
         .save(tempDir.toString)
     }.getMessage
-    assert(e3 == "Predicate references non-partition column 'not_a_column'. Only the " +
-      "partition columns may be referenced: [is_odd];")
+    assert(e3.contains("Predicate references non-partition column 'not_a_column'. Only the " +
+      "partition columns may be referenced: [is_odd]"))
 
     val e4 = intercept[AnalysisException] {
       Seq(6).toDF()
@@ -265,8 +265,8 @@ class DeltaSuite extends QueryTest
         .option(DeltaOptions.REPLACE_WHERE_OPTION, "value = 1")
         .save(tempDir.toString)
     }.getMessage
-    assert(e4 == "Predicate references non-partition column 'value'. Only the " +
-      "partition columns may be referenced: [is_odd];")
+    assert(e4.contains("Predicate references non-partition column 'value'. Only the " +
+      "partition columns may be referenced: [is_odd]"))
 
     val e5 = intercept[AnalysisException] {
       Seq(6).toDF()
