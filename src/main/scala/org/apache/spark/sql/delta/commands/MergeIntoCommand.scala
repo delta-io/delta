@@ -222,6 +222,7 @@ case class MergeIntoCommand(
     "numTargetFilesBeforeSkipping" -> createMetric(sc, "number of target files before skipping"),
     "numTargetFilesAfterSkipping" -> createMetric(sc, "number of target files after skipping"),
     "numTargetFilesRemoved" -> createMetric(sc, "number of files removed to target"),
+
     "numTargetFilesAdded" -> createMetric(sc, "number of files added to target"),
     "numTargetBytesBeforeSkipping" -> createMetric(sc, "number of target bytes before skipping"),
     "numTargetBytesAfterSkipping" -> createMetric(sc, "number of target bytes after skipping"),
@@ -232,11 +233,13 @@ case class MergeIntoCommand(
     "numTargetPartitionsRemovedFrom" ->
       createMetric(sc, "number of target partitions from which files were removed"),
     "numTargetPartitionsAddedTo" ->
-      createMetric(sc, "number of target partitions to which files were added"))
+      createMetric(sc, "number of target partitions to which files were added")
+  )++ commonMetrics
 
   override def run(
     spark: SparkSession): Seq[Row] = recordDeltaOperation(targetDeltaLog, "delta.dml.merge") {
     targetDeltaLog.withNewTransaction { deltaTxn =>
+      val startTime = System.nanoTime()
       if (target.schema.size != deltaTxn.metadata.schema.size) {
         throw DeltaErrors.schemaChangedSinceAnalysis(
           atAnalysis = target.schema, latestSchema = deltaTxn.metadata.schema)
@@ -265,6 +268,9 @@ case class MergeIntoCommand(
          filesToRewrite.map(_.remove) ++ newWrittenFiles
        }
       }
+
+      metrics(DeltaOperationMetrics.EXECUTION_TIME_MS)
+        .set((System.nanoTime() - startTime) / 1000 / 1000)
       deltaTxn.registerSQLMetrics(spark, metrics)
       deltaTxn.commit(
         deltaActions,
