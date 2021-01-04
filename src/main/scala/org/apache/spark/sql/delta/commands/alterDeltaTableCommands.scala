@@ -16,19 +16,25 @@
 
 package org.apache.spark.sql.delta.commands
 
+// scalastyle:off import.ordering.noEmptyLine
+import java.util.Locale
+
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.schema.SchemaUtils.transformColumnsStructs
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
+import org.apache.spark.sql.{AnalysisException, Column, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
-import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, QualifiedColType}
+import org.apache.spark.sql.catalyst.expressions.{Expression, IsNotNull, IsNull, IsUnknown, Not, Or}
+import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, LogicalPlan, QualifiedColType}
 import org.apache.spark.sql.connector.catalog.TableChange.{After, ColumnPosition, First}
 import org.apache.spark.sql.execution.command.{DDLUtils, RunnableCommand}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
@@ -68,10 +74,16 @@ case class AlterTableSetPropertiesDeltaCommand(
     recordDeltaOperation(deltaLog, "delta.ddl.alter.setProperties") {
       val txn = startTransaction()
 
-      DeltaConfigs.verifyProtocolVersionRequirements(configuration, txn.protocol)
       val metadata = txn.metadata
+      configuration.foreach {
+        case (k, _) if k.toLowerCase(Locale.ROOT).startsWith("delta.constraints.") =>
+          throw DeltaErrors.useAddConstraints
+        case _ =>
+          // do nothing
+      }
       val newMetadata = metadata.copy(configuration = metadata.configuration ++ configuration)
-      txn.commit(newMetadata :: Nil, DeltaOperations.SetTableProperties(configuration))
+      txn.updateMetadata(newMetadata)
+      txn.commit(Nil, DeltaOperations.SetTableProperties(configuration))
 
       Seq.empty[Row]
     }
@@ -114,7 +126,8 @@ case class AlterTableUnsetPropertiesDeltaCommand(
         case (key, _) => normalizedKeys.contains(key)
       }
       val newMetadata = metadata.copy(configuration = newConfiguration)
-      txn.commit(newMetadata :: Nil, DeltaOperations.UnsetTableProperties(normalizedKeys, ifExists))
+      txn.updateMetadata(newMetadata)
+      txn.commit(Nil, DeltaOperations.UnsetTableProperties(normalizedKeys, ifExists))
 
       Seq.empty[Row]
     }
@@ -178,7 +191,8 @@ case class AlterTableAddColumnsDeltaCommand(
       ParquetSchemaConverter.checkFieldNames(SchemaUtils.explodeNestedFieldNames(newSchema))
 
       val newMetadata = metadata.copy(schemaString = newSchema.json)
-      txn.commit(newMetadata :: Nil, DeltaOperations.AddColumns(
+      txn.updateMetadata(newMetadata)
+      txn.commit(Nil, DeltaOperations.AddColumns(
         colsToAddWithPosition.map {
           case QualifiedColTypeWithPosition(path, col, colPosition) =>
             DeltaOperations.QualifiedColTypeWithPositionForLog(
@@ -241,7 +255,7 @@ case class AlterTableChangeColumnDeltaCommand(
       val newSchema = transformColumnsStructs(oldSchema, columnName) {
         case (`columnPath`, struct @ StructType(fields), _) =>
           val oldColumn = struct(columnName)
-          verifyColumnChange(struct(columnName), resolver)
+          verifyColumnChange(struct(columnName), resolver, txn)
 
           // Take the comment, nullability and data type from newField
           val newField = newColumn.getComment().map(oldColumn.withComment).getOrElse(oldColumn)
@@ -264,7 +278,8 @@ case class AlterTableChangeColumnDeltaCommand(
       }
 
       val newMetadata = metadata.copy(schemaString = newSchema.json)
-      txn.commit(newMetadata :: Nil, DeltaOperations.ChangeColumn(
+      txn.updateMetadata(newMetadata)
+      txn.commit(Nil, DeltaOperations.ChangeColumn(
         columnPath, columnName, newColumn, colPosition.map(_.toString)))
 
       Seq.empty[Row]
@@ -312,13 +327,17 @@ case class AlterTableChangeColumnDeltaCommand(
 
   /**
    * Given two columns, verify whether replacing the original column with the new column is a valid
-   * operation
+   * operation.
+   *
+   * Note that this requires a full table scan in the case of SET NOT NULL to verify that all
+   * existing values are valid.
    *
    * @param originalField The existing column
    */
   private def verifyColumnChange(
       originalField: StructField,
-      resolver: Resolver): Unit = {
+      resolver: Resolver,
+      txn: OptimisticTransaction): Unit = {
 
     originalField.dataType match {
       case same if same == newColumn.dataType =>
@@ -346,8 +365,17 @@ case class AlterTableChangeColumnDeltaCommand(
 
     if (columnName != newColumn.name ||
       SchemaUtils.canChangeDataType(originalField.dataType, newColumn.dataType, resolver,
-        columnPath :+ originalField.name).nonEmpty ||
-      (originalField.nullable && !newColumn.nullable)) {
+        columnPath :+ originalField.name).nonEmpty) {
+      throw DeltaErrors.alterTableChangeColumnException(
+        s"'${UnresolvedAttribute(columnPath :+ originalField.name).name}' with type " +
+          s"'${originalField.dataType}" +
+          s" (nullable = ${originalField.nullable})'",
+        s"'${UnresolvedAttribute(Seq(newColumn.name)).name}' with type " +
+          s"'${newColumn.dataType}" +
+          s" (nullable = ${newColumn.nullable})'")
+    }
+
+    if (originalField.nullable && !newColumn.nullable) {
       throw DeltaErrors.alterTableChangeColumnException(
         s"'${UnresolvedAttribute(columnPath :+ originalField.name).name}' with type " +
           s"'${originalField.dataType}" +
@@ -396,7 +424,8 @@ case class AlterTableReplaceColumnsDeltaCommand(
       ParquetSchemaConverter.checkFieldNames(SchemaUtils.explodeNestedFieldNames(newSchema))
 
       val newMetadata = metadata.copy(schemaString = newSchema.json)
-      txn.commit(newMetadata :: Nil, DeltaOperations.ReplaceColumns(columns))
+      txn.updateMetadata(newMetadata)
+      txn.commit(Nil, DeltaOperations.ReplaceColumns(columns))
 
       Seq.empty[Row]
     }
@@ -454,5 +483,87 @@ case class AlterTableSetLocationDeltaCommand(
       oldMetadata: actions.Metadata, newMetadata: actions.Metadata): Boolean = {
     oldMetadata.schema == newMetadata.schema &&
       oldMetadata.partitionSchema == newMetadata.partitionSchema
+  }
+}
+
+/**
+ * Command to add a constraint to a Delta table. Currently only CHECK constraints are supported.
+ *
+ * Adding a constraint will scan all data in the table to verify the constraint currently holds.
+ *
+ * @param table The table to which the constraint should be added.
+ * @param name The name of the new constraint.
+ * @param exprText The contents of the new CHECK constraint, to be parsed and evaluated.
+ */
+case class AlterTableAddConstraintDeltaCommand(
+    table: DeltaTableV2,
+    name: String,
+    exprText: String)
+  extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+
+  override def run(sparkSession: SparkSession): Seq[Row] = {
+    val deltaLog = table.deltaLog
+    recordDeltaOperation(deltaLog, "delta.ddl.alter.addConstraint") {
+      val txn = startTransaction()
+
+      Constraints.getExprTextByName(name, txn.metadata, sparkSession).foreach { oldExpr =>
+        throw DeltaErrors.constraintAlreadyExists(name, oldExpr)
+      }
+
+      val newMetadata = txn.metadata.copy(
+        configuration = txn.metadata.configuration +
+          (Constraints.checkConstraintPropertyName(name) -> exprText)
+      )
+
+      val expr = sparkSession.sessionState.sqlParser.parseExpression(exprText)
+      if (expr.dataType != BooleanType) {
+        throw DeltaErrors.checkConstraintNotBoolean(name, exprText)
+      }
+      logInfo(s"Checking that $exprText is satisfied for existing data. " +
+        "This will require a full table scan.")
+      recordDeltaOperation(
+          txn.snapshot.deltaLog,
+          "delta.ddl.alter.addConstraint.checkExisting") {
+        val df = txn.snapshot.deltaLog.createDataFrame(txn.snapshot, txn.filterFiles())
+        val n = df.where(new Column(Or(Not(expr), IsUnknown(expr)))).count()
+
+        if (n > 0) {
+          throw DeltaErrors.newCheckConstraintViolated(n, table.name(), exprText)
+        }
+      }
+
+      txn.commit(newMetadata :: Nil, DeltaOperations.AddConstraint(name, exprText))
+    }
+    Seq()
+  }
+}
+
+/**
+ * Command to drop a constraint from a Delta table. No-op if a constraint with the given name
+ * doesn't exist.
+ *
+ * Currently only CHECK constraints are supported.
+ *
+ * @param table The table from which the constraint should be dropped
+ * @param name The name of the constraint to drop
+ */
+case class AlterTableDropConstraintDeltaCommand(
+    table: DeltaTableV2,
+    name: String)
+  extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+
+  override def run(sparkSession: SparkSession): Seq[Row] = {
+    val deltaLog = table.deltaLog
+    recordDeltaOperation(deltaLog, "delta.ddl.alter.dropConstraint") {
+      val txn = startTransaction()
+
+      val oldExprText = Constraints.getExprTextByName(name, txn.metadata, sparkSession)
+      val newMetadata = txn.metadata.copy(
+        configuration = txn.metadata.configuration - Constraints.checkConstraintPropertyName(name))
+
+      txn.commit(newMetadata :: Nil, DeltaOperations.DropConstraint(name, oldExprText))
+    }
+
+    Seq()
   }
 }

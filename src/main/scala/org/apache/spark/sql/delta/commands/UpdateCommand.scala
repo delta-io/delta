@@ -110,8 +110,12 @@ case class UpdateCommand(
       val operationTimestamp = System.currentTimeMillis()
       val deleteActions = candidateFiles.map(_.removeWithTimestamp(operationTimestamp))
 
-      val rewrittenFiles = rewriteFiles(sparkSession, txn, tahoeFileIndex.path,
-        filesToRewrite, nameToAddFile, updateCondition)
+      val rewrittenFiles =
+        withStatusCode(
+          "DELTA", s"Rewriting ${filesToRewrite.size} files for UPDATE operation (metadata)") {
+          rewriteFiles(sparkSession, txn, tahoeFileIndex.path,
+            filesToRewrite, nameToAddFile, updateCondition)
+        }
 
       numRewrittenFiles = rewrittenFiles.size
       rewriteTimeMs = (System.nanoTime() - startTime) / 1000 / 1000 - scanTimeMs

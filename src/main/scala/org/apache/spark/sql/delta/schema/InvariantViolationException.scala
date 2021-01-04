@@ -16,16 +16,47 @@
 
 package org.apache.spark.sql.delta.schema
 
+import scala.collection.JavaConverters._
+
+import org.apache.spark.sql.delta.constraints.Constraints
+
+import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 
 /** Thrown when the given data doesn't match the rules defined on the table. */
 case class InvariantViolationException(msg: String) extends IllegalArgumentException(msg)
 
 object InvariantViolationException {
+  def apply(constraint: Constraints.NotNull): InvariantViolationException = {
+    new InvariantViolationException(s"NOT NULL constraint violated for column: " +
+      s"${UnresolvedAttribute(constraint.column).name}.\n")
+  }
+
+  /**
+   * Build an exception to report the current row failed a CHECK constraint.
+   *
+   * @param constraint the constraint definition
+   * @param values a map of full column names to their evaluated values in the failed row
+   */
   def apply(
-      invariant: Invariant,
-      msg: String): InvariantViolationException = {
-    new InvariantViolationException(s"Invariant ${invariant.rule.name} violated for column: " +
-      s"${UnresolvedAttribute(invariant.column).name}.\n$msg")
+      constraint: Constraints.Check,
+      values: Map[String, Any]): InvariantViolationException = {
+    val valueLines = values.map {
+      case (column, value) =>
+        s" - $column : $value"
+    }.mkString("\n")
+    new InvariantViolationException(
+      s"CHECK constraint ${constraint.name} ${constraint.expression.sql} " +
+        s"violated by row with values:\n$valueLines")
+  }
+
+  /**
+   * Columns and values in parallel lists as a shim for Java codegen compatibility.
+   */
+  def apply(
+      constraint: Constraints.Check,
+      columns: java.util.List[String],
+      values: java.util.List[Any]): InvariantViolationException = {
+    apply(constraint, columns.asScala.zip(values.asScala).toMap)
   }
 }

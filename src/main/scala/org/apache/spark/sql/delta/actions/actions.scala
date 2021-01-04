@@ -18,7 +18,13 @@ package org.apache.spark.sql.delta.actions
 
 import java.net.URI
 import java.sql.Timestamp
+import java.util.Locale
 
+import scala.collection.mutable.ArrayBuffer
+
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors}
+import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation.{JsonIgnore, JsonInclude}
 import com.fasterxml.jackson.core.JsonGenerator
@@ -26,6 +32,8 @@ import com.fasterxml.jackson.databind.{JsonSerializer, SerializerProvider}
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 import org.codehaus.jackson.annotate.JsonRawValue
 
+import org.apache.spark.sql.{AnalysisException, SparkSession}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.util.Utils
 
 // scalastyle:off
@@ -41,13 +49,13 @@ class InvalidProtocolVersionException extends RuntimeException(
     "Please upgrade to a newer release.")
 
 class ProtocolDowngradeException(oldProtocol: Protocol, newProtocol: Protocol)
-  extends RuntimeException(
-    s"Protocol version cannot be downgraded from $oldProtocol to $newProtocol")
+  extends RuntimeException("Protocol version cannot be downgraded from " +
+    s"${oldProtocol.simpleString} to ${newProtocol.simpleString}")
 
 object Action {
   /** The maximum version of the protocol that this version of Delta understands. */
   val readerVersion = 1
-  val writerVersion = 2
+  val writerVersion = 3
   val protocolVersion: Protocol = Protocol(readerVersion, writerVersion)
 
   def fromJson(json: String): Action = {
@@ -83,6 +91,97 @@ case class Protocol(
   override def wrap: SingleAction = SingleAction(protocol = this)
   @JsonIgnore
   def simpleString: String = s"($minReaderVersion,$minWriterVersion)"
+}
+
+object Protocol {
+  val MIN_READER_VERSION_PROP = "delta.minReaderVersion"
+  val MIN_WRITER_VERSION_PROP = "delta.minWriterVersion"
+
+  def apply(spark: SparkSession, metadataOpt: Option[Metadata]): Protocol = {
+    val conf = spark.sessionState.conf
+    val minimumOpt = metadataOpt.map(m => requiredMinimumProtocol(spark, m)._1)
+    val configs = metadataOpt.map(_.configuration.map {
+      case (k, v) => k.toLowerCase(Locale.ROOT) -> v }
+    ).getOrElse(Map.empty[String, String])
+    // Check if the protocol version is provided as a table property, or get it from the SQL confs
+    val readerVersion = configs.get(MIN_READER_VERSION_PROP.toLowerCase(Locale.ROOT))
+      .map(getVersion(MIN_READER_VERSION_PROP, _))
+      .getOrElse(conf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION))
+    val writerVersion = configs.get(MIN_WRITER_VERSION_PROP.toLowerCase(Locale.ROOT))
+      .map(getVersion(MIN_WRITER_VERSION_PROP, _))
+      .getOrElse(conf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION))
+
+    Protocol(
+      minReaderVersion = math.max(minimumOpt.map(_.minReaderVersion).getOrElse(0), readerVersion),
+      minWriterVersion = math.max(minimumOpt.map(_.minWriterVersion).getOrElse(0), writerVersion))
+  }
+
+  /** Picks the protocol version for a new table given potential feature usage. */
+  def forNewTable(spark: SparkSession, metadata: Metadata): Protocol = {
+    Protocol(spark, Some(metadata))
+  }
+
+  /**
+   * Given the Delta table metadata, returns the minimum required table protocol version
+   * and the features used that require the protocol.
+   */
+  private def requiredMinimumProtocol(
+      spark: SparkSession,
+      metadata: Metadata): (Protocol, Seq[String]) = {
+    val featuresUsed = new ArrayBuffer[String]()
+    var minimumRequired = Protocol(0, 0)
+    // Check for invariants in the schema
+    if (Invariants.getFromSchema(metadata.schema, spark).nonEmpty) {
+      minimumRequired = Protocol(0, minWriterVersion = 2)
+      featuresUsed.append("Setting column level invariants")
+    }
+
+    val configs = metadata.configuration.map { case (k, v) => k.toLowerCase(Locale.ROOT) -> v }
+    if (configs.contains(DeltaConfigs.IS_APPEND_ONLY.key.toLowerCase(Locale.ROOT))) {
+      minimumRequired = Protocol(0, minWriterVersion = 2)
+      featuresUsed.append(s"Append only tables (${DeltaConfigs.IS_APPEND_ONLY.key})")
+    }
+
+    if (Constraints.getCheckConstraints(metadata, spark).nonEmpty) {
+      minimumRequired = Protocol(0, minWriterVersion = 3)
+      featuresUsed.append("Setting CHECK constraints")
+    }
+
+    minimumRequired -> featuresUsed
+  }
+
+  /** Cast the table property for the protocol version to an integer. */
+  def getVersion(key: String, value: String): Int = {
+    try value.toInt catch {
+      case n: NumberFormatException =>
+        throw new IllegalArgumentException(
+          s"Protocol property $key needs to be an integer. Found $value", n)
+    }
+  }
+
+  /**
+   * Verify that the protocol version of the table satisfies the version requirements of all the
+   * configurations to be set for the table. Returns the minimum required protocol if not.
+   */
+  def checkProtocolRequirements(
+      spark: SparkSession,
+      metadata: Metadata,
+      current: Protocol): Option[Protocol] = {
+    assert(!metadata.configuration.contains(MIN_READER_VERSION_PROP), s"Should not have the " +
+      s"protocol version ($MIN_READER_VERSION_PROP) as part of table properties")
+    assert(!metadata.configuration.contains(MIN_WRITER_VERSION_PROP), s"Should not have the " +
+      s"protocol version ($MIN_WRITER_VERSION_PROP) as part of table properties")
+    val (required, features) = requiredMinimumProtocol(spark, metadata)
+    if (current.minWriterVersion < required.minWriterVersion ||
+        current.minReaderVersion < required.minReaderVersion) {
+      Some(required.copy(
+        minReaderVersion = math.max(current.minReaderVersion, required.minReaderVersion),
+        minWriterVersion = math.max(current.minWriterVersion, required.minWriterVersion))
+      )
+    } else {
+      None
+    }
+  }
 }
 
 /**
@@ -153,6 +252,9 @@ object AddFile {
 
     /** [[ZCUBE_ZORDER_BY]]: ZOrdering of the corresponding ZCube */
     object ZCUBE_ZORDER_BY extends AddFile.Tags.KeyType("ZCUBE_ZORDER_BY")
+
+    /** [[ZCUBE_ZORDER_CURVE]]: Clustering strategy of the corresponding ZCube */
+    object ZCUBE_ZORDER_CURVE extends AddFile.Tags.KeyType("ZCUBE_ZORDER_CURVE")
   }
 
   /** Convert a [[Tags.KeyType]] to a string to be used in the AddMap.tags Map[String, String]. */

@@ -23,25 +23,42 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.AnalysisException
+import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis._
-import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, Expression, Literal, UnaryExpression, Unevaluable}
+import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, Expression, Literal, UnaryExpression}
+import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, ExprCode}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{ByteType, DataType, IntegerType, ShortType, StructField, StructType}
+
+/**
+ * A copy of Spark SQL Unevaluable for cross-version compatibility. In 3.0, implementers of
+ * the original Unevaluable must explicitly override foldable to false; in 3.1 onwards, this
+ * explicit override is invalid.
+ */
+trait DeltaUnevaluable extends Expression {
+  final override def foldable: Boolean = false
+
+  final override def eval(input: InternalRow = null): Any =
+    throw new UnsupportedOperationException(s"Cannot evaluate expression: $this")
+
+  final override protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode =
+    throw new UnsupportedOperationException(s"Cannot generate code for expression: $this")
+}
 
 /**
  * Represents an action in MERGE's UPDATE or INSERT clause where a target columns is assigned the
  * value of an expression
  * @param targetColNameParts The name parts of the target column. This is a sequence to support
  *                           nested fields as targets.
- * @param expr Expression to generate the value of the target column.
+ * @param expr Expression to generate the value of the target column.o
  */
 case class DeltaMergeAction(targetColNameParts: Seq[String], expr: Expression)
-  extends UnaryExpression with Unevaluable {
+  extends UnaryExpression with DeltaUnevaluable {
   override def child: Expression = expr
-  override def foldable: Boolean = false
   override def dataType: DataType = expr.dataType
-  override def sql: String = s"${targetColNameParts.mkString("`", "`.`", "`")} = ${expr.sql}"
-  override def toString: String = s"$prettyName ( $sql )"
+  override def sql: String = s"$targetColString = ${expr.sql}"
+  override def toString: String = s"$targetColString = $expr"
+  private lazy val targetColString: String = targetColNameParts.mkString("`", "`.`", "`")
 }
 
 
@@ -49,7 +66,7 @@ case class DeltaMergeAction(targetColNameParts: Seq[String], expr: Expression)
  * Trait that represents a WHEN clause in MERGE. See [[DeltaMergeInto]]. It extends [[Expression]]
  * so that Catalyst can find all the expressions in the clause implementations.
  */
-sealed trait DeltaMergeIntoClause extends Expression with Unevaluable {
+sealed trait DeltaMergeIntoClause extends Expression with DeltaUnevaluable {
   /** Optional condition of the clause */
   def condition: Option[Expression]
 
@@ -73,14 +90,13 @@ sealed trait DeltaMergeIntoClause extends Expression with Unevaluable {
     getClass.getSimpleName.stripPrefix("DeltaMergeInto").stripSuffix("Clause")
 
   override def toString: String = {
-    val condStr = condition.map { c => s"condition: ${c.sql}" }.getOrElse("")
-    val actionStr = if (actions.isEmpty) "" else {
-      "actions: " + actions.map(_.sql).mkString(", ")
+    val condStr = condition.map { c => s"condition: $c" }
+    val actionStr = if (actions.isEmpty) None else {
+      Some("actions: " + actions.mkString("[", ", ", "]"))
     }
-    s"$clauseType [${Seq(condStr, actionStr).mkString(", ")}]"
+    s"$clauseType " + Seq(condStr, actionStr).flatten.mkString("[", ", ", "]")
   }
 
-  override def foldable: Boolean = false
   override def nullable: Boolean = false
   override def dataType: DataType = null
   override def children: Seq[Expression] = condition.toSeq ++ actions
@@ -167,35 +183,38 @@ case class DeltaMergeIntoInsertClause(condition: Option[Expression], actions: Se
  *    ON <search_condition>
  *    [ WHEN MATCHED [ AND <condition> ] THEN <matched_action> ]
  *    [ WHEN MATCHED [ AND <condition> ] THEN <matched_action> ]
+ *    ...
  *    [ WHEN NOT MATCHED [ AND <condition> ] THEN <not_matched_action> ]
+ *    [ WHEN NOT MATCHED [ AND <condition> ] THEN <not_matched_action> ]
+ *    ...
  *
  *    where
  *    <matched_action> = DELETE | UPDATE SET column1 = value1 [, column2 = value2 ...]
  *    <not_matched_action> = INSERT (column1 [, column2 ...]) VALUES (expr1 [, expr2 ...])
  * }}}
  *
- * - There can be 1, 2 or 3 WHEN clauses. Of these, at most 2 can be WHEN MATCHED clauses, and
- * at most 1 can be WHEN NOT MATCHED clause.
+ * - There can be any number of WHEN clauses.
  * - WHEN MATCHED clauses:
- *    - There can be at most one UPDATE action and DELETE action in the MATCHED clauses.
- *    - Each WHEN MATCHED clause can have an optional condition. However, If there are two
- * WHEN MATCHED clauses, then the first one must have a condition.
- *    - When there are two MATCHED clauses and there are conditions (or the lack of) that
- * allow a row to match both MATCHED clauses, then the first clause/action is executed.
- * In other words, the order of the MATCHED clauses matter.
+ *    - Each WHEN MATCHED clause can have an optional condition. However, if there are multiple
+ * WHEN MATCHED clauses, only the last can omit the condition.
+ *    - WHEN MATCHED clauses are dependent on their ordering; that is, the first clause that
+ * satisfies the clause's condition has its corresponding action executed.
  * - WHEN NOT MATCHED clause:
- *    - Can only have the INSERT action. If present, it must be the last WHEN clause.
- *    - WHEN NOT MATCHED clause can have an optional condition.
+ *    - Can only have the INSERT action. If present, they must follow the last WHEN MATCHED clause.
+ *    - Each WHEN NOT MATCHED clause can have an optional condition. However, if there are multiple
+ * clauses, only the last can omit the condition.
+ *    - WHEN NOT MATCHED clauses are dependent on their ordering; that is, the first clause that
+ * satisfies the clause's condition has its corresponding action executed.
  */
 case class DeltaMergeInto(
     target: LogicalPlan,
     source: LogicalPlan,
     condition: Expression,
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
-    notMatchedClause: Option[DeltaMergeIntoInsertClause],
+    notMatchedClauses: Seq[DeltaMergeIntoInsertClause],
     migratedSchema: Option[StructType] = None) extends Command {
 
-  (matchedClauses ++ notMatchedClause).foreach(_.verifyActions())
+  (matchedClauses ++ notMatchedClauses).foreach(_.verifyActions())
 
   override def children: Seq[LogicalPlan] = Seq(target, source)
   override def output: Seq[Attribute] = Seq.empty
@@ -214,32 +233,27 @@ object DeltaMergeInto {
 
     // grammar enforcement goes here.
     if (whenClauses.isEmpty) {
-      throw new AnalysisException("There must be at least one WHEN clause in a MERGE query")
+      throw new AnalysisException("There must be at least one WHEN clause in a MERGE statement")
     }
 
-    if (matchedClauses.length == 2 &&
-      matchedClauses.apply(0).condition.isEmpty) {
-      throw new AnalysisException("When there are 2 MATCHED clauses in a MERGE query, " +
-        "the first MATCHED clause must have a condition")
+    // check that only last MATCHED clause omits the condition
+    if (matchedClauses.length > 1 && !matchedClauses.init.forall(_.condition.nonEmpty)) {
+      throw new AnalysisException("When there are more than one MATCHED clauses in a MERGE " +
+        "statement, only the last MATCHED clause can omit the condition.")
     }
 
-    if (matchedClauses.length > 2) {
-      throw new AnalysisException("There must be at most two match clauses in a MERGE query")
-    }
-
-    if (updateClauses.length >= 2 ||
-      deleteClauses.length >= 2 ||
-      insertClauses.length >= 2) {
-      throw new AnalysisException("INSERT, UPDATE and DELETE cannot appear twice in " +
-        "one MERGE query")
+    // check that only last NOT MATCHED clause omits the condition
+    if (insertClauses.length > 1 && !insertClauses.init.forall(_.condition.nonEmpty)) {
+      throw new AnalysisException("When there are more than one NOT MATCHED clauses in a MERGE " +
+        "statement, only the last NOT MATCHED clause can omit the condition.")
     }
 
     DeltaMergeInto(
       target,
       source,
       condition,
-      whenClauses.collect { case x: DeltaMergeIntoMatchedClause => x }.take(2),
-      whenClauses.collectFirst { case x: DeltaMergeIntoInsertClause => x },
+      whenClauses.collect { case x: DeltaMergeIntoMatchedClause => x },
+      whenClauses.collect { case x: DeltaMergeIntoInsertClause => x },
       None)
   }
 
@@ -400,9 +414,21 @@ object DeltaMergeInto {
     val resolvedNotMatchedClause = notMatchedClause.map {
       resolveClause(_, fakeSourcePlan)
     }
-    DeltaMergeInto(
+    val resolvedMerge = DeltaMergeInto(
       target, source, resolvedCond,
       resolvedMatchedClauses, resolvedNotMatchedClause,
       if (shouldAutoMigrate) Some(finalSchema) else None)
+
+    // Its possible that pre-resolved expressions (e.g. `sourceDF("key") = targetDF("key")`) have
+    // attribute references that are not present in the output attributes of the children (i.e.,
+    // incorrect DataFrame was used in the `df("col")` form).
+    if (resolvedMerge.missingInput.nonEmpty) {
+      val missingAttributes = resolvedMerge.missingInput.mkString(",")
+      val input = resolvedMerge.inputSet.mkString(",")
+      val msgForMissingAttributes = s"Resolved attribute(s) $missingAttributes missing " +
+        s"from $input in operator ${resolvedMerge.simpleString(SQLConf.get.maxToStringFields)}."
+      resolvedMerge.failAnalysis(msgForMissingAttributes)
+    }
+    resolvedMerge
   }
 }

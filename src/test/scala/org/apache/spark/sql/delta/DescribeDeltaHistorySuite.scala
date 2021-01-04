@@ -275,7 +275,7 @@ trait DescribeDeltaHistorySuiteBase
       checkLastOperation(
         tempDir2,
         Seq("CREATE TABLE AS SELECT",
-          "false", """[]""", """{}""", null),
+          "false", """[]""", """{}""", "this is my table"),
         Seq($"operation", $"operationParameters.isManaged", $"operationParameters.partitionBy",
           $"operationParameters.properties", $"operationParameters.description"))
     }
@@ -404,6 +404,7 @@ trait DescribeDeltaHistorySuiteBase
   }
 
   test("operations - streaming append with transaction ids") {
+
     val tempDir = Utils.createTempDir().toString
     val checkpoint = Utils.createTempDir().toString
 

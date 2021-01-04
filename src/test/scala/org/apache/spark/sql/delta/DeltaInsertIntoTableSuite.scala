@@ -45,6 +45,27 @@ class DeltaInsertIntoSQLSuite extends DeltaInsertIntoTests(false, true)
       sql(s"INSERT $overwrite TABLE $tableName SELECT * FROM $tmpView")
     }
   }
+
+  test("insert overwrite should work with selecting constants") {
+    withTable("t1") {
+      sql("CREATE TABLE t1 (a int, b int, c int) USING delta PARTITIONED BY (b, c)")
+      sql("INSERT OVERWRITE TABLE t1 PARTITION (c=3) SELECT 1, 2")
+      checkAnswer(
+        sql("SELECT * FROM t1"),
+        Row(1, 2, 3) :: Nil
+      )
+      sql("INSERT OVERWRITE TABLE t1 PARTITION (b=2, c=3) SELECT 1")
+      checkAnswer(
+        sql("SELECT * FROM t1"),
+        Row(1, 2, 3) :: Nil
+      )
+      sql("INSERT OVERWRITE TABLE t1 PARTITION (b=2, c) SELECT 1, 3")
+      checkAnswer(
+        sql("SELECT * FROM t1"),
+        Row(1, 2, 3) :: Nil
+      )
+    }
+  }
 }
 
 class DeltaInsertIntoSQLByPathSuite extends DeltaInsertIntoTests(false, true)
@@ -485,12 +506,23 @@ abstract class DeltaInsertIntoTests(
       verifyTable(t1, df)
     }
   }
+
+  test("insert nested struct from view into delta") {
+    withTable("testNestedStruct") {
+      sql(s"CREATE TABLE testNestedStruct " +
+        s" (num INT, text STRING, s STRUCT<a:STRING, s2: STRUCT<c:STRING,d:STRING>, b:STRING>)" +
+        s" USING DELTA")
+      val data = sql(s"SELECT 1, 'a', struct('a', struct('c', 'd'), 'b')")
+      doInsert("testNestedStruct", data)
+      verifyTable("testNestedStruct",
+        sql(s"SELECT 1 AS num, 'a' AS text, struct('a', struct('c', 'd') AS s2, 'b') AS s"))
+    }
+  }
 }
 
 trait InsertIntoSQLOnlyTests
     extends QueryTest
-    with SharedSparkSession
-    with BeforeAndAfter {
+    with SharedSparkSession    with BeforeAndAfter {
 
   import testImplicits._
 
@@ -768,7 +800,7 @@ trait InsertIntoSQLOnlyTests
         val t1 = "tbl"
         withTableAndData(t1) { view =>
           sql(s"CREATE TABLE $t1 (id bigint, data string, p int) " +
-              s"USING $v2Format PARTITIONED BY (id, p)")
+            s"USING $v2Format PARTITIONED BY (id, p)")
           sql(s"INSERT INTO $t1 VALUES (2L, 'dummy', 2), (4L, 'keep', 2)")
           sql(s"INSERT OVERWRITE TABLE $t1 PARTITION (id = 2, p = 2) SELECT data FROM $view")
           verifyTable(t1, Seq(
@@ -779,6 +811,16 @@ trait InsertIntoSQLOnlyTests
         }
       }
     }
+
+    test("insert nested struct literal into delta") {
+      withTable("insertNestedTest") {
+        sql(s"CREATE TABLE insertNestedTest " +
+          s" (num INT, text STRING, s STRUCT<a:STRING, s2: STRUCT<c:STRING,d:STRING>, b:STRING>)" +
+          s" USING DELTA")
+        sql(s"INSERT INTO insertNestedTest VALUES (1, 'a', struct('a', struct('c', 'd'), 'b'))")
+      }
+    }
+
   }
 
   // END Apache Spark tests

@@ -184,7 +184,8 @@ trait SnapshotManagement { self: DeltaLog =>
   protected def getSnapshotAtInit: Snapshot = {
     try {
       val segment = getLogSegmentFrom(lastCheckpoint)
-      val startCheckpoint = segment.checkpointVersion.map(v => s" starting from checkpoint $v")
+      val startCheckpoint = segment.checkpointVersion
+        .map(v => s" starting from checkpoint $v.").getOrElse(".")
       logInfo(s"Loading version ${segment.version}$startCheckpoint")
       val snapshot = createSnapshot(
         segment,
@@ -198,7 +199,7 @@ trait SnapshotManagement { self: DeltaLog =>
       case e: FileNotFoundException =>
         logInfo(s"Creating initial snapshot without metadata, because the directory is empty")
         // The log directory may not exist
-        new InitialSnapshot(logPath, this, Metadata())
+        new InitialSnapshot(logPath, this)
     }
   }
 
@@ -282,52 +283,58 @@ trait SnapshotManagement { self: DeltaLog =>
    */
   protected def updateInternal(isAsync: Boolean): Snapshot =
     recordDeltaOperation(this, "delta.log.update", Map(TAG_ASYNC -> isAsync.toString)) {
-      withStatusCode("DELTA", "Updating the Delta table's state") {
-        try {
-          val segment = getLogSegmentForVersion(currentSnapshot.logSegment.checkpointVersion)
-          if (segment == currentSnapshot.logSegment) {
-            // Exit early if there is no new file
-            lastUpdateTimestamp = clock.getTimeMillis()
-            return currentSnapshot
-          }
-
-          logInfo(s"Loading version ${segment.version}" +
-            segment.checkpointVersion.map(v => s"starting from checkpoint version $v."))
-
-          val newSnapshot = createSnapshot(
-            segment,
-            minFileRetentionTimestamp,
-            segment.lastCommitTimestamp)
-
-          if (currentSnapshot.version > -1 &&
-            currentSnapshot.metadata.id != newSnapshot.metadata.id) {
-            val msg = s"Change in the table id detected while updating snapshot. " +
-              s"\nPrevious snapshot = $currentSnapshot\nNew snapshot = $newSnapshot."
-            logError(msg)
-            recordDeltaEvent(self, "delta.metadataCheck.update", data = Map(
-              "prevSnapshotVersion" -> currentSnapshot.version,
-              "prevSnapshotMetadata" -> currentSnapshot.metadata,
-              "nextSnapshotVersion" -> newSnapshot.version,
-              "nextSnapshotMetadata" -> newSnapshot.metadata))
-          }
-
-          currentSnapshot.uncache()
-          currentSnapshot = newSnapshot
-          logInfo(s"Updated snapshot to $newSnapshot")
-        } catch {
-          case e: FileNotFoundException =>
-            if (Option(e.getMessage).exists(_.contains("reconstruct state at version"))) {
-              throw e
-            }
-            val message = s"No delta log found for the Delta table at $logPath"
-            logInfo(message)
-            currentSnapshot.uncache()
-            currentSnapshot = new InitialSnapshot(logPath, this, Metadata())
+      try {
+        val segment = getLogSegmentForVersion(currentSnapshot.logSegment.checkpointVersion)
+        if (segment == currentSnapshot.logSegment) {
+          // Exit early if there is no new file
+          lastUpdateTimestamp = clock.getTimeMillis()
+          return currentSnapshot
         }
-        lastUpdateTimestamp = clock.getTimeMillis()
-        currentSnapshot
+
+        val startingFrom = segment.checkpointVersion
+          .map(v => s" starting from checkpoint version $v.").getOrElse(".")
+        logInfo(s"Loading version ${segment.version}$startingFrom")
+
+        val newSnapshot = createSnapshot(
+          segment,
+          minFileRetentionTimestamp,
+          segment.lastCommitTimestamp)
+
+        if (currentSnapshot.version > -1 &&
+          currentSnapshot.metadata.id != newSnapshot.metadata.id) {
+          val msg = s"Change in the table id detected while updating snapshot. " +
+            s"\nPrevious snapshot = $currentSnapshot\nNew snapshot = $newSnapshot."
+          logError(msg)
+          recordDeltaEvent(self, "delta.metadataCheck.update", data = Map(
+            "prevSnapshotVersion" -> currentSnapshot.version,
+            "prevSnapshotMetadata" -> currentSnapshot.metadata,
+            "nextSnapshotVersion" -> newSnapshot.version,
+            "nextSnapshotMetadata" -> newSnapshot.metadata))
+        }
+
+        replaceSnapshot(newSnapshot)
+        logInfo(s"Updated snapshot to $newSnapshot")
+      } catch {
+        case e: FileNotFoundException =>
+          if (Option(e.getMessage).exists(_.contains("reconstruct state at version"))) {
+            throw e
+          }
+          val message = s"No delta log found for the Delta table at $logPath"
+          logInfo(message)
+          replaceSnapshot(new InitialSnapshot(logPath, this))
       }
+      lastUpdateTimestamp = clock.getTimeMillis()
+      currentSnapshot
     }
+
+  /** Replace the given snapshot with the provided one. */
+  protected def replaceSnapshot(newSnapshot: Snapshot): Unit = {
+    if (!deltaLogLock.isHeldByCurrentThread) {
+      recordDeltaEvent(this, "delta.update.unsafeReplace")
+    }
+    currentSnapshot.uncache()
+    currentSnapshot = newSnapshot
+  }
 
   /** Get the snapshot at `version`. */
   def getSnapshotAt(

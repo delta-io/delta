@@ -60,6 +60,9 @@ trait RecordChecksum extends DeltaLogging {
     CheckpointFileManager.create(deltaLog.logPath, spark.sessionState.newHadoopConf())
 
   protected def writeChecksumFile(snapshot: Snapshot): Unit = {
+    if (!spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED)) {
+      return
+    }
     val version = snapshot.version
     val checksum = VersionChecksum(
       tableSizeBytes = snapshot.sizeInBytes,

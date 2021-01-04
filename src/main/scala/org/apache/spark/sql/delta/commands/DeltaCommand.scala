@@ -189,7 +189,7 @@ trait DeltaCommand extends DeltaLogging {
         case LogicalRelation(HadoopFsRelation(_, _, _, _, _, _), _, Some(_), _) =>
           true
         // could not resolve table/db
-        case UnresolvedRelation(_) =>
+        case _: UnresolvedRelation =>
           throw new NoSuchTableException(tableIdent.database.getOrElse(""), tableIdent.table)
         // other e.g. view
         case _ => true
@@ -211,6 +211,29 @@ trait DeltaCommand extends DeltaLogging {
     DeltaSourceUtils.isDeltaDataSourceName(provider) && new Path(tableIdent.table).isAbsolute
   }
 
+  /** Update the table now that the commit has been made, and write a checkpoint. */
+  protected def updateAndCheckpoint(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      commitSize: Int,
+      attemptVersion: Long): Unit = {
+    val currentSnapshot = deltaLog.update()
+    if (currentSnapshot.version != attemptVersion) {
+      throw new IllegalStateException(
+        s"The committed version is $attemptVersion but the current version is " +
+          s"${currentSnapshot.version}. Please contact Databricks support.")
+    }
+
+    logInfo(s"Committed delta #$attemptVersion to ${deltaLog.logPath}. Wrote $commitSize actions.")
+
+    try {
+      deltaLog.checkpoint()
+    } catch {
+      case e: IllegalStateException =>
+        logWarning("Failed to checkpoint table state.", e)
+    }
+  }
+
   /**
    * Create a large commit on the Delta log by directly writing an iterator of FileActions to the
    * LogStore. This bypasses the Delta transactional protocol, therefore we forego all optimistic
@@ -220,12 +243,10 @@ trait DeltaCommand extends DeltaLogging {
   protected def commitLarge(
       spark: SparkSession,
       txn: OptimisticTransaction,
-      metadata: Metadata,
       actions: Iterator[Action],
       op: DeltaOperations.Operation,
-      numFiles: Long,
       context: Map[String, String],
-      metrics: Option[Map[String, String]] = None): Long = {
+      metrics: Map[String, String]): Long = {
     val attemptVersion = txn.readVersion + 1
     try {
       val metadata = txn.metadata
@@ -239,11 +260,16 @@ trait DeltaCommand extends DeltaLogging {
         readVersion = Some(txn.readVersion),
         isolationLevel = Some(Serializable.toString),
         isBlindAppend = Some(false),
-        metrics,
+        Some(metrics),
         userMetadata = txn.getUserMetadata(op))
 
-      val extraActions = Seq(commitInfo, Protocol(), metadata)
-      val allActions = extraActions.toIterator ++ actions
+      val extraActions = Seq(commitInfo, metadata)
+      // We don't expect commits to have more than 2 billion actions
+      var commitSize: Int = 0
+      val allActions = (extraActions.toIterator ++ actions).map { a =>
+        commitSize += 1
+        a
+      }
       if (txn.readVersion < 0) {
         deltaLog.fs.mkdirs(deltaLog.logPath)
       }
@@ -253,21 +279,7 @@ trait DeltaCommand extends DeltaLogging {
         DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,
         Some(attemptVersion))
 
-      val currentSnapshot = deltaLog.update()
-      if (currentSnapshot.version != attemptVersion) {
-        throw new IllegalStateException(
-          s"The committed version is $attemptVersion but the current version is " +
-            s"${currentSnapshot.version}. Please contact Databricks support.")
-      }
-
-      logInfo(s"Committed delta #$attemptVersion to ${deltaLog.logPath}")
-
-      try {
-        deltaLog.checkpoint()
-      } catch {
-        case e: IllegalStateException =>
-          logWarning("Failed to checkpoint table state.", e)
-      }
+      updateAndCheckpoint(spark, deltaLog, commitSize, attemptVersion)
 
       attemptVersion
     } catch {
@@ -278,11 +290,15 @@ trait DeltaCommand extends DeltaLogging {
           data = Map("exception" -> Utils.exceptionString(e), "operation" -> op.name))
         // Actions of a commit which went in before ours
         val deltaLog = txn.deltaLog
-        val winningCommitActions =
-          deltaLog.store.read(deltaFile(deltaLog.logPath, attemptVersion)).map(Action.fromJson)
-        val commitInfo = winningCommitActions.collectFirst { case a: CommitInfo => a }
-          .map(ci => ci.copy(version = Some(attemptVersion)))
-        throw new ConcurrentWriteException(commitInfo)
+        val logs = deltaLog.store.readAsIterator(deltaFile(deltaLog.logPath, attemptVersion))
+        try {
+          val winningCommitActions = logs.map(Action.fromJson)
+          val commitInfo = winningCommitActions.collectFirst { case a: CommitInfo => a }
+            .map(ci => ci.copy(version = Some(attemptVersion)))
+          throw new ConcurrentWriteException(commitInfo)
+        } finally {
+          logs.close()
+        }
 
       case NonFatal(e) =>
         recordDeltaEvent(

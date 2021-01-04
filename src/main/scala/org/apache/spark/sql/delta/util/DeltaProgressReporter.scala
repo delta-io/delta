@@ -16,7 +16,9 @@
 
 package org.apache.spark.sql.delta.util
 
+import org.apache.spark.SparkContext
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.SparkSession
 
 trait DeltaProgressReporter extends Logging {
   /**
@@ -27,8 +29,30 @@ trait DeltaProgressReporter extends Logging {
       defaultMessage: String,
       data: Map[String, Any] = Map.empty)(body: => T): T = {
     logInfo(s"$statusCode: $defaultMessage")
-    val t = body
+    val t = withJobDescription(defaultMessage)(body)
     logInfo(s"$statusCode: Done")
     t
+  }
+  /**
+   * Wrap various delta operations to provide a more meaningful name in Spark UI
+   * This only has an effect if {{{body}}} actually runs a Spark job
+   * @param jobDesc a short description of the operation
+   */
+  private def withJobDescription[U](jobDesc: String)(body: => U): U = {
+    val sc = SparkSession.active.sparkContext
+    // will prefix jobDesc with whatever the user specified in the job description
+    // of the higher level operation that triggered this delta operation
+    val oldDesc = sc.getLocalProperty(SparkContext.SPARK_JOB_DESCRIPTION)
+    val suffix = if (oldDesc == null) {
+      ""
+    } else {
+      s" $oldDesc:"
+    }
+    try {
+      sc.setJobDescription(s"Delta:$suffix $jobDesc")
+      body
+    } finally {
+      sc.setJobDescription(oldDesc)
+    }
   }
 }

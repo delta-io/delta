@@ -97,11 +97,14 @@ trait ImplicitMetadataOperation extends DeltaLogging {
       if (rearrangeOnly) {
         throw DeltaErrors.unexpectedDataChangeException("Create a Delta table")
       }
+      val description = configuration.get("comment").orNull
+      val cleanedConfs = configuration.filterKeys(_ != "comment")
       txn.updateMetadata(
         Metadata(
+          description = description,
           schemaString = dataSchema.json,
           partitionColumns = normalizedPartitionCols,
-          configuration = configuration))
+          configuration = cleanedConfs))
     } else if (isOverwriteMode && canOverwriteSchema && (isNewSchema || isPartitioningChanged)) {
       // Can define new partitioning in overwrite mode
       val newMetadata = txn.metadata.copy(

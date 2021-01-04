@@ -17,10 +17,13 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.constraints.Constraint
 import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.plans.logical.DeltaMergeIntoClause
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.{StructField, StructType}
@@ -99,13 +102,7 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = Map.empty
     override val operationMetrics: Set[String] = DeltaOperationMetrics.TRUNCATE
   }
-  /** Recorded when fscking the table. */
-  case class Fsck(numRemovedFiles: Long) extends Operation("FSCK") {
-    override val parameters: Map[String, Any] = Map(
-      "numRemovedFiles" -> numRemovedFiles
-    )
-    override val operationMetrics: Set[String] = DeltaOperationMetrics.FSCK
-  }
+
   /** Recorded when converting a table into a Delta table. */
   case class Convert(
       numFiles: Long,
@@ -118,34 +115,59 @@ object DeltaOperations {
       "collectStats" -> collectStats) ++ catalogTable.map("catalogTable" -> _)
     override val operationMetrics: Set[String] = DeltaOperationMetrics.CONVERT
   }
-  /** Recorded when optimizing the table. */
-  case class Optimize(
-      predicate: Seq[String],
-      zOrderBy: Seq[String],
-      batchId: Int,
-      auto: Boolean) extends Operation("OPTIMIZE") {
-    override val parameters: Map[String, Any] = Map(
-      "predicate" -> JsonUtils.toJson(predicate),
-      "zOrderBy" -> JsonUtils.toJson(zOrderBy),
-      "batchId" -> JsonUtils.toJson(batchId),
-      "auto" -> auto
-    )
-    override val operationMetrics: Set[String] = DeltaOperationMetrics.OPTIMIZE
+
+  /** Represents the predicates and action type (insert, update, delete) for a Merge clause */
+  case class MergePredicate(
+      predicate: Option[String],
+      actionType: String)
+
+  object MergePredicate {
+    def apply(mergeClause: DeltaMergeIntoClause): MergePredicate = {
+      MergePredicate(
+        predicate = mergeClause.condition.map(_.sql),
+        mergeClause.clauseType.toLowerCase())
+    }
   }
-  /** Recorded when a merge operation is committed to the table. */
+
+  /**
+   * Recorded when a merge operation is committed to the table.
+   *
+   * `updatePredicate`, `deletePredicate`, and `insertPredicate` are DEPRECATED.
+   * Only use `predicate`, `matchedPredicates`, and `notMatchedPredicates` to record the merge.
+   */
   case class Merge(
       predicate: Option[String],
       updatePredicate: Option[String],
       deletePredicate: Option[String],
-      insertPredicate: Option[String]) extends Operation("MERGE") {
+      insertPredicate: Option[String],
+      matchedPredicates: Seq[MergePredicate],
+      notMatchedPredicates: Seq[MergePredicate]) extends Operation("MERGE") {
+
     override val parameters: Map[String, Any] = {
       predicate.map("predicate" -> _).toMap ++
         updatePredicate.map("updatePredicate" -> _).toMap ++
         deletePredicate.map("deletePredicate" -> _).toMap ++
-        insertPredicate.map("insertPredicate" -> _).toMap
+        insertPredicate.map("insertPredicate" -> _).toMap +
+        ("matchedPredicates" -> JsonUtils.toJson(matchedPredicates)) +
+        ("notMatchedPredicates" -> JsonUtils.toJson(notMatchedPredicates))
     }
     override val operationMetrics: Set[String] = DeltaOperationMetrics.MERGE
   }
+
+  object Merge {
+    /** constructor to provide default values for deprecated fields */
+    def apply(
+        predicate: Option[String],
+        matchedPredicates: Seq[MergePredicate],
+        notMatchedPredicates: Seq[MergePredicate]): Merge = Merge(
+          predicate,
+          updatePredicate = None,
+          deletePredicate = None,
+          insertPredicate = None,
+          matchedPredicates,
+          notMatchedPredicates)
+  }
+
   /** Recorded when an update operation is committed to the table. */
   case class Update(predicate: Option[String]) extends Operation("UPDATE") {
     override val parameters: Map[String, Any] = predicate.map("predicate" -> _).toMap
@@ -256,10 +278,6 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = Map.empty
   }
 
-  object FileNotificationRetention extends Operation("FILE NOTIFICATION RETENTION") {
-    override val parameters: Map[String, Any] = Map.empty
-  }
-
   case class UpdateColumnMetadata(
       operationName: String,
       columns: Seq[(Seq[String], StructField)])
@@ -271,26 +289,27 @@ object DeltaOperations {
     }
   }
 
-  /** Recorded when recomputing stats on the table. */
-  case class ComputeStats(predicate: Seq[String]) extends Operation("COMPUTE STATS") {
-    override val parameters: Map[String, Any] = Map(
-      "predicate" -> JsonUtils.toJson(predicate))
-  }
-
-  /** Recorded when manually re-/un-/setting ZCube Information for existing files. */
-  case class ResetZCubeInfo(predicate: Seq[String], zOrderBy: Seq[String])
-    extends Operation("RESET ZCUBE INFO") {
-
-    override val parameters: Map[String, Any] = Map(
-      "predicate" -> JsonUtils.toJson(predicate),
-      "zOrderBy" -> JsonUtils.toJson(zOrderBy))
-  }
-
   case class UpdateSchema(oldSchema: StructType, newSchema: StructType)
       extends Operation("UPDATE SCHEMA") {
     override val parameters: Map[String, Any] = Map(
       "oldSchema" -> JsonUtils.toJson(oldSchema),
       "newSchema" -> JsonUtils.toJson(newSchema))
+  }
+
+  case class AddConstraint(
+      constraintName: String, expr: String) extends Operation("ADD CONSTRAINT") {
+    override val parameters: Map[String, Any] = Map("name" -> constraintName, "expr" -> expr)
+  }
+
+  case class DropConstraint(
+      constraintName: String, expr: Option[String]) extends Operation("DROP CONSTRAINT") {
+    override val parameters: Map[String, Any] = {
+      expr.map { e =>
+        Map("name" -> constraintName, "expr" -> e, "existed" -> "true")
+      }.getOrElse {
+        Map("name" -> constraintName, "existed" -> "false")
+      }
+    }
   }
 
 
@@ -348,24 +367,8 @@ private[delta] object DeltaOperationMetrics {
     "numRemovedFiles" // number of files removed
   )
 
-  val FSCK = Set(
-    "numRemovedFiles" // number of files removed
-  )
-
   val CONVERT = Set(
     "numConvertedFiles" // number of parquet files that have been converted.
-  )
-
-  val OPTIMIZE = Set(
-    "numAddedFiles", // number of files added
-    "numRemovedFiles", // number of files removed
-    "numAddedBytes", // number of bytes added by optimize
-    "numRemovedBytes", // number of bytes removed by optimize
-    "minFileSize", // the size of the smallest file
-    "p25FileSize", // the size of the 25th percentile file
-    "p50FileSize", // the median file size
-    "p75FileSize", // the 75th percentile of the file sizes
-    "maxFileSize" // the size of the largest file
   )
 
   val MERGE = Set(
@@ -385,4 +388,5 @@ private[delta] object DeltaOperationMetrics {
     "numUpdatedRows", // number of rows updated
     "numCopiedRows" // number of rows just copied over in the process of updating files.
   ) + EXECUTION_TIME_MS + SCAN_TIME_MS + REWRITE_TIME_MS
+
 }

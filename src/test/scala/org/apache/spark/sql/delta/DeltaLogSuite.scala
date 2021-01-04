@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta
 
 import java.io.{File, FileNotFoundException}
 
+import scala.language.postfixOps
+
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions._
@@ -355,7 +357,8 @@ class DeltaLogSuite extends QueryTest
             } else {
               "metadata"
             }
-            val corruptedCheckpointData = spark.read.parquet(checkpointPath.toString)
+            val corruptedCheckpointData = spark.read.schema(SingleAction.encoder.schema)
+              .parquet(checkpointPath.toString)
               .where(s"add is not null or $takeAction is not null")
               .as[SingleAction].collect()
 
