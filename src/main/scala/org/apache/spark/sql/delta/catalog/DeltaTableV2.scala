@@ -51,7 +51,8 @@ case class DeltaTableV2(
     path: Path,
     catalogTable: Option[CatalogTable] = None,
     tableIdentifier: Option[String] = None,
-    timeTravelOpt: Option[DeltaTimeTravelSpec] = None)
+    timeTravelOpt: Option[DeltaTimeTravelSpec] = None,
+    cdcOptions: Map[String, String] = Map.empty)
   extends Table
   with SupportsWrite
   with DeltaLogging {
