@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.files
 
 import java.net.URI
+import java.util.Objects
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.actions.AddFile
@@ -169,13 +170,13 @@ case class TahoeLogFileIndex(
 
   override def equals(that: Any): Boolean = that match {
     case t: TahoeLogFileIndex =>
-      t.deltaLog.compositeId == deltaLog.compositeId && t.versionToUse == versionToUse &&
-        t.partitionFilters == partitionFilters
+      t.path == path && t.deltaLog.compositeId == deltaLog.compositeId &&
+        t.versionToUse == versionToUse && t.partitionFilters == partitionFilters
     case _ => false
   }
 
   override def hashCode: scala.Int = {
-    31 * path.hashCode() + partitionFilters.hashCode()
+    Objects.hashCode(path, deltaLog.compositeId, versionToUse, partitionFilters)
   }
 
   override def partitionSchema: StructType = snapshotAtAnalysis.metadata.partitionSchema
@@ -219,4 +220,43 @@ class TahoeBatchFileIndex(
 
   override def refresh(): Unit = {}
   override val sizeInBytes: Long = addFiles.map(_.size).sum
+}
+
+/**
+ * A [[TahoeFileIndex]] that generates the list of files from the given [[Snapshot]].
+ */
+case class PinnedTahoeFileIndex(
+    override val spark: SparkSession,
+    override val deltaLog: DeltaLog,
+    override val path: Path,
+    snapshot: Snapshot) extends TahoeFileIndex(spark, deltaLog, path) {
+
+  override def tableVersion: Long = snapshot.version
+
+  override def matchingFiles(
+      partitionFilters: Seq[Expression],
+      dataFilters: Seq[Expression]): Seq[AddFile] = {
+    snapshot.filesForScan(projection = Nil, partitionFilters ++ dataFilters).files
+  }
+
+  override def inputFiles: Array[String] = {
+    snapshot.filesForScan(Nil, Nil).files.map(f => absolutePath(f.path).toString).toArray
+  }
+
+  override def refresh(): Unit = {}
+
+  override val sizeInBytes: Long = snapshot.sizeInBytes
+
+  override def equals(that: Any): Boolean = that match {
+    case t: PinnedTahoeFileIndex =>
+      t.path == path && t.deltaLog.compositeId == deltaLog.compositeId &&
+        t.snapshot.version == snapshot.version
+    case _ => false
+  }
+
+  override def hashCode: scala.Int = {
+    Objects.hash(path, deltaLog.compositeId, java.lang.Long.valueOf(snapshot.version))
+  }
+
+  override def partitionSchema: StructType = snapshot.metadata.partitionSchema
 }
