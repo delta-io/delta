@@ -1024,6 +1024,11 @@ object DeltaErrors
          """.stripMargin
   }
 
+  def mergeSchemaEvolutionWithCdcException(): Throwable = {
+    new AnalysisException("MERGE INTO operations with schema evolution do not currently support " +
+      "writing CDC output.")
+  }
+
   def configureSparkSessionWithExtensionAndCatalog(originalException: Throwable): Throwable = {
     val catalogImplConfig = SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key
     new AnalysisException(
