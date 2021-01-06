@@ -132,8 +132,6 @@ class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
   override def parseTableSchema(sqlText: String): StructType = delegate.parseTableSchema(sqlText)
 
   override def parseDataType(sqlText: String): DataType = delegate.parseDataType(sqlText)
-
-  override def parseRawDataType(sqlText: String): DataType = delegate.parseRawDataType(sqlText)
 }
 
 /**
@@ -204,22 +202,11 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   }
 
   override def visitColType(ctx: ColTypeContext): StructField = withOrigin(ctx) {
-    import ctx._
-
-    val builder = new MetadataBuilder
-
-    // Add Hive type string to metadata.
-    val rawDataType = typedVisit[DataType](ctx.dataType)
-    val cleanedDataType = HiveStringType.replaceCharType(rawDataType)
-    if (rawDataType != cleanedDataType) {
-      builder.putString(HIVE_TYPE_STRING, rawDataType.catalogString)
-    }
-
     StructField(
-      ctx.colName.getText,
-      cleanedDataType,
-      nullable = NOT == null,
-      builder.build())
+      name = ctx.colName.getText,
+      dataType = typedVisit[DataType](ctx.dataType),
+      nullable = ctx.NULL == null,
+      metadata = Metadata.empty) // We don't need to parse comment.
   }
 
   // Build the text of the CHECK constraint expression. The user-specified whitespace is in the

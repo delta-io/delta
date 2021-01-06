@@ -28,7 +28,7 @@ import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.internal.SQLConf
 
-case class PreprocessTableMerge(conf: SQLConf)
+case class PreprocessTableMerge(override val conf: SQLConf)
   extends Rule[LogicalPlan] with UpdateExpressionsSupport {
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {

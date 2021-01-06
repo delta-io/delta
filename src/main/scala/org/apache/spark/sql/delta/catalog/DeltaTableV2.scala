@@ -31,7 +31,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{AnalysisException, DataFrame, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogUtils}
-import org.apache.spark.sql.connector.catalog.{SupportsWrite, Table, TableCapability, TableCatalog}
+import org.apache.spark.sql.connector.catalog.{SupportsWrite, Table, TableCapability, TableCatalog, V2TableWithV1Fallback}
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.expressions._
 import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsOverwrite, SupportsTruncate, V1WriteBuilder, WriteBuilder}
@@ -54,6 +54,7 @@ case class DeltaTableV2(
     timeTravelOpt: Option[DeltaTimeTravelSpec] = None)
   extends Table
   with SupportsWrite
+  with V2TableWithV1Fallback
   with DeltaLogging {
 
   private lazy val (rootPath, partitionFilters, timeTravelByPath) = {
@@ -151,6 +152,11 @@ case class DeltaTableV2(
     } else {
       this
     }
+  }
+
+  override def v1Table: CatalogTable = {
+    // TODO check isEmpty
+    catalogTable.get
   }
 }
 

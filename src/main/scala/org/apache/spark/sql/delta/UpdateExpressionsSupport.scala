@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
+import org.apache.spark.sql.catalyst.SQLConfHelper
 import org.apache.spark.sql.catalyst.analysis.{CastSupport, Resolver}
 import org.apache.spark.sql.catalyst.expressions.{Alias, Cast, CreateNamedStruct, Expression, ExtractValue, GetStructField, Literal, NamedExpression}
 import org.apache.spark.sql.types._
@@ -27,7 +28,7 @@ import org.apache.spark.sql.types._
  * Trait with helper functions to generate expressions to update target columns, even if they are
  * nested fields.
  */
-trait UpdateExpressionsSupport extends CastSupport {
+trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper {
 
   /**
    * Specifies an operation that updates a target column with the given expression.

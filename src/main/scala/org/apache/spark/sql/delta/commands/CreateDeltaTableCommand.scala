@@ -235,7 +235,8 @@ case class CreateDeltaTableCommand(
     // overwrite any previous data)
     if (fs.exists(path) && fs.listStatus(path).nonEmpty) {
       throw new AnalysisException(s"Cannot create table ('${tableWithLocation.identifier}')." +
-        s" The associated location ('${tableWithLocation.location}') is not empty.")
+        s" The associated location ('${tableWithLocation.location}') is not empty but " +
+        s"it's not a Delta table")
     }
   }
 
