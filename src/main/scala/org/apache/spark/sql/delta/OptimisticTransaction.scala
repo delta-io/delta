@@ -172,6 +172,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   /** Tracks specific files that have been seen by this transaction. */
   protected val readFiles = new HashSet[AddFile]
 
+  /** Whether the whole table was read during the transaction. */
+  protected var readTheWholeTable = false
+
   /** Tracks if this transaction has already committed. */
   protected var committed = false
 
@@ -340,6 +343,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   /** Mark the entire table as tainted by this transaction. */
   def readWholeTable(): Unit = {
     readPredicates += Literal(true)
+    readTheWholeTable = true
   }
 
   /**
@@ -790,6 +794,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
         val filePath = deleteReadOverlap.get.path
         val partition = getPrettyPartitionMessage(readFilePaths(filePath))
         throw new ConcurrentDeleteReadException(commitInfo, s"$filePath in $partition")
+      }
+      if (removedFiles.nonEmpty && readTheWholeTable) {
+        val filePath = removedFiles.head.path
+        throw new ConcurrentDeleteReadException(commitInfo, s"$filePath")
       }
 
       // Fail if a file is deleted twice.

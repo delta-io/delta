@@ -635,6 +635,22 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
     }
   }
 
+  test("readWholeTable should block concurrent delete") {
+    withLog(addA_P1 :: Nil) { log =>
+      val tx1 = log.startTransaction()
+      tx1.readWholeTable()
+
+      // tx2 removes file
+      val tx2 = log.startTransaction()
+      tx2.commit(addA_P1.remove :: Nil, ManualUpdate)
+
+      intercept[ConcurrentDeleteReadException] {
+        // tx1 reads the whole table but tx2 removes files before tx1 commits
+        tx1.commit(addB_P1 :: Nil, ManualUpdate)
+      }
+    }
+  }
+
   def withLog(
       actions: Seq[Action],
       partitionCols: Seq[String] = "part" :: Nil)(
