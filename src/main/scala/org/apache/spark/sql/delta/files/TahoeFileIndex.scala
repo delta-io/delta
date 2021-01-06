@@ -45,7 +45,10 @@ abstract class TahoeFileIndex(
   override def rootPaths: Seq[Path] = path :: Nil
 
   /**
-   * Returns all matching/valid files by the given `partitionFilters` and `dataFilters`
+   * Returns all matching/valid files by the given `partitionFilters` and `dataFilters`.
+   * Implementations may avoid evaluating data filters when doing so would be expensive, but
+   * *must* evaluate the partition filters; wrong results will be produced if AddFile entries
+   * which don't match the partition filters are returned.
    */
   def matchingFiles(
       partitionFilters: Seq[Expression],
