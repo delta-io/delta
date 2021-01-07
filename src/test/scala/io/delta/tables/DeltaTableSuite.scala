@@ -16,6 +16,7 @@
 
 package io.delta.tables
 
+import java.io.File
 import java.util.Locale
 
 import scala.language.postfixOps
@@ -24,6 +25,7 @@ import scala.language.postfixOps
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkException
+import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.sql.{AnalysisException, QueryTest}
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -110,10 +112,30 @@ class DeltaTableSuite extends QueryTest
     }
   }
 
-  test("isDeltaTable - path") {
+  test("isDeltaTable - path - with _delta_log dir") {
     withTempDir { dir =>
       testData.write.format("delta").save(dir.getAbsolutePath)
       assert(DeltaTable.isDeltaTable(dir.getAbsolutePath))
+    }
+  }
+
+  test("isDeltaTable - path - with empty _delta_log dir") {
+    withTempDir { dir =>
+      new File(dir, "_delta_log").mkdirs()
+      assert(!DeltaTable.isDeltaTable(dir.getAbsolutePath))
+    }
+  }
+
+  test("isDeltaTable - path - with no _delta_log dir") {
+    withTempDir { dir =>
+      assert(!DeltaTable.isDeltaTable(dir.getAbsolutePath))
+    }
+  }
+
+  test("isDeltaTable - path - with non-existent dir") {
+    withTempDir { dir =>
+      JavaUtils.deleteRecursively(dir)
+      assert(!DeltaTable.isDeltaTable(dir.getAbsolutePath))
     }
   }
 
