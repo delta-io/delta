@@ -60,10 +60,9 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperatorsDown {
     // INSERT INTO by ordinal
-    case a @ AppendData(r @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, _), query, _, false)
-      if query.resolved && needsSchemaAdjustment(d.name(), query, r.schema) =>
-      val projection = resolveQueryColumns(query, r.output, d.name())
-      if (projection != query) {
+    case a @ AppendDelta(r, d) if needsSchemaAdjustment(d.name(), a.query, r.schema) =>
+      val projection = resolveQueryColumns(a.query, r.output, d.name())
+      if (projection != a.query) {
         val cleanedTable = r.copy(output = r.output.map(CharVarcharUtils.cleanAttrMetadata))
         a.copy(query = projection, table = cleanedTable)
       } else {
@@ -71,15 +70,13 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
       }
 
     // INSERT OVERWRITE by ordinal
-    case o @ OverwriteByExpression(
-        r @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, _), deleteExpr, query, _, false)
-      if query.resolved && needsSchemaAdjustment(d.name(), query, r.schema) =>
-      val projection = resolveQueryColumns(query, r.output, d.name())
-      if (projection != query) {
-        val aliases = AttributeMap(query.output.zip(projection.output).collect {
+    case o @ OverwriteDelta(r, d) if needsSchemaAdjustment(d.name(), o.query, r.schema) =>
+      val projection = resolveQueryColumns(o.query, r.output, d.name())
+      if (projection != o.query) {
+        val aliases = AttributeMap(o.query.output.zip(projection.output).collect {
           case (l: AttributeReference, r: AttributeReference) if !l.sameRef(r) => (l, r)
         })
-        val newDeleteExpr = deleteExpr.transformUp {
+        val newDeleteExpr = o.deleteExpr.transformUp {
           case a: AttributeReference => aliases.getOrElse(a, a)
         }
         val cleanedTable = r.copy(output = r.output.map(CharVarcharUtils.cleanAttrMetadata))
@@ -312,3 +309,30 @@ object DeltaRelation {
   }
 }
 
+object AppendDelta {
+  def unapply(a: AppendData): Option[(DataSourceV2Relation, DeltaTableV2)] = {
+    if (!a.isByName && a.query.resolved) {
+      a.table match {
+        case r: DataSourceV2Relation if r.table.isInstanceOf[DeltaTableV2] =>
+          Some((r, r.table.asInstanceOf[DeltaTableV2]))
+        case _ => None
+      }
+    } else {
+      None
+    }
+  }
+}
+
+object OverwriteDelta {
+  def unapply(o: OverwriteByExpression): Option[(DataSourceV2Relation, DeltaTableV2)] = {
+    if (!o.isByName && o.query.resolved) {
+      o.table match {
+        case r: DataSourceV2Relation if r.table.isInstanceOf[DeltaTableV2] =>
+          Some((r, r.table.asInstanceOf[DeltaTableV2]))
+        case _ => None
+      }
+    } else {
+      None
+    }
+  }
+}
