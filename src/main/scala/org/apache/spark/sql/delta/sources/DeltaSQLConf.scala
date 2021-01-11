@@ -45,13 +45,6 @@ object DeltaSQLConf {
       .booleanConf
       .createWithDefault(true)
 
-  val DELTA_COMMIT_LOCK_ENABLED =
-    buildConf("commitLock.enabled")
-      .internal()
-      .doc("Whether to lock a Delta table when doing a commit.")
-      .booleanConf
-      .createWithDefault(false)
-
   val DELTA_USER_METADATA =
     buildConf("commitInfo.userMetadata")
       .doc("Arbitrary user-defined metadata to include in CommitInfo. Requires commitInfo.enabled.")
