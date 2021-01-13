@@ -52,7 +52,7 @@ case class DeltaTableV2(
     catalogTable: Option[CatalogTable] = None,
     tableIdentifier: Option[String] = None,
     timeTravelOpt: Option[DeltaTimeTravelSpec] = None,
-    cdcOptions: Map[String, String] = Map.empty)
+    options: CaseInsensitiveStringMap = CaseInsensitiveStringMap.empty())
   extends Table
   with SupportsWrite
   with DeltaLogging {
@@ -139,7 +139,8 @@ case class DeltaTableV2(
     val partitionPredicates = DeltaDataSource.verifyAndCreatePartitionFilters(
       path.toString, snapshot, partitionFilters)
 
-    deltaLog.createRelation(partitionPredicates, Some(snapshot), timeTravelSpec.isDefined)
+    deltaLog.createRelation(
+      partitionPredicates, Some(snapshot), timeTravelSpec.isDefined, options)
   }
 
   /**

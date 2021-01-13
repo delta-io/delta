@@ -305,7 +305,9 @@ object DeltaRelation {
       v2Relation: DataSourceV2Relation,
       options: CaseInsensitiveStringMap): LogicalRelation = {
     val relation = d.withOptions(options.asScala.toMap).toBaseRelation
-    LogicalRelation(relation, v2Relation.output, d.catalogTable, isStreaming = false)
+    var output = v2Relation.output
+
+    LogicalRelation(relation, output, d.catalogTable, isStreaming = false)
   }
 }
 
