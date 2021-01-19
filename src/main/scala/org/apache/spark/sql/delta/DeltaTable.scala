@@ -179,7 +179,7 @@ object DeltaTableUtils extends PredicateHelper
     // GCed even if they'd normally be hidden. The _db_index directory contains (bloom filter)
     // indexes and these must be GCed when the data they are tied to is GCed.
     (pathName.startsWith(".") || pathName.startsWith("_")) &&
-      !pathName.startsWith("_delta_index") &&
+      !pathName.startsWith("_delta_index") && !pathName.startsWith("__cdc_type") &&
       !partitionColumnNames.exists(c => pathName.startsWith(c ++ "="))
   }
 
