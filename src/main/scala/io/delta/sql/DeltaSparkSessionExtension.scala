@@ -90,5 +90,8 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
     extensions.injectPostHocResolutionRule { session =>
       new PreprocessTableDelete(session.sessionState.conf)
     }
+    extensions.injectOptimizerRule { session =>
+      new ActiveOptimisticTransactionRule(session)
+    }
   }
 }

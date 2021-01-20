@@ -364,4 +364,15 @@ object DeltaSQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_STRICT_CHECK_DELTA_TABLE =
+    buildConf("isDeltaTable.strictCheck")
+      .internal()
+      .doc("""
+           | When enabled, io.delta.tables.DeltaTable.isDeltaTable
+           | should return false when the _delta_log directory doesn't
+           | contain any transaction logs.
+           |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
 }

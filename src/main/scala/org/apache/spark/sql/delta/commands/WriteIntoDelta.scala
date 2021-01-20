@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.{Action, AddFile}
+import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.schema.ImplicitMetadataOperation
 
 import org.apache.spark.sql._
@@ -104,14 +104,15 @@ case class WriteIntoDelta(
     }
 
     val newFiles = txn.writeFiles(data, Some(options))
+    val addFiles = newFiles.collect { case a: AddFile => a }
     val deletedFiles = (mode, partitionFilters) match {
       case (SaveMode.Overwrite, None) =>
         txn.filterFiles().map(_.remove)
       case (SaveMode.Overwrite, Some(predicates)) =>
         // Check to make sure the files we wrote out were actually valid.
         val matchingFiles = DeltaLog.filterFileList(
-          txn.metadata.partitionSchema, newFiles.toDF(), predicates).as[AddFile].collect()
-        val invalidFiles = newFiles.toSet -- matchingFiles
+          txn.metadata.partitionSchema, addFiles.toDF(), predicates).as[AddFile].collect()
+        val invalidFiles = addFiles.toSet -- matchingFiles
         if (invalidFiles.nonEmpty) {
           val badPartitions = invalidFiles
             .map(_.partitionValues)
@@ -125,7 +126,7 @@ case class WriteIntoDelta(
     }
 
     if (rearrangeOnly) {
-      newFiles.map(_.copy(dataChange = !rearrangeOnly)) ++
+      addFiles.map(_.copy(dataChange = !rearrangeOnly)) ++
         deletedFiles.map(_.copy(dataChange = !rearrangeOnly))
     } else {
       newFiles ++ deletedFiles

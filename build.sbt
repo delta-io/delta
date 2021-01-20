@@ -20,7 +20,7 @@ organization := "io.delta"
 
 scalaVersion := "2.12.10"
 
-sparkVersion := "3.1.0"
+sparkVersion := "3.1.1"
 
 libraryDependencies ++= Seq(
   // Adding test classifier seems to break transitive resolution of the core dependencies
@@ -157,7 +157,7 @@ unidocAllSources in(JavaUnidoc, unidoc) := {
 (test in Test) := ((test in Test) dependsOn unidoc.in(Compile)).value
 
 resolvers += "Apache Spark RC1" at
-  "https://repository.apache.org/content/repositories/orgapachespark-1363/"
+  "https://repository.apache.org/content/repositories/orgapachespark-1364/"
 
 /***************************
  * Spark Packages settings *

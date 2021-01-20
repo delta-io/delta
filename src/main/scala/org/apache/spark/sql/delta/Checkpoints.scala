@@ -22,7 +22,7 @@ import java.util.UUID
 import scala.collection.mutable
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.actions.{Action, Metadata, SingleAction}
+import org.apache.spark.sql.delta.actions.{Metadata, SingleAction}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
@@ -122,7 +122,11 @@ trait Checkpoints extends DeltaLogging {
 
   /** Creates a checkpoint at the current log version. */
   def checkpoint(): Unit = recordDeltaOperation(this, "delta.checkpoint") {
-    val checkpointMetaData = checkpoint(snapshot)
+    val snapshotToCheckpoint = snapshot
+    if (snapshotToCheckpoint.version < 0) {
+      throw DeltaErrors.checkpointNonExistTable(dataPath)
+    }
+    val checkpointMetaData = checkpoint(snapshotToCheckpoint)
     val json = JsonUtils.toJson(checkpointMetaData)
     store.write(LAST_CHECKPOINT, Iterator(json), overwrite = true)
 

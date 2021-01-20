@@ -31,7 +31,7 @@ import org.apache.spark.sql.delta.util.FileNames
 import org.apache.commons.lang3.time.DateUtils
 import org.apache.hadoop.fs.{FileStatus, Path}
 
-import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.{functions, AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.util.ManualClock
 
@@ -647,6 +647,23 @@ class DeltaTimeTravelSuite extends QueryTest
       intercept[AnalysisException] {
         spark.table(s"$format.`$path@v0`").count()
       }
+    }
+  }
+
+  test("scans on different versions of same table are executed correctly") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(5).selectExpr("id as key", "id * 10 as value").write.format("delta").save(path)
+
+      spark.range(5, 10).selectExpr("id as key", "id * 10 as value")
+        .write.format("delta").mode("append").save(path)
+
+      val df = spark.read.format("delta").option("versionAsOf", "0").load(path).as("a").join(
+        spark.read.format("delta").option("versionAsOf", "1").load(path).as("b"),
+        functions.expr("a.key == b.key"),
+        "fullOuter"
+      ).where("a.key IS NULL")  // keys 5 to 9 should be null
+      assert(df.count() == 5)
     }
   }
 

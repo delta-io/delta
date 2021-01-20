@@ -147,6 +147,13 @@ trait AppendSaveModeTests extends BatchWriterTest {
         val schema2 = new StructType()
           .add("key", StringType).add("id", IntegerType).add("extra", NullType)
         spark.read.schema(schema1).json(Seq(row1).toDS()).write.append(dir)
+
+        // NullType will be removed during the read
+        checkAnswer(
+          spark.read.format("delta").load(dir.getAbsolutePath),
+          Row("abc", 1) :: Nil
+        )
+
         spark.read.schema(schema2).json(Seq(row2).toDS()).write.append(dir)
         spark.read.schema(schema1).json(Seq(row3).toDS()).write.append(dir)
 
@@ -171,6 +178,12 @@ trait AppendSaveModeTests extends BatchWriterTest {
         val mergedSchema = new StructType().add("key", StringType)
           .add("top", new StructType().add("id", IntegerType).add("extra", IntegerType))
         spark.read.schema(schema1).json(Seq(row1).toDS()).write.append(dir)
+        // NullType will be removed during the read
+        checkAnswer(
+          spark.read.format("delta").load(dir.getAbsolutePath),
+          Row("abc", Row(1)) :: Nil
+        )
+
         spark.read.schema(schema2).json(Seq(row2).toDS()).write.append(dir)
         assert(spark.read.format("delta").load(dir.getAbsolutePath).schema === mergedSchema)
         spark.read.schema(schema1).json(Seq(row3).toDS()).write.append(dir)

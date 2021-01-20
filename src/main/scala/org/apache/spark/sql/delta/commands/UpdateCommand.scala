@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.commands
 
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, DeltaTableUtils, OptimisticTransaction}
-import org.apache.spark.sql.delta.actions.{Action, AddFile}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.hadoop.fs.Path
 
@@ -197,7 +197,7 @@ case class UpdateCommand(
       rootPath: Path,
       inputLeafFiles: Seq[String],
       nameToAddFileMap: Map[String, AddFile],
-      condition: Expression): Seq[AddFile] = {
+      condition: Expression): Seq[FileAction] = {
     // Containing the map from the relative file path to AddFile
     val baseRelation = buildBaseRelation(
       spark, txn, "update", rootPath, inputLeafFiles, nameToAddFileMap)

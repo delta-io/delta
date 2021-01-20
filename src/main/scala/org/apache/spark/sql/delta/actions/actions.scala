@@ -229,7 +229,9 @@ case class AddFile(
       timestamp: Long = System.currentTimeMillis(),
       dataChange: Boolean = true): RemoveFile = {
     // scalastyle:off
-    RemoveFile(path, Some(timestamp), dataChange)
+    RemoveFile(
+      path, Some(timestamp), dataChange,
+      extendedFileMetadata = true, partitionValues, size, tags)
     // scalastyle:on
   }
 }
@@ -264,19 +266,44 @@ object AddFile {
 /**
  * Logical removal of a given file from the reservoir. Acts as a tombstone before a file is
  * deleted permanently.
+ *
+ * Note that for protocol compatibility reasons, the fields `partitionValues`, `size`, and `tags`
+ * are only present when the extendedFileMetadata flag is true. New writers should generally be
+ * setting this flag, but old writers (and FSCK) won't, so readers must check this flag before
+ * attempting to consume those values.
  */
 // scalastyle:off
 case class RemoveFile(
     path: String,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     deletionTimestamp: Option[Long],
-    dataChange: Boolean = true) extends FileAction {
+    dataChange: Boolean = true,
+    extendedFileMetadata: Boolean = false,
+    partitionValues: Map[String, String] = null,
+    size: Long = 0,
+    tags: Map[String, String] = null) extends FileAction {
   override def wrap: SingleAction = SingleAction(remove = this)
 
   @JsonIgnore
   val delTimestamp: Long = deletionTimestamp.getOrElse(0L)
 }
 // scalastyle:on
+
+/**
+ * A change file containing CDC data for the Delta version it's within. Non-CDC readers should
+ * ignore this, CDC readers should scan all ChangeFiles in a version rather than computing
+ * changes from AddFile and RemoveFile actions.
+ */
+case class AddCDCFile(
+    path: String,
+    partitionValues: Map[String, String],
+    size: Long,
+    tags: Map[String, String] = null) extends FileAction {
+  override val dataChange = false
+
+  override def wrap: SingleAction = SingleAction(cdc = this)
+}
+
 
 case class Format(
     provider: String = "parquet",
@@ -449,6 +476,7 @@ case class SingleAction(
     remove: RemoveFile = null,
     metaData: Metadata = null,
     protocol: Protocol = null,
+    cdc: AddCDCFile = null,
     commitInfo: CommitInfo = null) {
 
   def unwrap: Action = {
@@ -462,6 +490,8 @@ case class SingleAction(
       txn
     } else if (protocol != null) {
       protocol
+    } else if (cdc != null) {
+      cdc
     } else if (commitInfo != null) {
       commitInfo
     } else {

@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
-import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, Metadata, RemoveFile, SetTransaction}
+import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, FileAction, Metadata, RemoveFile, SetTransaction}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
@@ -590,6 +590,7 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
     fileActions.map {
       case a: AddFile => a.copy(dataChange = false)
       case r: RemoveFile => r.copy(dataChange = false)
+      case cdc: AddCDCFile => cdc // change files are always dataChange = false
     }
   }
 
@@ -630,6 +631,22 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
         tx1.commit(
           setDataChangeFalse(addA_P1.remove :: addB_P1.remove :: addC_P1 :: Nil),
           ManualUpdate)
+      }
+    }
+  }
+
+  test("readWholeTable should block concurrent delete") {
+    withLog(addA_P1 :: Nil) { log =>
+      val tx1 = log.startTransaction()
+      tx1.readWholeTable()
+
+      // tx2 removes file
+      val tx2 = log.startTransaction()
+      tx2.commit(addA_P1.remove :: Nil, ManualUpdate)
+
+      intercept[ConcurrentDeleteReadException] {
+        // tx1 reads the whole table but tx2 removes files before tx1 commits
+        tx1.commit(addB_P1 :: Nil, ManualUpdate)
       }
     }
   }

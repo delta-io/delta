@@ -448,6 +448,11 @@ object DeltaErrors
       "policy of your Delta table").initCause(e)
   }
 
+  def checkpointNonExistTable(path: Path): Throwable = {
+    new IllegalStateException(s"Cannot checkpoint a non-exist table $path. Did you manually " +
+      s"delete files in the _delta_log directory?")
+  }
+
   def multipleLoadPathsException(paths: Seq[String]): Throwable = {
     new AnalysisException(
       s"""
@@ -903,6 +908,16 @@ object DeltaErrors
 
   def setLocationNotSupportedOnPathIdentifiers(): Throwable = {
     new AnalysisException("Cannot change the location of a path based table.")
+  }
+
+  def useSetLocation(): Throwable = {
+    new AnalysisException(
+      "Cannot change the 'location' of the Delta table using SET TBLPROPERTIES. Please use " +
+      "ALTER TABLE SET LOCATION instead.")
+  }
+
+  def cannotChangeProvider(): Throwable = {
+    new AnalysisException("'provider' is a reserved table property, and cannot be altered.")
   }
 
   def describeViewHistory: Throwable = {

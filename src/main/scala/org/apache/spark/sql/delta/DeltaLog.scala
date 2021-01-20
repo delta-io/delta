@@ -31,7 +31,7 @@ import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSQLConf}
 import org.apache.spark.sql.delta.storage.LogStoreProvider
 import com.google.common.cache.{CacheBuilder, RemovalListener, RemovalNotification}
 import org.apache.hadoop.fs.Path
@@ -41,10 +41,12 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Cast, Expression, Literal}
-import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
+import org.apache.spark.sql.catalyst.plans.logical.{AnalysisHelper, LocalRelation}
 import org.apache.spark.sql.execution.datasources._
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.{BaseRelation, InsertableRelation}
 import org.apache.spark.sql.types.{StructField, StructType}
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import org.apache.spark.util.{Clock, SystemClock, ThreadUtils}
 
 /**
@@ -334,7 +336,8 @@ class DeltaLog private(
   def createRelation(
       partitionFilters: Seq[Expression] = Nil,
       snapshotToUseOpt: Option[Snapshot] = None,
-      isTimeTravelQuery: Boolean = false): BaseRelation = {
+      isTimeTravelQuery: Boolean = false,
+      cdcOptions: CaseInsensitiveStringMap = CaseInsensitiveStringMap.empty): BaseRelation = {
 
     /** Used to link the files present in the table into the query planner. */
     val snapshotToUse = snapshotToUseOpt.getOrElse(snapshot)
@@ -344,7 +347,7 @@ class DeltaLog private(
     new HadoopFsRelation(
       fileIndex,
       partitionSchema = snapshotToUse.metadata.partitionSchema,
-      dataSchema = snapshotToUse.metadata.schema,
+      dataSchema = SchemaUtils.dropNullTypeColumns(snapshotToUse.metadata.schema),
       bucketSpec = None,
       snapshotToUse.fileFormat,
       snapshotToUse.metadata.format.options)(spark) with InsertableRelation {

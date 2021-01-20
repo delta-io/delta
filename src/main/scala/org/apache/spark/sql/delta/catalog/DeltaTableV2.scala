@@ -51,7 +51,8 @@ case class DeltaTableV2(
     path: Path,
     catalogTable: Option[CatalogTable] = None,
     tableIdentifier: Option[String] = None,
-    timeTravelOpt: Option[DeltaTimeTravelSpec] = None)
+    timeTravelOpt: Option[DeltaTimeTravelSpec] = None,
+    options: CaseInsensitiveStringMap = CaseInsensitiveStringMap.empty())
   extends Table
   with SupportsWrite
   with V2TableWithV1Fallback
@@ -111,6 +112,9 @@ case class DeltaTableV2(
     base.put(TableCatalog.PROP_PROVIDER, "delta")
     base.put(TableCatalog.PROP_LOCATION, CatalogUtils.URIToString(path.toUri))
     Option(snapshot.metadata.description).foreach(base.put(TableCatalog.PROP_COMMENT, _))
+    // this reports whether the table is an external or managed catalog table as
+    // the old DescribeTable command would
+    catalogTable.foreach(table => base.put("Type", table.tableType.name))
     base.asJava
   }
 
@@ -136,7 +140,8 @@ case class DeltaTableV2(
     val partitionPredicates = DeltaDataSource.verifyAndCreatePartitionFilters(
       path.toString, snapshot, partitionFilters)
 
-    deltaLog.createRelation(partitionPredicates, Some(snapshot), timeTravelSpec.isDefined)
+    deltaLog.createRelation(
+      partitionPredicates, Some(snapshot), timeTravelSpec.isDefined, options)
   }
 
   /**
