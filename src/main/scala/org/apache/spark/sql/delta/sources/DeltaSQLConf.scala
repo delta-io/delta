@@ -25,11 +25,10 @@ import org.apache.spark.sql.internal.SQLConf
 /**
  * [[SQLConf]] entries for Delta features.
  */
-object DeltaSQLConf {
+trait DeltaSQLConfBase {
   def buildConf(key: String): ConfigBuilder = SQLConf.buildConf(s"spark.databricks.delta.$key")
   def buildStaticConf(key: String): ConfigBuilder =
     SQLConf.buildStaticConf(s"spark.databricks.delta.$key")
-
 
   val RESOLVE_TIME_TRAVEL_ON_IDENTIFIER =
     buildConf("timeTravel.resolveOnIdentifier.enabled")
@@ -196,7 +195,6 @@ object DeltaSQLConf {
       .intConf
       .checkValues(Set(1))
       .createWithDefault(1)
-
 
   val DELTA_MAX_SNAPSHOT_LINEAGE_LENGTH =
     buildConf("maxSnapshotLineageLength")
@@ -374,5 +372,6 @@ object DeltaSQLConf {
            |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
-
 }
+
+object DeltaSQLConf extends DeltaSQLConfBase
