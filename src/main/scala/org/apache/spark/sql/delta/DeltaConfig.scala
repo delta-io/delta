@@ -71,8 +71,7 @@ case class DeltaConfig[T](
 /**
  * Contains list of reservoir configs and validation checks.
  */
-object DeltaConfigs extends DeltaLogging {
-
+trait DeltaConfigsBase extends DeltaLogging {
 
   /**
    * Convert a string to [[CalendarInterval]]. This method is case-insensitive and will throw
@@ -112,7 +111,7 @@ object DeltaConfigs extends DeltaLogging {
 
   private val entries = new HashMap[String, DeltaConfig[_]]
 
-  private def buildConfig[T](
+  protected def buildConfig[T](
       key: String,
       defaultValue: String,
       fromString: String => T,
@@ -418,3 +417,5 @@ object DeltaConfigs extends DeltaLogging {
     _ => true,
     "needs to be a boolean.")
 }
+
+object DeltaConfigs extends DeltaConfigsBase
