@@ -138,7 +138,7 @@ abstract class LogStoreSuiteBase extends QueryTest
         val e = intercept[IOException] {
           createLogStore(spark).listFrom(path)
         }
-        assert(e.getMessage.contains(expectedErrMsg))
+        assert(e.getMessage.matches(expectedErrMsg))
         withSQLConf(fsImplConfs: _*) {
           createLogStore(spark).listFrom(path)
         }
@@ -199,7 +199,7 @@ class AzureLogStoreSuite extends LogStoreSuiteBase {
   override val logStoreClassName: String = classOf[AzureLogStore].getName
 
   testHadoopConf(
-    expectedErrMsg = "No FileSystem for scheme: fake",
+    expectedErrMsg = ".*No FileSystem for scheme.*fake.*",
     "fs.fake.impl" -> classOf[FakeFileSystem].getName,
     "fs.fake.impl.disable.cache" -> "true")
 
@@ -212,7 +212,7 @@ class HDFSLogStoreSuite extends LogStoreSuiteBase {
   // HDFSLogStore is based on FileContext APIs and hence requires AbstractFileSystem-based
   // implementations.
   testHadoopConf(
-    expectedErrMsg = "No FileSystem for scheme: fake",
+    expectedErrMsg = ".*No FileSystem for scheme.*fake.*",
     "fs.fake.impl" -> classOf[FakeFileSystem].getName,
     "fs.fake.impl.disable.cache" -> "true")
 
@@ -276,7 +276,7 @@ class LocalLogStoreSuite extends LogStoreSuiteBase {
   override val logStoreClassName: String = classOf[LocalLogStore].getName
 
   testHadoopConf(
-    expectedErrMsg = "No FileSystem for scheme: fake",
+    expectedErrMsg = ".*No FileSystem for scheme.*fake.*",
     "fs.fake.impl" -> classOf[FakeFileSystem].getName,
     "fs.fake.impl.disable.cache" -> "true")
 
