@@ -35,6 +35,7 @@ import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
 import org.apache.spark.sql.catalyst.expressions.{Expression, IsNotNull, IsNull, IsUnknown, Not, Or}
 import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, LogicalPlan, QualifiedColType}
+import org.apache.spark.sql.connector.catalog.TableCatalog
 import org.apache.spark.sql.connector.catalog.TableChange.{After, ColumnPosition, First}
 import org.apache.spark.sql.execution.command.{DDLUtils, RunnableCommand}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
@@ -75,13 +76,21 @@ case class AlterTableSetPropertiesDeltaCommand(
       val txn = startTransaction()
 
       val metadata = txn.metadata
-      configuration.foreach {
-        case (k, _) if k.toLowerCase(Locale.ROOT).startsWith("delta.constraints.") =>
+      val filteredConfs = configuration.filterKeys {
+        case k if k.toLowerCase(Locale.ROOT).startsWith("delta.constraints.") =>
           throw DeltaErrors.useAddConstraints
+        case k if k == TableCatalog.PROP_LOCATION =>
+          throw DeltaErrors.useSetLocation()
+        case k if k == TableCatalog.PROP_COMMENT =>
+          false
+        case k if k == TableCatalog.PROP_PROVIDER =>
+          throw DeltaErrors.cannotChangeProvider()
         case _ =>
-          // do nothing
+          true
       }
-      val newMetadata = metadata.copy(configuration = metadata.configuration ++ configuration)
+      val newMetadata = metadata.copy(
+        description = configuration.getOrElse(TableCatalog.PROP_COMMENT, metadata.description),
+        configuration = metadata.configuration ++ filteredConfs)
       txn.updateMetadata(newMetadata)
       txn.commit(Nil, DeltaOperations.SetTableProperties(configuration))
 
@@ -125,7 +134,12 @@ case class AlterTableUnsetPropertiesDeltaCommand(
       val newConfiguration = metadata.configuration.filterNot {
         case (key, _) => normalizedKeys.contains(key)
       }
-      val newMetadata = metadata.copy(configuration = newConfiguration)
+      val description = if (normalizedKeys.contains(TableCatalog.PROP_COMMENT)) null else {
+        metadata.description
+      }
+      val newMetadata = metadata.copy(
+        description = description,
+        configuration = newConfiguration)
       txn.updateMetadata(newMetadata)
       txn.commit(Nil, DeltaOperations.UnsetTableProperties(normalizedKeys, ifExists))
 
@@ -210,12 +224,7 @@ case class AlterTableAddColumnsDeltaCommand(
       val builder = new MetadataBuilder
       col.comment.foreach(builder.putString("comment", _))
 
-      val cleanedDataType = HiveStringType.replaceCharType(col.dataType)
-      if (col.dataType != cleanedDataType) {
-        builder.putString(HIVE_TYPE_STRING, col.dataType.catalogString)
-      }
-
-      val field = StructField(col.name.last, cleanedDataType, col.nullable, builder.build())
+      val field = StructField(col.name.last, col.dataType, col.nullable, builder.build())
 
       Some((col.name.init, field, col.position))
     }

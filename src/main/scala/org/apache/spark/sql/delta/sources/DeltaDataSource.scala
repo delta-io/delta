@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.sources
 
+import scala.collection.JavaConverters._
+import scala.collection.mutable
 import scala.util.{Failure, Success, Try}
 
 // scalastyle:off import.ordering.noEmptyLine
@@ -159,10 +161,15 @@ class DeltaDataSource
     DeltaOptions.verifyOptions(CaseInsensitiveMap(parameters))
 
     val timeTravelByParams = DeltaDataSource.getTimeTravelVersion(parameters)
+    var cdcOptions: mutable.Map[String, String] = mutable.Map.empty
+
+
     DeltaTableV2(
       sqlContext.sparkSession,
       new Path(maybePath),
-      timeTravelOpt = timeTravelByParams).toBaseRelation
+      timeTravelOpt = timeTravelByParams,
+      options = new CaseInsensitiveStringMap(cdcOptions.asJava)
+    ).toBaseRelation
   }
 
   override def shortName(): String = {
@@ -188,6 +195,7 @@ object DeltaDataSource extends DatabricksLogging {
    * castable to a long.
    */
   final val TIME_TRAVEL_VERSION_KEY = "versionAsOf"
+
 
   def encodePartitioningColumns(columns: Seq[String]): String = {
     Serialization.write(columns)

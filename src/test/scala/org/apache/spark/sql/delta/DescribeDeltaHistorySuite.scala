@@ -586,6 +586,10 @@ trait DescribeDeltaHistorySuiteBase
           "numSourceRows" -> "100"
         )
         checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.MERGE)
+        val expectedTimeMetrics = Seq("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
+        expectedTimeMetrics.foreach { m =>
+          assert(operationMetrics.contains(m))
+        }
       }
     }
   }

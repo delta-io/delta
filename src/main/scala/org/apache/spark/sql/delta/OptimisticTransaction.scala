@@ -172,6 +172,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   /** Tracks specific files that have been seen by this transaction. */
   protected val readFiles = new HashSet[AddFile]
 
+  /** Whether the whole table was read during the transaction. */
+  protected var readTheWholeTable = false
+
   /** Tracks if this transaction has already committed. */
   protected var committed = false
 
@@ -223,11 +226,18 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
    * IMPORTANT: It is the responsibility of the caller to ensure that files currently
    * present in the table are still valid under the new metadata.
    */
-  def updateMetadata(metadata: Metadata): Unit = {
+  def updateMetadata(_metadata: Metadata): Unit = {
     assert(!hasWritten,
       "Cannot update the metadata in a transaction that has already written data.")
     assert(newMetadata.isEmpty,
       "Cannot change the metadata more than once in a transaction.")
+
+    val metadata = if (_metadata.schemaString != null) {
+      val schema = CharVarcharUtils.replaceCharVarcharWithStringInSchema(_metadata.schema)
+      _metadata.copy(schemaString = schema.json)
+    } else {
+      _metadata
+    }
 
     val metadataWithFixedSchema =
       if (snapshot.metadata.schemaString == metadata.schemaString) {
@@ -290,6 +300,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   }
 
   protected def verifyNewMetadata(metadata: Metadata): Unit = {
+    assert(!CharVarcharUtils.hasCharVarchar(metadata.schema),
+      "The schema in Delta log should not contain char/varchar type.")
     SchemaUtils.checkColumnNameDuplication(metadata.schema, "in the metadata update")
     SchemaUtils.checkFieldNames(SchemaUtils.explodeNestedFieldNames(metadata.dataSchema))
     val partitionColCheckIsFatal =
@@ -343,6 +355,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   /** Mark the entire table as tainted by this transaction. */
   def readWholeTable(): Unit = {
     readPredicates += Literal(true)
+    readTheWholeTable = true
   }
 
   /**
@@ -785,6 +798,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
         val filePath = deleteReadOverlap.get.path
         val partition = getPrettyPartitionMessage(readFilePaths(filePath))
         throw new ConcurrentDeleteReadException(commitInfo, s"$filePath in $partition")
+      }
+      if (removedFiles.nonEmpty && readTheWholeTable) {
+        val filePath = removedFiles.head.path
+        throw new ConcurrentDeleteReadException(commitInfo, s"$filePath")
       }
 
       // Fail if a file is deleted twice.

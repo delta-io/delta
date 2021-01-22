@@ -21,6 +21,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.tables.execution._
 import org.apache.hadoop.fs.Path
 
@@ -723,7 +724,13 @@ object DeltaTable {
    */
   @Evolving
   def isDeltaTable(sparkSession: SparkSession, identifier: String): Boolean = {
-    DeltaTableUtils.isDeltaTable(sparkSession, new Path(identifier))
+    val identifierPath = new Path(identifier)
+    if (sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_STRICT_CHECK_DELTA_TABLE)) {
+      val rootOption = DeltaTableUtils.findDeltaTableRoot(sparkSession, identifierPath)
+      rootOption.isDefined && DeltaLog.forTable(sparkSession, rootOption.get).tableExists
+    } else {
+      DeltaTableUtils.isDeltaTable(sparkSession, identifierPath)
+    }
   }
 
   /**

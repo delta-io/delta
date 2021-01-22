@@ -119,13 +119,15 @@ class DeltaSqlTests(DeltaTestCase):
 
             self.spark.sql(f"ALTER TABLE {table} SET TBLPROPERTIES ('k' = 'v')")
             self.__checkAnswer(self.spark.sql(f"SHOW TBLPROPERTIES {table}"),
-                               [('k', 'v'),
+                               [('Type', 'MANAGED'),
+                                ('k', 'v'),
                                 ('delta.minReaderVersion', '1'),
                                 ('delta.minWriterVersion', '2')])
 
             self.spark.sql(f"ALTER TABLE {table} UNSET TBLPROPERTIES ('k')")
             self.__checkAnswer(self.spark.sql(f"SHOW TBLPROPERTIES {table}"),
-                               [('delta.minReaderVersion', '1'),
+                               [('Type', 'MANAGED'),
+                                ('delta.minReaderVersion', '1'),
                                 ('delta.minWriterVersion', '2')])
 
             self.spark.sql(f"ALTER TABLE {table} RENAME TO {table2}")

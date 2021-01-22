@@ -23,15 +23,16 @@ import java.util.UUID
 import scala.collection.mutable.ArrayBuffer
 import scala.util.Random
 
-import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.actions.{AddFile, FileAction}
 import org.apache.spark.sql.delta.util.{DateFormatter, PartitionUtils, TimestampFormatter}
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.hadoop.mapreduce.{JobContext, TaskAttemptContext}
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.io.FileCommitProtocol
 import org.apache.spark.internal.io.FileCommitProtocol.TaskCommitMessage
 import org.apache.spark.sql.catalyst.expressions.Cast
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StringType
 
 /**
@@ -41,15 +42,13 @@ class DelayedCommitProtocol(
       jobId: String,
       path: String,
       randomPrefixLength: Option[Int])
-  extends FileCommitProtocol
-    with Serializable with Logging {
-
+  extends FileCommitProtocol with Serializable with Logging {
   // Track the list of files added by a task, only used on the executors.
-  @transient private var addedFiles: ArrayBuffer[(Map[String, String], String)] = _
+  @transient protected var addedFiles: ArrayBuffer[(Map[String, String], String)] = _
+  // Track the overall files added, only used on the driver.
   @transient val addedStatuses = new ArrayBuffer[AddFile]
 
   val timestampPartitionPattern = "yyyy-MM-dd HH:mm:ss[.S]"
-
 
   override def setupJob(jobContext: JobContext): Unit = {
 
@@ -68,7 +67,10 @@ class DelayedCommitProtocol(
     addedFiles = new ArrayBuffer[(Map[String, String], String)]
   }
 
-  protected def getFileName(taskContext: TaskAttemptContext, ext: String): String = {
+  protected def getFileName(
+      taskContext: TaskAttemptContext,
+      ext: String,
+      partitionValues: Map[String, String]): String = {
     // The file name looks like part-r-00000-2dd664f9-d2c4-4ffe-878f-c6c70c1fb0cb_00003.gz.parquet
     // Note that %05d does not truncate the split number, so if we have more than 100000 tasks,
     // the file name is fine and won't overflow.
@@ -107,14 +109,14 @@ class DelayedCommitProtocol(
   }
 
   /** Generates a string created of `randomPrefixLength` alphanumeric characters. */
-  private def getRandomPrefix(numChars: Int): String = {
+  protected def getRandomPrefix(numChars: Int): String = {
     Random.alphanumeric.take(numChars).mkString
   }
 
   override def newTaskTempFile(
       taskContext: TaskAttemptContext, dir: Option[String], ext: String): String = {
-    val filename = getFileName(taskContext, ext)
     val partitionValues = dir.map(parsePartitions).getOrElse(Map.empty[String, String])
+    val filename = getFileName(taskContext, ext, partitionValues)
     val relativePath = randomPrefixLength.map { prefixLength =>
       getRandomPrefix(prefixLength) // Generate a random prefix as a first choice
     }.orElse {
@@ -133,13 +135,21 @@ class DelayedCommitProtocol(
       s"$this does not support adding files with an absolute path")
   }
 
+  protected def buildActionFromAddedFile(
+      f: (Map[String, String], String),
+      stat: FileStatus,
+      taskContext: TaskAttemptContext): FileAction = {
+    AddFile(f._2, f._1, stat.getLen, stat.getModificationTime, true)
+  }
+
   override def commitTask(taskContext: TaskAttemptContext): TaskCommitMessage = {
     if (addedFiles.nonEmpty) {
       val fs = new Path(path, addedFiles.head._2).getFileSystem(taskContext.getConfiguration)
-      val statuses: Seq[AddFile] = addedFiles.map { f =>
+      val statuses: Seq[FileAction] = addedFiles.map { f =>
         val filePath = new Path(path, new Path(new URI(f._2)))
         val stat = fs.getFileStatus(filePath)
-        AddFile(f._2, f._1, stat.getLen, stat.getModificationTime, true)
+
+        buildActionFromAddedFile(f, stat, taskContext)
       }
 
       new TaskCommitMessage(statuses)

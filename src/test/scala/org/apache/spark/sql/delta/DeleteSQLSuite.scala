@@ -39,4 +39,15 @@ class DeleteSQLSuite extends DeleteSuiteBase  with DeltaSQLCommandTest {
     // no change should be made by explain
     checkAnswer(readDeltaTable(tempPath), Row(2, 2))
   }
+
+  test("delete from a temp view") {
+    withTable("tab") {
+      withTempView("v") {
+        Seq((1, 1), (0, 3), (1, 5)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+        spark.table("tab").as("name").createTempView("v")
+        sql("DELETE FROM v WHERE key = 1")
+        checkAnswer(spark.table("tab"), Row(0, 3))
+      }
+    }
+  }
 }

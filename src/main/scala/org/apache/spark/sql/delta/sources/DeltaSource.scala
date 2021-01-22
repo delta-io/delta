@@ -202,7 +202,13 @@ case class DeltaSource(
       // isStartingVersion must be false here as we have bumped the version
       Some(DeltaSourceOffset(tableId, v + 1, -1, isStartingVersion = false))
     } else {
-      Some(DeltaSourceOffset(tableId, v, i, isStartingVersion = v == version))
+      // - When the local val `isStartingVersion` is `false`, it means this query is using
+      // `startingVersion/startingTimestamp`. In this case, we should use an offset that's based on
+      // json files (the offset's `isStartingVersion` should be `false`).
+      // - If `isStartingVersion` is true (in other words, it's not using
+      // `startingVersion/startingTimestamp`), we should use `v == version` to determine whether we
+      // should use an offset that's based on snapshots or json files.
+      Some(DeltaSourceOffset(tableId, v, i, isStartingVersion = isStartingVersion && v == version))
     }
   }
 
