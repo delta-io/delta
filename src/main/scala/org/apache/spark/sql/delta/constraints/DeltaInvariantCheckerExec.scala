@@ -46,8 +46,29 @@ case class DeltaInvariantCheckerExec(
 
   override def output: Seq[Attribute] = child.output
 
+  override protected def doExecute(): RDD[InternalRow] = {
+    if (constraints.isEmpty) return child.execute()
+    val invariantChecks =
+      DeltaInvariantCheckerExec.buildInvariantChecks(child.output, constraints, spark)
+    val boundRefs = invariantChecks.map(_.withBoundReferences(child.output))
+
+    child.execute().mapPartitionsInternal { rows =>
+      val assertions = GenerateUnsafeProjection.generate(boundRefs)
+      rows.map { row =>
+        assertions(row)
+        row
+      }
+    }
+  }
+
+  override def outputOrdering: Seq[SortOrder] = child.outputOrdering
+
+  override def outputPartitioning: Partitioning = child.outputPartitioning
+}
+
+object DeltaInvariantCheckerExec {
   /** Build the extractor for a particular column. */
-  private def buildExtractor(column: Seq[String]): Option[Expression] = {
+  private def buildExtractor(output: Seq[Attribute], column: Seq[String]): Option[Expression] = {
     assert(column.nonEmpty)
     val topLevelColumn = column.head
     val topLevelRefOpt = output.collectFirst {
@@ -55,12 +76,11 @@ case class DeltaInvariantCheckerExec(
     }
 
     if (column.length == 1) {
-      topLevelRefOpt.map(BindReferences.bindReference[Expression](_, output))
+      topLevelRefOpt
     } else {
       topLevelRefOpt.flatMap { topLevelRef =>
-        val boundTopLevel = BindReferences.bindReference[Expression](topLevelRef, output)
         try {
-          val nested = column.tail.foldLeft(boundTopLevel) { case (e, fieldName) =>
+          val nested = column.tail.foldLeft[Expression](topLevelRef) { case (e, fieldName) =>
             e.dataType match {
               case StructType(fields) =>
                 val ordinal = fields.indexWhere(f =>
@@ -83,13 +103,15 @@ case class DeltaInvariantCheckerExec(
     }
   }
 
-  override protected def doExecute(): RDD[InternalRow] = {
-    if (constraints.isEmpty) return child.execute()
-    val boundRefs = constraints.map { constraint =>
+  def buildInvariantChecks(
+      output: Seq[Attribute],
+      constraints: Seq[Constraint],
+      spark: SparkSession): Seq[CheckDeltaInvariant] = {
+    constraints.map { constraint =>
       val columnExtractors = mutable.Map[String, Expression]()
       val executableExpr = constraint match {
         case n @ NotNull(column) =>
-          buildExtractor(column).getOrElse {
+          buildExtractor(output, column).getOrElse {
             throw DeltaErrors.notNullColumnMissingException(n)
           }
         case Check(name, expr) =>
@@ -99,7 +121,7 @@ case class DeltaInvariantCheckerExec(
 
           val attributesExtracted = expr.transformUp {
             case a: UnresolvedAttribute =>
-              val ex = buildExtractor(a.nameParts).getOrElse(Literal(null))
+              val ex = buildExtractor(output, a.nameParts).getOrElse(Literal(null))
               columnExtractors(a.name) = ex
               ex
           }
@@ -116,17 +138,5 @@ case class DeltaInvariantCheckerExec(
 
       CheckDeltaInvariant(executableExpr, columnExtractors.toMap, constraint)
     }
-
-    child.execute().mapPartitionsInternal { rows =>
-      val assertions = GenerateUnsafeProjection.generate(boundRefs)
-      rows.map { row =>
-        assertions(row)
-        row
-      }
-    }
   }
-
-  override def outputOrdering: Seq[SortOrder] = child.outputOrdering
-
-  override def outputPartitioning: Partitioning = child.outputPartitioning
 }

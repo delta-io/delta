@@ -20,7 +20,7 @@ import org.apache.spark.sql.delta.constraints.Constraints.{Check, NotNull}
 import org.apache.spark.sql.delta.schema.InvariantViolationException
 
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.{Expression, NonSQLExpression, UnaryExpression}
+import org.apache.spark.sql.catalyst.expressions.{AttributeSeq, BindReferences, Expression, NonSQLExpression, UnaryExpression}
 import org.apache.spark.sql.catalyst.expressions.codegen._
 import org.apache.spark.sql.catalyst.expressions.codegen.Block._
 import org.apache.spark.sql.types.{DataType, NullType}
@@ -41,6 +41,15 @@ case class CheckDeltaInvariant(
   override def dataType: DataType = NullType
   override def foldable: Boolean = false
   override def nullable: Boolean = true
+
+  def withBoundReferences(input: AttributeSeq): CheckDeltaInvariant = {
+    CheckDeltaInvariant(
+      BindReferences.bindReference(child, input),
+      columnExtractors.map {
+        case (column, extractor) => column -> BindReferences.bindReference(extractor, input)
+      },
+      constraint)
+  }
 
   private def assertRule(input: InternalRow): Unit = constraint match {
     case n: NotNull =>
