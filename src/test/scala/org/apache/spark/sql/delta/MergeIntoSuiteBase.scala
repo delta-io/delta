@@ -2493,6 +2493,18 @@ abstract class MergeIntoSuiteBase
       .selectExpr("key", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x")
   )
 
+  testEvolution("extra nested column in source - update - single target partition")(
+    targetData = Seq((1, (1, 10)), (2, (2, 2000))).toDF("key", "x")
+      .selectExpr("key", "named_struct('a', x._1, 'c', x._2) as x").repartition(1),
+    sourceData = Seq((1, (10, 100, 1000))).toDF("key", "x")
+      .selectExpr("key", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x"),
+    update = "*",
+    expected = ((1, (10, 100, 1000)) +: (2, (2, null, 2000)) +: Nil)
+      .asInstanceOf[List[(Integer, (Integer, Integer, Integer))]].toDF("key", "x")
+      .selectExpr("key", "named_struct('a', x._1, 'c', x._3, 'b', x._2) as x"),
+    expectErrorWithoutEvolutionContains = "Cannot cast struct"
+  )
+
   /* unlimited number of merge clauses tests */
 
   protected def testUnlimitedClauses(

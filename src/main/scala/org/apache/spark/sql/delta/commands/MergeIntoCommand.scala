@@ -40,6 +40,7 @@ import org.apache.spark.sql.catalyst.expressions.codegen._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.{StructField, StructType}
@@ -562,20 +563,44 @@ case class MergeIntoCommand(
   private def buildTargetPlanWithFiles(
     deltaTxn: OptimisticTransaction,
     files: Seq[AddFile]): LogicalPlan = {
-    val plan = deltaTxn.deltaLog.createDataFrame(deltaTxn.snapshot, files).queryExecution.analyzed
+    val targetOutputCols = getTargetOutputCols(deltaTxn)
+    val plan = {
+      // We have to do surgery to use the attributes from `targetOutputCols` to scan the table.
+      // In cases of schema evolution, they may not be the same type as the original attributes.
+      val original =
+        deltaTxn.deltaLog.createDataFrame(deltaTxn.snapshot, files).queryExecution.analyzed
+      original.transform {
+        case LogicalRelation(base, output, catalogTbl, isStreaming) =>
+          LogicalRelation(
+            base,
+            // We can ignore the new columns which aren't yet AttributeReferences.
+            targetOutputCols.collect { case a: AttributeReference => a },
+            catalogTbl,
+            isStreaming)
+      }
+    }
 
     // For each plan output column, find the corresponding target output column (by name) and
     // create an alias
     val aliases = plan.output.map {
       case newAttrib: AttributeReference =>
-        val existingTargetAttrib = getTargetOutputCols(deltaTxn).find(_.name == newAttrib.name)
-          .getOrElse {
+        val existingTargetAttrib = getTargetOutputCols(deltaTxn).find { col =>
+          conf.resolver(col.name, newAttrib.name)
+        }.getOrElse {
             throw new AnalysisException(
               s"Could not find ${newAttrib.name} among the existing target output " +
                 s"${getTargetOutputCols(deltaTxn)}")
           }.asInstanceOf[AttributeReference]
-        Alias(newAttrib, existingTargetAttrib.name)(exprId = existingTargetAttrib.exprId)
+
+        if (existingTargetAttrib.exprId == newAttrib.exprId) {
+          // It's not valid to alias an expression to its own exprId (this is considered a
+          // non-unique exprId by the analyzer), so we just use the attribute directly.
+          newAttrib
+        } else {
+          Alias(newAttrib, existingTargetAttrib.name)(exprId = existingTargetAttrib.exprId)
+        }
     }
+
     Project(aliases, plan)
   }
 
@@ -590,9 +615,10 @@ case class MergeIntoCommand(
 
   private def getTargetOutputCols(txn: OptimisticTransaction): Seq[NamedExpression] = {
     txn.metadata.schema.map { col =>
-      target.output.find(attr => conf.resolver(attr.name, col.name)).getOrElse {
-        Alias(Literal(null, col.dataType), col.name)()
-      }
+      target.output.find(attr => conf.resolver(attr.name, col.name)).map { a =>
+        AttributeReference(col.name, col.dataType, col.nullable)(a.exprId)
+      }.getOrElse(
+        Alias(Literal(null), col.name)())
     }
   }
 
