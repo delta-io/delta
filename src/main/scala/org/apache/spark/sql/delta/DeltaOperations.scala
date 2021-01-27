@@ -384,7 +384,10 @@ private[delta] object DeltaOperationMetrics {
     "numAddedFiles", // number of files added
     "numRemovedFiles", // number of files removed
     "numUpdatedRows", // number of rows updated
-    "numCopiedRows" // number of rows just copied over in the process of updating files.
+    "numCopiedRows", // number of rows just copied over in the process of updating files.
+    "executionTimeMs",  // time taken to execute the entire operation
+    "scanTimeMs", // time taken to scan the files for matches
+    "rewriteTimeMs" // time taken to rewrite the matched files
   )
 
 }

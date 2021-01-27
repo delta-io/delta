@@ -91,6 +91,14 @@ trait DescribeDeltaHistorySuiteBase
     }
   }
 
+  protected def checkOperationMetricsExist(
+      expectedMetrics: Seq[String],
+      operationMetrics: Map[String, String]): Unit = {
+    expectedMetrics.foreach {
+      m => assert(operationMetrics.contains(m))
+    }
+  }
+
   protected def getOperationMetrics(history: DataFrame): Map[String, String] = {
     history.select("operationMetrics")
       .take(1)
@@ -587,9 +595,7 @@ trait DescribeDeltaHistorySuiteBase
         )
         checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.MERGE)
         val expectedTimeMetrics = Seq("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
-        expectedTimeMetrics.foreach { m =>
-          assert(operationMetrics.contains(m))
-        }
+        checkOperationMetricsExist(expectedTimeMetrics, operationMetrics)
       }
     }
   }
@@ -714,6 +720,8 @@ trait DescribeDeltaHistorySuiteBase
           "numCopiedRows" -> "2" // There should be only three rows in total(updated + copied)
         )
         checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.UPDATE)
+        val expectedTimeMetrics = Seq("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
+        checkOperationMetricsExist(expectedTimeMetrics, operationMetrics)
       }
     }
   }

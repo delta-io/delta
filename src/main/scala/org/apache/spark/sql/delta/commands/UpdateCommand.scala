@@ -56,7 +56,10 @@ case class UpdateCommand(
   override lazy val metrics = Map[String, SQLMetric](
     "numAddedFiles" -> createMetric(sc, "number of files added."),
     "numRemovedFiles" -> createMetric(sc, "number of files removed."),
-    "numUpdatedRows" -> createMetric(sc, "number of rows updated.")
+    "numUpdatedRows" -> createMetric(sc, "number of rows updated."),
+    "executionTimeMs" -> createMetric(sc, "time taken to execute the entire operation"),
+    "scanTimeMs" -> createMetric(sc, "time taken to scan the files for matches"),
+    "rewriteTimeMs" -> createMetric(sc, "time taken to rewrite the matched files")
   )
 
   final override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -167,6 +170,9 @@ case class UpdateCommand(
     if (actions.nonEmpty) {
       metrics("numAddedFiles").set(numRewrittenFiles)
       metrics("numRemovedFiles").set(numTouchedFiles)
+      metrics("executionTimeMs").set((System.nanoTime() - startTime) / 1000 / 1000)
+      metrics("scanTimeMs").set(scanTimeMs)
+      metrics("rewriteTimeMs").set(rewriteTimeMs)
       txn.registerSQLMetrics(sparkSession, metrics)
       txn.commit(actions, DeltaOperations.Update(condition.map(_.toString)))
       // This is needed to make the SQL metrics visible in the Spark UI
