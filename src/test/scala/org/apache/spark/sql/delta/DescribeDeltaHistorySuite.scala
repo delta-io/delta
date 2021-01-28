@@ -91,11 +91,21 @@ trait DescribeDeltaHistorySuiteBase
     }
   }
 
-  protected def checkOperationMetricsExist(
-      expectedMetrics: Seq[String],
+  /**
+   * Check all expected metrics exist and executime time (if expected to exist) is the largest time
+   * metric.
+   */
+  protected def checkOperationTimeMetricsInvariant(
+      expectedMetrics: Set[String],
       operationMetrics: Map[String, String]): Unit = {
     expectedMetrics.foreach {
       m => assert(operationMetrics.contains(m))
+    }
+    if (expectedMetrics.contains("executionTimeMs")) {
+      val executionTimeMs = operationMetrics("executionTimeMs").toLong
+      val maxTimeMs = operationMetrics.filterKeys(expectedMetrics.contains(_))
+        .mapValues(v => v.toLong).valuesIterator.max
+      assert(executionTimeMs == maxTimeMs)
     }
   }
 
@@ -594,8 +604,8 @@ trait DescribeDeltaHistorySuiteBase
           "numSourceRows" -> "100"
         )
         checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.MERGE)
-        val expectedTimeMetrics = Seq("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
-        checkOperationMetricsExist(expectedTimeMetrics, operationMetrics)
+        val expectedTimeMetrics = Set("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
+        checkOperationTimeMetricsInvariant(expectedTimeMetrics, operationMetrics)
       }
     }
   }
@@ -720,8 +730,8 @@ trait DescribeDeltaHistorySuiteBase
           "numCopiedRows" -> "2" // There should be only three rows in total(updated + copied)
         )
         checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.UPDATE)
-        val expectedTimeMetrics = Seq("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
-        checkOperationMetricsExist(expectedTimeMetrics, operationMetrics)
+        val expectedTimeMetrics = Set("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
+        checkOperationTimeMetricsInvariant(expectedTimeMetrics, operationMetrics)
       }
     }
   }

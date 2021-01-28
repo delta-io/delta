@@ -247,7 +247,8 @@ case class MergeIntoCommand(
       createMetric(sc, "time taken to rewrite the matched files"))
 
   override def run(spark: SparkSession): Seq[Row] = {
-    recordMergeOperation(sqlMetricName = "executionTimeMs") {
+    recordDeltaOperation(targetDeltaLog, "delta.dml.merge") {
+      val startTime = System.nanoTime()
       targetDeltaLog.withNewTransaction { deltaTxn =>
         if (target.schema.size != deltaTxn.metadata.schema.size) {
           throw DeltaErrors.schemaChangedSinceAnalysis(
@@ -272,6 +273,8 @@ case class MergeIntoCommand(
             filesToRewrite.map(_.remove) ++ newWrittenFiles
           }
         }
+        // Metrics should be recorded before commit (where they are written to delta logs).
+        metrics("executionTimeMs").set((System.nanoTime() - startTime) / 1000 / 1000)
         deltaTxn.registerSQLMetrics(spark, metrics)
         deltaTxn.commit(
           deltaActions,
