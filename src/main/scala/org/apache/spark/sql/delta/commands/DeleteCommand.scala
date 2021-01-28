@@ -56,7 +56,10 @@ case class DeleteCommand(
   override lazy val metrics = Map[String, SQLMetric](
     "numRemovedFiles" -> createMetric(sc, "number of files removed."),
     "numAddedFiles" -> createMetric(sc, "number of files added."),
-    "numDeletedRows" -> createMetric(sc, "number of rows deleted.")
+    "numDeletedRows" -> createMetric(sc, "number of rows deleted."),
+    "executionTimeMs" -> createMetric(sc, "time taken to execute the entire operation"),
+    "scanTimeMs" -> createMetric(sc, "time taken to scan the files for matches"),
+    "rewriteTimeMs" -> createMetric(sc, "time taken to rewrite the matched files")
   )
 
   final override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -178,6 +181,10 @@ case class DeleteCommand(
     }
     if (deleteActions.nonEmpty) {
       metrics("numAddedFiles").set(numRewrittenFiles)
+      val executionTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
+      metrics("executionTimeMs").set(executionTimeMs)
+      metrics("scanTimeMs").set(scanTimeMs)
+      metrics("rewriteTimeMs").set(rewriteTimeMs)
       txn.registerSQLMetrics(sparkSession, metrics)
       txn.commit(deleteActions, DeltaOperations.Delete(condition.map(_.sql).toSeq))
       // This is needed to make the SQL metrics visible in the Spark UI

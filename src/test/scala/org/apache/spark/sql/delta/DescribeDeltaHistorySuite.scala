@@ -808,6 +808,8 @@ trait DescribeDeltaHistorySuiteBase
           "numCopiedRows" -> "2" // There should be only three rows in total(deleted + copied)
         )
         checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.DELETE)
+        val expectedTimeMetrics = Set("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
+        checkOperationTimeMetricsInvariant(expectedTimeMetrics, operationMetrics)
       }
     }
   }
@@ -835,6 +837,8 @@ trait DescribeDeltaHistorySuiteBase
         // row level metrics are not collected for deletes with parition columns
         checkOperationMetrics(
           expectedMetrics, operationMetrics, DeltaOperationMetrics.DELETE_PARTITIONS)
+        val expectedTimeMetrics = Set("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
+        checkOperationTimeMetricsInvariant(expectedTimeMetrics, operationMetrics)
       }
     }
   }
@@ -862,6 +866,8 @@ trait DescribeDeltaHistorySuiteBase
         )
         checkOperationMetrics(
           expectedMetrics, operationMetrics, DeltaOperationMetrics.DELETE_PARTITIONS)
+        val expectedTimeMetrics = Set("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
+        checkOperationTimeMetricsInvariant(expectedTimeMetrics, operationMetrics)
       }
     }
   }

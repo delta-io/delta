@@ -350,16 +350,26 @@ private[delta] object DeltaOperationMetrics {
     "numAddedFiles", // number of files added
     "numRemovedFiles", // number of files removed
     "numDeletedRows", // number of rows removed
-    "numCopiedRows" // number of rows copied in the process of deleting files
+    "numCopiedRows", // number of rows copied in the process of deleting files
+    "executionTimeMs", // time taken to execute the entire operation
+    "scanTimeMs", // time taken to scan the files for matches
+    "rewriteTimeMs" // time taken to rewrite the matched files
   )
 
-  /** Deleting the entire table or partition would prevent row level metrics from being recorded */
+  /**
+   * Deleting the entire table or partition would prevent row level metrics from being recorded.
+   * This is used only in test to verify specific delete cases.
+   */
   val DELETE_PARTITIONS = Set(
-    "numRemovedFiles" // number of files removed
+    "numRemovedFiles", // number of files removed
+    "executionTimeMs", // time taken to execute the entire operation
+    "scanTimeMs", // time taken to scan the files for matches
+    "rewriteTimeMs" // time taken to rewrite the matched files
   )
 
   val TRUNCATE = Set(
-    "numRemovedFiles" // number of files removed
+    "numRemovedFiles", // number of files removed
+    "executionTimeMs" // time taken to execute the entire operation
   )
 
   val CONVERT = Set(
