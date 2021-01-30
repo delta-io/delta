@@ -156,12 +156,16 @@ class DeltaCatalog extends DelegatingCatalogExtension
     } catch {
       case _: NoSuchDatabaseException | _: NoSuchNamespaceException | _: NoSuchTableException
           if isPathIdentifier(ident) =>
-        DeltaTableV2(spark, new Path(ident.name()))
+        newDeltaPathTable(ident)
       case e: AnalysisException if gluePermissionError(e) && isPathIdentifier(ident) =>
         logWarning("Received an access denied error from Glue. Assuming this " +
           s"identifier ($ident) is path based.", e)
-        DeltaTableV2(spark, new Path(ident.name()))
+        newDeltaPathTable(ident)
     }
+  }
+
+  private def newDeltaPathTable(ident: Identifier): DeltaTableV2 = {
+    DeltaTableV2(spark, new Path(ident.name()))
   }
 
   private def getProvider(properties: util.Map[String, String]): String = {
