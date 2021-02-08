@@ -21,6 +21,8 @@ import java.io.FileNotFoundException
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success, Try}
 
+// scalastyle:off import.ordering.noEmptyLine
+
 import com.databricks.spark.util.TagDefinitions.TAG_ASYNC
 import org.apache.spark.sql.delta.actions.{Metadata, SingleAction}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -242,9 +244,9 @@ trait SnapshotManagement { self: DeltaLog =>
   def update(stalenessAcceptable: Boolean = false): Snapshot = {
     val doAsync = stalenessAcceptable && !isSnapshotStale
     if (!doAsync) {
-      lockInterruptibly {
-        updateInternal(isAsync = false)
-      }
+        lockInterruptibly {
+          updateInternal(isAsync = false)
+        }
     } else {
       if (asyncUpdateTask == null || asyncUpdateTask.isCompleted) {
         val jobGroup = spark.sparkContext.getLocalProperty(SparkContext.SPARK_JOB_GROUP_ID)

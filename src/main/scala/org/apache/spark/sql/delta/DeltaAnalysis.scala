@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import scala.collection.JavaConverters._
 
+
 // scalastyle:off import.ordering.noEmptyLine
 
 import org.apache.spark.sql.delta.DeltaErrors.{TemporallyUnstableInputException, TimestampEarlierThanCommitRetentionException}
@@ -304,10 +305,10 @@ object DeltaRelation {
       d: DeltaTableV2,
       v2Relation: DataSourceV2Relation,
       options: CaseInsensitiveStringMap): LogicalRelation = {
-    val relation = d.withOptions(options.asScala.toMap).toBaseRelation
-    var output = v2Relation.output
+      val relation = d.withOptions(options.asScala.toMap).toBaseRelation
+      var output = v2Relation.output
 
-    LogicalRelation(relation, output, d.catalogTable, isStreaming = false)
+      LogicalRelation(relation, output, d.catalogTable, isStreaming = false)
   }
 }
 
