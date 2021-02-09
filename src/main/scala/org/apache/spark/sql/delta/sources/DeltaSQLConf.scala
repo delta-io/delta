@@ -372,6 +372,20 @@ trait DeltaSQLConfBase {
            |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_LEGACY_STORE_WRITER_OPTIONS_AS_PROPS =
+    buildConf("legacy.storeOptionsAsProperties")
+      .internal()
+      .doc("""
+             |Delta was unintentionally storing options provided by the DataFrameWriter in the
+             |saveAsTable method as table properties in the transaction log. This was unsupported
+             |behavior (it was a bug), and it has security implications (accidental storage of
+             |credentials). This flag prevents the storage of arbitrary options as table properties.
+             |Set this flag to true to continue setting non-delta prefixed table properties through
+             |table options.
+             |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

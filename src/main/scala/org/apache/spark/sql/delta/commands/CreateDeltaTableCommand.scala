@@ -365,10 +365,21 @@ case class CreateDeltaTableCommand(
 
   /** Clean up the information we pass on to store in the catalog. */
   private def cleanupTableDefinition(table: CatalogTable, snapshot: Snapshot): CatalogTable = {
+    // These actually have no effect on the usability of Delta, but feature flagging legacy
+    // behavior for now
+    val storageProps = if (conf.getConf(DeltaSQLConf.DELTA_LEGACY_STORE_WRITER_OPTIONS_AS_PROPS)) {
+      // Legacy behavior
+      table.storage
+    } else {
+      table.storage.copy(properties = Map.empty)
+    }
+
     table.copy(
       schema = new StructType(),
       properties = Map.empty,
       partitionColumnNames = Nil,
+      // Remove write specific options when updating the catalog
+      storage = storageProps,
       tracksPartitionsInCatalog = true)
   }
 

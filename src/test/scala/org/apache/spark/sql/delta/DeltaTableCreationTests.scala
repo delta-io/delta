@@ -25,6 +25,7 @@ import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.Path
 
@@ -1630,15 +1631,6 @@ class DeltaTableCreationSuite
         assert(deltaLog.snapshot.version === 1)
         assert(deltaLog.snapshot.schema === new StructType().add("col", "string"))
 
-        val e = intercept[IllegalArgumentException] {
-          sql(
-            s"""REPLACE TABLE delta_test (col2 string)
-               |USING delta
-               |LOCATION '${dir.getAbsolutePath}'
-               |OPTIONS (overwriteSchema = 'false')
-          """.stripMargin)
-        }
-        assert(e.getMessage.contains("overwriteSchema is not allowed"))
 
         val e2 = intercept[AnalysisException] {
           sql(
@@ -1827,6 +1819,105 @@ class DeltaTableCreationSuite
         sql(s"DESCRIBE DETAIL $table"),
         Seq("delta", "This table is created with existing data"),
         Seq("format", "description"))
+    }
+  }
+
+  /**
+   * Verifies that the correct table properties are stored in the transaction log as well as the
+   * catalog.
+   */
+  private def verifyTableProperties(
+      tableName: String,
+      deltaLogPropertiesContains: Seq[String],
+      deltaLogPropertiesMissing: Seq[String],
+      catalogStorageProps: Seq[String] = Nil): Unit = {
+    val table = spark.sessionState.catalog.getTableMetadata(TableIdentifier(tableName))
+
+    if (catalogStorageProps.isEmpty) {
+      assert(table.storage.properties.isEmpty)
+    } else {
+      assert(catalogStorageProps.forall(table.storage.properties.contains),
+        s"Catalog didn't contain properties: ${catalogStorageProps}.\n" +
+          "Catalog: ${table.storage.properties}")
+    }
+    val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+
+    deltaLogPropertiesContains.foreach { prop =>
+      assert(deltaLog.snapshot.getProperties.contains(prop))
+    }
+
+    deltaLogPropertiesMissing.foreach { prop =>
+      assert(!deltaLog.snapshot.getProperties.contains(prop))
+    }
+  }
+
+  test("do not store write options in the catalog - DataFrameWriter") {
+    withTempDir { dir =>
+      withTable("t") {
+        spark.range(10).write.format("delta")
+          .option("path", dir.getCanonicalPath)
+          .option("mergeSchema", "true")
+          .option("delta.appendOnly", "true")
+          .saveAsTable("t")
+
+        verifyTableProperties(
+          "t",
+          // Still allow delta prefixed confs
+          Seq("delta.appendOnly"),
+          Seq("mergeSchema")
+        )
+        // Sanity check that table is readable
+        checkAnswer(spark.table("t"), spark.range(10).toDF())
+      }
+    }
+  }
+
+  test("do not store write options in the catalog - DataFrameWriterV2") {
+    withTempDir { dir =>
+      withTable("t") {
+        spark.range(10).writeTo("t").using("delta")
+          .option("path", dir.getCanonicalPath)
+          .option("mergeSchema", "true")
+          .option("delta.appendOnly", "true")
+          .tableProperty("key", "value")
+          .create()
+
+        verifyTableProperties(
+          "t",
+          Seq(
+            "delta.appendOnly",   // Still allow delta prefixed confs
+            "key"                 // Explicit properties should work
+          ),
+          Seq("mergeSchema")
+        )
+        // Sanity check that table is readable
+        checkAnswer(spark.table("t"), spark.range(10).toDF())
+      }
+    }
+  }
+
+  test("do not store write options in the catalog - legacy flag") {
+    withTempDir { dir =>
+      withTable("t") {
+        withSQLConf(DeltaSQLConf.DELTA_LEGACY_STORE_WRITER_OPTIONS_AS_PROPS.key -> "true") {
+          spark.range(10).write.format("delta")
+            .option("path", dir.getCanonicalPath)
+            .option("mergeSchema", "true")
+            .option("delta.appendOnly", "true")
+            .saveAsTable("t")
+
+          verifyTableProperties(
+            "t",
+            // Everything gets stored in the transaction log
+            Seq("delta.appendOnly", "mergeSchema"),
+            Nil,
+            // Things get stored in the catalog props as well
+            Seq("delta.appendOnly", "mergeSchema")
+          )
+
+          checkAnswer(spark.table("t"), spark.range(10).toDF())
+        }
+      }
     }
   }
 }
