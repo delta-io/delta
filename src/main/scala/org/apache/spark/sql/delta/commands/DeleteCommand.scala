@@ -201,6 +201,8 @@ case class DeleteCommand(
         numFilesTotal,
         numTouchedFiles,
         numRewrittenFiles,
+        numAddedChangeFiles = 0,
+        changeFileBytes = 0,
         scanTimeMs,
         rewriteTimeMs)
     )
@@ -228,6 +230,8 @@ object DeleteCommand {
  * @param numFilesTotal: how big is the table
  * @param numTouchedFiles: how many files did we touch
  * @param numRewrittenFiles: how many files had to be rewritten
+ * @param numAddedChangeFiles: how many change files were generated
+ * @param changeFileBytes: total size of change files generated
  * @param scanTimeMs: how long did finding take
  * @param rewriteTimeMs: how long did rewriting take
  *
@@ -238,5 +242,7 @@ case class DeleteMetric(
     numFilesTotal: Long,
     numTouchedFiles: Long,
     numRewrittenFiles: Long,
+    numAddedChangeFiles: Long,
+    changeFileBytes: Long,
     scanTimeMs: Long,
     rewriteTimeMs: Long)

@@ -100,7 +100,9 @@ case class MergeStats(
     targetFilesRemoved: Long,
     targetFilesAdded: Long,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
-    changeFilesAdded: Option[Long],
+    targetChangeFilesAdded: Option[Long],
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    targetChangeFileBytes: Option[Long],
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     targetBytesRemoved: Option[Long],
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
@@ -149,7 +151,8 @@ object MergeStats {
 
       // Data change sizes
       targetFilesAdded = metrics("numTargetFilesAdded").value,
-      changeFilesAdded = metrics.get("numChangeFilesAdded").map(_.value),
+      targetChangeFilesAdded = metrics.get("numTargetChangeFilesAdded").map(_.value),
+      targetChangeFileBytes = metrics.get("numTargetChangeFileBytes").map(_.value),
       targetFilesRemoved = metrics("numTargetFilesRemoved").value,
       targetBytesAdded = Some(metrics("numTargetBytesAdded").value),
       targetBytesRemoved = Some(metrics("numTargetBytesRemoved").value),
