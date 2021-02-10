@@ -220,7 +220,7 @@ case class MergeIntoCommand(
   private def isMatchedOnly: Boolean = notMatchedClauses.isEmpty && matchedClauses.nonEmpty
 
   override lazy val metrics = Map[String, SQLMetric](
-    "numSourceRows" -> createMetric(sc, "number of source rows"),
+    "numSourceRows" -> createMetric(sc, "number of source rows participated in merge"),
     "numTargetRowsCopied" -> createMetric(sc, "number of target rows rewritten unmodified"),
     "numTargetRowsInserted" -> createMetric(sc, "number of inserted rows"),
     "numTargetRowsUpdated" -> createMetric(sc, "number of updated rows"),
@@ -481,13 +481,19 @@ case class MergeIntoCommand(
     val incrNoopCountExpr = makeMetricUpdateUDF("numTargetRowsCopied")
     val incrDeletedCountExpr = makeMetricUpdateUDF("numTargetRowsDeleted")
 
+    val sourceOnlyPredicates =
+      splitConjunctivePredicates(condition).filter(_.references.subsetOf(source.outputSet))
+
     // Apply an outer join to find both, matches and non-matches. We are adding two boolean fields
     // with value `true`, one to each side of the join. Whether this field is null or not after
     // the outer join, will allow us to identify whether the resultant joined row was a
     // matched inner result or an unmatched result with null on one side.
     val joinedDF = {
-      val sourceDF = Dataset.ofRows(spark, source)
-        .withColumn(SOURCE_ROW_PRESENT_COL, new Column(incrSourceRowCountExpr))
+      val sourceDF = (if (isMatchedOnly && sourceOnlyPredicates.nonEmpty) {
+        addFilterPushdown(Dataset.ofRows(spark, source), sourceOnlyPredicates)
+      } else {
+        Dataset.ofRows(spark, source)
+      }).withColumn(SOURCE_ROW_PRESENT_COL, new Column(incrSourceRowCountExpr))
       val targetDF = Dataset.ofRows(spark, newTarget)
         .withColumn(TARGET_ROW_PRESENT_COL, lit(true))
       sourceDF.join(targetDF, new Column(condition), joinType)

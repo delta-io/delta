@@ -27,10 +27,10 @@ import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{AnalysisException, SparkSession}
+import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Analyzer, EliminateSubqueryAliases, NoSuchTableException, UnresolvedRelation}
-import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
+import org.apache.spark.sql.catalyst.expressions.{And, Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
@@ -203,6 +203,11 @@ trait DeltaCommand extends DeltaLogging {
     val provider = tableIdent.database.getOrElse("")
     // If db doesnt exist or db is called delta/tahoe then check if path exists
     DeltaSourceUtils.isDeltaDataSourceName(provider) && new Path(tableIdent.table).isAbsolute
+  }
+
+
+  protected def addFilterPushdown(df: DataFrame, predicates: Seq[Expression]): DataFrame = {
+    predicates.reduceLeftOption(And).map(f => df.filter(Column(f))).getOrElse(df)
   }
 
   /** Update the table now that the commit has been made, and write a checkpoint. */
