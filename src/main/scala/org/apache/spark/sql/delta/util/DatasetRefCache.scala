@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.util
 
+import java.util.concurrent.atomic.AtomicReference
+
 import org.apache.spark.sql.{Dataset, SparkSession}
 
 /**
@@ -36,12 +38,13 @@ import org.apache.spark.sql.{Dataset, SparkSession}
  */
 class DatasetRefCache[T](creator: () => Dataset[T]) {
 
-  private var ref: Dataset[T] = _
+  private val holder = new AtomicReference[Dataset[T]]
 
-  def get: Dataset[T] = synchronized {
+  def get: Dataset[T] = holder.updateAndGet { ref =>
     if (ref == null || (ref.sparkSession ne SparkSession.active)) {
-      ref = creator()
+      creator()
+    } else {
+      ref
     }
-    ref
   }
 }
