@@ -127,7 +127,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
     val constraints = Constraints.getAll(metadata, spark)
 
-    SQLExecution.withNewExecutionId(queryExecution) {
+    SQLExecution.withNewExecutionId(queryExecution, Option("deltaTransactionalWrite")) {
       val outputSpec = FileFormatWriter.OutputSpec(
         outputPath.toString,
         Map.empty,
