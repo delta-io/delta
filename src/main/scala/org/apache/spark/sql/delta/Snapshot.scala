@@ -93,17 +93,11 @@ class Snapshot(
     val hadoopConf = spark.sparkContext.broadcast(
       new SerializableConfiguration(spark.sessionState.newHadoopConf()))
     val logPath = path.toUri // for serializability
+    var wrapPath = false
 
     loadActions.mapPartitions { actions =>
         val hdpConf = hadoopConf.value.value
-        actions.flatMap {
-          _.unwrap match {
-            case add: AddFile => Some(add.copy(path = canonicalizePath(add.path, hdpConf)).wrap)
-            case rm: RemoveFile => Some(rm.copy(path = canonicalizePath(rm.path, hdpConf)).wrap)
-            case other if other == null => None
-            case other => Some(other.wrap)
-          }
-        }
+        actions.flatMap(canonicalizePath(_, hdpConf, wrapPath))
       }
       .withColumn("file", assertLogBelongsToTable(logPath)(input_file_name()))
       .repartition(getNumPartitions, coalesce($"add.path", $"remove.path"))
@@ -303,6 +297,21 @@ class Snapshot(
 object Snapshot extends DeltaLogging {
 
   private val defaultNumSnapshotPartitions: Int = 50
+
+  private def canonicalizePath(
+      action: SingleAction,
+      hdpConf: Configuration,
+      wrapPath: Boolean): Option[SingleAction] = {
+    action.unwrap match {
+      case add: AddFile =>
+        Some(add.copy(path = canonicalizePath(add.path, hdpConf)).wrap)
+      case rm: RemoveFile =>
+        Some(rm.copy(path = canonicalizePath(rm.path, hdpConf)).wrap)
+      case other if other == null => None
+      case other => Some(other.wrap)
+    }
+  }
+
 
   /** Canonicalize the paths for Actions */
   private[delta] def canonicalizePath(path: String, hadoopConf: Configuration): String = {
