@@ -20,7 +20,7 @@ import scala.collection.mutable.ListBuffer
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.constraints.{Constraints, DeltaInvariantCheckerExec}
+import org.apache.spark.sql.delta.constraints.{Constraint, Constraints, DeltaInvariantCheckerExec}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -66,25 +66,52 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
   }
 
   /**
-   * Normalize the schema of the query, and return the QueryExecution to execute. The output
-   * attributes of the QueryExecution may not match the attributes we return as the output schema.
-   * This is because streaming queries create `IncrementalExecution`, which cannot be further
-   * modified. We can however have the Parquet writer use the physical plan from
+   * Normalize the schema of the query, and return the QueryExecution to execute. If the table has
+   * generated columns and users provide these columns in the output, we will also return
+   * constraints that should be respected. If any constraints are returned, the caller should apply
+   * these constraints when writing data.
+   *
+   * Note: The output attributes of the QueryExecution may not match the attributes we return as the
+   * output schema. This is because streaming queries create `IncrementalExecution`, which cannot be
+   * further modified. We can however have the Parquet writer use the physical plan from
    * `IncrementalExecution` and the output schema provided through the attributes.
    */
   protected def normalizeData(
+      deltaLog: DeltaLog,
       data: Dataset[_],
-      partitionCols: Seq[String]): (QueryExecution, Seq[Attribute]) = {
+      partitionCols: Seq[String]): (QueryExecution, Seq[Attribute], Seq[Constraint]) = {
     val normalizedData = SchemaUtils.normalizeColumnNames(metadata.schema, data)
-    val cleanedData = SchemaUtils.dropNullTypeColumns(normalizedData)
-    val queryExecution = if (cleanedData.schema != normalizedData.schema) {
+    val hasGeneratedColumns = GeneratedColumn.hasGeneratedColumns(metadata.schema)
+    val (dataWithGeneratedColumns, generatedColumnConstraints) =
+      if (hasGeneratedColumns) {
+        GeneratedColumn.addGeneratedColumnsOrReturnConstraints(
+          deltaLog,
+          // We need the original query execution if this is a streaming query, because
+          // `normalizedData` may add a new projection and change its type.
+          data.queryExecution,
+          metadata.schema,
+          normalizedData)
+      } else {
+        (normalizedData, Nil)
+      }
+    val cleanedData = SchemaUtils.dropNullTypeColumns(dataWithGeneratedColumns)
+    val queryExecution = if (cleanedData.schema != dataWithGeneratedColumns.schema) {
+      // This must be batch execution as DeltaSink doesn't accept NullType in micro batch DataFrame.
       // For batch executions, we need to use the latest DataFrame query execution
       cleanedData.queryExecution
+    } else if (hasGeneratedColumns) {
+      dataWithGeneratedColumns.queryExecution
     } else {
-      // For streaming workloads, we need to use the QueryExecution created from StreamExecution
+      assert(
+        normalizedData == dataWithGeneratedColumns,
+        "should not change data when there is no generate column")
+      // Ideally, we should use `normalizedData`. But it may use `QueryExecution` rather than
+      // `IncrementalExecution`. So we use the input `data` and leverage the `nullableOutput`
+      // below to fix the column names.
       data.queryExecution
     }
-    queryExecution -> makeOutputNullable(cleanedData.queryExecution.analyzed.output)
+    val nullableOutput = makeOutputNullable(cleanedData.queryExecution.analyzed.output)
+    (queryExecution, nullableOutput, generatedColumnConstraints)
   }
 
   protected def getPartitioningColumns(
@@ -119,13 +146,14 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     val partitionSchema = metadata.partitionSchema
     val outputPath = deltaLog.dataPath
 
-    val (queryExecution, output) = normalizeData(data, metadata.partitionColumns)
+    val (queryExecution, output, generatedColumnConstraints) =
+      normalizeData(deltaLog, data, metadata.partitionColumns)
     val partitioningColumns =
       getPartitioningColumns(partitionSchema, output, output.length < data.schema.size)
 
     val committer = getCommitter(outputPath)
 
-    val constraints = Constraints.getAll(metadata, spark)
+    val constraints = Constraints.getAll(metadata, spark) ++ generatedColumnConstraints
 
     SQLExecution.withNewExecutionId(queryExecution, Option("deltaTransactionalWrite")) {
       val outputSpec = FileFormatWriter.OutputSpec(

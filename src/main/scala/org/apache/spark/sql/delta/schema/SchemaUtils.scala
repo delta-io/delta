@@ -21,7 +21,8 @@ import scala.collection.Set._
 import scala.collection.mutable
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.DeltaErrors
+import org.apache.spark.sql.delta.{DeltaErrors, GeneratedColumn}
+import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql._
@@ -338,11 +339,33 @@ object SchemaUtils {
       s"Map field $field ${canOrNot(specified)} contain null values in specified schema " +
         s"but ${canOrNot(existing)} in existing schema"
     }
+    def removeGenerationExpressionMetadata(metadata: Metadata): Metadata = {
+      new MetadataBuilder()
+        .withMetadata(metadata)
+        .remove(GENERATION_EXPRESSION_METADATA_KEY)
+        .build()
+    }
     def metadataDifferentMessage(field: String, specified: Metadata, existing: Metadata)
       : String = {
-      s"""Specified metadata for field $field is different from existing schema:
-         |Specified: $specified
-         |Existing:  $existing""".stripMargin
+      val specifiedGenerationExpr = GeneratedColumn.getGenerationExpressionStr(specified)
+      val existingGenerationExpr = GeneratedColumn.getGenerationExpressionStr(existing)
+      var metadataDiffMessage = ""
+      if (specifiedGenerationExpr != existingGenerationExpr) {
+        metadataDiffMessage +=
+          s"""Specified generation expression for field $field is different from existing schema:
+             |Specified: ${specifiedGenerationExpr.getOrElse("")}
+             |Existing:  ${existingGenerationExpr.getOrElse("")}""".stripMargin
+      }
+      val specifiedMetadataWithoutGenerationExpr = removeGenerationExpressionMetadata(specified)
+      val existingMetadataWithoutGenerationExpr = removeGenerationExpressionMetadata(existing)
+      if (specifiedMetadataWithoutGenerationExpr != existingMetadataWithoutGenerationExpr) {
+        if (metadataDiffMessage.nonEmpty) metadataDiffMessage += "\n"
+        metadataDiffMessage +=
+          s"""Specified metadata for field $field is different from existing schema:
+             |Specified: $specifiedMetadataWithoutGenerationExpr
+             |Existing:  $existingMetadataWithoutGenerationExpr""".stripMargin
+      }
+      metadataDiffMessage
     }
     def typeDifferenceMessage(field: String, specified: DataType, existing: DataType)
       : String = {
@@ -1060,5 +1083,9 @@ object SchemaUtils {
     }
 
     SchemaUtils.transformColumns(schema)(checkField)
+  }
+
+  def fieldToColumn(field: StructField): Column = {
+    col(UnresolvedAttribute.quoted(field.name).name)
   }
 }

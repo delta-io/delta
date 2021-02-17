@@ -19,9 +19,11 @@ package org.apache.spark.sql.delta.schema
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
 
+import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.scalatest.GivenWhenThen
 
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
@@ -438,6 +440,56 @@ class SchemaUtilsSuite extends QueryTest
       .add("a", IntegerType, nullable = true, new MetadataBuilder().putString("x", "2").build())
       .add("b", StringType),
     expected = "metadata for field a is different"
+  )
+
+  testReportDifferences("change in generation expression for generated columns")(
+    existing = new StructType()
+      .add("a", IntegerType, nullable = true,
+        new MetadataBuilder()
+          .putString(GENERATION_EXPRESSION_METADATA_KEY, "b + 1")
+          .putString("x", "1").build())
+      .add("b", StringType),
+    specified = new StructType()
+      .add("a", IntegerType, nullable = true, new MetadataBuilder()
+        .putString(GENERATION_EXPRESSION_METADATA_KEY, "1 + b")
+        .putString("x", "1").build())
+      .add("b", StringType),
+    // Regex flags: DOTALL and MULTILINE
+    expected = "(?sm)generation expression for field a is different" +
+      // Not include
+      "(?!.*metadata for field a is different)"
+  )
+
+  testReportDifferences("change in column metadata for generated columns")(
+    existing = new StructType()
+      .add("a", IntegerType, nullable = true,
+        new MetadataBuilder()
+          .putString(GENERATION_EXPRESSION_METADATA_KEY, "b + 1")
+          .putString("x", "1").build())
+      .add("b", StringType),
+    specified = new StructType()
+      .add("a", IntegerType, nullable = true, new MetadataBuilder()
+        .putString(GENERATION_EXPRESSION_METADATA_KEY, "b + 1")
+        .putString("x", "2").build())
+      .add("b", StringType),
+    expected = "metadata for field a is different"
+  )
+
+  testReportDifferences("change in generation expression and metadata for generated columns")(
+    existing = new StructType()
+      .add("a", IntegerType, nullable = true,
+        new MetadataBuilder()
+          .putString(GENERATION_EXPRESSION_METADATA_KEY, "b + 1")
+          .putString("x", "1").build())
+      .add("b", StringType),
+    specified = new StructType()
+      .add("a", IntegerType, nullable = true, new MetadataBuilder()
+        .putString(GENERATION_EXPRESSION_METADATA_KEY, "b + 2")
+        .putString("x", "2").build())
+      .add("b", StringType),
+    // Regex flags: DOTALL and MULTILINE
+    expected = "(?sm)generation expression for field a is different" +
+      ".*metadata for field a is different"
   )
 
   testReportDifferences("change of column type should be reported as a difference")(
@@ -1241,5 +1293,13 @@ class SchemaUtilsSuite extends QueryTest
       // no issues here
       SchemaUtils.checkFieldNames(Seq(s"a${char}b", s"${char}ab", s"ab${char}", char.toString))
     }
+  }
+
+  test("fieldToColumn") {
+    assert(SchemaUtils.fieldToColumn(StructField("a", IntegerType)).expr ==
+      new UnresolvedAttribute("a" :: Nil))
+    // Dot in the column name should be converted correctly
+    assert(SchemaUtils.fieldToColumn(StructField("a.b", IntegerType)).expr ==
+      new UnresolvedAttribute("a.b" :: Nil))
   }
 }

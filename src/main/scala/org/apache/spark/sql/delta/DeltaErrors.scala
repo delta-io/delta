@@ -1057,6 +1057,54 @@ object DeltaErrors
          |Total time spent attempting this commit: $totalCommitAttemptTime ms
        """.stripMargin)
   }
+
+  def generatedColumnsNonDeltaFormatError(): Throwable = {
+    new AnalysisException("Generated columns are only supported by Delta")
+  }
+
+  def generatedColumnsReferToWrongColumns(e: AnalysisException): Throwable = {
+    new AnalysisException(
+      "A generated column cannot use a non-existent column or another generated column",
+      cause = Some(e))
+  }
+
+  def generatedColumnsUDF(expr: Expression): Throwable = {
+    new AnalysisException(
+      s"Found ${expr.sql}. A generated column cannot use a user-defined function")
+  }
+
+  def generatedColumnsNonDeterministicExpression(expr: Expression): Throwable = {
+    new AnalysisException(
+      s"Found ${expr.sql}. A generated column cannot use a non deterministic expression")
+  }
+
+  def generatedColumnsAggregateExpression(expr: Expression): Throwable = {
+    new AnalysisException(
+      s"Found ${expr.sql}. A generated column cannot use an aggregate expression")
+  }
+
+  def generatedColumnsUnsupportedExpression(expr: Expression): Throwable = {
+    new AnalysisException(
+      s"${expr.sql} cannot be used in a generated column")
+  }
+
+  def generatedColumnsTypeMismatch(
+      column: String,
+      columnType: DataType,
+      exprType: DataType): Throwable = {
+    new AnalysisException(
+      s"The expression type of the generated column ${column} is ${exprType.sql}, " +
+        s"but the column type is ${columnType.sql}")
+  }
+
+  def partitionTransformExpressionNotEnoughParameter(
+      exprName: String,
+      numOfExpectedParameters: Int,
+      numOfActualParameters: Int): Throwable = {
+    new AnalysisException(
+      s"'$exprName' should have $numOfExpectedParameters parameter(s). " +
+        s"But found $numOfActualParameters parameter(s)")
+  }
 }
 
 /** The basic class for all Tahoe commit conflict exceptions. */

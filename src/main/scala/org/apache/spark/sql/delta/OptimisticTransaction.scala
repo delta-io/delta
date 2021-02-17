@@ -320,6 +320,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
         )
         if (partitionColCheckIsFatal) throw DeltaErrors.invalidPartitionColumn(e)
     }
+
+    if (GeneratedColumn.hasGeneratedColumns(metadata.schema)) {
+      recordDeltaOperation(deltaLog, "delta.generatedColumns.check") {
+        GeneratedColumn.validateGeneratedColumns(spark, metadata.schema)
+      }
+      recordDeltaEvent(deltaLog, "delta.generatedColumns.definition")
+    }
+
     val needsProtocolUpdate = Protocol.checkProtocolRequirements(spark, metadata, protocol)
     if (needsProtocolUpdate.isDefined) {
       newProtocol = needsProtocolUpdate

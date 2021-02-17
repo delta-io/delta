@@ -22,7 +22,7 @@ import java.util.Locale
 
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, GeneratedColumn}
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -55,7 +55,7 @@ class ProtocolDowngradeException(oldProtocol: Protocol, newProtocol: Protocol)
 object Action {
   /** The maximum version of the protocol that this version of Delta understands. */
   val readerVersion = 1
-  val writerVersion = 3
+  val writerVersion = 4
   val protocolVersion: Protocol = Protocol(readerVersion, writerVersion)
 
   def fromJson(json: String): Action = {
@@ -145,6 +145,11 @@ object Protocol {
     if (Constraints.getCheckConstraints(metadata, spark).nonEmpty) {
       minimumRequired = Protocol(0, minWriterVersion = 3)
       featuresUsed.append("Setting CHECK constraints")
+    }
+
+    if (GeneratedColumn.hasGeneratedColumns(metadata.schema)) {
+      minimumRequired = Protocol(0, minWriterVersion = 4)
+      featuresUsed.append("Using Generated Columns")
     }
 
     minimumRequired -> featuresUsed
