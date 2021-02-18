@@ -341,6 +341,11 @@ class DeltaLog private(
 
     /** Used to link the files present in the table into the query planner. */
     val snapshotToUse = snapshotToUseOpt.getOrElse(snapshot)
+    if (snapshotToUse.version < 0) {
+      // A negative version here means the dataPath is an empty directory. Read query should error
+      // out in this case.
+      throw DeltaErrors.pathNotExistsException(dataPath.toString)
+    }
     val fileIndex = TahoeLogFileIndex(
       spark, this, dataPath, snapshotToUse, partitionFilters, isTimeTravelQuery)
 
