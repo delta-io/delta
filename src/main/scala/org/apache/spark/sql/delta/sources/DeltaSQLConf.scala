@@ -362,6 +362,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_TIME_TRAVEL_STRICT_TIMESTAMP_PARSING =
+    buildConf("timeTravel.parsing.strict")
+      .internal()
+      .doc("Whether to require time travel timestamps to parse to a valid timestamp. If " +
+        "disabled, Delta will revert to the legacy behavior of treating invalid timestamps as " +
+        "equivalent to unix time 0 (1970-01-01 00:00:00).")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_STRICT_CHECK_DELTA_TABLE =
     buildConf("isDeltaTable.strictCheck")
       .internal()

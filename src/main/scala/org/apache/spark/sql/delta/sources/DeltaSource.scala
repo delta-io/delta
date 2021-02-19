@@ -416,7 +416,7 @@ case class DeltaSource(
         version = None,
         creationSource = Some("deltaSource"))
       val tz = spark.sessionState.conf.sessionLocalTimeZone
-      val timestamp = tt.getTimestamp(tz)
+      val timestamp = tt.getTimestamp(spark.sessionState.conf)
       val commit = deltaLog.history.getActiveCommitAtTime(
         timestamp,
         canReturnLastCommit = true,

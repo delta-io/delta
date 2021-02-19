@@ -291,7 +291,7 @@ object DeltaTableUtils extends PredicateHelper
       deltaLog.history.checkVersionExists(userVersion)
       userVersion -> "version"
     } else {
-      val timestamp = tt.getTimestamp(conf.sessionLocalTimeZone)
+      val timestamp = tt.getTimestamp(conf)
       deltaLog.history.getActiveCommitAtTime(timestamp, false).version -> "timestamp"
     }
   }

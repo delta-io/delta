@@ -1207,6 +1207,21 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
         testStartingTimestamp("2020-07-16")
       }.getMessage.contains("The provided timestamp (2020-07-16 00:00:00.0) " +
         "is after the latest version"))
+      assert(intercept[StreamingQueryException] {
+        testStartingTimestamp("i am not a timestamp")
+      }.getMessage.contains("The provided timestamp ('i am not a timestamp') " +
+        "cannot be converted to a valid timestamp"))
+
+      // With non-strict parsing this produces null when casted to a timestamp and then parses
+      // to 1970-01-01 (unix time 0).
+      withSQLConf(DeltaSQLConf.DELTA_TIME_TRAVEL_STRICT_TIMESTAMP_PARSING.key -> "false") {
+        withTempView("startingTimestamp_test") {
+          testStartingTimestamp("i am not a timestamp")
+          checkAnswer(
+            spark.table("startingTimestamp_test"),
+            (0L until 20L).toDF())
+        }
+      }
 
       // Create a checkpoint at version 2 and delete version 0
       disableLogCleanup(tablePath)

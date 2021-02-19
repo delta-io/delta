@@ -47,8 +47,9 @@ case class DeltaTimeTravelSpec(
    * Compute the timestamp to use for time travelling the relation from the given expression for
    * the given time zone.
    */
-  def getTimestamp(timeZone: String): Timestamp = {
+  def getTimestamp(conf: SQLConf): Timestamp = {
     // note @brkyvz (2020-04-13): not great that we need to handle RuntimeReplaceable expressions...
+    val timeZone = conf.sessionLocalTimeZone
     val evaluable = timestamp match {
       case Some(e) => e.transform {
         case rr: RuntimeReplaceable => rr.child
@@ -62,8 +63,12 @@ case class DeltaTimeTravelSpec(
           "Should not ask to get Timestamp for time travel when the timestamp was not available")
       // scalastyle:on throwerror
     }
-    DateTimeUtils.toJavaTimestamp(
-      Cast(evaluable, TimestampType, Option(timeZone)).eval().asInstanceOf[java.lang.Long])
+    val strict = conf.getConf(DeltaSQLConf.DELTA_TIME_TRAVEL_STRICT_TIMESTAMP_PARSING)
+    val castResult = Cast(evaluable, TimestampType, Option(timeZone)).eval()
+    if (strict && castResult == null) {
+      throw DeltaErrors.timestampInvalid(evaluable)
+    }
+    DateTimeUtils.toJavaTimestamp(castResult.asInstanceOf[java.lang.Long])
   }
 }
 

@@ -825,6 +825,11 @@ object DeltaErrors
          """.stripMargin)
   }
 
+  def timestampInvalid(expr: Expression): Throwable = {
+    new AnalysisException(
+      s"The provided timestamp (${expr.sql}) cannot be converted to a valid timestamp.")
+  }
+
   case class TemporallyUnstableInputException(
       userTimestamp: java.sql.Timestamp,
       commitTs: java.sql.Timestamp,

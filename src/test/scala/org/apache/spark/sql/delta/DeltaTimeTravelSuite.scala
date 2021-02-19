@@ -503,6 +503,22 @@ class DeltaTimeTravelSuite extends QueryTest
     }
   }
 
+  test("as of timestamp on invalid timestamp") {
+    withTempDir { dir =>
+      val tblLoc = dir.getCanonicalPath
+      val start = 1540415658000L
+      generateCommits(tblLoc, start, start + 20.minutes)
+
+      val ex = intercept[AnalysisException] {
+        spark.read.format("delta").option("timestampAsOf", "i am not a timestamp")
+          .load(tblLoc).groupBy().count()
+      }
+
+      assert(ex.getMessage.contains(
+        "The provided timestamp ('i am not a timestamp') cannot be converted to a valid timestamp"))
+    }
+  }
+
   test("as of exact timestamp after last commit should fail") {
     withTempDir { dir =>
       val tblLoc = dir.getCanonicalPath
