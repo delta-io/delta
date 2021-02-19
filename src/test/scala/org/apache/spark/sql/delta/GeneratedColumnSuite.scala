@@ -204,7 +204,7 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
       }
     }
     assert(e.getMessage.contains(
-      "CHECK constraint Auto Generated Column (`c2_g` = (`c1` + 10)) violated by row with values"))
+      "CHECK constraint Generated Column (`c2_g` <=> (`c1` + 10)) violated by row with values"))
     Row(1L, 11L, "foo", 20201011, sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
@@ -271,8 +271,7 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
           q.processAllAvailable()
         }
         assert(e.getMessage.contains(
-          "CHECK constraint Auto Generated Column (`c2_g` = (`c1` + 10)) " +
-            "violated by row with values"))
+          "CHECK constraint Generated Column (`c2_g` <=> (`c1` + 10)) violated by row with values"))
         q.stop()
       }
     }
@@ -286,7 +285,7 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
         sql(s"INSERT INTO $table VALUES(1, 12)")
       }
       assert(e.getMessage.contains(
-        "CHECK constraint Auto Generated Column (`id2` = (`id` + 10)) violated by row with values"))
+        "CHECK constraint Generated Column (`id2` <=> (`id` + 10)) violated by row with values"))
     }
   }
 
@@ -369,15 +368,15 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
     assert(parseGenerationExpression(spark, "hours(foo)").sql ==
       "((((year(`foo`) * 1000000L) + (month(`foo`) * 10000L)) + " +
         "(dayofmonth(`foo`) * 100L)) + hour(`foo`))")
-    for (incorrectParameterNumberExpr <- Seq(
+    for (incorrectArgumentNumberExpr <- Seq(
       "days(foo, 1)",
       "years(foo, 1)",
       "months(foo, 1)",
       "hours(foo, 1)"
     )) {
       assert(intercept[AnalysisException] {
-        parseGenerationExpression(spark, incorrectParameterNumberExpr)
-      }.getMessage.contains("should have 1 parameter(s)"))
+        parseGenerationExpression(spark, incorrectArgumentNumberExpr)
+      }.getMessage.contains("should have 1 argument(s)"))
     }
     assert(intercept[AnalysisException] {
       parseGenerationExpression(spark, "bucket(10, foo)")
@@ -409,6 +408,32 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
         sql(s"SELECT * from $table"),
         Row(sqlTimestamp("2020-10-11 12:30:30"), 2020L, 202010L, 20201011L, 2020101112L)
       )
+    }
+  }
+
+  test("the generation expression constraint should support null values") {
+    withTableName("null") { table =>
+      createTable(table, None, "c1 STRING, c2 STRING", Map("c2" -> "CONCAT(c1, 'y')"), Nil)
+      sql(s"INSERT INTO $table VALUES('x', 'xy')")
+      sql(s"INSERT INTO $table VALUES(null, null)")
+      checkAnswer(
+        sql(s"SELECT * from $table"),
+        Row("x", "xy") :: Row(null, null) :: Nil
+      )
+      quietly {
+        val e =
+          intercept[InvariantViolationException](sql(s"INSERT INTO $table VALUES('foo', null)"))
+        assert(e.getMessage.contains(
+          "CHECK constraint Generated Column (`c2` <=> CONCAT(`c1`, 'y')) " +
+            "violated by row with values"))
+      }
+      quietly {
+        val e =
+          intercept[InvariantViolationException](sql(s"INSERT INTO $table VALUES(null, 'foo')"))
+        assert(e.getMessage.contains(
+          "CHECK constraint Generated Column (`c2` <=> CONCAT(`c1`, 'y')) " +
+            "violated by row with values"))
+      }
     }
   }
 }

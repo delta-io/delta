@@ -1102,13 +1102,13 @@ object DeltaErrors
         s"but the column type is ${columnType.sql}")
   }
 
-  def partitionTransformExpressionNotEnoughParameter(
+  def partitionTransformExpressionIncorrectArguments(
       exprName: String,
-      numOfExpectedParameters: Int,
-      numOfActualParameters: Int): Throwable = {
+      numOfExpectedArguments: Int,
+      numOfActualArguments: Int): Throwable = {
     new AnalysisException(
-      s"'$exprName' should have $numOfExpectedParameters parameter(s). " +
-        s"But found $numOfActualParameters parameter(s)")
+      s"'$exprName' should have $numOfExpectedArguments argument(s). " +
+        s"But found $numOfActualArguments argument(s)")
   }
 }
 

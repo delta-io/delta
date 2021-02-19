@@ -161,49 +161,39 @@ object GeneratedColumn extends DeltaLogging {
         if (checkPartitionTransformExpression) {
           import org.apache.spark.sql.catalyst.dsl.expressions._
 
+          // Ensure there is only one argument for the time function (years, months, days, hours)
+          def checkTimeFunctionArguments(funcName: String, arguments: Seq[Expression]): Unit = {
+            if (arguments.length != 1) {
+              throw DeltaErrors.partitionTransformExpressionIncorrectArguments(
+                funcName,
+                numOfExpectedArguments = 1,
+                numOfActualArguments = arguments.length)
+            }
+          }
+
           // Replace the partition transform expressions to normal SQL expressions. We are doing
           // this manually rather than registering them as UDFs because registering them as UDFs
           // may break code not using generated columns (e.g., a user may register their own
           // UDF with the same name). Note: the function name is always case insensitive.
           f.name.funcName.toLowerCase(Locale.ROOT) match {
             case "years" =>
-              if (f.arguments.length != 1) {
-                throw DeltaErrors.partitionTransformExpressionNotEnoughParameter(
-                  "years",
-                  numOfExpectedParameters = 1,
-                  numOfActualParameters = f.arguments.length)
-              }
+              checkTimeFunctionArguments("years", f.arguments)
               // The expression returns the year component of the date/timestamp as an integer. For
               // example, an integer 2021.
               Year(f.arguments(0)).cast(LongType)
             case "months" =>
-              if (f.arguments.length != 1) {
-                throw DeltaErrors.partitionTransformExpressionNotEnoughParameter(
-                  "months",
-                  numOfExpectedParameters = 1,
-                  numOfActualParameters = f.arguments.length)
-              }
+              checkTimeFunctionArguments("months", f.arguments)
               // The expression returns the year and month component of the date/timestamp as an
               // integer. For example, an integer 202102.
               Year(f.arguments(0)) * 100L + Month(f.arguments(0))
             case "days" =>
-              if (f.arguments.length != 1) {
-                throw DeltaErrors.partitionTransformExpressionNotEnoughParameter(
-                  "days",
-                  numOfExpectedParameters = 1,
-                  numOfActualParameters = f.arguments.length)
-              }
+              checkTimeFunctionArguments("days", f.arguments)
               // The expression returns the year, month and day components of the date/timestamp as
               // an integer. For example, an integer 20210212.
               Year(f.arguments(0)) * 10000L + Month(f.arguments(0)) * 100L +
                 DayOfMonth(f.arguments(0))
             case "hours" =>
-              if (f.arguments.length != 1) {
-                throw DeltaErrors.partitionTransformExpressionNotEnoughParameter(
-                  "hours",
-                  numOfExpectedParameters = 1,
-                  numOfActualParameters = f.arguments.length)
-              }
+              checkTimeFunctionArguments("hours", f.arguments)
               // The expression returns the year, month, day and hour components of the
               // date/timestamp as an integer. For example, an integer 2021021205.
               Year(f.arguments(0)) * 1000000L + Month(f.arguments(0)) * 10000L +
@@ -298,8 +288,9 @@ object GeneratedColumn extends DeltaLogging {
           val expr = parseGenerationExpression(df.sparkSession, exprString)
           if (topLevelOutputNames.contains(f.name)) {
             val column = SchemaUtils.fieldToColumn(f)
-            constraints +=
-              Constraints.Check("Auto Generated Column", EqualTo(column.expr, expr))
+            // Add a constraint to make sure the value provided by the user is the same as the value
+            // calculated by the generation expression.
+            constraints += Constraints.Check(s"Generated Column", EqualNullSafe(column.expr, expr))
             column.alias(f.name)
           } else {
             new Column(expr).alias(f.name)
