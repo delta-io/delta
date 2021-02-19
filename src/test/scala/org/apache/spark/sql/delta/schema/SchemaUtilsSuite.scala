@@ -953,6 +953,12 @@ class SchemaUtilsSuite extends QueryTest
     assert(normalizeColumnNames(schema, df).schema.fieldNames === Seq("Def", "ghi", "abc"))
   }
 
+  test("normalize column names - dots in the name") {
+    val df = Seq((1, 2)).toDF("a.b", "c.D")
+    val schema = new StructType().add("a.b", IntegerType).add("c.d", IntegerType)
+    assert(normalizeColumnNames(schema, df).schema.fieldNames === Seq("a.b", "c.d"))
+  }
+
   test("throw error if nested column cases don't match") {
     val df = spark.read.json(Seq("""{"a":1,"b":{"X":1,"y":2}}""").toDS())
     val schema = new StructType()

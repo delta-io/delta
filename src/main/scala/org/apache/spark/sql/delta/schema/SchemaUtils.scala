@@ -243,9 +243,9 @@ object SchemaUtils {
               s"Can't resolve column ${field.name} in ${baseSchema.treeString}")
         }
         if (originalCase != field.name) {
-          functions.col(field.name).as(originalCase)
+          fieldToColumn(field).as(originalCase)
         } else {
-          functions.col(field.name)
+          fieldToColumn(field)
         }
       }
       data.select(aliasExpressions: _*)
