@@ -88,7 +88,9 @@ class DeltaDataSource
     if (deltaLog.snapshot.schema.isEmpty) {
       throw DeltaErrors.schemaNotSetException
     }
-    (shortName(), deltaLog.snapshot.schema)
+    {
+      (shortName(), deltaLog.snapshot.schema)
+    }
   }
 
   override def createSource(

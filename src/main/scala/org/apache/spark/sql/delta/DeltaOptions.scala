@@ -119,6 +119,7 @@ trait DeltaReadOptions extends DeltaOptionParser {
   val failOnDataLoss = options.get(FAIL_ON_DATA_LOSS_OPTION)
     .forall(toBoolean(_, FAIL_ON_DATA_LOSS_OPTION)) // thanks to forall: by default true
 
+
   val excludeRegex: Option[Regex] = try options.get(EXCLUDE_REGEX_OPTION).map(_.r) catch {
     case e: PatternSyntaxException =>
       throw new IllegalArgumentException(
