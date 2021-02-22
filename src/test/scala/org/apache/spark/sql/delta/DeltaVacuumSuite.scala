@@ -280,7 +280,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
         CreateFile("file1.txt", commitToActionLog = true),
         CheckFiles(Seq("file1.txt")),
         ExpectFailure(
-          ExecuteVacuumInScala(deltaTable, Seq(), Some(-2)),
+          ExecuteVacuumInScala(deltaTable, Seq(), Some(false), Some(-2)),
           classOf[IllegalArgumentException],
           Seq("Retention", "less than", "0"))
       )
@@ -385,6 +385,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
   case class ExecuteVacuumInScala(
       deltaTable: io.delta.tables.DeltaTable,
       expectedDf: Seq[String],
+      dryRun: Option[Boolean] = Some(false),
       retentionHours: Option[Double] = None) extends Action
   /** Advance the time. */
   case class AdvanceClock(timeToAdd: Long) extends Action
@@ -477,12 +478,14 @@ trait DeltaVacuumSuiteBase extends QueryTest
         val result = VacuumCommand.gc(spark, deltaLog, dryRun, retention, clock = clock)
         val qualified = expectedDf.map(p => fs.makeQualified(new Path(p)).toString)
         checkDatasetUnorderly(result.as[String], qualified: _*)
-      case ExecuteVacuumInScala(deltaTable, expectedDf, retention) =>
-        Given("*** Garbage collecting Reservoir using Scala")
-        val result = if (retention.isDefined) {
-          deltaTable.vacuum(retention.get)
-        } else {
-          deltaTable.vacuum()
+      case ExecuteVacuumInScala(deltaTable, expectedDf, dryRun, retention) =>
+        val dryRunStr = if (dryRun.getOrElse(false)) "DRY RUN" else ""
+        Given(s"*** Garbage collecting Reservoir using Scala $dryRunStr")
+        val result = (dryRun, retention) match {
+          case (Some(dr), Some(r)) => deltaTable.vacuum(dr, r)
+          case (Some(dr), None) => deltaTable.vacuum(dr)
+          case (None, Some(r)) => deltaTable.vacuum(r)
+          case (None, None) => deltaTable.vacuum()
         }
         if(expectedDf == Seq()) {
           assert(result === spark.emptyDataFrame)
@@ -547,8 +550,23 @@ trait DeltaVacuumSuiteBase extends QueryTest
       CreateFile(notCommittedFile, commitToActionLog = false),
       CheckFiles(Seq(committedFile, notCommittedFile)),
 
+      // Dry run with default retention should return the not committed file but not delete files
+      ExecuteVacuumInScala(
+        deltaTable,
+        expectedDf = Seq(new File(tablePath, notCommittedFile).toString),
+        Some(true)),
+      CheckFiles(Seq(committedFile, notCommittedFile)),
+
+      // Dry run with 0 retention should return the not committed file but not delete files
+      ExecuteVacuumInScala(
+        deltaTable,
+        expectedDf = Seq(new File(tablePath, notCommittedFile).toString),
+        Some(true),
+        Some(0)),
+      CheckFiles(Seq(committedFile, notCommittedFile)),
+
       // Actual run should delete the not committed file and but not delete files
-      ExecuteVacuumInScala(deltaTable, Seq()),
+      ExecuteVacuumInScala(deltaTable, Seq(tablePath)),
       CheckFiles(Seq(committedFile)),
       CheckFiles(Seq(notCommittedFile), exist = false), // file ts older than default retention
 
@@ -557,7 +575,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
       CheckFiles(Seq(committedFile)),
 
       // Vacuum with 0 retention should actually delete the file.
-      ExecuteVacuumInScala(deltaTable, Seq(), Some(0)),
+      ExecuteVacuumInScala(deltaTable, Seq(tablePath), Some(false), Some(0)),
       CheckFiles(Seq(committedFile), exist = false))
   }
 

@@ -66,9 +66,9 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
 
   protected def executeVacuum(
       deltaLog: DeltaLog,
+      dryRun: Boolean,
       retentionHours: Option[Double]): DataFrame = {
-    VacuumCommand.gc(sparkSession, deltaLog, false, retentionHours)
-    sparkSession.emptyDataFrame
+    VacuumCommand.gc(sparkSession, deltaLog, dryRun, retentionHours)
   }
 
   protected def toStrColumnMap(map: Map[String, String]): Map[String, Column] = {
