@@ -101,8 +101,45 @@ class DeltaTable private[tables](
    * :: Evolving ::
    *
    * Recursively delete files and directories in the table that are not needed by the table for
-   * maintaining older versions up to the given retention threshold. This method will return an
-   * empty DataFrame on successful completion.
+   * maintaining older versions up to the given retention threshold. This method will return a
+   * DataFrame with a single column `path` listing the deleted files and directories.
+   *
+   * @param retentionHours The retention threshold in hours. Files required by the table for
+   *                       reading versions earlier than this will be preserved and the
+   *                       rest of them will be deleted.
+   * @param dryRun         If set to true, the deletion will not be executed.
+   *
+   * @since 0.9.0
+   */
+
+  def vacuum(dryRun: Boolean, retentionHours: Double): DataFrame = {
+    executeVacuum(deltaLog, dryRun, Some(retentionHours))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Recursively delete files and directories in the table that are not needed by the table for
+   * maintaining older versions up to the given retention threshold. This method will return a
+   * DataFrame with a single column `path` listing the deleted files and directories.
+   *
+   * @param dryRun         If set to true, the deletion will not be executed.
+   *
+   * note: This will use the default retention period of 7 days.
+   *
+   * @since 0.9.0
+   */
+
+  def vacuum(dryRun: Boolean): DataFrame = {
+    executeVacuum(deltaLog, dryRun, None)
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Recursively delete files and directories in the table that are not needed by the table for
+   * maintaining older versions up to the given retention threshold. This method will return a
+   * DataFrame with a single column `path` listing the deleted files and directories.
    *
    * @param retentionHours The retention threshold in hours. Files required by the table for
    *                       reading versions earlier than this will be preserved and the
@@ -111,15 +148,15 @@ class DeltaTable private[tables](
    */
   @Evolving
   def vacuum(retentionHours: Double): DataFrame = {
-    executeVacuum(deltaLog, Some(retentionHours))
+    executeVacuum(deltaLog, false, Some(retentionHours))
   }
 
   /**
    * :: Evolving ::
    *
    * Recursively delete files and directories in the table that are not needed by the table for
-   * maintaining older versions up to the given retention threshold. This method will return an
-   * empty DataFrame on successful completion.
+   * maintaining older versions up to the given retention threshold. This method will return a
+   * DataFrame with a single column `path` listing the deleted files and directories.
    *
    * note: This will use the default retention period of 7 days.
    *
@@ -127,7 +164,7 @@ class DeltaTable private[tables](
    */
   @Evolving
   def vacuum(): DataFrame = {
-    executeVacuum(deltaLog, None)
+    executeVacuum(deltaLog, false, None)
   }
 
   /**
