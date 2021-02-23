@@ -16,15 +16,15 @@
 
 package org.apache.spark.sql.delta.schema
 
+// scalastyle:off import.ordering.noEmptyLine
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.constraints.Constraints
 
-import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 
 /** Thrown when the given data doesn't match the rules defined on the table. */
-case class InvariantViolationException(msg: String) extends IllegalArgumentException(msg)
+case class InvariantViolationException(message: String) extends RuntimeException(message)
 
 object InvariantViolationException {
   def apply(constraint: Constraints.NotNull): InvariantViolationException = {
