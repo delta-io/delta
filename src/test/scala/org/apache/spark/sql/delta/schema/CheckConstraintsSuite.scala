@@ -23,8 +23,6 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
-import org.apache.spark.TaskFailedReason
-import org.apache.spark.scheduler.{SparkListener, SparkListenerTaskEnd}
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
@@ -33,7 +31,6 @@ import org.apache.spark.sql.types.{ArrayType, IntegerType, MapType, StringType, 
 class CheckConstraintsSuite extends QueryTest
     with SharedSparkSession    with DeltaSQLCommandTest
     with SQLTestUtils {
-
 
   import testImplicits._
 
