@@ -90,8 +90,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
     assert(action2.json === json2.replaceAll("\\s", ""))
   }
 
-  // SC-64953: re-enable the test case
-  ignore("removefile") {
+
+  test("removefile") {
     val removeJson = RemoveFile("a", Some(2L)).json
     assert(removeJson.contains(""""deletionTimestamp":2"""))
     assert(!removeJson.contains("""delTimestamp"""))
