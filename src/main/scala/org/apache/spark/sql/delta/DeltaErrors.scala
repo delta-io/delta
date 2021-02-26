@@ -383,6 +383,16 @@ object DeltaErrors
     new AnalysisException(s"Unknown configuration was specified: $confKey")
   }
 
+  def cdcNotAllowedInThisVersion(): Throwable = {
+    new AnalysisException("Configuration delta.enableChangeDataCapture cannot be set. Change " +
+      "data capture from Delta is not yet available.")
+  }
+
+  def cdcWriteNotAllowedInThisVersion(): Throwable = {
+    new AnalysisException("Cannot write to table with delta.enableChangeDataCapture set. Change " +
+      "data capture from Delta is not yet available.")
+  }
+
   def useDeltaOnOtherFormatPathException(
       operation: String, path: String, spark: SparkSession): Throwable = {
     new AnalysisException(

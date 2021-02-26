@@ -416,6 +416,16 @@ trait DeltaConfigsBase extends DeltaLogging {
     v => Option(v).map(_.toBoolean),
     _ => true,
     "needs to be a boolean.")
+
+  /**
+   * Enable change data capture output. Not implemented.
+   */
+  val CHANGE_DATA_CAPTURE = buildConfig[Boolean](
+    "enableChangeDataCapture",
+    "false",
+    _.toBoolean,
+    _ => true,
+    "needs to be a boolean.")
 }
 
 object DeltaConfigs extends DeltaConfigsBase

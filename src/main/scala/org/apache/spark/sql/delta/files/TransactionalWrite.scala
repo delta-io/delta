@@ -140,6 +140,10 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
    * actions to append these files to the reservoir.
    */
   def writeFiles(data: Dataset[_]): Seq[FileAction] = {
+    if (DeltaConfigs.CHANGE_DATA_CAPTURE.fromMetaData(metadata)) {
+      throw DeltaErrors.cdcWriteNotAllowedInThisVersion()
+    }
+
     hasWritten = true
 
     val spark = data.sparkSession

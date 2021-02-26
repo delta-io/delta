@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.FileNames.deltaFile
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.SparkException
@@ -1187,6 +1188,38 @@ class DeltaSuite extends QueryTest
       t.start
       t.join
       assert(spark.conf.get(DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION) === Some(1))
+    }
+  }
+
+  test("change data capture not implemented") {
+    withTable("tbl") {
+      sql("CREATE TABLE tbl(id INT) USING DELTA")
+      val ex = intercept[AnalysisException] {
+        sql(s"ALTER TABLE tbl SET TBLPROPERTIES (${DeltaConfigs.CHANGE_DATA_CAPTURE.key} = true)")
+      }
+
+      assert(ex.getMessage.contains("Configuration delta.enableChangeDataCapture cannot be set"))
+    }
+  }
+
+  test("change data capture write not implemented") {
+    withTempDir { dir =>
+      val path = dir.getAbsolutePath
+      spark.range(10).write.format("delta").save(path)
+
+      // Side channel since the config can't normally be set.
+      val log = DeltaLog.forTable(spark, path)
+      log.store.write(
+        deltaFile(log.logPath, 1),
+        Iterator(log.snapshot.metadata.copy(
+          configuration = Map(DeltaConfigs.CHANGE_DATA_CAPTURE.key -> "true")).json))
+      log.update()
+
+      val ex = intercept[AnalysisException] {
+        spark.range(10).write.mode("append").format("delta").save(path)
+      }
+
+      assert(ex.getMessage.contains("Cannot write to table with delta.enableChangeDataCapture set"))
     }
   }
 
