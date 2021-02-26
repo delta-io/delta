@@ -26,8 +26,6 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, Dataset, Encoder, SparkSession}
-import org.apache.spark.sql.catalyst.FunctionIdentifier
-import org.apache.spark.sql.catalyst.analysis.{NoSuchFunctionException, UnresolvedFunction}
 import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
@@ -35,7 +33,7 @@ import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.execution.QueryExecution
 import org.apache.spark.sql.execution.streaming.IncrementalExecution
-import org.apache.spark.sql.types.{LongType, Metadata => FieldMetadata, MetadataBuilder, StructField, StructType}
+import org.apache.spark.sql.types.{Metadata => FieldMetadata, MetadataBuilder, StructField, StructType}
 
 /**
  * Provide utility methods to implement Generated Columns for Delta. Users can use the following
@@ -109,108 +107,7 @@ object GeneratedColumn extends DeltaLogging {
 
   /** Parse a generation expression string and convert it to an [[Expression]] object. */
   def parseGenerationExpression(spark: SparkSession, exprString: String): Expression = {
-    val parsedExpr = spark.sessionState.sqlParser.parseExpression(exprString)
-    replacePartitionTransformExprWithStandardExpr(spark, parsedExpr)
-  }
-
-  /**
-   * As partition transform expressions are not built-in functions and cannot be used in a regular
-   * SQL expression, we need to replace them with alternative SQL standard expression.
-   */
-  private def replacePartitionTransformExprWithStandardExpr(
-      spark: SparkSession,
-      expr: Expression): Expression = {
-    val conf = spark.sessionState.conf
-    val catalog = spark.sessionState.catalog
-
-    // This function is copied from Analyzer.LookupFunctions.normalizeFuncName
-    def normalizeFuncName(name: FunctionIdentifier): FunctionIdentifier = {
-      val funcName = if (conf.caseSensitiveAnalysis) {
-        name.funcName
-      } else {
-        name.funcName.toLowerCase(Locale.ROOT)
-      }
-
-      val databaseName = name.database match {
-        case Some(a) => formatDatabaseName(a)
-        case None => catalog.getCurrentDatabase
-      }
-
-      FunctionIdentifier(funcName, Some(databaseName))
-    }
-
-    // This function is copied from Analyzer.LookupFunctions.normalizeFuncName
-    def formatDatabaseName(name: String): String = {
-      if (conf.caseSensitiveAnalysis) name else name.toLowerCase(Locale.ROOT)
-    }
-
-    // The following transform logic is similar to `Analyzer.LookupFunctions` except we need to
-    // recognize partition transform expressions and convert them to normal SQL expressions.
-    val externalFunctionNameSet = new mutable.HashSet[FunctionIdentifier]()
-    expr.transform {
-      case f: UnresolvedFunction
-        if externalFunctionNameSet.contains(normalizeFuncName(f.name)) => f
-      case f: UnresolvedFunction if catalog.isRegisteredFunction(f.name) => f
-      case f: UnresolvedFunction if catalog.isPersistentFunction(f.name) =>
-        externalFunctionNameSet.add(normalizeFuncName(f.name))
-        f
-      case f: UnresolvedFunction =>
-        val checkPartitionTransformExpression =
-          f.name.database.isEmpty
-
-        if (checkPartitionTransformExpression) {
-          import org.apache.spark.sql.catalyst.dsl.expressions._
-
-          // Ensure there is only one argument for the time function (years, months, days, hours)
-          def checkTimeFunctionArguments(funcName: String, arguments: Seq[Expression]): Unit = {
-            if (arguments.length != 1) {
-              throw DeltaErrors.partitionTransformExpressionIncorrectArguments(
-                funcName,
-                numOfExpectedArguments = 1,
-                numOfActualArguments = arguments.length)
-            }
-          }
-
-          // Replace the partition transform expressions to normal SQL expressions. We are doing
-          // this manually rather than registering them as UDFs because registering them as UDFs
-          // may break code not using generated columns (e.g., a user may register their own
-          // UDF with the same name). Note: the function name is always case insensitive.
-          f.name.funcName.toLowerCase(Locale.ROOT) match {
-            case "years" =>
-              checkTimeFunctionArguments("years", f.arguments)
-              // The expression returns the year component of the date/timestamp as an integer. For
-              // example, an integer 2021.
-              Year(f.arguments(0)).cast(LongType)
-            case "months" =>
-              checkTimeFunctionArguments("months", f.arguments)
-              // The expression returns the year and month component of the date/timestamp as an
-              // integer. For example, an integer 202102.
-              Year(f.arguments(0)) * 100L + Month(f.arguments(0))
-            case "days" =>
-              checkTimeFunctionArguments("days", f.arguments)
-              // The expression returns the year, month and day components of the date/timestamp as
-              // an integer. For example, an integer 20210212.
-              Year(f.arguments(0)) * 10000L + Month(f.arguments(0)) * 100L +
-                DayOfMonth(f.arguments(0))
-            case "hours" =>
-              checkTimeFunctionArguments("hours", f.arguments)
-              // The expression returns the year, month, day and hour components of the
-              // date/timestamp as an integer. For example, an integer 2021021205.
-              Year(f.arguments(0)) * 1000000L + Month(f.arguments(0)) * 10000L +
-                DayOfMonth(f.arguments(0)) * 100L + Hour(f.arguments(0))
-            case "bucket" =>
-              throw DeltaErrors.operationNotSupportedException("bucket")
-            case _ =>
-              throw new NoSuchFunctionException(
-                f.name.database.getOrElse(catalog.getCurrentDatabase),
-                f.name.funcName)
-          }
-        } else {
-          throw new NoSuchFunctionException(
-            f.name.database.getOrElse(catalog.getCurrentDatabase),
-            f.name.funcName)
-        }
-    }
+    spark.sessionState.sqlParser.parseExpression(exprString)
   }
 
   /**

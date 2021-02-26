@@ -65,10 +65,10 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
 
   // Define the information for a default test table used by many tests.
   protected val defaultTestTableSchema =
-    "c1 bigint, c2_g bigint, c3_p string, c4_g_p bigint, c5 timestamp, c6 int, c7_g_p int, c8 date"
+    "c1 bigint, c2_g bigint, c3_p string, c4_g_p date, c5 timestamp, c6 int, c7_g_p int, c8 date"
   protected val defaultTestTableGeneratedColumns = Map(
     "c2_g" -> "c1 + 10",
-    "c4_g_p" -> "days(c5)",
+    "c4_g_p" -> "cast(c5 as date)",
     "c7_g_p" -> "c6 * 10"
   )
   protected val defaultTestTablePartitionColumns = "c3_p, c4_g_p, c7_g_p".split(", ").toList
@@ -122,7 +122,7 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
       .format("delta")
       .mode("append")
       .save(path)
-    Row(1L, 11L, "foo", 20201011, sqlTimestamp("2020-10-11 12:30:30"),
+    Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
 
@@ -136,35 +136,35 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
       .format("delta")
       .mode("append")
       .save(path)
-    Row(1L, 11L, "foo", 20201011, sqlTimestamp("2020-10-11 12:30:30"),
+    Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
 
   testTableUpdate("insert_into_values_provide_all_columns") { (table, path) =>
     sql(s"INSERT INTO $table VALUES" +
-      s"(1, 11, 'foo', 20201011, '2020-10-11 12:30:30', 100, 1000, '2020-11-12')")
-    Row(1L, 11L, "foo", 20201011, sqlTimestamp("2020-10-11 12:30:30"),
+      s"(1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12')")
+    Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
 
   testTableUpdate("insert_into_select_provide_all_columns") { (table, path) =>
     sql(s"INSERT INTO $table SELECT " +
-      s"1, 11, 'foo', 20201011, '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
-    Row(1L, 11L, "foo", 20201011, sqlTimestamp("2020-10-11 12:30:30"),
+      s"1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
+    Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
 
   testTableUpdate("insert_overwrite_values_provide_all_columns") { (table, path) =>
     sql(s"INSERT OVERWRITE TABLE $table VALUES" +
-      s"(1, 11, 'foo', 20201011, '2020-10-11 12:30:30', 100, 1000, '2020-11-12')")
-    Row(1L, 11L, "foo", 20201011, sqlTimestamp("2020-10-11 12:30:30"),
+      s"(1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12')")
+    Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
 
   testTableUpdate("insert_overwrite_select_provide_all_columns") { (table, path) =>
     sql(s"INSERT OVERWRITE TABLE $table SELECT " +
-      s"1, 11, 'foo', 20201011, '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
-    Row(1L, 11L, "foo", 20201011, sqlTimestamp("2020-10-11 12:30:30"),
+      s"1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
+    Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
 
@@ -183,21 +183,21 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
     // Make sure we create only one file so that we will trigger file rewriting.
     assert(DeltaLog.forTable(spark, path).snapshot.allFiles.count == 1)
     sql(s"DELETE FROM $table WHERE c1 = 2")
-    Row(1L, 11L, "foo", 20201011, sqlTimestamp("2020-10-11 12:30:30"),
+    Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
 
   testTableUpdate("update_generated_column_with_correct_value") { (table, path) =>
     sql(s"INSERT INTO $table SELECT " +
-      s"1, 11, 'foo', 20201011, '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
+      s"1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
     sql(s"UPDATE $table SET c2_g = 11 WHERE c1 = 1")
-    Row(1, 11, "foo", 20201011, sqlTimestamp("2020-10-11 12:30:30"),
+    Row(1, 11, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
 
   testTableUpdate("update_generated_column_with_incorrect_value") { (table, path) =>
     sql(s"INSERT INTO $table SELECT " +
-      s"1, 11, 'foo', 20201011, '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
+      s"1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
     val e = intercept[InvariantViolationException] {
       quietly {
         sql(s"UPDATE $table SET c2_g = 12 WHERE c1 = 1")
@@ -205,7 +205,7 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
     }
     assert(e.getMessage.contains(
       "CHECK constraint Generated Column (`c2_g` <=> (`c1` + 10)) violated by row with values"))
-    Row(1L, 11L, "foo", 20201011, sqlTimestamp("2020-10-11 12:30:30"),
+    Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
 
@@ -226,7 +226,7 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
       q.processAllAvailable()
       q.stop()
     }
-    Row(1L, 11L, "foo", 20201011, sqlTimestamp("2020-10-11 12:30:30"),
+    Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
 
@@ -247,7 +247,7 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
       q.processAllAvailable()
       q.stop()
     }
-    Row(1L, 11L, "foo", 20201011, sqlTimestamp("2020-10-11 12:30:30"),
+    Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
 
@@ -358,43 +358,15 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
       "but the column type is INT"))
   }
 
-  test("replace partition transform expressions") {
-    assert(parseGenerationExpression(spark, "years(foo)").sql ==
-      "CAST(year(`foo`) AS BIGINT)")
-    assert(parseGenerationExpression(spark, "months(foo)").sql ==
-    "((year(`foo`) * 100L) + month(`foo`))")
-    assert(parseGenerationExpression(spark, "days(foo)").sql ==
-      "(((year(`foo`) * 10000L) + (month(`foo`) * 100L)) + dayofmonth(`foo`))")
-    assert(parseGenerationExpression(spark, "hours(foo)").sql ==
-      "((((year(`foo`) * 1000000L) + (month(`foo`) * 10000L)) + " +
-        "(dayofmonth(`foo`) * 100L)) + hour(`foo`))")
-    for (incorrectArgumentNumberExpr <- Seq(
-      "days(foo, 1)",
-      "years(foo, 1)",
-      "months(foo, 1)",
-      "hours(foo, 1)"
-    )) {
-      assert(intercept[AnalysisException] {
-        parseGenerationExpression(spark, incorrectArgumentNumberExpr)
-      }.getMessage.contains("should have 1 argument(s)"))
-    }
-    assert(intercept[AnalysisException] {
-      parseGenerationExpression(spark, "bucket(10, foo)")
-    }.getMessage.contains("`bucket` is not supported for Delta tables"))
-    assert(intercept[AnalysisException] {
-      parseGenerationExpression(spark, "undefined_function(foo)")
-    }.getMessage.contains("Undefined function"))
-  }
-
   test("test partition transform expressions end to end") {
     withTableName("partition_transform_expressions") { table =>
       createTable(table, None,
-        "time TIMESTAMP, year BIGINT, month BIGINT, day BIGINT, hour BIGINT",
+        "time TIMESTAMP, year DATE, month DATE, day DATE, hour TIMESTAMP",
         Map(
-          "year" -> "years(time)",
-          "month" -> "months(time)",
-          "day" -> "days(time)",
-          "hour" -> "hours(time)"
+          "year" -> "make_date(year(time), 1, 1)",
+          "month" -> "make_date(year(time), month(time), 1)",
+          "day" -> "make_date(year(time), month(time), day(time))",
+          "hour" -> "make_timestamp(year(time), month(time), day(time), hour(time), 0, 0)"
         ),
         partitionColumns = Nil)
       Seq("2020-10-11 12:30:30")
@@ -406,7 +378,8 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
         saveAsTable(table)
       checkAnswer(
         sql(s"SELECT * from $table"),
-        Row(sqlTimestamp("2020-10-11 12:30:30"), 2020L, 202010L, 20201011L, 2020101112L)
+        Row(sqlTimestamp("2020-10-11 12:30:30"), sqlDate("2020-01-01"), sqlDate("2020-10-01"),
+          sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:00:00"))
       )
     }
   }
