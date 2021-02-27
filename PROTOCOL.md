@@ -504,6 +504,7 @@ short| 2-byte signed integer numbers. Range: -32768 to 32767
 byte| 1-byte signed integer number. Range: -128 to 127
 float| 4-byte single-precision floating-point numbers
 double| 8-byte double-precision floating-point numbers
+decimal| signed decimal number with fixed precision (maximum number of digits) and scale (number of digits on right side of dot). The precision and scale can be up to 38.
 boolean| `true` or `false`
 binary| A sequence of binary data.
 date| A calendar date, represented as a year-month-day triple without a timezone.
