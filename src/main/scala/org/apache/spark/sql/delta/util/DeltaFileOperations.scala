@@ -204,15 +204,16 @@ object DeltaFileOperations extends DeltaLogging {
   }
 
   /**
-   * Lists the directory locally using LogStore without launching a spark job.
+   * Lists the directory locally using LogStore without launching a spark job. Returns an iterator
+   * from LogStore.
    */
   def localListDirs(
       spark: SparkSession,
       dirs: Seq[String],
       recursive: Boolean = true,
-      fileFilter: String => Boolean = defaultHiddenFileFilter): Seq[SerializableFileStatus] = {
+      fileFilter: String => Boolean = defaultHiddenFileFilter): Iterator[SerializableFileStatus] = {
     val logStore = LogStore(SparkEnv.get.conf, spark.sessionState.newHadoopConf)
-    listUsingLogStore(logStore, dirs.toIterator, recurse = recursive, fileFilter).toSeq
+    listUsingLogStore(logStore, dirs.toIterator, recurse = recursive, fileFilter)
   }
 
   /**
