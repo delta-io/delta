@@ -148,7 +148,7 @@ This section lists the space of available actions as well as their schema.
 
 ### Change Metadata
 The `metaData` action changes the current metadata of the table.
-The first version of a table must contain a `metaData` action.
+The first version of a table must contain a `metaData` action and this first `metaData` action must include the `schemaString` property.
 Subsequent` metaData` actions completely overwrite the current metadata of the table.
 
 There can be at most one metadata action in a given version of the table.
