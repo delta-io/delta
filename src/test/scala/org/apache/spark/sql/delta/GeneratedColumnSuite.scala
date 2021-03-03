@@ -56,12 +56,38 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
     }
   }
 
+  /** Manually generate table metadata to create a table with generated columns */
   protected def createTable(
       tableName: String,
       path: Option[String],
-      schema: String,
+      schemaString: String,
       generatedColumns: Map[String, String],
-      partitionColumns: Seq[String]): Unit
+      partitionColumns: Seq[String]): Unit = {
+    def updateTableMetadataWithGeneratedColumn(deltaLog: DeltaLog): Unit = {
+      val txn = deltaLog.startTransaction()
+      val schema = StructType.fromDDL(schemaString)
+      val finalSchema = StructType(schema.map { field =>
+        generatedColumns.get(field.name).map { expr =>
+          GeneratedColumn.withGenerationExpression(field, expr)
+        }.getOrElse(field)
+      })
+      val metadata = Metadata(schemaString = finalSchema.json, partitionColumns = partitionColumns)
+      txn.updateMetadataForNewTable(metadata)
+      txn.commit(Nil, ManualUpdate)
+    }
+
+    if (path.isEmpty) {
+      sql(s"CREATE TABLE $tableName(foo INT) USING delta")
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      updateTableMetadataWithGeneratedColumn(deltaLog)
+      spark.catalog.refreshTable(tableName)
+    } else {
+      sql(s"CREATE TABLE $tableName(foo INT) USING delta LOCATION '${path.get}'")
+      val deltaLog = DeltaLog.forTable(spark, path.get)
+      updateTableMetadataWithGeneratedColumn(deltaLog)
+      spark.catalog.refreshTable(tableName)
+    }
+  }
 
   // Define the information for a default test table used by many tests.
   protected val defaultTestTableSchema =
@@ -411,37 +437,4 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
   }
 }
 
-class GeneratedColumnSuite extends GeneratedColumnSuiteBase {
-  /** Manually generate table metadata to create a table with generated columns */
-  override def createTable(
-      tableName: String,
-      path: Option[String],
-      schemaString: String,
-      generatedColumns: Map[String, String],
-      partitionColumns: Seq[String]): Unit = {
-    def updateTableMetadataWithGeneratedColumn(deltaLog: DeltaLog): Unit = {
-      val txn = deltaLog.startTransaction()
-      val schema = StructType.fromDDL(schemaString)
-      val finalSchema = StructType(schema.map { field =>
-        generatedColumns.get(field.name).map { expr =>
-          GeneratedColumn.withGenerationExpression(field, expr)
-        }.getOrElse(field)
-      })
-      val metadata = Metadata(schemaString = finalSchema.json, partitionColumns = partitionColumns)
-      txn.updateMetadataForNewTable(metadata)
-      txn.commit(Nil, ManualUpdate)
-    }
-
-    if (path.isEmpty) {
-      sql(s"CREATE TABLE $tableName(foo INT) USING delta")
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
-      updateTableMetadataWithGeneratedColumn(deltaLog)
-      spark.catalog.refreshTable(tableName)
-    } else {
-      sql(s"CREATE TABLE $tableName(foo INT) USING delta LOCATION '${path.get}'")
-      val deltaLog = DeltaLog.forTable(spark, path.get)
-      updateTableMetadataWithGeneratedColumn(deltaLog)
-      spark.catalog.refreshTable(tableName)
-    }
-  }
-}
+class GeneratedColumnSuite extends GeneratedColumnSuiteBase
