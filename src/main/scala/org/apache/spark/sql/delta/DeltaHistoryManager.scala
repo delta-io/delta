@@ -265,6 +265,13 @@ object DeltaHistoryManager extends DeltaLogging {
   }
 
   /**
+   * When calling getCommits, the initial few timestamp values may be wrong because they are not
+   * properly monotonized. Callers should pass a start value at least
+   * this far behind the first timestamp they care about if they need correct values.
+   */
+  private[delta] val POTENTIALLY_UNMONOTONIZED_TIMESTAMPS = 100
+
+  /**
    * Returns the commit version and timestamps of all commits in `[start, end)`. If `end` is not
    * specified, will return all commits that exist after `start`. Will guarantee that the commits
    * returned will have both monotonically increasing versions as well as timestamps.
