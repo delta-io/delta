@@ -36,6 +36,7 @@ import org.apache.spark.sql.catalyst.plans.logical.Filter
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.streaming.MemoryStream
+import org.apache.spark.sql.functions.struct
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.StructType
@@ -1251,5 +1252,28 @@ class DeltaSuite extends QueryTest
       spark.read.format("delta").load(tempDir),
       Seq.fill(10)(Row(null))
     )
+  }
+
+  test("replaceWhere should support backtick") {
+    val table = "replace_where_backtick"
+    withTable(table) {
+      // The STRUCT column is added to prevent us from introducing any ambiguity in future
+      sql(s"CREATE TABLE $table(`a.b` STRING, `c.d` STRING, a STRUCT<b:STRING>)" +
+        s"USING delta PARTITIONED BY (`a.b`)")
+      Seq(("a", "b", "c"))
+        .toDF("a.b", "c.d", "ab")
+        .withColumn("a", struct($"ab".alias("b")))
+        .drop("ab")
+        .write
+        .format("delta")
+        // "replaceWhere" should support backtick and remove it correctly. Technically, "a.b" is not
+        // correct, but some users may already use it, so we keep supporting both. This is not
+        // ambiguous since "replaceWhere" only supports partition columns and it doesn't support
+        // struct type or map type.
+        .option("replaceWhere", "`a.b` = 'a' AND a.b = 'a'")
+        .mode("overwrite")
+        .saveAsTable(table)
+      checkAnswer(sql(s"SELECT `a.b`, `c.d`, a.b from $table"), Row("a", "b", "c") :: Nil)
+    }
   }
 }

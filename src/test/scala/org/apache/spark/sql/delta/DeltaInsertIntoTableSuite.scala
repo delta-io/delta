@@ -817,6 +817,7 @@ trait InsertIntoSQLOnlyTests
           (4, "keep", 2)).toDF("id", "data", "p"))
       }
     }
+
   }
 
   // END Apache Spark tests
