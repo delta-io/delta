@@ -16,20 +16,20 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.commons.io.FileUtils
+
 import java.io.{File, FileNotFoundException}
-
 import scala.language.postfixOps
-
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.test.{SQLTestUtils, SharedSparkSession}
 import org.apache.spark.util.Utils
 
 // scalastyle:off: removeFile
@@ -460,6 +460,42 @@ class DeltaLogSuite extends QueryTest
         spark.read.format("delta").load(path),
         spark.range(30).toDF()
       )
+    }
+  }
+
+  test("log cleanup in dry run mode") {
+    withTempDir { tempDir =>
+      val basePath = tempDir.getCanonicalPath
+      val deltaTable = DeltaTableV2(spark, new Path(basePath))
+      val deltaLog = deltaTable.deltaLog
+
+      // initialize the table if doesn't exist with commit 0
+      if (!DeltaTableUtils.isDeltaTable(spark, new Path(basePath))) {
+        deltaLog.startTransaction().commitManually()
+      }
+
+      /*
+       At least 2 version and 1 checkpoint are required to make expired log detection work.
+       maxVersion is computed as latestCheckpoint.version - 1
+       */
+      deltaLog.startTransaction().commitManually()
+      deltaLog.checkpoint()
+
+      // make the first log file old
+      val firstCommitLog = new Path(
+        deltaLog.logPath,
+        "00000000000000000000.json"
+      )
+
+      // Make the first log old
+      FileUtils.getFile(firstCommitLog.toUri.getPath).setLastModified(0L)
+
+      // Checks
+      val logToDelete = deltaLog.doLogCleanup(dryRun = true)
+      assert(logToDelete.count() == 1)
+
+      val deletedLog = logToDelete.head().get(0)
+      assert(deletedLog == firstCommitLog.toString)
     }
   }
 }
