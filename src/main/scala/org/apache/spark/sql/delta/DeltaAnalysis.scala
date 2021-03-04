@@ -102,7 +102,7 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
 
     case d @ DeleteFromTable(table, condition) if d.childrenResolved =>
       // rewrites Delta from V2 to V1
-      val newTarget = table.transformUp { case DeltaRelation(lr) => lr }
+      val newTarget = stripTempViewWrapper(table).transformUp { case DeltaRelation(lr) => lr }
       val indices = newTarget.collect {
         case DeltaFullTable(index) => index
       }
@@ -121,7 +121,7 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
       val (cols, expressions) = assignments.map(a =>
         a.key.asInstanceOf[NamedExpression] -> a.value).unzip
       // rewrites Delta from V2 to V1
-      val newTable = table.transformUp { case DeltaRelation(lr) => lr }
+      val newTable = stripTempViewWrapper(table).transformUp { case DeltaRelation(lr) => lr }
         newTable.collectLeaves().headOption match {
           case Some(DeltaFullTable(index)) =>
           case o =>
@@ -151,7 +151,7 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
             s"WHEN NOT MATCHED clause in MERGE INTO.")
       }
       // rewrites Delta from V2 to V1
-      val newTarget = target.transformUp { case DeltaRelation(lr) => lr }
+      val newTarget = stripTempViewWrapper(target).transformUp { case DeltaRelation(lr) => lr }
       // Even if we're merging into a non-Delta target, we will catch it later and throw an
       // exception.
       val deltaMerge =
@@ -289,6 +289,10 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
     }
     Alias(CreateStruct(fields), parent.name)(
       parent.exprId, parent.qualifier, Option(parent.metadata))
+  }
+
+  private def stripTempViewWrapper(plan: LogicalPlan): LogicalPlan = {
+    plan
   }
 }
 

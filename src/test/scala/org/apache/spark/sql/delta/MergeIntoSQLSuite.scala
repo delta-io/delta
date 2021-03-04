@@ -310,4 +310,50 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
         e.getMessage.contains("UPDATE and DELETE can appear at most once in MATCHED clauses"))
     }
   }
+
+  test("merge into a dataset temp view") {
+    withTable("tab") {
+      withTempView("v") {
+        withTempView("src") {
+          Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+          spark.table("tab").as("name").createTempView("v")
+          sql("CREATE TEMP VIEW src AS SELECT * FROM VALUES (1, 2), (3, 4) AS t(a, b)")
+          sql(
+            s"""
+               |MERGE INTO v
+               |USING src
+               |ON src.a = v.key AND src.b = v.value
+               |WHEN MATCHED THEN
+               |  UPDATE SET v.value = src.b + 1
+               |WHEN NOT MATCHED THEN
+               |  INSERT (v.key, v.value) VALUES (src.a, src.b)
+               |""".stripMargin)
+          checkAnswer(spark.table("tab"), Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
+        }
+      }
+    }
+  }
+
+  ignore("merge into a SQL temp view") {
+    withTable("tab") {
+      withTempView("v") {
+        withTempView("src") {
+          Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+          sql("CREATE TEMP VIEW v AS SELECT * FROM tab")
+          sql("CREATE TEMP VIEW src AS SELECT * FROM VALUES (1, 2), (3, 4) AS t(a, b)")
+          sql(
+            s"""
+               |MERGE INTO v
+               |USING src
+               |ON src.a = v.key AND src.b = v.value
+               |WHEN MATCHED THEN
+               |  UPDATE SET v.value = src.b + 1
+               |WHEN NOT MATCHED THEN
+               |  INSERT (v.key, v.value) VALUES (src.a, src.b)
+               |""".stripMargin)
+          checkAnswer(spark.table("tab"), Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
+        }
+      }
+    }
+  }
 }
