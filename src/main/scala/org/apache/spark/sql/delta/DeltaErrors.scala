@@ -1120,6 +1120,10 @@ object DeltaErrors
       s"'$exprName' should have $numOfExpectedArguments argument(s). " +
         s"But found $numOfActualArguments argument(s)")
   }
+
+  def missingColumnsInInsertInto(column: String): Throwable = {
+    new AnalysisException(s"Column $column is not specified in INSERT")
+  }
 }
 
 /** The basic class for all Tahoe commit conflict exceptions. */

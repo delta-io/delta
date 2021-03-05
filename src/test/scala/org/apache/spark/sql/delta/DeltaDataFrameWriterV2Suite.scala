@@ -658,4 +658,27 @@ class DeltaDataFrameWriterV2Suite
     checkFailure(spark.table("table_name"), "overwriteSchema is not allowed when replacing")(a =>
       a.partitionedBy($"id").tableProperty("delta.appendOnly", "true"))
   }
+
+  test("append or overwrite mode should not do implicit casting") {
+    val table = "not_implicit_casting"
+    withTable(table) {
+      spark.sql(s"CREATE TABLE $table(id bigint, p int) USING delta PARTITIONED BY (p)")
+      def verifyNotImplicitCasting(f: => Unit): Unit = {
+        val e = intercept[AnalysisException](f).getMessage
+        assert(e.contains("Failed to merge incompatible data types LongType and IntegerType"))
+      }
+      verifyNotImplicitCasting {
+        Seq(1 -> 1).toDF("id", "p").write.mode("append").format("delta").saveAsTable(table)
+      }
+      verifyNotImplicitCasting {
+        Seq(1 -> 1).toDF("id", "p").write.mode("overwrite").format("delta").saveAsTable(table)
+      }
+      verifyNotImplicitCasting {
+        Seq(1 -> 1).toDF("id", "p").writeTo(table).append()
+      }
+      verifyNotImplicitCasting {
+        Seq(1 -> 1).toDF("id", "p").writeTo(table).overwrite($"p" === 1)
+      }
+    }
+  }
 }

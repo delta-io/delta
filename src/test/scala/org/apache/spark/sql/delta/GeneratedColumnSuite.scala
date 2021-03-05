@@ -166,12 +166,37 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
 
+  testTableUpdate("append_data_v2") { (table, _) =>
+    Seq(
+      Tuple5(1L, "foo", "2020-10-11 12:30:30", 100, "2020-11-12")
+    ).toDF("c1", "c3_p", "c5", "c6", "c8")
+      .withColumn("c5", $"c5".cast(TimestampType))
+      .withColumn("c8", $"c8".cast(DateType))
+      .writeTo(table)
+      .append()
+    Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
+      100, 1000, sqlDate("2020-11-12")) :: Nil
+  }
+
+  testTableUpdate("append_data_in_different_column_order_v2") { (table, _) =>
+    Seq(
+      Tuple5("2020-10-11 12:30:30", 100, "2020-11-12", 1L, "foo")
+    ).toDF("c5", "c6", "c8", "c1", "c3_p")
+      .withColumn("c5", $"c5".cast(TimestampType))
+      .withColumn("c8", $"c8".cast(DateType))
+      .writeTo(table)
+      .append()
+    Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
+      100, 1000, sqlDate("2020-11-12")) :: Nil
+  }
+
   testTableUpdate("insert_into_values_provide_all_columns") { (table, path) =>
     sql(s"INSERT INTO $table VALUES" +
       s"(1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12')")
     Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
+
 
   testTableUpdate("insert_into_select_provide_all_columns") { (table, path) =>
     sql(s"INSERT INTO $table SELECT " +
@@ -193,6 +218,7 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
     Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
+
 
   testTableUpdate("delete") { (table, path) =>
     Seq(
@@ -435,6 +461,7 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
       }
     }
   }
+
 }
 
 class GeneratedColumnSuite extends GeneratedColumnSuiteBase

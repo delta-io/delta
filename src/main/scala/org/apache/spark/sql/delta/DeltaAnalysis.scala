@@ -40,6 +40,7 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.execution.datasources.LogicalRelation
@@ -61,8 +62,9 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperatorsDown {
     // INSERT INTO by ordinal
-    case a @ AppendDelta(r, d) if needsSchemaAdjustment(d.name(), a.query, r.schema) =>
-      val projection = resolveQueryColumns(a.query, r.output, d.name())
+    case a @ AppendDelta(r, d) if !a.isByName &&
+        needsSchemaAdjustment(d.name(), a.query, r.schema) =>
+      val projection = resolveQueryColumnsByOrdinal(a.query, r.output, d.name())
       if (projection != a.query) {
         val cleanedTable = r.copy(output = r.output.map(CharVarcharUtils.cleanAttrMetadata))
         a.copy(query = projection, table = cleanedTable)
@@ -70,9 +72,11 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
         a
       }
 
+
     // INSERT OVERWRITE by ordinal
-    case o @ OverwriteDelta(r, d) if needsSchemaAdjustment(d.name(), o.query, r.schema) =>
-      val projection = resolveQueryColumns(o.query, r.output, d.name())
+    case o @ OverwriteDelta(r, d) if !o.isByName &&
+        needsSchemaAdjustment(d.name(), o.query, r.schema) =>
+      val projection = resolveQueryColumnsByOrdinal(o.query, r.output, d.name())
       if (projection != o.query) {
         val aliases = AttributeMap(o.query.output.zip(projection.output).collect {
           case (l: AttributeReference, r: AttributeReference) if !l.sameRef(r) => (l, r)
@@ -85,6 +89,7 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
       } else {
         o
       }
+
 
     // Pull out the partition filter that may be part of the FileIndex. This can happen when someone
     // queries a Delta table such as spark.read.format("delta").load("/some/table/partition=2")
@@ -187,27 +192,80 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
    * The schema adjustment also include string length check if it's written into a char/varchar
    * type column/field.
    */
-  private def resolveQueryColumns(
+  private def resolveQueryColumnsByOrdinal(
       query: LogicalPlan, targetAttrs: Seq[Attribute], tblName: String): LogicalPlan = {
     // always add a Cast. it will be removed in the optimizer if it is unnecessary.
     val project = query.output.zipWithIndex.map { case (attr, i) =>
       if (i < targetAttrs.length) {
         val targetAttr = targetAttrs(i)
-        val expr = (attr.dataType, targetAttr.dataType) match {
-          case (s, t) if s == t =>
-            attr
-          case (s: StructType, t: StructType) if s != t =>
-            addCastsToStructs(tblName, attr, s, t)
-          case _ =>
-            getCastFunction(attr, targetAttr.dataType)
-        }
-        val strLenChecked = CharVarcharUtils.stringLengthCheck(expr, targetAttr)
-        Alias(strLenChecked, targetAttr.name)(explicitMetadata = Option(targetAttr.metadata))
+        addCastToColumn(attr, targetAttr, tblName)
       } else {
         attr
       }
     }
     Project(project, query)
+  }
+
+  /**
+   * Performs the schema adjustment by adding UpCasts (which are safe) so that we can insert into
+   * the Delta table when the input data types doesn't match the table schema. Unlike
+   * `resolveQueryColumnsByOrdinal` which ignores the names in `targetAttrs` and maps attributes
+   * directly to query output, this method will use the names in the query output to find the
+   * corresponding attribute to use. This method also allows users to not provide values for
+   * generated columns. If values of any columns are not in the query output, they must be generated
+   * columns.
+   */
+  private def resolveQueryColumnsByName(
+      query: LogicalPlan, targetAttrs: Seq[Attribute], tblName: String): LogicalPlan = {
+    if (query.output.length < targetAttrs.length) {
+      // Some columns are not specified. We don't allow schema evolution in INSERT INTO BY NAME, so
+      // we need to ensure the missing columns must be generated columns.
+      val userSpecifiedNames =
+        if (session.sessionState.conf.caseSensitiveAnalysis) {
+          query.output.map(a => (a.name, a)).toMap
+        } else {
+          CaseInsensitiveMap(query.output.map(a => (a.name, a)).toMap)
+        }
+      targetAttrs.foreach { tableColumn =>
+        if (!userSpecifiedNames.contains(tableColumn.name) &&
+          !GeneratedColumn.isGeneratedColumn(tableColumn)) {
+          throw DeltaErrors.missingColumnsInInsertInto(tableColumn.name)
+        }
+      }
+    }
+    // Spark will resolve columns to make sure specified columns are in the table schema and don't
+    // have duplicates. This is just a sanity check.
+    assert(
+      query.output.length <= targetAttrs.length,
+      s"Too many specified columns ${query.output.map(_.name).mkString(", ")}. " +
+        s"Table columns: ${targetAttrs.map(_.name).mkString(", ")}")
+
+    val project = query.output.map { attr =>
+      val targetAttr = targetAttrs.find(t => session.sessionState.conf.resolver(t.name, attr.name))
+        .getOrElse {
+          // This is a sanity check. Spark should have done the check.
+          throw new AnalysisException(s"Cannot find ${attr.name} in table columns:" +
+            s" ${targetAttrs.map(_.name).mkString(", ")}")
+        }
+      addCastToColumn(attr, targetAttr, tblName)
+    }
+    Project(project, query)
+  }
+
+  private def addCastToColumn(
+      attr: Attribute,
+      targetAttr: Attribute,
+      tblName: String): NamedExpression = {
+    val expr = (attr.dataType, targetAttr.dataType) match {
+      case (s, t) if s == t =>
+        attr
+      case (s: StructType, t: StructType) if s != t =>
+        addCastsToStructs(tblName, attr, s, t)
+      case _ =>
+        getCastFunction(attr, targetAttr.dataType)
+    }
+    val strLenChecked = CharVarcharUtils.stringLengthCheck(expr, targetAttr)
+    Alias(strLenChecked, targetAttr.name)(explicitMetadata = Option(targetAttr.metadata))
   }
 
   /**
@@ -318,7 +376,21 @@ object DeltaRelation {
 
 object AppendDelta {
   def unapply(a: AppendData): Option[(DataSourceV2Relation, DeltaTableV2)] = {
-    if (!a.isByName && a.query.resolved) {
+    if (a.query.resolved) {
+      a.table match {
+        case r: DataSourceV2Relation if r.table.isInstanceOf[DeltaTableV2] =>
+          Some((r, r.table.asInstanceOf[DeltaTableV2]))
+        case _ => None
+      }
+    } else {
+      None
+    }
+  }
+}
+
+object AppendDeltaByName {
+  def unapply(a: AppendData): Option[(DataSourceV2Relation, DeltaTableV2)] = {
+    if (a.query.resolved) {
       a.table match {
         case r: DataSourceV2Relation if r.table.isInstanceOf[DeltaTableV2] =>
           Some((r, r.table.asInstanceOf[DeltaTableV2]))
@@ -332,7 +404,7 @@ object AppendDelta {
 
 object OverwriteDelta {
   def unapply(o: OverwriteByExpression): Option[(DataSourceV2Relation, DeltaTableV2)] = {
-    if (!o.isByName && o.query.resolved) {
+    if (o.query.resolved) {
       o.table match {
         case r: DataSourceV2Relation if r.table.isInstanceOf[DeltaTableV2] =>
           Some((r, r.table.asInstanceOf[DeltaTableV2]))

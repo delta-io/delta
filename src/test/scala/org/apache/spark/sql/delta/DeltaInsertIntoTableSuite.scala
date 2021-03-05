@@ -37,6 +37,9 @@ import org.apache.spark.sql.types._
 
 class DeltaInsertIntoSQLSuite extends DeltaInsertIntoTests(false, true)
   with DeltaSQLCommandTest {
+
+  import testImplicits._
+
   override protected def doInsert(tableName: String, insert: DataFrame, mode: SaveMode): Unit = {
     val tmpView = "tmp_view"
     withTempView(tmpView) {
@@ -66,6 +69,7 @@ class DeltaInsertIntoSQLSuite extends DeltaInsertIntoTests(false, true)
       )
     }
   }
+
 }
 
 class DeltaInsertIntoSQLByPathSuite extends DeltaInsertIntoTests(false, true)
