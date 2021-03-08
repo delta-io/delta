@@ -91,6 +91,8 @@ object DeltaInvariantCheckerExec {
                 }
                 GetStructField(e, ordinal, Some(fieldName))
               case _ =>
+                // NOTE: We should also update `GeneratedColumn.validateGeneratedColumns` to enable
+                // `GetMapValue` and `GetArrayStructFields` expressions when this is supported.
                 throw new UnsupportedOperationException(
                   "Invariants on nested fields other than StructTypes are not supported.")
             }

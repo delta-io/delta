@@ -151,6 +151,11 @@ object GeneratedColumn extends DeltaLogging {
         // Alias will be non deterministic if it points to a non deterministic expression.
         // Skip `Alias` to provide a better error for a non deterministic expression.
         expr
+      case expr @ (_: GetStructField | _: GetArrayItem) =>
+        // The complex type extractors don't have a function name, so we need to check them
+        // separately. `GetMapValue` and `GetArrayStructFields` are not supported because Delta
+        // Invariant Check doesn't support them.
+        expr
       case expr: UserDefinedExpression =>
         throw DeltaErrors.generatedColumnsUDF(expr)
       case expr if !expr.deterministic =>

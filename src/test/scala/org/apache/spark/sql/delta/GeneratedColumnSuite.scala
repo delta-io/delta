@@ -27,6 +27,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.DateTimeUtils.{getZoneId, stringToDate, stringToTimestamp, toJavaDate, toJavaTimestamp}
 import org.apache.spark.sql.catalyst.util.quietly
 import org.apache.spark.sql.execution.streaming.MemoryStream
+import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.StreamingQueryException
 import org.apache.spark.sql.test.SharedSparkSession
@@ -459,6 +460,24 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
           "CHECK constraint Generated Column (`c2` <=> CONCAT(`c1`, 'y')) " +
             "violated by row with values"))
       }
+    }
+  }
+
+  test("complex type extractors") {
+    withTableName("struct_field") { table =>
+      createTable(
+        table,
+        None,
+        "`a.b` STRING, a STRUCT<b: INT, c: STRING>, array ARRAY<INT>, " +
+          "c1 STRING, c2 INT, c3 INT",
+        Map("c1" -> "CONCAT(`a.b`, 'b')", "c2" -> "a.b + 100", "c3" -> "array[1]"),
+        Nil)
+      sql(s"INSERT INTO $table VALUES(" +
+        s"'a', struct(100, 'foo'), array(1000, 1001), " +
+        s"'ab', 200, 1001)")
+      checkAnswer(
+        spark.table(table),
+        Row("a", Row(100, "foo"), Array(1000, 1001), "ab", 200, 1001) :: Nil)
     }
   }
 
