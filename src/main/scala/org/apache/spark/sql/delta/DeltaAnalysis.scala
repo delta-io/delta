@@ -388,20 +388,6 @@ object AppendDelta {
   }
 }
 
-object AppendDeltaByName {
-  def unapply(a: AppendData): Option[(DataSourceV2Relation, DeltaTableV2)] = {
-    if (a.query.resolved) {
-      a.table match {
-        case r: DataSourceV2Relation if r.table.isInstanceOf[DeltaTableV2] =>
-          Some((r, r.table.asInstanceOf[DeltaTableV2]))
-        case _ => None
-      }
-    } else {
-      None
-    }
-  }
-}
-
 object OverwriteDelta {
   def unapply(o: OverwriteByExpression): Option[(DataSourceV2Relation, DeltaTableV2)] = {
     if (o.query.resolved) {
