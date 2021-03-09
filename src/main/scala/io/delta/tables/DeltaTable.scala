@@ -111,7 +111,7 @@ class DeltaTable private[tables](
    */
   @Evolving
   def vacuum(retentionHours: Double): DataFrame = {
-    executeVacuum(deltaLog, Some(retentionHours))
+    executeVacuum(deltaLog, Some(retentionHours), table.getTableIdentifierIfExists)
   }
 
   /**
@@ -127,7 +127,7 @@ class DeltaTable private[tables](
    */
   @Evolving
   def vacuum(): DataFrame = {
-    executeVacuum(deltaLog, None)
+    executeVacuum(deltaLog, None, table.getTableIdentifierIfExists)
   }
 
   /**
@@ -142,7 +142,7 @@ class DeltaTable private[tables](
    */
   @Evolving
   def history(limit: Int): DataFrame = {
-    executeHistory(deltaLog, Some(limit))
+    executeHistory(deltaLog, Some(limit), table.getTableIdentifierIfExists)
   }
 
   /**
@@ -155,7 +155,7 @@ class DeltaTable private[tables](
    */
   @Evolving
   def history(): DataFrame = {
-    executeHistory(deltaLog, None)
+    executeHistory(deltaLog, None, table.getTableIdentifierIfExists)
   }
 
   /**
@@ -172,8 +172,8 @@ class DeltaTable private[tables](
    */
   @Evolving
   def generate(mode: String): Unit = {
-    val path = deltaLog.dataPath.toString
-    executeGenerate(s"delta.`$path`", mode)
+    val tableId = table.tableIdentifier.getOrElse(s"delta.`${deltaLog.dataPath.toString}`")
+    executeGenerate(tableId, mode)
   }
 
   /**
