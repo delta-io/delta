@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Metadata
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -28,6 +27,7 @@ import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.CannotReplaceMissingTableException
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
+import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.execution.command.RunnableCommand
@@ -51,7 +51,8 @@ case class CreateDeltaTableCommand(
     mode: SaveMode,
     query: Option[LogicalPlan],
     operation: TableCreationModes.CreationMode = TableCreationModes.Create,
-    tableByPath: Boolean = false)
+    tableByPath: Boolean = false,
+    override val output: Seq[Attribute] = Nil)
   extends RunnableCommand
   with DeltaLogging {
 
@@ -98,6 +99,8 @@ case class CreateDeltaTableCommand(
     val fs = tableLocation.getFileSystem(sparkSession.sessionState.newHadoopConf())
     val deltaLog = DeltaLog.forTable(sparkSession, tableLocation)
     val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
+    var result: Seq[Row] = Nil
+
     recordDeltaOperation(deltaLog, "delta.ddl.createTable") {
       val txn = deltaLog.startTransaction()
       if (query.isDefined) {
@@ -126,7 +129,7 @@ case class CreateDeltaTableCommand(
             val op = getOperation(txn.metadata, isManagedTable, Some(options))
             txn.commit(actions, op)
           case cmd: RunnableCommand =>
-            cmd.run(sparkSession)
+            result = cmd.run(sparkSession)
           case other =>
             // When using V1 APIs, the `other` plan is not yet optimized, therefore, it is safe
             // to once again go through analysis
@@ -213,7 +216,7 @@ case class CreateDeltaTableCommand(
       logInfo(s"Table is path-based table: $tableByPath. Update catalog with mode: $operation")
       updateCatalog(sparkSession, tableWithLocation, deltaLog.snapshot)
 
-      Nil
+      result
     }
   }
 
