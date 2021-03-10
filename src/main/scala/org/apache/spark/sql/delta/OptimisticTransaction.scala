@@ -59,6 +59,9 @@ case class CommitStats(
   numFilesTotal: Long,
   /** The table size in bytes as of version `readVersion`. */
   sizeInBytesTotal: Long,
+  /** The number and size of CDC files added in this operation. */
+  numCdcFiles: Long,
+  cdcBytesNew: Long,
   /** The protocol as of version `readVersion`. */
   protocol: Protocol,
   info: CommitInfo,
@@ -676,10 +679,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       bytesNew = adds.filter(_.dataChange).map(_.size).sum,
       numFilesTotal = postCommitSnapshot.numOfFiles,
       sizeInBytesTotal = postCommitSnapshot.sizeInBytes,
+      numCdcFiles = 0,
+      cdcBytesNew = 0,
       protocol = postCommitSnapshot.protocol,
       info = Option(commitInfo).map(_.copy(readVersion = None, isolationLevel = None)).orNull,
       newMetadata = newMetadata,
-      numAbsolutePaths,
+      numAbsolutePathsInAdd = numAbsolutePaths,
       numDistinctPartitionsInAdd = distinctPartitions.size,
       isolationLevel = null)
     recordDeltaEvent(deltaLog, "delta.commit.stats", data = stats)
