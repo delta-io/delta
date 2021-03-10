@@ -162,6 +162,20 @@ class DeltaSuite extends QueryTest
     assert(e2.contains("is not a Delta table"))
   }
 
+  test("SC-70676: directory deleted before first DataFrame is defined") {
+    val tempDir = Utils.createTempDir()
+    val path = new Path(tempDir.getCanonicalPath)
+    Seq(1).toDF().write.format("delta").save(tempDir.toString)
+
+    val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
+    fs.delete(path, true)
+
+    val e = intercept[AnalysisException] {
+      spark.read.format("delta").load(tempDir.toString).collect()
+    }.getMessage
+    assert(e.contains("doesn't exist"))
+  }
+
   test("append then read") {
     val tempDir = Utils.createTempDir()
     Seq(1).toDF().write.format("delta").save(tempDir.toString)
