@@ -49,4 +49,9 @@ trait SQLMetricsReporting {
   def getMetricsForOperation(operation: Operation): Map[String, String] = {
     operation.transformMetrics(operationSQLMetrics)
   }
+
+  /** Returns the metric with `name` registered for the given transaction if it exists. */
+  def getMetric(name: String): Option[SQLMetric] = {
+    operationSQLMetrics.get(name)
+  }
 }

@@ -173,6 +173,12 @@ case class UpdateCommand(
       metrics("executionTimeMs").set((System.nanoTime() - startTime) / 1000 / 1000)
       metrics("scanTimeMs").set(scanTimeMs)
       metrics("rewriteTimeMs").set(rewriteTimeMs)
+      // In the case where the numUpdatedRows is not captured, we can siphon out the metrics from
+      // the BasicWriteStatsTracker. This is for the case where the entire partition is re-written.
+      val outputRows = txn.getMetric("numOutputRows").map(_.value).getOrElse(-1L)
+      if (metrics("numUpdatedRows").value == 0 && outputRows != 0) {
+        metrics("numUpdatedRows").set(outputRows)
+      }
       txn.registerSQLMetrics(sparkSession, metrics)
       txn.commit(actions, DeltaOperations.Update(condition.map(_.toString)))
       // This is needed to make the SQL metrics visible in the Spark UI

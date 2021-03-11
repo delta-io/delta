@@ -177,16 +177,8 @@ object DeltaOperations {
       val numOutputRows = metrics("numOutputRows").value
       val numUpdatedRows = metrics("numUpdatedRows").value
       var strMetrics = super.transformMetrics(metrics)
-      // In the case where the numUpdatedRows is not captured in the UpdateCommand implementation
-      // we can siphon out the metrics from the BasicWriteStatsTracker for that command.
-      // This is for the case where the entire partition is re-written.
-      if (numUpdatedRows == 0 && numOutputRows != 0) {
-        strMetrics += "numUpdatedRows" -> numOutputRows.toString
-        strMetrics += "numCopiedRows" -> "0"
-      } else {
-        strMetrics += "numCopiedRows" -> (
-          numOutputRows - strMetrics("numUpdatedRows").toLong).toString
-      }
+      val numCopiedRows = numOutputRows - strMetrics("numUpdatedRows").toLong
+      strMetrics += "numCopiedRows" -> numCopiedRows.toString
       strMetrics
     }
   }
