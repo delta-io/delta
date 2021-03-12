@@ -39,7 +39,10 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
     toDataset(sparkSession, delete)
   }
 
-  protected def executeHistory(deltaLog: DeltaLog, limit: Option[Int]): DataFrame = {
+  protected def executeHistory(
+      deltaLog: DeltaLog,
+      limit: Option[Int],
+      tableId: Option[TableIdentifier] = None): DataFrame = {
     val history = new DeltaHistoryManager(deltaLog)
     val spark = self.toDF.sparkSession
     spark.createDataFrame(history.getHistory(limit))
@@ -51,7 +54,7 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
       .sqlParser
       .parseTableIdentifier(tblIdentifier)
     val generate = DeltaGenerateCommand(mode, tableId)
-    generate.run(sparkSession)
+    toDataset(sparkSession, generate)
   }
 
   protected def executeUpdate(
@@ -66,7 +69,8 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
 
   protected def executeVacuum(
       deltaLog: DeltaLog,
-      retentionHours: Option[Double]): DataFrame = {
+      retentionHours: Option[Double],
+      tableId: Option[TableIdentifier] = None): DataFrame = {
     VacuumCommand.gc(sparkSession, deltaLog, false, retentionHours)
     sparkSession.emptyDataFrame
   }

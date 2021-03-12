@@ -17,15 +17,19 @@
 package org.apache.spark.sql.delta.catalog
 
 import java.util
+import java.util.Locale
 
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, DeltaTableUtils}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
 import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
 import org.apache.spark.sql.delta.commands.{AlterTableAddColumnsDeltaCommand, AlterTableChangeColumnDeltaCommand, AlterTableSetLocationDeltaCommand, AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand, CreateDeltaTableCommand, TableCreationModes}
-import org.apache.spark.sql.delta.sources.DeltaSourceUtils
+import org.apache.spark.sql.delta.commands.{AlterTableAddConstraintDeltaCommand, AlterTableDropConstraintDeltaCommand, WriteIntoDelta}
+import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
+import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.Logging
@@ -49,14 +53,12 @@ import org.apache.spark.sql.types.{StructField, StructType}
  * A Catalog extension which can properly handle the interaction between the HiveMetaStore and
  * Delta tables. It delegates all operations DataSources other than Delta to the SparkCatalog.
  */
-class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
+class DeltaCatalog extends DelegatingCatalogExtension
   with StagingTableCatalog
   with SupportsPathIdentifier
   with Logging {
 
-  def this() = {
-    this(SparkSession.active)
-  }
+  val spark = SparkSession.active
 
   /**
    * Creates a Delta table
@@ -64,8 +66,9 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
    * @param ident The identifier of the table
    * @param schema The schema of the table
    * @param partitions The partition transforms for the table
-   * @param properties The table properties. Right now it also includes write options for backwards
-   *                   compatibility
+   * @param allTableProperties The table properties that configure the behavior of the table or
+   *                           provide information about the table
+   * @param writeOptions Options specific to the write during table creation or replacement
    * @param sourceQuery A query if this CREATE request came from a CTAS or RTAS
    * @param operation The specific table creation mode, whether this is a Create/Replace/Create or
    *                  Replace
@@ -74,16 +77,19 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
       ident: Identifier,
       schema: StructType,
       partitions: Array[Transform],
-      properties: util.Map[String, String],
-      sourceQuery: Option[LogicalPlan],
+      allTableProperties: util.Map[String, String],
+      writeOptions: Map[String, String],
+      sourceQuery: Option[DataFrame],
       operation: TableCreationModes.CreationMode): Table = {
-    // These two keys are properties in data source v2 but not in v1, so we have to filter
+    // These two keys are tableProperties in data source v2 but not in v1, so we have to filter
     // them out. Otherwise property consistency checks will fail.
-    val tableProperties = properties.asScala.filterKeys {
+    val tableProperties = allTableProperties.asScala.filterKeys {
       case TableCatalog.PROP_LOCATION => false
       case TableCatalog.PROP_PROVIDER => false
       case TableCatalog.PROP_COMMENT => false
       case TableCatalog.PROP_OWNER => false
+      // TODO: use TableCatalog.PROP_EXTERNAL after Spark 3.1.0 is released.
+      case "external" => false
       case "path" => false
       case _ => true
     }
@@ -93,15 +99,19 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
     val location = if (isByPath) {
       Option(ident.name())
     } else {
-      Option(properties.get("location"))
+      Option(allTableProperties.get("location"))
     }
-    val storage = DataSource.buildStorageFormatFromOptions(tableProperties.toMap)
-      .copy(locationUri = location.map(CatalogUtils.stringToURI))
+    val locUriOpt = location.map(CatalogUtils.stringToURI)
+    val storage = DataSource.buildStorageFormatFromOptions(writeOptions)
+      .copy(locationUri = locUriOpt)
     val tableType =
       if (location.isDefined) CatalogTableType.EXTERNAL else CatalogTableType.MANAGED
+    val id = TableIdentifier(ident.name(), ident.namespace().lastOption)
+    val loc = new Path(locUriOpt.getOrElse(spark.sessionState.catalog.defaultTablePath(id)))
+    val commentOpt = Option(allTableProperties.get("comment"))
 
     val tableDesc = new CatalogTable(
-      identifier = TableIdentifier(ident.name(), ident.namespace().lastOption),
+      identifier = id,
       tableType = tableType,
       storage = storage,
       schema = schema,
@@ -109,16 +119,27 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
       partitionColumnNames = partitionColumns,
       bucketSpec = maybeBucketSpec,
       properties = tableProperties.toMap,
-      comment = Option(properties.get("comment")))
+      comment = commentOpt)
     // END: copy-paste from the super method finished.
 
     val withDb = verifyTableAndSolidify(tableDesc, None)
     ParquetSchemaConverter.checkFieldNames(tableDesc.schema.fieldNames)
+
+    val writer = sourceQuery.map { df =>
+      WriteIntoDelta(
+        DeltaLog.forTable(spark, loc),
+        operation.mode,
+        new DeltaOptions(withDb.storage.properties, spark.sessionState.conf),
+        withDb.partitionColumnNames,
+        withDb.properties ++ commentOpt.map("comment" -> _),
+        df)
+    }
+
     CreateDeltaTableCommand(
       withDb,
       getExistingTableIfExists(tableDesc),
       operation.mode,
-      sourceQuery,
+      writer,
       operation,
       tableByPath = isByPath).run(spark)
 
@@ -139,12 +160,16 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
     } catch {
       case _: NoSuchDatabaseException | _: NoSuchNamespaceException | _: NoSuchTableException
           if isPathIdentifier(ident) =>
-        DeltaTableV2(spark, new Path(ident.name()))
+        newDeltaPathTable(ident)
       case e: AnalysisException if gluePermissionError(e) && isPathIdentifier(ident) =>
         logWarning("Received an access denied error from Glue. Assuming this " +
           s"identifier ($ident) is path based.", e)
-        DeltaTableV2(spark, new Path(ident.name()))
+        newDeltaPathTable(ident)
     }
+  }
+
+  private def newDeltaPathTable(ident: Identifier): DeltaTableV2 = {
+    DeltaTableV2(spark, new Path(ident.name()))
   }
 
   private def getProvider(properties: util.Map[String, String]): String = {
@@ -159,7 +184,13 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
       properties: util.Map[String, String]): Table = {
     if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
       createDeltaTable(
-        ident, schema, partitions, properties, sourceQuery = None, TableCreationModes.Create)
+        ident,
+        schema,
+        partitions,
+        properties,
+        Map.empty,
+        sourceQuery = None,
+        TableCreationModes.Create)
     } else {
       super.createTable(ident, schema, partitions, properties)
     }
@@ -278,7 +309,7 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
       }
       if (!DeltaSourceUtils.isDeltaTable(oldTable.provider)) {
         throw new AnalysisException(s"${table.identifier} is not a Delta table. Please drop this " +
-          "table first if you would like to create it with Delta Lake.")
+          "table first if you would like to recreate it with Delta Lake.")
       }
       Some(oldTable)
     } else {
@@ -299,15 +330,46 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
       operation: TableCreationModes.CreationMode) extends StagedTable with SupportsWrite {
 
     private var asSelectQuery: Option[DataFrame] = None
-    private var writeOptions: Map[String, String] = properties.asScala.toMap
+    private var writeOptions: Map[String, String] = Map.empty
 
     override def commitStagedChanges(): Unit = {
+      val conf = spark.sessionState.conf
+      val props = new util.HashMap[String, String]()
+      // Options passed in through the SQL API will show up both with an "option." prefix and
+      // without in Spark 3.1, so we need to remove those from the properties
+      val optionsThroughProperties = properties.asScala.collect {
+        case (k, _) if k.startsWith("option.") => k.stripPrefix("option.")
+      }.toSet
+      val sqlWriteOptions = new util.HashMap[String, String]()
+      properties.asScala.foreach { case (k, v) =>
+        if (!k.startsWith("option.") && !optionsThroughProperties.contains(k)) {
+          // Do not add to properties
+          props.put(k, v)
+        } else if (optionsThroughProperties.contains(k)) {
+          sqlWriteOptions.put(k, v)
+        }
+      }
+      if (writeOptions.isEmpty && !sqlWriteOptions.isEmpty) {
+        writeOptions = sqlWriteOptions.asScala.toMap
+      }
+      if (conf.getConf(DeltaSQLConf.DELTA_LEGACY_STORE_WRITER_OPTIONS_AS_PROPS)) {
+        // Legacy behavior
+        writeOptions.foreach { case (k, v) => props.put(k, v) }
+      } else {
+        writeOptions.foreach { case (k, v) =>
+          // Continue putting in Delta prefixed options to avoid breaking workloads
+          if (k.toLowerCase(Locale.ROOT).startsWith("delta.")) {
+            props.put(k, v)
+          }
+        }
+      }
       createDeltaTable(
         ident,
         schema,
         partitions,
-        writeOptions.asJava,
-        asSelectQuery.map(_.queryExecution.analyzed),
+        props,
+        writeOptions,
+        asSelectQuery,
         operation)
     }
 
@@ -318,11 +380,7 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
     override def capabilities(): util.Set[TableCapability] = Set(V1_BATCH_WRITE).asJava
 
     override def newWriteBuilder(info: LogicalWriteInfo): V1WriteBuilder = {
-      // TODO: We now pass both properties and options into CreateDeltaTableCommand, because
-      // it wasn't supported in the initial APIs, but with DFWriterV2, we should actually separate
-      // them
-      val combinedProps = info.options.asCaseSensitiveMap().asScala ++ properties.asScala
-      writeOptions = combinedProps.toMap
+      writeOptions = info.options.asCaseSensitiveMap().asScala.toMap
       new DeltaV1WriteBuilder
     }
 
@@ -444,6 +502,18 @@ class DeltaCatalog(val spark: SparkSession) extends DelegatingCatalogExtension
         AlterTableSetLocationDeltaCommand(
           table,
           locations.head.asInstanceOf[SetProperty].value()).run(spark)
+
+      case (t, constraints) if t == classOf[AddConstraint] =>
+        constraints.foreach { constraint =>
+          val c = constraint.asInstanceOf[AddConstraint]
+          AlterTableAddConstraintDeltaCommand(table, c.constraintName, c.expr).run(spark)
+        }
+
+      case (t, constraints) if t == classOf[DropConstraint] =>
+        constraints.foreach { constraint =>
+          val c = constraint.asInstanceOf[DropConstraint]
+          AlterTableDropConstraintDeltaCommand(table, c.constraintName).run(spark)
+        }
     }
 
     columnUpdates.foreach { case (fieldNames, (newField, newPositionOpt)) =>

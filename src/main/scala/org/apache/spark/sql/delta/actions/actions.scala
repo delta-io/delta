@@ -22,8 +22,8 @@ import java.util.Locale
 
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors}
-import org.apache.spark.sql.delta.schema.{Constraints, Invariants}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, GeneratedColumn}
+import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation.{JsonIgnore, JsonInclude}
@@ -55,7 +55,7 @@ class ProtocolDowngradeException(oldProtocol: Protocol, newProtocol: Protocol)
 object Action {
   /** The maximum version of the protocol that this version of Delta understands. */
   val readerVersion = 1
-  val writerVersion = 3
+  val writerVersion = 4
   val protocolVersion: Protocol = Protocol(readerVersion, writerVersion)
 
   def fromJson(json: String): Action = {
@@ -94,22 +94,31 @@ case class Protocol(
 }
 
 object Protocol {
-  def apply(conf: SQLConf, requiredProtocol: Option[Protocol]): Protocol = {
-    val reader = math.max(
-      requiredProtocol.map(_.minReaderVersion).getOrElse(0),
-      conf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION)
-    )
-    val writer = math.max(
-      requiredProtocol.map(_.minWriterVersion).getOrElse(0),
-      conf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION)
-    )
-    Protocol(minReaderVersion = reader, minWriterVersion = writer)
+  val MIN_READER_VERSION_PROP = "delta.minReaderVersion"
+  val MIN_WRITER_VERSION_PROP = "delta.minWriterVersion"
+
+  def apply(spark: SparkSession, metadataOpt: Option[Metadata]): Protocol = {
+    val conf = spark.sessionState.conf
+    val minimumOpt = metadataOpt.map(m => requiredMinimumProtocol(spark, m)._1)
+    val configs = metadataOpt.map(_.configuration.map {
+      case (k, v) => k.toLowerCase(Locale.ROOT) -> v }
+    ).getOrElse(Map.empty[String, String])
+    // Check if the protocol version is provided as a table property, or get it from the SQL confs
+    val readerVersion = configs.get(MIN_READER_VERSION_PROP.toLowerCase(Locale.ROOT))
+      .map(getVersion(MIN_READER_VERSION_PROP, _))
+      .getOrElse(conf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION))
+    val writerVersion = configs.get(MIN_WRITER_VERSION_PROP.toLowerCase(Locale.ROOT))
+      .map(getVersion(MIN_WRITER_VERSION_PROP, _))
+      .getOrElse(conf.getConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION))
+
+    Protocol(
+      minReaderVersion = math.max(minimumOpt.map(_.minReaderVersion).getOrElse(0), readerVersion),
+      minWriterVersion = math.max(minimumOpt.map(_.minWriterVersion).getOrElse(0), writerVersion))
   }
 
   /** Picks the protocol version for a new table given potential feature usage. */
   def forNewTable(spark: SparkSession, metadata: Metadata): Protocol = {
-    val requiredProtocol = requiredMinimumProtocol(spark, metadata)._1
-    Protocol(spark.sessionState.conf, Some(requiredProtocol))
+    Protocol(spark, Some(metadata))
   }
 
   /**
@@ -138,21 +147,50 @@ object Protocol {
       featuresUsed.append("Setting CHECK constraints")
     }
 
+    if (GeneratedColumn.hasGeneratedColumns(metadata.schema)) {
+      minimumRequired = Protocol(0, minWriterVersion = 4)
+      featuresUsed.append("Using Generated Columns")
+    }
+
+    if (DeltaConfigs.CHANGE_DATA_CAPTURE.fromMetaData(metadata)) {
+      minimumRequired = Protocol(0, minWriterVersion = 4)
+      featuresUsed.append("Change data capture")
+      throw DeltaErrors.cdcNotAllowedInThisVersion()
+    }
+
     minimumRequired -> featuresUsed
+  }
+
+  /** Cast the table property for the protocol version to an integer. */
+  def getVersion(key: String, value: String): Int = {
+    try value.toInt catch {
+      case n: NumberFormatException =>
+        throw new IllegalArgumentException(
+          s"Protocol property $key needs to be an integer. Found $value", n)
+    }
   }
 
   /**
    * Verify that the protocol version of the table satisfies the version requirements of all the
-   * configurations to be set for the table.
+   * configurations to be set for the table. Returns the minimum required protocol if not.
    */
-  def assertProtocolRequirements(
+  def checkProtocolRequirements(
       spark: SparkSession,
       metadata: Metadata,
-      current: Protocol): Unit = {
+      current: Protocol): Option[Protocol] = {
+    assert(!metadata.configuration.contains(MIN_READER_VERSION_PROP), s"Should not have the " +
+      s"protocol version ($MIN_READER_VERSION_PROP) as part of table properties")
+    assert(!metadata.configuration.contains(MIN_WRITER_VERSION_PROP), s"Should not have the " +
+      s"protocol version ($MIN_WRITER_VERSION_PROP) as part of table properties")
     val (required, features) = requiredMinimumProtocol(spark, metadata)
     if (current.minWriterVersion < required.minWriterVersion ||
         current.minReaderVersion < required.minReaderVersion) {
-      throw DeltaErrors.requireProtocolUpgrade(features, required, current)
+      Some(required.copy(
+        minReaderVersion = math.max(current.minReaderVersion, required.minReaderVersion),
+        minWriterVersion = math.max(current.minWriterVersion, required.minWriterVersion))
+      )
+    } else {
+      None
     }
   }
 }
@@ -202,9 +240,21 @@ case class AddFile(
       timestamp: Long = System.currentTimeMillis(),
       dataChange: Boolean = true): RemoveFile = {
     // scalastyle:off
-    RemoveFile(path, Some(timestamp), dataChange)
+    RemoveFile(
+      path, Some(timestamp), dataChange,
+      extendedFileMetadata = true, partitionValues, size, tags)
     // scalastyle:on
   }
+
+  @JsonIgnore
+  lazy val insertionTime: Long = tag(AddFile.Tags.INSERTION_TIME)
+    .getOrElse(modificationTime.toString).toLong
+
+  def tag(tag: AddFile.Tags.KeyType): Option[String] =
+    Option(tags).getOrElse(Map.empty).get(tag.name)
+
+  def copyWithTag(tag: AddFile.Tags.KeyType, value: String): AddFile =
+    copy(tags = Option(tags).getOrElse(Map.empty) + (tag.name -> value))
 }
 
 object AddFile {
@@ -228,6 +278,13 @@ object AddFile {
 
     /** [[ZCUBE_ZORDER_CURVE]]: Clustering strategy of the corresponding ZCube */
     object ZCUBE_ZORDER_CURVE extends AddFile.Tags.KeyType("ZCUBE_ZORDER_CURVE")
+
+    /** [[INSERTION_TIME]]: the latest timestamp when the data in the file was inserted */
+    object INSERTION_TIME extends AddFile.Tags.KeyType("INSERTION_TIME")
+
+    /** [[PARTITION_ID]]: rdd partition id that has written the file, will not be stored in the
+     physical log, only used for communication  */
+    object PARTITION_ID extends AddFile.Tags.KeyType("PARTITION_ID")
   }
 
   /** Convert a [[Tags.KeyType]] to a string to be used in the AddMap.tags Map[String, String]. */
@@ -237,19 +294,44 @@ object AddFile {
 /**
  * Logical removal of a given file from the reservoir. Acts as a tombstone before a file is
  * deleted permanently.
+ *
+ * Note that for protocol compatibility reasons, the fields `partitionValues`, `size`, and `tags`
+ * are only present when the extendedFileMetadata flag is true. New writers should generally be
+ * setting this flag, but old writers (and FSCK) won't, so readers must check this flag before
+ * attempting to consume those values.
  */
 // scalastyle:off
 case class RemoveFile(
     path: String,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     deletionTimestamp: Option[Long],
-    dataChange: Boolean = true) extends FileAction {
+    dataChange: Boolean = true,
+    extendedFileMetadata: Boolean = false,
+    partitionValues: Map[String, String] = null,
+    size: Long = 0,
+    tags: Map[String, String] = null) extends FileAction {
   override def wrap: SingleAction = SingleAction(remove = this)
 
   @JsonIgnore
   val delTimestamp: Long = deletionTimestamp.getOrElse(0L)
 }
 // scalastyle:on
+
+/**
+ * A change file containing CDC data for the Delta version it's within. Non-CDC readers should
+ * ignore this, CDC readers should scan all ChangeFiles in a version rather than computing
+ * changes from AddFile and RemoveFile actions.
+ */
+case class AddCDCFile(
+    path: String,
+    partitionValues: Map[String, String],
+    size: Long,
+    tags: Map[String, String] = null) extends FileAction {
+  override val dataChange = false
+
+  override def wrap: SingleAction = SingleAction(cdc = this)
+}
+
 
 case class Format(
     provider: String = "parquet",
@@ -422,6 +504,7 @@ case class SingleAction(
     remove: RemoveFile = null,
     metaData: Metadata = null,
     protocol: Protocol = null,
+    cdc: AddCDCFile = null,
     commitInfo: CommitInfo = null) {
 
   def unwrap: Action = {
@@ -435,6 +518,8 @@ case class SingleAction(
       txn
     } else if (protocol != null) {
       protocol
+    } else if (cdc != null) {
+      cdc
     } else if (commitInfo != null) {
       commitInfo
     } else {

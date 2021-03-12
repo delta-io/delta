@@ -23,6 +23,7 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.sql.{AnalysisException, QueryTest}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 
 
@@ -99,8 +100,19 @@ abstract class DeltaNotSupportedDDLBase extends QueryTest
   }
 
   test("CREATE TABLE LIKE") {
-    withTable("tbl") {
-      assertUnsupported(s"CREATE TABLE tbl LIKE $nonPartitionedTableName")
+    withSQLConf(SQLConf.DEFAULT_DATA_SOURCE_NAME.key -> "delta") {
+      withTempView("create_table_like_test_view") {
+        withTable("tbl") {
+          // Pick up the source table provider
+          assertUnsupported(s"CREATE TABLE tbl LIKE $nonPartitionedTableName")
+
+          spark.range(0, 10).createOrReplaceTempView("create_table_like_test_view")
+          // Pick up the user specified provider
+          assertUnsupported(s"CREATE TABLE tbl LIKE create_table_like_test_view USING delta")
+          // Pick up DEFAULT_DATA_SOURCE_NAME
+          assertUnsupported(s"CREATE TABLE tbl LIKE create_table_like_test_view")
+        }
+      }
     }
   }
 

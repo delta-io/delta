@@ -29,7 +29,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{Analyzer, EliminateSubqueryAliases, NoSuchTableException, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.analysis.{Analyzer, EliminateSubqueryAliases, NoSuchTableException, UnresolvedAttribute, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -67,10 +67,20 @@ trait DeltaCommand extends DeltaLogging {
       }
 
       pred.references.foreach { col =>
+        val colName = col match {
+          case u: UnresolvedAttribute =>
+            // Note: `UnresolvedAttribute(Seq("a.b"))` and `UnresolvedAttribute(Seq("a", "b"))` will
+            // return the same name. We accidentally treated the latter as the same as the former.
+            // Because some users may already rely on it, we keep supporting both. This is not
+            // ambiguous since "replaceWhere" only supports partition columns and it doesn't support
+            // struct type or map type.
+            u.nameParts.mkString(".")
+          case _ => col.name
+        }
         val nameEquality = spark.sessionState.conf.resolver
-        partitionColumns.find(f => nameEquality(f, col.name)).getOrElse {
+        partitionColumns.find(f => nameEquality(f, colName)).getOrElse {
           throw new AnalysisException(
-            s"Predicate references non-partition column '${col.name}'. " +
+            s"Predicate references non-partition column '$colName'. " +
               "Only the partition columns may be referenced: " +
               s"[${partitionColumns.mkString(", ")}]")
         }
@@ -284,11 +294,15 @@ trait DeltaCommand extends DeltaLogging {
           data = Map("exception" -> Utils.exceptionString(e), "operation" -> op.name))
         // Actions of a commit which went in before ours
         val deltaLog = txn.deltaLog
-        val winningCommitActions =
-          deltaLog.store.read(deltaFile(deltaLog.logPath, attemptVersion)).map(Action.fromJson)
-        val commitInfo = winningCommitActions.collectFirst { case a: CommitInfo => a }
-          .map(ci => ci.copy(version = Some(attemptVersion)))
-        throw new ConcurrentWriteException(commitInfo)
+        val logs = deltaLog.store.readAsIterator(deltaFile(deltaLog.logPath, attemptVersion))
+        try {
+          val winningCommitActions = logs.map(Action.fromJson)
+          val commitInfo = winningCommitActions.collectFirst { case a: CommitInfo => a }
+            .map(ci => ci.copy(version = Some(attemptVersion)))
+          throw new ConcurrentWriteException(commitInfo)
+        } finally {
+          logs.close()
+        }
 
       case NonFatal(e) =>
         recordDeltaEvent(

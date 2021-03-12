@@ -22,9 +22,10 @@ import java.util.ConcurrentModificationException
 
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
+import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.schema.{Constraints, InvariantViolationException, SchemaUtils}
+import org.apache.spark.sql.delta.schema.{InvariantViolationException, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.sql.DeltaSparkSessionExtension
@@ -180,6 +181,30 @@ object DeltaErrors
       s"Parsed $nestType type:\n${nested.prettyJson}")
   }
 
+  def constraintAlreadyExists(name: String, oldExpr: String): AnalysisException = {
+    new AnalysisException(
+      s"Constraint '$name' already exists as a CHECK constraint. Please delete the old " +
+        s"constraint first.\nOld constraint:\n${oldExpr}")
+  }
+
+  def checkConstraintNotBoolean(name: String, expr: String): AnalysisException = {
+    new AnalysisException(s"CHECK constraint '$name' ($expr) should be a boolean expression.'")
+  }
+
+  def newCheckConstraintViolated(num: Long, tableName: String, expr: String): AnalysisException = {
+    new AnalysisException(s"$num rows in $tableName violate the new CHECK constraint ($expr)")
+  }
+
+  def newNotNullViolated(
+      num: Long, tableName: String, col: UnresolvedAttribute): AnalysisException = {
+    new AnalysisException(
+      s"$num rows in $tableName violate the new NOT NULL constraint on ${col.name}")
+  }
+
+  def useAddConstraints: AnalysisException = {
+    new AnalysisException(s"Please use ALTER TABLE ADD CONSTRAINT to add CHECK constraints.")
+  }
+
   def incorrectLogStoreImplementationException(
       sparkConf: SparkConf,
       cause: Throwable): Throwable = {
@@ -189,6 +214,21 @@ object DeltaErrors
       | correct implementation of LogStore that is appropriate for your storage system.
       | See ${generateDocsLink(sparkConf, "/delta-storage.html")} " for details.
       """.stripMargin, cause)
+  }
+
+  def failOnDataLossException(expectedVersion: Long, seenVersion: Long): Throwable = {
+    new IllegalStateException(
+      s"""The stream from your Delta table was expecting process data from version $expectedVersion,
+         |but the earliest available version in the _delta_log directory is $seenVersion. The files
+         |in the transaction log may have been deleted due to log cleanup. In order to avoid losing
+         |data, we recommend that you restart your stream with a new checkpoint location and to
+         |increase your delta.logRetentionDuration setting, if you have explicitly set it below 30
+         |days.
+         |If you would like to ignore the missed data and continue your stream from where it left
+         |off, you can set the .option("${DeltaOptions.FAIL_ON_DATA_LOSS_OPTION}", "false") as part
+         |of your readStream statement.
+       """.stripMargin
+    )
   }
 
   def staticPartitionsNotSupportedException: Throwable = {
@@ -343,6 +383,16 @@ object DeltaErrors
     new AnalysisException(s"Unknown configuration was specified: $confKey")
   }
 
+  def cdcNotAllowedInThisVersion(): Throwable = {
+    new AnalysisException("Configuration delta.enableChangeDataCapture cannot be set. Change " +
+      "data capture from Delta is not yet available.")
+  }
+
+  def cdcWriteNotAllowedInThisVersion(): Throwable = {
+    new AnalysisException("Cannot write to table with delta.enableChangeDataCapture set. Change " +
+      "data capture from Delta is not yet available.")
+  }
+
   def useDeltaOnOtherFormatPathException(
       operation: String, path: String, spark: SparkSession): Throwable = {
     new AnalysisException(
@@ -408,23 +458,13 @@ object DeltaErrors
       "policy of your Delta table").initCause(e)
   }
 
-  def requireProtocolUpgrade(
-      features: Seq[String],
-      required: Protocol,
-      current: Protocol): Throwable = {
-    val featureList = features.mkString("\t - ", "\n\t -", "\n")
-    val readerVersion = math.max(required.minReaderVersion, current.minReaderVersion)
-    val writerVersion = math.max(required.minWriterVersion, current.minWriterVersion)
-    new AnalysisException(
-      s"The features listed below require a protocol version of $required " +
-        s"or above, but the protocol version of the Delta table is $current. Please upgrade " +
-        "the protocol version of the table before setting this config using " +
-        s"`io.delta.table.DeltaTable.upgradeTableProtocol($readerVersion, $writerVersion)`." +
-        s"\n$featureList")
+  def checkpointNonExistTable(path: Path): Throwable = {
+    new IllegalStateException(s"Cannot checkpoint a non-exist table $path. Did you manually " +
+      s"delete files in the _delta_log directory?")
   }
 
   def multipleLoadPathsException(paths: Seq[String]): Throwable = {
-    throw new AnalysisException(
+    new AnalysisException(
       s"""
         |Delta Lake does not support multiple input paths in the load() API.
         |paths: ${paths.mkString("[", ",", "]")}. To build a single DataFrame by loading
@@ -777,15 +817,13 @@ object DeltaErrors
     new AnalysisException(s"No reproducible commits found at $logPath")
   }
 
-  def timestampEarlierThanCommitRetention(
+  case class TimestampEarlierThanCommitRetentionException(
       userTimestamp: java.sql.Timestamp,
       commitTs: java.sql.Timestamp,
-      timestampString: String): Throwable = {
-    new AnalysisException(
-      s"""The provided timestamp ($userTimestamp) is before the earliest version available to this
+      timestampString: String) extends AnalysisException(
+    s"""The provided timestamp ($userTimestamp) is before the earliest version available to this
          |table ($commitTs). Please use a timestamp after $timestampString.
          """.stripMargin)
-  }
 
   def timestampGreaterThanLatestCommit(
       userTimestamp: java.sql.Timestamp,
@@ -797,23 +835,22 @@ object DeltaErrors
          """.stripMargin)
   }
 
-  def temporallyUnstableInput(
+  def timestampInvalid(expr: Expression): Throwable = {
+    new AnalysisException(
+      s"The provided timestamp (${expr.sql}) cannot be converted to a valid timestamp.")
+  }
+
+  case class TemporallyUnstableInputException(
       userTimestamp: java.sql.Timestamp,
       commitTs: java.sql.Timestamp,
       timestampString: String,
-      commitVersion: Long): Throwable = {
-    new AnalysisException(
-      s"""The provided timestamp: $userTimestamp is after the latest commit timestamp of
+      commitVersion: Long) extends AnalysisException(
+    s"""The provided timestamp: $userTimestamp is after the latest commit timestamp of
          |$commitTs. If you wish to query this version of the table, please either provide
          |the version with "VERSION AS OF $commitVersion" or use the exact timestamp
          |of the last commit: "TIMESTAMP AS OF '$timestampString'".
        """.stripMargin)
-  }
 
-  def versionNotExistException(userVersion: Long, earliest: Long, latest: Long): Throwable = {
-    throw new AnalysisException(s"Cannot time travel Delta table to version $userVersion. " +
-      s"Available versions: [$earliest, $latest].")
-  }
 
   def timeTravelNotSupportedException: Throwable = {
     new AnalysisException("Cannot time travel views, subqueries or streams.")
@@ -885,7 +922,17 @@ object DeltaErrors
   }
 
   def setLocationNotSupportedOnPathIdentifiers(): Throwable = {
-    throw new AnalysisException("Cannot change the location of a path based table.")
+    new AnalysisException("Cannot change the location of a path based table.")
+  }
+
+  def useSetLocation(): Throwable = {
+    new AnalysisException(
+      "Cannot change the 'location' of the Delta table using SET TBLPROPERTIES. Please use " +
+      "ALTER TABLE SET LOCATION instead.")
+  }
+
+  def cannotChangeProvider(): Throwable = {
+    new AnalysisException("'provider' is a reserved table property, and cannot be altered.")
   }
 
   def describeViewHistory: Throwable = {
@@ -938,12 +985,12 @@ object DeltaErrors
   }
 
   def illegalUsageException(option: String, operation: String): Throwable = {
-    throw new IllegalArgumentException(
+    new IllegalArgumentException(
       s"The usage of $option is not allowed when $operation a Delta table.")
   }
 
   def columnNotInSchemaException(column: String, schema: StructType): Throwable = {
-    throw new AnalysisException(
+    new AnalysisException(
       s"Couldn't find column $column in:\n${schema.treeString}")
   }
 
@@ -953,6 +1000,11 @@ object DeltaErrors
          |Couldn't find Metadata while committing the first version of the Delta table. To disable
          |this check set ${DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key} to "false"
        """.stripMargin)
+  }
+
+  def updateSchemaMismatchExpression(from: StructType, to: StructType): Throwable = {
+    new AnalysisException(s"Cannot cast ${from.catalogString} to ${to.catalogString}. All nested " +
+      s"columns must match.")
   }
 
   def addFilePartitioningMismatchException(
@@ -996,7 +1048,7 @@ object DeltaErrors
          |
          |  SparkSession.builder()
          |    .option("spark.sql.extensions", "${classOf[DeltaSparkSessionExtension].getName}")
-         |    .option("$catalogImplConfig", "${classOf[DeltaCatalog].getName}"
+         |    .option("$catalogImplConfig", "${classOf[DeltaCatalog].getName}")
          |    ...
          |    .build()
       """.stripMargin,
@@ -1019,6 +1071,58 @@ object DeltaErrors
          |Number of actions attempted to commit: $numActions
          |Total time spent attempting this commit: $totalCommitAttemptTime ms
        """.stripMargin)
+  }
+
+  def generatedColumnsNonDeltaFormatError(): Throwable = {
+    new AnalysisException("Generated columns are only supported by Delta")
+  }
+
+  def generatedColumnsReferToWrongColumns(e: AnalysisException): Throwable = {
+    new AnalysisException(
+      "A generated column cannot use a non-existent column or another generated column",
+      cause = Some(e))
+  }
+
+  def generatedColumnsUDF(expr: Expression): Throwable = {
+    new AnalysisException(
+      s"Found ${expr.sql}. A generated column cannot use a user-defined function")
+  }
+
+  def generatedColumnsNonDeterministicExpression(expr: Expression): Throwable = {
+    new AnalysisException(
+      s"Found ${expr.sql}. A generated column cannot use a non deterministic expression")
+  }
+
+  def generatedColumnsAggregateExpression(expr: Expression): Throwable = {
+    new AnalysisException(
+      s"Found ${expr.sql}. A generated column cannot use an aggregate expression")
+  }
+
+  def generatedColumnsUnsupportedExpression(expr: Expression): Throwable = {
+    new AnalysisException(
+      s"${expr.sql} cannot be used in a generated column")
+  }
+
+  def generatedColumnsTypeMismatch(
+      column: String,
+      columnType: DataType,
+      exprType: DataType): Throwable = {
+    new AnalysisException(
+      s"The expression type of the generated column ${column} is ${exprType.sql}, " +
+        s"but the column type is ${columnType.sql}")
+  }
+
+  def partitionTransformExpressionIncorrectArguments(
+      exprName: String,
+      numOfExpectedArguments: Int,
+      numOfActualArguments: Int): Throwable = {
+    new AnalysisException(
+      s"'$exprName' should have $numOfExpectedArguments argument(s). " +
+        s"But found $numOfActualArguments argument(s)")
+  }
+
+  def missingColumnsInInsertInto(column: String): Throwable = {
+    new AnalysisException(s"Column $column is not specified in INSERT")
   }
 }
 
@@ -1046,6 +1150,20 @@ class ConcurrentWriteException(
     conflictingCommit: Option[CommitInfo]) extends DeltaConcurrentModificationException(
   s"A concurrent transaction has written new data since the current transaction " +
     s"read the table. Please try the operation again.", conflictingCommit)
+
+/**
+ * Thrown when time travelling to a version that does not exist in the Delta Log.
+ * @param userVersion - the version time travelling to
+ * @param earliest - earliest version available in the Delta Log
+ * @param latest - The latest version available in the Delta Log
+ */
+case class VersionNotFoundException(
+    userVersion: Long,
+    earliest: Long,
+    latest: Long) extends AnalysisException(
+      s"Cannot time travel Delta table to version $userVersion. " +
+      s"Available versions: [$earliest, $latest]."
+    )
 
 /**
  * Thrown when the metadata of the Delta table has changed between the time of read

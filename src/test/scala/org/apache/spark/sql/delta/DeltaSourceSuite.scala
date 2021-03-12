@@ -1207,6 +1207,21 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
         testStartingTimestamp("2020-07-16")
       }.getMessage.contains("The provided timestamp (2020-07-16 00:00:00.0) " +
         "is after the latest version"))
+      assert(intercept[StreamingQueryException] {
+        testStartingTimestamp("i am not a timestamp")
+      }.getMessage.contains("The provided timestamp ('i am not a timestamp') " +
+        "cannot be converted to a valid timestamp"))
+
+      // With non-strict parsing this produces null when casted to a timestamp and then parses
+      // to 1970-01-01 (unix time 0).
+      withSQLConf(DeltaSQLConf.DELTA_TIME_TRAVEL_STRICT_TIMESTAMP_PARSING.key -> "false") {
+        withTempView("startingTimestamp_test") {
+          testStartingTimestamp("i am not a timestamp")
+          checkAnswer(
+            spark.table("startingTimestamp_test"),
+            (0L until 20L).toDF())
+        }
+      }
 
       // Create a checkpoint at version 2 and delete version 0
       disableLogCleanup(tablePath)
@@ -1428,6 +1443,42 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
     }
   }
 
+  test("startingVersion should work with rate time") {
+    withTempDir { dir =>
+      withTempView("startingVersionWithRateLimit") {
+        val path = dir.getAbsolutePath
+        // Create version 0 and version 1 and each version has two files
+        spark.range(0, 5).repartition(2).write.mode("append").format("delta").save(path)
+        spark.range(5, 10).repartition(2).write.mode("append").format("delta").save(path)
+
+        val q = spark.readStream
+          .format("delta")
+          .option("startingVersion", 1)
+          .option("maxFilesPerTrigger", 1)
+          .load(path)
+          .writeStream
+          .format("memory")
+          .queryName("startingVersionWithRateLimit")
+          .start()
+        try {
+          q.processAllAvailable()
+          checkAnswer(sql("select * from startingVersionWithRateLimit"), (5 until 10).map(Row(_)))
+          val id = DeltaLog.forTable(spark, path).snapshot.metadata.id
+          val endOffsets = q.recentProgress
+            .map(_.sources(0).endOffset)
+            .map(offsetJson => DeltaSourceOffset(id, SerializedOffset(offsetJson)))
+          assert(endOffsets.toList ==
+            DeltaSourceOffset(DeltaSourceOffset.VERSION, id, 1, 0, isStartingVersion = false)
+              // When we reach the end of version 1, we will jump to version 2 with index -1
+              :: DeltaSourceOffset(DeltaSourceOffset.VERSION, id, 2, -1, isStartingVersion = false)
+              :: Nil)
+        } finally {
+          q.stop()
+        }
+      }
+    }
+  }
+
   testQuietly("SC-46515: deltaSourceIgnoreChangesError contains removeFile, version") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
@@ -1501,6 +1552,163 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
           "'ignoreDeletes' to 'true'."))
       assert(e.getCause.getMessage.contains("for example"))
       assert(e.getCause.getMessage.contains("version"))
+    }
+  }
+
+  test("fail on data loss - starting from missing files") {
+    withTempDirs { case (srcData, targetData, chkLocation) =>
+      def addData(): Unit = {
+        spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
+      }
+
+      addData()
+      val df = spark.readStream.format("delta").load(srcData.getCanonicalPath)
+
+      val q = df.writeStream.format("delta")
+        .option("checkpointLocation", chkLocation.getCanonicalPath)
+        .start(targetData.getCanonicalPath)
+      q.processAllAvailable()
+      q.stop()
+
+      addData()
+      addData()
+      addData()
+
+      val srcLog = DeltaLog.forTable(spark, srcData)
+      // Delete the first file
+      assert(new File(FileNames.deltaFile(srcLog.logPath, 1).toUri).delete())
+
+      val e = intercept[StreamingQueryException] {
+        val q = df.writeStream.format("delta")
+          .option("checkpointLocation", chkLocation.getCanonicalPath)
+          .start(targetData.getCanonicalPath)
+        q.processAllAvailable()
+      }
+      assert(e.getCause.getMessage === DeltaErrors.failOnDataLossException(1L, 2L).getMessage)
+    }
+  }
+
+  test("fail on data loss - gaps of files") {
+    withTempDirs { case (srcData, targetData, chkLocation) =>
+      def addData(): Unit = {
+        spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
+      }
+
+      addData()
+      val df = spark.readStream.format("delta").load(srcData.getCanonicalPath)
+
+      val q = df.writeStream.format("delta")
+        .option("checkpointLocation", chkLocation.getCanonicalPath)
+        .start(targetData.getCanonicalPath)
+      q.processAllAvailable()
+      q.stop()
+
+      addData()
+      addData()
+      addData()
+
+      val srcLog = DeltaLog.forTable(spark, srcData)
+      // Delete the second file
+      assert(new File(FileNames.deltaFile(srcLog.logPath, 2).toUri).delete())
+
+      val e = intercept[StreamingQueryException] {
+        val q = df.writeStream.format("delta")
+          .option("checkpointLocation", chkLocation.getCanonicalPath)
+          .start(targetData.getCanonicalPath)
+        q.processAllAvailable()
+      }
+      assert(e.getCause.getMessage === DeltaErrors.failOnDataLossException(2L, 3L).getMessage)
+    }
+  }
+
+  test("fail on data loss - starting from missing files with option off") {
+    withTempDirs { case (srcData, targetData, chkLocation) =>
+      def addData(): Unit = {
+        spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
+      }
+
+      addData()
+      val df = spark.readStream.format("delta").option("failOnDataLoss", "false")
+        .load(srcData.getCanonicalPath)
+
+      val q = df.writeStream.format("delta")
+        .option("checkpointLocation", chkLocation.getCanonicalPath)
+        .start(targetData.getCanonicalPath)
+      q.processAllAvailable()
+      q.stop()
+
+      addData()
+      addData()
+      addData()
+
+      val srcLog = DeltaLog.forTable(spark, srcData)
+      // Delete the first file
+      assert(new File(FileNames.deltaFile(srcLog.logPath, 1).toUri).delete())
+
+      val q2 = df.writeStream.format("delta")
+        .option("checkpointLocation", chkLocation.getCanonicalPath)
+        .start(targetData.getCanonicalPath)
+      q2.processAllAvailable()
+      q2.stop()
+
+      assert(spark.read.format("delta").load(targetData.getCanonicalPath).count() === 30)
+    }
+  }
+
+  test("fail on data loss - gaps of files with option off") {
+    withTempDirs { case (srcData, targetData, chkLocation) =>
+      def addData(): Unit = {
+        spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
+      }
+
+      addData()
+      val df = spark.readStream.format("delta").option("failOnDataLoss", "false")
+        .load(srcData.getCanonicalPath)
+
+      val q = df.writeStream.format("delta")
+        .option("checkpointLocation", chkLocation.getCanonicalPath)
+        .start(targetData.getCanonicalPath)
+      q.processAllAvailable()
+      q.stop()
+
+      addData()
+      addData()
+      addData()
+
+      val srcLog = DeltaLog.forTable(spark, srcData)
+      // Delete the second file
+      assert(new File(FileNames.deltaFile(srcLog.logPath, 2).toUri).delete())
+
+      val q2 = df.writeStream.format("delta")
+        .option("checkpointLocation", chkLocation.getCanonicalPath)
+        .start(targetData.getCanonicalPath)
+      q2.processAllAvailable()
+      q2.stop()
+
+      assert(spark.read.format("delta").load(targetData.getCanonicalPath).count() === 30)
+    }
+  }
+
+  test("make sure that the delta sources works fine") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+
+      import io.delta.implicits._
+
+      Seq(1, 2, 3).toDF().write.delta(inputDir.toString)
+
+      val df = spark.readStream.delta(inputDir.toString)
+
+      val stream = df.writeStream
+        .option("checkpointLocation", checkpointDir.toString)
+        .delta(outputDir.toString)
+
+      stream.processAllAvailable()
+      stream.stop()
+
+      val writtenStreamDf = spark.read.delta(outputDir.toString)
+      val expectedRows = Seq(Row(1), Row(2), Row(3))
+
+      checkAnswer(writtenStreamDf, expectedRows)
     }
   }
 }

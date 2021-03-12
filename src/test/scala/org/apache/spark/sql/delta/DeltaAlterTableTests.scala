@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
@@ -194,6 +195,73 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('delta.randomPrefixLength' = 'value')")
       }
       assert(ex2.getMessage.contains("randomPrefixLength needs to be greater than 0."))
+    }
+  }
+
+  test("SET/UNSET comment by TBLPROPERTIES") {
+    withDeltaTable("v1 int, v2 string") { tableName =>
+      def assertCommentEmpty(): Unit = {
+        val props = sql(s"DESC EXTENDED $tableName").collect()
+        assert(!props.exists(_.getString(0) === "Comment"), "Comment should be empty")
+
+        val desc = sql(s"DESCRIBE DETAIL $tableName").head()
+        val fieldIndex = desc.fieldIndex("description")
+        assert(desc.isNullAt(fieldIndex))
+      }
+
+      assertCommentEmpty()
+
+      sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('comment'='does it work?')")
+
+      val props = sql(s"DESC EXTENDED $tableName").collect()
+      assert(props.exists(r => r.getString(0) === "Comment" && r.getString(1) === "does it work?"),
+        s"Comment not found in:\n${props.mkString("\n")}")
+
+      val desc = sql(s"DESCRIBE DETAIL $tableName").head()
+      assert(desc.getAs[String]("description") === "does it work?")
+
+      sql(s"ALTER TABLE $tableName UNSET TBLPROPERTIES ('comment')")
+      assertCommentEmpty()
+    }
+  }
+
+  test("update comment by TBLPROPERTIES") {
+    val tableName = "comment_table"
+
+    def checkComment(expected: String): Unit = {
+      val props = sql(s"DESC EXTENDED $tableName").collect()
+      assert(props.exists(r => r.getString(0) === "Comment" && r.getString(1) === expected),
+        s"Comment not found in:\n${props.mkString("\n")}")
+
+      val desc = sql(s"DESCRIBE DETAIL $tableName").head()
+      assert(desc.getAs[String]("description") === expected)
+    }
+
+    withTable(tableName) {
+      sql(s"CREATE TABLE $tableName (id bigint) USING delta COMMENT 'x'")
+      checkComment("x")
+
+      sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('comment'='y')")
+
+      checkComment("y")
+    }
+  }
+
+  ddlTest("Invalid TBLPROPERTIES") {
+    withDeltaTable("v1 int, v2 string") { tableName =>
+      // Handled by Spark
+      intercept[ParseException] {
+        sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('location'='/some/new/path')")
+      }
+      // Handled by Spark
+      intercept[ParseException] {
+        sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('provider'='json')")
+      }
+      // Illegal to add constraints
+      val e3 = intercept[AnalysisException] {
+        sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('delta.constraints.c1'='age >= 25')")
+      }
+      assert(e3.getMessage.contains("ALTER TABLE ADD CONSTRAINT"))
     }
   }
 

@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.net.URI
 
+import scala.collection.mutable
+
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -48,6 +50,7 @@ import org.apache.spark.util.{SerializableConfiguration, Utils}
  * @param timestamp The timestamp of the latest commit in milliseconds. Can also be set to -1 if the
  *                  timestamp of the commit is unknown or the table has not been initialized, i.e.
  *                  `version = -1`.
+ *
  */
 class Snapshot(
     val path: Path,
@@ -90,17 +93,11 @@ class Snapshot(
     val hadoopConf = spark.sparkContext.broadcast(
       new SerializableConfiguration(spark.sessionState.newHadoopConf()))
     val logPath = path.toUri // for serializability
+    var wrapPath = false
 
     loadActions.mapPartitions { actions =>
         val hdpConf = hadoopConf.value.value
-        actions.flatMap {
-          _.unwrap match {
-            case add: AddFile => Some(add.copy(path = canonicalizePath(add.path, hdpConf)).wrap)
-            case rm: RemoveFile => Some(rm.copy(path = canonicalizePath(rm.path, hdpConf)).wrap)
-            case other if other == null => None
-            case other => Some(other.wrap)
-          }
-        }
+        actions.flatMap(canonicalizePath(_, hdpConf, wrapPath))
       }
       .withColumn("file", assertLogBelongsToTable(logPath)(input_file_name()))
       .repartition(getNumPartitions, coalesce($"add.path", $"remove.path"))
@@ -137,45 +134,45 @@ class Snapshot(
    * Delta table.
    */
   protected lazy val computedState: State = {
-    val implicits = spark.implicits
-    import implicits._
-    var _computedState = state.select(
-      last($"protocol", ignoreNulls = true) as "protocol",
-      last($"metaData", ignoreNulls = true) as "metadata",
-      collect_set($"txn") as "setTransactions",
-      // sum may return null for empty data set.
-      coalesce(sum($"add.size"), lit(0L)) as "sizeInBytes",
-      count($"add") as "numOfFiles",
-      count($"metaData") as "numOfMetadata",
-      count($"protocol") as "numOfProtocol",
-      count($"remove") as "numOfRemoves",
-      count($"txn") as "numOfSetTransactions"
-    ).as[State](stateEncoder).first()
-    val stateReconstructionCheck = spark.sessionState.conf.getConf(
-      DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED)
-    if (_computedState.protocol == null) {
-      recordDeltaEvent(
-        deltaLog,
-        opType = "delta.assertions.missingAction",
-        data = Map("version" -> version.toString, "action" -> "Protocol", "source" -> "Snapshot"))
-      if (stateReconstructionCheck) {
-        throw DeltaErrors.actionNotFoundException("protocol", version)
+    withStatusCode("DELTA", s"Compute snapshot for version: $version") {
+      val implicits = spark.implicits
+      import implicits._
+      var _computedState = state.select(
+        last($"protocol", ignoreNulls = true) as "protocol",
+        last($"metaData", ignoreNulls = true) as "metadata",
+        collect_set($"txn") as "setTransactions",
+        // sum may return null for empty data set.
+        coalesce(sum($"add.size"), lit(0L)) as "sizeInBytes",
+        count($"add") as "numOfFiles",
+        count($"metaData") as "numOfMetadata",
+        count($"protocol") as "numOfProtocol",
+        count($"remove") as "numOfRemoves",
+        count($"txn") as "numOfSetTransactions"
+      ).as[State](stateEncoder).first()
+      val stateReconstructionCheck = spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED)
+      if (_computedState.protocol == null) {
+        recordDeltaEvent(
+          deltaLog,
+          opType = "delta.assertions.missingAction",
+          data = Map("version" -> version.toString, "action" -> "Protocol", "source" -> "Snapshot"))
+        if (stateReconstructionCheck) {
+          throw DeltaErrors.actionNotFoundException("protocol", version)
+        }
       }
-      logMissingActionWarning("protocol")
-      _computedState = _computedState.copy(protocol = Protocol(spark.sessionState.conf, None))
-    }
-    if (_computedState.metadata == null) {
-      recordDeltaEvent(
-        deltaLog,
-        opType = "delta.assertions.missingAction",
-        data = Map("version" -> version.toString, "action" -> "Metadata", "source" -> "Metadata"))
-      if (stateReconstructionCheck) {
-        throw DeltaErrors.actionNotFoundException("metadata", version)
+      if (_computedState.metadata == null) {
+        recordDeltaEvent(
+          deltaLog,
+          opType = "delta.assertions.missingAction",
+          data = Map("version" -> version.toString, "action" -> "Metadata", "source" -> "Metadata"))
+        if (stateReconstructionCheck) {
+          throw DeltaErrors.actionNotFoundException("metadata", version)
+        }
+        logMissingActionWarning("metadata")
+        _computedState = _computedState.copy(metadata = Metadata())
       }
-      logMissingActionWarning("metadata")
-      _computedState = _computedState.copy(metadata = Metadata())
+      _computedState
     }
-    _computedState
   }
 
   def protocol: Protocol = computedState.protocol
@@ -214,6 +211,19 @@ class Snapshot(
 
   /** Number of columns to collect stats on for data skipping */
   lazy val numIndexedCols: Int = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(metadata)
+
+  /** Return the set of properties of the table. */
+  def getProperties: mutable.HashMap[String, String] = {
+    val base = new mutable.HashMap[String, String]()
+    metadata.configuration.foreach { case (k, v) =>
+      if (k != "path") {
+        base.put(k, v)
+      }
+    }
+    base.put(Protocol.MIN_READER_VERSION_PROP, protocol.minReaderVersion.toString)
+    base.put(Protocol.MIN_WRITER_VERSION_PROP, protocol.minWriterVersion.toString)
+    base
+  }
 
   // Given the list of files from `LogSegment`, create respective file indices to help create
   // a DataFrame and short-circuit the many file existence and partition schema inference checks
@@ -287,6 +297,21 @@ class Snapshot(
 object Snapshot extends DeltaLogging {
 
   private val defaultNumSnapshotPartitions: Int = 50
+
+  private def canonicalizePath(
+      action: SingleAction,
+      hdpConf: Configuration,
+      wrapPath: Boolean): Option[SingleAction] = {
+    action.unwrap match {
+      case add: AddFile =>
+        Some(add.copy(path = canonicalizePath(add.path, hdpConf)).wrap)
+      case rm: RemoveFile =>
+        Some(rm.copy(path = canonicalizePath(rm.path, hdpConf)).wrap)
+      case other if other == null => None
+      case other => Some(other.wrap)
+    }
+  }
+
 
   /** Canonicalize the paths for Actions */
   private[delta] def canonicalizePath(path: String, hadoopConf: Configuration): String = {

@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.FileNames.deltaFile
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.SparkException
@@ -35,6 +36,7 @@ import org.apache.spark.sql.catalyst.plans.logical.Filter
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.streaming.MemoryStream
+import org.apache.spark.sql.functions.struct
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.StructType
@@ -160,6 +162,20 @@ class DeltaSuite extends QueryTest
     assert(e2.contains("is not a Delta table"))
   }
 
+  test("SC-70676: directory deleted before first DataFrame is defined") {
+    val tempDir = Utils.createTempDir()
+    val path = new Path(tempDir.getCanonicalPath)
+    Seq(1).toDF().write.format("delta").save(tempDir.toString)
+
+    val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
+    fs.delete(path, true)
+
+    val e = intercept[AnalysisException] {
+      spark.read.format("delta").load(tempDir.toString).collect()
+    }.getMessage
+    assert(e.contains("doesn't exist"))
+  }
+
   test("append then read") {
     val tempDir = Utils.createTempDir()
     Seq(1).toDF().write.format("delta").save(tempDir.toString)
@@ -253,8 +269,8 @@ class DeltaSuite extends QueryTest
         .option(DeltaOptions.REPLACE_WHERE_OPTION, "not_a_column = true")
         .save(tempDir.toString)
     }.getMessage
-    assert(e3 == "Predicate references non-partition column 'not_a_column'. Only the " +
-      "partition columns may be referenced: [is_odd];")
+    assert(e3.contains("Predicate references non-partition column 'not_a_column'. Only the " +
+      "partition columns may be referenced: [is_odd]"))
 
     val e4 = intercept[AnalysisException] {
       Seq(6).toDF()
@@ -265,8 +281,8 @@ class DeltaSuite extends QueryTest
         .option(DeltaOptions.REPLACE_WHERE_OPTION, "value = 1")
         .save(tempDir.toString)
     }.getMessage
-    assert(e4 == "Predicate references non-partition column 'value'. Only the " +
-      "partition columns may be referenced: [is_odd];")
+    assert(e4.contains("Predicate references non-partition column 'value'. Only the " +
+      "partition columns may be referenced: [is_odd]"))
 
     val e5 = intercept[AnalysisException] {
       Seq(6).toDF()
@@ -1190,6 +1206,38 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("change data capture not implemented") {
+    withTable("tbl") {
+      sql("CREATE TABLE tbl(id INT) USING DELTA")
+      val ex = intercept[AnalysisException] {
+        sql(s"ALTER TABLE tbl SET TBLPROPERTIES (${DeltaConfigs.CHANGE_DATA_CAPTURE.key} = true)")
+      }
+
+      assert(ex.getMessage.contains("Configuration delta.enableChangeDataCapture cannot be set"))
+    }
+  }
+
+  test("change data capture write not implemented") {
+    withTempDir { dir =>
+      val path = dir.getAbsolutePath
+      spark.range(10).write.format("delta").save(path)
+
+      // Side channel since the config can't normally be set.
+      val log = DeltaLog.forTable(spark, path)
+      log.store.write(
+        deltaFile(log.logPath, 1),
+        Iterator(log.snapshot.metadata.copy(
+          configuration = Map(DeltaConfigs.CHANGE_DATA_CAPTURE.key -> "true")).json))
+      log.update()
+
+      val ex = intercept[AnalysisException] {
+        spark.range(10).write.mode("append").format("delta").save(path)
+      }
+
+      assert(ex.getMessage.contains("Cannot write to table with delta.enableChangeDataCapture set"))
+    }
+  }
+
   test("An external write should be reflected during analysis of a path based query") {
     val tempDir = Utils.createTempDir().toString
     spark.range(10).coalesce(1).write.format("delta").mode("append").save(tempDir)
@@ -1218,5 +1266,28 @@ class DeltaSuite extends QueryTest
       spark.read.format("delta").load(tempDir),
       Seq.fill(10)(Row(null))
     )
+  }
+
+  test("replaceWhere should support backtick") {
+    val table = "replace_where_backtick"
+    withTable(table) {
+      // The STRUCT column is added to prevent us from introducing any ambiguity in future
+      sql(s"CREATE TABLE $table(`a.b` STRING, `c.d` STRING, a STRUCT<b:STRING>)" +
+        s"USING delta PARTITIONED BY (`a.b`)")
+      Seq(("a", "b", "c"))
+        .toDF("a.b", "c.d", "ab")
+        .withColumn("a", struct($"ab".alias("b")))
+        .drop("ab")
+        .write
+        .format("delta")
+        // "replaceWhere" should support backtick and remove it correctly. Technically, "a.b" is not
+        // correct, but some users may already use it, so we keep supporting both. This is not
+        // ambiguous since "replaceWhere" only supports partition columns and it doesn't support
+        // struct type or map type.
+        .option("replaceWhere", "`a.b` = 'a' AND a.b = 'a'")
+        .mode("overwrite")
+        .saveAsTable(table)
+      checkAnswer(sql(s"SELECT `a.b`, `c.d`, a.b from $table"), Row("a", "b", "c") :: Nil)
+    }
   }
 }

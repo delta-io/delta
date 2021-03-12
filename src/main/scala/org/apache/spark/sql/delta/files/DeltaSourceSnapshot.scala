@@ -17,12 +17,13 @@
 package org.apache.spark.sql.delta.files
 
 import org.apache.spark.sql.delta.{DeltaLog, DeltaTableUtils, Snapshot}
+import org.apache.spark.sql.delta.actions.{AddCDCFile, RemoveFile}
 import org.apache.spark.sql.delta.sources.IndexedFile
 import org.apache.spark.sql.delta.util.StateCache
 
 import org.apache.spark.sql.{Dataset, SparkSession}
-import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.functions.lit
+import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
+import org.apache.spark.sql.functions._
 
 /**
  * Converts a `Snapshot` into the initial set of files read when starting a new streaming query.
@@ -56,6 +57,8 @@ class DeltaSourceSnapshot(
       snapshot.allFiles.sort("modificationTime", "path")
         .rdd.zipWithIndex()
         .toDF("add", "index")
+        .withColumn("remove", typedLit(Option.empty[RemoveFile]))
+        .withColumn("cdc", typedLit(Option.empty[AddCDCFile]))
         .withColumn("version", lit(version))
         .withColumn("isLast", lit(false))
         .as[IndexedFile],

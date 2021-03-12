@@ -18,7 +18,7 @@ Starting from 0.7.0, Delta Lake is only available with Scala version 2.12.
 <dependency>
   <groupId>io.delta</groupId>
   <artifactId>delta-core_2.12</artifactId>
-  <version>0.7.0</version>
+  <version>0.8.0</version>
 </dependency>
 ```
 
@@ -27,7 +27,7 @@ Starting from 0.7.0, Delta Lake is only available with Scala version 2.12.
 You include Delta Lake in your SBT project by adding the following line to your build.sbt file:
 
 ```scala
-libraryDependencies += "io.delta" %% "delta-core" % "0.7.0"
+libraryDependencies += "io.delta" %% "delta-core" % "0.8.0"
 ```
 
 ## API Documentation
@@ -50,7 +50,7 @@ All other interfaces in this library are considered internal, and they are subje
 
 ### Data Storage Compatibility
 
-Delta Lake guarantees backward compatibility for all Delta Lake tables (i.e., newer versions of Delta Lake will always be able to read tables written by older versions of Delta Lake). However, we reserve the right to break forwards compatibility as new features are introduced to the transaction protocol (i.e., an older version of Delta Lake may not be able to read a table produced by a newer version).
+Delta Lake guarantees backward compatibility for all Delta Lake tables (i.e., newer versions of Delta Lake will always be able to read tables written by older versions of Delta Lake). However, we reserve the right to break forward compatibility as new features are introduced to the transaction protocol (i.e., an older version of Delta Lake may not be able to read a table produced by a newer version).
 
 Breaking changes in the protocol are indicated by incrementing the minimum reader/writer version in the `Protocol` [action](https://github.com/delta-io/delta/blob/master/src/main/scala/org/apache/spark/sql/delta/actions/actions.scala).
 
@@ -111,7 +111,7 @@ Apache License 2.0, see [LICENSE](https://github.com/delta-io/delta/blob/master/
 There are two mediums of communication within the Delta Lake community.
 
 - Public Slack Channel
-  - [Register here](https://join.slack.com/t/delta-users/shared_invite/enQtODQ5ODM5OTAxMjAwLWY4NGI5ZmQ3Y2JmMjZjYjc1MDkwNTA5YTQ4MzhjOWY1MmVjNTM2OGZhNTExNmM5MzQ0YzEzZjIwMjc0OGI0OGM)
+  - [Register here](https://dbricks.co/delta-users-slack)
   - [Login here](https://delta-users.slack.com/)
 
 - Public [Mailing list](https://groups.google.com/forum/#!forum/delta-users)

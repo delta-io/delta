@@ -30,7 +30,7 @@ import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, SessionCatalog}
-import org.apache.spark.sql.catalyst.expressions.{Expression, PredicateHelper, SubqueryExpression}
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, NamedExpression, PredicateHelper, SubqueryExpression}
 import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.datasources.{FileIndex, HadoopFsRelation, LogicalRelation}
@@ -179,7 +179,7 @@ object DeltaTableUtils extends PredicateHelper
     // GCed even if they'd normally be hidden. The _db_index directory contains (bloom filter)
     // indexes and these must be GCed when the data they are tied to is GCed.
     (pathName.startsWith(".") || pathName.startsWith("_")) &&
-      !pathName.startsWith("_delta_index") &&
+      !pathName.startsWith("_delta_index") && !pathName.startsWith("_change_data") &&
       !partitionColumnNames.exists(c => pathName.startsWith(c ++ "="))
   }
 
@@ -291,7 +291,7 @@ object DeltaTableUtils extends PredicateHelper
       deltaLog.history.checkVersionExists(userVersion)
       userVersion -> "version"
     } else {
-      val timestamp = tt.getTimestamp(conf.sessionLocalTimeZone)
+      val timestamp = tt.getTimestamp(conf)
       deltaLog.history.getActiveCommitAtTime(timestamp, false).version -> "timestamp"
     }
   }

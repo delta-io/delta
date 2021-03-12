@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.commands
 
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, DeltaTableUtils, OptimisticTransaction}
-import org.apache.spark.sql.delta.actions.{Action, AddFile}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.hadoop.fs.Path
 
@@ -56,7 +56,10 @@ case class UpdateCommand(
   override lazy val metrics = Map[String, SQLMetric](
     "numAddedFiles" -> createMetric(sc, "number of files added."),
     "numRemovedFiles" -> createMetric(sc, "number of files removed."),
-    "numUpdatedRows" -> createMetric(sc, "number of rows updated.")
+    "numUpdatedRows" -> createMetric(sc, "number of rows updated."),
+    "executionTimeMs" -> createMetric(sc, "time taken to execute the entire operation"),
+    "scanTimeMs" -> createMetric(sc, "time taken to scan the files for matches"),
+    "rewriteTimeMs" -> createMetric(sc, "time taken to rewrite the matched files")
   )
 
   final override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -107,8 +110,12 @@ case class UpdateCommand(
       val operationTimestamp = System.currentTimeMillis()
       val deleteActions = candidateFiles.map(_.removeWithTimestamp(operationTimestamp))
 
-      val rewrittenFiles = rewriteFiles(sparkSession, txn, tahoeFileIndex.path,
-        filesToRewrite, nameToAddFile, updateCondition)
+      val rewrittenFiles =
+        withStatusCode(
+          "DELTA", s"Rewriting ${filesToRewrite.size} files for UPDATE operation (metadata)") {
+          rewriteFiles(sparkSession, txn, tahoeFileIndex.path,
+            filesToRewrite, nameToAddFile, updateCondition)
+        }
 
       numRewrittenFiles = rewrittenFiles.size
       rewriteTimeMs = (System.nanoTime() - startTime) / 1000 / 1000 - scanTimeMs
@@ -163,6 +170,15 @@ case class UpdateCommand(
     if (actions.nonEmpty) {
       metrics("numAddedFiles").set(numRewrittenFiles)
       metrics("numRemovedFiles").set(numTouchedFiles)
+      metrics("executionTimeMs").set((System.nanoTime() - startTime) / 1000 / 1000)
+      metrics("scanTimeMs").set(scanTimeMs)
+      metrics("rewriteTimeMs").set(rewriteTimeMs)
+      // In the case where the numUpdatedRows is not captured, we can siphon out the metrics from
+      // the BasicWriteStatsTracker. This is for the case where the entire partition is re-written.
+      val outputRows = txn.getMetric("numOutputRows").map(_.value).getOrElse(-1L)
+      if (metrics("numUpdatedRows").value == 0 && outputRows != 0) {
+        metrics("numUpdatedRows").set(outputRows)
+      }
       txn.registerSQLMetrics(sparkSession, metrics)
       txn.commit(actions, DeltaOperations.Update(condition.map(_.toString)))
       // This is needed to make the SQL metrics visible in the Spark UI
@@ -179,6 +195,8 @@ case class UpdateCommand(
         numFilesTotal,
         numTouchedFiles,
         numRewrittenFiles,
+        numAddedChangeFiles = 0,
+        changeFileBytes = 0,
         scanTimeMs,
         rewriteTimeMs)
     )
@@ -193,7 +211,7 @@ case class UpdateCommand(
       rootPath: Path,
       inputLeafFiles: Seq[String],
       nameToAddFileMap: Map[String, AddFile],
-      condition: Expression): Seq[AddFile] = {
+      condition: Expression): Seq[FileAction] = {
     // Containing the map from the relative file path to AddFile
     val baseRelation = buildBaseRelation(
       spark, txn, "update", rootPath, inputLeafFiles, nameToAddFileMap)
@@ -230,6 +248,8 @@ object UpdateCommand {
  * @param numFilesTotal: how big is the table
  * @param numTouchedFiles: how many files did we touch
  * @param numRewrittenFiles: how many files had to be rewritten
+ * @param numAddedChangeFiles: how many change files were generated
+ * @param changeFileBytes: total size of change files generated
  * @param scanTimeMs: how long did finding take
  * @param rewriteTimeMs: how long did rewriting take
  *
@@ -240,5 +260,7 @@ case class UpdateMetric(
     numFilesTotal: Long,
     numTouchedFiles: Long,
     numRewrittenFiles: Long,
+    numAddedChangeFiles: Long,
+    changeFileBytes: Long,
     scanTimeMs: Long,
     rewriteTimeMs: Long)

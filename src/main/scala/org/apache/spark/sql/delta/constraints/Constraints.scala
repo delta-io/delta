@@ -14,17 +14,14 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.schema
+package org.apache.spark.sql.delta.constraints
 
 import java.util.Locale
 
 import org.apache.spark.sql.delta.actions.Metadata
-import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
-import org.apache.spark.sql.types.StructType
 
 /**
  * A constraint defined on a Delta table, which writers must verify before writing.
@@ -71,5 +68,17 @@ object Constraints {
     val constraintsFromSchema = Invariants.getFromSchema(metadata.schema, spark)
 
     (checkConstraints ++ constraintsFromSchema).toSeq
+  }
+
+  /** Get the expression text for a constraint with the given name, if present. */
+  def getExprTextByName(
+      name: String,
+      metadata: Metadata,
+      spark: SparkSession): Option[String] = {
+    metadata.configuration.get(checkConstraintPropertyName(name))
+  }
+
+  def checkConstraintPropertyName(constraintName: String): String = {
+    "delta.constraints." + constraintName.toLowerCase(Locale.ROOT)
   }
 }

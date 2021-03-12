@@ -549,6 +549,57 @@ abstract class UpdateSuiteBase
           {"a": [2, 22], "b": 'Y'}""")
   }
 
+  test("nested data resolution order") {
+    // By default, resolve by name.
+    checkUpdateJson(
+      target = """
+          {"a": {"c": {"d": 'RANDOM', "e": 'str'}, "g": 1}, "z": 10}
+          {"a": {"c": {"d": 'random2', "e": 'str2'}, "g": 2}, "z": 20}""",
+      updateWhere = "a.g = 2",
+      set = "a = named_struct('g', 20, 'c', named_struct('e', 'str0', 'd', 'randomNew'))" :: Nil,
+      expected = """
+          {"a": {"c": {"d": 'RANDOM', "e": 'str'}, "g": 1}, "z": 10}
+          {"a": {"c": {"d": 'randomNew', "e": 'str0'}, "g": 20}, "z": 20}""")
+    checkUpdateJson(
+      target = """
+          {"a": {"c": {"d": 'RANDOM', "e": 'str'}, "g": 1}, "z": 10}
+          {"a": {"c": {"d": 'random2', "e": 'str2'}, "g": 2}, "z": 20}""",
+      updateWhere = "a.g = 2",
+      set = "a.c = named_struct('e', 'str0', 'd', 'randomNew')" :: Nil,
+      expected = """
+          {"a": {"c": {"d": 'RANDOM', "e": 'str'}, "g": 1}, "z": 10}
+          {"a": {"c": {"d": 'randomNew', "e": 'str0'}, "g": 2}, "z": 20}""")
+
+    // With the legacy conf, resolve by position.
+    withSQLConf((DeltaSQLConf.DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME.key, "false")) {
+      checkUpdateJson(
+        target = """
+          {"a": {"c": {"d": 'RANDOM', "e": 'str'}, "g": 1}, "z": 10}
+          {"a": {"c": {"d": 'random2', "e": 'str2'}, "g": 2}, "z": 20}""",
+        updateWhere = "a.g = 2",
+        set = "a.c = named_struct('e', 'str0', 'd', 'randomNew')" :: Nil,
+        expected = """
+          {"a": {"c": {"d": 'RANDOM', "e": 'str'}, "g": 1}, "z": 10}
+          {"a": {"c": {"d": 'str0', "e": 'randomNew'}, "g": 2}, "z": 20}""")
+
+      val e = intercept[AnalysisException] {
+        checkUpdateJson(
+          target =
+            """
+          {"a": {"c": {"d": 'RANDOM', "e": 'str'}, "g": 1}, "z": 10}
+          {"a": {"c": {"d": 'random2', "e": 'str2'}, "g": 2}, "z": 20}""",
+          updateWhere = "a.g = 2",
+          set =
+            "a = named_struct('g', 20, 'c', named_struct('e', 'str0', 'd', 'randomNew'))" :: Nil,
+          expected =
+            """
+          {"a": {"c": {"d": 'RANDOM', "e": 'str'}, "g": 1}, "z": 10}
+          {"a": {"c": {"d": 'randomNew', "e": 'str0'}, "g": 20}, "z": 20}""")
+      }
+
+      assert(e.getMessage.contains("cannot cast struct"))
+    }
+  }
 
   testQuietly("nested data - negative case") {
     val targetDF = spark.read.json("""

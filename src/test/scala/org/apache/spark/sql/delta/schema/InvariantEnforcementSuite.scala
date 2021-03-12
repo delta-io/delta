@@ -25,8 +25,9 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaOperations
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
-import org.apache.spark.sql.delta.schema.Constraints.NotNull
-import org.apache.spark.sql.delta.schema.Invariants.PersistedExpression
+import org.apache.spark.sql.delta.constraints.{Constraint, Constraints, Invariants}
+import org.apache.spark.sql.delta.constraints.Constraints.NotNull
+import org.apache.spark.sql.delta.constraints.Invariants.PersistedExpression
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
@@ -382,39 +383,19 @@ class InvariantEnforcementSuite extends QueryTest
     }
   }
 
-  test("CHECK constraint can't be created through API by default") {
+  test("CHECK constraint can't be created through SET TBLPROPERTIES") {
     withTable("noCheckConstraints") {
       spark.range(10).write.format("delta").saveAsTable("noCheckConstraints")
       val ex = intercept[AnalysisException] {
         spark.sql(
           "ALTER TABLE noCheckConstraints SET TBLPROPERTIES ('delta.constraints.mychk' = '1')")
       }
-      assert(ex.getMessage.contains(
-        "Protocol(0,3) or above"))
-      assert(ex.getMessage.contains(
-        "- Setting CHECK constraints"))
-    }
-  }
-
-  test("CHECK constraint can't be committed in a transaction by default") {
-    withTable("noCheckConstraints") {
-      spark.range(10).write.format("delta").saveAsTable("noCheckConstraints")
-      val log = DeltaLog.forTable(spark, TableIdentifier("noCheckConstraints", None))
-      val txn = log.startTransaction()
-      val newMetadata = txn.metadata.copy(
-        configuration = txn.metadata.configuration + ("delta.constraints.mychk" -> "true"))
-      val ex = intercept[AnalysisException] {
-        txn.commit(Seq(newMetadata), DeltaOperations.ManualUpdate)
-      }
-      assert(ex.getMessage.contains(
-        "Protocol(0,3) or above"))
-      assert(ex.getMessage.contains(
-        "- Setting CHECK constraints"))
+      assert(ex.getMessage.contains("ALTER TABLE ADD CONSTRAINT"))
     }
   }
 
   testQuietly("CHECK constraint is enforced if somehow created") {
-    withSQLConf((DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key, "3")) {
+    withSQLConf((DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key, "2")) {
       withTable("constraint") {
         spark.range(10).selectExpr("id AS valueA", "id AS valueB", "id AS valueC")
           .write.format("delta").saveAsTable("constraint")
@@ -423,13 +404,15 @@ class InvariantEnforcementSuite extends QueryTest
         val newMetadata = txn.metadata.copy(
           configuration = txn.metadata.configuration +
             ("delta.constraints.mychk" -> "valueA < valueB"))
+        assert(txn.protocol.minWriterVersion === 2)
         txn.commit(Seq(newMetadata), DeltaOperations.ManualUpdate)
+        assert(log.snapshot.protocol.minWriterVersion === 3)
         spark.sql("INSERT INTO constraint VALUES (50, 100, null)")
         val e = intercept[InvariantViolationException] {
           spark.sql("INSERT INTO constraint VALUES (100, 50, null)")
         }
         checkConstraintException(e,
-          s"""Check constraint mychk (`valueA` < `valueB`) violated by row with values:
+          s"""CHECK constraint mychk (`valueA` < `valueB`) violated by row with values:
              | - valueA : 100
              | - valueB : 50""".stripMargin)
 
@@ -437,7 +420,7 @@ class InvariantEnforcementSuite extends QueryTest
           spark.sql("INSERT INTO constraint VALUES (100, null, null)")
         }
         checkConstraintException(e2,
-          s"""Check constraint mychk (`valueA` < `valueB`) violated by row with values:
+          s"""CHECK constraint mychk (`valueA` < `valueB`) violated by row with values:
              | - valueA : 100
              | - valueB : null""".stripMargin)
       }
@@ -523,4 +506,5 @@ class InvariantEnforcementSuite extends QueryTest
       "s struct<n:int NOT NULL, arr:array<struct<name:string,mailbox:string NOT NULL>> NOT NULL>",
     expectedError = "The element type of the field s.arr contains a NOT NULL constraint.",
     data = Row(Row(1, Seq(Row("myName", null)))))
+
 }

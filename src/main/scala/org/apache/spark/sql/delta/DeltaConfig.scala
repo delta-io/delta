@@ -18,10 +18,11 @@ package org.apache.spark.sql.delta
 
 import java.util.{HashMap, Locale}
 
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.schema.{Invariants, SchemaUtils}
+import org.apache.spark.sql.delta.schema.SchemaUtils
 
+import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.util.{DateTimeConstants, IntervalUtils}
 import org.apache.spark.sql.internal.SQLConf
@@ -60,12 +61,17 @@ case class DeltaConfig[T](
     validate(value)
     key -> value
   }
+
+  /**
+   * SQL configuration to set for ensuring that all newly created tables have this table property.
+   */
+  def defaultTablePropertyKey: String = DeltaConfigs.sqlConfPrefix + key.stripPrefix("delta.")
 }
 
 /**
  * Contains list of reservoir configs and validation checks.
  */
-object DeltaConfigs extends DeltaLogging {
+trait DeltaConfigsBase extends DeltaLogging {
 
   /**
    * Convert a string to [[CalendarInterval]]. This method is case-insensitive and will throw
@@ -105,7 +111,7 @@ object DeltaConfigs extends DeltaLogging {
 
   private val entries = new HashMap[String, DeltaConfig[_]]
 
-  private def buildConfig[T](
+  protected def buildConfig[T](
       key: String,
       defaultValue: String,
       fromString: String => T,
@@ -212,6 +218,30 @@ object DeltaConfigs extends DeltaLogging {
   def isValidIntervalConfigValue(i: CalendarInterval): Boolean = {
     i.months == 0 && getMicroSeconds(i) >= 0
   }
+
+  /**
+   * The protocol reader version modelled as a table property. This property is *not* stored as
+   * a table property in the `Metadata` action. It is stored as its own action. Having it modelled
+   * as a table property makes it easier to upgrade, and view the version.
+   */
+  val MIN_READER_VERSION = buildConfig[Int](
+    "minReaderVersion",
+    Action.readerVersion.toString,
+    _.toInt,
+    v => v > 0 && v <= Action.readerVersion,
+    s"needs to be an integer between [1, ${Action.readerVersion}].")
+
+  /**
+   * The protocol reader version modelled as a table property. This property is *not* stored as
+   * a table property in the `Metadata` action. It is stored as its own action. Having it modelled
+   * as a table property makes it easier to upgrade, and view the version.
+   */
+  val MIN_WRITER_VERSION = buildConfig[Int](
+    "minWriterVersion",
+    Action.writerVersion.toString,
+    _.toInt,
+    v => v > 0 && v <= Action.writerVersion,
+    s"needs to be an integer between [1, ${Action.writerVersion}].")
 
   /**
    * The shortest duration we have to keep delta files around before deleting them. We can only
@@ -336,10 +366,10 @@ object DeltaConfigs extends DeltaLogging {
   /**
    * Whether this table will automagically optimize the layout of files during writes.
    */
-  val AUTO_OPTIMIZE = buildConfig[Boolean](
+  val AUTO_OPTIMIZE = buildConfig[Option[Boolean]](
     "autoOptimize",
-    "false",
-    _.toBoolean,
+    null,
+    v => Option(v).map(_.toBoolean),
     _ => true,
     "needs to be a boolean.")
 
@@ -386,4 +416,16 @@ object DeltaConfigs extends DeltaLogging {
     v => Option(v).map(_.toBoolean),
     _ => true,
     "needs to be a boolean.")
+
+  /**
+   * Enable change data capture output. Not implemented.
+   */
+  val CHANGE_DATA_CAPTURE = buildConfig[Boolean](
+    "enableChangeDataCapture",
+    "false",
+    _.toBoolean,
+    _ => true,
+    "needs to be a boolean.")
 }
+
+object DeltaConfigs extends DeltaConfigsBase

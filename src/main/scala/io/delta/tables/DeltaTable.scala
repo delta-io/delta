@@ -21,6 +21,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.tables.execution._
 import org.apache.hadoop.fs.Path
 
@@ -110,7 +111,7 @@ class DeltaTable private[tables](
    */
   @Evolving
   def vacuum(retentionHours: Double): DataFrame = {
-    executeVacuum(deltaLog, Some(retentionHours))
+    executeVacuum(deltaLog, Some(retentionHours), table.getTableIdentifierIfExists)
   }
 
   /**
@@ -126,7 +127,7 @@ class DeltaTable private[tables](
    */
   @Evolving
   def vacuum(): DataFrame = {
-    executeVacuum(deltaLog, None)
+    executeVacuum(deltaLog, None, table.getTableIdentifierIfExists)
   }
 
   /**
@@ -141,7 +142,7 @@ class DeltaTable private[tables](
    */
   @Evolving
   def history(limit: Int): DataFrame = {
-    executeHistory(deltaLog, Some(limit))
+    executeHistory(deltaLog, Some(limit), table.getTableIdentifierIfExists)
   }
 
   /**
@@ -154,7 +155,7 @@ class DeltaTable private[tables](
    */
   @Evolving
   def history(): DataFrame = {
-    executeHistory(deltaLog, None)
+    executeHistory(deltaLog, None, table.getTableIdentifierIfExists)
   }
 
   /**
@@ -171,8 +172,8 @@ class DeltaTable private[tables](
    */
   @Evolving
   def generate(mode: String): Unit = {
-    val path = deltaLog.dataPath.toString
-    executeGenerate(s"delta.`$path`", mode)
+    val tableId = table.tableIdentifier.getOrElse(s"delta.`${deltaLog.dataPath.toString}`")
+    executeGenerate(tableId, mode)
   }
 
   /**
@@ -723,7 +724,13 @@ object DeltaTable {
    */
   @Evolving
   def isDeltaTable(sparkSession: SparkSession, identifier: String): Boolean = {
-    DeltaTableUtils.isDeltaTable(sparkSession, new Path(identifier))
+    val identifierPath = new Path(identifier)
+    if (sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_STRICT_CHECK_DELTA_TABLE)) {
+      val rootOption = DeltaTableUtils.findDeltaTableRoot(sparkSession, identifierPath)
+      rootOption.isDefined && DeltaLog.forTable(sparkSession, rootOption.get).tableExists
+    } else {
+      DeltaTableUtils.isDeltaTable(sparkSession, identifierPath)
+    }
   }
 
   /**

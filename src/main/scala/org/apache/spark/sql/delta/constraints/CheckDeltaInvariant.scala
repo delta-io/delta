@@ -14,20 +14,16 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.schema
+package org.apache.spark.sql.delta.constraints
 
-import org.apache.spark.sql.delta.DeltaErrors
-import org.apache.spark.sql.delta.schema.Constraints.{Check, NotNull}
+import org.apache.spark.sql.delta.constraints.Constraints.{Check, NotNull}
+import org.apache.spark.sql.delta.schema.InvariantViolationException
 
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.encoders.RowEncoder
-import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, AttributeSeq, AttributeSet, BindReferences, BoundReference, Expression, GetStructField, LeafExpression, Literal, NonSQLExpression, UnaryExpression}
-import org.apache.spark.sql.catalyst.expressions.codegen.{Block, CodegenContext, CodegenFallback, ExprCode, GenerateUnsafeProjection, JavaCode, TrueLiteral}
+import org.apache.spark.sql.catalyst.expressions.{AttributeSeq, BindReferences, Expression, NonSQLExpression, UnaryExpression}
+import org.apache.spark.sql.catalyst.expressions.codegen._
 import org.apache.spark.sql.catalyst.expressions.codegen.Block._
-import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{DataType, NullType, StructType}
+import org.apache.spark.sql.types.{DataType, NullType}
 
 /**
  * An expression that validates a specific invariant on a column, before writing into Delta.
@@ -45,6 +41,15 @@ case class CheckDeltaInvariant(
   override def dataType: DataType = NullType
   override def foldable: Boolean = false
   override def nullable: Boolean = true
+
+  def withBoundReferences(input: AttributeSeq): CheckDeltaInvariant = {
+    CheckDeltaInvariant(
+      BindReferences.bindReference(child, input),
+      columnExtractors.map {
+        case (column, extractor) => column -> BindReferences.bindReference(extractor, input)
+      },
+      constraint)
+  }
 
   private def assertRule(input: InternalRow): Unit = constraint match {
     case n: NotNull =>

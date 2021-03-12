@@ -54,6 +54,13 @@ abstract class HadoopFileSystemLogStore(
     }
   }
 
+  override def readAsIterator(path: Path): ClosableIterator[String] = {
+    val fs = path.getFileSystem(getHadoopConfiguration)
+    val stream = fs.open(path)
+    val reader = new BufferedReader(new InputStreamReader(stream, UTF_8))
+    new LineClosableIterator(reader)
+  }
+
   override def listFrom(path: Path): Iterator[FileStatus] = {
     val fs = path.getFileSystem(getHadoopConfiguration)
     if (!fs.exists(path.getParent)) {

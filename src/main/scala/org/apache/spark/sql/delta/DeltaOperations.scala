@@ -17,10 +17,12 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.constraints.Constraint
 import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.logical.DeltaMergeIntoClause
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.streaming.OutputMode
@@ -100,13 +102,7 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = Map.empty
     override val operationMetrics: Set[String] = DeltaOperationMetrics.TRUNCATE
   }
-  /** Recorded when fscking the table. */
-  case class Fsck(numRemovedFiles: Long) extends Operation("FSCK") {
-    override val parameters: Map[String, Any] = Map(
-      "numRemovedFiles" -> numRemovedFiles
-    )
-    override val operationMetrics: Set[String] = DeltaOperationMetrics.FSCK
-  }
+
   /** Recorded when converting a table into a Delta table. */
   case class Convert(
       numFiles: Long,
@@ -118,20 +114,6 @@ object DeltaOperations {
       "partitionedBy" -> JsonUtils.toJson(partitionBy),
       "collectStats" -> collectStats) ++ catalogTable.map("catalogTable" -> _)
     override val operationMetrics: Set[String] = DeltaOperationMetrics.CONVERT
-  }
-  /** Recorded when optimizing the table. */
-  case class Optimize(
-      predicate: Seq[String],
-      zOrderBy: Seq[String],
-      batchId: Int,
-      auto: Boolean) extends Operation("OPTIMIZE") {
-    override val parameters: Map[String, Any] = Map(
-      "predicate" -> JsonUtils.toJson(predicate),
-      "zOrderBy" -> JsonUtils.toJson(zOrderBy),
-      "batchId" -> JsonUtils.toJson(batchId),
-      "auto" -> auto
-    )
-    override val operationMetrics: Set[String] = DeltaOperationMetrics.OPTIMIZE
   }
 
   /** Represents the predicates and action type (insert, update, delete) for a Merge clause */
@@ -195,16 +177,8 @@ object DeltaOperations {
       val numOutputRows = metrics("numOutputRows").value
       val numUpdatedRows = metrics("numUpdatedRows").value
       var strMetrics = super.transformMetrics(metrics)
-      // In the case where the numUpdatedRows is not captured in the UpdateCommand implementation
-      // we can siphon out the metrics from the BasicWriteStatsTracker for that command.
-      // This is for the case where the entire partition is re-written.
-      if (numUpdatedRows == 0 && numOutputRows != 0) {
-        strMetrics += "numUpdatedRows" -> numOutputRows.toString
-        strMetrics += "numCopiedRows" -> "0"
-      } else {
-        strMetrics += "numCopiedRows" -> (
-          numOutputRows - strMetrics("numUpdatedRows").toLong).toString
-      }
+      val numCopiedRows = numOutputRows - strMetrics("numUpdatedRows").toLong
+      strMetrics += "numCopiedRows" -> numCopiedRows.toString
       strMetrics
     }
   }
@@ -296,10 +270,6 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = Map.empty
   }
 
-  object FileNotificationRetention extends Operation("FILE NOTIFICATION RETENTION") {
-    override val parameters: Map[String, Any] = Map.empty
-  }
-
   case class UpdateColumnMetadata(
       operationName: String,
       columns: Seq[(Seq[String], StructField)])
@@ -311,26 +281,27 @@ object DeltaOperations {
     }
   }
 
-  /** Recorded when recomputing stats on the table. */
-  case class ComputeStats(predicate: Seq[String]) extends Operation("COMPUTE STATS") {
-    override val parameters: Map[String, Any] = Map(
-      "predicate" -> JsonUtils.toJson(predicate))
-  }
-
-  /** Recorded when manually re-/un-/setting ZCube Information for existing files. */
-  case class ResetZCubeInfo(predicate: Seq[String], zOrderBy: Seq[String])
-    extends Operation("RESET ZCUBE INFO") {
-
-    override val parameters: Map[String, Any] = Map(
-      "predicate" -> JsonUtils.toJson(predicate),
-      "zOrderBy" -> JsonUtils.toJson(zOrderBy))
-  }
-
   case class UpdateSchema(oldSchema: StructType, newSchema: StructType)
       extends Operation("UPDATE SCHEMA") {
     override val parameters: Map[String, Any] = Map(
       "oldSchema" -> JsonUtils.toJson(oldSchema),
       "newSchema" -> JsonUtils.toJson(newSchema))
+  }
+
+  case class AddConstraint(
+      constraintName: String, expr: String) extends Operation("ADD CONSTRAINT") {
+    override val parameters: Map[String, Any] = Map("name" -> constraintName, "expr" -> expr)
+  }
+
+  case class DropConstraint(
+      constraintName: String, expr: Option[String]) extends Operation("DROP CONSTRAINT") {
+    override val parameters: Map[String, Any] = {
+      expr.map { e =>
+        Map("name" -> constraintName, "expr" -> e, "existed" -> "true")
+      }.getOrElse {
+        Map("name" -> constraintName, "existed" -> "false")
+      }
+    }
   }
 
 
@@ -371,36 +342,30 @@ private[delta] object DeltaOperationMetrics {
     "numAddedFiles", // number of files added
     "numRemovedFiles", // number of files removed
     "numDeletedRows", // number of rows removed
-    "numCopiedRows" // number of rows copied in the process of deleting files
+    "numCopiedRows", // number of rows copied in the process of deleting files
+    "executionTimeMs", // time taken to execute the entire operation
+    "scanTimeMs", // time taken to scan the files for matches
+    "rewriteTimeMs" // time taken to rewrite the matched files
   )
 
-  /** Deleting the entire table or partition would prevent row level metrics from being recorded */
+  /**
+   * Deleting the entire table or partition would prevent row level metrics from being recorded.
+   * This is used only in test to verify specific delete cases.
+   */
   val DELETE_PARTITIONS = Set(
-    "numRemovedFiles" // number of files removed
+    "numRemovedFiles", // number of files removed
+    "executionTimeMs", // time taken to execute the entire operation
+    "scanTimeMs", // time taken to scan the files for matches
+    "rewriteTimeMs" // time taken to rewrite the matched files
   )
 
   val TRUNCATE = Set(
-    "numRemovedFiles" // number of files removed
-  )
-
-  val FSCK = Set(
-    "numRemovedFiles" // number of files removed
+    "numRemovedFiles", // number of files removed
+    "executionTimeMs" // time taken to execute the entire operation
   )
 
   val CONVERT = Set(
     "numConvertedFiles" // number of parquet files that have been converted.
-  )
-
-  val OPTIMIZE = Set(
-    "numAddedFiles", // number of files added
-    "numRemovedFiles", // number of files removed
-    "numAddedBytes", // number of bytes added by optimize
-    "numRemovedBytes", // number of bytes removed by optimize
-    "minFileSize", // the size of the smallest file
-    "p25FileSize", // the size of the 25th percentile file
-    "p50FileSize", // the median file size
-    "p75FileSize", // the 75th percentile of the file sizes
-    "maxFileSize" // the size of the largest file
   )
 
   val MERGE = Set(
@@ -411,22 +376,20 @@ private[delta] object DeltaOperationMetrics {
     "numTargetRowsCopied", // number of target rows copied
     "numOutputRows", // total number of rows written out
     "numTargetFilesAdded", // num files added to the sink(target)
-    "numTargetFilesRemoved" // number of files removed from the sink(target)
+    "numTargetFilesRemoved", // number of files removed from the sink(target)
+    "executionTimeMs",  // time taken to execute the entire operation
+    "scanTimeMs", // time taken to scan the files for matches
+    "rewriteTimeMs" // time taken to rewrite the matched files
   )
 
   val UPDATE = Set(
     "numAddedFiles", // number of files added
     "numRemovedFiles", // number of files removed
     "numUpdatedRows", // number of rows updated
-    "numCopiedRows" // number of rows just copied over in the process of updating files.
+    "numCopiedRows", // number of rows just copied over in the process of updating files.
+    "executionTimeMs",  // time taken to execute the entire operation
+    "scanTimeMs", // time taken to scan the files for matches
+    "rewriteTimeMs" // time taken to rewrite the matched files
   )
 
-  val CLONE = Set(
-    "sourceTableSize", // size in bytes of source table at version
-    "sourceNumOfFiles", // number of files in source table at version
-    "numRemovedFiles", // number of files removed from target table if delta table was replaced
-    "numCopiedFiles", // number of files that were cloned - 0 for shallow tables
-    "removedFilesSize", // size in bytes of files removed from an existing Delta table if one exists
-    "copiedFilesSize" // size of files copied - 0 for shallow tables
-  )
 }

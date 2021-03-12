@@ -16,11 +16,14 @@
 
 package org.apache.spark.sql.delta.schema
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
 
+import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.scalatest.GivenWhenThen
 
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
@@ -437,6 +440,56 @@ class SchemaUtilsSuite extends QueryTest
       .add("a", IntegerType, nullable = true, new MetadataBuilder().putString("x", "2").build())
       .add("b", StringType),
     expected = "metadata for field a is different"
+  )
+
+  testReportDifferences("change in generation expression for generated columns")(
+    existing = new StructType()
+      .add("a", IntegerType, nullable = true,
+        new MetadataBuilder()
+          .putString(GENERATION_EXPRESSION_METADATA_KEY, "b + 1")
+          .putString("x", "1").build())
+      .add("b", StringType),
+    specified = new StructType()
+      .add("a", IntegerType, nullable = true, new MetadataBuilder()
+        .putString(GENERATION_EXPRESSION_METADATA_KEY, "1 + b")
+        .putString("x", "1").build())
+      .add("b", StringType),
+    // Regex flags: DOTALL and MULTILINE
+    expected = "(?sm)generation expression for field a is different" +
+      // Not include
+      "(?!.*metadata for field a is different)"
+  )
+
+  testReportDifferences("change in column metadata for generated columns")(
+    existing = new StructType()
+      .add("a", IntegerType, nullable = true,
+        new MetadataBuilder()
+          .putString(GENERATION_EXPRESSION_METADATA_KEY, "b + 1")
+          .putString("x", "1").build())
+      .add("b", StringType),
+    specified = new StructType()
+      .add("a", IntegerType, nullable = true, new MetadataBuilder()
+        .putString(GENERATION_EXPRESSION_METADATA_KEY, "b + 1")
+        .putString("x", "2").build())
+      .add("b", StringType),
+    expected = "metadata for field a is different"
+  )
+
+  testReportDifferences("change in generation expression and metadata for generated columns")(
+    existing = new StructType()
+      .add("a", IntegerType, nullable = true,
+        new MetadataBuilder()
+          .putString(GENERATION_EXPRESSION_METADATA_KEY, "b + 1")
+          .putString("x", "1").build())
+      .add("b", StringType),
+    specified = new StructType()
+      .add("a", IntegerType, nullable = true, new MetadataBuilder()
+        .putString(GENERATION_EXPRESSION_METADATA_KEY, "b + 2")
+        .putString("x", "2").build())
+      .add("b", StringType),
+    // Regex flags: DOTALL and MULTILINE
+    expected = "(?sm)generation expression for field a is different" +
+      ".*metadata for field a is different"
   )
 
   testReportDifferences("change of column type should be reported as a difference")(
@@ -900,6 +953,12 @@ class SchemaUtilsSuite extends QueryTest
     assert(normalizeColumnNames(schema, df).schema.fieldNames === Seq("Def", "ghi", "abc"))
   }
 
+  test("normalize column names - dots in the name") {
+    val df = Seq((1, 2)).toDF("a.b", "c.D")
+    val schema = new StructType().add("a.b", IntegerType).add("c.d", IntegerType)
+    assert(normalizeColumnNames(schema, df).schema.fieldNames === Seq("a.b", "c.d"))
+  }
+
   test("throw error if nested column cases don't match") {
     val df = spark.read.json(Seq("""{"a":1,"b":{"X":1,"y":2}}""").toDS())
     val schema = new StructType()
@@ -921,6 +980,7 @@ class SchemaUtilsSuite extends QueryTest
         .add("y", IntegerType))
     assert(normalizeColumnNames(schema, df).schema.fieldNames === Seq("a", "b"))
   }
+
 
   ////////////////////////////
   // mergeSchemas
@@ -1042,7 +1102,7 @@ class SchemaUtilsSuite extends QueryTest
     assert(mergeSchemas(update, base) === update)
   }
 
-  test("schema merging performs upcast between ByteType, ShortType, and LongType") {
+  test("schema merging performs upcast between ByteType, ShortType, and IntegerType") {
     val byteType = new StructType().add("top", ByteType)
     val shortType = new StructType().add("top", ShortType)
     val intType = new StructType().add("top", IntegerType)
@@ -1066,6 +1126,24 @@ class SchemaUtilsSuite extends QueryTest
     val arrInt = new StructType().add("top", new ArrayType(IntegerType, true))
     val arrShort = new StructType().add("top", new ArrayType(ShortType, true))
     assert(mergeSchemas(arrInt, arrShort) === arrInt)
+  }
+
+  test("schema merging allows upcasting to LongType with allowImplicitConversions") {
+    val byteType = new StructType().add("top", ByteType)
+    val shortType = new StructType().add("top", ShortType)
+    val intType = new StructType().add("top", IntegerType)
+    val longType = new StructType().add("top", LongType)
+
+    Seq(byteType, shortType, intType).foreach { sourceType =>
+      assert(
+        longType === SchemaUtils.mergeSchemas(
+          longType, sourceType, allowImplicitConversions = true))
+      val e = intercept[AnalysisException] {
+        SchemaUtils.mergeSchemas(longType, sourceType)
+      }
+      assert(e.getMessage.contains(
+        s"Failed to merge incompatible data types LongType and ${sourceType.head.dataType}"))
+    }
   }
 
   test("Upcast between ByteType, ShortType and IntegerType is OK for parquet") {
@@ -1221,5 +1299,13 @@ class SchemaUtilsSuite extends QueryTest
       // no issues here
       SchemaUtils.checkFieldNames(Seq(s"a${char}b", s"${char}ab", s"ab${char}", char.toString))
     }
+  }
+
+  test("fieldToColumn") {
+    assert(SchemaUtils.fieldToColumn(StructField("a", IntegerType)).expr ==
+      new UnresolvedAttribute("a" :: Nil))
+    // Dot in the column name should be converted correctly
+    assert(SchemaUtils.fieldToColumn(StructField("a.b", IntegerType)).expr ==
+      new UnresolvedAttribute("a.b" :: Nil))
   }
 }

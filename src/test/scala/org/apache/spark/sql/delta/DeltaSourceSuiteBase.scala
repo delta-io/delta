@@ -45,4 +45,15 @@ trait DeltaSourceSuiteBase extends StreamTest {
         true
       }
   }
+
+  object CheckProgress {
+    def apply(rowsPerBatch: Seq[Int]): AssertOnQuery =
+      Execute { q =>
+        val progress = q.recentProgress.filter(_.numInputRows != 0)
+        assert(progress.length === rowsPerBatch.size, "Expected batches don't match")
+        progress.zipWithIndex.foreach { case (p, i) =>
+          assert(p.numInputRows === rowsPerBatch(i), s"Expected rows in batch $i does not match ")
+        }
+      }
+  }
 }

@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta
 
 import java.io.{File, FileNotFoundException}
 
+import scala.language.postfixOps
+
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions._

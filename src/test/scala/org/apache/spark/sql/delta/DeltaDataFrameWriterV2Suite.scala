@@ -19,13 +19,14 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.catalog.{DeltaCatalog, DeltaTableV2}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.scalatest.BeforeAndAfter
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, CreateTableWriter, Dataset, QueryTest, Row}
-import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, NoSuchTableException, TableAlreadyExistsException}
+import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, TableAlreadyExistsException}
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, Table, TableCatalog}
 import org.apache.spark.sql.connector.expressions._
 import org.apache.spark.sql.functions._
@@ -60,8 +61,11 @@ trait OpenSourceDataFrameWriterV2Tests
   }
 
   protected def getProperties(table: Table): Map[String, String] = {
-    table.properties().asScala.toMap.filterKeys(
-      !CatalogV2Util.TABLE_RESERVED_PROPERTIES.contains(_))
+    val reservedProp = CatalogV2Util.TABLE_RESERVED_PROPERTIES :+ "Type"
+    table.properties().asScala.toMap
+      .filterKeys(!reservedProp.contains(_))
+      .filterKeys(k =>
+        k != Protocol.MIN_READER_VERSION_PROP &&  k != Protocol.MIN_WRITER_VERSION_PROP)
   }
 
   test("Append: basic append") {
@@ -99,7 +103,7 @@ trait OpenSourceDataFrameWriterV2Tests
   }
 
   test("Append: fail if table does not exist") {
-    val exc = intercept[NoSuchTableException] {
+    val exc = intercept[AnalysisException] {
       spark.table("source").writeTo("table_name").append()
     }
 
@@ -165,7 +169,7 @@ trait OpenSourceDataFrameWriterV2Tests
   }
 
   test("Overwrite: fail if table does not exist") {
-    val exc = intercept[NoSuchTableException] {
+    val exc = intercept[AnalysisException] {
       spark.table("source").writeTo("table_name").overwrite(lit(true))
     }
 
@@ -230,7 +234,7 @@ trait OpenSourceDataFrameWriterV2Tests
   }
 
   test("OverwritePartitions: fail if table does not exist") {
-    val exc = intercept[NoSuchTableException] {
+    val exc = intercept[AnalysisException] {
       spark.table("source").writeTo("table_name").overwritePartitions()
     }
 
@@ -653,5 +657,28 @@ class DeltaDataFrameWriterV2Suite
     // different table Properties
     checkFailure(spark.table("table_name"), "overwriteSchema is not allowed when replacing")(a =>
       a.partitionedBy($"id").tableProperty("delta.appendOnly", "true"))
+  }
+
+  test("append or overwrite mode should not do implicit casting") {
+    val table = "not_implicit_casting"
+    withTable(table) {
+      spark.sql(s"CREATE TABLE $table(id bigint, p int) USING delta PARTITIONED BY (p)")
+      def verifyNotImplicitCasting(f: => Unit): Unit = {
+        val e = intercept[AnalysisException](f).getMessage
+        assert(e.contains("Failed to merge incompatible data types LongType and IntegerType"))
+      }
+      verifyNotImplicitCasting {
+        Seq(1 -> 1).toDF("id", "p").write.mode("append").format("delta").saveAsTable(table)
+      }
+      verifyNotImplicitCasting {
+        Seq(1 -> 1).toDF("id", "p").write.mode("overwrite").format("delta").saveAsTable(table)
+      }
+      verifyNotImplicitCasting {
+        Seq(1 -> 1).toDF("id", "p").writeTo(table).append()
+      }
+      verifyNotImplicitCasting {
+        Seq(1 -> 1).toDF("id", "p").writeTo(table).overwrite($"p" === 1)
+      }
+    }
   }
 }

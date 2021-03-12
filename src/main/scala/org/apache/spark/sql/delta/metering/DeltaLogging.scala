@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta.metering
 import scala.util.Try
 import scala.util.control.NonFatal
 
+// scalastyle:off import.ordering.noEmptyLine
+
 import com.databricks.spark.util.{DatabricksLogging, OpType, TagDefinition}
 import com.databricks.spark.util.MetricDefinitions.{EVENT_LOGGING_FAILURE, EVENT_TAHOE}
 import com.databricks.spark.util.TagDefinitions.{TAG_OP_TYPE, TAG_TAHOE_ID, TAG_TAHOE_PATH}
@@ -100,6 +102,8 @@ trait DeltaLogging
     }
     recordOperation(
       new OpType(opType, ""),
-      extraTags = tableTags ++ tags) {thunk}
+      extraTags = tableTags ++ tags) {
+          thunk
+    }
   }
 }

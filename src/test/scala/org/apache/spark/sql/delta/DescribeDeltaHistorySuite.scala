@@ -91,6 +91,24 @@ trait DescribeDeltaHistorySuiteBase
     }
   }
 
+  /**
+   * Check all expected metrics exist and executime time (if expected to exist) is the largest time
+   * metric.
+   */
+  protected def checkOperationTimeMetricsInvariant(
+      expectedMetrics: Set[String],
+      operationMetrics: Map[String, String]): Unit = {
+    expectedMetrics.foreach {
+      m => assert(operationMetrics.contains(m))
+    }
+    if (expectedMetrics.contains("executionTimeMs")) {
+      val executionTimeMs = operationMetrics("executionTimeMs").toLong
+      val maxTimeMs = operationMetrics.filterKeys(expectedMetrics.contains(_))
+        .mapValues(v => v.toLong).valuesIterator.max
+      assert(executionTimeMs == maxTimeMs)
+    }
+  }
+
   protected def getOperationMetrics(history: DataFrame): Map[String, String] = {
     history.select("operationMetrics")
       .take(1)
@@ -261,7 +279,7 @@ trait DescribeDeltaHistorySuiteBase
       checkLastOperation(
         tempDir2,
         Seq("CREATE TABLE AS SELECT",
-          "false", """[]""", """{}""", null),
+          "false", """[]""", """{}""", "this is my table"),
         Seq($"operation", $"operationParameters.isManaged", $"operationParameters.partitionBy",
           $"operationParameters.properties", $"operationParameters.description"))
     }
@@ -586,6 +604,8 @@ trait DescribeDeltaHistorySuiteBase
           "numSourceRows" -> "100"
         )
         checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.MERGE)
+        val expectedTimeMetrics = Set("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
+        checkOperationTimeMetricsInvariant(expectedTimeMetrics, operationMetrics)
       }
     }
   }
@@ -710,6 +730,8 @@ trait DescribeDeltaHistorySuiteBase
           "numCopiedRows" -> "2" // There should be only three rows in total(updated + copied)
         )
         checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.UPDATE)
+        val expectedTimeMetrics = Set("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
+        checkOperationTimeMetricsInvariant(expectedTimeMetrics, operationMetrics)
       }
     }
   }
@@ -786,6 +808,8 @@ trait DescribeDeltaHistorySuiteBase
           "numCopiedRows" -> "2" // There should be only three rows in total(deleted + copied)
         )
         checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.DELETE)
+        val expectedTimeMetrics = Set("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
+        checkOperationTimeMetricsInvariant(expectedTimeMetrics, operationMetrics)
       }
     }
   }
@@ -813,6 +837,8 @@ trait DescribeDeltaHistorySuiteBase
         // row level metrics are not collected for deletes with parition columns
         checkOperationMetrics(
           expectedMetrics, operationMetrics, DeltaOperationMetrics.DELETE_PARTITIONS)
+        val expectedTimeMetrics = Set("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
+        checkOperationTimeMetricsInvariant(expectedTimeMetrics, operationMetrics)
       }
     }
   }
@@ -840,6 +866,8 @@ trait DescribeDeltaHistorySuiteBase
         )
         checkOperationMetrics(
           expectedMetrics, operationMetrics, DeltaOperationMetrics.DELETE_PARTITIONS)
+        val expectedTimeMetrics = Set("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
+        checkOperationTimeMetricsInvariant(expectedTimeMetrics, operationMetrics)
       }
     }
   }

@@ -25,11 +25,10 @@ import org.apache.spark.sql.internal.SQLConf
 /**
  * [[SQLConf]] entries for Delta features.
  */
-object DeltaSQLConf {
+trait DeltaSQLConfBase {
   def buildConf(key: String): ConfigBuilder = SQLConf.buildConf(s"spark.databricks.delta.$key")
   def buildStaticConf(key: String): ConfigBuilder =
     SQLConf.buildStaticConf(s"spark.databricks.delta.$key")
-
 
   val RESOLVE_TIME_TRAVEL_ON_IDENTIFIER =
     buildConf("timeTravel.resolveOnIdentifier.enabled")
@@ -182,21 +181,20 @@ object DeltaSQLConf {
       .createWithDefault(10000000)
 
   val DELTA_PROTOCOL_DEFAULT_WRITER_VERSION =
-    buildConf("protocol.minWriterVersion")
+    buildConf("properties.defaults.minWriterVersion")
       .doc("The default writer protocol version to create new tables with, unless a feature " +
         "that requires a higher version for correctness is enabled.")
       .intConf
-      .checkValues(Set(1, 2, 3))
+      .checkValues(Set(1, 2, 3, 4))
       .createWithDefault(2)
 
   val DELTA_PROTOCOL_DEFAULT_READER_VERSION =
-    buildConf("protocol.minReaderVersion")
+    buildConf("properties.defaults.minReaderVersion")
       .doc("The default reader protocol version to create new tables with, unless a feature " +
         "that requires a higher version for correctness is enabled.")
       .intConf
       .checkValues(Set(1))
       .createWithDefault(1)
-
 
   val DELTA_MAX_SNAPSHOT_LINEAGE_LENGTH =
     buildConf("maxSnapshotLineageLength")
@@ -229,6 +227,14 @@ object DeltaSQLConf {
         "period, which may end up corrupting the Delta Log.")
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_VACUUM_PARALLEL_DELETE_ENABLED =
+    buildConf("vacuum.parallelDelete.enabled")
+      .doc("Enables parallelizing the deletion of files during a vacuum command. Enabling " +
+        "may result hitting rate limits on some storage backends. When enabled, parallelization " +
+        "is controlled by the default number of shuffle partitions.")
+      .booleanConf
+      .createWithDefault(false)
 
   val DELTA_SCHEMA_AUTO_MIGRATE =
     buildConf("schema.autoMerge.enabled")
@@ -348,4 +354,47 @@ object DeltaSQLConf {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME =
+    buildConf("resolveMergeUpdateStructsByName.enabled")
+      .internal()
+      .doc("Whether to resolve structs by name in UPDATE operations of UPDATE and MERGE INTO " +
+        "commands. If disabled, Delta will revert to the legacy behavior of resolving by position.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_TIME_TRAVEL_STRICT_TIMESTAMP_PARSING =
+    buildConf("timeTravel.parsing.strict")
+      .internal()
+      .doc("Whether to require time travel timestamps to parse to a valid timestamp. If " +
+        "disabled, Delta will revert to the legacy behavior of treating invalid timestamps as " +
+        "equivalent to unix time 0 (1970-01-01 00:00:00).")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_STRICT_CHECK_DELTA_TABLE =
+    buildConf("isDeltaTable.strictCheck")
+      .internal()
+      .doc("""
+           | When enabled, io.delta.tables.DeltaTable.isDeltaTable
+           | should return false when the _delta_log directory doesn't
+           | contain any transaction logs.
+           |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_LEGACY_STORE_WRITER_OPTIONS_AS_PROPS =
+    buildConf("legacy.storeOptionsAsProperties")
+      .internal()
+      .doc("""
+             |Delta was unintentionally storing options provided by the DataFrameWriter in the
+             |saveAsTable method as table properties in the transaction log. This was unsupported
+             |behavior (it was a bug), and it has security implications (accidental storage of
+             |credentials). This flag prevents the storage of arbitrary options as table properties.
+             |Set this flag to true to continue setting non-delta prefixed table properties through
+             |table options.
+             |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
 }
+
+object DeltaSQLConf extends DeltaSQLConfBase

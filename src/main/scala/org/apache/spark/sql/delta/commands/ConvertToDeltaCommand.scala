@@ -395,7 +395,7 @@ abstract class ConvertToDeltaCommandBase(
     val (partitionOpt, _) = PartitionUtils.parsePartition(
       dir,
       typeInference = false,
-      basePaths = Set.empty,
+      basePaths = Set(basePath),
       userSpecifiedDataTypes = Map.empty,
       validatePartitionColumns = false,
       java.util.TimeZone.getDefault,

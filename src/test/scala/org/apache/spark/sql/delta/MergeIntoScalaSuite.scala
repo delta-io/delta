@@ -624,14 +624,18 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
     deltaTable.toDF
   }
 
+  // scalastyle:off argcount
   override def testNestedDataSupport(name: String, namePrefix: String = "nested data support")(
       source: String,
       target: String,
       update: Seq[String],
       insert: String = null,
-      schema: StructType = null,
+      targetSchema: StructType = null,
+      sourceSchema: StructType = null,
       result: String = null,
-      errorStrs: Seq[String] = null): Unit = {
+      errorStrs: Seq[String] = null,
+      confs: Seq[(String, String)] = Seq.empty): Unit = {
+    // scalastyle:on argcount
 
     require(result == null ^ errorStrs == null, "either set the result or the error strings")
 
@@ -639,34 +643,47 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
       if (result != null) s"$namePrefix - $name" else s"$namePrefix - analysis error - $name"
 
     test(testName) {
-      withJsonData(source, target, schema) { case (sourceName, targetName) =>
-        val pathOrName = parsePath(targetName)
-        val fieldNames = readDeltaTable(pathOrName).schema.fieldNames
-        val keyName = s"`${fieldNames.head}`"
-        val updateColExprMap = parseUpdate(update)
-        val insertExprMaps = if (insert != null) {
-          parseInsert(insert, None)
-        } else {
-          fieldNames.map { f => s"t.`$f`" -> s"s.`$f`" }.toMap
-        }
+      withSQLConf(confs: _*) {
+        withJsonData(source, target, targetSchema, sourceSchema) { case (sourceName, targetName) =>
+          val pathOrName = parsePath(targetName)
+          val fieldNames = readDeltaTable(pathOrName).schema.fieldNames
+          val keyName = s"`${fieldNames.head}`"
 
-        def execMerge() = {
-          val t = makeDeltaTable(targetName)
-          t.as("t")
-            .merge(
-              spark.table(sourceName).as("s"),
-              s"s.$keyName = t.$keyName")
-            .whenMatched().updateExpr(updateColExprMap)
-            .whenNotMatched().insertExpr(insertExprMaps)
-            .execute()
-        }
+          def execMerge() = {
+            val t = makeDeltaTable(targetName)
+            val m = t.as("t")
+              .merge(
+                spark.table(sourceName).as("s"),
+                s"s.$keyName = t.$keyName")
+            val withUpdate = if (update == Seq("*")) {
+              m.whenMatched().updateAll()
+            } else {
+              val updateColExprMap = parseUpdate(update)
+              m.whenMatched().updateExpr(updateColExprMap)
+            }
 
-        if (result != null) {
-          execMerge()
-          checkAnswer(readDeltaTable(pathOrName), spark.read.json(strToJsonSeq(result).toDS))
-        } else {
-          val e = intercept[AnalysisException] { execMerge() }
-          errorStrs.foreach { s => errorContains(e.getMessage, s) }
+            if (insert == "*") {
+              withUpdate.whenNotMatched().insertAll().execute()
+            } else {
+              val insertExprMaps = if (insert != null) {
+                parseInsert(insert, None)
+              } else {
+                fieldNames.map { f => s"t.`$f`" -> s"s.`$f`" }.toMap
+              }
+
+              withUpdate.whenNotMatched().insertExpr(insertExprMaps).execute()
+            }
+          }
+
+          if (result != null) {
+            execMerge()
+            checkAnswer(readDeltaTable(pathOrName), spark.read.json(strToJsonSeq(result).toDS))
+          } else {
+            val e = intercept[AnalysisException] {
+              execMerge()
+            }
+            errorStrs.foreach { s => errorContains(e.getMessage, s) }
+          }
         }
       }
     }
