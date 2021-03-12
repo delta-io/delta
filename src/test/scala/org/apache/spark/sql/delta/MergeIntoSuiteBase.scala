@@ -111,28 +111,36 @@ abstract class MergeIntoSuiteBase
 
   Seq(true, false).foreach { skippingEnabled =>
     Seq(true, false).foreach { isPartitioned =>
-      test("basic case - merge to view on a Delta table by path, " +
+      // TODO (SC-72770): enable test case when useSQLView = true
+      Seq(false).foreach { useSQLView =>
+        test("basic case - merge to view on a Delta table by path, " +
           s"isPartitioned: $isPartitioned skippingEnabled: $skippingEnabled") {
-        withTable("delta_target", "source") {
-          withSQLConf(DeltaSQLConf.DELTA_STATS_SKIPPING.key -> skippingEnabled.toString) {
-            Seq((1, 1), (0, 3), (1, 6)).toDF("key1", "value").createOrReplaceTempView("source")
-            val partitions = if (isPartitioned) "key2" :: Nil else Nil
-            append(Seq((2, 2), (1, 4)).toDF("key2", "value"), partitions)
-            readDeltaTable(tempPath).createOrReplaceTempView("delta_target")
+          withTable("delta_target", "source") {
+            withSQLConf(DeltaSQLConf.DELTA_STATS_SKIPPING.key -> skippingEnabled.toString) {
+              Seq((1, 1), (0, 3), (1, 6)).toDF("key1", "value").createOrReplaceTempView("source")
+              val partitions = if (isPartitioned) "key2" :: Nil else Nil
+              append(Seq((2, 2), (1, 4)).toDF("key2", "value"), partitions)
+              if (useSQLView) {
+                sql(s"CREATE OR REPLACE TEMP VIEW delta_target AS " +
+                  s"SELECT * FROM delta.`$tempPath` t")
+              } else {
+                readDeltaTable(tempPath).createOrReplaceTempView("delta_target")
+              }
 
-            executeMerge(
-              target = "delta_target",
-              source = "source src",
-              condition = "src.key1 = key2 AND src.value < delta_target.value",
-              update = "key2 = 20 + key1, value = 20 + src.value",
-              insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
+              executeMerge(
+                target = "delta_target",
+                source = "source src",
+                condition = "src.key1 = key2 AND src.value < delta_target.value",
+                update = "key2 = 20 + key1, value = 20 + src.value",
+                insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
 
-            checkAnswer(sql("SELECT key2, value FROM delta_target"),
-              Row(2, 2) :: // No change
-                Row(21, 21) :: // Update
-                Row(-10, 13) :: // Insert
-                Row(-9, 16) :: // Insert
-                Nil)
+              checkAnswer(sql("SELECT key2, value FROM delta_target"),
+                Row(2, 2) :: // No change
+                  Row(21, 21) :: // Update
+                  Row(-10, 13) :: // Insert
+                  Row(-9, 16) :: // Insert
+                  Nil)
+            }
           }
         }
       }
