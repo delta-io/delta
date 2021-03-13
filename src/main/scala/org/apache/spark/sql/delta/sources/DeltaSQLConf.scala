@@ -326,6 +326,18 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val MERGE_SKIP_OSS_RESOLUTION_WITH_STAR =
+    buildConf("merge.skipOssResolutionWithStar")
+      .internal()
+      .doc(
+        """
+          |If enabled, then any MERGE operation having UPDATE * / INSERT * will skip Apache
+          |Spark's resolution logic and use Delta's specific resolution logic. This is to avoid
+          |bug with star and temp views. See SC-72276 for details.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_LAST_COMMIT_VERSION_IN_SESSION =
     buildConf("lastCommitVersionInSession")
       .doc("The version of the last commit made in the SparkSession for any table.")
