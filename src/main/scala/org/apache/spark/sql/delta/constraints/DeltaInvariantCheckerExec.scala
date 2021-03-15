@@ -29,11 +29,36 @@ import org.apache.spark.sql.catalyst.analysis.{Analyzer, TypeCoercion, Unresolve
 import org.apache.spark.sql.catalyst.analysis.TypeCoercion.ImplicitTypeCasts
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, BindReferences, Expression, ExtractValue, GetStructField, Literal, SortOrder}
 import org.apache.spark.sql.catalyst.expressions.codegen.GenerateUnsafeProjection
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.execution.{SparkPlan, UnaryExecNode}
+import org.apache.spark.sql.execution.{SparkPlan, SparkStrategy, UnaryExecNode}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
+
+/**
+ * Operator that validates that records satisfy provided constraints before they are written into
+ * Delta. Each row is left unchanged after validations.
+ */
+case class DeltaInvariantChecker(
+    child: LogicalPlan,
+    deltaConstraints: Seq[Constraint])
+  extends UnaryNode {
+  override def output: Seq[Attribute] = child.output
+}
+
+object DeltaInvariantCheckerStrategy extends SparkStrategy {
+  override def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
+    case DeltaInvariantChecker(child, constraints) =>
+      val plannedChild = planLater(child)
+      val plan = if (constraints.nonEmpty) {
+        DeltaInvariantCheckerExec(plannedChild, constraints)
+      } else {
+        plannedChild
+      }
+      plan :: Nil
+    case _ => Nil
+  }
+}
 
 /**
  * A physical operator that validates records, before they are written into Delta. Each row
@@ -41,8 +66,9 @@ import org.apache.spark.sql.types.StructType
  */
 case class DeltaInvariantCheckerExec(
     child: SparkPlan,
-    constraints: Seq[Constraint],
-    @transient spark: SparkSession) extends UnaryExecNode {
+    constraints: Seq[Constraint]) extends UnaryExecNode {
+
+  private def spark: SparkSession = sqlContext.sparkSession
 
   override def output: Seq[Attribute] = child.output
 

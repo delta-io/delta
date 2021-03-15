@@ -165,8 +165,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         Map.empty,
         output)
 
-      val physicalPlan =
-        DeltaInvariantCheckerExec(queryExecution.executedPlan, constraints, spark)
+      val physicalPlan = DeltaInvariantCheckerExec(queryExecution.executedPlan, constraints)
 
       val statsTrackers: ListBuffer[WriteJobStatsTracker] = ListBuffer()
 
