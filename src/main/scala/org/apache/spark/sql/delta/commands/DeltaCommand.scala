@@ -240,9 +240,12 @@ trait DeltaCommand extends DeltaLogging {
 
   /**
    * Create a large commit on the Delta log by directly writing an iterator of FileActions to the
-   * LogStore. This bypasses the Delta transactional protocol, therefore we forego all optimistic
-   * concurrency benefits. We assume that transaction conflicts should be rare, because this method
-   * is typically used to create new tables.
+   * LogStore. This function only commits the next possible version and will not check whether the
+   * commit is retry-able. If the next version has already been committed, then this function
+   * will fail.
+   * This bypasses all optimistic concurrency checks. We assume that transaction conflicts should be
+   * rare because this method is typically used to create new tables (e.g. CONVERT TO DELTA) or
+   * apply some commands which rarely receive other transactions (e.g. CLONE/RESTORE).
    */
   protected def commitLarge(
       spark: SparkSession,
