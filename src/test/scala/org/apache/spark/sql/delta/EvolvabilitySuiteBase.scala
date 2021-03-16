@@ -65,11 +65,19 @@ abstract class EvolvabilitySuiteBase
 // scalastyle:on
 object EvolvabilitySuiteBase {
 
-  def generateData(spark: SparkSession, path: String): Unit = {
+  def generateData(
+      spark: SparkSession,
+      path: String,
+      tblProps: Map[DeltaConfig[_], String] = Map.empty): Unit = {
     import spark.implicits._
     implicit val s = spark.sqlContext
 
     Seq(1, 2, 3).toDF().write.format("delta").save(path)
+    if (tblProps.nonEmpty) {
+      val tblPropsStr = tblProps.map { case (k, v) => s"'${k.key}' = '$v'" }.mkString(", ")
+      spark.sql(s"CREATE TABLE test USING DELTA LOCATION '$path'")
+      spark.sql(s"ALTER TABLE test SET TBLPROPERTIES($tblPropsStr)")
+    }
     Seq(1, 2, 3).toDF().write.format("delta").mode("append").save(path)
     Seq(1, 2, 3).toDF().write.format("delta").mode("overwrite").save(path)
 
