@@ -809,11 +809,13 @@ object SchemaUtils {
    *                                 the same way in Parquet files. With this flag enabled, the
    *                                 merge will succeed, because once we get to write time Spark SQL
    *                                 will support implicitly converting the int to a string.
+   * @param keepExistingType Whether to keep existing types instead of trying to merge types.
    */
   def mergeSchemas(
       tableSchema: StructType,
       dataSchema: StructType,
-      allowImplicitConversions: Boolean = false): StructType = {
+      allowImplicitConversions: Boolean = false,
+      keepExistingType: Boolean = false): StructType = {
     checkColumnNameDuplication(dataSchema, "in the data to save")
     def merge(current: DataType, update: DataType): DataType = {
       (current, update) match {
@@ -857,6 +859,9 @@ object SchemaUtils {
             merge(currentKeyType, updateKeyType),
             merge(currentElementType, updateElementType),
             currentContainsNull)
+
+        // Simply keeps the existing type for primitive types
+        case (current, update) if keepExistingType => current
 
         // If implicit conversions are allowed, that means we can use any valid implicit cast to
         // perform the merge.
