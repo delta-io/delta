@@ -120,20 +120,23 @@ trait Checkpoints extends DeltaLogging {
   /** The path to the file that holds metadata about the most recent checkpoint. */
   val LAST_CHECKPOINT = new Path(logPath, "_last_checkpoint")
 
-  /** Creates a checkpoint at the current log version. */
-  def checkpoint(): Unit = recordDeltaOperation(this, "delta.checkpoint") {
-    val snapshotToCheckpoint = snapshot
-    if (snapshotToCheckpoint.version < 0) {
-      throw DeltaErrors.checkpointNonExistTable(dataPath)
+  /**
+   * Creates a checkpoint using snapshotToCheckpoint. By default it uses the current log version.
+   */
+  def checkpoint(_snapshotToCheckpoint: Option[Snapshot] = None): Unit =
+    recordDeltaOperation(this, "delta.checkpoint") {
+      val snapshotToCheckpoint = _snapshotToCheckpoint.getOrElse(snapshot)
+      if (snapshotToCheckpoint.version < 0) {
+        throw DeltaErrors.checkpointNonExistTable(dataPath)
+      }
+      val checkpointMetaData = writeCheckpointFiles(snapshotToCheckpoint)
+      val json = JsonUtils.toJson(checkpointMetaData)
+      store.write(LAST_CHECKPOINT, Iterator(json), overwrite = true)
+
+      doLogCleanup()
     }
-    val checkpointMetaData = checkpoint(snapshotToCheckpoint)
-    val json = JsonUtils.toJson(checkpointMetaData)
-    store.write(LAST_CHECKPOINT, Iterator(json), overwrite = true)
 
-    doLogCleanup()
-  }
-
-  protected def checkpoint(snapshotToCheckpoint: Snapshot): CheckpointMetaData = {
+  protected def writeCheckpointFiles(snapshotToCheckpoint: Snapshot): CheckpointMetaData = {
     Checkpoints.writeCheckpoint(spark, this, snapshotToCheckpoint)
   }
 

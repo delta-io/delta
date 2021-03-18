@@ -560,7 +560,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
     committed = true
     if (commitVersion != 0 && commitVersion % deltaLog.checkpointInterval == 0) {
       try {
-        deltaLog.checkpoint()
+        // We checkpoint the version to be committed to so that no two transactions will checkpoint
+        // the same version.
+        deltaLog.checkpoint(Some(deltaLog.getSnapshotAt(commitVersion)))
       } catch {
         case e: IllegalStateException =>
           logWarning("Failed to checkpoint table state.", e)

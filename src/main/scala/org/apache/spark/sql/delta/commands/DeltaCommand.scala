@@ -231,7 +231,7 @@ trait DeltaCommand extends DeltaLogging {
     logInfo(s"Committed delta #$attemptVersion to ${deltaLog.logPath}. Wrote $commitSize actions.")
 
     try {
-      deltaLog.checkpoint()
+      deltaLog.checkpoint(Some(currentSnapshot))
     } catch {
       case e: IllegalStateException =>
         logWarning("Failed to checkpoint table state.", e)
