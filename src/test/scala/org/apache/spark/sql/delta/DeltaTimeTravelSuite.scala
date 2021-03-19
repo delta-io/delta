@@ -23,16 +23,15 @@ import java.util.{Calendar, Date, TimeZone}
 
 import scala.concurrent.duration._
 import scala.language.implicitConversions
-
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.commons.lang3.time.DateUtils
 import org.apache.hadoop.fs.{FileStatus, Path}
-
-import org.apache.spark.sql.{functions, AnalysisException, QueryTest, Row}
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.delta.util.FileNames.{checkpointPrefix, isCheckpointFile, isDeltaFile}
+import org.apache.spark.sql.{AnalysisException, QueryTest, Row, functions}
+import org.apache.spark.sql.test.{SQLTestUtils, SharedSparkSession}
 import org.apache.spark.util.ManualClock
 
 class DeltaTimeTravelSuite extends QueryTest
@@ -190,14 +189,21 @@ class DeltaTimeTravelSuite extends QueryTest
 
   testQuietly("log cleanup should handle adjusted commit timestamps") {
     withTempDir { dir =>
+      val tblLoc = "C:\\Users\\EliteBook\\IdeaProjects\\unittestdemo\\target\\logCleanUp"
+      spark.conf.set("spark.databricks.delta.checkpointInterval", 5)
       val start = 1540415658000L
       val date = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
       date.setTimeInMillis(start)
       // We unfortunately need to set a weird timestamp due to day cutoffs
       val time = DateUtils.truncate(date, Calendar.DAY_OF_MONTH).getTimeInMillis - 10.seconds
       val clock = new ManualClock(time)
-      val deltaLog = DeltaLog.forTable(spark, new Path(dir.toURI), clock)
+      // val deltaLog = DeltaLog.forTable(spark, new Path(dir.toURI), clock)
+      val deltaLog = DeltaLog.forTable(spark, new Path(tblLoc), clock)
       generateCommitsCheap(deltaLog, time)
+
+      // scalastyle:off
+      println(deltaLog.checkpointInterval)
+      // scalastyle:on
 
       // we need this checkpoint so that we can delete starting with the first version
       deltaLog.checkpoint()
@@ -213,25 +219,33 @@ class DeltaTimeTravelSuite extends QueryTest
 
       // We shouldn't be able to delete anything in the version range 2-4
       clock.setTime(time + 10.seconds + deltaLog.deltaRetentionMillis)
+
       // Should delete commits at time and time + 5
       deltaLog.cleanUpExpiredLogs()
       assert(deltaLog.history.getHistory(0, None).map(_.timestamp.getTime).reverse ===
         Seq(time + 10.seconds, time + 10.seconds + 1, time + 10.seconds + 2, time + 14.seconds))
 
+
+      /*
       clock.setTime(time + 10.seconds + 1 + deltaLog.deltaRetentionMillis)
       deltaLog.cleanUpExpiredLogs()
       assert(deltaLog.history.getHistory(0, None).map(_.timestamp.getTime).reverse ===
         Seq(time + 10.seconds, time + 10.seconds + 1, time + 10.seconds + 2, time + 14.seconds))
-
+       */
+      /*
       clock.setTime(time + 10.seconds + 2 + deltaLog.deltaRetentionMillis)
       deltaLog.cleanUpExpiredLogs()
       assert(deltaLog.history.getHistory(0, None).map(_.timestamp.getTime).reverse ===
         Seq(time + 10.seconds, time + 10.seconds + 1, time + 10.seconds + 2, time + 14.seconds))
+        */
 
+      /*
       clock.setTime(time + 1.day + deltaLog.deltaRetentionMillis)
       deltaLog.cleanUpExpiredLogs()
       assert(deltaLog.history.getHistory(0, None).map(_.timestamp.getTime).reverse ===
         Seq(time + 10.seconds, time + 10.seconds + 1, time + 10.seconds + 2, time + 14.seconds))
+
+       */
     }
   }
 
@@ -251,10 +265,9 @@ class DeltaTimeTravelSuite extends QueryTest
    * return the adjusted timestamps of files that would actually be consumed by the iterator.
    */
   private def testBufferingLogDeletionIterator(
-      maxTimestamp: Long,
-      maxVersion: Long)(inputTimestamps: Seq[Long], deleted: Seq[Long]): Unit = {
+      maxTimestamp: Long)(inputTimestamps: Seq[Long], deleted: Seq[Long]): Unit = {
     val i = new BufferingLogDeletionIterator(
-      createFileStatuses(inputTimestamps: _*), maxTimestamp, maxVersion, _.getName.toLong)
+      createFileStatuses(inputTimestamps: _*), maxTimestamp, _.getName.toLong)
     deleted.foreach { ts =>
       assert(i.hasNext, s"Was supposed to delete $ts, but iterator returned hasNext: false")
       assert(i.next().getModificationTime === ts, "Returned files out of order!")
@@ -263,193 +276,119 @@ class DeltaTimeTravelSuite extends QueryTest
   }
 
   test("BufferingLogDeletionIterator: iterator behavior") {
-    val i1 = new BufferingLogDeletionIterator(Iterator.empty, 100, 100, _ => 1)
+    val i1 = new BufferingLogDeletionIterator(Iterator.empty, 100, _ => 1)
     intercept[NoSuchElementException](i1.next())
     assert(!i1.hasNext)
 
-    testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 100)(
+    testBufferingLogDeletionIterator(maxTimestamp = 100)(
       inputTimestamps = Seq(10),
       deleted = Seq(10)
     )
 
-    testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 100)(
+    testBufferingLogDeletionIterator(maxTimestamp = 100)(
       inputTimestamps = Seq(10, 15, 25),
       deleted = Seq(10, 15, 25)
     )
   }
 
-  test("BufferingLogDeletionIterator: " +
-    "early exit while handling adjusted timestamps due to timestamp") {
-    // only should return 5 because 5 < 7
-    testBufferingLogDeletionIterator(maxTimestamp = 7, maxVersion = 100)(
-      inputTimestamps = Seq(5, 10, 8, 12),
-      deleted = Seq(5)
-    )
+    test("BufferingLogDeletionIterator: " +
+      "early exit while handling adjusted timestamps due to timestamp") {
+      // only should return 5 because 5 < 7
+      testBufferingLogDeletionIterator(maxTimestamp = 7)(
+        inputTimestamps = Seq(5, 10, 8, 12),
+        deleted = Seq(5)
+      )
 
-    // Should only return 5, because 10 is used to adjust the following 8 to 11
-    testBufferingLogDeletionIterator(maxTimestamp = 10, maxVersion = 100)(
-      inputTimestamps = Seq(5, 10, 8, 12),
-      deleted = Seq(5)
-    )
+      // Should only return 5, because 10 is used to adjust the following 8 to 11
+      testBufferingLogDeletionIterator(maxTimestamp = 10)(
+        inputTimestamps = Seq(5, 10, 8, 12),
+        deleted = Seq(5)
+      )
 
-    // When it is 11, we can delete both 10 and 8
-    testBufferingLogDeletionIterator(maxTimestamp = 11, maxVersion = 100)(
-      inputTimestamps = Seq(5, 10, 8, 12),
-      deleted = Seq(5, 10, 11)
-    )
+      // When it is 11, we can delete both 10 and 8
+      testBufferingLogDeletionIterator(maxTimestamp = 11)(
+        inputTimestamps = Seq(5, 10, 8, 12),
+        deleted = Seq(5, 10, 11)
+      )
 
-    // When it is 12, we can return all
-    testBufferingLogDeletionIterator(maxTimestamp = 12, maxVersion = 100)(
-      inputTimestamps = Seq(5, 10, 8, 12),
-      deleted = Seq(5, 10, 11, 12)
-    )
+      // When it is 12, we can return all
+      testBufferingLogDeletionIterator(maxTimestamp = 12)(
+        inputTimestamps = Seq(5, 10, 8, 12),
+        deleted = Seq(5, 10, 11, 12)
+      )
 
-    // Should only return 5, because 10 is used to adjust the following 8 to 11
-    testBufferingLogDeletionIterator(maxTimestamp = 10, maxVersion = 100)(
-      inputTimestamps = Seq(5, 10, 8),
-      deleted = Seq(5)
-    )
+      // Should only return 5, because 10 is used to adjust the following 8 to 11
+      testBufferingLogDeletionIterator(maxTimestamp = 10)(
+        inputTimestamps = Seq(5, 10, 8),
+        deleted = Seq(5)
+      )
 
-    // When it is 11, we can delete both 10 and 8
-    testBufferingLogDeletionIterator(maxTimestamp = 11, maxVersion = 100)(
-      inputTimestamps = Seq(5, 10, 8),
-      deleted = Seq(5, 10, 11)
-    )
-  }
-
-  test("BufferingLogDeletionIterator: " +
-    "early exit while handling adjusted timestamps due to version") {
-    // only should return 5 because we can delete only up to version 0
-    testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 0)(
-      inputTimestamps = Seq(5, 10, 8, 12),
-      deleted = Seq(5)
-    )
-
-    // Should only return 5, because 10 is used to adjust the following 8 to 11
-    testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 1)(
-      inputTimestamps = Seq(5, 10, 8, 12),
-      deleted = Seq(5)
-    )
-
-    // When we can delete up to version 2, we can return up to version 2
-    testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 2)(
-      inputTimestamps = Seq(5, 10, 8, 12),
-      deleted = Seq(5, 10, 11)
-    )
-
-    // When it is version 3, we can return all
-    testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 3)(
-      inputTimestamps = Seq(5, 10, 8, 12),
-      deleted = Seq(5, 10, 11, 12)
-    )
-
-    // Should only return 5, because 10 is used to adjust the following 8 to 11
-    testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 1)(
-      inputTimestamps = Seq(5, 10, 8),
-      deleted = Seq(5)
-    )
-
-    // When we can delete up to version 2, we can return up to version 2
-    testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 2)(
-      inputTimestamps = Seq(5, 10, 8),
-      deleted = Seq(5, 10, 11)
-    )
-  }
+      // When it is 11, we can delete both 10 and 8
+      testBufferingLogDeletionIterator(maxTimestamp = 11)(
+        inputTimestamps = Seq(5, 10, 8),
+        deleted = Seq(5, 10, 11)
+      )
+    }
 
   test("BufferingLogDeletionIterator: multiple adjusted timestamps") {
-    Seq(9, 10, 11).foreach { retentionTimestamp =>
-      // Files should be buffered but not deleted, because of the file 11, which has adjusted ts 12
-      testBufferingLogDeletionIterator(maxTimestamp = retentionTimestamp, maxVersion = 100)(
+       Seq(9, 10, 11).foreach { retentionTimestamp =>
+       // Files should be buffered but not deleted, because of the file 11, which has adjusted ts 12
+         testBufferingLogDeletionIterator(maxTimestamp = retentionTimestamp)(
+           inputTimestamps = Seq(5, 10, 8, 11, 14),
+           deleted = Seq(5)
+         )
+       }
+
+      // Safe to delete everything before (including) file: 11 which has adjusted timestamp 12
+      testBufferingLogDeletionIterator(maxTimestamp = 12)(
         inputTimestamps = Seq(5, 10, 8, 11, 14),
-        deleted = Seq(5)
+        deleted = Seq(5, 10, 11, 12)
       )
-    }
 
-    // Safe to delete everything before (including) file: 11 which has adjusted timestamp 12
-    testBufferingLogDeletionIterator(maxTimestamp = 12, maxVersion = 100)(
-      inputTimestamps = Seq(5, 10, 8, 11, 14),
-      deleted = Seq(5, 10, 11, 12)
-    )
+      // Test when the last element is adjusted with both timestamp and version
+      Seq(9, 10, 11).foreach { retentionTimestamp =>
+        testBufferingLogDeletionIterator(maxTimestamp = retentionTimestamp)(
+          inputTimestamps = Seq(5, 10, 8, 9),
+          deleted = Seq(5)
+        )
+      }
 
-    Seq(0, 1, 2).foreach { retentionVersion =>
-      testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = retentionVersion)(
-        inputTimestamps = Seq(5, 10, 8, 11, 14),
-        deleted = Seq(5)
-      )
-    }
-
-    testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 3)(
-      inputTimestamps = Seq(5, 10, 8, 11, 14),
-      deleted = Seq(5, 10, 11, 12)
-    )
-
-    // Test when the last element is adjusted with both timestamp and version
-    Seq(9, 10, 11).foreach { retentionTimestamp =>
-      testBufferingLogDeletionIterator(maxTimestamp = retentionTimestamp, maxVersion = 100)(
+      testBufferingLogDeletionIterator(maxTimestamp = 12)(
         inputTimestamps = Seq(5, 10, 8, 9),
-        deleted = Seq(5)
+        deleted = Seq(5, 10, 11, 12)
       )
-    }
 
-    testBufferingLogDeletionIterator(maxTimestamp = 12, maxVersion = 100)(
-      inputTimestamps = Seq(5, 10, 8, 9),
-      deleted = Seq(5, 10, 11, 12)
-    )
+      Seq(9, 10, 11).foreach { retentionTimestamp =>
+        testBufferingLogDeletionIterator(maxTimestamp = retentionTimestamp)(
+          inputTimestamps = Seq(10, 8, 9),
+          deleted = Nil
+        )
+      }
 
-    Seq(0, 1, 2).foreach { retentionVersion =>
-      testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = retentionVersion)(
-        inputTimestamps = Seq(5, 10, 8, 9),
-        deleted = Seq(5)
-      )
-    }
-
-    testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 3)(
-      inputTimestamps = Seq(5, 10, 8, 9),
-      deleted = Seq(5, 10, 11, 12)
-    )
-
-    Seq(9, 10, 11).foreach { retentionTimestamp =>
-      testBufferingLogDeletionIterator(maxTimestamp = retentionTimestamp, maxVersion = 100)(
+      // Test the first element causing cascading adjustments
+      testBufferingLogDeletionIterator(maxTimestamp = 12)(
         inputTimestamps = Seq(10, 8, 9),
-        deleted = Nil
+        deleted = Seq(10, 11, 12)
       )
-    }
 
-    // Test the first element causing cascading adjustments
-    testBufferingLogDeletionIterator(maxTimestamp = 12, maxVersion = 100)(
-      inputTimestamps = Seq(10, 8, 9),
-      deleted = Seq(10, 11, 12)
-    )
-
-    Seq(0, 1).foreach { retentionVersion =>
-      testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = retentionVersion)(
-        inputTimestamps = Seq(10, 8, 9),
-        deleted = Nil
-      )
-    }
-
-    testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 2)(
-      inputTimestamps = Seq(10, 8, 9),
-      deleted = Seq(10, 11, 12)
-    )
-
-    // Test multiple batches of time adjustments
-    testBufferingLogDeletionIterator(maxTimestamp = 12, maxVersion = 100)(
-      inputTimestamps = Seq(5, 10, 8, 9, 12, 15, 14, 14), // 5, 10, 11, 12, 13, 15, 16, 17
-      deleted = Seq(5)
-    )
-
-    Seq(13, 14, 15, 16).foreach { retentionTimestamp =>
-      testBufferingLogDeletionIterator(maxTimestamp = retentionTimestamp, maxVersion = 100)(
+      // Test multiple batches of time adjustments
+      testBufferingLogDeletionIterator(maxTimestamp = 12)(
         inputTimestamps = Seq(5, 10, 8, 9, 12, 15, 14, 14), // 5, 10, 11, 12, 13, 15, 16, 17
-        deleted = Seq(5, 10, 11, 12, 13)
+        deleted = Seq(5)
       )
-    }
 
-    testBufferingLogDeletionIterator(maxTimestamp = 17, maxVersion = 100)(
-      inputTimestamps = Seq(5, 10, 8, 9, 12, 15, 14, 14), // 5, 10, 11, 12, 13, 15, 16, 17
-      deleted = Seq(5, 10, 11, 12, 13, 15, 16, 17)
-    )
+      Seq(13, 14, 15, 16).foreach { retentionTimestamp =>
+        testBufferingLogDeletionIterator(maxTimestamp = retentionTimestamp)(
+          inputTimestamps = Seq(5, 10, 8, 9, 12, 15, 14, 14), // 5, 10, 11, 12, 13, 15, 16, 17
+          deleted = Seq(5, 10, 11, 12, 13)
+        )
+      }
+
+      testBufferingLogDeletionIterator(maxTimestamp = 17)(
+        inputTimestamps = Seq(5, 10, 8, 9, 12, 15, 14, 14), // 5, 10, 11, 12, 13, 15, 16, 17
+        deleted = Seq(5, 10, 11, 12, 13, 15, 16, 17)
+      )
+
   }
 
   test("as of timestamp in between commits should use commit before timestamp") {
@@ -723,4 +662,50 @@ class DeltaTimeTravelSuite extends QueryTest
         v0)
     }
   }
+
+  test("reproduce time travel bug") {
+    withTempDir { dir =>
+      val tblLoc = dir.getCanonicalPath
+      // val tblLoc = "C:\\Users\\EliteBook\\IdeaProjects\\unittestdemo\\target\\checkCleanUp_v2"
+      // 24-10-2018 9:14:18
+      val start = 1540415658000L
+      // 13-03-2021
+      val newTime = 1615634034000L
+      val commits = (1 to 9).map(v => newTime + v.minutes)
+      // val toDeleteCommits = (1 to 15).map(v => start + v.minutes)
+      // generateCommits(tblLoc, toDeleteCommits: _*)
+      generateCommits(tblLoc, start, start + 1.minutes, start + 2.minutes)
+      generateCommits(tblLoc, commits: _*)
+
+      // val tablePathUri = identifierWithTimestamp(tblLoc, start + 10.minutes)
+      // latest commit 2018-10-24 14:29:18
+      // first commit 2018-10-24 14:16:18
+      /*
+      val df1 = spark.read.format("delta").load(tablePathUri)
+      checkAnswer(df1.groupBy().count(), Row(10L))
+      */
+      // .option("timestampAsOf", "2018-10-24 14:28:18")
+      val df2 = spark.read.format("delta").option("versionAsOf", 0).load(tblLoc)
+      df2.show()
+
+      spark.read.format("delta").option("versionAsOf", 1).load(tblLoc).show()
+      spark.read.format("delta").option("versionAsOf", 2).load(tblLoc).show()
+    }
+  }
+
+  test("Metadata cleanup should not remove any commit") {
+    withTempDir { dir =>
+      val tblLoc = dir.getCanonicalPath
+      val newTime = 1615634034000L
+      val commits = (1 to 15).map(v => newTime + v.minutes)
+      generateCommits(tblLoc, commits: _*)
+
+      val df2 = spark.read.format("delta").option("versionAsOf", 0).load(tblLoc)
+      df2.show()
+
+      spark.read.format("delta").option("versionAsOf", 1).load(tblLoc).show()
+      spark.read.format("delta").option("versionAsOf", 2).load(tblLoc).show()
+    }
+  }
+
 }
