@@ -17,6 +17,8 @@
 package org.apache.spark.sql.delta.schema
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.util.Locale
+
 import scala.collection.Set._
 import scala.collection.mutable
 import scala.util.control.NonFatal
@@ -810,14 +812,19 @@ object SchemaUtils {
    *                                 merge will succeed, because once we get to write time Spark SQL
    *                                 will support implicitly converting the int to a string.
    * @param keepExistingType Whether to keep existing types instead of trying to merge types.
+   * @param fixedTypeColumns The set of columns whose type should not be changed in any case.
    */
   def mergeSchemas(
       tableSchema: StructType,
       dataSchema: StructType,
       allowImplicitConversions: Boolean = false,
-      keepExistingType: Boolean = false): StructType = {
+      keepExistingType: Boolean = false,
+      fixedTypeColumns: Set[String] = Set.empty): StructType = {
     checkColumnNameDuplication(dataSchema, "in the data to save")
-    def merge(current: DataType, update: DataType): DataType = {
+    def merge(
+        current: DataType,
+        update: DataType,
+        fixedTypeColumnsSet: Set[String] = Set.empty): DataType = {
       (current, update) match {
         case (StructType(currentFields), StructType(updateFields)) =>
           // Merge existing fields.
@@ -825,6 +832,10 @@ object SchemaUtils {
           val updatedCurrentFields = currentFields.map { currentField =>
             updateFieldMap.get(currentField.name) match {
               case Some(updateField) =>
+                if (fixedTypeColumnsSet.contains(currentField.name.toLowerCase(Locale.ROOT)) &&
+                    currentField.dataType != updateField.dataType) {
+                  throw DeltaErrors.generatedColumnsUpdateColumnType(currentField, updateField)
+                }
                 try {
                   StructField(
                     currentField.name,
@@ -908,7 +919,8 @@ object SchemaUtils {
             s"Failed to merge incompatible data types $current and $update")
       }
     }
-    merge(tableSchema, dataSchema).asInstanceOf[StructType]
+    merge(tableSchema, dataSchema, fixedTypeColumns.map(_.toLowerCase(Locale.ROOT)))
+      .asInstanceOf[StructType]
   }
 
   /**

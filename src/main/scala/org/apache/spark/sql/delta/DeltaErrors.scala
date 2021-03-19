@@ -1083,6 +1083,13 @@ object DeltaErrors
       cause = Some(e))
   }
 
+  def generatedColumnsUpdateColumnType(current: StructField, update: StructField): Throwable = {
+    new AnalysisException(
+      s"Column ${current.name} is a generated column or a column used by a generated column. " +
+        s"The data type is ${current.dataType.sql}. It doesn't accept data type " +
+        s"${update.dataType.sql}")
+  }
+
   def generatedColumnsUDF(expr: Expression): Throwable = {
     new AnalysisException(
       s"Found ${expr.sql}. A generated column cannot use a user-defined function")

@@ -29,7 +29,7 @@ import org.apache.spark.sql.{AnalysisException, Column, DataFrame, Dataset, Enco
 import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
-import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
+import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, Project}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.execution.QueryExecution
 import org.apache.spark.sql.execution.streaming.IncrementalExecution
@@ -238,5 +238,40 @@ object GeneratedColumn extends DeltaLogging {
     constructor.newInstance(
       newIncrementalExecution,
       RowEncoder(newIncrementalExecution.analyzed.schema)).asInstanceOf[DataFrame]
+  }
+
+  def getGeneratedColumnsAndColumnsUsedByGeneratedColumns(schema: StructType): Set[String] = {
+    val generationExprs = schema.flatMap { col =>
+      getGenerationExpressionStr(col).map { exprStr =>
+        val expr = parseGenerationExpression(SparkSession.active, exprStr)
+        new Column(expr).alias(col.name)
+      }
+    }
+    if (generationExprs.isEmpty) {
+      return Set.empty
+    }
+
+    val df = Dataset.ofRows(SparkSession.active, new LocalRelation(schema.toAttributes))
+    val generatedColumnsAndColumnsUsedByGeneratedColumns =
+      df.select(generationExprs: _*).queryExecution.analyzed match {
+        case Project(exprs, _) =>
+          exprs.flatMap {
+            case Alias(expr, column) =>
+              expr.references.map {
+                case a: AttributeReference => a.name
+                case other =>
+                  // Should not happen since the columns should be resolved
+                throw new IllegalStateException(s"Expected AttributeReference but got $other")
+              }.toSeq :+ column
+            case other =>
+              // Should not happen since we use `Alias` expressions.
+              throw new IllegalStateException(s"Expected Alias but got $other")
+          }
+        case other =>
+          // Should not happen since `select` should use `Project`.
+          throw new IllegalStateException(s"Expected Project but got $other")
+      }
+    // Converting columns to lower case is fine since Delta's schema is always case insensitive.
+    generatedColumnsAndColumnsUsedByGeneratedColumns.map(_.toLowerCase(Locale.ROOT)).toSet
   }
 }

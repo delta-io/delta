@@ -481,6 +481,52 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
     }
   }
 
+  test("getGeneratedColumnsAndColumnsUsedByGeneratedColumns") {
+    def testSchema(schema: Seq[StructField], expected: Set[String]): Unit = {
+      assert(getGeneratedColumnsAndColumnsUsedByGeneratedColumns(StructType(schema)) == expected)
+    }
+
+    val f1 = StructField("c1", IntegerType)
+    val f2 = withGenerationExpression(StructField("c2", IntegerType), "c1 + 10")
+    val f3 = StructField("c3", IntegerType)
+    val f4 = withGenerationExpression(StructField("c4", IntegerType), "hash(c3 + 10)")
+    val f5 = withGenerationExpression(StructField("c5", IntegerType), "hash(C1 + 10)")
+    val f6 = StructField("c6", StructType(StructField("x", IntegerType) :: Nil))
+    val f6x = StructField("c6.x", IntegerType)
+    val f7x = withGenerationExpression(StructField("c7.x", IntegerType), "`c6.x` + 10")
+    val f8 = withGenerationExpression(StructField("c8", IntegerType), "c6.x + 10")
+    testSchema(Seq(f1, f2), Set("c1", "c2"))
+    testSchema(Seq(f1, f2, f3), Set("c1", "c2"))
+    testSchema(Seq(f1, f2, f3, f4), Set("c1", "c2", "c3", "c4"))
+    testSchema(Seq(f1, f2, f5), Set("c1", "c2", "c5"))
+    testSchema(Seq(f6x, f7x), Set("c6.x", "c7.x"))
+    testSchema(Seq(f6, f6x, f7x), Set("c6.x", "c7.x"))
+    testSchema(Seq(f6, f6x, f8), Set("c6", "c8"))
+  }
+
+  test("disallow column type evolution") {
+    withTableName("disallow_column_type_evolution") { table =>
+      // "CAST(HASH(c1 + 32767s) AS SMALLINT)" is a special expression that returns different
+      // results for SMALLINT and INT. For example, "CAST(hash(32767 + 32767s) AS SMALLINT)" returns
+      // 9876, but "SELECT CAST(hash(32767s + 32767s) AS SMALLINT)" returns 31349. Hence we should
+      // not allow updating column type from SMALLINT to INT.
+      createTable(table, None, "c1 SMALLINT, c2 SMALLINT",
+        Map("c2" -> "CAST(HASH(c1 + 32767s) AS SMALLINT)"), Nil)
+      val tableSchema = spark.table(table).schema
+      Seq(32767.toShort).toDF("c1").write.format("delta").mode("append").saveAsTable(table)
+      assert(tableSchema == spark.table(table).schema)
+      // Insert an INT to `c1` should fail rather than changing the `c1` type to INT
+      val e = intercept[AnalysisException] {
+        Seq(32767).toDF("c1").write.format("delta").mode("append")
+          .option("mergeSchema", "true")
+          .saveAsTable(table)
+      }.getMessage
+      assert(e.contains("Column c1") &&
+        e.contains("The data type is SMALLINT. It doesn't accept data type INT"))
+      checkAnswer(spark.table(table), Row(32767, 31349) :: Nil)
+    }
+  }
+
 }
 
 class GeneratedColumnSuite extends GeneratedColumnSuiteBase

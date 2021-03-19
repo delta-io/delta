@@ -376,6 +376,15 @@ case class Metadata(
     StructType(schema.filterNot(f => partitions.contains(f.name)))
   }
 
+  /**
+   * Columns whose type should never be changed. For example, if a column is used by a generated
+   * column, changing its type may break the constraint defined by the generation expression. Hence,
+   * we should never change its type.
+   */
+  @JsonIgnore
+  lazy val fixedTypeColumns: Set[String] =
+    GeneratedColumn.getGeneratedColumnsAndColumnsUsedByGeneratedColumns(schema)
+
   override def wrap: SingleAction = SingleAction(metaData = this)
 }
 
