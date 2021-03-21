@@ -810,18 +810,15 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
       DeltaLog.clearCache()
       val clock = new ManualClock(System.currentTimeMillis())
       val writersLog = DeltaLog.forTable(spark, new Path(inputDir.toURI), clock)
-      (0 until 3).foreach { i =>
+      (0 until 10).foreach { i =>
         Seq(i.toString).toDF("value")
           .write.mode("append").format("delta").save(inputDir.getCanonicalPath)
       }
 
-      // Create a checkpoint so that logs before checkpoint can be expired and deleted
-      writersLog.checkpoint()
-
       testStream(df)(
         StartStream(Trigger.ProcessingTime("10 seconds"), new StreamManualClock),
         AdvanceManualClock(10 * 1000L),
-        CheckLastBatch("0", "1", "2"),
+        CheckLastBatch("0", "1", "2", "3", "4", "5", "6", "7", "8", "9"),
         Assert {
           val defaultLogRetentionMillis = DeltaConfigs.getMilliSeconds(
             IntervalUtils.safeStringToInterval(
@@ -837,10 +834,11 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
               .filter(_.endsWith(".json"))
               .map(_.stripSuffix(".json").toInt)
 
-          !logVersions.contains(0) && !logVersions.contains(1)
+          (1 to 9).forall(version => !logVersions.contains(version))
+          // !logVersions.contains(0) && !logVersions.contains(1)
         },
         Assert {
-          (3 until 5).foreach { i =>
+          (10 until 12).foreach { i =>
             Seq(i.toString).toDF("value")
               .write.mode("append").format("delta").save(inputDir.getCanonicalPath)
           }
@@ -849,7 +847,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
         // can process new data without update, despite that previous log files have been deleted
         AdvanceManualClock(10 * 1000L),
         AdvanceManualClock(10 * 1000L),
-        CheckLastBatch("3", "4")
+        CheckLastBatch("10", "11")
       )
       assert(deltaLog.snapshot.version == 0)
     }

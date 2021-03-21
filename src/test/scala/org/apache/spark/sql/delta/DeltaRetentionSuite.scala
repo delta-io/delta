@@ -54,7 +54,7 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
       }
 
       val initialFiles = getLogFiles(logPath)
-      // Shouldn't clean up, no checkpoint, no expired files
+      // Shouldn't clean up, no expired files
       log.cleanUpExpiredLogs()
 
       assert(initialFiles === getLogFiles(logPath))
@@ -66,9 +66,21 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
       log.cleanUpExpiredLogs()
       assert(initialFiles === getLogFiles(logPath))
 
-      log.checkpoint()
+      (6 to 11).foreach { i =>
+        val txn = log.startTransaction()
+        val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
+        val delete: Seq[Action] = if (i > 1) {
+          RemoveFile(i - 1 toString, Some(System.currentTimeMillis()), true) :: Nil
+        } else {
+          Nil
+        }
+        txn.commit(delete ++ file, testOp)
+      }
 
-      val expectedFiles = Seq("04.json", "04.checkpoint.parquet")
+      clock.advance(intervalStringToMillis(DeltaConfigs.LOG_RETENTION.defaultValue) +
+        intervalStringToMillis("interval 1 day"))
+
+      val expectedFiles = Seq("10.json", "10.checkpoint.parquet")
       // after checkpointing, the files should be cleared
       log.cleanUpExpiredLogs()
       val afterCleanup = getLogFiles(logPath)
@@ -166,23 +178,31 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
     }
   }
 
-  test("the checkpoint file for version 0 should be cleaned") {
+  test("the checkpoint file for version 10 should be cleaned") {
     withTempDir { tempDir =>
       val clock = new ManualClock(System.currentTimeMillis())
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
       val logPath = new File(log.logPath.toUri)
-      startTxnWithManualLogCleanup(log).commit(AddFile("0", Map.empty, 1, 1, true) :: Nil, testOp)
-      log.checkpoint()
+
+      (1 to 20).foreach { i =>
+        val txn = if (i == 1) startTxnWithManualLogCleanup(log) else log.startTransaction()
+        val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
+        val delete: Seq[Action] = if (i > 1) {
+          RemoveFile(i - 1 toString, Some(System.currentTimeMillis()), true) :: Nil
+        } else {
+          Nil
+        }
+        txn.commit(delete ++ file, testOp)
+      }
 
       val initialFiles = getLogFiles(logPath)
+      // Create a new checkpoint so that the previous versions can be deleted
+      log.startTransaction().commit(AddFile("20", Map.empty, 1, 1, true) :: Nil, testOp)
+
       clock.advance(intervalStringToMillis(DeltaConfigs.LOG_RETENTION.defaultValue) +
         intervalStringToMillis("interval 1 day"))
-
-      // Create a new checkpoint so that the previous version can be deleted
-      log.startTransaction().commit(AddFile("1", Map.empty, 1, 1, true) :: Nil, testOp)
-      log.checkpoint()
-
       log.cleanUpExpiredLogs()
+
       val afterCleanup = getLogFiles(logPath)
       initialFiles.foreach { file =>
         assert(!afterCleanup.contains(file))
