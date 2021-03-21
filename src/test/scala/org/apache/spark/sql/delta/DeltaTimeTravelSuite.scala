@@ -23,15 +23,16 @@ import java.util.{Calendar, Date, TimeZone}
 
 import scala.concurrent.duration._
 import scala.language.implicitConversions
+
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.commons.lang3.time.DateUtils
 import org.apache.hadoop.fs.{FileStatus, Path}
-import org.apache.spark.sql.delta.util.FileNames.{checkpointPrefix, isCheckpointFile, isDeltaFile}
-import org.apache.spark.sql.{AnalysisException, QueryTest, Row, functions}
-import org.apache.spark.sql.test.{SQLTestUtils, SharedSparkSession}
+
+import org.apache.spark.sql.{functions, AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.util.ManualClock
 
 class DeltaTimeTravelSuite extends QueryTest
@@ -189,25 +190,15 @@ class DeltaTimeTravelSuite extends QueryTest
 
   testQuietly("log cleanup should handle adjusted commit timestamps") {
     withTempDir { dir =>
-      val tblLoc = "C:\\Users\\EliteBook\\IdeaProjects\\unittestdemo\\target\\logCleanUp"
-      spark.conf.set("spark.databricks.delta.checkpointInterval", 5)
       val start = 1540415658000L
       val date = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
       date.setTimeInMillis(start)
       // We unfortunately need to set a weird timestamp due to day cutoffs
       val time = DateUtils.truncate(date, Calendar.DAY_OF_MONTH).getTimeInMillis - 10.seconds
       val clock = new ManualClock(time)
-      // val deltaLog = DeltaLog.forTable(spark, new Path(dir.toURI), clock)
-      val deltaLog = DeltaLog.forTable(spark, new Path(tblLoc), clock)
+      val deltaLog = DeltaLog.forTable(spark, new Path(dir.toURI), clock)
       generateCommitsCheap(deltaLog, time)
 
-      // scalastyle:off
-      println(deltaLog.checkpointInterval)
-      // scalastyle:on
-
-      // we need this checkpoint so that we can delete starting with the first version
-      deltaLog.checkpoint()
-      modifyCheckpointTimestamp(deltaLog, deltaLog.snapshot.version, time)
       generateCommitsCheap(deltaLog, Seq(5, 10, 7, 8, 14).map(time + _.seconds): _*)
       // We need this checkpoint so that we can delete up to the last version
       deltaLog.checkpoint()
@@ -220,32 +211,38 @@ class DeltaTimeTravelSuite extends QueryTest
       // We shouldn't be able to delete anything in the version range 2-4
       clock.setTime(time + 10.seconds + deltaLog.deltaRetentionMillis)
 
-      // Should delete commits at time and time + 5
+      // Commits at time and time + 5 are expired but we shouldn't remove them
+      // because they are needed to time travel to non expired versions (2 to 5)
       deltaLog.cleanUpExpiredLogs()
       assert(deltaLog.history.getHistory(0, None).map(_.timestamp.getTime).reverse ===
-        Seq(time + 10.seconds, time + 10.seconds + 1, time + 10.seconds + 2, time + 14.seconds))
+        Seq(time, time +5.seconds,
+          time + 10.seconds, time + 10.seconds + 1, time + 10.seconds + 2, time + 14.seconds))
 
-
-      /*
       clock.setTime(time + 10.seconds + 1 + deltaLog.deltaRetentionMillis)
       deltaLog.cleanUpExpiredLogs()
       assert(deltaLog.history.getHistory(0, None).map(_.timestamp.getTime).reverse ===
-        Seq(time + 10.seconds, time + 10.seconds + 1, time + 10.seconds + 2, time + 14.seconds))
-       */
-      /*
+        Seq(time, time +5.seconds,
+          time + 10.seconds, time + 10.seconds + 1, time + 10.seconds + 2, time + 14.seconds))
+
       clock.setTime(time + 10.seconds + 2 + deltaLog.deltaRetentionMillis)
       deltaLog.cleanUpExpiredLogs()
       assert(deltaLog.history.getHistory(0, None).map(_.timestamp.getTime).reverse ===
-        Seq(time + 10.seconds, time + 10.seconds + 1, time + 10.seconds + 2, time + 14.seconds))
-        */
+        Seq(time, time +5.seconds,
+          time + 10.seconds, time + 10.seconds + 1, time + 10.seconds + 2, time + 14.seconds))
 
-      /*
       clock.setTime(time + 1.day + deltaLog.deltaRetentionMillis)
       deltaLog.cleanUpExpiredLogs()
       assert(deltaLog.history.getHistory(0, None).map(_.timestamp.getTime).reverse ===
-        Seq(time + 10.seconds, time + 10.seconds + 1, time + 10.seconds + 2, time + 14.seconds))
+        Seq(time, time +5.seconds,
+          time + 10.seconds, time + 10.seconds + 1, time + 10.seconds + 2, time + 14.seconds))
 
-       */
+      generateCommitsCheap(deltaLog, Seq(15, 16, 17, 18, 19).map(time + _.seconds): _*)
+      modifyCheckpointTimestamp(deltaLog, deltaLog.snapshot.version, time + 19.seconds)
+      // we should be able to delete any version lower than 10
+      clock.setTime(time + 2.day + deltaLog.deltaRetentionMillis)
+      deltaLog.cleanUpExpiredLogs()
+      assert(deltaLog.history.getHistory(0, None).map(_.timestamp.getTime).reverse ===
+        Seq(time + 19.seconds))
     }
   }
 
@@ -345,7 +342,7 @@ class DeltaTimeTravelSuite extends QueryTest
         deleted = Seq(5, 10, 11, 12)
       )
 
-      // Test when the last element is adjusted with both timestamp and version
+      // Test when the last element is adjusted with both timestamp
       Seq(9, 10, 11).foreach { retentionTimestamp =>
         testBufferingLogDeletionIterator(maxTimestamp = retentionTimestamp)(
           inputTimestamps = Seq(5, 10, 8, 9),
@@ -662,50 +659,4 @@ class DeltaTimeTravelSuite extends QueryTest
         v0)
     }
   }
-
-  test("reproduce time travel bug") {
-    withTempDir { dir =>
-      val tblLoc = dir.getCanonicalPath
-      // val tblLoc = "C:\\Users\\EliteBook\\IdeaProjects\\unittestdemo\\target\\checkCleanUp_v2"
-      // 24-10-2018 9:14:18
-      val start = 1540415658000L
-      // 13-03-2021
-      val newTime = 1615634034000L
-      val commits = (1 to 9).map(v => newTime + v.minutes)
-      // val toDeleteCommits = (1 to 15).map(v => start + v.minutes)
-      // generateCommits(tblLoc, toDeleteCommits: _*)
-      generateCommits(tblLoc, start, start + 1.minutes, start + 2.minutes)
-      generateCommits(tblLoc, commits: _*)
-
-      // val tablePathUri = identifierWithTimestamp(tblLoc, start + 10.minutes)
-      // latest commit 2018-10-24 14:29:18
-      // first commit 2018-10-24 14:16:18
-      /*
-      val df1 = spark.read.format("delta").load(tablePathUri)
-      checkAnswer(df1.groupBy().count(), Row(10L))
-      */
-      // .option("timestampAsOf", "2018-10-24 14:28:18")
-      val df2 = spark.read.format("delta").option("versionAsOf", 0).load(tblLoc)
-      df2.show()
-
-      spark.read.format("delta").option("versionAsOf", 1).load(tblLoc).show()
-      spark.read.format("delta").option("versionAsOf", 2).load(tblLoc).show()
-    }
-  }
-
-  test("Metadata cleanup should not remove any commit") {
-    withTempDir { dir =>
-      val tblLoc = dir.getCanonicalPath
-      val newTime = 1615634034000L
-      val commits = (1 to 15).map(v => newTime + v.minutes)
-      generateCommits(tblLoc, commits: _*)
-
-      val df2 = spark.read.format("delta").option("versionAsOf", 0).load(tblLoc)
-      df2.show()
-
-      spark.read.format("delta").option("versionAsOf", 1).load(tblLoc).show()
-      spark.read.format("delta").option("versionAsOf", 2).load(tblLoc).show()
-    }
-  }
-
 }

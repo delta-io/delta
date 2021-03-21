@@ -83,15 +83,12 @@ trait MetadataCleanup extends DeltaLogging {
   /**
    * Returns an iterator of expired delta logs that can be cleaned up. For a delta log to be
    * considered as expired, it must:
-   *  - have a checkpoint file after it
    *  - be older than `fileCutOffTime`
+   *  - not needed to time travel to a non expired version
    */
   private def listExpiredDeltaLogs(fileCutOffTime: Long): Seq[FileStatus] = {
     import org.apache.spark.sql.delta.util.FileNames._
 
-    val latestCheckpoint = lastCheckpoint
-    if (latestCheckpoint.isEmpty) return Seq.empty
-    val threshold = latestCheckpoint.get.version - 1L
     val files = store.listFrom(checkpointPrefix(logPath, 0))
       .filter(f => isCheckpointFile(f.getPath) || isDeltaFile(f.getPath))
 
@@ -100,9 +97,6 @@ trait MetadataCleanup extends DeltaLogging {
     val lastExpiredVersion = expiredFiles.lastOption
       .map(file => getVersion(file.getPath)).getOrElse(-1L)
 
-    // scalastyle:off
-       println(lastExpiredVersion)
-    // scalastyle:on
     val maxVersionToDelete = getMaxVersionToDelete(lastExpiredVersion)
     if(maxVersionToDelete <= 0) {
       Seq()
