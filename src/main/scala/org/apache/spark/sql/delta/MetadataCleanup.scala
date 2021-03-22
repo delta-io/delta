@@ -63,6 +63,7 @@ trait MetadataCleanup extends DeltaLogging {
     }
   }
 
+  /** Retrieve the version from the delta log file. */
   private def getVersion(filePath: Path): Long = {
     if (isCheckpointFile(filePath)) {
       checkpointVersion(filePath)
@@ -71,13 +72,24 @@ trait MetadataCleanup extends DeltaLogging {
     }
   }
 
+  /**
+   * Returns the maximum expired version that can be deleted. An expired version
+   *  that is mandatory to time travel to a non expired version should not be deleted.
+   *  Let's go through an example. If we have a delta table with 15 commits and only the
+   *  version 0 is expired, if we delete the version 0 then all versions from 1 to 9 are
+   *  no longer available for time travel even when they are not expired. So in this situation the
+   *  maximum version to delete will be -1 (0 - (0 mod 10) -1) and the version 0 will be kept in
+   *  the transaction log. We use the checkpoint interval configuration to determine the maximum
+   *  version to delete during the log cleanup.
+   */
   private def getMaxVersionToDelete(maxExpiredVersion: Long): Long = {
-    maxExpiredVersion - (maxExpiredVersion % self.checkpointInterval)
+    maxExpiredVersion - (maxExpiredVersion % self.checkpointInterval) - 1
   }
 
+  /** Whether the expired file can be deleted based on the version. */
   private def shouldDeleteExpiredFiles
       (expiredFile : FileStatus, maxVersionToDelete: Long): Boolean = {
-    getVersion(expiredFile.getPath) < maxVersionToDelete
+    getVersion(expiredFile.getPath) <= maxVersionToDelete
   }
 
   /**
