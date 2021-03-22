@@ -73,7 +73,7 @@ trait MetadataCleanup extends DeltaLogging {
   }
 
   /**
-   * Returns the maximum expired version that can be deleted. An expired version
+   *  Returns the maximum expired version that can be deleted. An expired version
    *  that is mandatory to time travel to a non expired version should not be deleted.
    *  Let's go through an example. If we have a delta table with 15 commits and only the
    *  version 0 is expired, if we delete the version 0 then all versions from 1 to 9 are
