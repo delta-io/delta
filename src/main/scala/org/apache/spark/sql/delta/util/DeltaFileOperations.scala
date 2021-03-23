@@ -115,17 +115,30 @@ object DeltaFileOperations extends DeltaLogging {
     Thread.sleep(sleepTime)
   }
 
-  /** Iterate through the contents of directories. */
+  /** Iterate through the contents of directories.
+   *
+   * If `listAsDirectories` is enabled, then we consider each path in `subDirs` to be directories,
+   * and we list files under that path. If, for example, "a/b" is provided, we would attempt to
+   * list "a/b/1.txt", "a/b/c/2.txt", and so on. We would not list "a/c", since it's not the same
+   * directory as "a/b".
+   * If not, we consider that path to be a filename, and we list paths in the same directory with
+   * names after that path. So, if "a/b" is provided, we would list "a/b/1.txt", "a/c", "a/d", and
+   * so on. However a file like "a/a.txt" would not be listed, because lexically it appears before
+   * "a/b".
+   */
   private def listUsingLogStore(
       logStore: LogStore,
       subDirs: Iterator[String],
       recurse: Boolean,
-      hiddenFileNameFilter: String => Boolean): Iterator[SerializableFileStatus] = {
+      hiddenFileNameFilter: String => Boolean,
+      listAsDirectories: Boolean = true): Iterator[SerializableFileStatus] = {
 
     def list(dir: String, tries: Int): Iterator[SerializableFileStatus] = {
       logInfo(s"Listing $dir")
       try {
-        logStore.listFrom(new Path(dir, "\u0000"))
+
+        val path = if (listAsDirectories) new Path(dir, "\u0000") else new Path(dir + "\u0000")
+        logStore.listFrom(path)
           .filterNot(f => hiddenFileNameFilter(f.getPath.getName))
           .map(SerializableFileStatus.fromStatus)
       } catch {
@@ -181,19 +194,24 @@ object DeltaFileOperations extends DeltaLogging {
    * @param hiddenFileNameFilter A function that returns true when the file should be considered
    *                             hidden and excluded from results. Defaults to checking for prefixes
    *                             of "." or "_".
+   * @param listAsDirectories Whether to treat the paths in subDirs as directories, where all files
+   *                          that are children to the path will be listed. If false, the paths are
+   *                          treated as filenames, and files under the same folder with filenames
+   *                          after the path will be listed instead.
    */
   def recursiveListDirs(
       spark: SparkSession,
       subDirs: Seq[String],
       hadoopConf: Broadcast[SerializableConfiguration],
       hiddenFileNameFilter: String => Boolean = defaultHiddenFileFilter,
-      fileListingParallelism: Option[Int] = None): Dataset[SerializableFileStatus] = {
+      fileListingParallelism: Option[Int] = None,
+      listAsDirectories: Boolean = true): Dataset[SerializableFileStatus] = {
     import spark.implicits._
     if (subDirs.isEmpty) return spark.emptyDataset[SerializableFileStatus]
     val listParallelism = fileListingParallelism.getOrElse(spark.sparkContext.defaultParallelism)
     val dirsAndFiles = spark.sparkContext.parallelize(subDirs).mapPartitions { dirs =>
       val logStore = LogStore(SparkEnv.get.conf, hadoopConf.value.value)
-      listUsingLogStore(logStore, dirs, recurse = false, hiddenFileNameFilter)
+      listUsingLogStore(logStore, dirs, recurse = false, hiddenFileNameFilter, listAsDirectories)
     }.repartition(listParallelism) // Initial list of subDirs may be small
 
     val allDirsAndFiles = dirsAndFiles.mapPartitions { firstLevelDirsAndFiles =>
@@ -201,6 +219,38 @@ object DeltaFileOperations extends DeltaLogging {
       recurseDirectories(logStore, firstLevelDirsAndFiles, hiddenFileNameFilter)
     }
     spark.createDataset(allDirsAndFiles)
+  }
+
+  /**
+   * Recursively and incrementally lists files with filenames after `listFilename` by alphabetical
+   * order. Helpful if you only want to list new files instead of the entire directory.
+   *
+   * Files located within `topDir` with filenames lexically after `listFilename` will be included,
+   * even if they may be located in parent/sibling folders of `listFilename`.
+   *
+   * @param spark The SparkSession
+   * @param listFilename Absolute path to a filename from which new files are listed (exclusive)
+   * @param topDir Absolute path to the original starting directory
+   * @param hadoopConf The Hadoop Configuration to get a FileSystem instance
+   * @param hiddenFileNameFilter A function that returns true when the file should be considered
+   *                             hidden and excluded from results. Defaults to checking for prefixes
+   *                             of "." or "_".
+   */
+  def recursiveListFrom(
+    spark: SparkSession,
+    listFilename: String,
+    topDir: String,
+    hadoopConf: Broadcast[SerializableConfiguration],
+    hiddenFileNameFilter: String => Boolean = defaultHiddenFileFilter,
+    fileListingParallelism: Option[Int] = None): Dataset[SerializableFileStatus] = {
+
+    // Add folders from `listPath` to the depth before `topPath`, so as to ensure new folders/files
+    // in the parent directories are also included in the listing.
+    // If there are no new files, listing from parent directories are expected to be constant time.
+    val subDirs = getAllTopComponents(new Path(listFilename), new Path(topDir))
+
+    recursiveListDirs(spark, subDirs, hadoopConf, hiddenFileNameFilter,
+      fileListingParallelism, listAsDirectories = false)
   }
 
   /**
@@ -214,6 +264,23 @@ object DeltaFileOperations extends DeltaLogging {
       fileFilter: String => Boolean = defaultHiddenFileFilter): Iterator[SerializableFileStatus] = {
     val logStore = LogStore(SparkEnv.get.conf, spark.sessionState.newHadoopConf)
     listUsingLogStore(logStore, dirs.toIterator, recurse = recursive, fileFilter)
+  }
+
+  /**
+   * Incrementally lists files with filenames after `listDir` by alphabetical order. Helpful if you
+   * only want to list new files instead of the entire directory.
+   * Listed locally using LogStore without launching a spark job. Returns an iterator from LogStore.
+   */
+  def localListFrom(
+    spark: SparkSession,
+    listFilename: String,
+    topDir: String,
+    recursive: Boolean = true,
+    fileFilter: String => Boolean = defaultHiddenFileFilter): Iterator[SerializableFileStatus] = {
+    val logStore = LogStore(SparkEnv.get.conf, spark.sessionState.newHadoopConf)
+    val listDirs = getAllTopComponents(new Path(listFilename), new Path(topDir))
+    listUsingLogStore(logStore, listDirs.toIterator, recurse = recursive, fileFilter,
+      listAsDirectories = false)
   }
 
   /**
@@ -296,5 +363,21 @@ object DeltaFileOperations extends DeltaLogging {
         }
       }
     }.flatten
+  }
+
+  /**
+   * Get all parent directory paths from `listDir` until `topDir` (exclusive).
+   * For example, if `topDir` is "/folder/" and `currDir` is "/folder/a/b/c", we would return
+   * "/folder/a/b/c", "/folder/a/b" and "/folder/a".
+   */
+  def getAllTopComponents(listDir: Path, topDir: Path): List[String] = {
+    var ret: List[String] = List()
+    var currDir = listDir
+    while (currDir.depth() > topDir.depth()) {
+      ret = ret :+ currDir.toString
+      val parent = currDir.getParent
+      currDir = parent
+    }
+    ret
   }
 }
