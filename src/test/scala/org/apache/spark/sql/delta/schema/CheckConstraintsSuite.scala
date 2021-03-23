@@ -49,6 +49,12 @@ class CheckConstraintsSuite extends QueryTest
     }
   }
 
+  private def errorContains(errMsg: String, str: String): Unit = {
+    val actual = errMsg.replaceAll("`", "")
+    val expected = str.replaceAll("`", "")
+    assert(actual.contains(expected))
+  }
+
   test("can't add unparseable constraint") {
     withTestTable { table =>
       val e = intercept[AnalysisException] {
@@ -56,13 +62,13 @@ class CheckConstraintsSuite extends QueryTest
       }
       // Make sure we're still getting a useful parse error, even though we do some complicated
       // internal stuff to persist the constraint. Unfortunately this test may be a bit fragile.
-      assert(e.getMessage.contains("mismatched input '<EOF>' expecting"))
-      assert(e.getMessage.contains(
+      errorContains(e.getMessage, "mismatched input '<EOF>' expecting")
+      errorContains(e.getMessage,
         """
           |== SQL ==
           |id <
           |----^^^
-          |""".stripMargin))
+          |""".stripMargin)
     }
   }
 
@@ -71,8 +77,8 @@ class CheckConstraintsSuite extends QueryTest
       val e = intercept[AnalysisException] {
         sql(s"ALTER TABLE $table ADD CONSTRAINT integerVal CHECK (3)")
       }
-      assert(e.getMessage.contains(
-        "CHECK constraint 'integerVal' (3) should be a boolean expression."))
+      errorContains(e.getMessage,
+        "CHECK constraint 'integerVal' (3) should be a boolean expression.")
     }
   }
 
@@ -82,9 +88,9 @@ class CheckConstraintsSuite extends QueryTest
       val e = intercept[AnalysisException] {
         sql(s"ALTER TABLE $table ADD CONSTRAINT trivial CHECK (true)")
       }
-      assert(e.getMessage.contains(
+      errorContains(e.getMessage,
         s"Constraint 'trivial' already exists as a CHECK constraint. Please delete the " +
-          s"old constraint first.\nOld constraint:\ntrue"))
+          s"old constraint first.\nOld constraint:\ntrue")
     }
   }
 
@@ -94,9 +100,9 @@ class CheckConstraintsSuite extends QueryTest
       val e = intercept[AnalysisException] {
         sql(s"ALTER TABLE $table ADD CONSTRAINT TRIVIAL CHECK (true)")
       }
-      assert(e.getMessage.contains(
+      errorContains(e.getMessage,
         s"Constraint 'TRIVIAL' already exists as a CHECK constraint. Please delete the " +
-          s"old constraint first.\nOld constraint:\ntrue"))
+          s"old constraint first.\nOld constraint:\ntrue")
     }
   }
 
@@ -105,8 +111,8 @@ class CheckConstraintsSuite extends QueryTest
       val e = intercept[AnalysisException] {
         sql(s"ALTER TABLE $table ADD CONSTRAINT lessThan5 CHECK (num < 5 and text < 'd')")
       }
-      assert(e.getMessage.contains(
-        s"violate the new CHECK constraint (num < 5 and text < 'd')"))
+      errorContains(e.getMessage,
+        s"violate the new CHECK constraint (num < 5 and text < 'd')")
     }
   }
 
@@ -117,8 +123,8 @@ class CheckConstraintsSuite extends QueryTest
       val e = intercept[InvariantViolationException] {
         sql(s"INSERT INTO $table VALUES (11, 'a')")
       }
-      assert(e.getMessage.contains(
-        s"CHECK constraint lessthan10 ((`num` < 10) AND (`text` < 'g')) violated"))
+      errorContains(e.getMessage,
+        s"CHECK constraint lessthan10 ((num < 10) AND (text < 'g')) violated")
     }
   }
 
@@ -215,7 +221,7 @@ class CheckConstraintsSuite extends QueryTest
       val e = intercept[InvariantViolationException] {
         sql(s"INSERT INTO $table VALUES (12, 'abcdefghijklmnop')")
       }
-      assert(e.getMessage.contains("constraint textsize (LENGTH(`text`) < 10) violated by row"))
+      errorContains(e.getMessage, "constraint textsize (LENGTH(text) < 10) violated by row")
     }
   }
 
@@ -225,7 +231,7 @@ class CheckConstraintsSuite extends QueryTest
       val e = intercept[InvariantViolationException] {
         sql(s"INSERT INTO $table VALUES (11, 'data')")
       }
-      assert(e.getMessage.contains("constraint maxwithimplicitcast (`num` < '10') violated by row"))
+      errorContains(e.getMessage, "constraint maxwithimplicitcast (num < '10') violated by row")
     }
   }
 
@@ -236,8 +242,8 @@ class CheckConstraintsSuite extends QueryTest
       val e = intercept[InvariantViolationException] {
         sql(s"INSERT INTO $table VALUES (11, 'data')")
       }
-      assert(e.getMessage.contains(
-        "constraint maxwithparens ((`num` < '10') AND (LENGTH(`text`) < 100)) violated by row"))
+      errorContains(e.getMessage,
+        "constraint maxwithparens ((num < '10') AND (LENGTH(text) < 100)) violated by row")
     }
   }
 
@@ -251,8 +257,8 @@ class CheckConstraintsSuite extends QueryTest
       val e = intercept[InvariantViolationException] {
         sql(s"INSERT INTO $table VALUES (${Int.MaxValue}, 'data')")
       }
-      assert(e.getMessage.contains(
-        "maxwithanalyzereval (`num` < unix_timestamp()) violated by row"))
+      errorContains(e.getMessage,
+        "maxwithanalyzereval (num < unix_timestamp()) violated by row")
     }
   }
 
@@ -287,9 +293,9 @@ class CheckConstraintsSuite extends QueryTest
           sql("ALTER TABLE checkConstraintsTest ADD CONSTRAINT arrLessThan5 " +
             "CHECK (nested.arr[1] < 5)")
         }
-        assert(e.getMessage.contains(
+        errorContains(e.getMessage,
           s"10 rows in default.checkconstraintstest violate the new CHECK constraint " +
-            s"(nested . arr [ 1 ] < 5)"))
+            s"(nested . arr [ 1 ] < 5)")
 
         // Adding a null value into a constraint should fail similarly, even if it's null
         // because a parent field is null.
@@ -304,8 +310,8 @@ class CheckConstraintsSuite extends QueryTest
             spark.createDataFrame(List(r).asJava, schema)
               .write.format("delta").mode("append").saveAsTable("checkConstraintsTest")
           }
-          assert(e.getMessage.contains(
-            "CHECK constraint arr0 (`nested.arr`[0] < 100) violated by row"))
+          errorContains(e.getMessage,
+            "CHECK constraint arr0 (nested.arr[0] < 100) violated by row")
         }
 
         // On the other hand, existing constraints like arr1Null which do allow null values should
@@ -347,8 +353,8 @@ class CheckConstraintsSuite extends QueryTest
           sql(s"ALTER TABLE checkConstraintsTest ADD CONSTRAINT violated " +
             s"CHECK (nested.arr[0] < id)")
         }
-        assert(e.getMessage.contains(
-          s"violate the new CHECK constraint (nested . arr [ 0 ] < id)"))
+        errorContains(e.getMessage,
+          s"violate the new CHECK constraint (nested . arr [ 0 ] < id)")
       }
     }
   }

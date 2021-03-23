@@ -139,6 +139,12 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
     }
   }
 
+  private def errorContains(errMsg: String, str: String): Unit = {
+    val actual = errMsg.replaceAll("`", "")
+    val expected = str.replaceAll("`", "")
+    assert(actual.contains(expected))
+  }
+
   testTableUpdate("append_data") { (table, path) =>
     Seq(
       Tuple5(1L, "foo", "2020-10-11 12:30:30", 100, "2020-11-12")
@@ -256,8 +262,8 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
         sql(s"UPDATE $table SET c2_g = 12 WHERE c1 = 1")
       }
     }
-    assert(e.getMessage.contains(
-      "CHECK constraint Generated Column (`c2_g` <=> (`c1` + 10)) violated by row with values"))
+    errorContains(e.getMessage,
+      "CHECK constraint Generated Column (c2_g <=> (c1 + 10)) violated by row with values")
     Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
@@ -323,8 +329,8 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
         val e = intercept[StreamingQueryException] {
           q.processAllAvailable()
         }
-        assert(e.getMessage.contains(
-          "CHECK constraint Generated Column (`c2_g` <=> (`c1` + 10)) violated by row with values"))
+        errorContains(e.getMessage,
+          "CHECK constraint Generated Column (c2_g <=> (c1 + 10)) violated by row with values")
         q.stop()
       }
     }
@@ -337,8 +343,8 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
       val e = intercept[InvariantViolationException] {
         sql(s"INSERT INTO $table VALUES(1, 12)")
       }
-      assert(e.getMessage.contains(
-        "CHECK constraint Generated Column (`id2` <=> (`id` + 10)) violated by row with values"))
+      errorContains(e.getMessage,
+        "CHECK constraint Generated Column (id2 <=> (id + 10)) violated by row with values")
     }
   }
 
@@ -356,8 +362,8 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
     val f2 = withGenerationExpression(StructField("c2", IntegerType), "c10 + 10")
     val schema = StructType(f1 :: f2 :: Nil)
     val e = intercept[AnalysisException](validateGeneratedColumns(spark, schema))
-    assert(e.getMessage.contains(
-      "A generated column cannot use a non-existent column or another generated column"))
+    errorContains(e.getMessage,
+      "A generated column cannot use a non-existent column or another generated column")
   }
 
   test("validateGeneratedColumns: no generated columns") {
@@ -380,8 +386,8 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
     val f3 = withGenerationExpression(StructField("c3", IntegerType), "c2 + 10")
     val schema = StructType(f1 :: f2 :: f3 :: Nil)
     val e = intercept[AnalysisException](validateGeneratedColumns(spark, schema))
-    assert(e.getMessage.contains(
-      "A generated column cannot use a non-existent column or another generated column"))
+    errorContains(e.getMessage,
+      "A generated column cannot use a non-existent column or another generated column")
   }
 
   test("validateGeneratedColumns: unsupported expressions") {
@@ -389,16 +395,16 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
     for ((exprString, error) <- Seq(
       "myudf(foo)" -> "Found myudf(foo). A generated column cannot use a user-defined function",
       "first(foo)" ->
-        "Found first(`foo`). A generated column cannot use a non deterministic expression",
-      "max(foo)" -> "Found max(`foo`). A generated column cannot use an aggregate expression",
-      "explode(foo)" -> "explode(`foo`) cannot be used in a generated column",
+        "Found first(foo). A generated column cannot use a non deterministic expression",
+      "max(foo)" -> "Found max(foo). A generated column cannot use an aggregate expression",
+      "explode(foo)" -> "explode(foo) cannot be used in a generated column",
       "current_timestamp" -> "current_timestamp() cannot be used in a generated column"
     )) {
       val f1 = StructField("foo", ArrayType(IntegerType, true))
       val f2 = withGenerationExpression(StructField("bar", IntegerType), exprString)
       val schema = StructType(f1 :: f2 :: Nil)
       val e = intercept[AnalysisException](validateGeneratedColumns(spark, schema))
-      assert(e.getMessage.contains(error))
+      errorContains(e.getMessage, error)
     }
   }
 
@@ -407,8 +413,8 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
     val f2 = withGenerationExpression(StructField("bar", IntegerType), "CAST(foo AS string)")
     val schema = StructType(f1 :: f2 :: Nil)
     val e = intercept[AnalysisException](validateGeneratedColumns(spark, schema))
-    assert(e.getMessage.contains("The expression type of the generated column bar is STRING, " +
-      "but the column type is INT"))
+    errorContains(e.getMessage, "The expression type of the generated column bar is STRING, " +
+      "but the column type is INT")
   }
 
   test("test partition transform expressions end to end") {
@@ -449,16 +455,16 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
       quietly {
         val e =
           intercept[InvariantViolationException](sql(s"INSERT INTO $table VALUES('foo', null)"))
-        assert(e.getMessage.contains(
-          "CHECK constraint Generated Column (`c2` <=> CONCAT(`c1`, 'y')) " +
-            "violated by row with values"))
+        errorContains(e.getMessage,
+          "CHECK constraint Generated Column (c2 <=> CONCAT(c1, 'y')) " +
+            "violated by row with values")
       }
       quietly {
         val e =
           intercept[InvariantViolationException](sql(s"INSERT INTO $table VALUES(null, 'foo')"))
-        assert(e.getMessage.contains(
-          "CHECK constraint Generated Column (`c2` <=> CONCAT(`c1`, 'y')) " +
-            "violated by row with values"))
+        errorContains(e.getMessage,
+          "CHECK constraint Generated Column (c2 <=> CONCAT(c1, 'y')) " +
+            "violated by row with values")
       }
     }
   }

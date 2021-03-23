@@ -584,8 +584,10 @@ abstract class MergeIntoSuiteBase
     }
   }
 
-  def errorContains(errMsg: String, str: String): Unit = {
-    assert(errMsg.toLowerCase(Locale.ROOT).contains(str.toLowerCase(Locale.ROOT)))
+  protected def errorContains(errMsg: String, str: String): Unit = {
+    val actual = errMsg.replaceAll("`", "").toLowerCase(Locale.ROOT)
+    val expected = str.replaceAll("`", "").toLowerCase(Locale.ROOT)
+    assert(actual.contains(expected))
   }
 
   def errorNotContains(errMsg: String, str: String): Unit = {
@@ -608,7 +610,7 @@ abstract class MergeIntoSuiteBase
           insert = "(key2, value) VALUES (3, src.value + key2)")
       }.getMessage
 
-      errorContains(e, "cannot resolve `key2`")
+      errorContains(e, "cannot resolve key2")
 
       // to-update columns have source table reference
       e = intercept[AnalysisException] {
@@ -620,7 +622,7 @@ abstract class MergeIntoSuiteBase
           insert = "(key2, value) VALUES (3, 4)")
       }.getMessage
 
-      errorContains(e, "Cannot resolve `key1` in UPDATE clause")
+      errorContains(e, "Cannot resolve key1 in UPDATE clause")
       errorContains(e, "key2") // should show key2 as a valid name in target columns
 
       // to-insert columns have source table reference
@@ -633,7 +635,7 @@ abstract class MergeIntoSuiteBase
           insert = "(key1, value) VALUES (3, 4)")
       }.getMessage
 
-      errorContains(e, "Cannot resolve `key1` in INSERT clause")
+      errorContains(e, "Cannot resolve key1 in INSERT clause")
       errorContains(e, "key2") // should contain key2 as a valid name in target columns
 
       // ambiguous reference
@@ -2152,7 +2154,7 @@ abstract class MergeIntoSuiteBase
               executeMerge(s"delta.`$tempPath` t", s"source s", "s.key = t.key",
                 clauses.toSeq: _*)
             }
-            assert(ex.getMessage.contains(expectErrorWithoutEvolutionContains))
+            errorContains(ex.getMessage, expectErrorWithoutEvolutionContains)
           } else {
             executeMerge(s"delta.`$tempPath` t", s"source s", "s.key = t.key",
               clauses.toSeq: _*)
@@ -2226,7 +2228,7 @@ abstract class MergeIntoSuiteBase
     update = "*",
     // update went through even though `extra` wasn't there
     expected = ((0, 0, 0) +: (1, 1, 10) +: (3, 30, 30) +: Nil).toDF("key", "value", "extra"),
-    expectErrorWithoutEvolutionContains = "cannot resolve `extra` in UPDATE clause"
+    expectErrorWithoutEvolutionContains = "cannot resolve extra in UPDATE clause"
   )
 
   testEvolution("insert * with column not in source")(
@@ -2237,7 +2239,7 @@ abstract class MergeIntoSuiteBase
     expected = ((0, 0, 0) +: (1, 10, 10) +: (2, 2, null) +: (3, 30, 30) +: Nil)
       .asInstanceOf[List[(Integer, Integer, Integer)]]
       .toDF("key", "value", "extra"),
-    expectErrorWithoutEvolutionContains = "cannot resolve `extra` in INSERT clause"
+    expectErrorWithoutEvolutionContains = "cannot resolve extra in INSERT clause"
   )
 
   testEvolution("explicitly insert subset of columns")(

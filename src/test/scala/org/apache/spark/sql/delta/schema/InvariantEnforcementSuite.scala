@@ -80,7 +80,8 @@ class InvariantEnforcementSuite extends QueryTest
     val error = e.getMessage
     val allExpected = expectedErrors
     allExpected.foreach { expected =>
-      assert(error.contains(expected), s"$error didn't contain $expected")
+      assert(error.replaceAll("`", "").contains(expected.replaceAll("`", "")),
+        s"$error didn't contain $expected")
     }
   }
 
@@ -412,7 +413,7 @@ class InvariantEnforcementSuite extends QueryTest
           spark.sql("INSERT INTO constraint VALUES (100, 50, null)")
         }
         checkConstraintException(e,
-          s"""CHECK constraint mychk (`valueA` < `valueB`) violated by row with values:
+          s"""CHECK constraint mychk (valueA < valueB) violated by row with values:
              | - valueA : 100
              | - valueB : 50""".stripMargin)
 
@@ -420,7 +421,7 @@ class InvariantEnforcementSuite extends QueryTest
           spark.sql("INSERT INTO constraint VALUES (100, null, null)")
         }
         checkConstraintException(e2,
-          s"""CHECK constraint mychk (`valueA` < `valueB`) violated by row with values:
+          s"""CHECK constraint mychk (valueA < valueB) violated by row with values:
              | - valueA : 100
              | - valueB : null""".stripMargin)
       }
