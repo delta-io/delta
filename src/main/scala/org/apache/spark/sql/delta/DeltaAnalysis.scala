@@ -123,8 +123,7 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
       }
 
     case u @ UpdateTable(table, assignments, condition) if u.childrenResolved =>
-      val (cols, expressions) = assignments.map(a =>
-        a.key.asInstanceOf[NamedExpression] -> a.value).unzip
+      val (cols, expressions) = assignments.map(a => a.key -> a.value).unzip
       // rewrites Delta from V2 to V1
       val newTable = stripTempViewWrapper(table).transformUp { case DeltaRelation(lr) => lr }
         newTable.collectLeaves().headOption match {

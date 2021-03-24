@@ -29,7 +29,7 @@ import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, Expression, 
  */
 case class DeltaUpdateTable(
     child: LogicalPlan,
-    updateColumns: Seq[NamedExpression],
+    updateColumns: Seq[Expression],
     updateExpressions: Seq[Expression],
     condition: Option[Expression])
   extends UnaryNode {
