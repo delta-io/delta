@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.files
 import java.net.URI
 import java.util.Objects
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.actions.SingleAction.addFileEncoder
@@ -114,6 +115,7 @@ abstract class TahoeFileIndex(
    * all the partition directories stripped off).
    */
   def getBasePath(filePath: Path): Option[Path] = Some(path)
+
 }
 
 
@@ -200,7 +202,8 @@ class TahoeBatchFileIndex(
     val addFiles: Seq[AddFile],
     deltaLog: DeltaLog,
     path: Path,
-    snapshot: Snapshot)
+    snapshot: Snapshot
+    )
   extends TahoeFileIndex(spark, deltaLog, path) {
 
   override def tableVersion: Long = snapshot.version
