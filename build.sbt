@@ -20,7 +20,7 @@ organization := "io.delta"
 
 scalaVersion := "2.12.10"
 
-sparkVersion := "3.0.1"
+sparkVersion := "3.1.1"
 
 libraryDependencies ++= Seq(
   // Adding test classifier seems to break transitive resolution of the core dependencies
@@ -30,7 +30,7 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
 
   // Test deps
-  "org.scalatest" %% "scalatest" % "3.0.5" % "test",
+  "org.scalatest" %% "scalatest" % "3.1.0" % "test",
   "junit" % "junit" % "4.12" % "test",
   "com.novocode" % "junit-interface" % "0.11" % "test",
   "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",

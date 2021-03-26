@@ -73,7 +73,7 @@ class DeltaDataSource
       schema: Option[StructType],
       providerName: String,
       parameters: Map[String, String]): (String, StructType) = {
-    if (schema.nonEmpty) {
+    if (schema.nonEmpty && schema.get.nonEmpty) {
       throw DeltaErrors.specifySchemaAtReadTimeException
     }
     val path = parameters.getOrElse("path", {
@@ -83,6 +83,9 @@ class DeltaDataSource
     val (_, maybeTimeTravel) = DeltaTableUtils.extractIfPathContainsTimeTravel(
       sqlContext.sparkSession, path)
     if (maybeTimeTravel.isDefined) throw DeltaErrors.timeTravelNotSupportedException
+    if (DeltaDataSource.getTimeTravelVersion(parameters).isDefined) {
+      throw DeltaErrors.timeTravelNotSupportedException
+    }
 
     val deltaLog = DeltaLog.forTable(sqlContext.sparkSession, path)
     if (deltaLog.snapshot.schema.isEmpty) {
@@ -99,7 +102,7 @@ class DeltaDataSource
       schema: Option[StructType],
       providerName: String,
       parameters: Map[String, String]): Source = {
-    if (schema.nonEmpty) {
+    if (schema.nonEmpty && schema.get.nonEmpty) {
       throw DeltaErrors.specifySchemaAtReadTimeException
     }
     val path = parameters.getOrElse("path", {

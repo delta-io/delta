@@ -132,8 +132,6 @@ class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
   override def parseTableSchema(sqlText: String): StructType = delegate.parseTableSchema(sqlText)
 
   override def parseDataType(sqlText: String): DataType = delegate.parseDataType(sqlText)
-
-  override def parseRawDataType(sqlText: String): DataType = delegate.parseRawDataType(sqlText)
 }
 
 /**
@@ -208,16 +206,9 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
 
     val builder = new MetadataBuilder
 
-    // Add Hive type string to metadata.
-    val rawDataType = typedVisit[DataType](ctx.dataType)
-    val cleanedDataType = HiveStringType.replaceCharType(rawDataType)
-    if (rawDataType != cleanedDataType) {
-      builder.putString(HIVE_TYPE_STRING, rawDataType.catalogString)
-    }
-
     StructField(
       ctx.colName.getText,
-      cleanedDataType,
+      typedVisit[DataType](ctx.dataType),
       nullable = NOT == null,
       builder.build())
   }

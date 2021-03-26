@@ -395,34 +395,6 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
     }
   }
 
-  test("SHOW CREATE TABLE should not include OPTIONS except for path") {
-    withTable("delta_test") {
-      sql(s"""
-             |CREATE TABLE delta_test(a LONG, b String)
-             |USING delta
-           """.stripMargin)
-
-      val statement = sql("SHOW CREATE TABLE delta_test").collect()(0).getString(0)
-      assert(!statement.contains("OPTION"))
-    }
-
-    withTempDir { dir =>
-      withTable("delta_test") {
-        val path = dir.getCanonicalPath()
-        sql(s"""
-               |CREATE TABLE delta_test(a LONG, b String)
-               |USING delta
-               |LOCATION '$path'
-             """.stripMargin)
-
-        val statement = sql("SHOW CREATE TABLE delta_test").collect()(0).getString(0)
-        assert(statement.contains(
-          s"LOCATION '${CatalogUtils.URIToString(makeQualifiedPath(path))}'"))
-        assert(!statement.contains("OPTION"))
-      }
-    }
-  }
-
   test("DESCRIBE TABLE for partitioned table") {
     withTempDir { dir =>
       withTable("delta_test") {

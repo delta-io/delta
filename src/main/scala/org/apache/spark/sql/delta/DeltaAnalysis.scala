@@ -350,6 +350,9 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
 
   private def stripTempViewWrapper(plan: LogicalPlan): LogicalPlan = {
     plan
+      .transformUp {
+        case v: View if v.isTempView => v.child
+      }
   }
 }
 

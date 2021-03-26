@@ -51,14 +51,4 @@ class DeleteSQLSuite extends DeleteSuiteBase  with DeltaSQLCommandTest {
     }
   }
 
-  test("delete from a SQL temp view") {
-    withTable("tab") {
-      withTempView("v") {
-        Seq((1, 1), (0, 3), (1, 5)).toDF("key", "value").write.format("delta").saveAsTable("tab")
-        sql("CREATE TEMP VIEW v AS SELECT * FROM tab")
-        sql("DELETE FROM v WHERE key = 1 AND VALUE = 5")
-        checkAnswer(spark.table("tab"), Seq(Row(1, 1), Row(0, 3)))
-      }
-    }
-  }
 }

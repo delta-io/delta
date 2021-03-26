@@ -73,11 +73,12 @@ abstract class DeltaNotSupportedDDLBase extends QueryTest
     }
   }
 
-  private def assertUnsupported(query: String): Unit = {
+  def assertUnsupported(query: String, messages: String*): Unit = {
+    val allErrMessages = "operation not allowed" +: messages
     val e = intercept[AnalysisException] {
       sql(query)
     }
-    assert(e.getMessage.toLowerCase(Locale.ROOT).contains("operation not allowed"))
+    assert(allErrMessages.exists(err => e.getMessage.toLowerCase(Locale.ROOT).contains(err)))
   }
 
   private def assertIgnored(query: String): Unit = {
@@ -117,15 +118,21 @@ abstract class DeltaNotSupportedDDLBase extends QueryTest
   }
 
   test("ANALYZE TABLE PARTITION") {
-    assertUnsupported(s"ANALYZE TABLE $partitionedTableName PARTITION (p1) COMPUTE STATISTICS")
+    assertUnsupported(
+      s"ANALYZE TABLE $partitionedTableName PARTITION (p1) COMPUTE STATISTICS",
+      "not supported for v2 tables")
   }
 
   test("ALTER TABLE ADD PARTITION") {
-    assertUnsupported(s"ALTER TABLE $partitionedTableName ADD PARTITION (p1=3)")
+    assertUnsupported(
+      s"ALTER TABLE $partitionedTableName ADD PARTITION (p1=3)",
+      "can not alter partitions")
   }
 
   test("ALTER TABLE DROP PARTITION") {
-    assertUnsupported(s"ALTER TABLE $partitionedTableName DROP PARTITION (p1=2)")
+    assertUnsupported(
+      s"ALTER TABLE $partitionedTableName DROP PARTITION (p1=2)",
+      "can not alter partitions")
   }
 
   test("ALTER TABLE RECOVER PARTITIONS") {
@@ -140,7 +147,8 @@ abstract class DeltaNotSupportedDDLBase extends QueryTest
 
   test("LOAD DATA") {
     assertUnsupported(
-      s"""LOAD DATA LOCAL INPATH '/path/to/home' INTO TABLE $nonPartitionedTableName""")
+      s"""LOAD DATA LOCAL INPATH '/path/to/home' INTO TABLE $nonPartitionedTableName""",
+      "not supported for v2 tables")
   }
 
   test("INSERT OVERWRITE DIRECTORY") {

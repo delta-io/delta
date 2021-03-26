@@ -24,7 +24,7 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 import org.apache.spark.sql.catalyst.catalog.CatalogTableType
-import org.apache.spark.sql.catalyst.plans.logical.{AppendData, LogicalPlan, OverwriteByExpression, V2WriteCommand}
+import org.apache.spark.sql.catalyst.plans.logical.{AppendData, DropTable, LogicalPlan, OverwriteByExpression, V2WriteCommand}
 import org.apache.spark.sql.execution.command._
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 
@@ -106,6 +106,11 @@ case class DeltaUnsupportedOperationsCheck(spark: SparkSession)
 
     case overwrite: OverwriteByExpression =>
       checkDeltaTableExists(overwrite, "OVERWRITE")
+
+    case _: DropTable =>
+      // For Delta tables being dropped, we do not need the underlying Delta log to exist so this is
+      // OK
+      return
 
     case DataSourceV2Relation(tbl: DeltaTableV2, _, _, _, _) if !tbl.deltaLog.tableExists =>
       throw DeltaErrors.pathNotExistsException(tbl.deltaLog.dataPath.toString)

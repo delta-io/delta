@@ -87,51 +87,18 @@ sealed trait BatchWriterTest extends SchemaEnforcementSuiteBase with SharedSpark
   }
 }
 
-trait AppendSaveModeTests extends BatchWriterTest {
+trait AppendSaveModeNullTests extends BatchWriterTest {
   import testImplicits._
 
-  equivalenceTest("reject schema changes by default") {
-    disableAutoMigration {
-      withTempDir { dir =>
-        spark.range(10).write.append(dir)
-        val e = intercept[AnalysisException] {
-          spark.range(10).withColumn("part", 'id + 1).write.append(dir)
-        }
-        assert(e.getMessage.contains(DeltaOptions.MERGE_SCHEMA_OPTION))
-      }
-    }
-  }
-
-  equivalenceTest("allow schema changes when autoMigrate is enabled") {
+  equivalenceTest("JSON ETL workflow, NullType being only data column") {
     enableAutoMigration {
+      val row1 = """{"key":"abc","id":null}"""
       withTempDir { dir =>
-        spark.range(10).write.append(dir)
-        spark.range(10).withColumn("part", 'id + 1).write.append(dir)
-        assert(spark.read.format("delta").load(dir.getAbsolutePath).schema.length == 2)
-      }
-    }
-  }
-
-  equivalenceTest("disallow schema changes when autoMigrate enabled but writer config disabled") {
-    enableAutoMigration {
-      withTempDir { dir =>
-        spark.range(10).write.append(dir)
+        val schema1 = new StructType().add("key", StringType).add("id", NullType)
         val e = intercept[AnalysisException] {
-          spark.range(10).withColumn("part", 'id + 1).write
-            .option(DeltaOptions.MERGE_SCHEMA_OPTION, "false").append(dir)
+          spark.read.schema(schema1).json(Seq(row1).toDS()).write.partitionBy("key").append(dir)
         }
-        assert(e.getMessage.contains(DeltaOptions.MERGE_SCHEMA_OPTION))
-      }
-    }
-  }
-
-  equivalenceTest("allow schema change with option") {
-    disableAutoMigration {
-      withTempDir { dir =>
-        spark.range(10).write.append(dir)
-        spark.range(10).withColumn("part", 'id + 1).write
-          .option(DeltaOptions.MERGE_SCHEMA_OPTION, "true").append(dir)
-        assert(spark.read.format("delta").load(dir.getAbsolutePath).schema.length == 2)
+        assert(e.getMessage.contains("NullType have been dropped"))
       }
     }
   }
@@ -216,16 +183,53 @@ trait AppendSaveModeTests extends BatchWriterTest {
       }
     }
   }
+}
 
-  equivalenceTest("JSON ETL workflow, NullType being only data column") {
-    enableAutoMigration {
-      val row1 = """{"key":"abc","id":null}"""
+trait AppendSaveModeTests extends BatchWriterTest {
+  import testImplicits._
+
+  equivalenceTest("reject schema changes by default") {
+    disableAutoMigration {
       withTempDir { dir =>
-        val schema1 = new StructType().add("key", StringType).add("id", NullType)
+        spark.range(10).write.append(dir)
         val e = intercept[AnalysisException] {
-          spark.read.schema(schema1).json(Seq(row1).toDS()).write.partitionBy("key").append(dir)
+          spark.range(10).withColumn("part", 'id + 1).write.append(dir)
         }
-        assert(e.getMessage.contains("NullType have been dropped"))
+        assert(e.getMessage.contains(DeltaOptions.MERGE_SCHEMA_OPTION))
+      }
+    }
+  }
+
+  equivalenceTest("allow schema changes when autoMigrate is enabled") {
+    enableAutoMigration {
+      withTempDir { dir =>
+        spark.range(10).write.append(dir)
+        spark.range(10).withColumn("part", 'id + 1).write.append(dir)
+        assert(spark.read.format("delta").load(dir.getAbsolutePath).schema.length == 2)
+      }
+    }
+  }
+
+  equivalenceTest("disallow schema changes when autoMigrate enabled but writer config disabled") {
+    enableAutoMigration {
+      withTempDir { dir =>
+        spark.range(10).write.append(dir)
+        val e = intercept[AnalysisException] {
+          spark.range(10).withColumn("part", 'id + 1).write
+            .option(DeltaOptions.MERGE_SCHEMA_OPTION, "false").append(dir)
+        }
+        assert(e.getMessage.contains(DeltaOptions.MERGE_SCHEMA_OPTION))
+      }
+    }
+  }
+
+  equivalenceTest("allow schema change with option") {
+    disableAutoMigration {
+      withTempDir { dir =>
+        spark.range(10).write.append(dir)
+        spark.range(10).withColumn("part", 'id + 1).write
+          .option(DeltaOptions.MERGE_SCHEMA_OPTION, "true").append(dir)
+        assert(spark.read.format("delta").load(dir.getAbsolutePath).schema.length == 2)
       }
     }
   }
@@ -871,7 +875,10 @@ trait CompleteOutputModeTests extends SchemaEnforcementSuiteBase with SharedSpar
   }
 }
 
-class SchemaEnforcementWithPathSuite extends AppendSaveModeTests with OverwriteSaveModeTests {
+class SchemaEnforcementWithPathSuite
+  extends AppendSaveModeTests
+  with AppendSaveModeNullTests
+  with OverwriteSaveModeTests {
   override val saveOperation = SaveWithPath()
 }
 
