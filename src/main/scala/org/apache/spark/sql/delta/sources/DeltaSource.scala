@@ -484,32 +484,55 @@ case class DeltaSource(
         timestamp = options.startingTimestamp.map(Literal(_)),
         version = None,
         creationSource = Some("deltaSource"))
-      val tz = spark.sessionState.conf.sessionLocalTimeZone
-      val timestamp = tt.getTimestamp(spark.sessionState.conf)
-      val commit = deltaLog.history.getActiveCommitAtTime(
-        timestamp,
-        canReturnLastCommit = true,
-        mustBeRecreatable = false,
-        canReturnEarliestCommit = true)
-      if (commit.timestamp >= timestamp.getTime) {
-        // Find the commit at the `timestamp` or the earliest commit
-        Some(commit.version)
-      } else {
-        // commit.timestamp is not the same, so this commit is a commit before the timestamp and
-        // the next version if exists should be the earliest commit after the timestamp.
-        // Note: `getActiveCommitAtTime` has called `update`, so we don't need to call it again.
-        if (commit.version + 1 <= deltaLog.snapshot.version) {
-          Some(commit.version + 1)
-        } else {
-          val commitTs = new Timestamp(commit.timestamp)
-          val timestampFormatter = TimestampFormatter(DateTimeUtils.getTimeZone(tz))
-          val tsString = DateTimeUtils.timestampToString(
-            timestampFormatter, DateTimeUtils.fromJavaTimestamp(commitTs))
-          throw DeltaErrors.timestampGreaterThanLatestCommit(timestamp, commitTs, tsString)
-        }
-      }
+      Some(DeltaSource
+        .getStartingVersionFromTimestamp(spark, deltaLog, tt.getTimestamp(spark.sessionState.conf)))
     } else {
       None
     }
   }
 }
+
+object DeltaSource {
+
+  /**
+   * - If a commit version exactly matches the provided timestamp, we return it.
+   * - Otherwise, we return the earliest commit version
+   *   with a timestamp greater than the provided one.
+   * - If the provided timestamp is larger than the timestamp
+   *   of any committed version, we throw an error.
+   *
+   * @param spark - current spark session
+   * @param deltaLog - Delta log of the table for which we find the version.
+   * @param timestamp - user specified timestamp
+   * @return - corresponding version number for timestamp
+   */
+  def getStartingVersionFromTimestamp(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      timestamp: Timestamp): Long = {
+    val tz = spark.sessionState.conf.sessionLocalTimeZone
+    val commit = deltaLog.history.getActiveCommitAtTime(
+      timestamp,
+      canReturnLastCommit = true,
+      mustBeRecreatable = false,
+      canReturnEarliestCommit = true)
+    if (commit.timestamp >= timestamp.getTime) {
+      // Find the commit at the `timestamp` or the earliest commit
+      commit.version
+    } else {
+      // commit.timestamp is not the same, so this commit is a commit before the timestamp and
+      // the next version if exists should be the earliest commit after the timestamp.
+      // Note: `getActiveCommitAtTime` has called `update`, so we don't need to call it again.
+      if (commit.version + 1 <= deltaLog.snapshot.version) {
+        commit.version + 1
+      } else {
+        val commitTs = new Timestamp(commit.timestamp)
+        val timestampFormatter = TimestampFormatter(DateTimeUtils.getTimeZone(tz))
+        val tsString = DateTimeUtils.timestampToString(
+          timestampFormatter, DateTimeUtils.fromJavaTimestamp(commitTs))
+        throw DeltaErrors.timestampGreaterThanLatestCommit(timestamp, commitTs, tsString)
+      }
+    }
+  }
+}
+
