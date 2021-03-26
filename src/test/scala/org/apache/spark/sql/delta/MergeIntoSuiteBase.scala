@@ -2134,7 +2134,8 @@ abstract class MergeIntoSuiteBase
   protected def testEvolution(name: String)(
       targetData: => DataFrame,
       sourceData: => DataFrame,
-      clauses: Seq[MergeClause] = Seq.empty,
+      update: String = null,
+      insert: String = null,
       expected: => DataFrame = null,
       expectedWithoutEvolution: => DataFrame = null,
       expectErrorContains: String = null,
@@ -2145,6 +2146,8 @@ abstract class MergeIntoSuiteBase
         append(targetData)
         withTempView("source") {
           sourceData.createOrReplaceTempView("source")
+          val clauses = Option(update).map(u => this.update(set = u)) ++
+            Option(insert).map(i => this.insert(values = i))
 
           if (expectErrorWithoutEvolutionContains != null) {
             val ex = intercept[AnalysisException] {
@@ -2171,6 +2174,8 @@ abstract class MergeIntoSuiteBase
         append(targetData)
         withTempView("source") {
           sourceData.createOrReplaceTempView("source")
+          val clauses = Option(update).map(u => this.update(set = u)) ++
+            Option(insert).map(i => this.insert(values = i))
 
           if (expectErrorContains != null) {
             val ex = intercept[AnalysisException] {
@@ -2195,7 +2200,7 @@ abstract class MergeIntoSuiteBase
   testEvolution("new column with only insert *")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
-    clauses = insert("*") :: Nil,
+    insert = "*",
     expected =
       ((0, 0, null) +: (3, 30, null) +: // unchanged
         (1, 10, null) +:  // not updated
@@ -2208,7 +2213,7 @@ abstract class MergeIntoSuiteBase
   testEvolution("new column with only update *")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
-    clauses = update("*") :: Nil,
+    update = "*",
     expected =
       ((0, 0, null) +: (3, 30, null) +:
         (1, 1, "extra1") +: // updated
@@ -2220,7 +2225,7 @@ abstract class MergeIntoSuiteBase
   testEvolution("update * with column not in source")(
     targetData = Seq((0, 0, 0), (1, 10, 10), (3, 30, 30)).toDF("key", "value", "extra"),
     sourceData = Seq((1, 1), (2, 2)).toDF("key", "value"),
-    clauses = update("*") :: Nil,
+    update = "*",
     // update went through even though `extra` wasn't there
     expected = ((0, 0, 0) +: (1, 1, 10) +: (3, 30, 30) +: Nil).toDF("key", "value", "extra"),
     expectErrorWithoutEvolutionContains = "cannot resolve extra in UPDATE clause"
@@ -2229,7 +2234,7 @@ abstract class MergeIntoSuiteBase
   testEvolution("insert * with column not in source")(
     targetData = Seq((0, 0, 0), (1, 10, 10), (3, 30, 30)).toDF("key", "value", "extra"),
     sourceData = Seq((1, 1), (2, 2)).toDF("key", "value"),
-    clauses = insert("*") :: Nil,
+    insert = "*",
     // insert went through even though `extra` wasn't there
     expected = ((0, 0, 0) +: (1, 10, 10) +: (2, 2, null) +: (3, 30, 30) +: Nil)
       .asInstanceOf[List[(Integer, Integer, Integer)]]
@@ -2240,7 +2245,7 @@ abstract class MergeIntoSuiteBase
   testEvolution("explicitly insert subset of columns")(
     targetData = Seq((0, 0, 0), (1, 10, 10), (3, 30, 30)).toDF("key", "value", "extra"),
     sourceData = Seq((1, 1, 1), (2, 2, 2)).toDF("key", "value", "extra"),
-    clauses = insert("(key, value) VALUES (s.key, s.value)") :: Nil,
+    insert = "(key, value) VALUES (s.key, s.value)",
     // 2 should have extra = null, since extra wasn't in the insert spec.
     expected = ((0, 0, 0) +: (1, 10, 10) +: (2, 2, null) +: (3, 30, 30) +: Nil)
       .asInstanceOf[List[(Integer, Integer, Integer)]]
@@ -2253,7 +2258,7 @@ abstract class MergeIntoSuiteBase
   testEvolution("explicitly update one column")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1, 1), (2, 2, 2)).toDF("key", "value", "extra"),
-    clauses = update("value = s.value") :: Nil,
+    update = "value = s.value",
     // Both results should be the same - we're checking that no evolution logic triggers
     // even though there's an extra source column.
     expected = ((0, 0) +: (1, 1) +: (3, 30) +: Nil).toDF("key", "value"),
@@ -2263,7 +2268,8 @@ abstract class MergeIntoSuiteBase
   testEvolution("new column with update non-* and insert *")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1, 1), (2, 2, 2)).toDF("key", "value", "extra"),
-    clauses = update("key = s.key, value = s.value") :: insert("*") :: Nil,
+    update = "key = s.key, value = s.value",
+    insert = "*",
     expected = ((0, 0, null) +: (2, 2, 2) +: (3, 30, null) +:
       // null because `extra` isn't an update action, even though it's 1 in the source data
       (1, 1, null) +: Nil)
@@ -2274,7 +2280,8 @@ abstract class MergeIntoSuiteBase
   testEvolution("new column with update * and insert non-*")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1, 1), (2, 2, 2)).toDF("key", "value", "extra"),
-    clauses = update("*") :: insert("(key, value) VALUES (s.key, s.value)") :: Nil,
+    update = "*",
+    insert = "(key, value) VALUES (s.key, s.value)",
     expected = ((0, 0, null) +: (1, 1, 1) +: (3, 30, null) +:
       // null because `extra` isn't an insert action, even though it's 2 in the source data
       (2, 2, null) +: Nil)
@@ -2285,7 +2292,8 @@ abstract class MergeIntoSuiteBase
   testEvolution("evolve partitioned table")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
-    clauses = update("*") :: insert("*") :: Nil,
+    update = "*",
+    insert = "*",
     expected = ((0, 0, null) +: (1, 1, "extra1") +: (2, 2, "extra2") +: (3, 30, null) +: Nil)
       .toDF("key", "value", "extra"),
     expectedWithoutEvolution = ((0, 0) +: (2, 2) +: (3, 30) +: (1, 1) +: Nil).toDF("key", "value")
@@ -2295,7 +2303,8 @@ abstract class MergeIntoSuiteBase
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value.with.dotted.name"),
     sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF(
       "key", "value.with.dotted.name", "extra.dotted"),
-    clauses = update("*") :: insert("*") :: Nil,
+    update = "*",
+    insert = "*",
     expected = ((0, 0, null) +: (1, 1, "extra1") +: (2, 2, "extra2") +: (3, 30, null) +: Nil)
       .toDF("key", "value.with.dotted.name", "extra.dotted"),
     expectedWithoutEvolution = ((0, 0) +: (2, 2) +: (3, 30) +: (1, 1) +: Nil)
@@ -2307,7 +2316,7 @@ abstract class MergeIntoSuiteBase
   testEvolution("incompatible types in update *")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, Array[Byte](1)), (2, Array[Byte](2))).toDF("key", "value"),
-    clauses = update("*") :: Nil,
+    update = "*",
     expectErrorContains =
       "Failed to merge incompatible data types IntegerType and BinaryType",
     expectErrorWithoutEvolutionContains = "cannot cast binary to int"
@@ -2316,7 +2325,7 @@ abstract class MergeIntoSuiteBase
   testEvolution("incompatible types in insert *")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, Array[Byte](1)), (2, Array[Byte](2))).toDF("key", "value"),
-    clauses = insert("*") :: Nil,
+    insert = "*",
     expectErrorContains = "Failed to merge incompatible data types IntegerType and BinaryType",
     expectErrorWithoutEvolutionContains = "cannot cast binary to int"
   )
@@ -2325,7 +2334,8 @@ abstract class MergeIntoSuiteBase
   testEvolution("upcast numeric source types into integer target")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1.toByte, 1.toShort), (2.toByte, 2.toShort)).toDF("key", "value"),
-    clauses = update("*") :: insert("*") :: Nil,
+    insert = "*",
+    update = "*",
     expected = Seq((0, 0), (1, 1), (2, 2), (3, 30)).toDF("key", "value"),
     expectedWithoutEvolution = Seq((0, 0), (1, 1), (2, 2), (3, 30)).toDF("key", "value")
   )
@@ -2335,7 +2345,8 @@ abstract class MergeIntoSuiteBase
   testEvolution("upcast numeric target types from integer source")(
     targetData = Seq((0.toByte, 0.toShort), (1.toByte, 10.toShort)).toDF("key", "value"),
     sourceData = Seq((1, 1), (2, 2)).toDF("key", "value"),
-    clauses = update("*") :: insert("*") :: Nil,
+    insert = "*",
+    update = "*",
     expected =
       ((0.toByte, 0.toShort) +:
         (1.toByte, 1.toShort) +:
@@ -2351,7 +2362,8 @@ abstract class MergeIntoSuiteBase
   testEvolution("upcast int source type into long target")(
     targetData = Seq((0, 0L), (1, 10L), (3, 30L)).toDF("key", "value"),
     sourceData = Seq((1, 1), (2, 2)).toDF("key", "value"),
-    clauses = update("*") :: insert("*") :: Nil,
+    insert = "*",
+    update = "*",
     expected = ((0, 0L) +: (1, 1L) +: (2, 2L) +: (3, 30L) +: Nil).toDF("key", "value"),
     expectedWithoutEvolution =
       ((0, 0L) +: (1, 1L) +: (2, 2L) +: (3, 30L) +: Nil).toDF("key", "value")
@@ -2360,7 +2372,7 @@ abstract class MergeIntoSuiteBase
   testEvolution("write string into int column")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, "1"), (2, "2"), (5, "notANumber")).toDF("key", "value"),
-    clauses = insert("*") :: Nil,
+    insert = "*",
     expected = ((0, 0) +: (1, 10) +: (2, 2) +: (3, 30) +: (5, null) +: Nil)
       .asInstanceOf[List[(Integer, Integer)]].toDF("key", "value"),
     expectedWithoutEvolution =
@@ -2373,7 +2385,7 @@ abstract class MergeIntoSuiteBase
   testEvolution("write double into int column")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1.1), (2, 2.2), (5, Double.PositiveInfinity)).toDF("key", "value"),
-    clauses = insert("*") :: Nil,
+    insert = "*",
     expected =
       ((0, 0) +: (1, 10) +: (2, 2) +: (3, 30) +: (5, Int.MaxValue) +: Nil)
         .asInstanceOf[List[(Integer, Integer)]].toDF("key", "value"),
@@ -2385,7 +2397,7 @@ abstract class MergeIntoSuiteBase
   testEvolution("extra nested column in source - insert")(
     targetData = Seq((1, (1, 10))).toDF("key", "x"),
     sourceData = Seq((2, (2, 20, 30))).toDF("key", "x"),
-    clauses = insert("*") :: Nil,
+    insert = "*",
     expected = ((1, (1, 10, null)) +: (2, (2, 20, 30)) +: Nil)
       .asInstanceOf[List[(Integer, (Integer, Integer, Integer))]].toDF("key", "x"),
     expectErrorWithoutEvolutionContains = "Cannot cast struct"
@@ -2394,7 +2406,7 @@ abstract class MergeIntoSuiteBase
   testEvolution("missing nested column in source - insert")(
     targetData = Seq((1, (1, 2, 3))).toDF("key", "x"),
     sourceData = Seq((2, (2, 3))).toDF("key", "x"),
-    clauses = insert("*") :: Nil,
+    insert = "*",
     expected = ((1, (1, 2, 3)) +: (2, (2, 3, null)) +: Nil)
       .asInstanceOf[List[(Integer, (Integer, Integer, Integer))]].toDF("key", "x"),
     expectErrorWithoutEvolutionContains = "Cannot cast struct"
@@ -2405,7 +2417,7 @@ abstract class MergeIntoSuiteBase
       .selectExpr("key", "named_struct('a', a, 'b', b, 'c', c) as x"),
     sourceData = Seq((2, 2, 4)).toDF("key", "a", "c")
       .selectExpr("key", "named_struct('a', a, 'c', c) as x"),
-    clauses = insert("*") :: Nil,
+    insert = "*",
     expected = ((1, (1, 2, 3)) +: (2, (2, null, 4)) +: Nil)
       .asInstanceOf[List[(Integer, (Integer, Integer, Integer))]].toDF("key", "x")
       .selectExpr("key", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x"),
@@ -2413,11 +2425,11 @@ abstract class MergeIntoSuiteBase
   )
 
   testEvolution("additional nested column in source resolved by name - insert")(
-    targetData = Seq((1, 10, 30)).toDF("key", "a", "c")
+   targetData = Seq((1, 10, 30)).toDF("key", "a", "c")
       .selectExpr("key", "named_struct('a', a, 'c', c) as x"),
-    sourceData = Seq((2, 20, 30, 40)).toDF("key", "a", "b", "c")
+   sourceData = Seq((2, 20, 30, 40)).toDF("key", "a", "b", "c")
       .selectExpr("key", "named_struct('a', a, 'b', b, 'c', c) as x"),
-    clauses = insert("*") :: Nil,
+    insert = "*",
     expected = ((1, (10, null, 30)) +: ((2, (20, 30, 40)) +: Nil))
       .asInstanceOf[List[(Integer, (Integer, Integer, Integer))]].toDF("key", "x")
       .selectExpr("key", "named_struct('a', x._1, 'c', x._3, 'b', x._2) as x"),
@@ -2429,7 +2441,7 @@ abstract class MergeIntoSuiteBase
       .selectExpr("key", "named_struct('a', x._1, 'c', x._2) as x"),
     sourceData = Seq((1, (10, 100, 1000))).toDF("key", "x")
       .selectExpr("key", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x"),
-    clauses = update("*") :: Nil,
+    update = "*",
     expected = ((1, (10, 100, 1000)) +: (2, (2, null, 2000)) +: Nil)
       .asInstanceOf[List[(Integer, (Integer, Integer, Integer))]].toDF("key", "x")
       .selectExpr("key", "named_struct('a', x._1, 'c', x._3, 'b', x._2) as x"),
@@ -2441,8 +2453,8 @@ abstract class MergeIntoSuiteBase
       .selectExpr("key", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x"),
     sourceData = Seq((1, (0, 0))).toDF("key", "x")
       .selectExpr("key", "named_struct('a', x._1, 'c', x._2) as x"),
-    clauses = update("*") :: Nil,
-    expected = ((1, (0, 10, 0)) +: (2, (2, 20, 200)) +: Nil).toDF("key", "x")
+    update = "*",
+  expected = ((1, (0, 10, 0)) +: (2, (2, 20, 200)) +: Nil).toDF("key", "x")
       .selectExpr("key", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x"),
     expectErrorWithoutEvolutionContains = "Cannot cast struct"
   )
@@ -2452,7 +2464,8 @@ abstract class MergeIntoSuiteBase
       .selectExpr("key", "struct(a, b, c) as x"),
     sourceData = Seq((1, 10, 20, 30), (2, 20, 30, 40)).toDF("key", "a", "b", "d")
       .selectExpr("key", "struct(a, b, d) as x"),
-    clauses = update("*") :: insert("*") :: Nil,
+    insert = "*",
+    update = "*",
     // We evolve to the schema (key, x.{a, b, c, d}).
     expected = ((1, (10, 20, 3, 30)) +: (2, (20, 30, null, 40)) +: Nil)
       .asInstanceOf[List[(Integer, (Integer, Integer, Integer, Integer))]]
@@ -2466,7 +2479,8 @@ abstract class MergeIntoSuiteBase
       .selectExpr("key", "struct(a, b, c) as x"),
     sourceData = Seq((1, 10, 20, 30), (2, 20, 30, 40)).toDF("key", "a", "b", "d")
       .selectExpr("key", "struct(a, b, d) as x"),
-    clauses = update("*") :: insert("*") :: Nil,
+    insert = "*",
+    update = "*",
     expectErrorContains = "cannot cast struct",
     expectedWithoutEvolution = ((1, (10, 20, 30)) +: (2, (20, 30, 40)) +: Nil)
       .asInstanceOf[List[(Integer, (Integer, Integer, Integer))]]
@@ -2480,7 +2494,8 @@ abstract class MergeIntoSuiteBase
       .selectExpr("key", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x"),
     sourceData = Seq((1, (100, 10, 1)), (3, (300, 30, 3))).toDF("key", "x")
       .selectExpr("key", "named_struct('c', x._1, 'b', x._2, 'a', x._3) as x"),
-    clauses = update("*") :: insert("*") :: Nil,
+    insert = "*",
+    update = "*",
     expected = ((1, (1, 10, 100)) +: (2, (2, 20, 200)) +: (3, (3, 30, 300)) +: Nil).toDF("key", "x")
       .selectExpr("key", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x"),
     expectedWithoutEvolution =
@@ -2493,13 +2508,12 @@ abstract class MergeIntoSuiteBase
       .selectExpr("key", "named_struct('a', x._1, 'c', x._2) as x").repartition(1),
     sourceData = Seq((1, (10, 100, 1000))).toDF("key", "x")
       .selectExpr("key", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x"),
-    clauses = update("*") :: Nil,
+    update = "*",
     expected = ((1, (10, 100, 1000)) +: (2, (2, null, 2000)) +: Nil)
       .asInstanceOf[List[(Integer, (Integer, Integer, Integer))]].toDF("key", "x")
       .selectExpr("key", "named_struct('a', x._1, 'c', x._3, 'b', x._2) as x"),
     expectErrorWithoutEvolutionContains = "Cannot cast struct"
   )
-
 
   /* unlimited number of merge clauses tests */
 
