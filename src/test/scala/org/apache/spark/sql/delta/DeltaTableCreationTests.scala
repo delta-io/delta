@@ -397,7 +397,7 @@ trait DeltaTableCreationTests
           .saveAsTable("bucketed_table")
       }
       assert(e.getMessage.toLowerCase(Locale.ROOT).contains(
-        "`bucketing` is not supported for delta tables"))
+        "is not supported for delta tables"))
     }
   }
 

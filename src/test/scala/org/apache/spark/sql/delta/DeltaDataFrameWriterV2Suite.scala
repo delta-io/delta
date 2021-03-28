@@ -514,7 +514,7 @@ trait OpenSourceDataFrameWriterV2Tests
         .using("delta")
         .create()
     }
-    assert(e.getMessage.contains("Bucketing"))
+    assert(e.getMessage.contains("is not supported for Delta tables"))
   }
 }
 

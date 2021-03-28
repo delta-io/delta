@@ -73,6 +73,7 @@ abstract class DeltaNotSupportedDDLBase extends QueryTest
     }
   }
 
+
   def assertUnsupported(query: String, messages: String*): Unit = {
     val allErrMessages = "operation not allowed" +: messages
     val e = intercept[AnalysisException] {

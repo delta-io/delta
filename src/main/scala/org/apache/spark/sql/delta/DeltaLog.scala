@@ -39,7 +39,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable}
 import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Cast, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.{AnalysisHelper, LocalRelation}
 import org.apache.spark.sql.execution.datasources._
@@ -348,12 +348,12 @@ class DeltaLog private(
     }
     val fileIndex = TahoeLogFileIndex(
       spark, this, dataPath, snapshotToUse, partitionFilters, isTimeTravelQuery)
-
+    var bucketSpec: Option[BucketSpec] = None
     new HadoopFsRelation(
       fileIndex,
       partitionSchema = snapshotToUse.metadata.partitionSchema,
       dataSchema = SchemaUtils.dropNullTypeColumns(snapshotToUse.metadata.schema),
-      bucketSpec = None,
+      bucketSpec = bucketSpec,
       snapshotToUse.fileFormat,
       snapshotToUse.metadata.format.options)(spark) with InsertableRelation {
       def insert(data: DataFrame, overwrite: Boolean): Unit = {

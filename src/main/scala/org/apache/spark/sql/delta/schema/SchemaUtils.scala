@@ -1105,4 +1105,8 @@ object SchemaUtils {
   def fieldToColumn(field: StructField): Column = {
     col(UnresolvedAttribute.quoted(field.name).name)
   }
+
+  // Escapes back-ticks within the identifier name with double-back-ticks, and then quote the
+  // identifier with back-ticks.
+  def quoteIdentifier(part: String): String = s"`${part.replace("`", "``")}`"
 }

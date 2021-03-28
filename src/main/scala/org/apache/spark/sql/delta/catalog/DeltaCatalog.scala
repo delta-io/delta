@@ -47,7 +47,8 @@ import org.apache.spark.sql.execution.datasources.{DataSource, PartitioningUtils
 import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.InsertableRelation
-import org.apache.spark.sql.types.{StructField, StructType}
+import org.apache.spark.sql.types.{IntegerType, MetadataBuilder, StructField, StructType}
+
 
 /**
  * A Catalog extension which can properly handle the interaction between the HiveMetaStore and
@@ -93,8 +94,11 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case "path" => false
       case _ => true
     }
-    // START: This entire block until END is a copy-paste from V2SessionCatalog
     val (partitionColumns, maybeBucketSpec) = convertTransforms(partitions)
+    var newSchema = schema
+    var newPartitionColumns = partitionColumns
+    var newBucketSpec = maybeBucketSpec
+
     val isByPath = isPathIdentifier(ident)
     val location = if (isByPath) {
       Option(ident.name())
@@ -114,13 +118,12 @@ class DeltaCatalog extends DelegatingCatalogExtension
       identifier = id,
       tableType = tableType,
       storage = storage,
-      schema = schema,
-      provider = Some("delta"),
-      partitionColumnNames = partitionColumns,
-      bucketSpec = maybeBucketSpec,
+      schema = newSchema,
+      provider = Some(DeltaSourceUtils.ALT_NAME),
+      partitionColumnNames = newPartitionColumns,
+      bucketSpec = newBucketSpec,
       properties = tableProperties.toMap,
       comment = commentOpt)
-    // END: copy-paste from the super method finished.
 
     val withDb = verifyTableAndSolidify(tableDesc, None)
     ParquetSchemaConverter.checkFieldNames(tableDesc.schema.fieldNames)
@@ -255,6 +258,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
     partitions.map {
       case IdentityTransform(FieldReference(Seq(col))) =>
         identityCols += col
+
 
       case BucketTransform(numBuckets, FieldReference(Seq(col))) =>
         bucketSpec = Some(BucketSpec(numBuckets, col :: Nil, Nil))

@@ -35,12 +35,14 @@ import org.apache.spark.{SparkConf, SparkEnv}
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.catalog.BucketSpec
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
+
 
 trait DocsPath {
   /**
@@ -1119,14 +1121,6 @@ object DeltaErrors
         s"but the column type is ${columnType.sql}")
   }
 
-  def partitionTransformExpressionIncorrectArguments(
-      exprName: String,
-      numOfExpectedArguments: Int,
-      numOfActualArguments: Int): Throwable = {
-    new AnalysisException(
-      s"'$exprName' should have $numOfExpectedArguments argument(s). " +
-        s"But found $numOfActualArguments argument(s)")
-  }
 
   def missingColumnsInInsertInto(column: String): Throwable = {
     new AnalysisException(s"Column $column is not specified in INSERT")
