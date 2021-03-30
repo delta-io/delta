@@ -34,10 +34,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{ArrayType, DateType, IntegerType, StructField, StructType, TimestampType}
 import org.apache.spark.unsafe.types.UTF8String
 
-trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
-
-  import GeneratedColumn._
-  import testImplicits._
+trait GeneratedColumnTest extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
 
   protected def sqlDate(date: String): java.sql.Date = {
     toJavaDate(stringToDate(
@@ -56,6 +53,12 @@ trait GeneratedColumnSuiteBase extends QueryTest with SharedSparkSession with De
       func(tableName)
     }
   }
+}
+
+trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
+
+  import GeneratedColumn._
+  import testImplicits._
 
   /** Manually generate table metadata to create a table with generated columns */
   protected def createTable(

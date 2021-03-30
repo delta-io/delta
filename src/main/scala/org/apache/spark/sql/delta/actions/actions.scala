@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.actions
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.net.URI
 import java.sql.Timestamp
 import java.util.Locale
@@ -32,16 +33,11 @@ import com.fasterxml.jackson.databind.{JsonSerializer, SerializerProvider}
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 import org.codehaus.jackson.annotate.JsonRawValue
 
-import org.apache.spark.sql.{AnalysisException, SparkSession}
-import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.util.Utils
-
-// scalastyle:off
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.Encoder
+import org.apache.spark.sql.{Encoder, SparkSession}
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.types.{DataType, StructType}
-// scalastyle:on
+import org.apache.spark.util.Utils
 
 /** Thrown when the protocol version of a table is greater than supported by this client. */
 class InvalidProtocolVersionException extends RuntimeException(
@@ -384,6 +380,7 @@ case class Metadata(
   @JsonIgnore
   lazy val fixedTypeColumns: Set[String] =
     GeneratedColumn.getGeneratedColumnsAndColumnsUsedByGeneratedColumns(schema)
+
 
   override def wrap: SingleAction = SingleAction(metaData = this)
 }

@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.util
 import org.apache.spark.sql.delta.DeltaErrors
 
 import org.apache.spark.sql.{Dataset, Row, SparkSession}
+import org.apache.spark.sql.catalyst.analysis.AnalysisErrorAt
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 
@@ -29,15 +30,39 @@ trait AnalysisHelper {
       sparkSession: SparkSession)(
       expr: Expression,
       planContainingExpr: LogicalPlan): Expression = {
-    val newPlan = FakeLogicalPlan(expr, planContainingExpr.children)
+    val newPlan = FakeLogicalPlan(Seq(expr), planContainingExpr.children)
     sparkSession.sessionState.analyzer.execute(newPlan) match {
       case FakeLogicalPlan(resolvedExpr, _) =>
         // Return even if it did not successfully resolve
-        return resolvedExpr
+        resolvedExpr.head
       case _ =>
         // This is unexpected
         throw DeltaErrors.analysisException(
           s"Could not resolve expression $expr", plan = Option(planContainingExpr))
+    }
+  }
+
+  /**
+   * Resolve expressions using the attributes provided by `planProvidingAttrs`. Throw an error if
+   * failing to resolve any expressions.
+   */
+  protected def resolveReferencesForExpressions(
+      sparkSession: SparkSession,
+      exprs: Seq[Expression],
+      planProvidingAttrs: LogicalPlan): Seq[Expression] = {
+    val newPlan = FakeLogicalPlan(exprs, Seq(planProvidingAttrs))
+    sparkSession.sessionState.analyzer.execute(newPlan) match {
+      case FakeLogicalPlan(resolvedExprs, _) =>
+        resolvedExprs.foreach { expr =>
+          if (!expr.resolved) {
+            expr.failAnalysis(s"cannot resolve ${expr.sql} given $planProvidingAttrs")
+          }
+        }
+        resolvedExprs
+      case _ =>
+        // This is unexpected
+        throw DeltaErrors.analysisException(
+          s"Could not resolve expressions $exprs", plan = Option(planProvidingAttrs))
     }
   }
 
@@ -66,7 +91,7 @@ trait AnalysisHelper {
 
 object AnalysisHelper {
   /** LogicalPlan to help resolve the given expression */
-  case class FakeLogicalPlan(expr: Expression, children: Seq[LogicalPlan])
+  case class FakeLogicalPlan(exprs: Seq[Expression], children: Seq[LogicalPlan])
     extends LogicalPlan {
     override def output: Seq[Attribute] = Nil
   }

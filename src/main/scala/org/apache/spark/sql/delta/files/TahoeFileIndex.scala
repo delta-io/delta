@@ -202,8 +202,8 @@ class TahoeBatchFileIndex(
     val addFiles: Seq[AddFile],
     deltaLog: DeltaLog,
     path: Path,
-    snapshot: Snapshot
-    )
+    val snapshot: Snapshot,
+    val partitionFiltersGenerated: Boolean = false)
   extends TahoeFileIndex(spark, deltaLog, path) {
 
   override def tableVersion: Long = snapshot.version
