@@ -44,7 +44,7 @@ case class DeltaGenerateCommand(modeName: String, tableId: TableIdentifier)
     }
 
     val deltaLog = DeltaLog.forTable(sparkSession, tablePath)
-    if (deltaLog.snapshot.version < 0) {
+    if (!deltaLog.tableExists) {
       throw DeltaErrors.notADeltaTableException("GENERATE")
     }
     val generationFunc = modeNameToGenerationFunc(modeName)

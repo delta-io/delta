@@ -88,7 +88,7 @@ trait ImplicitMetadataOperation extends DeltaLogging {
       // Delta is case insensitive regarding internal column naming
       caseSensitive = false)
 
-    if (txn.readVersion == -1) {
+    if (!txn.deltaLog.tableExists) {
       if (dataSchema.isEmpty) {
         throw DeltaErrors.emptyDataException
       }

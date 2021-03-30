@@ -61,7 +61,7 @@ case class VacuumTableCommand(
       }
     }
     val deltaLog = DeltaLog.forTable(sparkSession, pathToVacuum)
-    if (deltaLog.snapshot.version == -1) {
+    if (!deltaLog.tableExists) {
       throw DeltaErrors.notADeltaTableException(
         "VACUUM",
         DeltaTableIdentifier(path = Some(pathToVacuum.toString)))

@@ -114,7 +114,7 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
       if (indices.isEmpty) {
         // Not a Delta table at all, do not transform
         d
-      } else if (indices.size == 1 && indices(0).deltaLog.snapshot.version > -1) {
+      } else if (indices.size == 1 && indices(0).deltaLog.tableExists) {
         // It is a well-defined Delta table with a schema
         DeltaDelete(newTarget, condition)
       } else {
