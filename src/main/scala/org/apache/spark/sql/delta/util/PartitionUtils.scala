@@ -577,14 +577,14 @@ private[delta] object PartitionUtils {
         // Then falls back to string
         .getOrElse {
         if (raw == DEFAULT_PARTITION_NAME) {
-          Literal.create(null, NullType)
+          Literal(null)
         } else {
           Literal.create(unescapePathName(raw), StringType)
         }
       }
     } else {
       if (raw == DEFAULT_PARTITION_NAME) {
-        Literal.create(null, NullType)
+        Literal(null)
       } else {
         Literal.create(unescapePathName(raw), StringType)
       }

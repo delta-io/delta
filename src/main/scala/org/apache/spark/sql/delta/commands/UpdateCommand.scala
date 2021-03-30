@@ -88,7 +88,7 @@ case class UpdateCommand(
     val startTime = System.nanoTime()
     val numFilesTotal = deltaLog.snapshot.numOfFiles
 
-    val updateCondition = condition.getOrElse(Literal(true, BooleanType))
+    val updateCondition = condition.getOrElse(Literal.TrueLiteral)
     val (metadataPredicates, dataPredicates) =
       DeltaTableUtils.splitMetadataAndDataPredicates(
         updateCondition, txn.metadata.partitionColumns, sparkSession)

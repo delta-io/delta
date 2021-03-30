@@ -162,7 +162,7 @@ case class DeleteCommand(
             val newTarget = DeltaTableUtils.replaceFileIndex(target, baseRelation.location)
 
             val targetDF = Dataset.ofRows(sparkSession, newTarget)
-            val filterCond = Not(EqualNullSafe(cond, Literal(true, BooleanType)))
+            val filterCond = Not(EqualNullSafe(cond, Literal.TrueLiteral))
             val updatedDF = targetDF.filter(new Column(filterCond))
 
             val rewrittenFiles = withStatusCode(
