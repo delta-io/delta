@@ -86,7 +86,7 @@ case class DescribeDeltaHistoryCommand(
 
     val deltaLog = DeltaLog.forTable(sparkSession, basePath)
     recordDeltaOperation(deltaLog, "delta.ddl.describeHistory") {
-      if (deltaLog.snapshot.version == -1) {
+      if (!deltaLog.tableExists) {
         throw DeltaErrors.notADeltaTableException("DESCRIBE HISTORY")
       }
 
