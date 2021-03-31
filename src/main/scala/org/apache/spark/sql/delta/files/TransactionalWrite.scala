@@ -140,7 +140,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
    * actions to append these files to the reservoir.
    */
   def writeFiles(data: Dataset[_]): Seq[FileAction] = {
-    if (DeltaConfigs.CHANGE_DATA_CAPTURE.fromMetaData(metadata)) {
+    if (DeltaConfigs.CHANGE_DATA_CAPTURE.fromMetaData(metadata) ||
+        DeltaConfigs.CHANGE_DATA_CAPTURE_LEGACY.fromMetaData(metadata)) {
       throw DeltaErrors.cdcWriteNotAllowedInThisVersion()
     }
 

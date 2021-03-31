@@ -386,13 +386,13 @@ object DeltaErrors
   }
 
   def cdcNotAllowedInThisVersion(): Throwable = {
-    new AnalysisException("Configuration delta.enableChangeDataCapture cannot be set. Change " +
-      "data capture from Delta is not yet available.")
+    new AnalysisException("Configuration delta.enableChangeDataFeed cannot be set. Change " +
+      "data feed from Delta is not yet available.")
   }
 
   def cdcWriteNotAllowedInThisVersion(): Throwable = {
-    new AnalysisException("Cannot write to table with delta.enableChangeDataCapture set. Change " +
-      "data capture from Delta is not yet available.")
+    new AnalysisException("Cannot write to table with delta.enableChangeDataFeed set. Change " +
+      "data feed from Delta is not yet available.")
   }
 
   def useDeltaOnOtherFormatPathException(

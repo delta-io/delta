@@ -1213,7 +1213,7 @@ class DeltaSuite extends QueryTest
         sql(s"ALTER TABLE tbl SET TBLPROPERTIES (${DeltaConfigs.CHANGE_DATA_CAPTURE.key} = true)")
       }
 
-      assert(ex.getMessage.contains("Configuration delta.enableChangeDataCapture cannot be set"))
+      assert(ex.getMessage.contains("Configuration delta.enableChangeDataFeed cannot be set"))
     }
   }
 
@@ -1234,7 +1234,7 @@ class DeltaSuite extends QueryTest
         spark.range(10).write.mode("append").format("delta").save(path)
       }
 
-      assert(ex.getMessage.contains("Cannot write to table with delta.enableChangeDataCapture set"))
+      assert(ex.getMessage.contains("Cannot write to table with delta.enableChangeDataFeed set"))
     }
   }
 

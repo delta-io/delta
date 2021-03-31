@@ -418,9 +418,19 @@ trait DeltaConfigsBase extends DeltaLogging {
     "needs to be a boolean.")
 
   /**
-   * Enable change data capture output. Not implemented.
+   * Enable change data feed output. Not implemented.
    */
   val CHANGE_DATA_CAPTURE = buildConfig[Boolean](
+    "enableChangeDataFeed",
+    "false",
+    _.toBoolean,
+    _ => true,
+    "needs to be a boolean.")
+
+  /**
+   *  Old configuration which has been replaced by CHANGE_DATA_CAPTURE
+   */
+  val CHANGE_DATA_CAPTURE_LEGACY = buildConfig[Boolean](
     "enableChangeDataCapture",
     "false",
     _.toBoolean,
