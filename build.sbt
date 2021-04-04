@@ -20,30 +20,32 @@ organization := "io.delta"
 
 scalaVersion := "2.12.10"
 
-sparkVersion := "3.0.1"
+val sparkVersion = "3.0.1"
 
 libraryDependencies ++= Seq(
   // Adding test classifier seems to break transitive resolution of the core dependencies
-  "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
-  "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
-  "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
-  "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
+  "org.apache.spark" %% "spark-hive" % sparkVersion % "provided",
+  "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
+  "org.apache.spark" %% "spark-core" % sparkVersion % "provided",
+  "org.apache.spark" %% "spark-catalyst" % sparkVersion % "provided",
 
   // Test deps
-  "org.scalatest" %% "scalatest" % "3.0.5" % "test",
-  "junit" % "junit" % "4.12" % "test",
+  "org.scalatest" %% "scalatest" % "3.0.9" % "test",
+  "junit" % "junit" % "4.13.2" % "test",
   "com.novocode" % "junit-interface" % "0.11" % "test",
-  "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
-  "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
-  "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
-  "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
+  "org.apache.spark" %% "spark-catalyst" % sparkVersion % "test" classifier "tests",
+  "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
+  "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
+  "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
 
   // Compiler plugins
   // -- Bump up the genjavadoc version explicitly to 0.16 to work with Scala 2.12
-  compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.16" cross CrossVersion.full)
+  compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.17" cross CrossVersion.full)
 )
 
-antlr4Settings
+enablePlugins(Antlr4Plugin)
+
+antlr4TreatWarningsAsErrors in Antlr4 := true
 
 antlr4Version in Antlr4 := "4.7"
 
@@ -156,23 +158,6 @@ unidocAllSources in(JavaUnidoc, unidoc) := {
 // Ensure unidoc is run with tests
 (test in Test) := ((test in Test) dependsOn unidoc.in(Compile)).value
 
-
-/***************************
- * Spark Packages settings *
- ***************************/
-
-spName := "databricks/delta-core"
-
-spAppendScalaVersion := true
-
-spIncludeMaven := true
-
-spIgnoreProvided := true
-
-packageBin in Compile := spPackage.value
-
-sparkComponents := Seq("sql")
-
 /********************
  * Release settings *
  ********************/
@@ -227,11 +212,8 @@ pomExtra :=
       </developer>
     </developers>
 
-bintrayOrganization := Some("delta-io")
-
-bintrayRepository := "delta"
-
 import ReleaseTransformations._
+import com.simplytyped.Antlr4Plugin
 
 releaseProcess := Seq[ReleaseStep](
   checkSnapshotDependencies,
