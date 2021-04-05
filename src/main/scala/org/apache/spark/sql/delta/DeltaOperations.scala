@@ -52,6 +52,9 @@ object DeltaOperations {
     }
 
     val userMetadata: Option[String] = None
+
+    /** Whether this operation changes data */
+    def changesData: Boolean = false
   }
 
   /** Recorded during batch inserts. Predicates can be provided for overwrites. */
@@ -65,6 +68,7 @@ object DeltaOperations {
       predicate.map("predicate" -> _)
 
     override val operationMetrics: Set[String] = DeltaOperationMetrics.WRITE
+    override def changesData: Boolean = true
   }
   /** Recorded during streaming inserts. */
   case class StreamingUpdate(
@@ -75,6 +79,7 @@ object DeltaOperations {
     override val parameters: Map[String, Any] =
       Map("outputMode" -> outputMode.toString, "queryId" -> queryId, "epochId" -> epochId.toString)
     override val operationMetrics: Set[String] = DeltaOperationMetrics.STREAMING_UPDATE
+    override def changesData: Boolean = true
   }
   /** Recorded while deleting certain partitions. */
   case class Delete(predicate: Seq[String]) extends Operation("DELETE") {
@@ -96,11 +101,13 @@ object DeltaOperations {
       }
       strMetrics
     }
+    override def changesData: Boolean = true
   }
   /** Recorded when truncating the table. */
   case class Truncate() extends Operation("TRUNCATE") {
     override val parameters: Map[String, Any] = Map.empty
     override val operationMetrics: Set[String] = DeltaOperationMetrics.TRUNCATE
+    override def changesData: Boolean = true
   }
 
   /** Recorded when converting a table into a Delta table. */
@@ -114,6 +121,7 @@ object DeltaOperations {
       "partitionedBy" -> JsonUtils.toJson(partitionBy),
       "collectStats" -> collectStats) ++ catalogTable.map("catalogTable" -> _)
     override val operationMetrics: Set[String] = DeltaOperationMetrics.CONVERT
+    override def changesData: Boolean = true
   }
 
   /** Represents the predicates and action type (insert, update, delete) for a Merge clause */
@@ -152,6 +160,7 @@ object DeltaOperations {
         ("notMatchedPredicates" -> JsonUtils.toJson(notMatchedPredicates))
     }
     override val operationMetrics: Set[String] = DeltaOperationMetrics.MERGE
+    override def changesData: Boolean = true
   }
 
   object Merge {
@@ -181,6 +190,7 @@ object DeltaOperations {
       strMetrics += "numCopiedRows" -> numCopiedRows.toString
       strMetrics
     }
+    override def changesData: Boolean = true
   }
   /** Recorded when the table is created. */
   case class CreateTable(metadata: Metadata, isManaged: Boolean, asSelect: Boolean = false)
@@ -195,6 +205,7 @@ object DeltaOperations {
     } else {
       DeltaOperationMetrics.WRITE
     }
+    override def changesData: Boolean = asSelect
   }
   /** Recorded when the table is replaced. */
   case class ReplaceTable(
@@ -214,6 +225,7 @@ object DeltaOperations {
     } else {
       DeltaOperationMetrics.WRITE
     }
+    override def changesData: Boolean = true
   }
   /** Recorded when the table properties are set. */
   case class SetTableProperties(
@@ -322,6 +334,11 @@ object DeltaOperations {
      columnPath: Seq[String],
      column: StructField,
      colPosition: Option[String])
+
+  /** Dummy operation only for testing with arbitrary operation names */
+  case class TestOperation(operationName: String = "TEST") extends Operation(operationName) {
+    override val parameters: Map[String, Any] = Map.empty
+  }
 }
 
 private[delta] object DeltaOperationMetrics {
