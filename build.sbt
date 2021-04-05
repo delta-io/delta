@@ -37,30 +37,40 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
   "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
   "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
-
-  // Compiler plugins
-  // -- Bump up the genjavadoc version explicitly to 0.16 to work with Scala 2.12
-  compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.17" cross CrossVersion.full)
 )
 
 enablePlugins(Antlr4Plugin)
+inConfig(Antlr4) {
+  Seq(
+    antlr4Version := "4.9.2",
+    antlr4PackageName := Some("io.delta.sql.parser"),
+    antlr4GenListener := true,
+    antlr4GenVisitor := true,
+    antlr4TreatWarningsAsErrors := true
+  )
+}
 
-antlr4TreatWarningsAsErrors in Antlr4 := true
+inConfig(Test) {
+  Seq(
+    testOptions += Tests.Argument("-oDF"),
+    testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
+    // Don't execute in parallel since we can't have multiple Sparks in the same JVM
+    parallelExecution := false,
+    // FIXME Is this really used with parallelExecution false?
+    fork := true,
 
-antlr4Version in Antlr4 := "4.7"
-
-antlr4PackageName in Antlr4 := Some("io.delta.sql.parser")
-
-antlr4GenListener in Antlr4 := true
-
-antlr4GenVisitor in Antlr4 := true
-
-testOptions in Test += Tests.Argument("-oDF")
-
-testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
-
-// Don't execute in parallel since we can't have multiple Sparks in the same JVM
-parallelExecution in Test := false
+    // Configurations to speed up tests and reduce memory footprint
+    javaOptions ++= Seq(
+      "-Dspark.ui.enabled=false",
+      "-Dspark.ui.showConsoleProgress=false",
+      "-Dspark.databricks.delta.snapshotPartitions=2",
+      "-Dspark.sql.shuffle.partitions=5",
+      "-Ddelta.log.cacheSize=3",
+      "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
+      "-Xmx1024m"
+    )
+  )
+}
 
 scalacOptions ++= Seq(
   "-target:jvm-1.8",
@@ -69,19 +79,6 @@ scalacOptions ++= Seq(
 
 javaOptions += "-Xmx1024m"
 
-fork in Test := true
-
-// Configurations to speed up tests and reduce memory footprint
-javaOptions in Test ++= Seq(
-  "-Dspark.ui.enabled=false",
-  "-Dspark.ui.showConsoleProgress=false",
-  "-Dspark.databricks.delta.snapshotPartitions=2",
-  "-Dspark.sql.shuffle.partitions=5",
-  "-Ddelta.log.cacheSize=3",
-  "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
-  "-Xmx1024m"
-)
-
 /** ********************
  * ScalaStyle settings *
  * *********************/
@@ -89,22 +86,18 @@ javaOptions in Test ++= Seq(
 scalastyleConfig := baseDirectory.value / "scalastyle-config.xml"
 
 lazy val compileScalastyle = taskKey[Unit]("compileScalastyle")
-
-compileScalastyle := scalastyle.in(Compile).toTask("").value
-
-(compile in Compile) := ((compile in Compile) dependsOn compileScalastyle).value
+compileScalastyle := (Compile / scalastyle).toTask("").value
+(Compile / compile) := ((Compile / compile) dependsOn compileScalastyle).value
 
 lazy val testScalastyle = taskKey[Unit]("testScalastyle")
-
-testScalastyle := scalastyle.in(Test).toTask("").value
-
-(test in Test) := ((test in Test) dependsOn testScalastyle).value
+testScalastyle := (Test / scalastyle).toTask("").value
+(Test / test) := ((Test / test) dependsOn testScalastyle).value
 
 /*********************
  *  MIMA settings    *
  *********************/
 
-(test in Test) := ((test in Test) dependsOn mimaReportBinaryIssues).value
+(Test / test) := ((Test / test) dependsOn mimaReportBinaryIssues).value
 
 def getVersion(version: String): String = {
     version.split("\\.").toList match {
@@ -124,15 +117,16 @@ mimaBinaryIssueFilters ++= MimaExcludes.ignoredABIProblems
  *******************/
 
 enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin)
+unidocGenjavadocVersion := "0.17"
 
 // Configure Scala unidoc
-scalacOptions in(ScalaUnidoc, unidoc) ++= Seq(
+ScalaUnidoc / unidoc / scalacOptions ++= Seq(
   "-skip-packages", "org:com:io.delta.sql:io.delta.tables.execution",
   "-doc-title", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " ScalaDoc"
 )
 
 // Configure Java unidoc
-javacOptions in(JavaUnidoc, unidoc) := Seq(
+JavaUnidoc / unidoc / javacOptions := Seq(
   "-public",
   "-exclude", "org:com:io.delta.sql:io.delta.tables.execution",
   "-windowtitle", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
@@ -142,7 +136,8 @@ javacOptions in(JavaUnidoc, unidoc) := Seq(
   "-Xdoclint:all"
 )
 
-// Explicitly remove source files by package because these docs are not formatted correctly for Javadocs
+// Explicitly remove source files by package
+// these docs are not formatted correctly for Javadocs
 def ignoreUndocumentedPackages(packages: Seq[Seq[java.io.File]]): Seq[Seq[java.io.File]] = {
   packages
     .map(_.filterNot(_.getName.contains("$")))
@@ -151,12 +146,12 @@ def ignoreUndocumentedPackages(packages: Seq[Seq[java.io.File]]): Seq[Seq[java.i
     .map(_.filterNot(_.getCanonicalPath.contains("spark")))
 }
 
-unidocAllSources in(JavaUnidoc, unidoc) := {
-  ignoreUndocumentedPackages((unidocAllSources in(JavaUnidoc, unidoc)).value)
+JavaUnidoc / unidoc / unidocAllSources := {
+  ignoreUndocumentedPackages((JavaUnidoc / unidoc / unidocAllSources).value)
 }
 
 // Ensure unidoc is run with tests
-(test in Test) := ((test in Test) dependsOn unidoc.in(Compile)).value
+Test / test := ((Test / test) dependsOn (Compile / unidoc)).value
 
 /********************
  * Release settings *
