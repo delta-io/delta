@@ -41,6 +41,7 @@ libraryDependencies ++= Seq(
 
 enablePlugins(Antlr4Plugin)
 inConfig(Antlr4)(Seq(
+  antlr4Version := "4.8",
   antlr4PackageName := Some("io.delta.sql.parser"),
   antlr4GenVisitor := true,
   antlr4TreatWarningsAsErrors := true
@@ -109,7 +110,6 @@ mimaBinaryIssueFilters ++= MimaExcludes.ignoredABIProblems
  *******************/
 
 enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin)
-unidocGenjavadocVersion := "0.17"
 
 // Configure Scala unidoc
 ScalaUnidoc / unidoc / scalacOptions ++= Seq(
