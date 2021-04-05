@@ -46,34 +46,30 @@ inConfig(Antlr4)(Seq(
   antlr4TreatWarningsAsErrors := true
 ))
 
-inConfig(Test) {
-  Seq(
-    testOptions += Tests.Argument("-oDF"),
-    testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
-    // Don't execute in parallel since we can't have multiple Sparks in the same JVM
-    parallelExecution := false,
-    fork := true,
-    javaOptions := Seq(
-      "-Dspark.ui.enabled=false",
-      "-Dspark.ui.showConsoleProgress=false",
-      "-Dspark.databricks.delta.snapshotPartitions=2",
-      "-Dspark.sql.shuffle.partitions=5",
-      "-Ddelta.log.cacheSize=3",
-      "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
-      "-XX:+UseG1GC",
-      "-enableassertions",
-      "-Xmx4g",
-      "-Xss4m"
-    )
+fork := true
+inConfig(Test)(Seq(
+  testOptions += Tests.Argument("-oDF"),
+  testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
+  // Don't execute in parallel since we can't have multiple Sparks in the same JVM
+  parallelExecution := false,
+  javaOptions := Seq(
+    "-Dspark.ui.enabled=false",
+    "-Dspark.ui.showConsoleProgress=false",
+    "-Dspark.databricks.delta.snapshotPartitions=2",
+    "-Dspark.sql.shuffle.partitions=5",
+    "-Ddelta.log.cacheSize=3",
+    "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
+    "-XX:+UseG1GC",
+    "-enableassertions",
+    "-Xmx4g",
+    "-Xss4m"
   )
-}
+))
 
 scalacOptions ++= Seq(
   "-target:jvm-1.8",
   "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
 )
-
-javaOptions += "-Xmx1024m"
 
 /** ********************
  * ScalaStyle settings *
