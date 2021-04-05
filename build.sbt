@@ -69,7 +69,8 @@ inConfig(Test)(Seq(
 
 scalacOptions ++= Seq(
   "-target:jvm-1.8",
-  "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
+  "-unchecked",
+  "-deprecation"
 )
 
 /** ********************
@@ -110,6 +111,7 @@ mimaBinaryIssueFilters ++= MimaExcludes.ignoredABIProblems
  *******************/
 
 enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin)
+unidocGenjavadocVersion := "0.17"
 
 // Configure Scala unidoc
 ScalaUnidoc / unidoc / scalacOptions ++= Seq(
