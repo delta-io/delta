@@ -40,15 +40,11 @@ libraryDependencies ++= Seq(
 )
 
 enablePlugins(Antlr4Plugin)
-inConfig(Antlr4) {
-  Seq(
-    antlr4Version := "4.9.2",
-    antlr4PackageName := Some("io.delta.sql.parser"),
-    antlr4GenListener := true,
-    antlr4GenVisitor := true,
-    antlr4TreatWarningsAsErrors := true
-  )
-}
+inConfig(Antlr4)(Seq(
+  antlr4PackageName := Some("io.delta.sql.parser"),
+  antlr4GenVisitor := true,
+  antlr4TreatWarningsAsErrors := true
+))
 
 inConfig(Test) {
   Seq(
@@ -56,10 +52,7 @@ inConfig(Test) {
     testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
     // Don't execute in parallel since we can't have multiple Sparks in the same JVM
     parallelExecution := false,
-    // FIXME Is this really used with parallelExecution false?
     fork := true,
-
-    // Configurations to speed up tests and reduce memory footprint
     javaOptions ++= Seq(
       "-Dspark.ui.enabled=false",
       "-Dspark.ui.showConsoleProgress=false",
@@ -67,7 +60,10 @@ inConfig(Test) {
       "-Dspark.sql.shuffle.partitions=5",
       "-Ddelta.log.cacheSize=3",
       "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
-      "-Xmx1024m"
+      "-XX:+UseG1GC",
+      "-enableassertions",
+      "-Xmx4g",
+      "-Xss4m"
     )
   )
 }
