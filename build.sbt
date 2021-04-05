@@ -53,7 +53,7 @@ inConfig(Test) {
     // Don't execute in parallel since we can't have multiple Sparks in the same JVM
     parallelExecution := false,
     fork := true,
-    javaOptions ++= Seq(
+    javaOptions := Seq(
       "-Dspark.ui.enabled=false",
       "-Dspark.ui.showConsoleProgress=false",
       "-Dspark.databricks.delta.snapshotPartitions=2",
