@@ -576,15 +576,15 @@ private[delta] object PartitionUtils {
         .orElse(dateTry)
         // Then falls back to string
         .getOrElse {
-        if (raw == DEFAULT_PARTITION_NAME) {
-          Literal.create(null, NullType)
-        } else {
-          Literal.create(unescapePathName(raw), StringType)
+          if (raw == DEFAULT_PARTITION_NAME) {
+            Literal.default(NullType)
+          } else {
+            Literal.create(unescapePathName(raw), StringType)
+          }
         }
-      }
     } else {
       if (raw == DEFAULT_PARTITION_NAME) {
-        Literal.create(null, NullType)
+        Literal.default(NullType)
       } else {
         Literal.create(unescapePathName(raw), StringType)
       }

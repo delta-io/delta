@@ -413,7 +413,7 @@ case class MergeIntoCommand(
     // source DataFrame
     val sourceDF = Dataset.ofRows(spark, source)
       .filter(new Column(incrSourceRowCountExpr))
-      .filter(new Column(notMatchedClauses.head.condition.getOrElse(Literal(true))))
+      .filter(new Column(notMatchedClauses.head.condition.getOrElse(Literal.TrueLiteral)))
 
     // Skip data based on the merge condition
     val conjunctivePredicates = splitConjunctivePredicates(condition)
@@ -506,22 +506,22 @@ case class MergeIntoCommand(
       val exprs = clause match {
         case u: DeltaMergeIntoUpdateClause =>
           // Generate update expressions and set ROW_DELETED_COL = false
-          u.resolvedActions.map(_.expr) :+ Literal(false) :+ incrUpdatedCountExpr
+          u.resolvedActions.map(_.expr) :+ Literal.FalseLiteral :+ incrUpdatedCountExpr
         case _: DeltaMergeIntoDeleteClause =>
           // Generate expressions to set the ROW_DELETED_COL = true
-          targetOutputCols :+ Literal(true) :+ incrDeletedCountExpr
+          targetOutputCols :+ Literal.TrueLiteral :+ incrDeletedCountExpr
       }
       resolveOnJoinedPlan(exprs)
     }
 
     def notMatchedClauseOutput(clause: DeltaMergeIntoInsertClause): Seq[Expression] = {
-      val exprs = clause.resolvedActions.map(_.expr) :+ Literal(false) :+ incrInsertedCountExpr
-      resolveOnJoinedPlan(exprs)
+      resolveOnJoinedPlan(
+        clause.resolvedActions.map(_.expr) :+ Literal.FalseLiteral :+ incrInsertedCountExpr)
     }
 
     def clauseCondition(clause: DeltaMergeIntoClause): Expression = {
       // if condition is None, then expression always evaluates to true
-      val condExpr = clause.condition.getOrElse(Literal(true))
+      val condExpr = clause.condition.getOrElse(Literal.TrueLiteral)
       resolveOnJoinedPlan(Seq(condExpr)).head
     }
 
@@ -536,9 +536,9 @@ case class MergeIntoCommand(
       notMatchedConditions = notMatchedClauses.map(clauseCondition),
       notMatchedOutputs = notMatchedClauses.map(notMatchedClauseOutput),
       noopCopyOutput =
-        resolveOnJoinedPlan(targetOutputCols :+ Literal(false) :+ incrNoopCountExpr),
+        resolveOnJoinedPlan(targetOutputCols :+ Literal.FalseLiteral :+ incrNoopCountExpr),
       deleteRowOutput =
-        resolveOnJoinedPlan(targetOutputCols :+ Literal(true) :+ Literal(true)),
+        resolveOnJoinedPlan(targetOutputCols :+ Literal.TrueLiteral :+ Literal.TrueLiteral),
       joinedAttributes = joinedPlan.output,
       joinedRowEncoder = joinedRowEncoder,
       outputRowEncoder = outputRowEncoder)

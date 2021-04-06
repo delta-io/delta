@@ -516,7 +516,8 @@ object DeltaLog extends DeltaLogging {
       files.sparkSession.sessionState.conf.resolver,
       partitionFilters,
       partitionColumnPrefixes)
-    val columnFilter = new Column(rewrittenFilters.reduceLeftOption(And).getOrElse(Literal(true)))
+    val expr = rewrittenFilters.reduceLeftOption(And).getOrElse(Literal.TrueLiteral)
+    val columnFilter = new Column(expr)
     files.filter(columnFilter)
   }
 

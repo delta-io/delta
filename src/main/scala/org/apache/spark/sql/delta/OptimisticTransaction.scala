@@ -338,7 +338,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   }
 
   /** Returns files matching the given predicates. */
-  def filterFiles(): Seq[AddFile] = filterFiles(Seq(Literal.apply(true)))
+  def filterFiles(): Seq[AddFile] = filterFiles(Seq(Literal.TrueLiteral))
 
   /** Returns files matching the given predicates. */
   def filterFiles(filters: Seq[Expression]): Seq[AddFile] = {
@@ -346,14 +346,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
     val partitionFilters = filters.filter { f =>
       DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
     }
-    readPredicates += partitionFilters.reduceLeftOption(And).getOrElse(Literal(true))
+    readPredicates += partitionFilters.reduceLeftOption(And).getOrElse(Literal.TrueLiteral)
     readFiles ++= scan.files
     scan.files
   }
 
   /** Mark the entire table as tainted by this transaction. */
   def readWholeTable(): Unit = {
-    readPredicates += Literal(true)
+    readPredicates += Literal.TrueLiteral
     readTheWholeTable = true
   }
 
