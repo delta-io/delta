@@ -144,7 +144,7 @@ object Protocol {
     }
 
     if (GeneratedColumn.hasGeneratedColumns(metadata.schema)) {
-      minimumRequired = Protocol(0, minWriterVersion = 4)
+      minimumRequired = Protocol(0, minWriterVersion = GeneratedColumn.MIN_WRITER_VERSION)
       featuresUsed.append("Using Generated Columns")
     }
 

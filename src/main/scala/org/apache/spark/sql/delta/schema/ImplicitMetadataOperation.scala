@@ -71,10 +71,16 @@ trait ImplicitMetadataOperation extends DeltaLogging {
     val mergedSchema = if (isOverwriteMode && canOverwriteSchema) {
       dataSchema
     } else {
+      val fixedTypeColumns =
+        if (GeneratedColumn.satisfyGeneratedColumnProtocol(txn.protocol)) {
+          txn.metadata.fixedTypeColumns
+        } else {
+          Set.empty[String]
+        }
       SchemaUtils.mergeSchemas(
         txn.metadata.schema,
         dataSchema,
-        fixedTypeColumns = txn.metadata.fixedTypeColumns)
+        fixedTypeColumns = fixedTypeColumns)
     }
     val normalizedPartitionCols =
       normalizePartitionColumns(spark, partitionColumns, dataSchema)

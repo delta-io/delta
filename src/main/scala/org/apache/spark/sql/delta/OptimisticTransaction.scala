@@ -242,6 +242,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       _metadata
     }
 
+    val protocolBeforeUpdate = protocol
+
     val metadataWithFixedSchema =
       if (snapshot.metadata.schemaString == metadata.schemaString) {
         // Shortcut when the schema hasn't changed to avoid generating spurious schema change logs.
@@ -278,8 +280,29 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
         false
       case _ => true
     }
-    val noProtocolVersions = updatedMetadata.copy(configuration = configs)
-
+    val generationExpressionsFixed =
+      if (isCreatingNewTable) {
+        // Creating a new table will drop all existing data, so we don't need to fix the old
+        // metadata.
+        updatedMetadata
+      } else {
+        // This is not a new table. The new schema may be merged from the existing schema.
+        if (GeneratedColumn.satisfyGeneratedColumnProtocol(protocolBeforeUpdate)) {
+          // The protocol matches so this is a valid generated column table. Do nothing.
+          updatedMetadata
+        } else {
+          // As the protocol doesn't match, this table is created by an old version that doesn't
+          // support generated columns. We should remove the generation expressions to fix the
+          // schema to avoid bumping the writer version incorrectly.
+          val newSchema = GeneratedColumn.removeGenerationExpressions(updatedMetadata.schema)
+          if (newSchema ne updatedMetadata.schema) {
+            updatedMetadata.copy(schemaString = newSchema.json)
+          } else {
+            updatedMetadata
+          }
+        }
+      }
+    val noProtocolVersions = generationExpressionsFixed.copy(configuration = configs)
     verifyNewMetadata(noProtocolVersions)
     logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $noProtocolVersions")
 

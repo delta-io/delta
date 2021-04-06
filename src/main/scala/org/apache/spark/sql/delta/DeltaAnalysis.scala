@@ -215,7 +215,7 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
    * columns.
    */
   private def resolveQueryColumnsByName(
-      query: LogicalPlan, targetAttrs: Seq[Attribute], tblName: String): LogicalPlan = {
+      query: LogicalPlan, targetAttrs: Seq[Attribute], deltaTable: DeltaTableV2): LogicalPlan = {
     if (query.output.length < targetAttrs.length) {
       // Some columns are not specified. We don't allow schema evolution in INSERT INTO BY NAME, so
       // we need to ensure the missing columns must be generated columns.
@@ -225,9 +225,16 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
         } else {
           CaseInsensitiveMap(query.output.map(a => (a.name, a)).toMap)
         }
-      targetAttrs.foreach { tableColumn =>
+      val tableSchema = deltaTable.snapshot.metadata.schema
+      if (tableSchema.length != targetAttrs.length) {
+        // The target attributes may contain the metadata columns by design. Throwing an exception
+        // here in case target attributes may have the metadata columns for Delta in future.
+        throw new IllegalStateException(s"The table schema $tableSchema is not consistent with " +
+          s"the target attributes: $targetAttrs")
+      }
+      deltaTable.snapshot.metadata.schema.foreach { tableColumn =>
         if (!userSpecifiedNames.contains(tableColumn.name) &&
-          !GeneratedColumn.isGeneratedColumn(tableColumn)) {
+          !GeneratedColumn.isGeneratedColumn(deltaTable.snapshot.protocol, tableColumn)) {
           throw DeltaErrors.missingColumnsInInsertInto(tableColumn.name)
         }
       }
@@ -246,7 +253,7 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
           throw new AnalysisException(s"Cannot find ${attr.name} in table columns:" +
             s" ${targetAttrs.map(_.name).mkString(", ")}")
         }
-      addCastToColumn(attr, targetAttr, tblName)
+      addCastToColumn(attr, targetAttr, deltaTable.name())
     }
     Project(project, query)
   }

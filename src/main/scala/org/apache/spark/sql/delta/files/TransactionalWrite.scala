@@ -81,9 +81,9 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       data: Dataset[_],
       partitionCols: Seq[String]): (QueryExecution, Seq[Attribute], Seq[Constraint]) = {
     val normalizedData = SchemaUtils.normalizeColumnNames(metadata.schema, data)
-    val hasGeneratedColumns = GeneratedColumn.hasGeneratedColumns(metadata.schema)
+    val enforcesGeneratedColumns = GeneratedColumn.enforcesGeneratedColumns(protocol, metadata)
     val (dataWithGeneratedColumns, generatedColumnConstraints) =
-      if (hasGeneratedColumns) {
+      if (enforcesGeneratedColumns) {
         GeneratedColumn.addGeneratedColumnsOrReturnConstraints(
           deltaLog,
           // We need the original query execution if this is a streaming query, because
@@ -99,7 +99,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       // This must be batch execution as DeltaSink doesn't accept NullType in micro batch DataFrame.
       // For batch executions, we need to use the latest DataFrame query execution
       cleanedData.queryExecution
-    } else if (hasGeneratedColumns) {
+    } else if (enforcesGeneratedColumns) {
       dataWithGeneratedColumns.queryExecution
     } else {
       assert(

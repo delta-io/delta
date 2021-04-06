@@ -22,7 +22,7 @@ import java.sql.Timestamp
 
 import scala.util.matching.Regex
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTableUtils, DeltaTimeTravelSpec, StartingVersion, StartingVersionLatest}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTableUtils, DeltaTimeTravelSpec, GeneratedColumn, StartingVersion, StartingVersionLatest}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -81,7 +81,8 @@ trait DeltaSourceBase extends Source
     with SupportsAdmissionControl
     with DeltaLogging { self: DeltaSource =>
 
-  override val schema: StructType = deltaLog.snapshot.metadata.schema
+  override val schema: StructType =
+    GeneratedColumn.removeGenerationExpressions(deltaLog.snapshot.metadata.schema)
 
   protected def getFileChangesWithRateLimit(
       fromVersion: Long,

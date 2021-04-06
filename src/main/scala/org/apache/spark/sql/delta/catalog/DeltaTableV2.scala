@@ -23,6 +23,7 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, DeltaTimeTravelSpec, Snapshot}
+import org.apache.spark.sql.delta.GeneratedColumn
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils}
@@ -99,7 +100,10 @@ case class DeltaTableV2(
     }.getOrElse(deltaLog.update(stalenessAcceptable = true))
   }
 
-  override def schema(): StructType = snapshot.schema
+  private lazy val tableSchema: StructType =
+    GeneratedColumn.removeGenerationExpressions(snapshot.schema)
+
+  override def schema(): StructType = tableSchema
 
   override def partitioning(): Array[Transform] = {
     snapshot.metadata.partitionColumns.map { col =>

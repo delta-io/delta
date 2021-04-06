@@ -20,18 +20,19 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.schema.InvariantViolationException
+import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
-import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.DateTimeUtils.{getZoneId, stringToDate, stringToTimestamp, toJavaDate, toJavaTimestamp}
 import org.apache.spark.sql.catalyst.util.quietly
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.streaming.StreamingQueryException
+import org.apache.spark.sql.streaming.{StreamingQueryException, Trigger}
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{ArrayType, DateType, IntegerType, StructField, StructType, TimestampType}
+import org.apache.spark.sql.types.{ArrayType, DateType, IntegerType, MetadataBuilder, StructField, StructType, TimestampType}
 import org.apache.spark.unsafe.types.UTF8String
 
 trait GeneratedColumnTest extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
@@ -53,6 +54,15 @@ trait GeneratedColumnTest extends QueryTest with SharedSparkSession with DeltaSQ
       func(tableName)
     }
   }
+
+  /** Create a new field with the given generation expression. */
+  def withGenerationExpression(field: StructField, expr: String): StructField = {
+    val newMetadata = new MetadataBuilder()
+      .withMetadata(field.metadata)
+      .putString(GENERATION_EXPRESSION_METADATA_KEY, expr)
+      .build()
+    field.copy(metadata = newMetadata)
+  }
 }
 
 trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
@@ -72,7 +82,7 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
       val schema = StructType.fromDDL(schemaString)
       val finalSchema = StructType(schema.map { field =>
         generatedColumns.get(field.name).map { expr =>
-          GeneratedColumn.withGenerationExpression(field, expr)
+          withGenerationExpression(field, expr)
         }.getOrElse(field)
       })
       val metadata = Metadata(schemaString = finalSchema.json, partitionColumns = partitionColumns)
@@ -536,6 +546,56 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
     }
   }
 
+
+  test("reading from a Delta table should not see generation expressions") {
+    def verifyNoGenerationExpression(df: Dataset[_]): Unit = {
+      assert(!hasGeneratedColumns(df.schema))
+    }
+
+    withTableName("test_source") { table =>
+      createTable(table, None, "c1 INT, c2 INT", Map("c1" -> "c2 + 1"), Nil)
+      sql(s"INSERT INTO $table VALUES(2, 1)")
+      val path = DeltaLog.forTable(spark, TableIdentifier(table)).dataPath.toString
+
+      verifyNoGenerationExpression(spark.table(table))
+      verifyNoGenerationExpression(spark.sql(s"select * from $table"))
+      verifyNoGenerationExpression(spark.sql(s"select * from delta.`$path`"))
+      verifyNoGenerationExpression(spark.read.format("delta").load(path))
+      verifyNoGenerationExpression(spark.read.format("delta").table(table))
+      verifyNoGenerationExpression(spark.readStream.format("delta").load(path))
+      verifyNoGenerationExpression(spark.readStream.format("delta").table(table))
+      withTempDir { checkpointDir =>
+        val q = spark.readStream.format("delta").table(table).writeStream
+          .trigger(Trigger.Once)
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .foreachBatch { (ds: DataFrame, _: Long) =>
+            verifyNoGenerationExpression(ds)
+          }.start()
+        try {
+          q.processAllAvailable()
+        } finally {
+          q.stop()
+        }
+      }
+      withTempDir { outputDir =>
+        withTempDir { checkpointDir =>
+          val q = spark.readStream.format("delta").table(table).writeStream
+            .trigger(Trigger.Once)
+            .option("checkpointLocation", checkpointDir.getCanonicalPath)
+            .format("delta")
+            .start(outputDir.getCanonicalPath)
+          try {
+            q.processAllAvailable()
+          } finally {
+            q.stop()
+          }
+          val deltaLog = DeltaLog.forTable(spark, outputDir)
+          assert(deltaLog.snapshot.version >= 0)
+          assert(!hasGeneratedColumns(deltaLog.snapshot.schema))
+        }
+      }
+    }
+  }
 }
 
 class GeneratedColumnSuite extends GeneratedColumnSuiteBase

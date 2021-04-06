@@ -20,6 +20,7 @@ import java.util.Locale
 
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.constraints.{Constraint, Constraints}
 import org.apache.spark.sql.delta.files.TahoeFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -75,17 +76,55 @@ import org.apache.spark.sql.types.{DataType, DateType, IntegerType, Metadata => 
  */
 object GeneratedColumn extends DeltaLogging {
 
-  def isGeneratedColumn(attr: Attribute): Boolean = {
-    attr.metadata.contains(GENERATION_EXPRESSION_METADATA_KEY)
+  val MIN_WRITER_VERSION = 4
+
+  def satisfyGeneratedColumnProtocol(protocol: Protocol): Boolean = {
+    protocol.minWriterVersion >= MIN_WRITER_VERSION
   }
 
-  def isGeneratedColumn(field: StructField): Boolean = {
+  /**
+   * Whether the field contains the generation expression. Note: this doesn't mean the column is a
+   * generated column. A column is a generated column only if the table's
+   * `minWriterVersion` >= `GeneratedColumn.MIN_WRITER_VERSION` and the column metadata contains
+   * generation expressions. Use the other `isGeneratedColumn` to check whether it's a generated
+   * column instead.
+   */
+  private def isGeneratedColumn(field: StructField): Boolean = {
     field.metadata.contains(GENERATION_EXPRESSION_METADATA_KEY)
   }
 
-  /**  Whether exists any generated columns in the schema. */
+  /** Whether a column is a generated column. */
+  def isGeneratedColumn(protocol: Protocol, field: StructField): Boolean = {
+    satisfyGeneratedColumnProtocol(protocol) && isGeneratedColumn(field)
+  }
+
+  /**
+   * Whether any generation expressions exist in the schema. Note: this doesn't mean the table
+   * contains generated columns. A table has generated columns only if its
+   * `minWriterVersion` >= `GeneratedColumn.MIN_WRITER_VERSION` and some of columns in the table
+   * schema contain generation expressions. Use `enforcesGeneratedColumns` to check generated
+   * column tables instead.
+   */
   def hasGeneratedColumns(schema: StructType): Boolean = {
     schema.exists(isGeneratedColumn)
+  }
+
+  /**
+   * Whether the table has generated columns. A table has generated columns only if its
+   * `minWriterVersion` >= `GeneratedColumn.MIN_WRITER_VERSION` and some of columns in the table
+   * schema contain generation expressions.
+   *
+   * As Spark will propagate column metadata storing the generation expression through
+   * the entire plan, old versions that don't support generated columns may create tables whose
+   * schema contain generation expressions. However, since these old versions has a lower writer
+   * version, we can use the table's `minWriterVersion` to identify such tables and treat them as
+   * normal tables.
+   *
+   * @param protocol the table protocol.
+   * @param metadata the table metadata.
+   */
+  def enforcesGeneratedColumns(protocol: Protocol, metadata: Metadata): Boolean = {
+    satisfyGeneratedColumnProtocol(protocol) && metadata.schema.exists(isGeneratedColumn)
   }
 
   /** Return the generation expression from a field metadata if any. */
@@ -97,22 +136,38 @@ object GeneratedColumn extends DeltaLogging {
     }
   }
 
+  /**
+   * Remove generation expressions from the schema. We use this to remove generation expression
+   * metadata when reading a Delta table to avoid propagating generation expressions downstream.
+   */
+  def removeGenerationExpressions(schema: StructType): StructType = {
+    var updated = false
+    val updatedSchema = schema.map { field =>
+      if (isGeneratedColumn(field)) {
+        updated = true
+        val newMetadata = new MetadataBuilder()
+          .withMetadata(field.metadata)
+          .remove(GENERATION_EXPRESSION_METADATA_KEY)
+          .build()
+        field.copy(metadata = newMetadata)
+      } else {
+        field
+      }
+    }
+    if (updated) {
+      StructType(updatedSchema)
+    } else {
+      schema
+    }
+  }
+
   /** Return the generation expression from a field if any. */
-  def getGenerationExpressionStr(field: StructField): Option[String] = {
+  private def getGenerationExpressionStr(field: StructField): Option[String] = {
     getGenerationExpressionStr(field.metadata)
   }
 
-  /** Create a new field with the given generation expression. */
-  def withGenerationExpression(field: StructField, expr: String): StructField = {
-    val newMetadata = new MetadataBuilder()
-      .withMetadata(field.metadata)
-      .putString(GENERATION_EXPRESSION_METADATA_KEY, expr)
-      .build()
-    field.copy(metadata = newMetadata)
-  }
-
   /** Parse a generation expression string and convert it to an [[Expression]] object. */
-  def parseGenerationExpression(spark: SparkSession, exprString: String): Expression = {
+  private def parseGenerationExpression(spark: SparkSession, exprString: String): Expression = {
     spark.sessionState.sqlParser.parseExpression(exprString)
   }
 
@@ -222,7 +277,7 @@ object GeneratedColumn extends DeltaLogging {
    * the micro batch DataFrame. A streaming micro batch DataFrame to execute should use
    * `IncrementalExecution`.
    */
-  def selectFromStreamingDataFrame(
+  private def selectFromStreamingDataFrame(
       incrementalExecution: IncrementalExecution,
       df: DataFrame,
       cols: Column*): DataFrame = {
