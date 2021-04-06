@@ -352,4 +352,33 @@ abstract class DeleteSuiteBase extends QueryTest
     }.getMessage
     assert(e4.contains("Subqueries are not supported"))
   }
+
+  /**
+   * @param functionType The type of the unsupported expression to be tested.
+   * @param where the where clause containing the unsupported expression.
+   * @param expectedError the expected error string contained in thrown exception.
+   */
+  def testUnsupportedExpression(
+      functionType: String,
+      where: String,
+      expectedError: String) {
+    test(s"$functionType functions is not supported in delete") {
+      withTable("deltaTable") {
+        Seq((2, 2), (1, 4)).toDF("key", "value")
+          .write.format("delta").saveAsTable("deltaTable")
+
+        val e = intercept[org.apache.spark.sql.AnalysisException] {
+          executeDelete(target = "deltaTable", where = where)
+        }
+        assert(e.message.matches(s"(?s).*(?i)unsupported.*(?i)$functionType.*"))
+        assert(e.message.contains(expectedError))
+      }
+    }
+  }
+
+  testUnsupportedExpression(
+    functionType = "Window",
+    where = "row_number() over (order by value) > 1",
+    expectedError = "Invalid expressions: [row_number() OVER"
+  )
 }

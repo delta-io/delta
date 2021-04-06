@@ -644,6 +644,47 @@ abstract class UpdateSuiteBase
       errMsgs = "Updating nested fields is only supported for StructType" :: Nil)
   }
 
+  /**
+   * @param functionType The type of the unsupported expression to be tested.
+   * @param set the set action containing the unsupported expression.
+   * @param where the where clause containing the unsupported expression.
+   * @param expectedError the expected error string contained in thrown exception.
+   */
+  def testUnsupportedExpression(
+      functionType: String,
+      set: String,
+      where: String,
+      expectedError: String) {
+    test(s"$functionType functions is not supported in update") {
+      withTempDir { dir =>
+        val path = dir.getCanonicalPath
+        Seq((1, 2, 3)).toDF("a", "b", "c").write.format("delta").save(path)
+
+        def checkUnsupportedException(set: Option[String] = None, where: Option[String] = None) {
+          val e = intercept[org.apache.spark.sql.AnalysisException] {
+            executeUpdate(
+              s"delta.`$path`",
+              set.getOrElse("b = 4"),
+              where.getOrElse("a = 1"))
+          }
+          assert(e.message.matches(s"(?s).*(?i)unsupported.*(?i)$functionType.*"))
+          assert(e.message.contains(expectedError))
+        }
+        // on set
+        checkUnsupportedException(set = Option(set))
+
+        // on condition
+        checkUnsupportedException(where = Option(where))
+      }
+    }
+  }
+
+  testUnsupportedExpression(
+    functionType = "Window",
+    set = "b = row_number() over (order by c)",
+    where = "row_number() over (order by c) > 1",
+    expectedError = "Invalid expressions: [row_number() OVER"
+  )
 
   protected def checkUpdateJson(
       target: Seq[String],
