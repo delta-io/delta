@@ -35,9 +35,6 @@ object DeltaSourceUtils {
   // The metadata key recording the generation expression in a generated column's `StructField`.
   val GENERATION_EXPRESSION_METADATA_KEY = "delta.generationExpression"
 
-  // Reserved column names for delta bucketed table.
-  val BUCKET_VALUE_COLUMN_NAME = "__bucket_value"
-  val BUCKET_ID_COLUMN_NAME = "__bucket_id"
 
   def isDeltaDataSourceName(name: String): Boolean = {
     name.toLowerCase(Locale.ROOT) == NAME || name.toLowerCase(Locale.ROOT) == ALT_NAME
