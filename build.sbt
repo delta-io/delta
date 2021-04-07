@@ -14,13 +14,15 @@
  * limitations under the License.
  */
 
-// val sparkVersion = "3.1.1"
+import java.nio.file.Files
+
 sparkVersion := "3.1.1"
 
 lazy val commonSettings = Seq(
   organization := "io.delta",
   scalaVersion := "2.12.10",
-  fork := true)
+  fork := true
+)
 
 lazy val core = (project in file("core"))
   .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin)
@@ -28,7 +30,7 @@ lazy val core = (project in file("core"))
     name := "delta-core",
     commonSettings,
     scalaStyleSettings,
-      mimaSettings,
+    mimaSettings,
     unidocSettings,
     sparkPackageSettings,
     releaseSettings,
@@ -81,8 +83,17 @@ lazy val core = (project in file("core"))
       "-Ddelta.log.cacheSize=3",
       "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
       "-Xmx1024m"
-    )
+    ),
+
+    // Hack to avoid errors related to missing repo-root/target/scala-2.12/classes/
+    createTargetClassesDir := {
+      val dir = baseDirectory.value.getParentFile / "target" / "scala-2.12" / "classes"
+      Files.createDirectories(dir.toPath)
+    },
+    (compile in Compile) := ((compile in Compile) dependsOn createTargetClassesDir).value
   )
+
+val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 /*
  ***********************
