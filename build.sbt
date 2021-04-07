@@ -14,131 +14,124 @@
  * limitations under the License.
  */
 
-name := "delta-core"
-
-organization := "io.delta"
-
-scalaVersion := "2.12.10"
-
+// val sparkVersion = "3.1.1"
 sparkVersion := "3.1.1"
 
-libraryDependencies ++= Seq(
-  // Adding test classifier seems to break transitive resolution of the core dependencies
-  "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
-  "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
-  "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
-  "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
+lazy val commonSettings = Seq(
+  organization := "io.delta",
+  scalaVersion := "2.12.10",
+  fork := true)
 
-  // Test deps
-  "org.scalatest" %% "scalatest" % "3.1.0" % "test",
-  "junit" % "junit" % "4.12" % "test",
-  "com.novocode" % "junit-interface" % "0.11" % "test",
-  "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
-  "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
-  "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
-  "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
+lazy val core = (project in file("core"))
+  .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin)
+  .settings (
+    name := "delta-core",
+    commonSettings,
+    scalaStyleSettings,
+      mimaSettings,
+    unidocSettings,
+    sparkPackageSettings,
+    releaseSettings,
+    libraryDependencies ++= Seq(
+      // Adding test classifier seems to break transitive resolution of the core dependencies
+      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
 
-  // Compiler plugins
-  // -- Bump up the genjavadoc version explicitly to 0.16 to work with Scala 2.12
-  compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.16" cross CrossVersion.full)
-)
+      // Test deps
+      "org.scalatest" %% "scalatest" % "3.1.0" % "test",
+      "junit" % "junit" % "4.12" % "test",
+      "com.novocode" % "junit-interface" % "0.11" % "test",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
 
-antlr4Settings
+      // Compiler plugins
+      // -- Bump up the genjavadoc version explicitly to 0.16 to work with Scala 2.12
+      compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.16" cross CrossVersion.full)
+    ),
 
-antlr4Version in Antlr4 := "4.7"
+    antlr4Settings,
+    antlr4Version in Antlr4 := "4.7",
+    antlr4PackageName in Antlr4 := Some("io.delta.sql.parser"),
+    antlr4GenListener in Antlr4 := true,
+    antlr4GenVisitor in Antlr4 := true,
 
-antlr4PackageName in Antlr4 := Some("io.delta.sql.parser")
+    testOptions in Test += Tests.Argument("-oDF"),
+    testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
 
-antlr4GenListener in Antlr4 := true
+    // Don't execute in parallel since we can't have multiple Sparks in the same JVM
+    parallelExecution in Test := false,
 
-antlr4GenVisitor in Antlr4 := true
+    scalacOptions ++= Seq(
+      "-target:jvm-1.8",
+      "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
+    ),
 
-testOptions in Test += Tests.Argument("-oDF")
+    javaOptions += "-Xmx1024m",
 
-testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
+    // Configurations to speed up tests and reduce memory footprint
+    javaOptions in Test ++= Seq(
+      "-Dspark.ui.enabled=false",
+      "-Dspark.ui.showConsoleProgress=false",
+      "-Dspark.databricks.delta.snapshotPartitions=2",
+      "-Dspark.sql.shuffle.partitions=5",
+      "-Ddelta.log.cacheSize=3",
+      "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
+      "-Xmx1024m"
+    )
+  )
 
-// Don't execute in parallel since we can't have multiple Sparks in the same JVM
-parallelExecution in Test := false
-
-scalacOptions ++= Seq(
-  "-target:jvm-1.8",
-  "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
-)
-
-javaOptions += "-Xmx1024m"
-
-fork in Test := true
-
-// Configurations to speed up tests and reduce memory footprint
-javaOptions in Test ++= Seq(
-  "-Dspark.ui.enabled=false",
-  "-Dspark.ui.showConsoleProgress=false",
-  "-Dspark.databricks.delta.snapshotPartitions=2",
-  "-Dspark.sql.shuffle.partitions=5",
-  "-Ddelta.log.cacheSize=3",
-  "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
-  "-Xmx1024m"
-)
-
-/** ********************
+/*
+ ***********************
  * ScalaStyle settings *
- * *********************/
+ ***********************
+ */
 
-scalastyleConfig := baseDirectory.value / "scalastyle-config.xml"
+parallelExecution in ThisBuild := false
+
+scalastyleConfig in ThisBuild := baseDirectory.value / "scalastyle-config.xml"
 
 lazy val compileScalastyle = taskKey[Unit]("compileScalastyle")
-
-compileScalastyle := scalastyle.in(Compile).toTask("").value
-
-(compile in Compile) := ((compile in Compile) dependsOn compileScalastyle).value
-
 lazy val testScalastyle = taskKey[Unit]("testScalastyle")
 
-testScalastyle := scalastyle.in(Test).toTask("").value
+lazy val scalaStyleSettings = Seq(
+  compileScalastyle := scalastyle.in(Compile).toTask("").value,
 
-(test in Test) := ((test in Test) dependsOn testScalastyle).value
+  (compile in Compile) := ((compile in Compile) dependsOn compileScalastyle).value,
 
-/*********************
- *  MIMA settings    *
- *********************/
+  testScalastyle := scalastyle.in(Test).toTask("").value,
 
-(test in Test) := ((test in Test) dependsOn mimaReportBinaryIssues).value
+  (test in Test) := ((test in Test) dependsOn testScalastyle).value
+)
 
+/*
+ ********************
+ *  MIMA settings   *
+ ********************
+ */
 def getVersion(version: String): String = {
-    version.split("\\.").toList match {
-        case major :: minor :: rest =>
-          if (rest.head.startsWith("0")) s"$major.${minor.toInt - 1}.0"
-          else s"$major.$minor.${rest.head.replaceAll("-SNAPSHOT", "").toInt - 1}"
-        case _ => throw new Exception(s"Could not find previous version for $version.")
-    }
+  version.split("\\.").toList match {
+    case major :: minor :: rest =>
+      if (rest.head.startsWith("0")) s"$major.${minor.toInt - 1}.0"
+      else s"$major.$minor.${rest.head.replaceAll("-SNAPSHOT", "").toInt - 1}"
+    case _ => throw new Exception(s"Could not find previous version for $version.")
+  }
 }
 
-mimaPreviousArtifacts := Set("io.delta" %% "delta-core" %  getVersion(version.value))
-mimaBinaryIssueFilters ++= MimaExcludes.ignoredABIProblems
+lazy val mimaSettings = Seq(
+  (test in Test) := ((test in Test) dependsOn mimaReportBinaryIssues).value,
+  mimaPreviousArtifacts := Set("io.delta" %% "delta-core" %  getVersion(version.value)),
+  mimaBinaryIssueFilters ++= MimaExcludes.ignoredABIProblems
+)
 
-
-/*******************
+/*
+ *******************
  * Unidoc settings *
- *******************/
-
-enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin)
-
-// Configure Scala unidoc
-scalacOptions in(ScalaUnidoc, unidoc) ++= Seq(
-  "-skip-packages", "org:com:io.delta.sql:io.delta.tables.execution",
-  "-doc-title", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " ScalaDoc"
-)
-
-// Configure Java unidoc
-javacOptions in(JavaUnidoc, unidoc) := Seq(
-  "-public",
-  "-exclude", "org:com:io.delta.sql:io.delta.tables.execution",
-  "-windowtitle", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
-  "-noqualifier", "java.lang",
-  "-tag", "return:X",
-  // `doclint` is disabled on Circle CI. Need to enable it manually to test our javadoc.
-  "-Xdoclint:all"
-)
+ *******************
+ */
 
 // Explicitly remove source files by package because these docs are not formatted correctly for Javadocs
 def ignoreUndocumentedPackages(packages: Seq[Seq[java.io.File]]): Seq[Seq[java.io.File]] = {
@@ -149,89 +142,138 @@ def ignoreUndocumentedPackages(packages: Seq[Seq[java.io.File]]): Seq[Seq[java.i
     .map(_.filterNot(_.getCanonicalPath.contains("spark")))
 }
 
-unidocAllSources in(JavaUnidoc, unidoc) := {
-  ignoreUndocumentedPackages((unidocAllSources in(JavaUnidoc, unidoc)).value)
-}
+lazy val unidocSettings = Seq(
 
-// Ensure unidoc is run with tests
-(test in Test) := ((test in Test) dependsOn unidoc.in(Compile)).value
+  // Configure Scala unidoc
+  scalacOptions in(ScalaUnidoc, unidoc) ++= Seq(
+    "-skip-packages", "org:com:io.delta.sql:io.delta.tables.execution",
+    "-doc-title", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " ScalaDoc"
+  ),
 
+  // Configure Java unidoc
+  javacOptions in(JavaUnidoc, unidoc) := Seq(
+    "-public",
+    "-exclude", "org:com:io.delta.sql:io.delta.tables.execution",
+    "-windowtitle", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
+    "-noqualifier", "java.lang",
+    "-tag", "return:X",
+    // `doclint` is disabled on Circle CI. Need to enable it manually to test our javadoc.
+    "-Xdoclint:all"
+  ),
 
-/***************************
+  unidocAllSources in(JavaUnidoc, unidoc) := {
+    ignoreUndocumentedPackages((unidocAllSources in(JavaUnidoc, unidoc)).value)
+  },
+
+  // Ensure unidoc is run with tests
+  (test in Test) := ((test in Test) dependsOn unidoc.in(Compile)).value
+)
+
+/*
+ ***************************
  * Spark Packages settings *
- ***************************/
+ ***************************
+ */
 
-spName := "databricks/delta-core"
+lazy val sparkPackageSettings = Seq(
+  spName := "databricks/delta-core",
 
-spAppendScalaVersion := true
+  sparkVersion := "3.1.1",
 
-spIncludeMaven := true
+  spAppendScalaVersion := true,
 
-spIgnoreProvided := true
+  spIncludeMaven := true,
 
-packageBin in Compile := spPackage.value
+  spIgnoreProvided := true,
 
-sparkComponents := Seq("sql")
+  packageBin in Compile := spPackage.value,
 
-/********************
+  sparkComponents := Seq("sql")
+)
+
+
+/*
+ ********************
  * Release settings *
- ********************/
-
-publishMavenStyle := true
-
-releaseCrossBuild := true
-
-licenses += ("Apache-2.0", url("http://www.apache.org/licenses/LICENSE-2.0"))
-
-pomExtra :=
-  <url>https://delta.io/</url>
-    <scm>
-      <url>git@github.com:delta-io/delta.git</url>
-      <connection>scm:git:git@github.com:delta-io/delta.git</connection>
-    </scm>
-    <developers>
-      <developer>
-        <id>marmbrus</id>
-        <name>Michael Armbrust</name>
-        <url>https://github.com/marmbrus</url>
-      </developer>
-      <developer>
-        <id>brkyvz</id>
-        <name>Burak Yavuz</name>
-        <url>https://github.com/brkyvz</url>
-      </developer>
-      <developer>
-        <id>jose-torres</id>
-        <name>Jose Torres</name>
-        <url>https://github.com/jose-torres</url>
-      </developer>
-      <developer>
-        <id>liwensun</id>
-        <name>Liwen Sun</name>
-        <url>https://github.com/liwensun</url>
-      </developer>
-      <developer>
-        <id>mukulmurthy</id>
-        <name>Mukul Murthy</name>
-        <url>https://github.com/mukulmurthy</url>
-      </developer>
-      <developer>
-        <id>tdas</id>
-        <name>Tathagata Das</name>
-        <url>https://github.com/tdas</url>
-      </developer>
-      <developer>
-        <id>zsxwing</id>
-        <name>Shixiong Zhu</name>
-        <url>https://github.com/zsxwing</url>
-      </developer>
-    </developers>
-
-bintrayOrganization := Some("delta-io")
-
-bintrayRepository := "delta"
-
+ ********************
+ */
 import ReleaseTransformations._
+
+lazy val releaseSettings = Seq(
+  publishMavenStyle := true,
+
+  releaseCrossBuild := true,
+
+  releaseProcess := Seq[ReleaseStep](
+    checkSnapshotDependencies,
+    inquireVersions,
+    runTest,
+    setReleaseVersion,
+    commitReleaseVersion,
+    tagRelease,
+    publishArtifacts,
+    setNextVersion,
+    commitNextVersion
+  ),
+
+  licenses += ("Apache-2.0", url("http://www.apache.org/licenses/LICENSE-2.0")),
+
+  pomExtra :=
+    <url>https://delta.io/</url>
+      <scm>
+        <url>git@github.com:delta-io/delta.git</url>
+        <connection>scm:git:git@github.com:delta-io/delta.git</connection>
+      </scm>
+      <developers>
+        <developer>
+          <id>marmbrus</id>
+          <name>Michael Armbrust</name>
+          <url>https://github.com/marmbrus</url>
+        </developer>
+        <developer>
+          <id>brkyvz</id>
+          <name>Burak Yavuz</name>
+          <url>https://github.com/brkyvz</url>
+        </developer>
+        <developer>
+          <id>jose-torres</id>
+          <name>Jose Torres</name>
+          <url>https://github.com/jose-torres</url>
+        </developer>
+        <developer>
+          <id>liwensun</id>
+          <name>Liwen Sun</name>
+          <url>https://github.com/liwensun</url>
+        </developer>
+        <developer>
+          <id>mukulmurthy</id>
+          <name>Mukul Murthy</name>
+          <url>https://github.com/mukulmurthy</url>
+        </developer>
+        <developer>
+          <id>tdas</id>
+          <name>Tathagata Das</name>
+          <url>https://github.com/tdas</url>
+        </developer>
+        <developer>
+          <id>zsxwing</id>
+          <name>Shixiong Zhu</name>
+          <url>https://github.com/zsxwing</url>
+        </developer>
+      </developers>,
+
+  bintrayOrganization := Some("delta-io"),
+
+  bintrayRepository := "delta"
+)
+
+// Don't release the root project
+publishArtifact := false
+
+publish := ()
+
+// Looks like some of release settings should be set for the root project as well.
+releaseCrossBuild := true
 
 releaseProcess := Seq[ReleaseStep](
   checkSnapshotDependencies,
