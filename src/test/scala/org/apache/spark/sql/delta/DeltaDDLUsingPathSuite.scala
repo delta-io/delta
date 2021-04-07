@@ -93,6 +93,12 @@ trait DeltaDDLUsingPathTests extends QueryTest
     }
   }
 
+  private def errorContains(errMsg: String, str: String): Unit = {
+    val actual = errMsg.replaceAll("`", "")
+    val expected = str.replaceAll("`", "")
+    assert(actual.contains(expected))
+  }
+
   testUsingPath("SELECT") { (table, path) =>
     Seq(table, s"delta.`$path`").foreach { tableOrPath =>
       checkDatasetUnorderly(
@@ -112,7 +118,7 @@ trait DeltaDDLUsingPathTests extends QueryTest
       val ex = intercept[AnalysisException] {
         spark.table(s"delta.`/path/to/delta`")
       }
-      assert(ex.getMessage.contains("Table or view not found: delta./path/to/delta"))
+      errorContains(ex.message, "Table or view not found: delta.`/path/to/delta`")
     }
   }
 

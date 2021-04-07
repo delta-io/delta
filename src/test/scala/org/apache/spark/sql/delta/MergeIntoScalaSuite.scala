@@ -209,7 +209,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
           .whenNotMatched().insertExpr(Map("trgKey" -> "srcKey", "trgValue" -> "srcValue"))
           .execute()
       }
-      errorContains(e.getMessage, "cannot resolve *")
+      errorContains(e.getMessage, "cannot resolve `*`")
 
       e = intercept[AnalysisException] {
         io.delta.tables.DeltaTable.forPath(spark, tempPath)
@@ -218,7 +218,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
           .whenNotMatched().insertExpr(Map("*" -> "*"))
           .execute()
       }
-      errorContains(e.getMessage, "cannot resolve *")
+      errorContains(e.getMessage, "cannot resolve `*`")
     }
   }
 
