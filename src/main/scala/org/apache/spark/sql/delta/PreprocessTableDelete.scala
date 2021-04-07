@@ -37,15 +37,7 @@ case class PreprocessTableDelete(sqlConf: SQLConf) extends Rule[LogicalPlan] {
             throw DeltaErrors.subqueryNotSupportedException("DELETE", cond)
           }
         }
-        toCommand(d)
+        DeleteCommand(d)
     }
-  }
-
-  def toCommand(d: DeltaDelete): DeleteCommand = EliminateSubqueryAliases(d.child) match {
-    case DeltaFullTable(tahoeFileIndex) =>
-      DeleteCommand(tahoeFileIndex, d.child, d.condition)
-
-    case o =>
-      throw DeltaErrors.notADeltaSourceException("DELETE", Some(o))
   }
 }
