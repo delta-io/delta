@@ -63,14 +63,16 @@ class DeltaHistoryManager(
     val listStart = limitOpt.map { limit =>
       math.max(deltaLog.update().version - limit + 1, 0)
     }.getOrElse(getEarliestDeltaFile)
-    getHistory(listStart, None)
+    getHistory(listStart)
   }
 
   /**
    * Get the commit information of the Delta table from commit `[start, end)`. If `end` is `None`,
    * we return all commits from start to now.
    */
-  def getHistory(start: Long, end: Option[Long]): Seq[CommitInfo] = {
+  def getHistory(
+      start: Long,
+      end: Option[Long] = None): Seq[CommitInfo] = {
     val _spark = spark
     import _spark.implicits._
     val conf = getSerializableHadoopConf

@@ -155,7 +155,7 @@ class DeltaTable private[tables](
    */
   @Evolving
   def history(): DataFrame = {
-    executeHistory(deltaLog, None, table.getTableIdentifierIfExists)
+    executeHistory(deltaLog, tableId = table.getTableIdentifierIfExists)
   }
 
   /**
