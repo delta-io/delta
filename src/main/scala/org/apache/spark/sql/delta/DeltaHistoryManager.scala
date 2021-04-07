@@ -433,13 +433,11 @@ object DeltaHistoryManager extends DeltaLogging {
    *
    * @param underlying The iterator which gives the list of files in ascending version order
    * @param maxTimestamp The timestamp until which we can delete (inclusive).
-   * @param maxVersion The version until which we can delete (inclusive).
    * @param versionGetter A method to get the commit version from the file path.
    */
   class BufferingLogDeletionIterator(
       underlying: Iterator[FileStatus],
       maxTimestamp: Long,
-      maxVersion: Long,
       versionGetter: Path => Long) extends Iterator[FileStatus] {
     /**
      * Our output iterator
@@ -464,7 +462,7 @@ object DeltaHistoryManager extends DeltaLogging {
 
     /** Whether the given file can be deleted based on the version and retention timestamp input. */
     private def shouldDeleteFile(file: FileStatus): Boolean = {
-      file.getModificationTime <= maxTimestamp && versionGetter(file.getPath) <= maxVersion
+      file.getModificationTime <= maxTimestamp
     }
 
     /**
