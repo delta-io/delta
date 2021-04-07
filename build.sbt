@@ -17,6 +17,7 @@
 import java.nio.file.Files
 
 sparkVersion := "3.1.1"
+scalaVersion := "2.12.10"
 
 lazy val commonSettings = Seq(
   organization := "io.delta",
@@ -93,6 +94,8 @@ lazy val core = (project in file("core"))
     (compile in Compile) := ((compile in Compile) dependsOn createTargetClassesDir).value
   )
 
+parallelExecution in ThisBuild := false
+
 val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 /*
@@ -100,9 +103,6 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
  * ScalaStyle settings *
  ***********************
  */
-
-parallelExecution in ThisBuild := false
-
 scalastyleConfig in ThisBuild := baseDirectory.value / "scalastyle-config.xml"
 
 lazy val compileScalastyle = taskKey[Unit]("compileScalastyle")
