@@ -16,7 +16,7 @@
 
 import java.nio.file.Files
 
-sparkVersion := "3.1.1"
+val sparkVersion = "3.1.1"
 scalaVersion := "2.12.10"
 
 lazy val commonSettings = Seq(
@@ -33,28 +33,29 @@ lazy val core = (project in file("core"))
     scalaStyleSettings,
     mimaSettings,
     unidocSettings,
-    sparkPackageSettings,
     releaseSettings,
     libraryDependencies ++= Seq(
       // Adding test classifier seems to break transitive resolution of the core dependencies
-      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-hive" % sparkVersion % "provided",
+      "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
+      "org.apache.spark" %% "spark-core" % sparkVersion % "provided",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion % "provided",
 
       // Test deps
       "org.scalatest" %% "scalatest" % "3.1.0" % "test",
       "junit" % "junit" % "4.12" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
 
       // Compiler plugins
       // -- Bump up the genjavadoc version explicitly to 0.16 to work with Scala 2.12
       compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.16" cross CrossVersion.full)
     ),
+    (mappings in (Compile, packageBin)) := (mappings in (Compile, packageBin)).value ++
+        listPythonFiles(baseDirectory.value.getParentFile / "python"),
 
     antlr4Settings,
     antlr4Version in Antlr4 := "4.7",
@@ -93,6 +94,24 @@ lazy val core = (project in file("core"))
     },
     (compile in Compile) := ((compile in Compile) dependsOn createTargetClassesDir).value
   )
+
+def listPythonFiles(pythonBase: File): Seq[(File, String)] = {
+  // Compile the python files
+  if (pythonBase.exists()) {
+    s"python -m compileall $pythonBase" !
+  }
+
+  // Get list of python files and return the mapping between source files and target paths
+  // in the generated package JAR.
+  val pythonExcludeDirs = pythonBase / "lib" :: pythonBase / "doc" :: pythonBase / "bin" :: Nil
+  import scala.collection.JavaConverters._
+  val pythonFiles = Files.walk(pythonBase.toPath).iterator().asScala
+    .map { path => path.toFile() }
+    .filter { file => file.getName.endsWith(".py") && ! file.getName.contains("test") }
+    .filter { file => ! pythonExcludeDirs.exists { base => IO.relativize(base, file).nonEmpty} }
+    .toSeq
+  pythonFiles pair relativeTo(pythonBase)
+}
 
 parallelExecution in ThisBuild := false
 
@@ -179,29 +198,6 @@ lazy val unidocSettings = Seq(
   // Ensure unidoc is run with tests
   (test in Test) := ((test in Test) dependsOn unidoc.in(Compile)).value
 )
-
-/*
- ***************************
- * Spark Packages settings *
- ***************************
- */
-
-lazy val sparkPackageSettings = Seq(
-  spName := "databricks/delta-core",
-
-  sparkVersion := "3.1.1",
-
-  spAppendScalaVersion := true,
-
-  spIncludeMaven := true,
-
-  spIgnoreProvided := true,
-
-  packageBin in Compile := spPackage.value,
-
-  sparkComponents := Seq("sql")
-)
-
 
 /*
  ********************
