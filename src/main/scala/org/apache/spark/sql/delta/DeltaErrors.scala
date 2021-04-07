@@ -1125,17 +1125,87 @@ object DeltaErrors
   def missingColumnsInInsertInto(column: String): Throwable = {
     new AnalysisException(s"Column $column is not specified in INSERT")
   }
+
+  def concurrentWriteException(
+      conflictingCommit: Option[CommitInfo]): io.delta.exceptions.ConcurrentWriteException = {
+    val message = DeltaErrors.concurrentModificationExceptionMsg(
+      SparkEnv.get.conf,
+      s"A concurrent transaction has written new data since the current transaction " +
+        s"read the table. Please try the operation again.",
+      conflictingCommit)
+    new io.delta.exceptions.ConcurrentWriteException(message)
+  }
+
+  def metadataChangedException(
+      conflictingCommit: Option[CommitInfo]): io.delta.exceptions.MetadataChangedException = {
+    val message = DeltaErrors.concurrentModificationExceptionMsg(
+      SparkEnv.get.conf,
+      "The metadata of the Delta table has been changed by a concurrent update. " +
+        "Please try the operation again.",
+      conflictingCommit)
+    new io.delta.exceptions.MetadataChangedException(message)
+  }
+
+  def protocolChangedException(
+      conflictingCommit: Option[CommitInfo]): io.delta.exceptions.ProtocolChangedException = {
+    val message = DeltaErrors.concurrentModificationExceptionMsg(
+      SparkEnv.get.conf,
+      "The protocol version of the Delta table has been changed by a concurrent update. " +
+        "Please try the operation again.",
+      conflictingCommit)
+    new io.delta.exceptions.ProtocolChangedException(message)
+  }
+
+  def concurrentAppendException(
+      conflictingCommit: Option[CommitInfo],
+      partition: String,
+      customRetryMsg: Option[String] = None): io.delta.exceptions.ConcurrentAppendException = {
+    val message = DeltaErrors.concurrentModificationExceptionMsg(
+      SparkEnv.get.conf,
+      s"Files were added to $partition by a concurrent update. " +
+        customRetryMsg.getOrElse("Please try the operation again."),
+      conflictingCommit)
+    new io.delta.exceptions.ConcurrentAppendException(message)
+  }
+
+  def concurrentDeleteReadException(
+      conflictingCommit: Option[CommitInfo],
+      file: String): io.delta.exceptions.ConcurrentDeleteReadException = {
+    val message = DeltaErrors.concurrentModificationExceptionMsg(
+      SparkEnv.get.conf,
+      "This transaction attempted to read one or more files that were deleted" +
+        s" (for example $file) by a concurrent update. Please try the operation again.",
+      conflictingCommit)
+    new io.delta.exceptions.ConcurrentDeleteReadException(message)
+  }
+
+  def concurrentDeleteDeleteException(
+      conflictingCommit: Option[CommitInfo],
+      file: String): io.delta.exceptions.ConcurrentDeleteDeleteException = {
+    val message = DeltaErrors.concurrentModificationExceptionMsg(
+      SparkEnv.get.conf,
+      "This transaction attempted to delete one or more files that were deleted " +
+        s"(for example $file) by a concurrent update. Please try the operation again.",
+      conflictingCommit)
+    new io.delta.exceptions.ConcurrentDeleteDeleteException(message)
+  }
+
+
+  def concurrentTransactionException(
+      conflictingCommit: Option[CommitInfo]): io.delta.exceptions.ConcurrentTransactionException = {
+    val message = DeltaErrors.concurrentModificationExceptionMsg(
+        SparkEnv.get.conf,
+      s"This error occurs when multiple streaming queries are using the same checkpoint to write " +
+        "into this table. Did you run multiple instances of the same streaming query" +
+        " at the same time?",
+      conflictingCommit)
+    new io.delta.exceptions.ConcurrentTransactionException(message)
+  }
 }
 
 /** The basic class for all Tahoe commit conflict exceptions. */
 abstract class DeltaConcurrentModificationException(message: String)
   extends ConcurrentModificationException(message) {
-
-  def this(baseMessage: String, conflictingCommit: Option[CommitInfo]) = this(
-    DeltaErrors.concurrentModificationExceptionMsg(
-      SparkEnv.get.conf,
-      baseMessage,
-      conflictingCommit))
 
   /**
    * Type of the commit conflict.
@@ -1144,13 +1214,18 @@ abstract class DeltaConcurrentModificationException(message: String)
 }
 
 /**
- * Thrown when a concurrent transaction has written data after the current transaction read the
- * table.
+ * This class is kept for backward compatibility.
+ * Use [[io.delta.exceptions.ConcurrentWriteException]] instead.
  */
-class ConcurrentWriteException(
-    conflictingCommit: Option[CommitInfo]) extends DeltaConcurrentModificationException(
-  s"A concurrent transaction has written new data since the current transaction " +
-    s"read the table. Please try the operation again.", conflictingCommit)
+class ConcurrentWriteException(message: String)
+  extends io.delta.exceptions.DeltaConcurrentModificationException(message) {
+  def this(conflictingCommit: Option[CommitInfo]) = this(
+    DeltaErrors.concurrentModificationExceptionMsg(
+      SparkEnv.get.conf,
+      s"A concurrent transaction has written new data since the current transaction " +
+        s"read the table. Please try the operation again.",
+      conflictingCommit))
+}
 
 /**
  * Thrown when time travelling to a version that does not exist in the Delta Log.
@@ -1167,53 +1242,92 @@ case class VersionNotFoundException(
     )
 
 /**
- * Thrown when the metadata of the Delta table has changed between the time of read
- * and the time of commit.
+ * This class is kept for backward compatibility.
+ * Use [[io.delta.exceptions.MetadataChangedException]] instead.
  */
-class MetadataChangedException(
-    conflictingCommit: Option[CommitInfo]) extends DeltaConcurrentModificationException(
-  "The metadata of the Delta table has been changed by a concurrent update. " +
-    "Please try the operation again.", conflictingCommit)
+class MetadataChangedException(message: String)
+  extends io.delta.exceptions.DeltaConcurrentModificationException(message) {
+  def this(conflictingCommit: Option[CommitInfo]) = this(
+    DeltaErrors.concurrentModificationExceptionMsg(
+      SparkEnv.get.conf,
+      "The metadata of the Delta table has been changed by a concurrent update. " +
+        "Please try the operation again.",
+      conflictingCommit))
+}
 
 /**
- * Thrown when the protocol version has changed between the time of read
- * and the time of commit.
+ * This class is kept for backward compatibility.
+ * Use [[io.delta.exceptions.ProtocolChangedException]] instead.
  */
-class ProtocolChangedException(
-    conflictingCommit: Option[CommitInfo]) extends DeltaConcurrentModificationException(
-  "The protocol version of the Delta table has been changed by a concurrent update. " +
-    "Please try the operation again.", conflictingCommit)
-
-/** Thrown when files are added that would have been read by the current transaction. */
-class ConcurrentAppendException(
-    conflictingCommit: Option[CommitInfo],
-    partition: String,
-    customRetryMsg: Option[String] = None) extends DeltaConcurrentModificationException(
-  s"Files were added to $partition by a concurrent update. " +
-    customRetryMsg.getOrElse("Please try the operation again."), conflictingCommit)
-
-/** Thrown when the current transaction reads data that was deleted by a concurrent transaction. */
-class ConcurrentDeleteReadException(
-    conflictingCommit: Option[CommitInfo],
-    file: String) extends DeltaConcurrentModificationException(
-  s"This transaction attempted to read one or more files that were deleted (for example $file) " +
-    "by a concurrent update. Please try the operation again.", conflictingCommit)
+class ProtocolChangedException(message: String)
+  extends io.delta.exceptions.DeltaConcurrentModificationException(message) {
+  def this(conflictingCommit: Option[CommitInfo]) = this(
+    DeltaErrors.concurrentModificationExceptionMsg(
+      SparkEnv.get.conf,
+      "The protocol version of the Delta table has been changed by a concurrent update. " +
+        "Please try the operation again.",
+      conflictingCommit))
+}
 
 /**
- * Thrown when the current transaction deletes data that was deleted by a concurrent transaction.
+ * This class is kept for backward compatibility.
+ * Use [[io.delta.exceptions.ConcurrentAppendException]] instead.
  */
-class ConcurrentDeleteDeleteException(
-    conflictingCommit: Option[CommitInfo],
-    file: String) extends DeltaConcurrentModificationException(
-  s"This transaction attempted to delete one or more files that were deleted (for example $file) " +
-    "by a concurrent update. Please try the operation again.", conflictingCommit)
+class ConcurrentAppendException(message: String)
+  extends io.delta.exceptions.DeltaConcurrentModificationException(message) {
+  def this(
+      conflictingCommit: Option[CommitInfo],
+      partition: String,
+      customRetryMsg: Option[String] = None) = this(
+    DeltaErrors.concurrentModificationExceptionMsg(
+      SparkEnv.get.conf,
+      s"Files were added to $partition by a concurrent update. " +
+        customRetryMsg.getOrElse("Please try the operation again."),
+      conflictingCommit))
+}
 
-/** Thrown when concurrent transaction both attempt to update the same idempotent transaction. */
-class ConcurrentTransactionException(
-    conflictingCommit: Option[CommitInfo]) extends DeltaConcurrentModificationException(
-  s"This error occurs when multiple streaming queries are using the same checkpoint to write " +
-    "into this table. Did you run multiple instances of the same streaming query at the same " +
-    "time?", conflictingCommit)
+/**
+ * This class is kept for backward compatibility.
+ * Use [[io.delta.exceptions.ConcurrentDeleteReadException]] instead.
+ */
+class ConcurrentDeleteReadException(message: String)
+  extends io.delta.exceptions.DeltaConcurrentModificationException(message) {
+  def this(conflictingCommit: Option[CommitInfo], file: String) = this(
+    DeltaErrors.concurrentModificationExceptionMsg(
+      SparkEnv.get.conf,
+      "This transaction attempted to read one or more files that were deleted" +
+        s" (for example $file) by a concurrent update. Please try the operation again.",
+      conflictingCommit))
+}
+
+/**
+ * This class is kept for backward compatibility.
+ * Use [[io.delta.exceptions.ConcurrentDeleteDeleteException]] instead.
+ */
+class ConcurrentDeleteDeleteException(message: String)
+  extends io.delta.exceptions.DeltaConcurrentModificationException(message) {
+  def this(conflictingCommit: Option[CommitInfo], file: String) = this(
+    DeltaErrors.concurrentModificationExceptionMsg(
+      SparkEnv.get.conf,
+      "This transaction attempted to delete one or more files that were deleted " +
+        s"(for example $file) by a concurrent update. Please try the operation again.",
+      conflictingCommit))
+}
+
+/**
+ * This class is kept for backward compatibility.
+ * Use [[io.delta.exceptions.ConcurrentTransactionException]] instead.
+ */
+class ConcurrentTransactionException(message: String)
+  extends io.delta.exceptions.DeltaConcurrentModificationException(message) {
+  def this(conflictingCommit: Option[CommitInfo]) = this(
+    DeltaErrors.concurrentModificationExceptionMsg(
+      SparkEnv.get.conf,
+      s"This error occurs when multiple streaming queries are using the same checkpoint to write " +
+        "into this table. Did you run multiple instances of the same streaming query" +
+        " at the same time?",
+      conflictingCommit))
+}
 
 /** A helper class in building a helpful error message in case of metadata mismatches. */
 class MetadataMismatchErrorBuilder {

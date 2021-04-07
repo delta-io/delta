@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.commands
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{ConcurrentWriteException, DeltaErrors, DeltaLog, DeltaOperations, OptimisticTransaction, Serializable}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, OptimisticTransaction, Serializable}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -302,7 +302,7 @@ trait DeltaCommand extends DeltaLogging {
           val winningCommitActions = logs.map(Action.fromJson)
           val commitInfo = winningCommitActions.collectFirst { case a: CommitInfo => a }
             .map(ci => ci.copy(version = Some(attemptVersion)))
-          throw new ConcurrentWriteException(commitInfo)
+          throw DeltaErrors.concurrentWriteException(commitInfo)
         } finally {
           logs.close()
         }

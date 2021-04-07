@@ -773,14 +773,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
           deltaLog.protocolWrite(p)
         }
         actions.foreach {
-          case Protocol(_, _) => throw new ProtocolChangedException(commitInfo)
+          case Protocol(_, _) => throw DeltaErrors.protocolChangedException(commitInfo)
           case _ =>
         }
       }
 
       // Fail if the metadata is different than what the txn read.
       if (metadataUpdates.nonEmpty) {
-        throw new MetadataChangedException(commitInfo)
+        throw DeltaErrors.metadataChangedException(commitInfo)
       }
 
       // Fail if new files have been added that the txn should have read.
@@ -811,7 +811,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
               "Upgrading all your concurrent writers to use the latest Delta Lake may " +
                 "avoid this error. Please upgrade and then retry this operation again.")
           } else None
-        throw new ConcurrentAppendException(
+        throw DeltaErrors.concurrentAppendException(
           commitInfo,
           predicatesMatchingAddedFiles.head,
           retryMsg)
@@ -823,24 +823,24 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       if (deleteReadOverlap.nonEmpty) {
         val filePath = deleteReadOverlap.get.path
         val partition = getPrettyPartitionMessage(readFilePaths(filePath))
-        throw new ConcurrentDeleteReadException(commitInfo, s"$filePath in $partition")
+        throw DeltaErrors.concurrentDeleteReadException(commitInfo, s"$filePath in $partition")
       }
       if (removedFiles.nonEmpty && readTheWholeTable) {
         val filePath = removedFiles.head.path
-        throw new ConcurrentDeleteReadException(commitInfo, s"$filePath")
+        throw DeltaErrors.concurrentDeleteReadException(commitInfo, s"$filePath")
       }
 
       // Fail if a file is deleted twice.
       val txnDeletes = actions.collect { case r: RemoveFile => r }.map(_.path).toSet
       val deleteOverlap = removedFiles.map(_.path).toSet intersect txnDeletes
       if (deleteOverlap.nonEmpty) {
-        throw new ConcurrentDeleteDeleteException(commitInfo, deleteOverlap.head)
+        throw DeltaErrors.concurrentDeleteDeleteException(commitInfo, deleteOverlap.head)
       }
 
       // Fail if idempotent transactions have conflicted.
       val txnOverlap = txns.map(_.appId).toSet intersect readTxn.toSet
       if (txnOverlap.nonEmpty) {
-        throw new ConcurrentTransactionException(commitInfo)
+        throw DeltaErrors.concurrentTransactionException(commitInfo)
       }
 
       logInfo("Completed checking for conflicts" + baseLog)
