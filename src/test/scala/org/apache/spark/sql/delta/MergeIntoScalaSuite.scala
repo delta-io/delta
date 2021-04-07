@@ -528,6 +528,26 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
       Nil)
   }
 
+  test("schema evolution with multiple update clauses") {
+    withSQLConf(("spark.databricks.delta.schema.autoMerge.enabled", "true")) {
+      withTable("target", "src") {
+        Seq((1, "a"), (2, "b"), (3, "c")).toDF("id", "targetValue")
+          .write.format("delta").saveAsTable("target")
+        val source = Seq((1, "x"), (2, "y"), (4, "z")).toDF("id", "srcValue")
+
+        io.delta.tables.DeltaTable.forName("target")
+          .merge(source, col("target.id") === source.col("id"))
+          .whenMatched("target.id = 1").updateExpr(Map("targetValue" -> "srcValue"))
+          .whenMatched("target.id = 2").updateAll()
+          .whenNotMatched().insertAll()
+          .execute()
+        checkAnswer(
+          sql("select * from target"),
+          Row(1, "x", null) +: Row(2, "b", "y") +: Row(3, "c", null) +: Row(4, null, "z") +: Nil)
+      }
+    }
+  }
+
   override protected def executeMerge(
       target: String,
       source: String,
