@@ -395,6 +395,42 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
     }
   }
 
+  /**
+   * SHOW CREATE TABLE is NOT supported in spark 3.1 for v2 tables.
+   */
+  test("SHOW CREATE TABLE should not include OPTIONS except for path - not supported") {
+    withTable("delta_test") {
+      sql(
+        s"""
+           |CREATE TABLE delta_test(a LONG, b String)
+           |USING delta
+           """.stripMargin)
+
+      val e = intercept[AnalysisException] {
+        sql("SHOW CREATE TABLE delta_test").collect()(0).getString(0)
+      }
+      assert(e.message.equals("SHOW CREATE TABLE is not supported for v2 tables."))
+    }
+
+    withTempDir { dir =>
+      withTable("delta_test") {
+        val path = dir.getCanonicalPath()
+        sql(
+          s"""
+             |CREATE TABLE delta_test(a LONG, b String)
+             |USING delta
+             |LOCATION '$path'
+             """.stripMargin)
+
+        val e = intercept[AnalysisException] {
+          sql("SHOW CREATE TABLE delta_test").collect()(0).getString(0)
+        }
+        assert(e.message.equals("SHOW CREATE TABLE is not supported for v2 tables."))
+      }
+    }
+  }
+
+
   test("DESCRIBE TABLE for partitioned table") {
     withTempDir { dir =>
       withTable("delta_test") {
