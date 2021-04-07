@@ -161,10 +161,13 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
       val deltaMerge =
         DeltaMergeInto(newTarget, source, condition, matchedActions ++ notMatchedActions)
 
-      val deltaMergeResolved =
-        DeltaMergeInto.resolveReferences(deltaMerge, conf)(tryResolveReferences(session) _)
+      DeltaMergeInto.resolveReferences(deltaMerge, conf)(tryResolveReferences(session))
 
-      deltaMergeResolved
+    case deltaMerge: DeltaMergeInto =>
+      val d = if (deltaMerge.childrenResolved && !deltaMerge.resolved) {
+        DeltaMergeInto.resolveReferences(deltaMerge, conf)(tryResolveReferences(session))
+      } else deltaMerge
+      d.copy(target = stripTempViewWrapper(d.target))
 
     case AlterTableAddConstraintStatement(
           original @ SessionCatalogAndIdentifier(catalog, ident), constraintName, expr) =>

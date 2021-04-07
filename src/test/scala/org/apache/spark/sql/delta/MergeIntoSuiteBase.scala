@@ -597,7 +597,7 @@ abstract class MergeIntoSuiteBase
 
   test("Negative case - basic syntax analysis") {
     withTable("source") {
-      Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value").createOrReplaceTempView("source")
+      Seq((1, 1), (0, 3)).toDF("key1", "value").createOrReplaceTempView("source")
       append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
 
       // insert expressions have target table reference
@@ -2740,6 +2740,26 @@ abstract class MergeIntoSuiteBase
       "only the last not matched clause can omit the condition" :: Nil)
 
   /* end unlimited number of merge clauses tests */
+
+  test("SC-70829 - prevent re-resolution with star and schema evolution") {
+    val source = "source"
+    val target = "target"
+    withTable(source, target) {
+
+      sql(s"""CREATE TABLE $source (id string, new string, old string, date DATE) USING delta""")
+      sql(s"""CREATE TABLE $target (id string, old string, date DATE) USING delta""")
+
+      withSQLConf("spark.databricks.delta.schema.autoMerge.enabled" -> "true") {
+        executeMerge(
+          tgt = s"$target t",
+          src = s"$source s",
+          // functions like date_sub requires additional work to resolve
+          cond = "s.id = t.id AND t.date >= date_sub(current_date(), 3)",
+          update(set = "*"),
+          insert(values = "*"))
+      }
+    }
+  }
 
   /**
    * @param functionType The type of the unsupported expression to be tested.

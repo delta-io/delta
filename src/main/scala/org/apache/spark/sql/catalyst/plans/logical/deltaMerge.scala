@@ -46,14 +46,23 @@ trait DeltaUnevaluable extends Expression {
 /**
  * Represents an action in MERGE's UPDATE or INSERT clause where a target columns is assigned the
  * value of an expression
+ *
  * @param targetColNameParts The name parts of the target column. This is a sequence to support
  *                           nested fields as targets.
- * @param expr Expression to generate the value of the target column.o
+ * @param expr Expression to generate the value of the target column.
+ * @param targetColNameResolved Whether the targetColNameParts have undergone resolution and checks
+ *                              for validity.
  */
-case class DeltaMergeAction(targetColNameParts: Seq[String], expr: Expression)
+case class DeltaMergeAction(
+    targetColNameParts: Seq[String],
+    expr: Expression,
+    targetColNameResolved: Boolean = false)
   extends UnaryExpression with DeltaUnevaluable {
   override def child: Expression = expr
   override def dataType: DataType = expr.dataType
+  override lazy val resolved: Boolean = {
+    childrenResolved && checkInputDataTypes().isSuccess && targetColNameResolved
+  }
   override def sql: String = s"$targetColString = ${expr.sql}"
   override def toString: String = s"$targetColString = $expr"
   private lazy val targetColString: String = targetColNameParts.mkString("`", "`.`", "`")
@@ -257,7 +266,6 @@ object DeltaMergeInto {
 
   def resolveReferences(merge: DeltaMergeInto, conf: SQLConf)(
       resolveExpr: (Expression, LogicalPlan) => Expression): DeltaMergeInto = {
-
     val DeltaMergeInto(target, source, condition, matchedClauses, notMatchedClause, _) = merge
 
     // We must do manual resolution as the expressions in different clauses of the MERGE have
@@ -305,7 +313,7 @@ object DeltaMergeInto {
               val resolvedExpr = resolveOrFail(
                 UnresolvedAttribute.quotedString(s"`$tgtColName`"),
                 fakeSourcePlan, s"$typ clause")
-              DeltaMergeAction(Seq(tgtColName), resolvedExpr)
+              DeltaMergeAction(Seq(tgtColName), resolvedExpr, targetColNameResolved = true)
             }
           case _: UnresolvedStar if canAutoMigrate =>
             clause match {
@@ -314,7 +322,7 @@ object DeltaMergeInto {
                 // column name. Target columns not present in the source will be filled in
                 // with null later.
                 source.output.map { attr =>
-                  DeltaMergeAction(Seq(attr.name), attr)
+                  DeltaMergeAction(Seq(attr.name), attr, targetColNameResolved = true)
                 }
               case _: DeltaMergeIntoUpdateClause =>
                 // Expand `*` into seq of [ `columnName = sourceColumnBySameName` ] for every source
@@ -338,15 +346,14 @@ object DeltaMergeInto {
                             s"${UnresolvedAttribute(nameParts).name} within the source query. " +
                             s"Please contact Databricks support.")
                       }
-                      Seq(DeltaMergeAction(nameParts, sourceExpr))
+                      Seq(DeltaMergeAction(nameParts, sourceExpr, targetColNameResolved = true))
                   }
                 }
                 getActions(source.schema, Seq.empty)
             }
 
           // For actions like `UPDATE SET x = a, y = b` or `INSERT (x, y) VALUES (a, b)`
-          case DeltaMergeAction(colNameParts, expr) =>
-
+          case d @ DeltaMergeAction(colNameParts, expr, _) if !d.resolved =>
             val unresolvedAttrib = UnresolvedAttribute(colNameParts)
             val resolutionErrorMsg =
               s"Cannot resolve ${unresolvedAttrib.sql} in target columns in $typ " +
@@ -357,10 +364,14 @@ object DeltaMergeInto {
             // parts of the name (e.g., "a.b" -> Seq("a", "b")). Otherwise, this will
             // return only one string.
             val resolvedNameParts = DeltaUpdateTable.getTargetColNameParts(
-              resolveOrFail(unresolvedAttrib, fakeTargetPlan, s"$typ clause"), resolutionErrorMsg)
-
+              resolveOrFail(unresolvedAttrib, fakeTargetPlan, s"$typ clause"),
+              resolutionErrorMsg)
             val resolvedExpr = resolveOrFail(expr, planToResolveAction, s"$typ clause")
-            Seq(DeltaMergeAction(resolvedNameParts, resolvedExpr))
+            Seq(DeltaMergeAction(resolvedNameParts, resolvedExpr, targetColNameResolved = true))
+
+          case d: DeltaMergeAction =>
+            // Already resolved
+            Seq(d)
 
           case _ =>
             action.failAnalysis(s"Unexpected action expression '$action' in clause $clause")
@@ -397,6 +408,7 @@ object DeltaMergeInto {
         s"from $input in operator ${resolvedMerge.simpleString(SQLConf.get.maxToStringFields)}."
       resolvedMerge.failAnalysis(msgForMissingAttributes)
     }
+
     resolvedMerge
   }
 }

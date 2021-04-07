@@ -127,7 +127,9 @@ case class PreprocessTableMerge(override val conf: SQLConf)
           conf.resolver)
         val alignedActions: Seq[DeltaMergeAction] = alignedExprs
           .zip(finalSchemaExprs)
-          .map { case (expr, attrib) => DeltaMergeAction(Seq(attrib.name), expr) }
+          .map { case (expr, attrib) =>
+            DeltaMergeAction(Seq(attrib.name), expr, targetColNameResolved = true)
+          }
 
         m.copy(m.condition, alignedActions)
 
@@ -155,7 +157,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
           conf.resolver(insertAct.targetColNameParts.head, col.name)
         }
       }.map { col =>
-        DeltaMergeAction(Seq(col.name), Literal(null, col.dataType))
+        DeltaMergeAction(Seq(col.name), Literal(null, col.dataType), targetColNameResolved = true)
       }
 
       val newActionsFromUpdate = matched.flatMap {
@@ -164,9 +166,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
             conf.resolver(insertAct.targetColNameParts.head, updateAct.targetColNameParts.head)
           }
         }.toSeq
-      }.map { updateAction =>
-        DeltaMergeAction(updateAction.targetColNameParts, Literal(null, updateAction.dataType))
-      }
+      }.map { updateAction => updateAction.copy(expr = Literal(null, updateAction.dataType)) }
 
       // Reorder actions by the target column order, with columns to be schema evolved that
       // aren't currently in the target at the end.
@@ -179,7 +179,8 @@ case class PreprocessTableMerge(override val conf: SQLConf)
             castIfNeeded(
               a.expr,
               targetAttrib.dataType,
-              allowStructEvolution = shouldAutoMigrate))
+              allowStructEvolution = shouldAutoMigrate),
+            targetColNameResolved = true)
         }.getOrElse {
           // If a target table column was not found in the INSERT columns and expressions,
           // then throw exception as there must be an expression to set every target column.

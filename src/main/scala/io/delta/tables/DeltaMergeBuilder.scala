@@ -227,6 +227,14 @@ class DeltaMergeBuilder private(
   @Evolving
   def execute(): Unit = improveUnsupportedOpError {
     val sparkSession = targetTable.toDF.sparkSession
+    // Note: We are explicitly resolving DeltaMergeInto plan rather than going to through the
+    // Analyzer using `Dataset.ofRows()` because the Analyzer incorrectly resolves all
+    // references in the DeltaMergeInto using both source and target child plans, even before
+    // DeltaAnalysis rule kicks in. This is because the Analyzer  understands only MergeIntoTable,
+    // and handles that separately by skipping resolution (for Delta) and letting the
+    // DeltaAnalysis rule do the resolving correctly. This can be solved by generating
+    // MergeIntoTable instead, which blocked by the different issue with MergeIntoTable as explained
+    // in the function `mergePlan` and https://issues.apache.org/jira/browse/SPARK-34962.
     val resolvedMergeInto =
       DeltaMergeInto.resolveReferences(mergePlan, sparkSession.sessionState.conf)(
         tryResolveReferences(sparkSession) _)
@@ -274,6 +282,13 @@ class DeltaMergeBuilder private(
         + refReplacementMap.toSeq.mkString(", "))
     }
 
+    // Note: The Scala API cannot generate MergeIntoTable just like the SQL parser because
+    // UpdateAction in MergeIntoTable does not have any way to differentiate between
+    // the representations of `updateAll()` and `update(some-condition, empty-actions)`.
+    // More specifically, UpdateAction with a list of empty Assignments implicitly represents
+    // `updateAll()`, so there is no way to represent `update()` with zero column assignments
+    // (possible in Scala API, but syntactically not possible in SQL). This issue is tracked
+    // by https://issues.apache.org/jira/browse/SPARK-34962.
     val merge = DeltaMergeInto(targetPlan, sourcePlan, onCondition.expr, whenClauses)
     val finalMerge = if (duplicateResolvedRefs.nonEmpty) {
       // If any expression contain duplicate, pre-resolved references, we can't simply
