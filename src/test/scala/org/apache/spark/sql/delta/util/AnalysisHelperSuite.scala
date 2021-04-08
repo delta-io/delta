@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.util
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 
-class AnalysisHelperTest extends QueryTest with SharedSparkSession {
+class AnalysisHelperSuite extends QueryTest with SharedSparkSession {
 
   test("should not throw NullPointerException when Exception has null description") {
 
