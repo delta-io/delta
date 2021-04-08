@@ -17,11 +17,11 @@
 package org.apache.spark.sql.delta
 
 import java.util.{Calendar, TimeZone}
-
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.commons.lang3.time.DateUtils
 import org.apache.hadoop.fs.{FileStatus, Path}
+import org.apache.spark.sql.{DataFrame, Row}
 
 /** Cleans up expired Delta table metadata. */
 trait MetadataCleanup extends DeltaLogging {
@@ -40,9 +40,25 @@ trait MetadataCleanup extends DeltaLogging {
     DeltaConfigs.getMilliSeconds(interval)
   }
 
-  override def doLogCleanup(): Unit = {
-    if (enableExpiredLogCleanup) {
-      cleanUpExpiredLogs()
+  override def doLogCleanup(dryRun: Boolean = false): DataFrame = {
+    val sparkSession = spark
+    import sparkSession.implicits._
+    val pathColName = "path"
+
+    // with dryRun enabled we just show the logs to be deleted
+    if (dryRun) {
+      val fileCutOffTime = truncateDay(clock.getTimeMillis() - deltaRetentionMillis).getTime
+      val expiredLogsIterator = listExpiredDeltaLogs(fileCutOffTime.getTime)
+      val expiredLogPaths = expiredLogsIterator.map(_.getPath.toString).toList
+      sparkSession.sparkContext.parallelize(expiredLogPaths).toDF(pathColName)
+    }
+
+    // otherwise we do not show logs and delete them if the cleanup is enabled
+    else {
+      if (enableExpiredLogCleanup) {
+        cleanUpExpiredLogs()
+      }
+      sparkSession.emptyDataFrame
     }
   }
 

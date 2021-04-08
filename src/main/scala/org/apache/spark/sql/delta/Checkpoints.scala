@@ -114,8 +114,8 @@ trait Checkpoints extends DeltaLogging {
   protected def store: LogStore
   protected def metadata: Metadata
 
-  /** Used to clean up stale log files. */
-  protected def doLogCleanup(): Unit
+  /** Used to clean up stale log files. Files are listed and not removed if dryRun is true */
+  protected def doLogCleanup(dryRun: Boolean = false): DataFrame
 
   /** The path to the file that holds metadata about the most recent checkpoint. */
   val LAST_CHECKPOINT = new Path(logPath, "_last_checkpoint")
