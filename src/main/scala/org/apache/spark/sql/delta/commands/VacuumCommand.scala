@@ -238,7 +238,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
         val filesDeleted = try {
           delete(diff, spark, basePath, hadoopConf, parallelDeleteEnabled)
         } catch { case t: Throwable =>
-          logVacuumEnd(deltaLog, spark)
+          logVacuumEnd(deltaLog, spark, path)
           throw t
         }
         val stats = DeltaVacuumStats(
@@ -249,7 +249,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           dirsPresentBeforeDelete = dirCounts,
           objectsDeleted = filesDeleted)
         recordDeltaEvent(deltaLog, "delta.gc.stats", data = stats)
-        logVacuumEnd(deltaLog, spark, Some(filesDeleted), Some(dirCounts))
+        logVacuumEnd(deltaLog, spark, path, Some(filesDeleted), Some(dirCounts))
 
         spark.createDataset(Seq(basePath)).toDF("path")
       } finally {
@@ -274,6 +274,7 @@ trait VacuumCommandImpl extends DeltaCommand {
   protected def logVacuumEnd(
       deltaLog: DeltaLog,
       spark: SparkSession,
+      path: Path,
       filesDeleted: Option[Long] = None,
       dirCounts: Option[Long] = None): Unit = {
     if (filesDeleted.nonEmpty) {
