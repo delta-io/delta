@@ -79,7 +79,9 @@ trait AnalysisHelper {
     ).map(_.toLowerCase())
 
     def isExtensionOrCatalogError(error: Exception): Boolean = {
-      possibleErrorMsgs.exists(m => error.getMessage().toLowerCase().contains(m))
+      possibleErrorMsgs.exists(m => {
+        error.getMessage != null && error.getMessage.toLowerCase().contains(m)
+      })
     }
 
     try { f } catch {
