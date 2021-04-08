@@ -95,14 +95,11 @@ lazy val core = (project in file("core"))
     (compile in Compile) := ((compile in Compile) dependsOn createTargetClassesDir).value
   )
 
+/**
+ * Get list of python files and return the mapping between source files and target paths
+ * in the generated package JAR.
+ */
 def listPythonFiles(pythonBase: File): Seq[(File, String)] = {
-  // Compile the python files
-  if (pythonBase.exists()) {
-    s"python -m compileall $pythonBase" !
-  }
-
-  // Get list of python files and return the mapping between source files and target paths
-  // in the generated package JAR.
   val pythonExcludeDirs = pythonBase / "lib" :: pythonBase / "doc" :: pythonBase / "bin" :: Nil
   import scala.collection.JavaConverters._
   val pythonFiles = Files.walk(pythonBase.toPath).iterator().asScala
