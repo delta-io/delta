@@ -154,7 +154,7 @@ trait DeltaReadOptions extends DeltaOptionParser {
  */
 class DeltaOptions(
     @transient protected[delta] val options: CaseInsensitiveMap[String],
-    @transient protected val sqlConf: SQLConf)
+    @transient protected[delta] val sqlConf: SQLConf)
   extends DeltaWriteOptions with DeltaReadOptions with Serializable {
 
   DeltaOptions.verifyOptions(options)
