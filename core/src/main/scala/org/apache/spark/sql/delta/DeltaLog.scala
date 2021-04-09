@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.{File, IOException}
-import java.util.concurrent.{Callable, TimeUnit}
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
 import scala.concurrent.Future
 import scala.util.Try
@@ -31,12 +31,12 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStoreProvider
-import com.google.common.cache.{CacheBuilder, RemovalListener, RemovalNotification}
+import com.google.common.cache.{CacheBuilder, RemovalNotification}
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
-import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable}
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, BucketSpec}
 import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Cast, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
 import org.apache.spark.sql.execution.datasources._
@@ -370,14 +370,12 @@ object DeltaLog extends DeltaLogging {
   private val deltaLogCache = {
     val builder = CacheBuilder.newBuilder()
       .expireAfterAccess(60, TimeUnit.MINUTES)
-      .removalListener(new RemovalListener[Path, DeltaLog] {
-        override def onRemoval(removalNotification: RemovalNotification[Path, DeltaLog]) = {
+      .removalListener((removalNotification: RemovalNotification[Path, DeltaLog]) => {
           val log = removalNotification.getValue
           try log.snapshot.uncache() catch {
             case _: java.lang.NullPointerException =>
-              // Various layers will throw null pointer if the RDD is already gone.
+            // Various layers will throw null pointer if the RDD is already gone.
           }
-        }
       })
     sys.props.get("delta.log.cacheSize")
       .flatMap(v => Try(v.toLong).toOption)
@@ -460,8 +458,7 @@ object DeltaLog extends DeltaLogging {
     // - Different `authority` (e.g., different user tokens in the path)
     // - Different mount point.
     try {
-      deltaLogCache.get(path, new Callable[DeltaLog] {
-        override def call(): DeltaLog = recordDeltaOperation(
+      deltaLogCache.get(path, () => { recordDeltaOperation(
             null, "delta.log.create", Map(TAG_TAHOE_PATH -> path.getParent.toString)) {
           AnalysisHelper.allowInvokingTransformsInAnalyzer {
             new DeltaLog(path, path.getParent, clock)
