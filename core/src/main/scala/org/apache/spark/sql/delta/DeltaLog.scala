@@ -239,13 +239,6 @@ class DeltaLog private(
    * --------------------- */
 
   /**
-   * If the given `protocol` is older than that of the client.
-   */
-  private def isProtocolOld(protocol: Protocol): Boolean = protocol != null &&
-    (Action.readerVersion > protocol.minReaderVersion ||
-      Action.writerVersion > protocol.minWriterVersion)
-
-  /**
    * Asserts that the client is up to date with the protocol and
    * allowed to read the table that is using the given `protocol`.
    */
