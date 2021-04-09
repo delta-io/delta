@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta.files
 
 import scala.collection.mutable.ListBuffer
-
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.constraints.{Constraint, Constraints, DeltaInvariantCheckerExec}
@@ -26,13 +25,13 @@ import org.apache.spark.sql.delta.schema._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.SparkException
 import org.apache.spark.sql.Dataset
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.datasources.{BasicWriteJobStatsTracker, FileFormatWriter, WriteJobStatsTracker}
-import org.apache.spark.sql.types.{ArrayType, MapType, StructType}
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
 
 /**
@@ -148,7 +147,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     val outputPath = deltaLog.dataPath
 
     val (options, sparkConf) = writeOptions match {
-      case None => (Map.empty[String, String], null)
+      case None => (Map.empty[String, String], null.asInstanceOf[SQLConf])
       case Some(writeOptions) => (writeOptions.options, writeOptions.sqlConf)
     }
 
