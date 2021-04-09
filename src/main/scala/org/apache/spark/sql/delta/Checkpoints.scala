@@ -243,7 +243,7 @@ object Checkpoints extends DeltaLogging {
           numOfFiles.add(1)
         }
         action
-      }.drop("commitInfo")
+      }.drop("commitInfo", "cdc")
 
     val chk = buildCheckpoint(base, snapshot)
     val schema = chk.schema.asNullable
