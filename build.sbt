@@ -16,6 +16,8 @@
 
 import java.nio.file.Files
 
+import com.typesafe.tools.mima.plugin.MimaKeys
+
 val sparkVersion = "3.1.1"
 scalaVersion := "2.12.10"
 
@@ -31,7 +33,7 @@ lazy val core = (project in file("core"))
     name := "delta-core",
     commonSettings,
     scalaStyleSettings,
-    mimaSettings,
+    // mimaSettings,
     unidocSettings,
     releaseSettings,
     libraryDependencies ++= Seq(
@@ -139,18 +141,39 @@ lazy val scalaStyleSettings = Seq(
  *  MIMA settings   *
  ********************
  */
-def getVersion(version: String): String = {
-  version.split("\\.").toList match {
-    case major :: minor :: rest =>
-      if (rest.head.startsWith("0")) s"$major.${minor.toInt - 1}.0"
-      else s"$major.$minor.${rest.head.replaceAll("-SNAPSHOT", "").toInt - 1}"
-    case _ => throw new Exception(s"Could not find previous version for $version.")
+def getPrevVersion(currentVersion: String): String = {
+  implicit def extractInt(str: String): Int = {
+    """\d+""".r.findFirstIn(str).map(java.lang.Integer.parseInt).getOrElse {
+      throw new Exception(s"Could not extract version number from $str in $version")
+    }
+  }
+
+  val (major, minor, patch): (Int, Int, Int) = {
+    currentVersion.split("\\.").toList match {
+      case majorStr :: minorStr :: patchStr :: _ =>
+        (majorStr, minorStr, patchStr)
+      case _ => throw new Exception(s"Could not find previous version for $version.")
+    }
+  }
+
+  val majorToLastMinorVersions = Map(
+    0 -> 8
+  )
+  if (minor == 0) {  // 1.0.0
+    val prevMinor = majorToLastMinorVersions.getOrElse(major - 1, {
+      throw new Exception(s"Last minor version of ${major - 1}.x.x not configured.")
+    })
+    s"${major - 1}.$prevMinor.0"  // 1.0.0 -> 0.8.0
+  } else if (patch == 0) {
+    s"$major.${minor - 1}.0"      // 1.1.0 -> 1.0.0
+  } else {
+    s"$major.$minor.${patch - 1}" // 1.1.1 -> 1.1.0
   }
 }
 
 lazy val mimaSettings = Seq(
   (test in Test) := ((test in Test) dependsOn mimaReportBinaryIssues).value,
-  mimaPreviousArtifacts := Set("io.delta" %% "delta-core" %  getVersion(version.value)),
+  mimaPreviousArtifacts := Set("io.delta" %% "delta-core" %  getPrevVersion(version.value)),
   mimaBinaryIssueFilters ++= MimaExcludes.ignoredABIProblems
 )
 
@@ -206,6 +229,15 @@ import ReleaseTransformations._
 lazy val releaseSettings = Seq(
   publishMavenStyle := true,
 
+  publishTo := {
+    val nexus = "https://oss.sonatype.org/"
+    if (isSnapshot.value) {
+      Some("snapshots" at nexus + "content/repositories/snapshots")
+    } else {
+      Some("releases"  at nexus + "service/local/staging/deploy/maven2")
+    }
+  },
+
   releaseCrossBuild := true,
 
   releaseProcess := Seq[ReleaseStep](
@@ -215,7 +247,7 @@ lazy val releaseSettings = Seq(
     setReleaseVersion,
     commitReleaseVersion,
     tagRelease,
-    publishArtifacts,
+    releaseStepCommand("+publishSigned"),
     setNextVersion,
     commitNextVersion
   ),
@@ -264,29 +296,11 @@ lazy val releaseSettings = Seq(
           <name>Shixiong Zhu</name>
           <url>https://github.com/zsxwing</url>
         </developer>
-      </developers>,
-
-  bintrayOrganization := Some("delta-io"),
-
-  bintrayRepository := "delta"
+      </developers>
 )
-
-// Don't release the root project
-publishArtifact := false
-
-publish := ()
 
 // Looks like some of release settings should be set for the root project as well.
-releaseCrossBuild := true
-
-releaseProcess := Seq[ReleaseStep](
-  checkSnapshotDependencies,
-  inquireVersions,
-  runTest,
-  setReleaseVersion,
-  commitReleaseVersion,
-  tagRelease,
-  publishArtifacts,
-  setNextVersion,
-  commitNextVersion
-)
+publishArtifact := false  // Don't release the root project
+publish := {}
+publishTo := Some("snapshots" at "https://oss.sonatype.org/content/repositories/snapshots")
+releaseCrossBuild := false
