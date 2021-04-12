@@ -146,12 +146,10 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     val partitionSchema = metadata.partitionSchema
     val outputPath = deltaLog.dataPath
 
-    val (options, sparkConf) = writeOptions match {
+    val (options, _) = writeOptions match {
       case None => (Map.empty[String, String], null.asInstanceOf[SQLConf])
       case Some(writeOptions) => (writeOptions.options, writeOptions.sqlConf)
     }
-
-    sparkConf.settings.forEach((key, value) => spark.conf.set(key, value))
 
     val (queryExecution, output, generatedColumnConstraints) =
       normalizeData(deltaLog, data, metadata.partitionColumns)
