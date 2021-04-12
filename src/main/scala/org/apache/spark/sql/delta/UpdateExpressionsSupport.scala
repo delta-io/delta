@@ -89,7 +89,7 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper {
                   }
                   Literal(null)
                 }
-              Seq(fieldNameLit, castIfNeeded(extractedField, field.dataType))
+              Seq(fieldNameLit, castIfNeeded(extractedField, field.dataType, allowStructEvolution))
             })
 
             cast(nameMappedStruct, to.asNullable)
@@ -127,12 +127,17 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper {
    * @param updateOps a set of update operations.
    * @param pathPrefix the path from root to the current (nested) column. Only used for printing out
    *                   full column path in error messages.
+   * @param allowStructEvolution Whether to allow structs to evolve. When this is false (default),
+   *                             struct casting will throw an error if there's any mismatch between
+   *                             column names. For example, (b, c, a) -> (a, b, c) is always a valid
+   *                             cast, but (a, b) -> (a, b, c) is valid only with this flag set.
    */
   protected def generateUpdateExpressions(
       targetCols: Seq[NamedExpression],
       updateOps: Seq[UpdateOperation],
       resolver: Resolver,
-      pathPrefix: Seq[String] = Nil): Seq[Expression] = {
+      pathPrefix: Seq[String] = Nil,
+      allowStructEvolution: Boolean = false): Seq[Expression] = {
     // Check that the head of nameParts in each update operation can match a target col. This avoids
     // silently ignoring invalid column names specified in update operations.
     updateOps.foreach { u =>
@@ -164,7 +169,7 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper {
               prefixMatchedOps.map(op => (pathPrefix ++ op.targetColNameParts).mkString(".")))
           }
           // For an exact match, return the updateExpr from the update operation.
-          castIfNeeded(fullyMatchedOp.get.updateExpr, targetCol.dataType)
+          castIfNeeded(fullyMatchedOp.get.updateExpr, targetCol.dataType, allowStructEvolution)
         } else {
           // So there are prefix-matched update operations, but none of them is a full match. Then
           // that means targetCol is a complex data type, so we recursively pass along the update
@@ -180,7 +185,8 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper {
                 childExprs,
                 prefixMatchedOps.map(u => u.copy(targetColNameParts = u.targetColNameParts.tail)),
                 resolver,
-                pathPrefix :+ targetCol.name)
+                pathPrefix :+ targetCol.name,
+                allowStructEvolution)
               // Reconstruct the expression for targetCol using its possibly updated children
               val namedStructExprs = fields
                 .zip(updatedChildExprs)

@@ -124,7 +124,8 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         val alignedExprs = generateUpdateExpressions(
           finalSchemaExprs,
           existingUpdateOps ++ newOpsFromTargetSchema ++ newOpsFromInsert,
-          conf.resolver)
+          conf.resolver,
+          allowStructEvolution = shouldAutoMigrate)
         val alignedActions: Seq[DeltaMergeAction] = alignedExprs
           .zip(finalSchemaExprs)
           .map { case (expr, attrib) =>

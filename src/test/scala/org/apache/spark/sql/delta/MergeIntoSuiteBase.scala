@@ -2271,6 +2271,36 @@ abstract class MergeIntoSuiteBase
     expectedWithoutEvolution = ((0, 0) +: (2, 2) +: (3, 30) +: (1, 1) +: Nil).toDF("key", "value")
   )
 
+  // Note that the obvious dual of this test, "update * and insert non-*", doesn't exist
+  // because nested columns can't be explicitly INSERTed to.
+  testEvolution("new nested column with update non-* and insert *")(
+    targetData = Seq((1, 1, 2, 3)).toDF("key", "a", "b", "c")
+      .selectExpr("key", "named_struct('a', a, 'b', b, 'c', c) as x"),
+    sourceData = Seq((1, 10, 30), (2, 20, 40)).toDF("key", "a", "c")
+      .selectExpr("key", "named_struct('a', a, 'c', c) as x"),
+    clauses = update("x.a = s.x.a") :: insert("*") :: Nil,
+    expected = Seq((1, 10, 2, 3), (2, 20, null, 40))
+      .asInstanceOf[List[(Integer, Integer, Integer, Integer)]]
+      .toDF("key", "a", "b", "c")
+      .selectExpr("key", "named_struct('a', a, 'b', b, 'c', c) as x"),
+    expectErrorWithoutEvolutionContains =
+      "Cannot cast struct<a:int,c:int> to struct<a:int,b:int,c:int>. All nested columns must match"
+  )
+
+  testEvolution("new nested-nested column with update non-* and insert *")(
+    targetData = Seq((1, 1, 2, 3)).toDF("key", "a", "b", "c")
+      .selectExpr("key", "named_struct('y', named_struct('a', a, 'b', b, 'c', c)) as x"),
+    sourceData = Seq((1, 10, 30), (2, 20, 40)).toDF("key", "a", "c")
+      .selectExpr("key", "named_struct('y', named_struct('a', a, 'c', c)) as x"),
+    clauses = update("x.y.a = s.x.y.a") :: insert("*") :: Nil,
+    expected = Seq((1, 10, 2, 3), (2, 20, null, 40))
+      .asInstanceOf[List[(Integer, Integer, Integer, Integer)]]
+      .toDF("key", "a", "b", "c")
+      .selectExpr("key", "named_struct('y', named_struct('a', a, 'b', b, 'c', c)) as x"),
+    expectErrorWithoutEvolutionContains =
+      "Cannot cast struct<a:int,c:int> to struct<a:int,b:int,c:int>. All nested columns must match"
+  )
+
   testEvolution("new column with update * and insert non-*")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1, 1), (2, 2, 2)).toDF("key", "value", "extra"),
