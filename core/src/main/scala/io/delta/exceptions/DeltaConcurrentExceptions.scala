@@ -50,8 +50,8 @@ class ConcurrentDeleteReadException(message: String)
   extends org.apache.spark.sql.delta.ConcurrentDeleteReadException(message)
 
 /**
-* Thrown when the current transaction deletes data that was deleted by a concurrent transaction.
-*/
+ * Thrown when the current transaction deletes data that was deleted by a concurrent transaction.
+ */
 class ConcurrentDeleteDeleteException(message: String)
   extends org.apache.spark.sql.delta.ConcurrentDeleteDeleteException(message)
 

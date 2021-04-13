@@ -14,6 +14,8 @@
 # limitations under the License.
 #
 
+import delta.exceptions  # noqa: F401; pylint: disable=unused-variable
+
 from pyspark import since
 from pyspark.sql import Column, DataFrame, functions
 
