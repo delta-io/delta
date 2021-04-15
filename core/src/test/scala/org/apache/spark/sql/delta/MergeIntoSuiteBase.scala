@@ -2796,71 +2796,90 @@ abstract class MergeIntoSuiteBase
   }
 
   /**
+   * @param function the unsupported function used in query.
    * @param functionType The type of the unsupported expression to be tested.
    * @param mergeCondition the merge condition containing the unsupported expression.
    * @param clauseCondition the clause condition containing the unsupported expression.
    * @param clauseAction the clause action containing the unsupported expression.
-   * @param expectedError the expected error string contained in thrown exception.
    */
   def testUnsupportedExpression(
+      function: String,
       functionType: String,
       mergeCondition: String,
       clauseCondition: String,
       clauseAction: String,
-      expectedError: String) {
-    test(s"$functionType functions is not supported in merge") {
-      withTempDir { source =>
-        withTempDir { target =>
-          val src = source.getCanonicalPath
-          val trgt = target.getCanonicalPath
-          Seq((1, 2, 3)).toDF("a", "b", "c").write.format("delta").save(src)
-          Seq((1, 5, 6)).toDF("a", "b", "c").write.format("delta").save(trgt)
+      conditionErrorRegex: Option[String] = None) {
+    test(s"$functionType functions are not supported in merge") {
+      withTable("source", "target") {
+        Seq((1, 2, 3)).toDF("a", "b", "c")
+          .write.format("delta").saveAsTable("source")
 
-          def checkUnsupportedError(
-              condition: Option[String] = None,
-              clause: Option[MergeClause] = None) {
-            val e = intercept[org.apache.spark.sql.AnalysisException] {
-              executeMerge(
-                tgt = s"delta.`$trgt` as t",
-                src = s"delta.`$src` as s",
-                cond = condition.getOrElse("s.a = t.a"),
-                clause.getOrElse(update(set = "b = s.b"))
-              )
-            }
-            assert(e.message.matches(s"(?s).*(?i)unsupported.*(?i)$functionType.*"))
-            assert(e.message.contains(expectedError))
-          }
+        Seq((1, 5, 6)).toDF("a", "b", "c")
+          .write.format("delta").saveAsTable("target")
 
-          // on merge condition
-          checkUnsupportedError(condition = Option(mergeCondition))
+        val expectedErrorRegex = s"(?s).*(?i)unsupported.*(?i)$functionType" +
+          s".*Invalid expressions: \\[$function.*"
 
-          // on update condition
-          checkUnsupportedError(clause =
-            Option(update(condition = clauseCondition, set = "b = s.b")))
-
-          // on update action
-          checkUnsupportedError(clause = Option(update(set = s"b = $clauseAction")))
-
-          // on insert condition
-          checkUnsupportedError(
-            clause = Option(
-              insert(values = "(a, b, c) VALUES (s.a, s.b, s.c)", condition = clauseCondition)
+        def checkUnsupportedError(
+            condition: Option[String] = None,
+            clause: Option[MergeClause] = None,
+            expectedRegex: String) {
+          val e = intercept[org.apache.spark.sql.AnalysisException] {
+            executeMerge(
+              tgt = "target as t",
+              src = "source as s",
+              cond = condition.getOrElse("s.a = t.a"),
+              clause.getOrElse(update(set = "b = s.b"))
             )
-          )
-
-          // on insert action
-          checkUnsupportedError(
-            clause = Option(insert(values = s"(a, b, c) VALUES ($clauseAction, s.b, s.c)")))
+          }
+          assert(e.message.matches(expectedRegex))
         }
+
+        // on merge condition
+        checkUnsupportedError(
+          condition = Option(mergeCondition),
+          expectedRegex = conditionErrorRegex.getOrElse(expectedErrorRegex))
+
+        // on update condition
+        checkUnsupportedError(
+          clause = Option(update(condition = clauseCondition, set = "b = s.b")),
+          expectedRegex = conditionErrorRegex.getOrElse(expectedErrorRegex))
+
+        // on update action
+        checkUnsupportedError(
+          clause = Option(update(set = s"b = $clauseAction")),
+          expectedRegex = expectedErrorRegex)
+
+        // on insert condition
+        checkUnsupportedError(
+          clause = Option(
+            insert(values = "(a, b, c) VALUES (s.a, s.b, s.c)", condition = clauseCondition)),
+          expectedRegex = conditionErrorRegex.getOrElse(expectedErrorRegex)
+        )
+
+        // on insert action
+        checkUnsupportedError(
+          clause = Option(insert(values = s"(a, b, c) VALUES ($clauseAction, s.b, s.c)")),
+          expectedRegex = expectedErrorRegex)
       }
     }
   }
 
   testUnsupportedExpression(
+    function = "row_number",
     functionType = "Window",
     mergeCondition = "(row_number() over (order by s.c)) = (row_number() over (order by t.c))",
     clauseCondition = "row_number() over (order by s.c) > 1",
-    clauseAction = "row_number() over (order by s.c)",
-    expectedError = "Invalid expressions: [row_number() OVER"
+    clauseAction = "row_number() over (order by s.c)"
+  )
+
+  testUnsupportedExpression(
+    function = "max",
+    functionType = "Aggregate",
+    mergeCondition = "t.a = max(s.a)",
+    clauseCondition = "max(s.b) > 1",
+    clauseAction = "max(s.c)",
+    conditionErrorRegex =
+      Option("Aggregate functions are not supported in the .* condition of MERGE operation.*")
   )
 }

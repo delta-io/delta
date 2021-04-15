@@ -645,45 +645,58 @@ abstract class UpdateSuiteBase
   }
 
   /**
+   * @param function the unsupported function.
    * @param functionType The type of the unsupported expression to be tested.
    * @param set the set action containing the unsupported expression.
    * @param where the where clause containing the unsupported expression.
-   * @param expectedError the expected error string contained in thrown exception.
    */
   def testUnsupportedExpression(
+      function: String,
       functionType: String,
       set: String,
-      where: String,
-      expectedError: String) {
-    test(s"$functionType functions is not supported in update") {
-      withTempDir { dir =>
-        val path = dir.getCanonicalPath
-        Seq((1, 2, 3)).toDF("a", "b", "c").write.format("delta").save(path)
+      where: String) {
+    test(s"$functionType functions are not supported in update") {
+      withTable("deltaTable") {
+        Seq((1, 2, 3)).toDF("a", "b", "c")
+          .write.format("delta").saveAsTable("deltaTable")
 
-        def checkUnsupportedException(set: Option[String] = None, where: Option[String] = None) {
+        val expectedErrorRegex = s"(?s).*(?i)unsupported.*(?i)$functionType" +
+          s".*Invalid expressions: \\[$function.*"
+
+        def checkUnsupportedException(
+            errorRegex: String,
+            set: Option[String] = None,
+            where: Option[String] = None) {
           val e = intercept[org.apache.spark.sql.AnalysisException] {
             executeUpdate(
-              s"delta.`$path`",
+              "deltaTable",
               set.getOrElse("b = 4"),
               where.getOrElse("a = 1"))
           }
-          assert(e.message.matches(s"(?s).*(?i)unsupported.*(?i)$functionType.*"))
-          assert(e.message.contains(expectedError))
+          assert(e.message.matches(errorRegex))
         }
+
         // on set
-        checkUnsupportedException(set = Option(set))
+        checkUnsupportedException(expectedErrorRegex, set = Option(set))
 
         // on condition
-        checkUnsupportedException(where = Option(where))
+        checkUnsupportedException(expectedErrorRegex, where = Option(where))
       }
     }
   }
 
   testUnsupportedExpression(
+    function = "row_number",
     functionType = "Window",
     set = "b = row_number() over (order by c)",
-    where = "row_number() over (order by c) > 1",
-    expectedError = "Invalid expressions: [row_number() OVER"
+    where = "row_number() over (order by c) > 1"
+  )
+
+  testUnsupportedExpression(
+    function = "max",
+    functionType = "Aggregate",
+    set = "b = max(c)",
+    where = "b > max(c)"
   )
 
   protected def checkUpdateJson(

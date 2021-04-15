@@ -24,6 +24,7 @@ import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.{ArrayType, IntegerType, StructType}
 import org.apache.spark.util.Utils
 
 abstract class DeleteSuiteBase extends QueryTest
@@ -354,31 +355,39 @@ abstract class DeleteSuiteBase extends QueryTest
   }
 
   /**
+   * @param function the unsupported function.
    * @param functionType The type of the unsupported expression to be tested.
    * @param where the where clause containing the unsupported expression.
-   * @param expectedError the expected error string contained in thrown exception.
    */
   def testUnsupportedExpression(
+      function: String,
       functionType: String,
-      where: String,
-      expectedError: String) {
-    test(s"$functionType functions is not supported in delete") {
+      where: String) {
+    test(s"$functionType functions are not supported in delete") {
       withTable("deltaTable") {
         Seq((2, 2), (1, 4)).toDF("key", "value")
           .write.format("delta").saveAsTable("deltaTable")
 
+        val expectedErrorRegex = s"(?s).*(?i)unsupported.*(?i)$functionType" +
+          s".*Invalid expressions: \\[$function.*"
+
         val e = intercept[org.apache.spark.sql.AnalysisException] {
           executeDelete(target = "deltaTable", where = where)
         }
-        assert(e.message.matches(s"(?s).*(?i)unsupported.*(?i)$functionType.*"))
-        assert(e.message.contains(expectedError))
+        assert(e.message.matches(expectedErrorRegex))
       }
     }
   }
 
   testUnsupportedExpression(
+    function = "row_number",
     functionType = "Window",
-    where = "row_number() over (order by value) > 1",
-    expectedError = "Invalid expressions: [row_number() OVER"
+    where = "row_number() over (order by value) > 1"
+  )
+
+  testUnsupportedExpression(
+    function = "max",
+    functionType = "Aggregate",
+    where = "key > max(value)"
   )
 }
