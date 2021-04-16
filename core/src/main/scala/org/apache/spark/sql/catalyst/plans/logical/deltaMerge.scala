@@ -66,6 +66,8 @@ case class DeltaMergeAction(
   override def sql: String = s"$targetColString = ${expr.sql}"
   override def toString: String = s"$targetColString = $expr"
   private lazy val targetColString: String = targetColNameParts.mkString("`", "`.`", "`")
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 
@@ -161,14 +163,18 @@ case class DeltaMergeIntoUpdateClause(condition: Option[Expression], actions: Se
 
   def this(cond: Option[Expression], cols: Seq[UnresolvedAttribute], exprs: Seq[Expression]) =
     this(cond, DeltaMergeIntoClause.toActions(cols, exprs))
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 /** Represents the clause WHEN MATCHED THEN DELETE in MERGE. See [[DeltaMergeInto]]. */
 case class DeltaMergeIntoDeleteClause(condition: Option[Expression])
     extends DeltaMergeIntoMatchedClause {
   def this(condition: Option[Expression], actions: Seq[DeltaMergeAction]) = this(condition)
-
+  children
   override def actions: Seq[Expression] = Seq.empty
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 /** Represents the clause WHEN NOT MATCHED THEN INSERT in MERGE. See [[DeltaMergeInto]]. */
@@ -177,6 +183,8 @@ case class DeltaMergeIntoInsertClause(condition: Option[Expression], actions: Se
 
   def this(cond: Option[Expression], cols: Seq[UnresolvedAttribute], exprs: Seq[Expression]) =
     this(cond, DeltaMergeIntoClause.toActions(cols, exprs))
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 /**
@@ -223,8 +231,10 @@ case class DeltaMergeInto(
 
   (matchedClauses ++ notMatchedClauses).foreach(_.verifyActions())
 
+  // TODO: extend BinaryCommand once the new Spark version is released
   override def children: Seq[LogicalPlan] = Seq(target, source)
   override def output: Seq[Attribute] = Seq.empty
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 object DeltaMergeInto {

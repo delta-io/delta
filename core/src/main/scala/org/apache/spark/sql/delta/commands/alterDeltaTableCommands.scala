@@ -37,7 +37,7 @@ import org.apache.spark.sql.catalyst.expressions.{Expression, IsNotNull, IsNull,
 import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, LogicalPlan, QualifiedColType}
 import org.apache.spark.sql.connector.catalog.TableCatalog
 import org.apache.spark.sql.connector.catalog.TableChange.{After, ColumnPosition, First}
-import org.apache.spark.sql.execution.command.{DDLUtils, RunnableCommand}
+import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
 import org.apache.spark.sql.types._
 
@@ -97,6 +97,8 @@ case class AlterTableSetPropertiesDeltaCommand(
       Seq.empty[Row]
     }
   }
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 /**
@@ -146,6 +148,8 @@ case class AlterTableUnsetPropertiesDeltaCommand(
       Seq.empty[Row]
     }
   }
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 /**
@@ -229,6 +233,8 @@ case class AlterTableAddColumnsDeltaCommand(
       Some((col.name.init, field, col.position))
     }
   }
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 /**
@@ -394,6 +400,8 @@ case class AlterTableChangeColumnDeltaCommand(
           s" (nullable = ${newColumn.nullable})'")
     }
   }
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 /**
@@ -439,6 +447,8 @@ case class AlterTableReplaceColumnsDeltaCommand(
       Seq.empty[Row]
     }
   }
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 /**
@@ -493,6 +503,8 @@ case class AlterTableSetLocationDeltaCommand(
     oldMetadata.schema == newMetadata.schema &&
       oldMetadata.partitionSchema == newMetadata.partitionSchema
   }
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 /**
@@ -545,6 +557,8 @@ case class AlterTableAddConstraintDeltaCommand(
     }
     Seq()
   }
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 /**
@@ -575,4 +589,6 @@ case class AlterTableDropConstraintDeltaCommand(
 
     Seq()
   }
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }

@@ -425,6 +425,8 @@ case class CreateDeltaTableCommand(
     Thread.currentThread().getStackTrace.exists(_.toString.contains(
       classOf[DataFrameWriter[_]].getCanonicalName + "."))
   }
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 object TableCreationModes {

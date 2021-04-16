@@ -37,6 +37,8 @@ case class DeltaUpdateTable(
   assert(updateColumns.size == updateExpressions.size)
 
   override def output: Seq[Attribute] = Seq.empty
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 object DeltaUpdateTable {

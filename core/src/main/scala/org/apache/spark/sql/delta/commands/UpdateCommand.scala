@@ -235,6 +235,9 @@ case class UpdateCommand(
       new Column(Alias(updated, original.name)())
     }
   }
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+
 }
 
 object UpdateCommand {

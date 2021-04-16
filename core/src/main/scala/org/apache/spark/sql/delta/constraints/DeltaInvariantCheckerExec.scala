@@ -44,6 +44,8 @@ case class DeltaInvariantChecker(
     deltaConstraints: Seq[Constraint])
   extends UnaryNode {
   override def output: Seq[Attribute] = child.output
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 object DeltaInvariantCheckerStrategy extends SparkStrategy {
@@ -90,6 +92,8 @@ case class DeltaInvariantCheckerExec(
   override def outputOrdering: Seq[SortOrder] = child.outputOrdering
 
   override def outputPartitioning: Partitioning = child.outputPartitioning
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 object DeltaInvariantCheckerExec {
