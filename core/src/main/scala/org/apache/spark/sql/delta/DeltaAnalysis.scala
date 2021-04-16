@@ -43,6 +43,7 @@ import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.internal.SQLConf
@@ -359,12 +360,10 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
   }
 
   private def stripTempViewWrapper(plan: LogicalPlan): LogicalPlan = {
-    plan
-      .transformUp {
-        case v: View if v.isTempView => v.child
-      }
+    DeltaViewHelper.stripTempView(plan, conf)
   }
 }
+
 
 /** Matchers for dealing with a Delta table. */
 object DeltaRelation {

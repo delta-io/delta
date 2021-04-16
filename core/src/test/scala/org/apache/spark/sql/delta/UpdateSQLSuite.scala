@@ -63,6 +63,16 @@ class UpdateSQLSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
     }
   }
 
+  test("update a SQL temp view") {
+    withTable("tab") {
+      withTempView("v") {
+        Seq((0, 3)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+        sql("CREATE TEMP VIEW v AS SELECT * FROM tab")
+        sql("UPDATE v SET key = 1 WHERE key = 0 AND value = 3")
+        checkAnswer(spark.table("tab"), Row(1, 3))
+      }
+    }
+  }
 
   override protected def executeUpdate(
       target: String,
