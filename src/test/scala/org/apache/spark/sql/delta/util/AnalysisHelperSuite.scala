@@ -22,7 +22,6 @@ import org.apache.spark.sql.test.SharedSparkSession
 class AnalysisHelperSuite extends QueryTest with SharedSparkSession {
 
   test("should not throw NullPointerException when Exception has null description") {
-
     class FakeAnalysisHelper extends AnalysisHelper {
       def throwInterruptedException(): Unit = super.improveUnsupportedOpError {
         throw new InterruptedException()
