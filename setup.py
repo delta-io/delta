@@ -58,6 +58,7 @@ setup(
     packages=['delta'],
     install_requires=[
         'pyspark>=3.0.0',
+        'importlib_metadata>=3.10.0',
     ],
     python_requires='>=3',
     cmdclass={

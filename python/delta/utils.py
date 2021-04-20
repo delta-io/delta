@@ -13,8 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+import importlib_metadata
 
-from delta.tables import DeltaTable
-from delta.utils import get_delta_maven_coordinate
-
-__all__ = ['DeltaTable', 'get_delta_maven_coordinate']
+def get_delta_maven_coordinate():
+    delta_version = importlib_metadata.version("delta-io")
+    scala_version = "2.12"
+    return f"io.delta:delta-core_{scala_version}:{delta_version}"
