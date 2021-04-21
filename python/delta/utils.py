@@ -15,6 +15,7 @@
 #
 import importlib_metadata
 
+
 def get_delta_maven_coordinate():
     delta_version = importlib_metadata.version("delta-io")
     scala_version = "2.12"

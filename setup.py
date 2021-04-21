@@ -31,7 +31,7 @@ with open("python/README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
-    name="delta-io",
+    name="delta.io",
     version=VERSION,
     description="Delta Lake Python API",
     long_description=long_description,
