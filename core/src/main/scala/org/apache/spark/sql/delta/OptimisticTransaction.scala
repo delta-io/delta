@@ -802,7 +802,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
         val conflictingFile = DeltaLog.filterFileList(
           metadata.partitionSchema,
           addedFilesToCheckForConflicts.filter(isDataChangeOrConflict).toDF(),
-          p :: Nil).as[AddFile].take(1)
+          p :: Nil)
+          .as[AddFile]
+          .take(1)
 
         conflictingFile.headOption.map(f => getPrettyPartitionMessage(f.partitionValues))
       }.take(1).toArray

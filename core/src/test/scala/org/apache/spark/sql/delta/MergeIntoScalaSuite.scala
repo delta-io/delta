@@ -617,7 +617,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
 
   def runCompaction(location: String): Unit = {
     val table = DeltaTable.forPath(spark, location)
-    val lastTableOperation = table.history(1).select("operation").head().getString(0)
+    val lastTableOperation = table.history(1).select("operation").as[String].head
     if (lastTableOperation == "MERGE") {
       DeltaTable.forPath(spark, location).toDF
         .coalesce(1)
