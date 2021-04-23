@@ -20,7 +20,6 @@ import java.util.Locale
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import io.delta.tables._
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.plans.Inner
@@ -36,6 +35,7 @@ import scala.reflect.{ClassTag, classTag}
 
 class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
 
+  import io.delta.tables._
   import testImplicits._
 
   test("basic scala API") {
@@ -586,7 +586,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
   def executeConcurrentCompactionTestInsertOnlyMerge(location: String, i: Int): Unit = {
     val df = spark.range(i, i + concurrentCompactionTestRangeSize)
       .withColumn("par", $"id" % concurrentCompactionTestPartitions)
-    val table = io.delta.tables.DeltaTable.forPath(spark, location)
+    val table = DeltaTable.forPath(spark, location)
     table.alias("t").merge(df.alias("s"), "slowMergeCondition(s.par=t.par AND s.id=t.id)")
       .whenNotMatched().insertAll()
       .execute()
@@ -595,7 +595,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
   def executeConcurrentCompactionTestUpsertMerge(location: String, i: Int): Unit = {
     val df = spark.range(i, i + concurrentCompactionTestRangeSize)
       .withColumn("par", $"id" % concurrentCompactionTestPartitions)
-    val table = io.delta.tables.DeltaTable.forPath(spark, location)
+    val table = DeltaTable.forPath(spark, location)
     table.alias("t").merge(df.alias("s"), "slowMergeCondition(s.par=t.par AND s.id=t.id)")
       .whenNotMatched().insertAll()
       .whenMatched().updateAll()
@@ -616,7 +616,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
   }
 
   def runCompaction(location: String): Unit = {
-    val table = io.delta.tables.DeltaTable.forPath(spark, location)
+    val table = DeltaTable.forPath(spark, location)
     val lastTableOperation = table.history(1).select("operation").head().getString(0)
     if (lastTableOperation == "MERGE") {
       spark.read.format("delta")
@@ -660,7 +660,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
     runCompactionLop = false
     ThreadUtils.awaitReady(compactionFuture, duration.Duration.create(5, duration.MINUTES))
     runCompaction(location)
-    val table = io.delta.tables.DeltaTable.forPath(spark, location)
+    val table = DeltaTable.forPath(spark, location)
     withSQLConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
       table.vacuum(0)
     }
