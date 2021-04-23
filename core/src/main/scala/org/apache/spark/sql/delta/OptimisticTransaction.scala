@@ -718,10 +718,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   }
 
   /**
-   * Used to filter collections of `FileAction`s with `dataChange=false`
-   * when `DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION` is enabled.
+   * This function is used to determine if the given `FileAction` should be considered when
+   * checking for conflicts based on the value of `dataChange` and the configuration toggle
+   * `DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION`.
    */
-  protected def filterDataChange(f: FileAction): Boolean = {
+  protected def isDataChangeOrConflict(f: FileAction): Boolean = {
     f.dataChange || !spark.conf.get(DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION)
   }
 
@@ -800,7 +801,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       val predicatesMatchingAddedFiles = ExpressionSet(readPredicates).iterator.flatMap { p =>
         val conflictingFile = DeltaLog.filterFileList(
           metadata.partitionSchema,
-          addedFilesToCheckForConflicts.filter(filterDataChange).toDF(),
+          addedFilesToCheckForConflicts.filter(isDataChangeOrConflict).toDF(),
           p :: Nil).as[AddFile].take(1)
 
         conflictingFile.headOption.map(f => getPrettyPartitionMessage(f.partitionValues))
@@ -829,7 +830,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       // Fail if files have been deleted that the txn read.
       val readFilePaths = readFiles.map(f => f.path -> f.partitionValues).toMap
       val deleteReadOverlap = removedFiles.find(r =>
-        filterDataChange(r) & readFilePaths.contains(r.path))
+        isDataChangeOrConflict(r) & readFilePaths.contains(r.path))
       if (deleteReadOverlap.nonEmpty) {
         val filePath = deleteReadOverlap.get.path
         val partition = getPrettyPartitionMessage(readFilePaths(filePath))
