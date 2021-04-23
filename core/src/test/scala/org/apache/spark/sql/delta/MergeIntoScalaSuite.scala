@@ -607,7 +607,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
       .range(concurrentCompactionTestNumIterations + concurrentCompactionTestRangeSize - 1)
       .withColumn("par", $"id" % concurrentCompactionTestPartitions)
       .orderBy("id")
-    val deltaResultDF = spark.read.format("delta").load(location).orderBy("id")
+    val deltaResultDF = DeltaTable.forPath(spark, location).toDF.orderBy("id")
     checkAnswer(deltaResultDF, expectedDF)
     // make sure no extra files were left after last vacuum
     // this is a safety check to see that we are not leaving any untracked files in the table
@@ -619,8 +619,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
     val table = DeltaTable.forPath(spark, location)
     val lastTableOperation = table.history(1).select("operation").head().getString(0)
     if (lastTableOperation == "MERGE") {
-      spark.read.format("delta")
-        .load(location)
+      DeltaTable.forPath(spark, location).toDF
         .coalesce(1)
         .write.format("delta")
         .mode("overwrite")
