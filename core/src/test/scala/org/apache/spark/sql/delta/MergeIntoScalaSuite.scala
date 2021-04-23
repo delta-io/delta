@@ -633,8 +633,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
 
   def runConcurrentCompactionTest[ExpectedExceptionType: ClassTag](
       location: String,
-      executeMergeTest: (String, Int) => Unit
-  ): Unit = {
+      executeMergeTest: (String, Int) => Unit): Unit = {
     var runCompactionLop = true
     val compactionFuture = Future {
       while (runCompactionLop) runCompaction(location)
