@@ -832,7 +832,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       // Fail if files have been deleted that the txn read.
       val readFilePaths = readFiles.map(f => f.path -> f.partitionValues).toMap
       val deleteReadOverlap = removedFiles.find(r =>
-        isDataChangeOrConflict(r) & readFilePaths.contains(r.path))
+        isDataChangeOrConflict(r) && readFilePaths.contains(r.path))
       if (deleteReadOverlap.nonEmpty) {
         val filePath = deleteReadOverlap.get.path
         val partition = getPrettyPartitionMessage(readFilePaths(filePath))
