@@ -27,6 +27,12 @@ import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.logical.Join
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.util.ThreadUtils
+
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.Future
+import scala.concurrent.duration
+import scala.reflect.{ClassTag, classTag}
 
 class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
 
@@ -545,6 +551,161 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
           sql("select * from target"),
           Row(1, "x", null) +: Row(2, "b", "y") +: Row(3, "c", null) +: Row(4, null, "z") +: Nil)
       }
+    }
+  }
+
+  def withConcurrentCompactionTestSetup(toggle: Boolean)(closure: String => Unit): Unit = {
+    // in order to slow down the merge operation and increase the conflict probability,
+    // we use a UDF with sleep as the merge condition
+    spark.udf.register("slowMergeCondition", (condition: Boolean) => {
+      Thread.sleep(10)
+      condition
+    })
+
+    withTempDir { dir =>
+      withSQLConf(DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION.key -> toggle.toString,
+                  // we enable merge repartition before write to slow down the merge operation,
+                  // thus increasing conflict probability
+                  DeltaSQLConf.MERGE_REPARTITION_BEFORE_WRITE.key -> "true") {
+        closure(dir.getAbsolutePath)
+      }
+    }
+  }
+
+  val concurrentCompactionTestPartitions = 3
+  val concurrentCompactionTestRangeSize = 10
+  val concurrentCompactionTestNumIterations = 10
+
+  def createConcurrentCompactionTestTable(location: String): Unit = {
+    spark.range(0)
+            .withColumn("par", $"id" % concurrentCompactionTestPartitions)
+            .coalesce(1)
+            .write.partitionBy("par").format("delta").save(location)
+  }
+
+  def executeConcurrentCompactionTestInsertOnlyMerge(location: String, i: Int): Unit = {
+    val df = spark.range(i, i + concurrentCompactionTestRangeSize)
+            .withColumn("par", $"id" % concurrentCompactionTestPartitions)
+    val table = io.delta.tables.DeltaTable.forPath(spark, location)
+    table.alias("t").merge(df.alias("s"), "slowMergeCondition(s.par=t.par AND s.id=t.id)")
+            .whenNotMatched().insertAll()
+            .execute()
+  }
+
+  def executeConcurrentCompactionTestUpsertMerge(location: String, i: Int): Unit = {
+    val df = spark.range(i, i + concurrentCompactionTestRangeSize)
+            .withColumn("par", $"id" % concurrentCompactionTestPartitions)
+    val table = io.delta.tables.DeltaTable.forPath(spark, location)
+    table.alias("t").merge(df.alias("s"), "slowMergeCondition(s.par=t.par AND s.id=t.id)")
+            .whenNotMatched().insertAll()
+            .whenMatched().updateAll()
+            .execute()
+  }
+
+  def assertConcurrentCompactionTestResults(location: String): Unit = {
+    val expectedDF = spark
+            .range(concurrentCompactionTestNumIterations + concurrentCompactionTestRangeSize - 1)
+            .withColumn("par", $"id" % concurrentCompactionTestPartitions)
+            .orderBy("id")
+    val deltaResultDF = spark.read.format("delta").load(location).orderBy("id")
+    checkAnswer(deltaResultDF, expectedDF)
+    // make sure no extra files were left after last vacuum
+    // this is a safety check to see that we are not leaving any untracked files in the table
+    val parquetResultDF = spark.read.parquet(location).orderBy("id")
+    checkAnswer(parquetResultDF, expectedDF)
+  }
+
+  def runCompaction(location: String): Unit = {
+    val table = io.delta.tables.DeltaTable.forPath(spark, location)
+    val lastTableOperation = table.history(1).select("operation").head().getString(0)
+    if (lastTableOperation == "MERGE") {
+      spark.read.format("delta")
+              .load(location)
+              .coalesce(1)
+              .write.format("delta")
+              .mode("overwrite")
+              .option("dataChange", "false")
+              .save(location)
+    }
+  }
+
+  class NoException extends Throwable
+
+  def runConcurrentCompactionTest[ExpectedExceptionType: ClassTag]
+  (location: String, executeMergeTest: (String, Int) => Unit): Unit = {
+    var runCompactionLop = true
+    val compactionFuture = Future {
+      while (runCompactionLop) runCompaction(location)
+    }
+    val expectExceptionInTest = classTag[ExpectedExceptionType] != classTag[NoException]
+
+    var i = 0
+    var numExceptions = 0
+    while (i < concurrentCompactionTestNumIterations) {
+      try {
+        executeMergeTest(location, i)
+        i += 1
+      } catch {
+        case _ if !expectExceptionInTest => numExceptions += 1
+        case _: ExpectedExceptionType if expectExceptionInTest => numExceptions += 1
+      }
+    }
+    if (expectExceptionInTest) {
+      assert(numExceptions > 0)
+    } else {
+      assert(numExceptions === 0)
+    }
+
+    runCompactionLop = false
+    ThreadUtils.awaitReady(compactionFuture, duration.Duration.create(5, duration.MINUTES))
+    runCompaction(location)
+    val table = io.delta.tables.DeltaTable.forPath(spark, location)
+    withSQLConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
+      table.vacuum(0)
+    }
+  }
+
+  test("insert-only merge with concurrent compaction operation " +
+          "(concurrentCompactionDetection: enabled)") {
+    withConcurrentCompactionTestSetup(true) { location =>
+      createConcurrentCompactionTestTable(location)
+      runConcurrentCompactionTest[NoException](
+        location, executeConcurrentCompactionTestInsertOnlyMerge
+      )
+      assertConcurrentCompactionTestResults(location)
+    }
+  }
+
+  test("insert-only merge with concurrent compaction operation " +
+          "(concurrentCompactionDetection: disabled)") {
+    withConcurrentCompactionTestSetup(false) { location =>
+      createConcurrentCompactionTestTable(location)
+      runConcurrentCompactionTest[ConcurrentAppendException](
+        location, executeConcurrentCompactionTestInsertOnlyMerge
+      )
+      assertConcurrentCompactionTestResults(location)
+    }
+  }
+
+  test(s"upsert merge with concurrent compaction operation " +
+          s"(concurrentCompactionDetection: enabled)") {
+    withConcurrentCompactionTestSetup(true) { location =>
+      createConcurrentCompactionTestTable(location)
+      runConcurrentCompactionTest[ConcurrentDeleteDeleteException](
+        location, executeConcurrentCompactionTestUpsertMerge
+      )
+      assertConcurrentCompactionTestResults(location)
+    }
+  }
+
+  test(s"upsert merge with concurrent compaction operation " +
+          s"(concurrentCompactionDetection: disabled)") {
+    withConcurrentCompactionTestSetup(false) { location =>
+      createConcurrentCompactionTestTable(location)
+      runConcurrentCompactionTest[ConcurrentAppendException](
+        location, executeConcurrentCompactionTestUpsertMerge
+      )
+      assertConcurrentCompactionTestResults(location)
     }
   }
 
