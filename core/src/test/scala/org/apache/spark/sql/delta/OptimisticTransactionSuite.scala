@@ -596,10 +596,10 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
     }
   }
 
-  Seq("true", "false").foreach { toggle =>
+  Seq(true, false).foreach { toggle =>
     test(s"no data change: allow data rearrange when new files concurrently added " +
             s"(concurrentCompactionDetection: $toggle)") {
-      withSQLConf(DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION.key -> toggle) {
+      withSQLConf(DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION.key -> toggle.toString) {
         withLog(addA_P1 :: addB_P1 :: Nil) { log =>
           val tx1 = log.startTransaction()
           tx1.filterFiles()
@@ -624,7 +624,7 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
 
     test(s"no data change: allow data rearrange when new files concurrently added " +
             s"(NTMT) (concurrentCompactionDetection: $toggle)") {
-      withSQLConf(DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION.key -> toggle) {
+      withSQLConf(DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION.key -> toggle.toString) {
         withLog(addA_P1 :: addB_P1 :: Nil) { log =>
           val tx1 = log.startTransaction()
           tx1.filterFiles()
@@ -650,7 +650,7 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
 
     test(s"no data change: block data rearrange when new files concurrently deleted " +
             s"(concurrentCompactionDetection: $toggle)") {
-      withSQLConf(DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION.key -> toggle) {
+      withSQLConf(DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION.key -> toggle.toString) {
         withLog(addA_P1 :: addB_P1 :: Nil) { log =>
           val tx1 = log.startTransaction()
           tx1.filterFiles()
@@ -673,7 +673,7 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
 
     test(s"no data change: block data rearrange when new files concurrently deleted " +
             s"(NTMT) (concurrentCompactionDetection: $toggle)") {
-      withSQLConf(DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION.key -> toggle) {
+      withSQLConf(DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION.key -> toggle.toString) {
         withLog(addA_P1 :: addB_P1 :: Nil) { log =>
           val tx1 = log.startTransaction()
           tx1.filterFiles()

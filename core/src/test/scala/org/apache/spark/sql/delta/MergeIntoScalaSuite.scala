@@ -578,35 +578,35 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
 
   def createConcurrentCompactionTestTable(location: String): Unit = {
     spark.range(0)
-            .withColumn("par", $"id" % concurrentCompactionTestPartitions)
-            .coalesce(1)
-            .write.partitionBy("par").format("delta").save(location)
+      .withColumn("par", $"id" % concurrentCompactionTestPartitions)
+      .coalesce(1)
+      .write.partitionBy("par").format("delta").save(location)
   }
 
   def executeConcurrentCompactionTestInsertOnlyMerge(location: String, i: Int): Unit = {
     val df = spark.range(i, i + concurrentCompactionTestRangeSize)
-            .withColumn("par", $"id" % concurrentCompactionTestPartitions)
+      .withColumn("par", $"id" % concurrentCompactionTestPartitions)
     val table = io.delta.tables.DeltaTable.forPath(spark, location)
     table.alias("t").merge(df.alias("s"), "slowMergeCondition(s.par=t.par AND s.id=t.id)")
-            .whenNotMatched().insertAll()
-            .execute()
+      .whenNotMatched().insertAll()
+      .execute()
   }
 
   def executeConcurrentCompactionTestUpsertMerge(location: String, i: Int): Unit = {
     val df = spark.range(i, i + concurrentCompactionTestRangeSize)
-            .withColumn("par", $"id" % concurrentCompactionTestPartitions)
+      .withColumn("par", $"id" % concurrentCompactionTestPartitions)
     val table = io.delta.tables.DeltaTable.forPath(spark, location)
     table.alias("t").merge(df.alias("s"), "slowMergeCondition(s.par=t.par AND s.id=t.id)")
-            .whenNotMatched().insertAll()
-            .whenMatched().updateAll()
-            .execute()
+      .whenNotMatched().insertAll()
+      .whenMatched().updateAll()
+      .execute()
   }
 
   def assertConcurrentCompactionTestResults(location: String): Unit = {
     val expectedDF = spark
-            .range(concurrentCompactionTestNumIterations + concurrentCompactionTestRangeSize - 1)
-            .withColumn("par", $"id" % concurrentCompactionTestPartitions)
-            .orderBy("id")
+      .range(concurrentCompactionTestNumIterations + concurrentCompactionTestRangeSize - 1)
+      .withColumn("par", $"id" % concurrentCompactionTestPartitions)
+      .orderBy("id")
     val deltaResultDF = spark.read.format("delta").load(location).orderBy("id")
     checkAnswer(deltaResultDF, expectedDF)
     // make sure no extra files were left after last vacuum
@@ -620,19 +620,21 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
     val lastTableOperation = table.history(1).select("operation").head().getString(0)
     if (lastTableOperation == "MERGE") {
       spark.read.format("delta")
-              .load(location)
-              .coalesce(1)
-              .write.format("delta")
-              .mode("overwrite")
-              .option("dataChange", "false")
-              .save(location)
+        .load(location)
+        .coalesce(1)
+        .write.format("delta")
+        .mode("overwrite")
+        .option("dataChange", false)
+        .save(location)
     }
   }
 
   class NoException extends Throwable
 
-  def runConcurrentCompactionTest[ExpectedExceptionType: ClassTag]
-  (location: String, executeMergeTest: (String, Int) => Unit): Unit = {
+  def runConcurrentCompactionTest[ExpectedExceptionType: ClassTag](
+      location: String,
+      executeMergeTest: (String, Int) => Unit
+  ): Unit = {
     var runCompactionLop = true
     val compactionFuture = Future {
       while (runCompactionLop) runCompaction(location)

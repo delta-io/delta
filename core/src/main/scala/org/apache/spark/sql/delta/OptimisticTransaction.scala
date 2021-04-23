@@ -718,9 +718,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   }
 
   /**
-   * This function is used to determine if the given `FileAction` should be considered when
+   * Determines if the given {@link FileAction} should be considered when
    * checking for conflicts based on the value of `dataChange` and the configuration toggle
-   * `DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION`.
+   * {@link DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION}.
    */
   protected def isDataChangeOrConflict(f: FileAction): Boolean = {
     f.dataChange || !spark.conf.get(DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION)
