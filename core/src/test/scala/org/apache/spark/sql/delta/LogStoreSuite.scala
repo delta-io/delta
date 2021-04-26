@@ -283,30 +283,6 @@ class LocalLogStoreSuite extends LogStoreSuiteBase {
   protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 
-class OCILogStoreSuite extends LogStoreSuiteBase {
-
-  override val logStoreClassName: String = classOf[OCILogStore].getName
-
-  testHadoopConf(
-    expectedErrMsg = "No FileSystem for scheme: fake",
-    "fs.fake.impl" -> classOf[FakeFileSystem].getName,
-    "fs.fake.impl.disable.cache" -> "true")
-
-  protected def shouldUseRenameToWriteCheckpoint: Boolean = true
-}
-
-class OCILogStoreSuite extends LogStoreSuiteBase {
-
-  override val logStoreClassName: String = classOf[OCILogStore].getName
-
-  testHadoopConf(
-    expectedErrMsg = "No FileSystem for scheme: fake",
-    "fs.fake.impl" -> classOf[FakeFileSystem].getName,
-    "fs.fake.impl.disable.cache" -> "true")
-
-  protected def shouldUseRenameToWriteCheckpoint: Boolean = true
-}
-
 /** A fake file system to test whether session Hadoop configuration will be picked up. */
 class FakeFileSystem extends RawLocalFileSystem {
   override def getScheme: String = FakeFileSystem.scheme

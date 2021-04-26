@@ -95,6 +95,79 @@ lazy val core = (project in file("core"))
     (compile in Compile) := ((compile in Compile) dependsOn createTargetClassesDir).value
   )
 
+lazy val oci = (project in file("delta-contribs-oci"))
+  .aggregate(core)
+  .dependsOn(core % "compile->compile;test->test")
+  .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin)
+  .settings (
+    name := "delta-contribs-oci",
+    commonSettings,
+    scalaStyleSettings,
+    // mimaSettings,
+    unidocSettings,
+    releaseSettings,
+    libraryDependencies ++= Seq(
+      // Adding test classifier seems to break transitive resolution of the core dependencies
+      "org.apache.spark" %% "spark-hive" % sparkVersion % "provided",
+      "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
+      "org.apache.spark" %% "spark-core" % sparkVersion % "provided",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion % "provided",
+
+      // Test deps
+      "org.scalatest" %% "scalatest" % "3.1.0" % "test",
+      "junit" % "junit" % "4.12" % "test",
+      "com.novocode" % "junit-interface" % "0.11" % "test",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
+
+      // Compiler plugins
+      // -- Bump up the genjavadoc version explicitly to 0.16 to work with Scala 2.12
+      compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.16" cross CrossVersion.full)
+    ),
+    (mappings in (Compile, packageBin)) := (mappings in (Compile, packageBin)).value ++
+        (mappings in (core, Compile, packageBin)).value ++
+        listPythonFiles(baseDirectory.value.getParentFile / "python"),
+
+    antlr4Settings,
+    antlr4Version in Antlr4 := "4.7",
+    antlr4PackageName in Antlr4 := Some("io.delta.sql.parser"),
+    antlr4GenListener in Antlr4 := true,
+    antlr4GenVisitor in Antlr4 := true,
+
+    testOptions in Test += Tests.Argument("-oDF"),
+    testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
+
+    // Don't execute in parallel since we can't have multiple Sparks in the same JVM
+    parallelExecution in Test := false,
+
+    scalacOptions ++= Seq(
+      "-target:jvm-1.8",
+      "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
+    ),
+
+    javaOptions += "-Xmx1024m",
+
+    // Configurations to speed up tests and reduce memory footprint
+    javaOptions in Test ++= Seq(
+      "-Dspark.ui.enabled=false",
+      "-Dspark.ui.showConsoleProgress=false",
+      "-Dspark.databricks.delta.snapshotPartitions=2",
+      "-Dspark.sql.shuffle.partitions=5",
+      "-Ddelta.log.cacheSize=3",
+      "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
+      "-Xmx1024m"
+    ),
+
+    // Hack to avoid errors related to missing repo-root/target/scala-2.12/classes/
+    createTargetClassesDir := {
+      val dir = baseDirectory.value.getParentFile / "target" / "scala-2.12" / "classes"
+      Files.createDirectories(dir.toPath)
+    },
+    (compile in Compile) := ((compile in Compile) dependsOn createTargetClassesDir).value
+  )
+
 /**
  * Get list of python files and return the mapping between source files and target paths
  * in the generated package JAR.
