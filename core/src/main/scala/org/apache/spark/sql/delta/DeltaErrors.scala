@@ -1155,10 +1155,18 @@ object DeltaErrors
 
   def protocolChangedException(
       conflictingCommit: Option[CommitInfo]): io.delta.exceptions.ProtocolChangedException = {
+    val additionalInfo = conflictingCommit.map { v =>
+      if (v.version.getOrElse(-1) == 0) {
+        "This happens when multiple writers are writing to an empty directory. " +
+          "Creating the table ahead of time will avoid this conflict. "
+      } else {
+        ""
+      }
+    }.getOrElse("")
     val message = DeltaErrors.concurrentModificationExceptionMsg(
       SparkEnv.get.conf,
       "The protocol version of the Delta table has been changed by a concurrent update. " +
-        "Please try the operation again.",
+        additionalInfo + "Please try the operation again.",
       conflictingCommit)
     new io.delta.exceptions.ProtocolChangedException(message)
   }
