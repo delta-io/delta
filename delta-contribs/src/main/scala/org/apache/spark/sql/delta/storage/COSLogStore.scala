@@ -16,10 +16,11 @@
 
 package org.apache.spark.sql.delta.storage
 
+import com.google.common.base.Throwables
+
 import java.io.IOException
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.FileAlreadyExistsException
-
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.SparkConf
@@ -37,6 +38,9 @@ import org.apache.spark.SparkConf
  */
 class COSLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
   extends HadoopFileSystemLogStore(sparkConf, hadoopConf) {
+  val preconditionFailedExceptionMessage =
+    "At least one of the preconditions you specified did not hold"
+
   assert(hadoopConf.getBoolean("fs.cos.atomic.write", false) == true,
     "'fs.cos.atomic.write' must be set to true to use COSLogStore")
 
@@ -57,7 +61,7 @@ class COSLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
         })
         stream.close()
       } catch {
-        case e: IOException =>
+        case e: IOException if isPreconditionFailure(e) =>
           if (fs.exists(path)) {
             throw new FileAlreadyExistsException(path.toString)
           } else {
@@ -65,6 +69,16 @@ class COSLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
           }
       }
     }
+  }
+
+  private def isPreconditionFailure(x: Throwable): Boolean = {
+    Throwables.getCausalChain(x)
+      .stream()
+      .filter(p => p != null)
+      .filter(p => p.getMessage != null)
+      .filter(p => p.getMessage.contains(preconditionFailedExceptionMessage))
+      .findFirst
+      .isPresent;
   }
 
   override def invalidateCache(): Unit = {}
