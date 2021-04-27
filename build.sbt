@@ -102,7 +102,6 @@ lazy val deltacontribs = (project in file("delta-contribs"))
     name := "delta-contribs",
     commonSettings,
     scalaStyleSettings,
-    mimaSettings,
     unidocSettings,
     releaseSettings,
     libraryDependencies ++= Seq(
