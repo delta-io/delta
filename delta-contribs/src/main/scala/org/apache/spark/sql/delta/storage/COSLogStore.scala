@@ -62,7 +62,11 @@ class COSLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
         stream.close()
       } catch {
         case e: IOException if isPreconditionFailure(e) =>
+          if (fs.exists(path)) {
+            throw new FileAlreadyExistsException(path.toString)
+          } else {
             throw new IllegalStateException(s"Failed due to concurrent write", e)
+          }
       }
     }
   }
