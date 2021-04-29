@@ -647,40 +647,65 @@ abstract class UpdateSuiteBase
   /**
    * @param function the unsupported function.
    * @param functionType The type of the unsupported expression to be tested.
+   * @param data the data in the table.
    * @param set the set action containing the unsupported expression.
    * @param where the where clause containing the unsupported expression.
+   * @param expectException whether an exception is expected to be thrown
+   * @param customErrorRegex customized error regex.
    */
   def testUnsupportedExpression(
       function: String,
       functionType: String,
+      data: => DataFrame,
       set: String,
-      where: String) {
-    test(s"$functionType functions are not supported in update") {
+      where: String,
+      expectException: Boolean,
+      customErrorRegex: Option[String] = None) {
+    test(s"$functionType functions in update - expect exception: $expectException") {
       withTable("deltaTable") {
-        Seq((1, 2, 3)).toDF("a", "b", "c")
-          .write.format("delta").saveAsTable("deltaTable")
+        data.write.format("delta").saveAsTable("deltaTable")
 
         val expectedErrorRegex = s"(?s).*(?i)unsupported.*(?i)$functionType" +
           s".*Invalid expressions: \\[$function.*"
 
-        def checkUnsupportedException(
-            errorRegex: String,
-            set: Option[String] = None,
-            where: Option[String] = None) {
-          val e = intercept[org.apache.spark.sql.AnalysisException] {
+        def checkExpression(
+            setOption: Option[String] = None,
+            whereOption: Option[String] = None) {
+          var catchException = if (functionType.equals("Generate") && setOption.nonEmpty) {
+            expectException
+          } else true
+
+          var errorRegex = if (functionType.equals("Generate") && whereOption.nonEmpty) {
+            ".*Subqueries are not supported in the UPDATE.*"
+          } else customErrorRegex.getOrElse(expectedErrorRegex)
+
+
+          if (catchException) {
+            val dataBeforeException = spark.read.format("delta").table("deltaTable").collect()
+            val e = intercept[Exception] {
+              executeUpdate(
+                "deltaTable",
+                setOption.getOrElse("b = 4"),
+                whereOption.getOrElse("a = 1"))
+            }
+            val message = if (e.getCause != null) {
+              e.getCause.getMessage
+            } else e.getMessage
+            assert(message.matches(errorRegex))
+            checkAnswer(spark.read.format("delta").table("deltaTable"), dataBeforeException)
+          } else {
             executeUpdate(
               "deltaTable",
-              set.getOrElse("b = 4"),
-              where.getOrElse("a = 1"))
+              setOption.getOrElse("b = 4"),
+              whereOption.getOrElse("a = 1"))
           }
-          assert(e.message.matches(errorRegex))
         }
 
         // on set
-        checkUnsupportedException(expectedErrorRegex, set = Option(set))
+        checkExpression(setOption = Option(set))
 
         // on condition
-        checkUnsupportedException(expectedErrorRegex, where = Option(where))
+        checkExpression(whereOption = Option(where))
       }
     }
   }
@@ -688,15 +713,41 @@ abstract class UpdateSuiteBase
   testUnsupportedExpression(
     function = "row_number",
     functionType = "Window",
+    data = Seq((1, 2, 3)).toDF("a", "b", "c"),
     set = "b = row_number() over (order by c)",
-    where = "row_number() over (order by c) > 1"
+    where = "row_number() over (order by c) > 1",
+    expectException = true
   )
 
   testUnsupportedExpression(
     function = "max",
     functionType = "Aggregate",
+    data = Seq((1, 2, 3)).toDF("a", "b", "c"),
     set = "b = max(c)",
-    where = "b > max(c)"
+    where = "b > max(c)",
+    expectException = true
+  )
+
+  // Explode functions are supported in set and where if there's only one row generated.
+  testUnsupportedExpression(
+    function = "explode",
+    functionType = "Generate",
+    data = Seq((1, 2, List(3))).toDF("a", "b", "c"),
+    set = "b = (select explode(c) from deltaTable)",
+    where = "b = (select explode(c) from deltaTable)",
+    expectException = false // only one row generated, no exception.
+  )
+
+  // Explode functions are supported in set and where but if there's more than one row generated,
+  // it will throw an exception.
+  testUnsupportedExpression(
+    function = "explode",
+    functionType = "Generate",
+    data = Seq((1, 2, List(3, 4))).toDF("a", "b", "c"),
+    set = "b = (select explode(c) from deltaTable)",
+    where = "b = (select explode(c) from deltaTable)",
+    expectException = true, // more than one generated, expect exception.
+    customErrorRegex = Some("more than one row returned by a subquery used as an expression(?s).*")
   )
 
   protected def checkUpdateJson(

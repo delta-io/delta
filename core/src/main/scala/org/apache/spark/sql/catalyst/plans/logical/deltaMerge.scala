@@ -227,7 +227,7 @@ case class DeltaMergeInto(
     condition: Expression,
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
     notMatchedClauses: Seq[DeltaMergeIntoInsertClause],
-    migrateSchema: Boolean) extends Command {
+    migrateSchema: Boolean) extends Command with SupportsSubquery {
 
   (matchedClauses ++ notMatchedClauses).foreach(_.verifyActions())
 
