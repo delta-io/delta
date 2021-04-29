@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.AnalysisHelper
 
 import org.apache.spark.sql.catalyst.SQLConfHelper
 import org.apache.spark.sql.catalyst.analysis.{CastSupport, Resolver}
@@ -28,7 +29,7 @@ import org.apache.spark.sql.types._
  * Trait with helper functions to generate expressions to update target columns, even if they are
  * nested fields.
  */
-trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper {
+trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with AnalysisHelper {
   /**
    * Specifies an operation that updates a target column with the given expression.
    * The target column may or may not be a nested field and it is specified as a full quoted name
@@ -131,13 +132,25 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper {
    *                             struct casting will throw an error if there's any mismatch between
    *                             column names. For example, (b, c, a) -> (a, b, c) is always a valid
    *                             cast, but (a, b) -> (a, b, c) is valid only with this flag set.
+   * @param generatedColumns the list of the generated columns in the table. When a column is a
+   *                         generated column and the user doesn't provide a update expression, its
+   *                         update expression in the return result will be None.
+   *                         If `generatedColumns` is empty, any of the options in the return result
+   *                         must be non-empty.
+   * @return a sequence of expression options. The elements in the sequence are options because
+   *         when a column is a generated column but the user doesn't provide an update expression
+   *         for this column, we need to generate the update expression according to the generated
+   *         column definition. But this method doesn't have enough context to do that. Hence, we
+   *         return a `None` for this case so that the caller knows it should generate the update
+   *         expression for such column. For other cases, we will always return Some(expr).
    */
   protected def generateUpdateExpressions(
       targetCols: Seq[NamedExpression],
       updateOps: Seq[UpdateOperation],
       resolver: Resolver,
       pathPrefix: Seq[String] = Nil,
-      allowStructEvolution: Boolean = false): Seq[Expression] = {
+      allowStructEvolution: Boolean = false,
+      generatedColumns: Seq[StructField] = Nil): Seq[Option[Expression]] = {
     // Check that the head of nameParts in each update operation can match a target col. This avoids
     // silently ignoring invalid column names specified in update operations.
     updateOps.foreach { u =>
@@ -155,7 +168,15 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper {
         updateOps.filter(u => resolver(u.targetColNameParts.head, targetCol.name))
       // No prefix matches this target column, return its original expression.
       if (prefixMatchedOps.isEmpty) {
-        targetCol
+        // Check whether it's a generated column or not. If so, we will return `None` so that the
+        // caller will generate an expression for this column. We cannot generate an expression at
+        // this moment because a generated column may use other columns which we don't know their
+        // update expressions yet.
+        if (generatedColumns.find(f => resolver(f.name, targetCol.name)).nonEmpty) {
+          None
+        } else {
+          Some(targetCol)
+        }
       } else {
         // The update operation whose path exactly matches the current targetCol path.
         val fullyMatchedOp = prefixMatchedOps.find(_.targetColNameParts.size == 1)
@@ -169,7 +190,8 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper {
               prefixMatchedOps.map(op => (pathPrefix ++ op.targetColNameParts).mkString(".")))
           }
           // For an exact match, return the updateExpr from the update operation.
-          castIfNeeded(fullyMatchedOp.get.updateExpr, targetCol.dataType, allowStructEvolution)
+          Some(
+            castIfNeeded(fullyMatchedOp.get.updateExpr, targetCol.dataType, allowStructEvolution))
         } else {
           // So there are prefix-matched update operations, but none of them is a full match. Then
           // that means targetCol is a complex data type, so we recursively pass along the update
@@ -186,12 +208,19 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper {
                 prefixMatchedOps.map(u => u.copy(targetColNameParts = u.targetColNameParts.tail)),
                 resolver,
                 pathPrefix :+ targetCol.name,
-                allowStructEvolution)
+                allowStructEvolution,
+                // Set `generatedColumns` to Nil because they are only valid in the top level.
+                generatedColumns = Nil)
+                .map(_.getOrElse {
+                  // Should not happen
+                  throw new IllegalStateException("Calling without generated columns should " +
+                    "always return a update expression for each column")
+                })
               // Reconstruct the expression for targetCol using its possibly updated children
               val namedStructExprs = fields
                 .zip(updatedChildExprs)
                 .flatMap { case (field, expr) => Seq(Literal(field.name), expr) }
-              CreateNamedStruct(namedStructExprs)
+              Some(CreateNamedStruct(namedStructExprs))
 
             case otherType =>
               throw DeltaErrors.updateNonStructTypeFieldNotSupportedException(
@@ -207,11 +236,12 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper {
       targetCols: Seq[NamedExpression],
       nameParts: Seq[Seq[String]],
       updateExprs: Seq[Expression],
-      resolver: Resolver): Seq[Expression] = {
+      resolver: Resolver,
+      generatedColumns: Seq[StructField]): Seq[Option[Expression]] = {
     assert(nameParts.size == updateExprs.size)
     val updateOps = nameParts.zip(updateExprs).map {
       case (nameParts, expr) => UpdateOperation(nameParts, expr)
     }
-    generateUpdateExpressions(targetCols, updateOps, resolver)
+    generateUpdateExpressions(targetCols, updateOps, resolver, generatedColumns = generatedColumns)
   }
 }

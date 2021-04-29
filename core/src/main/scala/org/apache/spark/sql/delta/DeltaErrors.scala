@@ -1128,6 +1128,12 @@ object DeltaErrors
         s"but the column type is ${columnType.sql}")
   }
 
+  def updateOnTempViewWithGenerateColsNotSupported: Throwable = {
+    new AnalysisException(
+      s"Updating a temp view referring to a Delta table that contains generated columns is not " +
+        s"supported. Please run the update command on the Delta table directly")
+  }
+
 
   def missingColumnsInInsertInto(column: String): Throwable = {
     new AnalysisException(s"Column $column is not specified in INSERT")

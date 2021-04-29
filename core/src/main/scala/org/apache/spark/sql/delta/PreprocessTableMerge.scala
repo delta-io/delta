@@ -125,7 +125,13 @@ case class PreprocessTableMerge(override val conf: SQLConf)
           finalSchemaExprs,
           existingUpdateOps ++ newOpsFromTargetSchema ++ newOpsFromInsert,
           conf.resolver,
-          allowStructEvolution = shouldAutoMigrate)
+          allowStructEvolution = shouldAutoMigrate,
+          generatedColumns = Nil)
+          .map(_.getOrElse {
+            // Should not happen
+            throw new IllegalStateException("Calling without generated columns should " +
+              "always return a update expression for each column")
+          })
         val alignedActions: Seq[DeltaMergeAction] = alignedExprs
           .zip(finalSchemaExprs)
           .map { case (expr, attrib) =>
