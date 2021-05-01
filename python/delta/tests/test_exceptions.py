@@ -1,0 +1,72 @@
+#
+# Copyright (2020) The Delta Lake Project Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+import unittest
+
+import delta.exceptions as exceptions
+
+from delta.testing.utils import DeltaTestCase
+
+
+class DeltaExceptionTests(DeltaTestCase):
+
+    def _raise_concurrent_exception(self, exception_type):
+        e = exception_type("")
+        self.spark.sparkContext._jvm.scala.util.Failure(e).get()
+
+    def test_capture_concurrent_write_exception(self):
+        e = self.spark._jvm.io.delta.exceptions.ConcurrentWriteException
+        self.assertRaises(exceptions.ConcurrentWriteException,
+                          lambda: self._raise_concurrent_exception(e))
+
+    def test_capture_metadata_changed_exception(self):
+        e = self.spark._jvm.io.delta.exceptions.MetadataChangedException
+        self.assertRaises(exceptions.MetadataChangedException,
+                          lambda: self._raise_concurrent_exception(e))
+
+    def test_capture_protocol_changed_exception(self):
+        e = self.spark._jvm.io.delta.exceptions.ProtocolChangedException
+        self.assertRaises(exceptions.ProtocolChangedException,
+                          lambda: self._raise_concurrent_exception(e))
+
+    def test_capture_concurrent_append_exception(self):
+        e = self.spark._jvm.io.delta.exceptions.ConcurrentAppendException
+        self.assertRaises(exceptions.ConcurrentAppendException,
+                          lambda: self._raise_concurrent_exception(e))
+
+    def test_capture_concurrent_delete_read_exception(self):
+        e = self.spark._jvm.io.delta.exceptions.ConcurrentDeleteReadException
+        self.assertRaises(exceptions.ConcurrentDeleteReadException,
+                          lambda: self._raise_concurrent_exception(e))
+
+    def test_capture_concurrent_delete_delete_exception(self):
+        e = self.spark._jvm.io.delta.exceptions.ConcurrentDeleteDeleteException
+        self.assertRaises(exceptions.ConcurrentDeleteDeleteException,
+                          lambda: self._raise_concurrent_exception(e))
+
+    def test_capture_concurrent_transaction_exception(self):
+        e = self.spark._jvm.io.delta.exceptions.ConcurrentTransactionException
+        self.assertRaises(exceptions.ConcurrentTransactionException,
+                          lambda: self._raise_concurrent_exception(e))
+
+
+if __name__ == "__main__":
+    try:
+        import xmlrunner
+        testRunner = xmlrunner.XMLTestRunner(output='target/test-reports', verbosity=4)
+    except ImportError:
+        testRunner = None
+    unittest.main(testRunner=testRunner, verbosity=4)
