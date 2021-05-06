@@ -31,6 +31,7 @@ import org.apache.spark.sql.catalyst.ScalaReflection.Schema
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.types.StructType
 
@@ -196,4 +197,6 @@ case class DescribeDeltaDetailCommand(
         snapshot.protocol.minReaderVersion,
         snapshot.protocol.minWriterVersion))
   }
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }

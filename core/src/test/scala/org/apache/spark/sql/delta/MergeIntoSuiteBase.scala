@@ -2796,35 +2796,59 @@ abstract class MergeIntoSuiteBase
   }
 
   /**
-   * @param function the unsupported function used in query.
+   * @param function the unsupported function.
    * @param functionType The type of the unsupported expression to be tested.
+   * @param sourceData the data in the source table.
+   * @param targetData the data in the target table.
    * @param mergeCondition the merge condition containing the unsupported expression.
    * @param clauseCondition the clause condition containing the unsupported expression.
    * @param clauseAction the clause action containing the unsupported expression.
+   * @param expectExceptionInAction whether expect exception thrown in action.
+   * @param customConditionErrorRegex the customized error regex for condition.
+   * @param customActionErrorRegex the customized error regex for action.
    */
   def testUnsupportedExpression(
       function: String,
       functionType: String,
+      sourceData: => DataFrame,
+      targetData: => DataFrame,
       mergeCondition: String,
       clauseCondition: String,
       clauseAction: String,
-      conditionErrorRegex: Option[String] = None) {
-    test(s"$functionType functions are not supported in merge") {
+      expectExceptionInAction: Option[Boolean] = None,
+      customConditionErrorRegex: Option[String] = None,
+      customActionErrorRegex: Option[String] = None) {
+    test(s"$functionType functions in merge" +
+      s" - expect exception in action: ${expectExceptionInAction.getOrElse(true)}") {
       withTable("source", "target") {
-        Seq((1, 2, 3)).toDF("a", "b", "c")
-          .write.format("delta").saveAsTable("source")
-
-        Seq((1, 5, 6)).toDF("a", "b", "c")
-          .write.format("delta").saveAsTable("target")
+        sourceData.write.format("delta").saveAsTable("source")
+        targetData.write.format("delta").saveAsTable("target")
 
         val expectedErrorRegex = s"(?s).*(?i)unsupported.*(?i)$functionType" +
           s".*Invalid expressions: \\[$function.*"
 
-        def checkUnsupportedError(
+        def checkExpression(
+            expectException: Boolean,
             condition: Option[String] = None,
             clause: Option[MergeClause] = None,
-            expectedRegex: String) {
-          val e = intercept[org.apache.spark.sql.AnalysisException] {
+            expectedRegex: Option[String] = None) {
+          if (expectException) {
+            val dataBeforeException = spark.read.format("delta").table("target").collect()
+            val e = intercept[Exception] {
+              executeMerge(
+                tgt = "target as t",
+                src = "source as s",
+                cond = condition.getOrElse("s.a = t.a"),
+                clause.getOrElse(update(set = "b = s.b"))
+              )
+            }
+
+            val message = if (e.getCause != null) {
+              e.getCause.getMessage
+            } else e.getMessage
+            assert(message.matches(expectedRegex.getOrElse(expectedErrorRegex)))
+            checkAnswer(spark.read.format("delta").table("target"), dataBeforeException)
+          } else {
             executeMerge(
               tgt = "target as t",
               src = "source as s",
@@ -2832,35 +2856,44 @@ abstract class MergeIntoSuiteBase
               clause.getOrElse(update(set = "b = s.b"))
             )
           }
-          assert(e.message.matches(expectedRegex))
         }
 
         // on merge condition
-        checkUnsupportedError(
+        checkExpression(
+          expectException = true,
           condition = Option(mergeCondition),
-          expectedRegex = conditionErrorRegex.getOrElse(expectedErrorRegex))
-
-        // on update condition
-        checkUnsupportedError(
-          clause = Option(update(condition = clauseCondition, set = "b = s.b")),
-          expectedRegex = conditionErrorRegex.getOrElse(expectedErrorRegex))
-
-        // on update action
-        checkUnsupportedError(
-          clause = Option(update(set = s"b = $clauseAction")),
-          expectedRegex = expectedErrorRegex)
-
-        // on insert condition
-        checkUnsupportedError(
-          clause = Option(
-            insert(values = "(a, b, c) VALUES (s.a, s.b, s.c)", condition = clauseCondition)),
-          expectedRegex = conditionErrorRegex.getOrElse(expectedErrorRegex)
+          expectedRegex = customConditionErrorRegex
         )
 
+        // on update condition
+        checkExpression(
+          expectException = true,
+          clause = Option(update(condition = clauseCondition, set = "b = s.b")),
+          expectedRegex = customConditionErrorRegex
+        )
+
+        // on update action
+        checkExpression(
+          expectException = expectExceptionInAction.getOrElse(true),
+          clause = Option(update(set = s"b = $clauseAction")),
+          expectedRegex = customActionErrorRegex
+        )
+
+        // on insert condition
+        checkExpression(
+          expectException = true,
+          clause = Option(
+            insert(values = "(a, b, c) VALUES (s.a, s.b, s.c)", condition = clauseCondition)),
+          expectedRegex = customConditionErrorRegex
+        )
+
+        sql("update source set a = 2")
         // on insert action
-        checkUnsupportedError(
+        checkExpression(
+          expectException = expectExceptionInAction.getOrElse(true),
           clause = Option(insert(values = s"(a, b, c) VALUES ($clauseAction, s.b, s.c)")),
-          expectedRegex = expectedErrorRegex)
+          expectedRegex = customActionErrorRegex
+        )
       }
     }
   }
@@ -2868,6 +2901,8 @@ abstract class MergeIntoSuiteBase
   testUnsupportedExpression(
     function = "row_number",
     functionType = "Window",
+    sourceData = Seq((1, 2, 3)).toDF("a", "b", "c"),
+    targetData = Seq((1, 5, 6)).toDF("a", "b", "c"),
     mergeCondition = "(row_number() over (order by s.c)) = (row_number() over (order by t.c))",
     clauseCondition = "row_number() over (order by s.c) > 1",
     clauseAction = "row_number() over (order by s.c)"
@@ -2876,10 +2911,12 @@ abstract class MergeIntoSuiteBase
   testUnsupportedExpression(
     function = "max",
     functionType = "Aggregate",
+    sourceData = Seq((1, 2, 3)).toDF("a", "b", "c"),
+    targetData = Seq((1, 5, 6)).toDF("a", "b", "c"),
     mergeCondition = "t.a = max(s.a)",
     clauseCondition = "max(s.b) > 1",
     clauseAction = "max(s.c)",
-    conditionErrorRegex =
+    customConditionErrorRegex =
       Option("Aggregate functions are not supported in the .* condition of MERGE operation.*")
   )
 }

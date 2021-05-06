@@ -94,5 +94,7 @@ object AnalysisHelper {
   case class FakeLogicalPlan(exprs: Seq[Expression], children: Seq[LogicalPlan])
     extends LogicalPlan {
     override def output: Seq[Attribute] = Nil
+
+    // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
   }
 }

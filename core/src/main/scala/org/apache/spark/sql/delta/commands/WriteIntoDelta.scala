@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.schema.ImplicitMetadataOperation
 
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.command.RunnableCommand
 
 /**
@@ -132,4 +133,6 @@ case class WriteIntoDelta(
       newFiles ++ deletedFiles
     }
   }
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }

@@ -40,7 +40,7 @@ import org.apache.spark.sql.connector.expressions.{BucketTransform, Transform}
 import org.apache.spark.sql.execution.{QueryExecution, SQLExecution}
 import org.apache.spark.sql.execution.datasources.HadoopFsRelation
 import org.apache.spark.sql.execution.streaming.IncrementalExecution
-import org.apache.spark.sql.types.{DataType, DateType, IntegerType, Metadata => FieldMetadata, MetadataBuilder, StringType, StructField, StructType, TimestampType}
+import org.apache.spark.sql.types.{DataType, DateType, DoubleType, FloatType, IntegerType, Metadata => FieldMetadata, MetadataBuilder, StringType, StructField, StructType, TimestampType}
 
 /**
  * Provide utility methods to implement Generated Columns for Delta. Users can use the following
@@ -110,6 +110,19 @@ object GeneratedColumn extends DeltaLogging {
   }
 
   /**
+   * Returns the generated columns of a table. A column is a generated column requires:
+   * - The table writer protocol >= GeneratedColumn.MIN_WRITER_VERSION;
+   * - It has a generation expression in the column metadata.
+   */
+  def getGeneratedColumns(snapshot: Snapshot): Seq[StructField] = {
+    if (satisfyGeneratedColumnProtocol(snapshot.protocol)) {
+      snapshot.metadata.schema.partition(isGeneratedColumn)._1
+    } else {
+      Nil
+    }
+  }
+
+  /**
    * Whether the table has generated columns. A table has generated columns only if its
    * `minWriterVersion` >= `GeneratedColumn.MIN_WRITER_VERSION` and some of columns in the table
    * schema contain generation expressions.
@@ -133,6 +146,17 @@ object GeneratedColumn extends DeltaLogging {
       Some(metadata.getString(GENERATION_EXPRESSION_METADATA_KEY))
     } else {
       None
+    }
+  }
+
+  /**
+   * Return the generation expression from a field if any. This method doesn't check the protocl.
+   * The caller should make sure the table writer protocol meets `satisfyGeneratedColumnProtocol`
+   * before calling method.
+   */
+  def getGenerationExpression(field: StructField): Option[Expression] = {
+    getGenerationExpressionStr(field.metadata).map { exprStr =>
+      parseGenerationExpression(SparkSession.active, exprStr)
     }
   }
 

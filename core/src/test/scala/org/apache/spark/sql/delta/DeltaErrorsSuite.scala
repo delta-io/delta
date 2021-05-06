@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import java.io.{PrintWriter, StringWriter}
+
 import scala.sys.process.Process
 
 import org.apache.hadoop.fs.Path
@@ -77,7 +79,14 @@ trait DeltaErrorsSuiteBase
         var response = ""
         (1 to MAX_URL_ACCESS_RETRIES).foreach { attempt =>
           if (attempt > 1) Thread.sleep(1000)
-          response = Process("curl -I " + url).!!
+          response = try {
+            Process("curl -I " + url).!!
+          } catch {
+            case e: RuntimeException =>
+              val sw = new StringWriter
+              e.printStackTrace(new PrintWriter(sw))
+              sw.toString
+          }
           if (!checkIfValidResponse(url, response)) {
             fail(
               s"""
