@@ -19,14 +19,16 @@ package org.apache.spark.sql.delta
 import java.io.{File, IOException}
 import java.net.URI
 
+import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.storage._
-import org.apache.hadoop.fs.{FileSystem, Path, RawLocalFileSystem}
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{FileStatus, FileSystem, Path, RawLocalFileSystem}
 
+import org.apache.spark.SparkEnv
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
@@ -41,10 +43,14 @@ abstract class LogStoreSuiteBase extends QueryTest
     super.sparkConf.set(logStoreClassConfKey, logStoreClassName)
   }
 
-  test("instantiation through SparkConf") {
-    assert(spark.sparkContext.getConf.get(logStoreClassConfKey) == logStoreClassName)
-    assert(LogStore(spark.sparkContext).getClass.getName == logStoreClassName)
+  protected def testInitFromSparkConf(): Unit = {
+    test("instantiation through SparkConf") {
+      assert(spark.sparkContext.getConf.get(logStoreClassConfKey) == logStoreClassName)
+      assert(LogStore(spark.sparkContext).getClass.getName == logStoreClassName)
+    }
   }
+
+  testInitFromSparkConf()
 
   test("read / write") {
     def assertNoLeakedCrcFiles(dir: File): Unit = {
@@ -328,4 +334,70 @@ class TrackingRenameFileSystem extends RawLocalFileSystem {
 
 object TrackingRenameFileSystem {
   @volatile var numOfRename = 0
+}
+
+class CustomPublicLogStore(initHadoopConf: Configuration)
+  extends io.delta.storage.LogStore(initHadoopConf) {
+
+  private val logStoreInternal = new HDFSLogStore(SparkEnv.get.conf, initHadoopConf)
+
+  override def read(
+      path: Path,
+      hadoopConf: Configuration): io.delta.storage.CloseableIterator[String] = {
+    val iter = logStoreInternal.readAsIterator(path)
+    new io.delta.storage.CloseableIterator[String] {
+      override def close(): Unit = iter.close
+      override def hasNext: Boolean = iter.hasNext
+      override def next(): String = iter.next
+    }
+  }
+
+  override def write(
+      path: Path,
+      actions: java.util.Iterator[String],
+      overwrite: java.lang.Boolean,
+      hadoopConf: Configuration): Unit = {
+    logStoreInternal.write(path, actions.asScala, overwrite)
+  }
+
+  override def listFrom(
+      path: Path,
+      hadoopConf: Configuration): java.util.Iterator[FileStatus] = {
+    logStoreInternal.listFrom(path).asJava
+  }
+
+  override def resolvePathOnPhysicalStorage(
+      path: Path,
+      hadoopConf: Configuration): Path = {
+    logStoreInternal.resolvePathOnPhysicalStorage(path)
+  }
+
+  override def isPartialWriteVisible(path: Path, hadoopConf: Configuration): java.lang.Boolean = {
+    logStoreInternal.isPartialWriteVisible(path)
+  }
+
+}
+
+class CustomPublicLogStoreSuite extends LogStoreSuiteBase {
+
+  private val customLogStoreClassName: String = classOf[CustomPublicLogStore].getName
+
+  // The actual type of LogStore created will be LogStoreAdaptor.
+  override val logStoreClassName: String = classOf[LogStoreAdaptor].getName
+
+  protected override def sparkConf = {
+    super.sparkConf.set(logStoreClassConfKey, customLogStoreClassName)
+  }
+
+  protected override def testInitFromSparkConf(): Unit = {
+    test("instantiation through SparkConf") {
+      assert(spark.sparkContext.getConf.get(logStoreClassConfKey) == customLogStoreClassName)
+      assert(LogStore(spark.sparkContext).getClass.getName == logStoreClassName)
+      assert(LogStore(spark.sparkContext).asInstanceOf[LogStoreAdaptor]
+        .logStoreImpl.getClass.getName == customLogStoreClassName)
+
+    }
+  }
+
+  protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }

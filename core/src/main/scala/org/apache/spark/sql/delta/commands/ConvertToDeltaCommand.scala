@@ -40,6 +40,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Analyzer, NoSuchTableException}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions.Cast
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog, V1Table}
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, ParquetToSparkSchemaConverter}
@@ -649,4 +650,6 @@ case class ConvertToDeltaCommand(
     tableIdentifier: TableIdentifier,
     partitionSchema: Option[StructType],
     deltaPath: Option[String])
-  extends ConvertToDeltaCommandBase(tableIdentifier, partitionSchema, deltaPath)
+  extends ConvertToDeltaCommandBase(tableIdentifier, partitionSchema, deltaPath) {
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+}

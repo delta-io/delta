@@ -14,17 +14,13 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.catalyst.plans.logical
+package io.delta.storage;
 
-import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
+import java.io.Closeable;
+import java.util.Iterator;
 
-// This only used by Delta which needs to be compatible with DBR 6 and can't use the new class
-// added in Spark 3.0: `DeleteFromTable`.
-case class DeltaDelete(
-    child: LogicalPlan,
-    condition: Option[Expression])
-  extends UnaryNode {
-  override def output: Seq[Attribute] = Seq.empty
-
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
-}
+/**
+ * An iterator that may contain resources which should be released after use. Users of
+ * CloseableIterator are responsible to to close the iterator if they are done with it.
+ */
+public interface CloseableIterator<T> extends Iterator<T>, Closeable {}

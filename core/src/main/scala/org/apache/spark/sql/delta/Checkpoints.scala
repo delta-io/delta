@@ -121,11 +121,15 @@ trait Checkpoints extends DeltaLogging {
   val LAST_CHECKPOINT = new Path(logPath, "_last_checkpoint")
 
   /**
+   * Creates a checkpoint using the default snapshot.
+   */
+  def checkpoint(): Unit = checkpoint(snapshot)
+
+  /**
    * Creates a checkpoint using snapshotToCheckpoint. By default it uses the current log version.
    */
-  def checkpoint(_snapshotToCheckpoint: Option[Snapshot] = None): Unit =
+  def checkpoint(snapshotToCheckpoint: Snapshot): Unit =
     recordDeltaOperation(this, "delta.checkpoint") {
-      val snapshotToCheckpoint = _snapshotToCheckpoint.getOrElse(snapshot)
       if (snapshotToCheckpoint.version < 0) {
         throw DeltaErrors.checkpointNonExistTable(dataPath)
       }
