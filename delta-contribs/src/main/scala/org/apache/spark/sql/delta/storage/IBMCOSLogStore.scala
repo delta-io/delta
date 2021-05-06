@@ -42,7 +42,8 @@ class IBMCOSLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
     "At least one of the preconditions you specified did not hold"
 
   assert(hadoopConf.getBoolean("fs.cos.atomic.write", false) == true,
-    "'fs.cos.atomic.write' must be set to true to use COSLogStore")
+    "'fs.cos.atomic.write' must be set to true to use IBMCOSLogStore " +
+      "in order to enable atomic write")
 
   override def write(path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit = {
     val fs = path.getFileSystem(hadoopConf)
