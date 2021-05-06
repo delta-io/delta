@@ -96,33 +96,14 @@ lazy val core = (project in file("core"))
   )
 
 lazy val deltacontribs = (project in file("delta-contribs"))
-  .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin)
-  .dependsOn(core)
+  .dependsOn(core % "compile->compile;test->test")
   .settings (
     name := "delta-contribs",
     commonSettings,
     scalaStyleSettings,
-    unidocSettings,
     releaseSettings,
     libraryDependencies ++= Seq(
-      // Adding test classifier seems to break transitive resolution of the core dependencies
-      "org.apache.spark" %% "spark-hive" % sparkVersion % "provided",
-      "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
-      "org.apache.spark" %% "spark-core" % sparkVersion % "provided",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion % "provided",
-
-      // Test deps
-      "org.scalatest" %% "scalatest" % "3.1.0" % "test",
-      "junit" % "junit" % "4.12" % "test",
-      "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
-
-      // Compiler plugins
-      // -- Bump up the genjavadoc version explicitly to 0.16 to work with Scala 2.12
-      compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.16" cross CrossVersion.full)
+      "org.apache.spark" %% "spark-sql" % sparkVersion % "provided"
     ),
     (mappings in (Compile, packageBin)) := (mappings in (Compile, packageBin)).value ++
       listPythonFiles(baseDirectory.value.getParentFile / "python"),
@@ -134,8 +115,7 @@ lazy val deltacontribs = (project in file("delta-contribs"))
     parallelExecution in Test := false,
 
     scalacOptions ++= Seq(
-      "-target:jvm-1.8",
-      "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
+      "-target:jvm-1.8"
     ),
 
     javaOptions += "-Xmx1024m",
