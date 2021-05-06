@@ -96,15 +96,12 @@ lazy val core = (project in file("core"))
   )
 
 lazy val deltacontribs = (project in file("delta-contribs"))
-  .dependsOn(core % "compile->compile;test->test")
+  .dependsOn(core % "compile->compile;test->test;provided->provided")
   .settings (
     name := "delta-contribs",
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
-    libraryDependencies ++= Seq(
-      "org.apache.spark" %% "spark-sql" % sparkVersion % "provided"
-    ),
     (mappings in (Compile, packageBin)) := (mappings in (Compile, packageBin)).value ++
       listPythonFiles(baseDirectory.value.getParentFile / "python"),
 
