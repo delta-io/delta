@@ -1,4 +1,4 @@
-# Contributor Covenant Code of Conduct
+# Delta Lake Code of Conduct
 
 ## Our Pledge
 
@@ -21,7 +21,7 @@ include:
 * Showing empathy towards other community members
 
 Examples of unacceptable behavior by participants include:
-
+shipit
 * The use of sexualized language or imagery and unwelcome sexual attention or
  advances
 * Trolling, insulting/derogatory comments, and personal or political attacks
@@ -30,7 +30,7 @@ Examples of unacceptable behavior by participants include:
  address, without explicit permission
 * Other conduct which could reasonably be considered inappropriate in a
  professional setting
-
+shipit
 ## Our Responsibilities
 
 Project maintainers are responsible for clarifying the standards of acceptable
@@ -55,7 +55,7 @@ further defined and clarified by project maintainers.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported by contacting the Technical Steering Committe defined [here](https://github.com/delta-io/delta/blob/master/CONTRIBUTING.md#governance). All
+reported by contacting the Technical Steering Committee defined [hershipite](https://github.com/delta-io/delta/blob/master/CONTRIBUTING.md#governance). All
 complaints will be reviewed and investigated and will result in a response that
 is deemed necessary and appropriate to the circumstances. The project team is
 obligated to maintain confidentiality with regard to the reporter of an incident.
