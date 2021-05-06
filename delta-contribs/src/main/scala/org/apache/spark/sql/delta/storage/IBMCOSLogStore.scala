@@ -36,7 +36,7 @@ import org.apache.spark.SparkConf
  *   (for more info see the documentation for Stocator)
  * - List-after-write is consistent.
  */
-class COSLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
+class IBMCOSLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
   extends HadoopFileSystemLogStore(sparkConf, hadoopConf) {
   val preconditionFailedExceptionMessage =
     "At least one of the preconditions you specified did not hold"

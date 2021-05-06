@@ -18,14 +18,14 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.storage._
 
-class COSLogStoreSuite extends LogStoreSuiteBase {
+class IBMCOSLogStoreSuite extends LogStoreSuiteBase {
 
   protected override def sparkConf = {
     super.sparkConf.set(logStoreClassConfKey, logStoreClassName)
       .set("spark.hadoop.fs.cos.atomic.write", "true")
   }
 
-  override val logStoreClassName: String = classOf[COSLogStore].getName
+  override val logStoreClassName: String = classOf[IBMCOSLogStore].getName
 
   testHadoopConf(
     expectedErrMsg = ".*No FileSystem for scheme.*fake.*",

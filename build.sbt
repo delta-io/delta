@@ -95,7 +95,7 @@ lazy val core = (project in file("core"))
     (compile in Compile) := ((compile in Compile) dependsOn createTargetClassesDir).value
   )
 
-lazy val deltacontribs = (project in file("delta-contribs"))
+lazy val contribs = (project in file("delta-contribs"))
   .dependsOn(core % "compile->compile;test->test;provided->provided")
   .settings (
     name := "delta-contribs",
