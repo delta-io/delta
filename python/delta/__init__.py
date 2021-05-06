@@ -15,5 +15,6 @@
 #
 
 from delta.tables import DeltaTable
+from delta.pip_utils import configure_spark_with_delta_pip
 
-__all__ = ['DeltaTable']
+__all__ = ['DeltaTable', 'configure_spark_with_delta_pip']
