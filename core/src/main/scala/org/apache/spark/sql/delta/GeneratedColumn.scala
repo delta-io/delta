@@ -16,31 +16,33 @@
 
 package org.apache.spark.sql.delta
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
 
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.constraints.{Constraint, Constraints}
-import org.apache.spark.sql.delta.files.TahoeFileIndex
+import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.schema.SchemaUtils.quoteIdentifier
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
+import org.apache.spark.sql.delta.util.AnalysisHelper
 
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, Dataset, Encoder, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.BucketSpec
 import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
-import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, Project}
+import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, LogicalPlan, Project}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.expressions.{BucketTransform, Transform}
 import org.apache.spark.sql.execution.{QueryExecution, SQLExecution}
-import org.apache.spark.sql.execution.datasources.HadoopFsRelation
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.streaming.IncrementalExecution
-import org.apache.spark.sql.types.{DataType, DateType, IntegerType, Metadata => FieldMetadata, MetadataBuilder, StringType, StructField, StructType, TimestampType}
+import org.apache.spark.sql.types.{DataType, DateType, DoubleType, FloatType, IntegerType, Metadata => FieldMetadata, MetadataBuilder, StringType, StructField, StructType, TimestampType}
 
 /**
  * Provide utility methods to implement Generated Columns for Delta. Users can use the following
@@ -74,7 +76,7 @@ import org.apache.spark.sql.types.{DataType, DateType, IntegerType, Metadata => 
  * - If a generated column exists in the output, in other words, we will add a constraint to ensure
  *   the given value doesn't violate the generation expression.
  */
-object GeneratedColumn extends DeltaLogging {
+object GeneratedColumn extends DeltaLogging with AnalysisHelper {
 
   val MIN_WRITER_VERSION = 4
 
@@ -110,6 +112,19 @@ object GeneratedColumn extends DeltaLogging {
   }
 
   /**
+   * Returns the generated columns of a table. A column is a generated column requires:
+   * - The table writer protocol >= GeneratedColumn.MIN_WRITER_VERSION;
+   * - It has a generation expression in the column metadata.
+   */
+  def getGeneratedColumns(snapshot: Snapshot): Seq[StructField] = {
+    if (satisfyGeneratedColumnProtocol(snapshot.protocol)) {
+      snapshot.metadata.schema.partition(isGeneratedColumn)._1
+    } else {
+      Nil
+    }
+  }
+
+  /**
    * Whether the table has generated columns. A table has generated columns only if its
    * `minWriterVersion` >= `GeneratedColumn.MIN_WRITER_VERSION` and some of columns in the table
    * schema contain generation expressions.
@@ -133,6 +148,17 @@ object GeneratedColumn extends DeltaLogging {
       Some(metadata.getString(GENERATION_EXPRESSION_METADATA_KEY))
     } else {
       None
+    }
+  }
+
+  /**
+   * Return the generation expression from a field if any. This method doesn't check the protocl.
+   * The caller should make sure the table writer protocol meets `satisfyGeneratedColumnProtocol`
+   * before calling method.
+   */
+  def getGenerationExpression(field: StructField): Option[Expression] = {
+    getGenerationExpressionStr(field.metadata).map { exprStr =>
+      parseGenerationExpression(SparkSession.active, exprStr)
     }
   }
 

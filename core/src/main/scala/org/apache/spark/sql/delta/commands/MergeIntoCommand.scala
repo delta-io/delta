@@ -658,6 +658,8 @@ case class MergeIntoCommand(
     }
     r
   }
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 object MergeIntoCommand {

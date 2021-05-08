@@ -25,4 +25,6 @@ case class DeltaDelete(
     condition: Option[Expression])
   extends UnaryNode {
   override def output: Seq[Attribute] = Seq.empty
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }

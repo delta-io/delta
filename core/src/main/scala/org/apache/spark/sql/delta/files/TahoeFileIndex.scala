@@ -152,7 +152,10 @@ case class TahoeLogFileIndex(
       // Ensure that the schema hasn't changed in an incompatible manner since analysis time
       val snapshotSchema = snapshotToScan.metadata.schema
       if (!SchemaUtils.isReadCompatible(snapshotAtAnalysis.schema, snapshotSchema)) {
-        throw DeltaErrors.schemaChangedSinceAnalysis(snapshotAtAnalysis.schema, snapshotSchema)
+        throw DeltaErrors.schemaChangedSinceAnalysis(
+            snapshotAtAnalysis.schema,
+            snapshotSchema,
+            mentionLegacyFlag = true)
       }
     }
     snapshotToScan

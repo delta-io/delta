@@ -25,6 +25,8 @@ case class AlterTableAddConstraintStatement(
     expr: String) extends ParsedStatement {
   // TODO: extend LeafParsedStatement when new Spark version released, now fails on OSS Delta build
   override def children: Seq[LogicalPlan] = Nil
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 /**
@@ -35,4 +37,6 @@ case class AlterTableDropConstraintStatement(
     constraintName: String) extends ParsedStatement {
   // TODO: extend LeafParsedStatement when new Spark version released, now fails on OSS Delta build
   override def children: Seq[LogicalPlan] = Nil
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }

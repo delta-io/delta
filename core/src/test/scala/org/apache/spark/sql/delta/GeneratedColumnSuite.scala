@@ -281,6 +281,95 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
 
+  testTableUpdate("update_source_column_used_by_generated_column") { (table, _) =>
+    sql(s"INSERT INTO $table SELECT " +
+      s"1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
+    sql(s"UPDATE $table SET c1 = 2 WHERE c1 = 1")
+    Row(2, 12, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
+      100, 1000, sqlDate("2020-11-12")) :: Nil
+  }
+
+  testTableUpdate("update_source_and_generated_columns_with_correct_value") { (table, _) =>
+    sql(s"INSERT INTO $table SELECT " +
+      s"1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
+    sql(s"UPDATE $table SET c2_g = 12, c1 = 2 WHERE c1 = 1")
+    Row(2, 12, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
+      100, 1000, sqlDate("2020-11-12")) :: Nil
+  }
+
+  testTableUpdate("update_source_and_generated_columns_with_incorrect_value") { (table, _) =>
+    sql(s"INSERT INTO $table SELECT " +
+      s"1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
+    val e = intercept[InvariantViolationException] {
+      quietly {
+        sql(s"UPDATE $table SET c2_g = 12, c1 = 3 WHERE c1 = 1")
+      }
+    }
+    errorContains(e.getMessage,
+      "CHECK constraint Generated Column (c2_g <=> (c1 + 10)) violated by row with values")
+    Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
+      100, 1000, sqlDate("2020-11-12")) :: Nil
+  }
+
+  test("various update commands") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withTableName("update_commands") { table =>
+        createTable(table, Some(path), "c INT, g INT", Map("g" -> "c + 10"), Nil)
+        sql(s"INSERT INTO $table VALUES(10, 20)")
+        sql(s"UPDATE $table SET c = 20")
+        checkAnswer(spark.table(table), Row(20, 30) :: Nil)
+        sql(s"UPDATE delta.`$path` SET c = 30")
+        checkAnswer(spark.table(table), Row(30, 40) :: Nil)
+        io.delta.tables.DeltaTable.forName(table).updateExpr(Map("c" -> "40"))
+        checkAnswer(spark.table(table), Row(40, 50) :: Nil)
+        io.delta.tables.DeltaTable.forPath(path).updateExpr(Map("c" -> "50"))
+        checkAnswer(spark.table(table), Row(50, 60) :: Nil)
+      }
+    }
+  }
+
+  test("update with various column references") {
+    withTableName("update_with_various_references") { table =>
+      createTable(table, None, "c1 INT, c2 INT, g INT", Map("g" -> "c1 + 10"), Nil)
+      sql(s"INSERT INTO $table VALUES(10, 50, 20)")
+      sql(s"UPDATE $table SET c1 = 20")
+      checkAnswer(spark.table(table), Row(20, 50, 30) :: Nil)
+      sql(s"UPDATE $table SET c1 = c2 + 100, c2 = 1000")
+      checkAnswer(spark.table(table), Row(150, 1000, 160) :: Nil)
+      sql(s"UPDATE $table SET c1 = c2 + g")
+      checkAnswer(spark.table(table), Row(1160, 1000, 1170) :: Nil)
+      sql(s"UPDATE $table SET c1 = g")
+      checkAnswer(spark.table(table), Row(1170, 1000, 1180) :: Nil)
+    }
+  }
+
+  test("update a struct source column") {
+    withTableName("update_struct_column") { table =>
+      createTable(table,
+        None,
+        "s STRUCT<s1: INT, s2: STRING>, g INT",
+        Map("g" -> "s.s1 + 10"),
+        Nil)
+      sql(s"INSERT INTO $table VALUES(struct(10, 'foo'), 20)")
+      sql(s"UPDATE $table SET s.s1 = 20 WHERE s.s1 = 10")
+      checkAnswer(spark.table(table), Row(Row(20, "foo"), 30) :: Nil)
+    }
+  }
+
+  test("updating a temp view is not supported") {
+    withTableName("update_temp_view") { table =>
+      createTable(table, None, "c1 INT, c2 INT", Map("c2" -> "c1 + 10"), Nil)
+      withTempView("test_view") {
+        sql(s"CREATE TEMP VIEW test_view AS SELECT * FROM $table")
+        val e = intercept[AnalysisException] {
+          sql(s"UPDATE test_view SET c1 = 2 WHERE c1 = 1")
+        }
+        assert(e.getMessage.contains("Updating a temp view"))
+      }
+    }
+  }
+
   testTableUpdate("streaming_write", isStreaming = true) { (table, path) =>
     withTempDir { checkpointDir =>
       val stream = MemoryStream[Int]

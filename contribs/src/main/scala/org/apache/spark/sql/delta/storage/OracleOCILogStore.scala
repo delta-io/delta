@@ -34,7 +34,7 @@ import org.apache.spark.SparkConf
  * - Uses create-with-overwrite when overwrite is true. This does not make the file atomically
  *   visible and therefore the caller must handle partial files.
  */
-class OCILogStore(sparkConf: SparkConf, hadoopConf: Configuration)
+class OracleOCILogStore(sparkConf: SparkConf, hadoopConf: Configuration)
   extends HadoopFileSystemLogStore(sparkConf, hadoopConf) {
 
   override def write(path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit = {

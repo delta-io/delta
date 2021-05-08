@@ -95,46 +95,15 @@ lazy val core = (project in file("core"))
     (compile in Compile) := ((compile in Compile) dependsOn createTargetClassesDir).value
   )
 
-lazy val oci = (project in file("delta-contribs-oci"))
-  .aggregate(core)
-  .dependsOn(core % "compile->compile;test->test")
-  .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin)
+lazy val contribs = (project in file("contribs"))
+  .dependsOn(core % "compile->compile;test->test;provided->provided")
   .settings (
-    name := "delta-contribs-oci",
+    name := "delta-contribs",
     commonSettings,
     scalaStyleSettings,
-    // mimaSettings,
-    unidocSettings,
     releaseSettings,
-    libraryDependencies ++= Seq(
-      // Adding test classifier seems to break transitive resolution of the core dependencies
-      "org.apache.spark" %% "spark-hive" % sparkVersion % "provided",
-      "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
-      "org.apache.spark" %% "spark-core" % sparkVersion % "provided",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion % "provided",
-
-      // Test deps
-      "org.scalatest" %% "scalatest" % "3.1.0" % "test",
-      "junit" % "junit" % "4.12" % "test",
-      "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
-
-      // Compiler plugins
-      // -- Bump up the genjavadoc version explicitly to 0.16 to work with Scala 2.12
-      compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.16" cross CrossVersion.full)
-    ),
     (mappings in (Compile, packageBin)) := (mappings in (Compile, packageBin)).value ++
-        (mappings in (core, Compile, packageBin)).value ++
-        listPythonFiles(baseDirectory.value.getParentFile / "python"),
-
-    antlr4Settings,
-    antlr4Version in Antlr4 := "4.7",
-    antlr4PackageName in Antlr4 := Some("io.delta.sql.parser"),
-    antlr4GenListener in Antlr4 := true,
-    antlr4GenVisitor in Antlr4 := true,
+      listPythonFiles(baseDirectory.value.getParentFile / "python"),
 
     testOptions in Test += Tests.Argument("-oDF"),
     testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
@@ -143,8 +112,7 @@ lazy val oci = (project in file("delta-contribs-oci"))
     parallelExecution in Test := false,
 
     scalacOptions ++= Seq(
-      "-target:jvm-1.8",
-      "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
+      "-target:jvm-1.8"
     ),
 
     javaOptions += "-Xmx1024m",

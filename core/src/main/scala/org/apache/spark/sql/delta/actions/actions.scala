@@ -252,6 +252,9 @@ case class AddFile(
 
   def copyWithTag(tag: AddFile.Tags.KeyType, value: String): AddFile =
     copy(tags = Option(tags).getOrElse(Map.empty) + (tag.name -> value))
+
+  def copyWithoutTag(tag: AddFile.Tags.KeyType): AddFile =
+    copy(tags = Option(tags).getOrElse(Map.empty) - tag.name)
 }
 
 object AddFile {
@@ -282,6 +285,9 @@ object AddFile {
     /** [[PARTITION_ID]]: rdd partition id that has written the file, will not be stored in the
      physical log, only used for communication  */
     object PARTITION_ID extends AddFile.Tags.KeyType("PARTITION_ID")
+
+    /** [[OPTIMIZE_TARGET_SIZE]]: target file size the file was optimized to. */
+    object OPTIMIZE_TARGET_SIZE extends AddFile.Tags.KeyType("OPTIMIZE_TARGET_SIZE")
   }
 
   /** Convert a [[Tags.KeyType]] to a string to be used in the AddMap.tags Map[String, String]. */
