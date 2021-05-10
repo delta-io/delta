@@ -19,7 +19,9 @@ package org.apache.spark.sql.delta
 import java.util.{Calendar, TimeZone}
 
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
+import org.apache.spark.sql.delta.LogFileMeta.{isCheckpointFile, isDeltaFile}
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.util.FileNames.checkpointPrefix
 import org.apache.commons.lang3.time.DateUtils
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -69,22 +71,19 @@ trait MetadataCleanup extends DeltaLogging {
    *  - be older than `fileCutOffTime`
    */
   private def listExpiredDeltaLogs(fileCutOffTime: Long): Iterator[FileStatus] = {
-    import org.apache.spark.sql.delta.util.FileNames._
 
     val latestCheckpoint = lastCheckpoint
     if (latestCheckpoint.isEmpty) return Iterator.empty
     val threshold = latestCheckpoint.get.version - 1L
-    val files = store.listFrom(checkpointPrefix(logPath, 0))
-      .filter(f => isCheckpointFile(f.getPath) || isDeltaFile(f.getPath))
-    def getVersion(filePath: Path): Long = {
-      if (isCheckpointFile(filePath)) {
-        checkpointVersion(filePath)
-      } else {
-        deltaVersion(filePath)
-      }
-    }
+    val files = logFileHandler.listFilesFrom(checkpointPrefix(logPath, 0))
+      .filter(f => isCheckpointFile(f) || isDeltaFile(f))
+    val versionTuples = files.map(f => (f.fileStatus, f.version)).toArray
+    val versionMap = versionTuples.map(vt => (vt._1.getPath, vt._2)).toMap
 
-    new BufferingLogDeletionIterator(files, fileCutOffTime, threshold, getVersion)
+    new BufferingLogDeletionIterator(versionTuples.map(_._1).iterator,
+      fileCutOffTime,
+      threshold,
+      versionMap)
   }
 
   /** Truncates a timestamp down to the previous midnight and returns the time and a log string */

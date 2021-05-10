@@ -125,6 +125,18 @@ trait LogStore {
   }
 
   /**
+   * Let LogStore decide where checkpoints should be stored.
+   *
+   * Typically the checkpoint storage path would be the same as for Delta storage.
+   * This woudl be inside the _delta_log directory. The LogStore impl may wish to control this path
+   * and should inform the Checkpoints methods accordingly. This is only required for checkpoints
+   * as they are the only metadata file not directly written by LogStore.
+   */
+  def resolveCheckpointPath(path: Path): Path = {
+    path
+  }
+
+  /**
    * Whether a partial write is visible when writing to `path`.
    *
    * As this depends on the underlying file system implementations, we require the input of `path`

@@ -29,10 +29,12 @@ import com.databricks.spark.util.TagDefinitions._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
+import org.apache.spark.sql.delta.LogFileMeta.isDeltaFile
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSQLConf}
 import org.apache.spark.sql.delta.storage.LogStoreProvider
+import org.apache.spark.sql.delta.util.FileNames.deltaFile
 import com.google.common.cache.{CacheBuilder, RemovalListener, RemovalNotification}
 import org.apache.hadoop.fs.Path
 
@@ -65,9 +67,8 @@ class DeltaLog private(
   with MetadataCleanup
   with LogStoreProvider
   with SnapshotManagement
-  with ReadChecksum {
-
-  import org.apache.spark.sql.delta.util.FileNames._
+  with ReadChecksum
+  with LogFileMetaProvider {
 
 
   private lazy implicit val _clock = clock
@@ -78,6 +79,9 @@ class DeltaLog private(
 
   /** Used to read and write physical log files and checkpoints. */
   lazy val store = createLogStore(spark)
+
+  lazy val logFileHandler = createLogFileMetaParser(spark, store)
+
   /** Direct access to the underlying storage system. */
   private[delta] lazy val fs = logPath.getFileSystem(spark.sessionState.newHadoopConf)
 
@@ -223,13 +227,12 @@ class DeltaLog private(
   def getChanges(
       startVersion: Long,
       failOnDataLoss: Boolean = false): Iterator[(Long, Seq[Action])] = {
-    val deltas = store.listFrom(deltaFile(logPath, startVersion))
-      .filter(f => isDeltaFile(f.getPath))
+    val deltas = logFileHandler.listFilesFrom(deltaFile(logPath, startVersion)).filter(isDeltaFile)
     // Subtract 1 to ensure that we have the same check for the inclusive startVersion
     var lastSeenVersion = startVersion - 1
     deltas.map { status =>
-      val p = status.getPath
-      val version = deltaVersion(p)
+      val p = status.fileStatus.getPath
+      val version = status.version
       if (failOnDataLoss && version > lastSeenVersion + 1) {
         throw DeltaErrors.failOnDataLossException(lastSeenVersion + 1, version)
       }
