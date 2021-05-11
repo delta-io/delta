@@ -178,7 +178,7 @@ case class TahoeLogFileIndex(
 
   override def equals(that: Any): Boolean = that match {
     case t: TahoeLogFileIndex =>
-      t.path == path && t.deltaLog.compositeId == deltaLog.compositeId &&
+      t.path == path && t.deltaLog.isSameLogAs(deltaLog) &&
         t.versionToUse == versionToUse && t.partitionFilters == partitionFilters
     case _ => false
   }
@@ -258,7 +258,7 @@ case class PinnedTahoeFileIndex(
 
   override def equals(that: Any): Boolean = that match {
     case t: PinnedTahoeFileIndex =>
-      t.path == path && t.deltaLog.compositeId == deltaLog.compositeId &&
+      t.path == path && t.deltaLog.isSameLogAs(deltaLog) &&
         t.snapshot.version == snapshot.version
     case _ => false
   }
