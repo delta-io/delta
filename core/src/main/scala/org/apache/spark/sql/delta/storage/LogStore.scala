@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.storage
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -147,27 +147,53 @@ object LogStore extends LogStoreProvider
   def apply(sparkConf: SparkConf, hadoopConf: Configuration): LogStore = {
     createLogStore(sparkConf, hadoopConf)
   }
+
+  // The conf key for setting the LogStore implementation for `scheme`.
+  def logStoreSchemeConfKey(scheme: String): String = s"spark.delta.logStore.${scheme}.impl"
+
+  // Creates a LogStore with the given LogStore class name and configurations.
+  def createLogStoreWithClassName(
+      className: String,
+      sparkConf: SparkConf,
+      hadoopConf: Configuration): LogStore = {
+    if (className == classOf[DelegatingLogStore].getName) {
+      new DelegatingLogStore(hadoopConf)
+    } else {
+      val logStoreClass = Utils.classForName(className)
+      if (classOf[io.delta.storage.LogStore].isAssignableFrom(logStoreClass)) {
+        new LogStoreAdaptor(logStoreClass.getConstructor(classOf[Configuration])
+          .newInstance(hadoopConf))
+      } else {
+        logStoreClass.getConstructor(classOf[SparkConf], classOf[Configuration])
+          .newInstance(sparkConf, hadoopConf).asInstanceOf[LogStore]
+      }
+    }
+  }
 }
 
 trait LogStoreProvider {
   val logStoreClassConfKey: String = "spark.delta.logStore.class"
-  val defaultLogStoreClass: String = classOf[HDFSLogStore].getName
+  val defaultLogStoreClass: String = classOf[DelegatingLogStore].getName
 
   def createLogStore(spark: SparkSession): LogStore = {
+    // TODO: return the singleton.
     val sc = spark.sparkContext
     createLogStore(sc.getConf, sc.hadoopConfiguration)
   }
 
-  def createLogStore(sparkConf: SparkConf, hadoopConf: Configuration): LogStore = {
-    val logStoreClassName = sparkConf.get(logStoreClassConfKey, defaultLogStoreClass)
-    val logStoreClass = Utils.classForName(logStoreClassName)
-    if (classOf[io.delta.storage.LogStore].isAssignableFrom(logStoreClass)) {
-      new LogStoreAdaptor(logStoreClass.getConstructor(classOf[Configuration])
-        .newInstance(hadoopConf))
-    } else {
-      logStoreClass.getConstructor(classOf[SparkConf], classOf[Configuration])
-        .newInstance(sparkConf, hadoopConf).asInstanceOf[LogStore]
+  def checkLogStoreConfConflicts(sparkConf: SparkConf): Unit = {
+    val (classConf, otherConf) = sparkConf.getAllWithPrefix("spark.delta.logStore.")
+      .partition(v => v._1 == "class")
+    val schemeConf = otherConf.filter(_._1.endsWith(".impl"))
+    if (classConf.nonEmpty && schemeConf.nonEmpty) {
+      throw DeltaErrors.logStoreConfConflicts(schemeConf)
     }
+  }
+
+  def createLogStore(sparkConf: SparkConf, hadoopConf: Configuration): LogStore = {
+    checkLogStoreConfConflicts(sparkConf)
+    val logStoreClassName = sparkConf.get(logStoreClassConfKey, defaultLogStoreClass)
+    LogStore.createLogStoreWithClassName(logStoreClassName, sparkConf, hadoopConf)
   }
 }
 

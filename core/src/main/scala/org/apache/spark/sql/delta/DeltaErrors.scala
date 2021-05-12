@@ -1139,6 +1139,13 @@ object DeltaErrors
     new AnalysisException(s"Column $column is not specified in INSERT")
   }
 
+  def logStoreConfConflicts(schemeConf: Seq[(String, String)]): Throwable = {
+    val schemeConfStr = schemeConf.map("spark.delta.logStore." + _._1).mkString(", ")
+    new AnalysisException(
+      s"(`spark.delta.logStore.class`) and (`${schemeConfStr}`)" +
+      " cannot be set at the same time. Please set only one group of them.")
+  }
+
   def concurrentWriteException(
       conflictingCommit: Option[CommitInfo]): io.delta.exceptions.ConcurrentWriteException = {
     val message = DeltaErrors.concurrentModificationExceptionMsg(
