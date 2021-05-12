@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.actions.{Action, Metadata}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -214,7 +214,7 @@ case class CreateDeltaTableCommand(
       // Note that someone may have dropped and recreated the table in a separate location in the
       // meantime... Unfortunately we can't do anything there at the moment, because Hive sucks.
       logInfo(s"Table is path-based table: $tableByPath. Update catalog with mode: $operation")
-      updateCatalog(sparkSession, tableWithLocation, deltaLog.snapshot)
+      updateCatalog(sparkSession, tableWithLocation, deltaLog.snapshot, txn)
 
       result
     }
@@ -344,7 +344,8 @@ case class CreateDeltaTableCommand(
   private def updateCatalog(
       spark: SparkSession,
       table: CatalogTable,
-      snapshot: Snapshot): Unit = {
+      snapshot: Snapshot,
+      txn: OptimisticTransaction): Unit = {
     val cleaned = cleanupTableDefinition(table, snapshot)
     operation match {
       case _ if tableByPath => // do nothing with the metastore if this is by path
