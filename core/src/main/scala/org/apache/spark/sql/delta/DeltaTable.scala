@@ -33,6 +33,7 @@ import org.apache.spark.sql.catalyst.catalog.{CatalogTable, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions.{And, AttributeReference, Expression, NamedExpression, Or, PredicateHelper, SubqueryExpression}
 import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform}
 import org.apache.spark.sql.execution.datasources.{FileIndex, HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
 
@@ -350,5 +351,9 @@ object DeltaTableUtils extends PredicateHelper
       val timestamp = tt.getTimestamp(conf)
       deltaLog.history.getActiveCommitAtTime(timestamp, false).version -> "timestamp"
     }
+  }
+
+  def parseColToTransform(col: String): IdentityTransform = {
+    IdentityTransform(FieldReference(Seq(col)))
   }
 }

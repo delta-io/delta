@@ -757,4 +757,174 @@ object DeltaTable {
     }
     isDeltaTable(sparkSession, identifier)
   }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to create a Delta table,
+   * error if the table exists (the same as SQL `CREATE TABLE`).
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   *
+   * @since 1.0.0
+   */
+  def create(): DeltaTableBuilder = {
+    val sparkSession = SparkSession.getActiveSession.getOrElse {
+      throw new IllegalArgumentException("Could not find active SparkSession")
+    }
+    create(sparkSession)
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to create a Delta table,
+   * error if the table exists (the same as SQL `CREATE TABLE`).
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * @param spark sparkSession sparkSession passed by the user
+   * @since 1.0.0
+   */
+  def create(spark: SparkSession): DeltaTableBuilder = {
+    new DeltaTableBuilder(spark, DeltaTableBuilder.CreateBuilderOption(false))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to create a Delta table,
+   * if it does not exists (the same as SQL `CREATE TABLE IF NOT EXISTS`).
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   *
+   * @since 1.0.0
+   */
+  def createIfNotExists(): DeltaTableBuilder = {
+    val sparkSession = SparkSession.getActiveSession.getOrElse {
+      throw new IllegalArgumentException("Could not find active SparkSession")
+    }
+    createIfNotExists(sparkSession)
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to create a Delta table,
+   * if it does not exists (the same as SQL `CREATE TABLE IF NOT EXISTS`).
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * @param spark sparkSession sparkSession passed by the user
+   * @since 1.0.0
+   */
+  def createIfNotExists(spark: SparkSession): DeltaTableBuilder = {
+    new DeltaTableBuilder(spark, DeltaTableBuilder.CreateBuilderOption(true))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to replace a Delta table,
+   * error if the table doesn't exist (the same as SQL `REPLACE TABLE`)
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   *
+   * @since 1.0.0
+   */
+  def replace(): DeltaTableBuilder = {
+    val sparkSession = SparkSession.getActiveSession.getOrElse {
+      throw new IllegalArgumentException("Could not find active SparkSession")
+    }
+    replace(sparkSession)
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to replace a Delta table,
+   * error if the table doesn't exist (the same as SQL `REPLACE TABLE`)
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * @param spark sparkSession sparkSession passed by the user
+   * @since 1.0.0
+   */
+  def replace(spark: SparkSession): DeltaTableBuilder = {
+    new DeltaTableBuilder(spark, DeltaTableBuilder.ReplaceBuilderOption(false))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to replace a Delta table
+   * or create table if not exists (the same as SQL `CREATE OR REPLACE TABLE`)
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   *
+   * @since 1.0.0
+   */
+  def createOrReplace(): DeltaTableBuilder = {
+    val sparkSession = SparkSession.getActiveSession.getOrElse {
+      throw new IllegalArgumentException("Could not find active SparkSession")
+    }
+    createOrReplace(sparkSession)
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to replace a Delta table,
+   * or create table if not exists (the same as SQL `CREATE OR REPLACE TABLE`)
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * @param spark sparkSession sparkSession passed by the user.
+   * @since 1.0.0
+   */
+  def createOrReplace(spark: SparkSession): DeltaTableBuilder = {
+    new DeltaTableBuilder(spark, DeltaTableBuilder.ReplaceBuilderOption(true))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaColumnBuilder]] to specify a column.
+   * Refer to [[DeltaTableBuilder]] for examples and [[DeltaColumnBuilder]] detailed APIs.
+   *
+   * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   *
+   * @param colName string the column name
+   * @since 1.0.0
+   */
+  def columnBuilder(colName: String): DeltaColumnBuilder = {
+    val sparkSession = SparkSession.getActiveSession.getOrElse {
+      throw new IllegalArgumentException("Could not find active SparkSession")
+    }
+    columnBuilder(sparkSession, colName)
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaColumnBuilder]] to specify a column.
+   * Refer to [[DeltaTableBuilder]] for examples and [[DeltaColumnBuilder]] detailed APIs.
+   *
+   * @param spark sparkSession sparkSession passed by the user
+   * @param colName string the column name
+   * @since 1.0.0
+   */
+  def columnBuilder(spark: SparkSession, colName: String): DeltaColumnBuilder = {
+    new DeltaColumnBuilder(spark, colName)
+  }
 }

@@ -17,18 +17,16 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
-import org.apache.spark.sql.delta.actions.Metadata
-import org.apache.spark.sql.delta.schema.InvariantViolationException
+import org.apache.spark.sql.delta.schema.{InvariantViolationException, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import io.delta.tables.DeltaTableBuilder
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.DateTimeUtils.{getZoneId, stringToDate, stringToTimestamp, toJavaDate, toJavaTimestamp}
 import org.apache.spark.sql.catalyst.util.quietly
 import org.apache.spark.sql.execution.streaming.MemoryStream
-import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.{StreamingQueryException, Trigger}
 import org.apache.spark.sql.test.SharedSparkSession
@@ -70,37 +68,77 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
   import GeneratedColumn._
   import testImplicits._
 
-  /** Manually generate table metadata to create a table with generated columns */
+  private def buildTable(
+      builder: DeltaTableBuilder,
+      tableName: String,
+      path: Option[String],
+      schemaString: String,
+      generatedColumns: Map[String, String],
+      partitionColumns: Seq[String],
+      notNullColumns: Set[String],
+       comments: Map[String, String]): DeltaTableBuilder = {
+    val schema = if (schemaString.nonEmpty) {
+      StructType.fromDDL(schemaString)
+    } else {
+      new StructType()
+    }
+    val cols = schema.map(field => (field.name, field.dataType))
+    if (tableName != null) {
+      builder.tableName(tableName)
+    }
+    cols.foreach(col => {
+      val (colName, dataType) = col
+      val nullable = !notNullColumns.contains(colName)
+      var columnBuilder = io.delta.tables.DeltaTable.columnBuilder(spark, colName)
+      columnBuilder.dataType(dataType.sql)
+      columnBuilder.nullable(nullable)
+      if (generatedColumns.contains(colName)) {
+        columnBuilder.generatedAlwaysAs(generatedColumns(colName))
+      }
+      if (comments.contains(colName)) {
+        columnBuilder.comment(comments(colName))
+      }
+      builder.addColumn(columnBuilder.build())
+    })
+    if (partitionColumns.nonEmpty) {
+      builder.partitionedBy(partitionColumns: _*)
+    }
+    if (path.nonEmpty) {
+      builder.location(path.get)
+    }
+    builder
+  }
+
   protected def createTable(
       tableName: String,
       path: Option[String],
       schemaString: String,
       generatedColumns: Map[String, String],
-      partitionColumns: Seq[String]): Unit = {
-    def updateTableMetadataWithGeneratedColumn(deltaLog: DeltaLog): Unit = {
-      val txn = deltaLog.startTransaction()
-      val schema = StructType.fromDDL(schemaString)
-      val finalSchema = StructType(schema.map { field =>
-        generatedColumns.get(field.name).map { expr =>
-          withGenerationExpression(field, expr)
-        }.getOrElse(field)
-      })
-      val metadata = Metadata(schemaString = finalSchema.json, partitionColumns = partitionColumns)
-      txn.updateMetadataForNewTable(metadata)
-      txn.commit(Nil, ManualUpdate)
-    }
+      partitionColumns: Seq[String],
+      notNullColumns: Set[String] = Set.empty,
+      comments: Map[String, String] = Map.empty): Unit = {
+    var tableBuilder = io.delta.tables.DeltaTable.create(spark)
+    buildTable(tableBuilder, tableName, path, schemaString,
+      generatedColumns, partitionColumns, notNullColumns, comments)
+      .execute()
+  }
 
-    if (path.isEmpty) {
-      sql(s"CREATE TABLE $tableName(foo INT) USING delta")
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
-      updateTableMetadataWithGeneratedColumn(deltaLog)
-      spark.catalog.refreshTable(tableName)
+  protected def replaceTable(
+      tableName: String,
+      path: Option[String],
+      schemaString: String,
+      generatedColumns: Map[String, String],
+      partitionColumns: Seq[String],
+      notNullColumns: Set[String] = Set.empty,
+      comments: Map[String, String] = Map.empty,
+      orCreate: Option[Boolean] = None): Unit = {
+    var tableBuilder = if (orCreate.getOrElse(false)) {
+      io.delta.tables.DeltaTable.createOrReplace(spark)
     } else {
-      sql(s"CREATE TABLE $tableName(foo INT) USING delta LOCATION '${path.get}'")
-      val deltaLog = DeltaLog.forTable(spark, path.get)
-      updateTableMetadataWithGeneratedColumn(deltaLog)
-      spark.catalog.refreshTable(tableName)
+      io.delta.tables.DeltaTable.replace(spark)
     }
+    buildTable(tableBuilder, tableName, path, schemaString,
+      generatedColumns, partitionColumns, notNullColumns, comments).execute()
   }
 
   // Define the information for a default test table used by many tests.
@@ -119,7 +157,8 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
       path,
       defaultTestTableSchema,
       defaultTestTableGeneratedColumns,
-      defaultTestTablePartitionColumns)
+      defaultTestTablePartitionColumns
+    )
   }
 
   /**
@@ -685,6 +724,276 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
       }
     }
   }
+
+  /**
+   * Verify if the table metadata matches the default test table. We use this to verify DDLs
+   * write correct table metadata into the transaction logs.
+   */
+  protected def verifyDefaultTestTableMetadata(table: String): Unit = {
+    val deltaLog = if (table.startsWith("delta.")) {
+      DeltaLog.forTable(spark, table.stripPrefix("delta.`").stripSuffix("`"))
+    } else {
+      DeltaLog.forTable(spark, TableIdentifier(table))
+    }
+    val schema = StructType.fromDDL(defaultTestTableSchema)
+    val expectedSchema = StructType(schema.map { field =>
+      defaultTestTableGeneratedColumns.get(field.name).map { expr =>
+        withGenerationExpression(field, expr)
+      }.getOrElse(field)
+    })
+    val partitionColumns = defaultTestTablePartitionColumns
+    val metadata = deltaLog.snapshot.metadata
+    assert(metadata.schema == expectedSchema)
+    assert(metadata.partitionColumns == partitionColumns)
+  }
+
+  protected def testCreateTable(testName: String)(createFunc: String => Unit): Unit = {
+    test(testName) {
+      withTable(testName) {
+        createFunc(testName)
+        verifyDefaultTestTableMetadata(testName)
+      }
+    }
+  }
+
+  protected def testCreateTableWithLocation(
+      testName: String)(createFunc: (String, String) => Unit): Unit = {
+    test(testName + ": external") {
+      withTempPath { path =>
+        withTable(testName) {
+          createFunc(testName, path.getCanonicalPath)
+          verifyDefaultTestTableMetadata(testName)
+          verifyDefaultTestTableMetadata(s"delta.`${path.getCanonicalPath}`")
+        }
+      }
+    }
+  }
+
+  testCreateTable("create_table") { table =>
+    createTable(
+      table,
+      None,
+      defaultTestTableSchema,
+      defaultTestTableGeneratedColumns,
+      defaultTestTablePartitionColumns
+    )
+  }
+
+  testCreateTable("replace_table") { table =>
+    createTable(table, None, "id bigint", Map.empty, Seq.empty)
+    replaceTable(
+      table,
+      None,
+      defaultTestTableSchema,
+      defaultTestTableGeneratedColumns,
+      defaultTestTablePartitionColumns
+    )
+  }
+
+  testCreateTable("create_or_replace_table_non_exist") { table =>
+    replaceTable(
+      table,
+      None,
+      defaultTestTableSchema,
+      defaultTestTableGeneratedColumns,
+      defaultTestTablePartitionColumns,
+      orCreate = Some(true)
+    )
+  }
+
+  testCreateTable("create_or_replace_table_exist") { table =>
+    createTable(table, None, "id bigint", Map.empty, Seq.empty)
+    replaceTable(
+      table,
+      None,
+      defaultTestTableSchema,
+      defaultTestTableGeneratedColumns,
+      defaultTestTablePartitionColumns,
+      orCreate = Some(true)
+    )
+  }
+
+  testCreateTableWithLocation("create_table") { (table, path) =>
+    createTable(
+      table,
+      Some(path),
+      defaultTestTableSchema,
+      defaultTestTableGeneratedColumns,
+      defaultTestTablePartitionColumns
+    )
+  }
+
+  testCreateTableWithLocation("replace_table") { (table, path) =>
+    createTable(
+      table,
+      Some(path),
+      defaultTestTableSchema,
+      defaultTestTableGeneratedColumns,
+      defaultTestTablePartitionColumns
+    )
+    replaceTable(
+      table,
+      Some(path),
+      defaultTestTableSchema,
+      defaultTestTableGeneratedColumns,
+      defaultTestTablePartitionColumns
+    )
+  }
+
+  testCreateTableWithLocation("create_or_replace_table_non_exist") { (table, path) =>
+    replaceTable(
+      table,
+      Some(path),
+      defaultTestTableSchema,
+      defaultTestTableGeneratedColumns,
+      defaultTestTablePartitionColumns,
+      orCreate = Some(true)
+    )
+  }
+
+  testCreateTableWithLocation("create_or_replace_table_exist") { (table, path) =>
+    createTable(
+      table,
+      Some(path),
+      "id bigint",
+      Map.empty,
+      Seq.empty
+    )
+    replaceTable(
+      table,
+      Some(path),
+      defaultTestTableSchema,
+      defaultTestTableGeneratedColumns,
+      defaultTestTablePartitionColumns,
+      orCreate = Some(true)
+    )
+  }
+
+  test("using generated columns should upgrade the protocol") {
+    withTableName("upgrade_protocol") { table =>
+      def protocolVersions: (Int, Int) = {
+        sql(s"DESC DETAIL $table")
+          .select("minReaderVersion", "minWriterVersion")
+          .as[(Int, Int)]
+          .head()
+      }
+
+      // Use the default protocol versions when not using computed partitions
+      createTable(table, None, "i INT", Map.empty, Seq.empty)
+      assert(protocolVersions == (1, 2))
+      assert(DeltaLog.forTable(spark, TableIdentifier(tableName = table)).snapshot.version == 0)
+
+      // Protocol versions should be upgraded when using computed partitions
+      replaceTable(
+        table,
+        None,
+        defaultTestTableSchema,
+        defaultTestTableGeneratedColumns,
+        defaultTestTablePartitionColumns)
+      assert(protocolVersions == (1, 4))
+      // Make sure we did overwrite the table rather than deleting and re-creating.
+      assert(DeltaLog.forTable(spark, TableIdentifier(tableName = table)).snapshot.version == 1)
+    }
+  }
+
+  test("creating a table with a different schema should fail") {
+    withTempPath { path =>
+      // Currently SQL is the only way to define a table using generated columns. So we create a
+      // temp table and drop it to get a path for such table.
+      withTableName("temp_generated_column_table") { table =>
+        createTable(
+          null,
+          Some(path.toString),
+          defaultTestTableSchema,
+          defaultTestTableGeneratedColumns,
+          defaultTestTablePartitionColumns
+        )
+      }
+      withTableName("table_with_no_schema") { table =>
+        createTable(
+          table,
+          Some(path.toString),
+          "",
+          Map.empty,
+          Seq.empty
+        )
+        verifyDefaultTestTableMetadata(table)
+      }
+      withTableName("table_with_different_expr") { table =>
+        val e = intercept[AnalysisException](
+          createTable(
+            table,
+            Some(path.toString),
+            defaultTestTableSchema,
+            Map(
+              "c2_g" -> "c1 + 11", // use a different generated expr
+              "c4_g_p" -> "CAST(c5 AS date)",
+              "c7_g_p" -> "c6 * 10"
+            ),
+            defaultTestTablePartitionColumns
+          )
+        )
+        assert(e.getMessage.contains(
+          "Specified generation expression for field c2_g is different from existing schema"))
+        assert(e.getMessage.contains("Specified: c1 + 11"))
+        assert(e.getMessage.contains("Existing:  c1 + 10"))
+      }
+      withTableName("table_add_new_expr") { table =>
+        val e = intercept[AnalysisException](
+          createTable(
+            table,
+            Some(path.toString),
+            defaultTestTableSchema,
+            Map(
+              "c2_g" -> "c1 + 10",
+              "c3_p" -> "CAST(c1 AS string)", // add a generated expr
+              "c4_g_p" -> "CAST(c5 AS date)",
+              "c7_g_p" -> "c6 * 10"
+            ),
+            defaultTestTablePartitionColumns
+          )
+        )
+        assert(e.getMessage.contains(
+          "Specified generation expression for field c3_p is different from existing schema"))
+        assert(e.getMessage.contains("CAST(c1 AS string)"))
+        assert(e.getMessage.contains("Existing:  \n"))
+      }
+    }
+  }
+
+  test("use the generation expression, column comment and NOT NULL at the same time") {
+    withTableName("generation_expression_comment") { table =>
+      createTable(
+        table,
+        None,
+        "c1 INT, c2 INT, c3 INT",
+        Map("c2" -> "c1 + 10", "c3" -> "c1 + 10"),
+        Seq.empty,
+        Set("c3"),
+        Map("c2" -> "foo", "c3" -> "foo")
+      )
+      // Verify schema
+      val f1 = StructField("c1", IntegerType, nullable = true)
+      val fieldMetadata = new MetadataBuilder()
+        .putString(GENERATION_EXPRESSION_METADATA_KEY, "c1 + 10")
+        .putString("comment", "foo")
+        .build()
+      val f2 = StructField("c2", IntegerType, nullable = true, metadata = fieldMetadata)
+      val f3 = StructField("c3", IntegerType, nullable = false, metadata = fieldMetadata)
+      val expectedSchema = StructType(f1 :: f2 :: f3 :: Nil)
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
+      assert(deltaLog.snapshot.metadata.schema == expectedSchema)
+      // Verify column comment
+      val comments = sql(s"DESC $table")
+        .where("col_name = 'c2'")
+        .select("comment")
+        .as[String]
+        .collect()
+        .toSeq
+      assert("foo" :: Nil == comments)
+    }
+  }
 }
 
 class GeneratedColumnSuite extends GeneratedColumnSuiteBase
+
