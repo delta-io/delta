@@ -37,6 +37,7 @@ import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.functions.{col, struct, when}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
 
@@ -345,9 +346,7 @@ object Checkpoints extends DeltaLogging {
     val sessionConf = state.sparkSession.sessionState.conf
     // We provide fine grained control using the session conf for now, until users explicitly
     // opt in our out of the struct conf.
-    val includeStructColumns = DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT
-      .fromMetaData(snapshot.metadata)
-      .getOrElse(sessionConf.getConf(DeltaSQLConf.DELTA_CHECKPOINT_V2_ENABLED))
+    val includeStructColumns = getWriteStatsAsStructConf(sessionConf, snapshot)
     if (includeStructColumns) {
       additionalCols ++= CheckpointV2.extractPartitionValues(snapshot.metadata.partitionSchema)
     }
@@ -362,6 +361,12 @@ object Checkpoints extends DeltaLogging {
         additionalCols: _*
       ))
     )
+  }
+
+  def getWriteStatsAsStructConf(conf: SQLConf, snapshot: Snapshot): Boolean = {
+    DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT
+      .fromMetaData(snapshot.metadata)
+      .getOrElse(conf.getConf(DeltaSQLConf.DELTA_CHECKPOINT_V2_ENABLED))
   }
 }
 

@@ -472,7 +472,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
         finalActions,
         isolationLevelToUse)
       logInfo(s"Committed delta #$commitVersion to ${deltaLog.logPath}")
-      postCommit(commitVersion, finalActions)
+      postCommit(commitVersion)
       commitVersion
     } catch {
       case e: DeltaConcurrentModificationException =>
@@ -578,10 +578,17 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
     finalActions
   }
 
+  /**
+   * Returns true if we should checkpoint the version that has just been committed.
+   */
+  protected def shouldCheckpoint(committedVersion: Long): Boolean = {
+    committedVersion != 0 && committedVersion % deltaLog.checkpointInterval == 0
+  }
+
   /** Perform post-commit operations */
-  protected def postCommit(commitVersion: Long, commitActions: Seq[Action]): Unit = {
+  protected def postCommit(commitVersion: Long): Unit = {
     committed = true
-    if (commitVersion != 0 && commitVersion % deltaLog.checkpointInterval == 0) {
+    if (shouldCheckpoint(commitVersion)) {
       try {
         // We checkpoint the version to be committed to so that no two transactions will checkpoint
         // the same version.
