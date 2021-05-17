@@ -215,6 +215,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   /** The protocol of the snapshot that this transaction is reading at. */
   def protocol: Protocol = newProtocol.getOrElse(snapshot.protocol)
 
+  /** Start time of txn in nanoseconds */
+  def txnStartTimeNs: Long = txnStartNano
+
   /**
    * Returns the metadata for this transaction. The metadata refers to the metadata of the snapshot
    * at the transaction's read version unless updated during the transaction.
@@ -699,12 +702,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
 
     // Post stats
     var numAbsolutePaths = 0
-    var pathHolder: Path = null
     val distinctPartitions = new mutable.HashSet[Map[String, String]]
     val adds = actions.collect {
       case a: AddFile =>
-        pathHolder = new Path(new URI(a.path))
-        if (pathHolder.isAbsolute) numAbsolutePaths += 1
+        if (a.pathAsUri.isAbsolute) numAbsolutePaths += 1
         distinctPartitions += a.partitionValues
         a
     }

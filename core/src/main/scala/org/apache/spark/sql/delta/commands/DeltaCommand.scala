@@ -16,9 +16,13 @@
 
 package org.apache.spark.sql.delta.commands
 
+import java.net.URI
+import java.util.concurrent.TimeUnit.NANOSECONDS
+
+import scala.collection.mutable
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, OptimisticTransaction, Serializable}
+import org.apache.spark.sql.delta.{CommitStats, DeltaErrors, DeltaLog, DeltaOperations, OptimisticTransaction, Serializable, Snapshot}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -254,6 +258,7 @@ trait DeltaCommand extends DeltaLogging {
       op: DeltaOperations.Operation,
       context: Map[String, String],
       metrics: Map[String, String]): Long = {
+    val commitStartNano = System.nanoTime()
     val attemptVersion = txn.readVersion + 1
     try {
       val metadata = txn.metadata
@@ -273,9 +278,22 @@ trait DeltaCommand extends DeltaLogging {
       val extraActions = Seq(commitInfo, metadata)
       // We don't expect commits to have more than 2 billion actions
       var commitSize: Int = 0
-      val allActions = (extraActions.toIterator ++ actions).map { a =>
+      var numAbsolutePaths: Int = 0
+      var numAddFiles: Int = 0
+      var numRemoveFiles: Int = 0
+      var bytesNew: Long = 0L
+      val allActions = (extraActions.toIterator ++ actions).map { action =>
         commitSize += 1
-        a
+        action match {
+          case a: AddFile =>
+            numAddFiles += 1
+            if (a.pathAsUri.isAbsolute) numAbsolutePaths += 1
+            if (a.dataChange) bytesNew += a.size
+          case _: RemoveFile =>
+            numRemoveFiles += 1
+          case _ =>
+        }
+        action
       }
       if (txn.readVersion < 0) {
         deltaLog.fs.mkdirs(deltaLog.logPath)
@@ -285,8 +303,30 @@ trait DeltaCommand extends DeltaLogging {
       spark.sessionState.conf.setConf(
         DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,
         Some(attemptVersion))
+      val commitTime = System.nanoTime()
 
       updateAndCheckpoint(spark, deltaLog, commitSize, attemptVersion)
+      val postCommitSnapshot = deltaLog.snapshot
+      val stats = CommitStats(
+        startVersion = txn.readVersion,
+        commitVersion = attemptVersion,
+        readVersion = postCommitSnapshot.version,
+        txnDurationMs = NANOSECONDS.toMillis(commitTime - txn.txnStartTimeNs),
+        commitDurationMs = NANOSECONDS.toMillis(commitTime - commitStartNano),
+        numAdd = numAddFiles,
+        numRemove = numRemoveFiles,
+        bytesNew = bytesNew,
+        numFilesTotal = postCommitSnapshot.numOfFiles,
+        sizeInBytesTotal = postCommitSnapshot.sizeInBytes,
+        numCdcFiles = 0,
+        cdcBytesNew = 0,
+        protocol = postCommitSnapshot.protocol,
+        info = Option(commitInfo).map(_.copy(readVersion = None, isolationLevel = None)).orNull,
+        newMetadata = Some(metadata),
+        numAbsolutePathsInAdd = numAbsolutePaths,
+        numDistinctPartitionsInAdd = -1, // not tracking distinct partitions as of now
+        isolationLevel = Serializable.toString)
+      recordDeltaEvent(deltaLog, "delta.commit.stats", data = stats)
 
       attemptVersion
     } catch {
