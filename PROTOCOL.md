@@ -244,6 +244,10 @@ Field Name | Data Type | Description
 path | String | An absolute or relative path to a file that should be removed from the table
 deletionTimestamp | Long | The time the deletion occurred, represented as milliseconds since the epoch
 dataChange | Boolean | When `false` the records in the removed file must be contained in one or more `add` file actions in the same version
+extendedFileMetadata | Boolean | When `true` the fields `partitionValues`, `size`, and `tags` are present
+partitionValues| Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization)
+size| Long | The size of this file in bytes
+tags | Map[String, String] | Map containing metadata about this file
 
 The following is an example `remove` action.
 ```
