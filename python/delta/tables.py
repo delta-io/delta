@@ -14,6 +14,8 @@
 # limitations under the License.
 #
 
+import delta.exceptions  # noqa: F401; pylint: disable=unused-variable
+
 from pyspark import since
 from pyspark.sql import Column, DataFrame, functions
 
@@ -464,7 +466,7 @@ class DeltaMergeBuilder(object):
         corresponding column of the source DataFrame, then you can use
         ``whenNotMatchedInsertAll()``. This is equivalent to::
 
-            whenMatchedInsert(values = {
+            whenNotMatchedInsert(values = {
               "col1": "source.col1",
               "col2": "source.col2",
               ...    # for all columns in the delta table

@@ -129,10 +129,10 @@ Checkpoints for a given version must only be created after the associated delta 
 ### Last Checkpoint File
 The Delta transaction log will often contain many (e.g. 10,000+) files.
 Listing such a large directory can be prohibitively expensive.
-The last checkpoint file can help reduce the cost of constructing the lastest snapshot of the table by providing a pointer to near the end of the log.
+The last checkpoint file can help reduce the cost of constructing the latest snapshot of the table by providing a pointer to near the end of the log.
 
 Rather than list the entire directory, readers can locate a recent checkpoint by looking at the `_delta_log/_last_checkpoint` file.
-Due to the zero-padded encoding of the files in the log, the version id of this recent checkpoint can be used on storage systems that support lexigraphically-sorted, paginated directory listing to enumerate any delta files or newer checkpoints that comprise more recent versions of the table.
+Due to the zero-padded encoding of the files in the log, the version id of this recent checkpoint can be used on storage systems that support lexicographically-sorted, paginated directory listing to enumerate any delta files or newer checkpoints that comprise more recent versions of the table.
 
 This last checkpoint file is encoded as JSON and contains the following information:
 
@@ -244,6 +244,10 @@ Field Name | Data Type | Description
 path | String | An absolute or relative path to a file that should be removed from the table
 deletionTimestamp | Long | The time the deletion occurred, represented as milliseconds since the epoch
 dataChange | Boolean | When `false` the records in the removed file must be contained in one or more `add` file actions in the same version
+extendedFileMetadata | Boolean | When `true` the fields `partitionValues`, `size`, and `tags` are present
+partitionValues| Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization)
+size| Long | The size of this file in bytes
+tags | Map[String, String] | Map containing metadata about this file
 
 The following is an example `remove` action.
 ```
@@ -367,7 +371,7 @@ This section documents additional requirements that writers must follow in order
  - Columns present in the schema of the table MAY be missing from data files. Readers SHOULD fill these missing columns in with `null`.
 
 ## Delta Log Entries
-- A single log entry MUST NOT include more than one action that reconcile with each other.
+- A single log entry MUST NOT include more than one action that reconciles with each other.
   - Add / Remove actions with the same `path`
   - More than one Metadata action
   - More than one protocol action
@@ -445,7 +449,7 @@ Name | Description
 -|-
 numRecords | The number of records in this file.
 
-Per-column statistics record information for each column in the file and they are encoded mirroring the schema of the actual data.
+Per-column statistics record information for each column in the file and they are encoded, mirroring the schema of the actual data.
 For example, given the following data schema:
 ```
 |-- a: struct
@@ -527,7 +531,7 @@ Field Name | Description
 name| Name of this (possibly nested) column
 type| String containing the name of a primitive type, a struct definition, an array definition or a map definition
 nullable| Boolean denoting whether this field can be null
-metadata| A JSON map containing information about this column. Keys prefixed with `Delta` are reserved for the implementation. See [TODO](#) for more information on column level metadata that must clients must handle when writing to a table.
+metadata| A JSON map containing information about this column. Keys prefixed with `Delta` are reserved for the implementation. See [TODO](#) for more information on column level metadata that clients must handle when writing to a table.
 
 ### Array Type
 

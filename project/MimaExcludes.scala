@@ -27,6 +27,7 @@ object MimaExcludes {
       ProblemFilters.exclude[Problem]("io.delta.tables.execution.*"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.apply"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.executeHistory"),
+      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.executeVacuum"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.this"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.deltaLog"),
 
