@@ -29,8 +29,8 @@ def main():
     # Set up the directories
     docs_root_dir = os.path.dirname(os.path.realpath(__file__))
     repo_root_dir = os.path.dirname(docs_root_dir)
-    scaladoc_gen_dir = repo_root_dir + "/target/scala-2.12/unidoc"
-    javadoc_gen_dir = repo_root_dir + "/target/javaunidoc"
+    scaladoc_gen_dir = repo_root_dir + "/core/target/scala-2.12/unidoc"
+    javadoc_gen_dir = repo_root_dir + "/core/target/javaunidoc"
     all_api_docs_final_dir = docs_root_dir + "/_site/api"
     scala_api_docs_final_dir = all_api_docs_final_dir + "/scala"
     java_api_docs_final_dir = all_api_docs_final_dir + "/java"
