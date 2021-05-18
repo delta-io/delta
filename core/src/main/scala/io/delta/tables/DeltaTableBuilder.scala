@@ -31,6 +31,8 @@ import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
 
 /**
+ * :: Evolving ::
+ *
  * Builder to specify how to create / replace a Delta table.
  * You must specify the table name or the path before executing the builder.
  * You can specify the table columns, the partitioning columns, the location of the data,
@@ -98,6 +100,7 @@ import org.apache.spark.sql.types.{DataType, StructField, StructType}
  *
  * @since 1.0.0
  */
+@Evolving
 class DeltaTableBuilder private[tables](
     private val spark: SparkSession, builderOption: BuilderOption) {
   private var identifier: String = null

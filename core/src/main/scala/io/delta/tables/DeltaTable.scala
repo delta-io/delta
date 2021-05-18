@@ -679,6 +679,7 @@ object DeltaTable {
    *
    * @since 1.0.0
    */
+  @Evolving
   def create(): DeltaTableBuilder = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
       throw new IllegalArgumentException("Could not find active SparkSession")
@@ -696,6 +697,7 @@ object DeltaTable {
    * @param spark sparkSession sparkSession passed by the user
    * @since 1.0.0
    */
+  @Evolving
   def create(spark: SparkSession): DeltaTableBuilder = {
     new DeltaTableBuilder(spark, DeltaTableBuilder.CreateBuilderOption(false))
   }
@@ -713,6 +715,7 @@ object DeltaTable {
    *
    * @since 1.0.0
    */
+  @Evolving
   def createIfNotExists(): DeltaTableBuilder = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
       throw new IllegalArgumentException("Could not find active SparkSession")
@@ -730,6 +733,7 @@ object DeltaTable {
    * @param spark sparkSession sparkSession passed by the user
    * @since 1.0.0
    */
+  @Evolving
   def createIfNotExists(spark: SparkSession): DeltaTableBuilder = {
     new DeltaTableBuilder(spark, DeltaTableBuilder.CreateBuilderOption(true))
   }
@@ -747,6 +751,7 @@ object DeltaTable {
    *
    * @since 1.0.0
    */
+  @Evolving
   def replace(): DeltaTableBuilder = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
       throw new IllegalArgumentException("Could not find active SparkSession")
@@ -764,6 +769,7 @@ object DeltaTable {
    * @param spark sparkSession sparkSession passed by the user
    * @since 1.0.0
    */
+  @Evolving
   def replace(spark: SparkSession): DeltaTableBuilder = {
     new DeltaTableBuilder(spark, DeltaTableBuilder.ReplaceBuilderOption(false))
   }
@@ -781,6 +787,7 @@ object DeltaTable {
    *
    * @since 1.0.0
    */
+  @Evolving
   def createOrReplace(): DeltaTableBuilder = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
       throw new IllegalArgumentException("Could not find active SparkSession")
@@ -798,6 +805,7 @@ object DeltaTable {
    * @param spark sparkSession sparkSession passed by the user.
    * @since 1.0.0
    */
+  @Evolving
   def createOrReplace(spark: SparkSession): DeltaTableBuilder = {
     new DeltaTableBuilder(spark, DeltaTableBuilder.ReplaceBuilderOption(true))
   }
@@ -815,6 +823,7 @@ object DeltaTable {
    * @param colName string the column name
    * @since 1.0.0
    */
+  @Evolving
   def columnBuilder(colName: String): DeltaColumnBuilder = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
       throw new IllegalArgumentException("Could not find active SparkSession")
@@ -832,6 +841,7 @@ object DeltaTable {
    * @param colName string the column name
    * @since 1.0.0
    */
+  @Evolving
   def columnBuilder(spark: SparkSession, colName: String): DeltaColumnBuilder = {
     new DeltaColumnBuilder(spark, colName)
   }
