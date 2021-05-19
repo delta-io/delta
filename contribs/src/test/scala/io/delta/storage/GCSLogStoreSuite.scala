@@ -14,18 +14,18 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta
+package io.delta.storage
 
-import org.apache.spark.sql.delta.storage._
+import org.apache.spark.sql.delta.{FakeFileSystem, LogStoreSuiteBase}
 
-class OracleCloudLogStoreSuite extends LogStoreSuiteBase {
+class GCSLogStoreSuite extends LogStoreSuiteBase {
 
-  override val logStoreClassName: String = classOf[OracleCloudLogStore].getName
+  override val logStoreClassName: String = classOf[GCSLogStore].getName
 
   testHadoopConf(
-    expectedErrMsg = "No FileSystem for scheme \"fake\"",
+    expectedErrMsg = ".*No FileSystem for scheme.*fake.*",
     "fs.fake.impl" -> classOf[FakeFileSystem].getName,
     "fs.fake.impl.disable.cache" -> "true")
 
-  protected def shouldUseRenameToWriteCheckpoint: Boolean = true
+  protected def shouldUseRenameToWriteCheckpoint: Boolean = false
 }

@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.storage
+package io.delta.storage
 
+import org.apache.spark.sql.delta.storage.HadoopFileSystemLogStore
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 
@@ -33,6 +34,9 @@ import org.apache.spark.SparkConf
  *   fails, throws an exception.
  * - Uses create-with-overwrite when overwrite is true. This does not make the file atomically
  *   visible and therefore the caller must handle partial files.
+ *
+ * This class is not meant for direct access but for configuration based on storage system.
+ * See https://docs.delta.io/latest/delta-storage.html for details.
  */
 class OracleCloudLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
   extends HadoopFileSystemLogStore(sparkConf, hadoopConf) {

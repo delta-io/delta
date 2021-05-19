@@ -19,12 +19,15 @@ package io.delta.storage;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
+import org.apache.spark.annotation.DeveloperApi;
 
 import java.io.FileNotFoundException;
 import java.nio.file.FileAlreadyExistsException;
 import java.util.Iterator;
 
 /**
+ * :: DeveloperApi ::
+ *
  * General interface for all critical file system operations required to read and write the
  * Delta logs. The correctness is predicated on the atomicity and durability guarantees of
  * the implementation of this interface. Specifically,
@@ -41,7 +44,13 @@ import java.util.Iterator;
  *
  * All subclasses of this interface is required to have a constructor that takes Configuration
  * as a single parameter. This constructor is used to dynamically create the LogStore.
+ *
+ * LogStore and its implementations are not meant for direct access but for configuration based
+ * on storage system. See [[https://docs.delta.io/latest/delta-storage.html]] for details.
+ *
+ * @since 1.0.0
  */
+@DeveloperApi
 public abstract class LogStore {
 
   private Configuration initHadoopConf;
@@ -52,7 +61,7 @@ public abstract class LogStore {
 
   /**
    * Hadoop configuration that should only be used during initialization of LogStore. Each method
-   * should use their `haddopConf` parameter rather than this (potentially outdated) hadoop
+   * should use their `hadoopConf` parameter rather than this (potentially outdated) hadoop
    * configuration.
    */
   public Configuration initHadoopConf() { return initHadoopConf; }
