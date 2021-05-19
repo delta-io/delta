@@ -426,15 +426,15 @@ When the table property `delta.appendOnly` is set to `true`:
   - New log entries may rearrange data (i.e. `add` and `remove` actions where `dataChange=false`).
 
 ## Column Invariants
- - The `metadata` for a given column in the table schema MAY contain the key `delta.invariants`.
- - This value of `delta.invariants` SHOULD be parsed as a boolean SQL expression.
- - Writers MUST abort any transaction that adds a row to the table, where a present invariant evaluates to `false` or `null`.
+ - The `metadata` for a column in the table schema MAY contain the key `delta.invariants`.
+ - The value of `delta.invariants` SHOULD be parsed as a boolean SQL expression.
+ - Writers MUST abort any transaction that adds a row to the table, where an invariant evaluates to `false` or `null`.
 
 ## Generated Columns
 
- - The `metadata` for a given column in the table schema MAY contain the key `delta.generationExpression`.
- - This value of `delta.generationExpression` SHOULD be parsed as a SQL expression.
- - Writers MUST enforce any data writing to the table satisfy the condition `(<value> <=> <generation expression>) IS TRUE`.
+ - The `metadata` for a column in the table schema MAY contain the key `delta.generationExpression`.
+ - The value of `delta.generationExpression` SHOULD be parsed as a SQL expression.
+ - Writers MUST enforce that any data writing to the table satisfy the condition `(<value> <=> <generation expression>) IS TRUE`.
 
 ## Writer Version Requirements
 
