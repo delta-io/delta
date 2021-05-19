@@ -32,10 +32,6 @@ import org.apache.spark.internal.Logging
 /**
  * :: Unstable ::
  *
- * @note This class is not meant for direct access but for configuration based on storage system.
- *       See https://docs.delta.io/latest/delta-storage.html for details.
- *
- *
  * The [[LogStore]] implementation for GCS, which uses gcs-connector to
  * provide the necessary atomic and durability guarantees:
  *
@@ -53,7 +49,8 @@ import org.apache.spark.internal.Logging
  * - Throws [[FileAlreadyExistsException]] if file exists and overwrite is false.
  * - Assumes file writing to be all-or-nothing, irrespective of overwrite option.
  *
- * This class is not meant for direct access but for configuration based on storage system.
+ * @note This class is not meant for direct access but for configuration based on storage system.
+ *       See https://docs.delta.io/latest/delta-storage.html for details.
  */
 @Unstable
 class GCSLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
