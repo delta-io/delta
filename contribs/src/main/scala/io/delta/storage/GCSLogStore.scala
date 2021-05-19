@@ -14,12 +14,13 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.storage
+package io.delta.storage
 
 import java.io.{IOException, _}
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.FileAlreadyExistsException
 
+import org.apache.spark.sql.delta.storage.HadoopFileSystemLogStore
 import com.google.common.base.Throwables
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs._
@@ -43,6 +44,9 @@ import org.apache.spark.internal.Logging
  * - Opens a stream to write to GCS otherwise.
  * - Throws [[FileAlreadyExistsException]] if file exists and overwrite is false.
  * - Assumes file writing to be all-or-nothing, irrespective of overwrite option.
+ *
+ * This class is not meant for direct access but for configuration based on storage system.
+ * See https://docs.delta.io/latest/delta-storage.html for details.
  */
 class GCSLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
   extends HadoopFileSystemLogStore(sparkConf, defaultHadoopConf) with Logging {

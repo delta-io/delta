@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta
+package io.delta.storage
 
-import org.apache.spark.sql.delta.storage._
+import org.apache.spark.sql.delta.{FakeFileSystem, LogStoreSuiteBase}
 
 class GCSLogStoreSuite extends LogStoreSuiteBase {
 

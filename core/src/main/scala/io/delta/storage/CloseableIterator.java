@@ -16,11 +16,18 @@
 
 package io.delta.storage;
 
+import org.apache.spark.annotation.DeveloperApi;
+
 import java.io.Closeable;
 import java.util.Iterator;
 
 /**
+ * :: DeveloperApi ::
+ *
  * An iterator that may contain resources which should be released after use. Users of
- * CloseableIterator are responsible to to close the iterator if they are done with it.
+ * CloseableIterator are responsible for closing the iterator if they are done with it.
+ *
+ * @since 1.0.0
  */
+@DeveloperApi
 public interface CloseableIterator<T> extends Iterator<T>, Closeable {}
