@@ -18,6 +18,16 @@
     - [Commit Provenance Information](#commit-provenance-information)
 - [Action Reconciliation](#action-reconciliation)
 - [Requirements for Writers](#requirements-for-writers)
+  - [Creation of New Log Entries](#creation-of-new-log-entries)
+  - [Consistency Between Table Metadata and Data Files](#consistency-between-table-metadata-and-data-files)
+  - [Delta Log Entries](#delta-log-entries-1)
+  - [Checkpoints](#checkpoints-1)
+    - [Checkpoint Format](#checkpoint-format)
+  - [Data Files](#data-files-1)
+  - [Append-only Tables](#append-only-tables)
+  - [Column Invariants](#column-invariants)
+  - [Generated Columns](#generated-columns)
+  - [Writer Version Requirements](#writer-version-requirements)
 - [Appendix](#appendix)
   - [Per-file Statistics](#per-file-statistics)
   - [Partition Value Serialization](#partition-value-serialization)
@@ -416,25 +426,25 @@ When the table property `delta.appendOnly` is set to `true`:
   - New log entries may rearrange data (i.e. `add` and `remove` actions where `dataChange=false`).
 
 ## Column Invariants
- - The schema for a given column MAY the metadata `delta.invariants`.
- - This column SHOULD be parsed as a boolean SQL expression.
+ - The `metadata` for a given column in the table schema MAY contain the key `delta.invariants`.
+ - This value of `delta.invariants` SHOULD be parsed as a boolean SQL expression.
  - Writers MUST abort any transaction that adds a row to the table, where a present invariant evaluates to `false` or `null`.
+
+## Generated Columns
+
+ - The `metadata` for a given column in the table schema MAY contain the key `delta.generationExpression`.
+ - This value of `delta.generationExpression` SHOULD be parsed as a SQL expression.
+ - Writers MUST enforce any data writing to the table satisfy the condition `(<value> <=> <generation expression>) IS TRUE`.
 
 ## Writer Version Requirements
 
 The requirements of the writers according to the protocol versions are summarized in the table below. Each row inherits the requirements from the preceding row.
 
-+------------------+----------------------------------------------+
-|                  | Reader Version 1                             |
-+------------------+----------------------------------------------+
-| Writer Version 2 |  - Support `delta.appendOnly`                |
-|                  |  - Support column invariants                 |
-+------------------+----------------------------------------------+
-| Writer Version 3 |  - Enforce:                                  |
-|                  |    - `delta.checkpoint.writeStatsAsJson`     |
-|                  |    - `delta.checkpoint.writeStatsAsStruct`   |
-|                  |    - `CHECK` constraints                     |
-+------------------+----------------------------------------------+
+<br> | Reader Version 1
+-|-
+Writer Version 2 | - Support [`delta.appendOnly`](#append-only-tables)<br>- Support [Column Invariants](#column-invariants)
+Writer Version 3 | Enforce:<br>- `delta.checkpoint.writeStatsAsJson`<br>- `delta.checkpoint.writeStatsAsStruct`<br>- `CHECK` constraints
+Writer Version 4 | - Support Change Data Feed<br>- Support [Generated Columns](#generated-columns)
 
 # Appendix
 
