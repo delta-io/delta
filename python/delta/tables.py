@@ -14,6 +14,8 @@
 # limitations under the License.
 #
 
+import delta.exceptions  # noqa: F401; pylint: disable=unused-variable
+
 from pyspark import since
 from pyspark.sql import Column, DataFrame, functions
 
@@ -30,8 +32,6 @@ class DeltaTable(object):
             deltaTable = DeltaTable.convertToDelta(spark, "parquet.`/path/to/table`")
 
         .. versionadded:: 0.4
-
-        .. note:: Evolving
     """
     def __init__(self, spark, jdt):
         self._spark = spark
@@ -41,8 +41,6 @@ class DeltaTable(object):
     def toDF(self):
         """
         Get a DataFrame representation of this Delta table.
-
-        .. note:: Evolving
         """
         return DataFrame(self._jdt.toDF(), self._spark._wrapped)
 
@@ -50,8 +48,6 @@ class DeltaTable(object):
     def alias(self, aliasName):
         """
         Apply an alias to the Delta table.
-
-        .. note:: Evolving
         """
         jdt = self._jdt.alias(aliasName)
         return DeltaTable(self._spark, jdt)
@@ -68,8 +64,6 @@ class DeltaTable(object):
                                                   for Presto and Athena read support.
 
                      See the online documentation for more information.
-
-        .. note:: Evolving
         """
         self._jdt.generate(mode)
 
@@ -86,8 +80,6 @@ class DeltaTable(object):
 
         :param condition: condition of the update
         :type condition: str or pyspark.sql.Column
-
-        .. note:: Evolving
         """
         if condition is None:
             self._jdt.delete()
@@ -118,8 +110,6 @@ class DeltaTable(object):
                     *Note: This param is required.* Default value None is present to allow
                     positional args in same order across languages.
         :type set: dict with str as keys and str or pyspark.sql.Column as values
-
-        .. note:: Evolving
         """
         jmap = self._dict_to_jmap(self._spark, set, "'set'")
         jcolumn = self._condition_to_jcolumn(condition)
@@ -185,8 +175,6 @@ class DeltaTable(object):
         :return: builder object to specify whether to update, delete or insert rows based on
                  whether the condition matched or not
         :rtype: :py:class:`delta.tables.DeltaMergeBuilder`
-
-        .. note:: Evolving
         """
         if source is None:
             raise ValueError("'source' in merge cannot be None")
@@ -213,8 +201,6 @@ class DeltaTable(object):
 
         :param retentionHours: Optional number of hours retain history. If not specified, then the
                                default retention period of 168 hours (7 days) will be used.
-
-        .. note:: Evolving
         """
         jdt = self._jdt
         if retentionHours is None:
@@ -237,8 +223,6 @@ class DeltaTable(object):
         :param limit: Optional, number of latest commits to returns in the history.
         :return: Table's commit history. See the online Delta Lake documentation for more details.
         :rtype: pyspark.sql.DataFrame
-
-        .. note:: Evolving
         """
         jdt = self._jdt
         if limit is None:
@@ -274,8 +258,6 @@ class DeltaTable(object):
         :param partitionSchema: Hive DDL formatted string, or pyspark.sql.types.StructType
         :return: DeltaTable representing the converted Delta table
         :rtype: :py:class:`~delta.tables.DeltaTable`
-
-        .. note:: Evolving
         """
         assert sparkSession is not None
         if partitionSchema is None:
@@ -303,8 +285,6 @@ class DeltaTable(object):
         Example::
 
             deltaTable = DeltaTable.forPath(spark, "/path/to/table")
-
-        .. note:: Evolving
         """
         assert sparkSession is not None
         jdt = sparkSession._sc._jvm.io.delta.tables.DeltaTable.forPath(
@@ -325,8 +305,6 @@ class DeltaTable(object):
         Example::
 
             deltaTable = DeltaTable.forName(spark, "tblName")
-
-        .. note:: Evolving
         """
         assert sparkSession is not None
         jdt = sparkSession._sc._jvm.io.delta.tables.DeltaTable.forName(
@@ -348,8 +326,6 @@ class DeltaTable(object):
         Example::
 
             DeltaTable.isDeltaTable(spark, "/path/to/table")
-
-        .. note:: Evolving
         """
         assert sparkSession is not None
         return sparkSession._sc._jvm.io.delta.tables.DeltaTable.isDeltaTable(
@@ -364,8 +340,6 @@ class DeltaTable(object):
         to this table. The reader or writer version cannot be downgraded.
 
         See online documentation and Delta's protocol specification at PROTOCOL.md for more details.
-
-        .. note:: Evolving
         """
         jdt = self._jdt
         if not isinstance(readerVersion, int):
@@ -464,7 +438,7 @@ class DeltaMergeBuilder(object):
         corresponding column of the source DataFrame, then you can use
         ``whenNotMatchedInsertAll()``. This is equivalent to::
 
-            whenMatchedInsert(values = {
+            whenNotMatchedInsert(values = {
               "col1": "source.col1",
               "col2": "source.col2",
               ...    # for all columns in the delta table
@@ -511,8 +485,6 @@ class DeltaMergeBuilder(object):
           ).execute()
 
     .. versionadded:: 0.4
-
-    .. note:: Evolving
     """
     def __init__(self, spark, jbuilder):
         self._spark = spark
@@ -533,8 +505,6 @@ class DeltaMergeBuilder(object):
                     positional args in same order across languages.
         :type set: dict with str as keys and str or pyspark.sql.Column as values
         :return: this builder
-
-        .. note:: Evolving
         """
         jset = DeltaTable._dict_to_jmap(self._spark, set, "'set' in whenMatchedUpdate")
         new_jbuilder = self.__getMatchedBuilder(condition).update(jset)
@@ -552,8 +522,6 @@ class DeltaMergeBuilder(object):
         :param condition: Optional condition of the insert
         :type condition: str or pyspark.sql.Column
         :return: this builder
-
-        .. note:: Evolving
         """
         new_jbuilder = self.__getMatchedBuilder(condition).updateAll()
         return DeltaMergeBuilder(self._spark, new_jbuilder)
@@ -569,8 +537,6 @@ class DeltaMergeBuilder(object):
         :param condition: Optional condition of the delete
         :type condition: str or pyspark.sql.Column
         :return: this builder
-
-        .. note:: Evolving
         """
         new_jbuilder = self.__getMatchedBuilder(condition).delete()
         return DeltaMergeBuilder(self._spark, new_jbuilder)
@@ -590,8 +556,6 @@ class DeltaMergeBuilder(object):
                        positional args in same order across languages.
         :type values: dict with str as keys and str or pyspark.sql.Column as values
         :return: this builder
-
-        .. note:: Evolving
         """
         jvalues = DeltaTable._dict_to_jmap(self._spark, values, "'values' in whenNotMatchedInsert")
         new_jbuilder = self.__getNotMatchedBuilder(condition).insert(jvalues)
@@ -609,8 +573,6 @@ class DeltaMergeBuilder(object):
         :param condition: Optional condition of the insert
         :type condition: str or pyspark.sql.Column
         :return: this builder
-
-        .. note:: Evolving
         """
         new_jbuilder = self.__getNotMatchedBuilder(condition).insertAll()
         return DeltaMergeBuilder(self._spark, new_jbuilder)
@@ -621,8 +583,6 @@ class DeltaMergeBuilder(object):
         Execute the merge operation based on the built matched and not matched actions.
 
         See :py:class:`~delta.tables.DeltaMergeBuilder` for complete usage details.
-
-        .. note:: Evolving
         """
         self._jbuilder.execute()
 
