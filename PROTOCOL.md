@@ -434,7 +434,7 @@ When the table property `delta.appendOnly` is set to `true`:
 
  - The `metadata` for a column in the table schema MAY contain the key `delta.generationExpression`.
  - The value of `delta.generationExpression` SHOULD be parsed as a SQL expression.
- - Writers MUST enforce that any data writing to the table satisfy the condition `(<value> <=> <generation expression>) IS TRUE`.
+ - Writers MUST enforce that any data writing to the table satisfy the condition `(<value> <=> <generation expression>) IS TRUE`. `<=>` is the NULL-safe equal operator which performs an equality comparison like the `=` operator but returns `TRUE` rather than NULL if both operands are `NULL`
 
 ## Writer Version Requirements
 
