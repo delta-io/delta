@@ -41,7 +41,7 @@
 $(document).ready(function() {
   var annotations = $("dt:contains('Annotations')").next("dd").children("span.name");
   addBadges(annotations, "Unstable", ":: Unstable ::", '<span class="unstable badge">Unstable API</span>');
-  addBadges(annotations, "Developer", ":: DeveloperAPI ::", '<span class="developer badge">Developer API</span>');
+  addBadges(annotations, "Developer", ":: DeveloperApi ::", '<span class="developer badge">Developer API</span>');
   addBadges(annotations, "Evolving", ":: Evolving ::", '<span class="evolving badge">Evolving API</span>');
 });
 

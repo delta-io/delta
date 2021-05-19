@@ -21,8 +21,15 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.SparkConf
+import org.apache.spark.annotation.Unstable
 
 /**
+ * :: Unstable ::
+ *
+ * @note This class is not meant for direct access but for configuration based on storage system.
+ *       See https://docs.delta.io/latest/delta-storage.html for details.
+ *
+ *
  * LogStore implementation for OCI (Oracle Cloud Infrastructure).
  *
  * We assume the following from OCI (Oracle Cloud Infrastructure)'s BmcFilesystem implementations:
@@ -34,10 +41,8 @@ import org.apache.spark.SparkConf
  *   fails, throws an exception.
  * - Uses create-with-overwrite when overwrite is true. This does not make the file atomically
  *   visible and therefore the caller must handle partial files.
- *
- * This class is not meant for direct access but for configuration based on storage system.
- * See https://docs.delta.io/latest/delta-storage.html for details.
  */
+@Unstable
 class OracleCloudLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
   extends HadoopFileSystemLogStore(sparkConf, hadoopConf) {
 

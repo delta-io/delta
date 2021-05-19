@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+   * Copyright (2020) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -229,7 +229,7 @@ def ignoreUndocumentedPackages(packages: Seq[Seq[java.io.File]]): Seq[Seq[java.i
     .map(_.filterNot(_.getCanonicalPath.contains("io/delta/sql")))
     .map(_.filterNot(_.getCanonicalPath.contains("io/delta/tables/execution")))
     .map(_.filterNot(_.getCanonicalPath.contains("spark")))
-}
+  }
 
 lazy val unidocSettings = Seq(
 

@@ -24,10 +24,18 @@ import org.apache.spark.sql.delta.storage.HadoopFileSystemLogStore
 import com.google.common.base.Throwables
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs._
+
 import org.apache.spark.SparkConf
+import org.apache.spark.annotation.Unstable
 import org.apache.spark.internal.Logging
 
 /**
+ * :: Unstable ::
+ *
+ * @note This class is not meant for direct access but for configuration based on storage system.
+ *       See https://docs.delta.io/latest/delta-storage.html for details.
+ *
+ *
  * The [[LogStore]] implementation for GCS, which uses gcs-connector to
  * provide the necessary atomic and durability guarantees:
  *
@@ -46,8 +54,8 @@ import org.apache.spark.internal.Logging
  * - Assumes file writing to be all-or-nothing, irrespective of overwrite option.
  *
  * This class is not meant for direct access but for configuration based on storage system.
- * See https://docs.delta.io/latest/delta-storage.html for details.
  */
+@Unstable
 class GCSLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
   extends HadoopFileSystemLogStore(sparkConf, defaultHadoopConf) with Logging {
 

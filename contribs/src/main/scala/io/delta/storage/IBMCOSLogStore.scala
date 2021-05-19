@@ -17,7 +17,6 @@
 package io.delta.storage
 
 import com.google.common.base.Throwables
-
 import java.io.IOException
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.FileAlreadyExistsException
@@ -25,9 +24,17 @@ import java.nio.file.FileAlreadyExistsException
 import org.apache.spark.sql.delta.storage.HadoopFileSystemLogStore
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
+
 import org.apache.spark.SparkConf
+import org.apache.spark.annotation.Unstable
 
 /**
+ * :: Unstable ::
+ *
+ * @note This class is not meant for direct access but for configuration based on storage system.
+ *       See https://docs.delta.io/latest/delta-storage.html for details.
+ *
+ *
  * LogStore implementation for IBM Cloud Object Storage.
  *
  * We assume the following from COS's [[FileSystem]] implementations:
@@ -37,10 +44,8 @@ import org.apache.spark.SparkConf
  *   (https://github.com/CODAIT/stocator) by setting the configuration `fs.cos.atomic.write` to true
  *   (for more info see the documentation for Stocator)
  * - List-after-write is consistent.
- *
- * This class is not meant for direct access but for configuration based on storage system.
- * See https://docs.delta.io/latest/delta-storage.html for details.
  */
+@Unstable
 class IBMCOSLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
   extends HadoopFileSystemLogStore(sparkConf, hadoopConf) {
   val preconditionFailedExceptionMessage =

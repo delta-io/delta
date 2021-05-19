@@ -32,7 +32,8 @@ import org.apache.spark.sql.types.{DataType, MetadataBuilder, StructField}
  */
 @Evolving
 class DeltaColumnBuilder private[tables](
-    private val spark: SparkSession, private val colName: String) {
+    private val spark: SparkSession,
+    private val colName: String) {
   private var dataType: DataType = _
   private var nullable: Boolean = true
   private var generationExpr: Option[String] = None
