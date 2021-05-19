@@ -477,7 +477,6 @@ case class DeltaSource(
           // when starting from a given version, we don't need the snapshot of this version. So
           // `mustBeRecreatable` is set to `false`.
           deltaLog.history.checkVersionExists(version, mustBeRecreatable = false)
-          version
       }
       Some(v)
     } else if (options.startingTimestamp.isDefined) {
