@@ -128,11 +128,7 @@ trait DeltaReadOptions extends DeltaOptionParser {
 
   val startingVersion: Option[DeltaStartingVersion] = options.get(STARTING_VERSION_OPTION).map {
     case "latest" => StartingVersionLatest
-    case str =>
-      Try(str.toLong).toOption.filter(_ >= 0).map(StartingVersion).getOrElse{
-        throw DeltaErrors.illegalDeltaOptionException(
-          STARTING_VERSION_OPTION, str, "must be greater than or equal to zero")
-      }
+    case str => Try(str.toLong).toOption.map(StartingVersion).get
   }
 
   val startingTimestamp = options.get(STARTING_TIMESTAMP_OPTION)

@@ -1064,9 +1064,20 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
         }
       }
 
-      assert(intercept[StreamingQueryException] {
+      // Negative Index Versioning is allowed
+      withTempView("startingVersion_test") {
         testStartingVersion(-1)
-      }.getMessage.contains("Invalid value '-1' for option 'startingVersion'"))
+        checkAnswer(
+          spark.table("startingVersion_test"),
+          (0 until 20).map(_.toLong).toDF())
+      }
+
+      // TODO: should the exception message use -2 or the "resolved version"? Maybe the message
+      //  needs to be changed for negative indexing?
+      assert(intercept[StreamingQueryException] {
+        testStartingVersion(-2)
+      }.getMessage.contains("Cannot time travel Delta table to version -2"))
+
       assert(intercept[StreamingQueryException] {
         testStartingVersion(2)
       }.getMessage.contains("Cannot time travel Delta table to version 2"))

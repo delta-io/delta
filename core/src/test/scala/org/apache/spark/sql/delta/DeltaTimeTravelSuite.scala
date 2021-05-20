@@ -723,4 +723,25 @@ class DeltaTimeTravelSuite extends QueryTest
         v0)
     }
   }
+
+  test("Support of Negative Index Version; version < 0") {
+    withTempDir { dir =>
+      val tblLoc = dir.getCanonicalPath
+      val start = 1540415658000L
+      generateCommits(tblLoc, start, start + 20.minutes, start + 40.minutes)
+
+      val df = spark.read.format("delta").load(identifierWithVersion(tblLoc, 0))
+      checkAnswer(df.groupBy().count(), Row(10L))
+
+      checkAnswer(
+        spark.read.format("delta").option("versionAsOf", -1).load(tblLoc).groupBy().count(),
+        Row(20)
+      )
+
+      // Out-of-bounds negative index
+      assert(intercept[AnalysisException] {
+        spark.read.format("delta").option("versionAsOf", -3).load(tblLoc).collect()
+      }.getMessage.contains("Cannot time travel Delta table to version -3"))
+    }
+  }
 }
