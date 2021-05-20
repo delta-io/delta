@@ -730,9 +730,6 @@ class DeltaTimeTravelSuite extends QueryTest
       val start = 1540415658000L
       generateCommits(tblLoc, start, start + 20.minutes, start + 40.minutes)
 
-      val df = spark.read.format("delta").load(identifierWithVersion(tblLoc, 0))
-      checkAnswer(df.groupBy().count(), Row(10L))
-
       checkAnswer(
         spark.read.format("delta").option("versionAsOf", -1).load(tblLoc).groupBy().count(),
         Row(20)
