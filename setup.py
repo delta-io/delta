@@ -35,7 +35,7 @@ with open("python/README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
-    name="deltalake-spark",
+    name="delta-spark",
     version=VERSION,
     description="Python APIs for using Delta Lake with Apache Spark",
     long_description=long_description,

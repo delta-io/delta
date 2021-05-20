@@ -683,6 +683,7 @@ class DeltaTimeTravelSuite extends QueryTest
     }
   }
 
+
   test("time travel with schema changes - should instantiate old schema") {
     withTempDir { dir =>
       val tblLoc = dir.getCanonicalPath
