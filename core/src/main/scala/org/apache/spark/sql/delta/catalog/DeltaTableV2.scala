@@ -164,8 +164,13 @@ case class DeltaTableV2(
   }
 
   override def v1Table: CatalogTable = {
-    catalogTable.getOrElse {
+    if (catalogTable.isEmpty) {
       throw new IllegalStateException("v1Table call is not expected with path based DeltaTableV2")
+    }
+    if (timeTravelSpec.isDefined) {
+      catalogTable.get.copy(stats = None)
+    } else {
+      catalogTable.get
     }
   }
 }

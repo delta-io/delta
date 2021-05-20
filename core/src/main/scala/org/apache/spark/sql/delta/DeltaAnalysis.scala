@@ -381,7 +381,12 @@ object DeltaRelation {
       val relation = d.withOptions(options.asScala.toMap).toBaseRelation
       var output = v2Relation.output
 
-      LogicalRelation(relation, output, d.catalogTable, isStreaming = false)
+      val catalogTable = if (d.catalogTable.isDefined) {
+        Some(d.v1Table)
+      } else {
+        None
+      }
+      LogicalRelation(relation, output, catalogTable, isStreaming = false)
   }
 }
 
