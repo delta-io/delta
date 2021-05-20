@@ -6,7 +6,7 @@ This PyPi package contains the Python APIs for using Delta Lake with Apache Spar
 
 ## Installation and usage
 
-1. Install using `pip install deltalake-spark`
+1. Install using `pip install delta-spark`
 2. To use the Delta Lake with Apache Spark, you have to set additional configurations when creating the SparkSession. See the online [project web page](https://docs.delta.io/latest/delta-intro.html) for details.
 
 ## Documentation
