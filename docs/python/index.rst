@@ -12,11 +12,22 @@ Welcome to Delta Lake's Python documentation page
 
 
 DeltaTable
-===========
+==========
 .. automodule:: delta.tables
    :members:
    :undoc-members:
 
+Exceptions
+==========
+.. automodule:: delta.exceptions
+   :members:
+   :undoc-members:
+
+Others
+======
+.. automodule:: delta.pip_utils
+   :members:
+   :undoc-members:
 
 Indices and tables
 ==================

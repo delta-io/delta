@@ -699,7 +699,7 @@ object DeltaTable {
    */
   @Evolving
   def create(spark: SparkSession): DeltaTableBuilder = {
-    new DeltaTableBuilder(spark, DeltaTableBuilder.CreateBuilderOption(false))
+    new DeltaTableBuilder(spark, CreateTableOptions(ifNotExists = false))
   }
 
   /**
@@ -735,7 +735,7 @@ object DeltaTable {
    */
   @Evolving
   def createIfNotExists(spark: SparkSession): DeltaTableBuilder = {
-    new DeltaTableBuilder(spark, DeltaTableBuilder.CreateBuilderOption(true))
+    new DeltaTableBuilder(spark, CreateTableOptions(ifNotExists = true))
   }
 
   /**
@@ -771,7 +771,7 @@ object DeltaTable {
    */
   @Evolving
   def replace(spark: SparkSession): DeltaTableBuilder = {
-    new DeltaTableBuilder(spark, DeltaTableBuilder.ReplaceBuilderOption(false))
+    new DeltaTableBuilder(spark, ReplaceTableOptions(orCreate = false))
   }
 
   /**
@@ -807,7 +807,7 @@ object DeltaTable {
    */
   @Evolving
   def createOrReplace(spark: SparkSession): DeltaTableBuilder = {
-    new DeltaTableBuilder(spark, DeltaTableBuilder.ReplaceBuilderOption(true))
+    new DeltaTableBuilder(spark, ReplaceTableOptions(orCreate = true))
   }
 
   /**

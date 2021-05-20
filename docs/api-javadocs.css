@@ -61,9 +61,14 @@
 }
 
 .unstable {
-  background-color: #257080;
+  background-color: #EE4B2B;
+}
+
+.developer {
+  background-color: #0047AB;
 }
 
 .evolving {
   background-color: #44751E;
 }
+

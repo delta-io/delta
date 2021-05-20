@@ -39,8 +39,9 @@
 /* Dynamically injected post-processing code for the API docs */
 
 $(document).ready(function() {
-  addBadges(":: Unstable ::", '<span class="unstable badge">Unstable</span>');
-  addBadges(":: Evolving ::", '<span class="evolving badge">Evolving</span>');
+  addBadges(":: Unstable ::", '<span class="unstable badge">Unstable API</span>');
+  addBadges(":: DeveloperApi ::", '<span class="developer badge">Developer API</span>');
+  addBadges(":: Evolving ::", '<span class="evolving badge">Evolving API</span>');
 });
 
 function addBadges(tag, html) {

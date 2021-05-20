@@ -37,7 +37,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(root_dir, 'python')))
 
 # -- Project information -----------------------------------------------------
 
-project = 'delta-core'
+project = 'delta-spark'
 
 # The full version, including alpha/beta/rc tags
 release = '0.0.0'

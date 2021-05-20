@@ -19,7 +19,7 @@ package io.delta.tables
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaTableUtils}
-import io.delta.tables.DeltaTableBuilder.{BuilderOption, CreateBuilderOption, ReplaceBuilderOption}
+import io.delta.tables.execution._
 
 import org.apache.spark.annotation._
 import org.apache.spark.sql.SparkSession
@@ -102,7 +102,8 @@ import org.apache.spark.sql.types.{DataType, StructField, StructType}
  */
 @Evolving
 class DeltaTableBuilder private[tables](
-    private val spark: SparkSession, builderOption: BuilderOption) {
+    spark: SparkSession,
+    builderOption: DeltaTableBuilderOptions) {
   private var identifier: String = null
   private var partitioningColumns: Option[Seq[String]] = None
   private var columns: mutable.Seq[StructField] = mutable.Seq.empty
@@ -320,7 +321,7 @@ class DeltaTableBuilder private[tables](
     }.getOrElse(Seq.empty[Transform])
 
     val stmt = builderOption match {
-      case CreateBuilderOption(ifNotExists) =>
+      case CreateTableOptions(ifNotExists) =>
         CreateTableStatement(
           table,
           StructType(columns),
@@ -335,7 +336,7 @@ class DeltaTableBuilder private[tables](
           false,
           ifNotExists
         )
-      case ReplaceBuilderOption(orCreate) =>
+      case ReplaceTableOptions(orCreate) =>
         ReplaceTableStatement(
           table,
           StructType(columns),
@@ -361,25 +362,4 @@ class DeltaTableBuilder private[tables](
       DeltaTable.forName(this.identifier)
     }
   }
-}
-
-private[tables] object DeltaTableBuilder {
-  /**
-   * DeltaTableBuilder option to indicate whether it's to create / replace the table.
-   */
-  private[tables] sealed trait BuilderOption
-
-  /**
-   * Specify that the builder is to create a Delta table.
-   *
-   * @param ifNotExists boolean whether to ignore if the table already exists.
-   */
-  private[tables] case class CreateBuilderOption(ifNotExists: Boolean) extends BuilderOption
-
-  /**
-   * Specify that the builder is to replace a Delta table.
-   *
-   * @param orCreate boolean whether to create the table if the table doesn't exist.
-   */
-  private[tables] case class ReplaceBuilderOption(orCreate: Boolean) extends BuilderOption
 }
