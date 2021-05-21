@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.metering
 
+import scala.collection.mutable
 import scala.util.Try
 import scala.util.control.NonFatal
 
@@ -54,6 +55,8 @@ import org.apache.spark.sql.delta.util.JsonUtils
 trait DeltaLogging
   extends DeltaProgressReporter {
 
+  protected def logConsole(line: String): Unit = LoggerImplementation.activeLogger.logConsole(line)
+
   /**
    * Used to record the occurrence of a single event or report detailed, operation specific
    * statistics.
@@ -72,13 +75,13 @@ trait DeltaLogging
       } else {
         Map.empty
       }
-      LoggerImplementation.logger.recordEvent(
+      LoggerImplementation.activeLogger.recordEvent(
         EVENT_TAHOE,
         Map(TAG_OP_TYPE -> opType) ++ tableTags ++ tags,
         blob = json)
     } catch {
       case NonFatal(e) =>
-        LoggerImplementation.logger.recordEvent(
+        LoggerImplementation.activeLogger.recordEvent(
           EVENT_LOGGING_FAILURE,
           blob = JsonUtils.toJson(
             Map("exception" -> e.getMessage,
@@ -103,7 +106,7 @@ trait DeltaLogging
     } else {
       Map.empty
     }
-    LoggerImplementation.logger.recordOperation(
+    LoggerImplementation.activeLogger.recordOperation(
         OpType(opType, ""),
         extraTags = tableTags ++ tags) {
         thunk
@@ -116,10 +119,15 @@ trait DeltaLogging
  */
 private object LoggerImplementation {
 
-  private class EmptyLogger extends DatabricksLogging
+  private val loggers: mutable.Map[String, DatabricksLogging] = new mutable.HashMap()
 
-  lazy val logger: DatabricksLogging = SparkSession.active.sessionState.conf.getConf(
-    DeltaSQLConf.DELTA_TELEMETRY_LOGGER).map{ loggerClassName =>
-    Utils.classForName(loggerClassName).newInstance.asInstanceOf[DatabricksLogging]
-  }.getOrElse(new EmptyLogger)
+  def activeLogger: DatabricksLogging =
+    SparkSession.active.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_TELEMETRY_LOGGER).map{ name =>
+        loggers.getOrElseUpdate(name, {
+          Utils.classForName(name).newInstance.asInstanceOf[DatabricksLogging]
+        })
+    }.getOrElse(new EmptyLogger)
+
+  private class EmptyLogger extends DatabricksLogging
 }
