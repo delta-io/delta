@@ -414,6 +414,12 @@ trait DeltaSQLConfBase {
              |""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_TELEMETRY_LOGGER =
+    buildConf("telemetry.logger")
+    .internal()
+    .stringConf
+    .createOptional
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase
