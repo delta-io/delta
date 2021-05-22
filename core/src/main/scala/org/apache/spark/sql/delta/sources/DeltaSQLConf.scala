@@ -418,6 +418,10 @@ trait DeltaSQLConfBase {
   val DELTA_TELEMETRY_LOGGER =
     buildConf("telemetry.logger")
     .internal()
+    .doc("""
+        |Class name for a telemetry logger implementation. If enabled, telemetry will be redirected
+        |to this logger. The class must extend com.databricks.spark.util.DatabricksLogging.
+        |""".stripMargin)
     .stringConf
     .createOptional
 }
