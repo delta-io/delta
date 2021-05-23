@@ -26,12 +26,11 @@ import org.apache.spark.util.Utils
 
 // scalastyle:off import.ordering.noEmptyLine
 
-import com.databricks.spark.util.{DatabricksLogging, OpType, TagDefinition}
 import com.databricks.spark.util.MetricDefinitions.{EVENT_LOGGING_FAILURE, EVENT_TAHOE}
 import com.databricks.spark.util.TagDefinitions.{TAG_OP_TYPE, TAG_TAHOE_ID, TAG_TAHOE_PATH}
+import com.databricks.spark.util.{DatabricksLogging, OpType, TagDefinition}
 import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.util.DeltaProgressReporter
-import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.delta.util.{DeltaProgressReporter, JsonUtils}
 
 /**
  * Convenience wrappers for logging that include delta specific options and
@@ -52,10 +51,10 @@ import org.apache.spark.sql.delta.util.JsonUtils
  *  Underneath these functions use the standard usage log reporting defined in
  *  [[com.databricks.spark.util.DatabricksLogging]].
  */
-trait DeltaLogging
-  extends DeltaProgressReporter {
+trait DeltaLogging extends DeltaProgressReporter {
 
-  protected def logConsole(line: String): Unit = LoggerImplementation.activeLogger.logConsole(line)
+  protected def logConsole(line: String): Unit =
+    LoggerImplementation.activeLogger.logConsole(line)
 
   /**
    * Used to record the occurrence of a single event or report detailed, operation specific
@@ -84,10 +83,7 @@ trait DeltaLogging
         LoggerImplementation.activeLogger.recordEvent(
           EVENT_LOGGING_FAILURE,
           blob = JsonUtils.toJson(
-            Map("exception" -> e.getMessage,
-              "opType" -> opType,
-              "method" -> "recordDeltaEvent"))
-        )
+            Map("exception" -> e.getMessage, "opType" -> opType, "method" -> "recordDeltaEvent")))
     }
   }
 
@@ -97,8 +93,7 @@ trait DeltaLogging
   protected def recordDeltaOperation[A](
       deltaLog: DeltaLog,
       opType: String,
-      tags: Map[TagDefinition, String] = Map.empty)(
-      thunk: => A): A = {
+      tags: Map[TagDefinition, String] = Map.empty)(thunk: => A): A = {
     val tableTags = if (deltaLog != null) {
       Map(
         TAG_TAHOE_PATH -> Try(deltaLog.dataPath.toString).getOrElse(null),
@@ -106,9 +101,8 @@ trait DeltaLogging
     } else {
       Map.empty
     }
-    LoggerImplementation.activeLogger.recordOperation(
-        OpType(opType, ""),
-        extraTags = tableTags ++ tags) {
+    LoggerImplementation.activeLogger
+      .recordOperation(OpType(opType, ""), extraTags = tableTags ++ tags) {
         thunk
       }
   }
@@ -119,15 +113,18 @@ trait DeltaLogging
  */
 private object LoggerImplementation {
 
-  private val loggers: mutable.Map[String, DatabricksLogging] = new mutable.HashMap()
+  private val loggers: mutable.Map[String, DatabricksLogging] =
+    new scala.collection.concurrent.TrieMap()
 
   def activeLogger: DatabricksLogging =
-    SparkSession.active.sessionState.conf.getConf(
-      DeltaSQLConf.DELTA_TELEMETRY_LOGGER).map{ name =>
+    SparkSession.active.sessionState.conf
+      .getConf(DeltaSQLConf.DELTA_TELEMETRY_LOGGER)
+      .map { name =>
         loggers.getOrElseUpdate(name, {
           Utils.classForName(name).newInstance.asInstanceOf[DatabricksLogging]
         })
-    }.getOrElse(new EmptyLogger)
+      }
+      .getOrElse(new EmptyLogger)
 
   private class EmptyLogger extends DatabricksLogging
 }
