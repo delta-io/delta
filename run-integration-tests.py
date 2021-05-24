@@ -87,6 +87,7 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo)
     
 def run_pip_installation_tests(root_dir, version, use_testpypi, extra_maven_repo):
     print("\n\n##### Running pip installation tests on version %s #####" % str(version))
+    clear_artifact_cache()
     delta_pip_name = "delta-spark"
     # uninstall packages if they exist
     run_cmd(["pip", "uninstall", "--yes", delta_pip_name, "pyspark"], stream_output=True)
@@ -94,7 +95,7 @@ def run_pip_installation_tests(root_dir, version, use_testpypi, extra_maven_repo
     # install packages
     delta_pip_name_with_version = "%s==%s" % (delta_pip_name, str(version)) 
     if use_testpypi:
-        install_cmd = ["pip", "install", "--extra-index-url ", "https://test.pypi.org/simple/", delta_pip_name_with_version]
+        install_cmd = ["pip", "install", "--extra-index-url", "https://test.pypi.org/simple/", delta_pip_name_with_version]
     else:
         install_cmd = ["pip", "install", delta_pip_name_with_version]
     print("pip install command: %s" % str(install_cmd))
@@ -185,17 +186,23 @@ if __name__ == "__main__":
         action="store_true",
         help="Run only Python tests")
     parser.add_argument(
-        "--pip-only",
-        required=False,
-        default=False,
-        action="store_true",
-        help="Run only pip installationt tests")
-    parser.add_argument(
         "--scala-only",
         required=False,
         default=False,
         action="store_true",
         help="Run only Scala tests")
+    parser.add_argument(
+        "--pip-only",
+        required=False,
+        default=False,
+        action="store_true",
+        help="Run only pip installation tests")
+    parser.add_argument(
+        "--no-pip",
+        required=False,
+        default=False,
+        action="store_true",
+        help="Do not run pip installation tests")
     parser.add_argument(
         "--test",
         required=False,
@@ -215,9 +222,12 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    if args.pip_only and args.no_pip:
+        raise Exception("Cannot specify both --pip-only and --no-pip")
+
     run_python = not args.scala_only and not args.pip_only
     run_scala = not args.python_only and not args.pip_only
-    run_pip = not args.python_only and not args.scala_only
+    run_pip = not args.python_only and not args.scala_only and not args.no_pip
 
     if run_scala:
         run_scala_integration_tests(root_dir, args.version, args.test, args.maven_repo)
