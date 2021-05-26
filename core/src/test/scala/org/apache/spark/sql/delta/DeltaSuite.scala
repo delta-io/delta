@@ -1108,6 +1108,25 @@ class DeltaSuite extends QueryTest
     assert(lastCommitInfo(tempDir).userMetadata === Some("optionMeta2"))
   }
 
+  test("SC-77958 - history includes user-defined metadata for createOrReplace") {
+    withTable("tbl") {
+      spark.range(10).writeTo("tbl").using("delta").option("userMetadata", "meta").createOrReplace()
+
+      val history = sql("DESCRIBE HISTORY tbl LIMIT 1").as[CommitInfo].head()
+      assert(history.userMetadata === Some("meta"))
+    }
+  }
+
+  test("SC-77958 - history includes user-defined metadata for saveAsTable") {
+    withTable("tbl") {
+      spark.range(10).write.format("delta").option("userMetadata", "meta1")
+        .mode("overwrite").saveAsTable("tbl")
+
+      val history = sql("DESCRIBE HISTORY tbl LIMIT 1").as[CommitInfo].head()
+      assert(history.userMetadata === Some("meta1"))
+    }
+  }
+
   test("lastCommitVersionInSession - init") {
     spark.sessionState.conf.unsetConf(DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION)
     withTempDir { tempDir =>
