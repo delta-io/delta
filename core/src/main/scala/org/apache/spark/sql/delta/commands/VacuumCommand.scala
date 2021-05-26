@@ -125,6 +125,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       var isBloomFiltered = false
       val parallelDeleteEnabled =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_PARALLEL_DELETE_ENABLED)
+      val relativizeIgnoreError =
+        spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR)
 
       val validFiles = snapshot.state
         .mapPartitions { actions =>
@@ -138,7 +140,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
                 val filePath = stringToPath(fa.path)
                 val validFileOpt = if (filePath.isAbsolute) {
                   val maybeRelative =
-                    DeltaFileOperations.tryRelativizePath(fs, reservoirBase, filePath)
+                    DeltaFileOperations.tryRelativizePath(fs, reservoirBase,
+                      filePath, relativizeIgnoreError)
                   if (maybeRelative.isAbsolute) {
                     // This file lives outside the directory of the table
                     None
