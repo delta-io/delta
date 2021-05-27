@@ -54,6 +54,9 @@ import org.apache.spark.sql.delta.util.JsonUtils
  */
 trait DeltaLogging extends DeltaProgressReporter {
 
+  /**
+   * Used to record a log line to the console.
+   */
   protected def logConsole(line: String): Unit =
     LoggerImplementation.activeLogger.logConsole(line)
 
@@ -97,7 +100,8 @@ trait DeltaLogging extends DeltaProgressReporter {
   protected def recordDeltaOperation[A](
       deltaLog: DeltaLog,
       opType: String,
-      tags: Map[TagDefinition, String] = Map.empty)(thunk: => A): A = {
+      tags: Map[TagDefinition, String] = Map.empty)(
+      thunk: => A): A = {
     val tableTags = if (deltaLog != null) {
       Map(
         TAG_TAHOE_PATH -> Try(deltaLog.dataPath.toString).getOrElse(null),
@@ -105,10 +109,11 @@ trait DeltaLogging extends DeltaProgressReporter {
     } else {
       Map.empty
     }
-    LoggerImplementation.activeLogger
-      .recordOperation(OpType(opType, ""), extraTags = tableTags ++ tags) {
-        thunk
-      }
+    LoggerImplementation.activeLogger.recordOperation(
+      OpType(opType, ""),
+      extraTags = tableTags ++ tags) {
+          thunk
+    }
   }
 }
 
@@ -116,6 +121,8 @@ trait DeltaLogging extends DeltaProgressReporter {
  * Private factory to construct the logger implementation based on the active config.
  */
 private object LoggerImplementation {
+
+  private val emptyLogger = new EmptyLogger
 
   private val loggers: mutable.Map[String, DatabricksLogging] =
     new scala.collection.concurrent.TrieMap()
@@ -128,7 +135,7 @@ private object LoggerImplementation {
           Utils.classForName(name).newInstance.asInstanceOf[DatabricksLogging]
         })
       }
-      .getOrElse(new EmptyLogger)
+      .getOrElse(emptyLogger)
 
   private class EmptyLogger extends DatabricksLogging
 }
