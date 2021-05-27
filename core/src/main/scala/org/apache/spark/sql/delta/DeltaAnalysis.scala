@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -381,7 +381,12 @@ object DeltaRelation {
       val relation = d.withOptions(options.asScala.toMap).toBaseRelation
       var output = v2Relation.output
 
-      LogicalRelation(relation, output, d.catalogTable, isStreaming = false)
+      val catalogTable = if (d.catalogTable.isDefined) {
+        Some(d.v1Table)
+      } else {
+        None
+      }
+      LogicalRelation(relation, output, catalogTable, isStreaming = false)
   }
 }
 

@@ -1,5 +1,5 @@
 #
-# Copyright (2020) The Delta Lake Project Authors.
+# Copyright (2021) The Delta Lake Project Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ builder = SparkSession.builder \
     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
 
 # This configuration tells Spark to download the Delta Lake JAR that is needed to operate
-# in Spark. Use this only when the Pypi package deltalake-spark is locally installed.
+# in Spark. Use this only when the Pypi package Delta Lake is locally installed with pip.
 # This configuration is not needed if the this python program is executed with
 # spark-submit or pyspark shell with the --package arguments.
 spark = configure_spark_with_delta_pip(builder).getOrCreate()

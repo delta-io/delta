@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,13 +18,15 @@ package org.apache.spark.sql.delta;
 
 import org.apache.spark.sql.SparkSession;
 
-interface DeltaSQLCommandJavaTest {
+public interface DeltaSQLCommandJavaTest {
   default SparkSession buildSparkSession() {
     // Set the configurations as DeltaSQLCommandTest
     return SparkSession.builder()
         .appName("JavaDeltaSparkSessionExtensionSuiteUsingSQLConf")
         .master("local[2]")
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+        .config("spark.sql.catalog.spark_catalog",
+            "org.apache.spark.sql.delta.catalog.DeltaCatalog")
         .getOrCreate();
   }
 }
