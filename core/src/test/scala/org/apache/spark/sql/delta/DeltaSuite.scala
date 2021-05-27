@@ -1287,6 +1287,57 @@ class DeltaSuite extends QueryTest
     )
   }
 
+  test("isBlindAppend with save and saveAsTable") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withTable("blind_append") {
+        sql(s"CREATE TABLE blind_append(value INT) USING delta LOCATION '$path'") // version = 0
+        sql("INSERT INTO blind_append VALUES(1)") // version = 1
+        spark.read.format("delta").load(path)
+          .where("value = 1")
+          .write.mode("append").format("delta").save(path) // version = 2
+        checkAnswer(spark.table("blind_append"), Row(1) :: Row(1) :: Nil)
+        assert(sql("desc history blind_append")
+          .select("version", "isBlindAppend").head == Row(2, false))
+        spark.table("blind_append").where("value = 1").write.mode("append").format("delta")
+          .saveAsTable("blind_append") // version = 3
+        checkAnswer(spark.table("blind_append"), Row(1) :: Row(1) :: Row(1) :: Row(1) :: Nil)
+        assert(sql("desc history blind_append")
+          .select("version", "isBlindAppend").head == Row(3, false))
+      }
+    }
+  }
+
+  test("isBlindAppend with DataFrameWriterV2") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withTable("blind_append") {
+        sql(s"CREATE TABLE blind_append(value INT) USING delta LOCATION '$path'") // version = 0
+        sql("INSERT INTO blind_append VALUES(1)") // version = 1
+        spark.read.format("delta").load(path)
+          .where("value = 1")
+          .writeTo("blind_append").append() // version = 2
+        checkAnswer(spark.table("blind_append"), Row(1) :: Row(1) :: Nil)
+        assert(sql("desc history blind_append")
+          .select("version", "isBlindAppend").head == Row(2, false))
+      }
+    }
+  }
+
+  test("isBlindAppend with RTAS") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withTable("blind_append") {
+        sql(s"CREATE TABLE blind_append(value INT) USING delta LOCATION '$path'") // version = 0
+        sql("INSERT INTO blind_append VALUES(1)") // version = 1
+        sql("REPLACE TABLE blind_append USING delta AS SELECT * FROM blind_append") // version = 2
+        checkAnswer(spark.table("blind_append"), Row(1) :: Nil)
+        assert(sql("desc history blind_append")
+          .select("version", "isBlindAppend").head == Row(2, false))
+      }
+    }
+  }
+
   test("replaceWhere should support backtick") {
     val table = "replace_where_backtick"
     withTable(table) {
