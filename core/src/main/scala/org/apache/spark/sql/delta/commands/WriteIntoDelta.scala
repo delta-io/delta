@@ -63,6 +63,7 @@ case class WriteIntoDelta(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     deltaLog.withNewTransaction { txn =>
+
       val actions = write(txn, sparkSession)
       val operation = DeltaOperations.Write(mode, Option(partitionColumns),
         options.replaceWhere, options.userMetadata)
@@ -126,13 +127,13 @@ case class WriteIntoDelta(
       case _ => Nil
     }
 
-    if (rearrangeOnly) {
+    val fileActions = if (rearrangeOnly) {
       addFiles.map(_.copy(dataChange = !rearrangeOnly)) ++
         deletedFiles.map(_.copy(dataChange = !rearrangeOnly))
     } else {
       newFiles ++ deletedFiles
     }
+    fileActions
   }
 
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
