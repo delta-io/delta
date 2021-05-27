@@ -124,45 +124,60 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
       }
 
     case u @ UpdateTable(table, assignments, condition) if u.childrenResolved =>
-      val (cols, expressions) = assignments.map(a => a.key -> a.value).unzip
       // rewrites Delta from V2 to V1
-      val newTable = stripTempViewWrapper(table).transformUp { case DeltaRelation(lr) => lr }
-        newTable.collectLeaves().headOption match {
+      val newTarget = stripTempViewWrapper(table).transformUp { case DeltaRelation(lr) => lr }
+      val indices = newTarget.collect {
+        case DeltaFullTable(index) => index
+      }
+      if (indices.isEmpty) {
+        // Not a Delta table at all, do not transform
+        u
+      } else {
+        val (cols, expressions) = assignments.map(a => a.key -> a.value).unzip
+        newTarget.collectLeaves().headOption match {
           case Some(DeltaFullTable(index)) =>
           case o =>
             throw DeltaErrors.notADeltaSourceException("UPDATE", o)
         }
-      DeltaUpdateTable(newTable, cols, expressions, condition)
+        DeltaUpdateTable(newTarget, cols, expressions, condition)
+      }
 
-    case m@MergeIntoTable(target, source, condition, matched, notMatched) if m.childrenResolved =>
-      val matchedActions = matched.map {
-        case update: UpdateAction =>
-          DeltaMergeIntoUpdateClause(
-            update.condition,
-            DeltaMergeIntoClause.toActions(update.assignments))
-        case delete: DeleteAction =>
-          DeltaMergeIntoDeleteClause(delete.condition)
-        case insert =>
-          throw new AnalysisException(
-            "Insert clauses cannot be part of the WHEN MATCHED clause in MERGE INTO.")
-      }
-      val notMatchedActions = notMatched.map {
-        case insert: InsertAction =>
-          DeltaMergeIntoInsertClause(
-            insert.condition,
-            DeltaMergeIntoClause.toActions(insert.assignments))
-        case other =>
-          throw new AnalysisException(s"${other.prettyName} clauses cannot be part of the " +
-            s"WHEN NOT MATCHED clause in MERGE INTO.")
-      }
+    case m @ MergeIntoTable(target, source, condition, matched, notMatched) if m.childrenResolved =>
       // rewrites Delta from V2 to V1
       val newTarget = stripTempViewWrapper(target).transformUp { case DeltaRelation(lr) => lr }
-      // Even if we're merging into a non-Delta target, we will catch it later and throw an
-      // exception.
-      val deltaMerge =
-        DeltaMergeInto(newTarget, source, condition, matchedActions ++ notMatchedActions)
-
-      DeltaMergeInto.resolveReferences(deltaMerge, conf)(tryResolveReferences(session))
+      val indices = newTarget.collect {
+        case DeltaFullTable(index) => index
+      }
+      if (indices.isEmpty) {
+        // Not a Delta table at all, do not transform
+        m
+      } else {
+        val matchedActions = matched.map {
+          case update: UpdateAction =>
+            DeltaMergeIntoUpdateClause(
+              update.condition,
+              DeltaMergeIntoClause.toActions(update.assignments))
+          case delete: DeleteAction =>
+            DeltaMergeIntoDeleteClause(delete.condition)
+          case insert =>
+            throw new AnalysisException(
+              "Insert clauses cannot be part of the WHEN MATCHED clause in MERGE INTO.")
+        }
+        val notMatchedActions = notMatched.map {
+          case insert: InsertAction =>
+            DeltaMergeIntoInsertClause(
+              insert.condition,
+              DeltaMergeIntoClause.toActions(insert.assignments))
+          case other =>
+            throw new AnalysisException(s"${other.prettyName} clauses cannot be part of the " +
+              s"WHEN NOT MATCHED clause in MERGE INTO.")
+        }
+        // Even if we're merging into a non-Delta target, we will catch it later and throw an
+        // exception.
+        val deltaMerge =
+          DeltaMergeInto(newTarget, source, condition, matchedActions ++ notMatchedActions)
+        DeltaMergeInto.resolveReferences(deltaMerge, conf)(tryResolveReferences(session))
+      }
 
     case deltaMerge: DeltaMergeInto =>
       val d = if (deltaMerge.childrenResolved && !deltaMerge.resolved) {
