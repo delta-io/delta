@@ -58,7 +58,7 @@ lazy val core = (project in file("core"))
         listPythonFiles(baseDirectory.value.getParentFile / "python"),
 
     antlr4Settings,
-    antlr4Version in Antlr4 := "4.7",
+    antlr4Version in Antlr4 := "4.8",
     antlr4PackageName in Antlr4 := Some("io.delta.sql.parser"),
     antlr4GenListener in Antlr4 := true,
     antlr4GenVisitor in Antlr4 := true,
