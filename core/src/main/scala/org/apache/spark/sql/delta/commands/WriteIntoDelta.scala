@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.schema.ImplicitMetadataOperation
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.types.StructType
 
 /**
  * Used to write a [[DataFrame]] into a delta table.
@@ -42,6 +43,9 @@ import org.apache.spark.sql.execution.command.RunnableCommand
  *
  * In combination with `Overwrite`, a `replaceWhere` option can be used to transactionally
  * replace data that matches a predicate.
+ *
+ * @param schemaInCatalog The schema created in Catalog. We will use this schema to update metadata
+ *                        when it is set (in CTAS code path), and otherwise use schema from `data`.
  */
 case class WriteIntoDelta(
     deltaLog: DeltaLog,
@@ -49,7 +53,8 @@ case class WriteIntoDelta(
     options: DeltaOptions,
     partitionColumns: Seq[String],
     configuration: Map[String, String],
-    data: DataFrame)
+    data: DataFrame,
+    schemaInCatalog: Option[StructType] = None)
   extends RunnableCommand
   with ImplicitMetadataOperation
   with DeltaCommand {
@@ -85,7 +90,8 @@ case class WriteIntoDelta(
       }
     }
     val rearrangeOnly = options.rearrangeOnly
-    updateMetadata(txn, data, partitionColumns, configuration, isOverwriteOperation, rearrangeOnly)
+    updateMetadata(data.sparkSession, txn, schemaInCatalog.getOrElse(data.schema),
+      partitionColumns, configuration, isOverwriteOperation, rearrangeOnly)
 
     // Validate partition predicates
     val replaceWhere = options.replaceWhere
