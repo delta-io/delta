@@ -875,7 +875,7 @@ class DeltaTableBuilder(object):
         return self
 
     @since(1.0)
-    def partitionedBy(self, col, *cols):
+    def partitionedBy(self, *cols):
         """
         Specify columns for partitioning
 
@@ -886,8 +886,8 @@ class DeltaTableBuilder(object):
 
         .. note:: Evolving
         """
-        if type(col) is not str:
-            self._raise_type_error("Partitioning columns must be str.", [col])
+        if len(cols) == 1 and isinstance(cols[0], (list, tuple)):
+            cols = cols[0]
         for c in cols:
             if type(c) is not str:
                 self._raise_type_error("Partitioning column must be str.", [c])
