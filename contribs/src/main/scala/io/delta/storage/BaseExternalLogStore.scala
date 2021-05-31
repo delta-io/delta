@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.storage
+package io.delta.storage
 
 import java.io.FileNotFoundException
 import java.net.URI
@@ -28,6 +28,7 @@ import org.apache.hadoop.fs._
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.storage.HadoopFileSystemLogStore
 
 abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
   extends HadoopFileSystemLogStore(sparkConf, hadoopConf)
