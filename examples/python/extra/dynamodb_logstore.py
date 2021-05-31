@@ -34,8 +34,8 @@ except:
     pass
 
 # Create SparkContext
-sc = SparkContext()
-sqlContext = SQLContext(sc)
+# sc = SparkContext()
+# sqlContext = SQLContext(sc)
 
 # Enable SQL for the current spark session. we need to set the following configs to enable SQL
 # Commands
@@ -47,8 +47,9 @@ spark = SparkSession \
     .master("local[*]") \
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
     .config("spark.sql.sources.parallelPartitionDiscovery.parallelism", "8") \
-    .config("spark.delta.logStore.class", "org.apache.spark.sql.delta.storage.DynamoDBLogStore") \
+    .config("spark.delta.logStore.class", "io.delta.storage.DynamoDBLogStore") \
     .getOrCreate()
+
 
 # Apache Spark 2.4.x has a known issue (SPARK-25003) that requires explicit activation
 # of the extension and cloning of the session. This will unnecessary in Apache Spark 3.x.

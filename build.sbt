@@ -102,6 +102,9 @@ lazy val contribs = (project in file("contribs"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
+    libraryDependencies ++= Seq(
+      "com.amazonaws" % "aws-java-sdk" % "1.7.4"
+    ),
     (mappings in (Compile, packageBin)) := (mappings in (Compile, packageBin)).value ++
       listPythonFiles(baseDirectory.value.getParentFile / "python"),
 

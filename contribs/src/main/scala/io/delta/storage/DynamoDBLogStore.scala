@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.storage
+package io.delta.storage
 
 import scala.collection.JavaConverters._
+import scala.language.implicitConversions
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient
 import com.amazonaws.auth.BasicAWSCredentials
 import com.amazonaws.services.dynamodbv2.model.{
@@ -35,8 +36,6 @@ import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.SparkConf
 import com.amazonaws.regions.Region
 import com.amazonaws.regions.Regions
-import org.apache.spark.sql.delta.storage
-
 
 /*
   DynamoDB requirements:
@@ -126,7 +125,7 @@ class DynamoDBLogStore(
       val length = item.get("length").getN.toLong
       val modificationTime = item.get("modificationTime").getN.toLong
       val isComplete = item.get("isComplete").getS() == "true"
-      storage.LogEntryMetadata(
+      LogEntryMetadata(
         path = new Path(s"$parentPath/$filename"),
         tempPath = tempPath,
         length = length,
