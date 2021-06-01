@@ -414,6 +414,20 @@ trait DeltaSQLConfBase {
              |""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS =
+    buildConf("legacy.allowAmbiguousPaths")
+      .internal()
+      .doc("""
+             |Delta was unintentionally allowing CREATE TABLE queries with both 'delta.`path`'
+             |and 'USING delta LOCATION path' statements. This was unsupported behavior
+             |and supplies ambiguous paths to Delta. This flag blocks queries that contain both
+             |statements.
+             |Set this flag to true to allow ambiguous path queries. In the event that this flag
+             |is true and both statements are contained in the query, the
+             |'USING delta LOCATION path' statement will be ignored.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

@@ -18,12 +18,11 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.JavaConverters._
-
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.schema.InvariantViolationException
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -473,6 +472,42 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
       val snapshotAfter = getDeltaLog(tableLocation).update()
       assert(snapshotBefore ne snapshotAfter)
       assert(snapshotAfter.version === -1)
+    }
+  }
+
+  test("block table creation with ambiguous delta paths") {
+    withTempDir { foo =>
+      withTempDir {
+        bar =>
+          val fooPath = foo.getCanonicalPath()
+          val barPath = bar.getCanonicalPath()
+          val e = intercept[AnalysisException] {
+            sql(s"CREATE TABLE delta.`$fooPath`(id LONG) USING delta LOCATION '$barPath'")
+          }
+          assert(e.message
+            .equals(
+              """
+                |Ambiguous delta paths not allowed for CREATE TABLE.
+                |Set DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS to true to allow this behavior
+                |""".stripMargin))
+      }
+    }
+  }
+
+  test("allow ambiguous delta paths with legacy flag") {
+    withTempDir { foo =>
+      withTempDir {
+        bar =>
+          val fooPath = foo.getCanonicalPath()
+          val barPath = bar.getCanonicalPath()
+          withSQLConf(DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS.key -> "true") {
+            sql(s"CREATE TABLE delta.`$fooPath`(id LONG) USING delta LOCATION '$barPath'")
+
+            val expectedSchema = new StructType()
+              .add("id", LongType, nullable = true)
+            assert(spark.table(s"delta.`$fooPath`").schema === expectedSchema)
+          }
+      }
     }
   }
 

@@ -98,8 +98,17 @@ class DeltaCatalog extends DelegatingCatalogExtension
     var newSchema = schema
     var newPartitionColumns = partitionColumns
     var newBucketSpec = maybeBucketSpec
+    val conf = spark.sessionState.conf
 
     val isByPath = isPathIdentifier(ident)
+    if (isByPath && allTableProperties.containsKey("location") &&
+      !conf.getConf(DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS)) {
+      throw new AnalysisException(
+        """
+          |Ambiguous delta paths not allowed for CREATE TABLE.
+          |Set DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS to true to allow this behavior
+          |""".stripMargin)
+    }
     val location = if (isByPath) {
       Option(ident.name())
     } else {
