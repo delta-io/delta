@@ -138,7 +138,7 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
    */
   protected def getTemporaryPath(path: Path): Path = {
     val uuid = java.util.UUID.randomUUID().toString
-    new Path(s"${path.getParent}/.${path.getName}.$uuid.temp")
+    new Path(s"${path.getParent}/.temp/${path.getName}.$uuid")
   }
 
   /**
