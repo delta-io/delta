@@ -45,6 +45,12 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
     fs.delete(path, false)
   }
 
+  /**
+   * Copies file within filesystem
+   * @param fs reference to [[FileSystem]]
+   * @param src path to source file
+   * @param dst path to destination file
+   */
   private def copyFile(fs: FileSystem, src: Path, dst: Path) {
     logDebug(s"copy file: $src -> $dst")
     val input_stream = fs.open(src)
@@ -101,7 +107,7 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
 
   /**
    * Method for assuring consistency on filesystem according to the external cache.
-   * Method try to rewrite TransactionLog from temporary path if it not exists.
+   * Method tries to rewrite TransactionLog entry from temporary path if it does not exists.
    * Method returns completed [[LogEntryMetadata]]
    */
 
@@ -236,8 +242,6 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
     fs: FileSystem,
     logEntry: LogEntryMetadata,
     overwrite: Boolean = false): Unit
-
-  protected def cleanCache(p: LogEntryMetadata => Boolean)
 
   protected def listFromCache(fs: FileSystem, resolvedPath: Path): Iterator[LogEntryMetadata]
 

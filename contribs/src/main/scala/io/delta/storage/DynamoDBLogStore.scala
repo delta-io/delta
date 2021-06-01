@@ -74,8 +74,6 @@ class DynamoDBLogStore(
 
   private val client: AmazonDynamoDBClient = DynamoDBLogStore.getClient(sparkConf)
 
-  override protected def cleanCache(p: LogEntryMetadata => Boolean): Unit = {}
-
   override protected def writeCache(
     fs: FileSystem,
     logEntry: LogEntryMetadata,
