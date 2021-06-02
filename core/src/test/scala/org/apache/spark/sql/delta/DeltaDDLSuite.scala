@@ -494,7 +494,7 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
         withSQLConf(DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS.key -> "true") {
           sql(s"CREATE TABLE delta.`$fooPath`(id LONG) USING delta LOCATION '$barPath'")
           assert(io.delta.tables.DeltaTable.isDeltaTable(fooPath))
-          assert(!io.delta.tables.DeltaTable.isDeltaTable(fooPath))
+          assert(!io.delta.tables.DeltaTable.isDeltaTable(barPath))
         }
       }
     }
