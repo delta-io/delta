@@ -13,19 +13,43 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+import os
+import shutil
+import threading
 
 from pyspark import SparkContext
 from pyspark.sql import Column, DataFrame, SparkSession, SQLContext, functions
 from pyspark.sql.functions import *
 from py4j.java_collections import MapConverter
 from delta.tables import *
-import shutil
-import threading
 from multiprocessing.pool import ThreadPool
 
 import uuid
 
-table_path = f"/tmp/delta-table-{uuid.uuid4()}"
+"""
+create required dynamodb table with:
+
+$ aws --region us-west-2 dynamodb create-table \
+    --table-name delta_log \
+    --attribute-definitions AttributeName=parentPath,AttributeType=S \
+                            AttributeName=filename,AttributeType=S \
+    --key-schema AttributeName=parentPath,KeyType=HASH \
+                AttributeName=filename,KeyType=RANGE \
+    --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5
+
+run this script with:
+
+$ PYTHONPATH=./python spark-submit \
+  --jars core/target/scala-2.12/delta-core_2.12-1.0.0-SNAPSHOT.jar,contribs/target/scala-2.12/delta-contribs_2.12-1.0.0-SNAPSHOT.jar \
+  --packages org.apache.hadoop:hadoop-aws:2.7.3,com.amazonaws:aws-java-sdk:1.7.4 \
+  --conf spark.delta.DynamoDBLogStore.tableName=delta_log_test \
+  --conf spark.delta.DynamoDBLogStore.region=us-west-2 \
+  examples/python/extra/dynamodb_logstore.py
+
+"""
+
+base_url = os.environ.get("DYNAMODB_TEST_BASE_URL", "/tmp").rstrip("/")
+table_path = f"{base_url}/delta-table-{uuid.uuid4()}"
 
 # Clear previous run's delta-tables
 try:
@@ -66,7 +90,7 @@ def write_tx(n):
     data.write.format("delta").mode("append").partitionBy("id").save(table_path)
 
 n = 32
-concurrency = 4
+concurrency = 8
 
 pool = ThreadPool(concurrency)
 pool.map(write_tx, range(n))
@@ -76,4 +100,5 @@ print("number of rows:", actual)
 assert actual == n
 
 # cleanup
-shutil.rmtree(table_path)
+if table_path.startswith("/"):
+    shutil.rmtree(table_path)
