@@ -151,7 +151,7 @@ class MemoryLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
       hash_map.put(logEntry.path, logEntry)
     } else {
       val curr_val = hash_map.putIfAbsent(logEntry.path, logEntry);
-      if(curr_val != null) {
+      if (curr_val != null) {
         throw new java.nio.file.FileAlreadyExistsException(
           s"TransactionLog exists ${logEntry.path}"
         )
@@ -196,8 +196,9 @@ class FailingFileSystem extends RawLocalFileSystem {
   override def create(
     path: Path,
     overwrite: Boolean): FSDataOutputStream = {
-      if(FailingFileSystem.failOnSuffix != null && path.toString.endsWith(FailingFileSystem.failOnSuffix)) {
-        throw new java.nio.file.FileSystemException("fail")
+      if (FailingFileSystem.failOnSuffix != null
+        && path.toString.endsWith(FailingFileSystem.failOnSuffix)) {
+          throw new java.nio.file.FileSystemException("fail")
       }
       super.create(path, overwrite)
   }
@@ -207,5 +208,5 @@ object FailingFileSystem {
   private val scheme = "failing"
   private val uri: URI = URI.create(s"$scheme:///")
 
-  var failOnSuffix:String = null
+  var failOnSuffix: String = null
 }
