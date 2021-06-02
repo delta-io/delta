@@ -29,7 +29,6 @@ import org.apache.spark.sql.catalyst.catalog.CatalogUtils
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructType}
-import io.delta.tables.{DeltaTable => TDeltaTable}
 
 class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession
   with DeltaSQLCommandTest {
@@ -494,8 +493,8 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
         val barPath = bar.getCanonicalPath()
         withSQLConf(DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS.key -> "true") {
           sql(s"CREATE TABLE delta.`$fooPath`(id LONG) USING delta LOCATION '$barPath'")
-          assert(TDeltaTable.isDeltaTable(fooPath))
-          assert(!TDeltaTable.isDeltaTable(barPath))
+          assert(io.delta.tables.DeltaTable.isDeltaTable(fooPath))
+          assert(!io.delta.tables.DeltaTable.isDeltaTable(fooPath))
         }
       }
     }
@@ -505,7 +504,7 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
       val fooPath = foo.getCanonicalPath()
       withSQLConf(DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS.key -> "true") {
         sql(s"CREATE TABLE delta.`$fooPath`(id LONG) USING delta LOCATION '$fooPath'")
-        assert(TDeltaTable.isDeltaTable(fooPath))
+        assert(io.delta.tables.DeltaTable.isDeltaTable(fooPath))
       }
     }
 
