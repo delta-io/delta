@@ -18,12 +18,10 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.JavaConverters._
-import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.schema.InvariantViolationException
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
-import org.apache.spark.SparkEnv
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.NoSuchPartitionException
@@ -31,6 +29,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogUtils
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructType}
+import io.delta.tables.{DeltaTable => TDeltaTable}
 
 class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession
   with DeltaSQLCommandTest {
@@ -475,40 +474,47 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
     }
   }
 
-  test("block table creation with ambiguous delta paths") {
+  test("table creation with ambiguous paths only allowed with legacy flag") {
+    // ambiguous paths not allowed
     withTempDir { foo =>
-      withTempDir {
-        bar =>
+      withTempDir { bar =>
           val fooPath = foo.getCanonicalPath()
           val barPath = bar.getCanonicalPath()
           val e = intercept[AnalysisException] {
             sql(s"CREATE TABLE delta.`$fooPath`(id LONG) USING delta LOCATION '$barPath'")
           }
-          assert(e.message
-            .equals(
-              """
-                |Ambiguous delta paths not allowed for CREATE TABLE.
-                |Set DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS to true to allow this behavior
-                |""".stripMargin))
+          assert(e.message.contains("DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS"))
       }
     }
+
+    // allowed with legacy flag
+    withTempDir { foo =>
+      withTempDir { bar =>
+        val fooPath = foo.getCanonicalPath()
+        val barPath = bar.getCanonicalPath()
+        withSQLConf(DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS.key -> "true") {
+          sql(s"CREATE TABLE delta.`$fooPath`(id LONG) USING delta LOCATION '$barPath'")
+          assert(TDeltaTable.isDeltaTable(fooPath))
+          assert(!TDeltaTable.isDeltaTable(barPath))
+        }
+      }
+    }
+
+    // allowed if paths are the same
+    withTempDir { foo =>
+      val fooPath = foo.getCanonicalPath()
+      withSQLConf(DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS.key -> "true") {
+        sql(s"CREATE TABLE delta.`$fooPath`(id LONG) USING delta LOCATION '$fooPath'")
+        assert(TDeltaTable.isDeltaTable(fooPath))
+      }
+    }
+
+    // make sure default is false
+    assert(!spark.conf.get(DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS))
   }
 
   test("allow ambiguous delta paths with legacy flag") {
-    withTempDir { foo =>
-      withTempDir {
-        bar =>
-          val fooPath = foo.getCanonicalPath()
-          val barPath = bar.getCanonicalPath()
-          withSQLConf(DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS.key -> "true") {
-            sql(s"CREATE TABLE delta.`$fooPath`(id LONG) USING delta LOCATION '$barPath'")
 
-            val expectedSchema = new StructType()
-              .add("id", LongType, nullable = true)
-            assert(spark.table(s"delta.`$fooPath`").schema === expectedSchema)
-          }
-      }
-    }
   }
 
 }

@@ -416,16 +416,14 @@ trait DeltaSQLConfBase {
       .createWithDefault(false)
 
   val DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS =
-    buildConf("legacy.allowAmbiguousPaths")
+    buildConf("legacy.allowAmbiguousPathsInCreateTable")
       .internal()
       .doc("""
              |Delta was unintentionally allowing CREATE TABLE queries with both 'delta.`path`'
-             |and 'USING delta LOCATION path' statements. This was unsupported behavior
-             |and supplies ambiguous paths to Delta. This flag blocks queries that contain both
-             |statements.
-             |Set this flag to true to allow ambiguous path queries. In the event that this flag
-             |is true and both statements are contained in the query, the
-             |'USING delta LOCATION path' statement will be ignored.""".stripMargin)
+             |and 'USING delta LOCATION path' clauses. In the new version, we will raise an error
+             |for this case. This flag is added to allow users to skip the check. When it's set to
+             |true and there are two paths in CREATE TABLE, the LOCATION path clause will be
+             |ignored like what the old version does.""".stripMargin)
       .booleanConf
       .createWithDefault(false)
 }

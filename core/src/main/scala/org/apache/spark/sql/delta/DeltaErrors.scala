@@ -1146,6 +1146,15 @@ object DeltaErrors
       " cannot be set at the same time. Please set only one group of them.")
   }
 
+  def ambiguousPathsInCreateTableException(identPath: String, propertiesPath: String): Throwable = {
+    new AnalysisException(
+      s"""
+         |CREATE TABLE contains two different locations: ${identPath} and ${propertiesPath}.
+         |You can remove the LOCATION clause from the CREATE TABLE statement, or set
+         |DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS.key to true to skip this check.
+         |""".stripMargin)
+  }
+
   def concurrentWriteException(
       conflictingCommit: Option[CommitInfo]): io.delta.exceptions.ConcurrentWriteException = {
     val message = DeltaErrors.concurrentModificationExceptionMsg(
