@@ -618,7 +618,7 @@ object DeltaTable {
       new DeltaTable(
         sparkSession.table(tableName),
         DeltaTableV2(sparkSession, new Path(tbl.location), Some(tbl), Some(tableName)))
-    } else if (isDeltaTable(tableId.table)) {
+    } else if (DeltaTableUtils.isValidPath(tableId)) {
       forPath(sparkSession, tableId.table)
     } else {
       throw DeltaErrors.notADeltaTableException(DeltaTableIdentifier(table = Some(tableId)))
