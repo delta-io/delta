@@ -1146,12 +1146,12 @@ object DeltaErrors
       " cannot be set at the same time. Please set only one group of them.")
   }
 
-  def ambiguousPathsInCreateTableException(identPath: String, propertiesPath: String): Throwable = {
+  def ambiguousPathsInCreateTableException(identifier: String, location: String): Throwable = {
     new AnalysisException(
       s"""
-         |CREATE TABLE contains two different locations: ${identPath} and ${propertiesPath}.
+         |CREATE TABLE contains two different locations: ${identifier} and ${location}.
          |You can remove the LOCATION clause from the CREATE TABLE statement, or set
-         |DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS.key to true to skip this check.
+         |${DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS.key} to true to skip this check.
          |""".stripMargin)
   }
 

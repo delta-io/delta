@@ -420,7 +420,7 @@ trait DeltaSQLConfBase {
       .internal()
       .doc("""
              |Delta was unintentionally allowing CREATE TABLE queries with both 'delta.`path`'
-             |and 'USING delta LOCATION path' clauses. In the new version, we will raise an error
+             |and 'LOCATION path' clauses. In the new version, we will raise an error
              |for this case. This flag is added to allow users to skip the check. When it's set to
              |true and there are two paths in CREATE TABLE, the LOCATION path clause will be
              |ignored like what the old version does.""".stripMargin)

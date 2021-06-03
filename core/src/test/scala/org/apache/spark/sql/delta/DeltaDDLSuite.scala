@@ -482,7 +482,7 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
           val e = intercept[AnalysisException] {
             sql(s"CREATE TABLE delta.`$fooPath`(id LONG) USING delta LOCATION '$barPath'")
           }
-          assert(e.message.contains("DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS"))
+          assert(e.message.contains("legacy.allowAmbiguousPathsInCreateTable"))
       }
     }
 
@@ -502,18 +502,9 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
     // allowed if paths are the same
     withTempDir { foo =>
       val fooPath = foo.getCanonicalPath()
-      withSQLConf(DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS.key -> "true") {
-        sql(s"CREATE TABLE delta.`$fooPath`(id LONG) USING delta LOCATION '$fooPath'")
-        assert(io.delta.tables.DeltaTable.isDeltaTable(fooPath))
-      }
+      sql(s"CREATE TABLE delta.`$fooPath`(id LONG) USING delta LOCATION '$fooPath'")
+      assert(io.delta.tables.DeltaTable.isDeltaTable(fooPath))
     }
-
-    // make sure default is false
-    assert(!spark.conf.get(DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS))
-  }
-
-  test("allow ambiguous delta paths with legacy flag") {
-
   }
 
 }
