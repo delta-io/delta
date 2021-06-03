@@ -212,7 +212,8 @@ object DeltaOperations {
       metadata: Metadata,
       isManaged: Boolean,
       orCreate: Boolean,
-      asSelect: Boolean = false)
+      asSelect: Boolean = false,
+      override val userMetadata: Option[String] = None)
     extends Operation(s"${if (orCreate) "CREATE OR " else ""}REPLACE TABLE" +
       s"${if (asSelect) " AS SELECT" else ""}") {
     override val parameters: Map[String, Any] = Map(

@@ -48,18 +48,6 @@ trait ImplicitMetadataOperation extends DeltaLogging {
   }
 
   protected final def updateMetadata(
-      txn: OptimisticTransaction,
-      data: Dataset[_],
-      partitionColumns: Seq[String],
-      configuration: Map[String, String],
-      isOverwriteMode: Boolean,
-      rearrangeOnly: Boolean = false): Unit = {
-    updateMetadata(
-      data.sparkSession, txn, data.schema, partitionColumns,
-      configuration, isOverwriteMode, rearrangeOnly)
-  }
-
-  protected final def updateMetadata(
       spark: SparkSession,
       txn: OptimisticTransaction,
       schema: StructType,

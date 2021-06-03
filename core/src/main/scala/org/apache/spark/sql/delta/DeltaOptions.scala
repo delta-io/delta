@@ -60,6 +60,8 @@ trait DeltaWriteOptions
 }
 
 trait DeltaWriteOptionsImpl extends DeltaOptionParser {
+  import DeltaOptions._
+
   /**
    * Whether the user has enabled auto schema merging in writes using either a DataFrame option
    * or SQL Session configuration. Automerging is off when table ACLs are enabled.
