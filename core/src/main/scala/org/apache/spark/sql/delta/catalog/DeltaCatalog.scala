@@ -143,7 +143,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
         new DeltaOptions(withDb.storage.properties, spark.sessionState.conf),
         withDb.partitionColumnNames,
         withDb.properties ++ commentOpt.map("comment" -> _),
-        df)
+        df,
+        schemaInCatalog = if (newSchema != schema) Some(newSchema) else None)
     }
 
     CreateDeltaTableCommand(
