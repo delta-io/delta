@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.JavaConverters._
+
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.schema.InvariantViolationException
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
