@@ -16,8 +16,13 @@
 
 package org.apache.spark.sql.delta.metering
 
+import scala.collection.mutable
 import scala.util.Try
 import scala.util.control.NonFatal
+
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.util.Utils
 
 // scalastyle:off import.ordering.noEmptyLine
 
@@ -47,9 +52,13 @@ import org.apache.spark.sql.delta.util.JsonUtils
  *  Underneath these functions use the standard usage log reporting defined in
  *  [[com.databricks.spark.util.DatabricksLogging]].
  */
-trait DeltaLogging
-  extends DeltaProgressReporter
-  with DatabricksLogging {
+trait DeltaLogging extends DeltaProgressReporter {
+
+  /**
+   * Used to record a log line to the console.
+   */
+  protected def logConsole(line: String): Unit =
+    LoggerImplementation.activeLogger.logConsole(line)
 
   /**
    * Used to record the occurrence of a single event or report detailed, operation specific
@@ -69,13 +78,13 @@ trait DeltaLogging
       } else {
         Map.empty
       }
-      recordEvent(
+      LoggerImplementation.activeLogger.recordEvent(
         EVENT_TAHOE,
         Map(TAG_OP_TYPE -> opType) ++ tableTags ++ tags,
         blob = json)
     } catch {
       case NonFatal(e) =>
-        recordEvent(
+        LoggerImplementation.activeLogger.recordEvent(
           EVENT_LOGGING_FAILURE,
           blob = JsonUtils.toJson(
             Map("exception" -> e.getMessage,
@@ -100,10 +109,33 @@ trait DeltaLogging
     } else {
       Map.empty
     }
-    recordOperation(
-      new OpType(opType, ""),
+    LoggerImplementation.activeLogger.recordOperation(
+      OpType(opType, ""),
       extraTags = tableTags ++ tags) {
           thunk
     }
   }
+}
+
+/**
+ * Private factory to construct the logger implementation based on the active config.
+ */
+private object LoggerImplementation {
+
+  private val emptyLogger = new EmptyLogger
+
+  private val loggers: mutable.Map[String, DatabricksLogging] =
+    new scala.collection.concurrent.TrieMap()
+
+  def activeLogger: DatabricksLogging =
+    SparkSession.active.sessionState.conf
+      .getConf(DeltaSQLConf.DELTA_TELEMETRY_LOGGER)
+      .map { name =>
+        loggers.getOrElseUpdate(name, {
+          Utils.classForName(name).newInstance.asInstanceOf[DatabricksLogging]
+        })
+      }
+      .getOrElse(emptyLogger)
+
+  private class EmptyLogger extends DatabricksLogging
 }
