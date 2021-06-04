@@ -69,7 +69,7 @@ trait DeltaLogging
       } else {
         Map.empty
       }
-      recordEvent(
+      recordProductEvent(
         EVENT_TAHOE,
         Map(TAG_OP_TYPE -> opType) ++ tableTags ++ tags,
         blob = json)
