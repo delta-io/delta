@@ -523,6 +523,7 @@ object DeltaErrors
       s"Invalid value '$input' for option '$name', $explain")
   }
 
+
   def startingVersionAndTimestampBothSetException(
       versionOptKey: String,
       timestampOptKey: String): Throwable = {

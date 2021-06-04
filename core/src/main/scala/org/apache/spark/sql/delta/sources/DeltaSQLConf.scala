@@ -415,6 +415,19 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR =
+    buildConf("vacuum.relativize.ignoreError")
+      .internal()
+      .doc("""
+             |When enabled, the error when trying to relativize an absolute path when
+             |vacuuming a delta table will be ignored. This usually happens when a table is
+             |shallow cloned across FileSystems, such as across buckets or across cloud storage
+             |systems. We do not recommend enabling this configuration in production or using it
+             |with production datasets.
+             |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_TELEMETRY_LOGGER =
     buildConf("telemetry.logger")
     .internal()

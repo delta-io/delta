@@ -18,6 +18,7 @@ import unittest
 import os
 
 from pyspark.sql import Row
+from pyspark.sql.column import _to_seq
 from pyspark.sql.functions import col, lit, expr
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType
 from pyspark.sql.utils import AnalysisException, ParseException
@@ -353,7 +354,8 @@ class DeltaTableTests(DeltaTestCase):
 
     def __verify_table_schema(self, tableName, schema, cols,
                               types, nullables={}, comments={},
-                              properties={}):
+                              properties={}, partitioningColumns=[],
+                              tblComment=None):
         fields = []
         for i in range(len(cols)):
             col = cols[i]
@@ -369,6 +371,13 @@ class DeltaTableTests(DeltaTestCase):
             for key in properties:
                 assert (key in tablePropertyMap)
                 assert (tablePropertyMap[key] == properties[key])
+        tableDetails = self.spark.sql("DESCRIBE DETAIL {}".format(tableName))\
+            .collect()[0]
+        assert(tableDetails.format == "delta")
+        actualComment = tableDetails.description
+        assert(actualComment == tblComment)
+        partitionCols = tableDetails.partitionColumns
+        assert(sorted(partitionCols) == sorted((partitioningColumns)))
 
     def __verify_generated_column(self, tableName, deltaTable):
         cmd = "INSERT INTO {table} (col1, col2) VALUES (1, 11)".format(table=tableName)
@@ -405,22 +414,28 @@ class DeltaTableTests(DeltaTestCase):
         df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
         deltaTable = DeltaTable.create(self.spark).tableName("test") \
             .addColumns(df.schema) \
-            .addColumn("value2", dataType="int").execute()
+            .addColumn("value2", dataType="int")\
+            .partitionedBy(["value2", "value"])\
+            .execute()
         self.__verify_table_schema("test",
                                    deltaTable.toDF().schema,
                                    ["key", "value", "value2"],
                                    [StringType(), LongType(), IntegerType()],
-                                   nullables={"key", "value", "value2"})
+                                   nullables={"key", "value", "value2"},
+                                   partitioningColumns=["value", "value2"])
 
         # verify creating table with list of structFields
         deltaTable2 = DeltaTable.create(self.spark).tableName("test2").addColumns(
             df.schema.fields) \
-            .addColumn("value2", dataType="int").execute()
+            .addColumn("value2", dataType="int") \
+            .partitionedBy("value2", "value")\
+            .execute()
         self.__verify_table_schema("test2",
                                    deltaTable2.toDF().schema,
                                    ["key", "value", "value2"],
                                    [StringType(), LongType(), IntegerType()],
-                                   nullables={"key", "value", "value2"})
+                                   nullables={"key", "value", "value2"},
+                                   partitioningColumns=["value", "value2"])
 
     def test_create_replace_table_with_no_spark_session_passed(self):
         # create table.
@@ -471,7 +486,9 @@ class DeltaTableTests(DeltaTestCase):
                                        [IntegerType(), IntegerType()],
                                        nullables={"col2"},
                                        comments={"col1": "foo"},
-                                       properties={"foo": "bar"})
+                                       properties={"foo": "bar"},
+                                       partitioningColumns=["col1"],
+                                       tblComment="comment")
             # verify generated columns.
             self.__verify_generated_column(tableName, deltaTable)
             self.spark.sql("DROP TABLE IF EXISTS {}".format(tableName))
@@ -486,7 +503,9 @@ class DeltaTableTests(DeltaTestCase):
                                        ["col1", "col2"],
                                        [IntegerType(), IntegerType()],
                                        nullables={"col2"},
-                                       comments={"col1": "foo"})
+                                       comments={"col1": "foo"},
+                                       partitioningColumns=["col1"],
+                                       tblComment="comment")
             # verify generated columns.
             self.__verify_generated_column("delta.`{}`".format(path), deltaTable)
 
@@ -503,7 +522,9 @@ class DeltaTableTests(DeltaTestCase):
                                        [IntegerType(), IntegerType()],
                                        nullables={"col2"},
                                        comments={"col1": "foo"},
-                                       properties={"foo": "bar"})
+                                       properties={"foo": "bar"},
+                                       partitioningColumns=["col1"],
+                                       tblComment="comment")
             # verify generated columns.
             self.__verify_generated_column(tableName, deltaTable)
             self.spark.sql("DROP TABLE IF EXISTS {}".format(tableName))
@@ -539,7 +560,9 @@ class DeltaTableTests(DeltaTestCase):
                                        [IntegerType(), IntegerType()],
                                        nullables={"col2"},
                                        comments={"col1": "foo"},
-                                       properties={"foo": "bar"})
+                                       properties={"foo": "bar"},
+                                       partitioningColumns=["col1"],
+                                       tblComment="comment")
             # verify generated columns.
             self.__verify_generated_column(tableName, deltaTable)
             self.spark.sql("DROP TABLE IF EXISTS {}".format(tableName))
@@ -555,7 +578,10 @@ class DeltaTableTests(DeltaTestCase):
                                        ["col1", "col2"],
                                        [IntegerType(), IntegerType()],
                                        nullables={"col2"},
-                                       comments={"col1": "foo"})
+                                       comments={"col1": "foo"},
+                                       properties={"foo": "bar"},
+                                       partitioningColumns=["col1"],
+                                       tblComment="comment")
             # verify generated columns.
             self.__verify_generated_column("delta.`{}`".format(path), deltaTable)
 
@@ -574,7 +600,9 @@ class DeltaTableTests(DeltaTestCase):
                                        [IntegerType(), IntegerType()],
                                        nullables={"col2"},
                                        comments={"col1": "foo"},
-                                       properties={"foo": "bar"})
+                                       properties={"foo": "bar"},
+                                       partitioningColumns=["col1"],
+                                       tblComment="comment")
             # verify generated columns.
             self.__verify_generated_column(tableName, deltaTable)
             self.spark.sql("DROP TABLE IF EXISTS {}".format(tableName))
@@ -594,7 +622,28 @@ class DeltaTableTests(DeltaTestCase):
                                    [IntegerType(), IntegerType()],
                                    nullables={"col2"},
                                    comments={"col1": "foo"},
-                                   properties={"foo": "bar"})
+                                   properties={"foo": "bar"},
+                                   partitioningColumns=["col1"],
+                                   tblComment="comment")
+
+    def test_verify_paritionedBy_compatibility(self):
+        tableBuilder = DeltaTable.create(self.spark).tableName("testTable") \
+            .addColumn("col1", "int", comment="foo", nullable=False) \
+            .addColumn("col2", IntegerType(), generatedAlwaysAs="col1 + 10") \
+            .property("foo", "bar") \
+            .comment("comment")
+        tableBuilder._jbuilder = tableBuilder._jbuilder \
+            .partitionedBy(_to_seq(self.spark._sc, ["col1"]))
+        deltaTable = tableBuilder.execute()
+        self.__verify_table_schema("testTable",
+                                   deltaTable.toDF().schema,
+                                   ["col1", "col2"],
+                                   [IntegerType(), IntegerType()],
+                                   nullables={"col2"},
+                                   comments={"col1": "foo"},
+                                   properties={"foo": "bar"},
+                                   partitioningColumns=["col1"],
+                                   tblComment="comment")
 
     def test_delta_table_builder_with_bad_args(self):
         builder = DeltaTable.create(self.spark)
@@ -649,6 +698,9 @@ class DeltaTableTests(DeltaTestCase):
 
         with self.assertRaises(TypeError):
             builder.partitionedBy(1, "1")
+
+        with self.assertRaises(TypeError):
+            builder.partitionedBy([1])
 
         # bad property key
         with self.assertRaises(TypeError):

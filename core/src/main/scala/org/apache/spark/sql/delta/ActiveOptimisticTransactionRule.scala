@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.SubqueryExpression
 import org.apache.spark.sql.catalyst.planning.PhysicalOperation
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, V2WriteCommand}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.delta.files.{PinnedTahoeFileIndex, TahoeLogFileIndex}
 
@@ -32,6 +32,12 @@ import org.apache.spark.sql.delta.files.{PinnedTahoeFileIndex, TahoeLogFileIndex
 class ActiveOptimisticTransactionRule(spark: SparkSession) extends Rule[LogicalPlan] {
 
   override def apply(plan: LogicalPlan): LogicalPlan = {
+    // Skip this rule for V2 write commands - it will be evaluated later when the V1 fallback
+    // is planned. We don't want to pin the file index yet because we're not in the transaction.
+    if (plan.isInstanceOf[V2WriteCommand]) {
+      return plan
+    }
+
     // We need to first prepare the scans in the subqueries of a node. Otherwise, because of the
     // short-circuiting nature of the pattern matching in the transform method, if a
     // PhysicalOperation node is matched, its subqueries that may contain other PhysicalOperation
