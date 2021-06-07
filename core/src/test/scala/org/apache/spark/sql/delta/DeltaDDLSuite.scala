@@ -21,6 +21,7 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.schema.InvariantViolationException
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.Path
 
@@ -43,6 +44,40 @@ class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession
 
   override protected def verifyNullabilityFailure(exception: AnalysisException): Unit = {
     exception.getMessage.contains("Cannot change nullable column to non-nullable")
+  }
+
+  test("table creation with ambiguous paths only allowed with legacy flag") {
+    // ambiguous paths not allowed
+    withTempDir { foo =>
+      withTempDir { bar =>
+          val fooPath = foo.getCanonicalPath()
+          val barPath = bar.getCanonicalPath()
+          val e = intercept[AnalysisException] {
+            sql(s"CREATE TABLE delta.`$fooPath`(id LONG) USING delta LOCATION '$barPath'")
+          }
+          assert(e.message.contains("legacy.allowAmbiguousPathsInCreateTable"))
+      }
+    }
+
+    // allowed with legacy flag
+    withTempDir { foo =>
+      withTempDir { bar =>
+        val fooPath = foo.getCanonicalPath()
+        val barPath = bar.getCanonicalPath()
+        withSQLConf(DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS.key -> "true") {
+          sql(s"CREATE TABLE delta.`$fooPath`(id LONG) USING delta LOCATION '$barPath'")
+          assert(io.delta.tables.DeltaTable.isDeltaTable(fooPath))
+          assert(!io.delta.tables.DeltaTable.isDeltaTable(barPath))
+        }
+      }
+    }
+
+    // allowed if paths are the same
+    withTempDir { foo =>
+      val fooPath = foo.getCanonicalPath()
+      sql(s"CREATE TABLE delta.`$fooPath`(id LONG) USING delta LOCATION '$fooPath'")
+      assert(io.delta.tables.DeltaTable.isDeltaTable(fooPath))
+    }
   }
 }
 
