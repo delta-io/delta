@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.commands
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.net.URI
 import java.util.concurrent.TimeUnit.NANOSECONDS
 
@@ -27,6 +28,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
+import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
 import org.apache.hadoop.fs.Path
@@ -282,6 +284,8 @@ trait DeltaCommand extends DeltaLogging {
       var numAddFiles: Int = 0
       var numRemoveFiles: Int = 0
       var bytesNew: Long = 0L
+      var addFilesHistogram: Option[FileSizeHistogram] = None
+      var removeFilesHistogram: Option[FileSizeHistogram] = None
       val allActions = (extraActions.toIterator ++ actions).map { action =>
         commitSize += 1
         action match {
@@ -289,8 +293,10 @@ trait DeltaCommand extends DeltaLogging {
             numAddFiles += 1
             if (a.pathAsUri.isAbsolute) numAbsolutePaths += 1
             if (a.dataChange) bytesNew += a.size
-          case _: RemoveFile =>
+            addFilesHistogram.foreach(_.insert(a.size))
+          case r: RemoveFile =>
             numRemoveFiles += 1
+            removeFilesHistogram.foreach(_.insert(r.size))
           case _ =>
         }
         action
@@ -307,7 +313,7 @@ trait DeltaCommand extends DeltaLogging {
 
       updateAndCheckpoint(spark, deltaLog, commitSize, attemptVersion)
       val postCommitSnapshot = deltaLog.snapshot
-      val stats = CommitStats(
+      var stats = CommitStats(
         startVersion = txn.readVersion,
         commitVersion = attemptVersion,
         readVersion = postCommitSnapshot.version,
@@ -326,6 +332,7 @@ trait DeltaCommand extends DeltaLogging {
         numAbsolutePathsInAdd = numAbsolutePaths,
         numDistinctPartitionsInAdd = -1, // not tracking distinct partitions as of now
         isolationLevel = Serializable.toString)
+
       recordDeltaEvent(deltaLog, "delta.commit.stats", data = stats)
 
       attemptVersion

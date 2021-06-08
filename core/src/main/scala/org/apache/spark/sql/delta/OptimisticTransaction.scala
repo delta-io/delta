@@ -33,6 +33,7 @@ import org.apache.spark.sql.delta.hooks.{GenerateSymlinkManifest, PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.Logging
@@ -68,7 +69,11 @@ case class CommitStats(
   newMetadata: Option[Metadata],
   numAbsolutePathsInAdd: Int,
   numDistinctPartitionsInAdd: Int,
-  isolationLevel: String)
+  isolationLevel: String,
+  fileSizeHistogram: Option[FileSizeHistogram] = None,
+  addFilesHistogram: Option[FileSizeHistogram] = None,
+  removeFilesHistogram: Option[FileSizeHistogram] = None
+)
 
 /**
  * Used to perform a set of reads in a transaction and then commit a set of updates to the
