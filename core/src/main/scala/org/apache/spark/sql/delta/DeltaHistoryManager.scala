@@ -218,8 +218,8 @@ class DeltaHistoryManager(
         smallestDeltaVersion = math.min(version, smallestDeltaVersion)
 
         // Note that we also check this condition at the end of the function - we check it
-        // here too to try and avoid more file listing when it's unnecessary.
-        if (lastCompleteCheckpoint.exists(_ >= smallestDeltaVersion - 1)) {
+        // here too to to try and avoid more file listing when it's unnecessary.
+        if (lastCompleteCheckpoint.exists(_ >= smallestDeltaVersion)) {
           return lastCompleteCheckpoint.get
         }
       } else if (FileNames.isCheckpointFile(nextFilePath)) {
