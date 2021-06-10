@@ -18,8 +18,9 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 
-import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, RemoveFile, SingleAction}
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, SingleAction}
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 
@@ -229,11 +230,26 @@ object EvolvabilitySuiteBase {
     // against both checkpoint with unknown column and delta log with unkown column.
 
     // manually remove AddFile in the previous commit and append a new column.
-    val records = deltaLog.store.readAsIterator(FileNames.deltaFile(deltaLog.logPath, version))
+    val records = deltaLog.store.read(FileNames.deltaFile(deltaLog.logPath, version))
     val actions = records.map(Action.fromJson).filter(action => action.isInstanceOf[AddFile])
       .map { action => action.asInstanceOf[AddFile].remove}
-    val recordsWithNewAction = actions.map(_.json) ++ Iterator("""{"some_new_feature":{"a":1}}""")
+      .toIterator
+    val recordsWithNewAction = actions.map(_.json) ++ Iterator("""{"some_new_action":{"a":1}}""")
     deltaLog.store.write(FileNames.deltaFile(deltaLog.logPath, version + 1), recordsWithNewAction)
+
+    // manually add those files back and add a unknown field to it.
+    val newRecords = records.map{ record =>
+      val recordMap = JsonUtils.fromJson[Map[String, Any]](record)
+      val newRecordMap = if (recordMap.contains("add")) {
+        // add a unknown column inside action fields.
+        val actionFields = recordMap("add").asInstanceOf[Map[String, Any]] +
+          ("some_new_column_in_add_action" -> 1)
+        recordMap + ("add" -> actionFields)
+      } else recordMap
+      // add a unknown column outside action fields.
+      JsonUtils.toJson(newRecordMap + ("some_new_action_alongside_add_action" -> ("a" -> "1")))
+    }.toIterator
+    deltaLog.store.write(FileNames.deltaFile(deltaLog.logPath, version + 2), newRecords)
 
     // Shouldn't fail here
     deltaLog.update()

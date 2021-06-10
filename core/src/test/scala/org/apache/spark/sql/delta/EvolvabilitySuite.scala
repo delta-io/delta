@@ -42,36 +42,6 @@ class EvolvabilitySuite extends EvolvabilitySuiteBase with DeltaSQLCommandTest {
     }
   }
 
-  testQuietly("future proofing against new features") {
-
-    val tempDir = Utils.createTempDir().toString
-    Seq(1, 2, 3).toDF().write.format("delta").save(tempDir)
-
-    val deltaLog = DeltaLog.forTable(spark, tempDir)
-    deltaLog.store.write(new Path(deltaLog.logPath, "00000000000000000001.json"),
-      Iterator("""{"some_new_feature":{"a":1}}"""))
-
-    // Shouldn't fail here
-    deltaLog.update()
-
-    val sq = spark.readStream.format("delta").load(tempDir.toString)
-      .groupBy()
-      .count()
-      .writeStream
-      .outputMode("complete")
-      .format("console")
-      .start()
-
-    // Also shouldn't fail
-    sq.processAllAvailable()
-    Seq(1, 2, 3).toDF().write.format("delta").mode("append").save(tempDir)
-    sq.processAllAvailable()
-    deltaLog.store.write(new Path(deltaLog.logPath, "00000000000000000003.json"),
-      Iterator("""{"some_new_feature":{"a":1}}"""))
-    sq.processAllAvailable()
-    sq.stop()
-  }
-
   test("serialized partition values must contain null values") {
     val tempDir = Utils.createTempDir().toString
     val df1 = spark.range(5).withColumn("part", typedLit[String](null))
