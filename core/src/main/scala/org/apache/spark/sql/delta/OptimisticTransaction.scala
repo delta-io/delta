@@ -474,6 +474,18 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
         registerPostCommitHook(GenerateSymlinkManifest)
       }
 
+      // Register external post-commit hook if any
+      val externalPostCommitHookClass =
+        DeltaConfigs.EXTERNAL_POST_COMMIT_HOOK_CLASS.fromMetaData(metadata)
+
+      externalPostCommitHookClass collect {
+        case className if hasFileActions =>
+          val externalPostCommitHook = Utils.classForName(className)
+            .newInstance()
+            .asInstanceOf[PostCommitHook]
+          registerPostCommitHook(externalPostCommitHook)
+      }
+
       commitAttemptStartTime = clock.getTimeMillis()
       val commitVersion = doCommitRetryIteratively(
         snapshot.version + 1,
