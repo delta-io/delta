@@ -681,15 +681,21 @@ abstract class MergeIntoSuiteBase
       Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value").createOrReplaceTempView("source")
       Seq((1, 1), (0, 3), (1, 5)).toDF("key2", "value").write.saveAsTable("target")
 
-      val e = intercept[AnalysisException] {
+      val e = intercept[Exception] {
         executeMerge(
           target = "target",
           source = "source src",
           condition = "src.key1 = target.key2",
           update = "key2 = 20 + key1, value = 20 + src.value",
           insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
-      }.getMessage
-      errorContains(e, "MERGE destination only supports Delta sources")
+      }
+      assert(e.isInstanceOf[UnsupportedOperationException] ||
+        e.isInstanceOf[AnalysisException])
+      if (e.isInstanceOf[UnsupportedOperationException] )  {
+        errorContains(e.getMessage, "MERGE INTO TABLE is not supported temporarily")
+      } else {
+        errorContains(e.getMessage, "MERGE destination only supports Delta sources")
+      }
     }
   }
 
