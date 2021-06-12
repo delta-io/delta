@@ -401,8 +401,8 @@ trait DeltaConfigsBase extends DeltaLogging {
     a => a.nonEmpty,
     "This class must be a subclass of PostCommitHook, " +
       "and must have a zero-arg constructor. " +
-      "Note: This configuration will not changed for next transactions, " +
-      "once it is added to delta table, need to run alter command to remove or chance this.")
+      "Note: This configuration will not be changed for next transactions, " +
+      "once it is added to a delta table, ALTER TABLE is needed to drop or change it.")
 
   /**
    * When enabled, we will write file statistics in the checkpoint in JSON format as the "stats"
