@@ -487,6 +487,41 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
     }
   }
 
+  test("SHOW PARTITIONS for partitioned table") {
+    withTempDir { dir =>
+      withTable("delta_test") {
+        val path = dir.getCanonicalPath()
+
+        val df = Seq(
+          ("IT", 24, "Alice"),
+          ("CS", 25, "Bob"),
+          ("IT", 24, "Carol"),
+          ("CS", 24, "Dave")).toDF("dept", "age", "name")
+        df.write.format("delta").partitionBy("dept", "age").save(path)
+
+        sql(s"CREATE TABLE delta_test USING delta LOCATION '$path'")
+
+        assert(sql("SHOW PARTITIONS delta_test").collect().length == 3)
+        assert(sql("SHOW PARTITIONS delta_test PARTITION (dept = 'IT')").collect().length == 1)
+        assert(sql("SHOW PARTITIONS delta_test PARTITION (dept = 'CS')").collect().length == 2)
+        assert(sql("SHOW PARTITIONS delta_test PARTITION (age = 24)").collect().length == 2)
+        assert(sql("SHOW PARTITIONS delta_test PARTITION (dept = 'CS', age = 24)").collect()
+          .length == 1)
+        assert(sql("SHOW PARTITIONS delta_test PARTITION (dept = 'IT', age = 25)").collect()
+          .length == 0)
+
+        assert(sql(s"SHOW PARTITIONS delta.`$path`").collect().length == 3)
+        assert(sql(s"SHOW PARTITIONS delta.`$path` PARTITION (dept = 'IT')").collect().length == 1)
+        assert(sql(s"SHOW PARTITIONS delta.`$path` PARTITION (dept = 'CS')").collect().length == 2)
+        assert(sql(s"SHOW PARTITIONS delta.`$path` PARTITION (age = 24)").collect().length == 2)
+        assert(sql(s"SHOW PARTITIONS delta.`$path` PARTITION (dept = 'CS', age = 24)").collect()
+          .length == 1)
+        assert(sql(s"SHOW PARTITIONS delta.`$path` PARTITION (dept = 'IT', age = 25)").collect()
+          .length == 0)
+      }
+    }
+  }
+
   test("snapshot returned after a dropped managed table should be empty") {
     withTable("delta_test") {
       sql("CREATE TABLE delta_test USING delta AS SELECT 'foo' as a")
