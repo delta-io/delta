@@ -17,6 +17,7 @@
 package io.delta.standalone.internal
 
 import java.net.URI
+import java.util.TimeZone
 
 import scala.collection.JavaConverters._
 
@@ -50,6 +51,15 @@ private[internal] class SnapshotImpl(
 
   import SnapshotImpl._
 
+  /** Convert the timeZoneId to an actual timeZone that can be used for decoding. */
+  private val readTimeZone = {
+    if (hadoopConf.get(StandaloneHadoopConf.PARQUET_DATA_TIME_ZONE_ID) == null) {
+      TimeZone.getDefault
+    } else {
+      TimeZone.getTimeZone(hadoopConf.get(StandaloneHadoopConf.PARQUET_DATA_TIME_ZONE_ID))
+    }
+  }
+
   ///////////////////////////////////////////////////////////////////////////
   // Public API Methods
   ///////////////////////////////////////////////////////////////////////////
@@ -67,7 +77,8 @@ private[internal] class SnapshotImpl(
         .map(FileNames.absolutePath(deltaLog.dataPath, _).toString),
       getMetadata.getSchema,
       // the time zone ID if it exists, else null
-      hadoopConf.get(StandaloneHadoopConf.PARQUET_DATA_TIME_ZONE_ID))
+      readTimeZone,
+      hadoopConf)
 
   ///////////////////////////////////////////////////////////////////////////
   // Internal-Only Methods
@@ -84,7 +95,8 @@ private[internal] class SnapshotImpl(
           JsonUtils.mapper.readValue[SingleAction](line)
         }
       } else if (path.endsWith("parquet")) {
-        ParquetReader.read[SingleAction](path).toSeq
+        ParquetReader.read[SingleAction](path, ParquetReader.Options(
+          timeZone = readTimeZone, hadoopConf = hadoopConf)).toSeq
       } else Seq.empty[SingleAction]
     }.toList
   }

@@ -20,6 +20,7 @@ import java.util.TimeZone
 
 import com.github.mjakubowski84.parquet4s._
 import com.github.mjakubowski84.parquet4s.ParquetReader.Options
+import org.apache.hadoop.conf.Configuration
 
 import io.delta.standalone.data.{CloseableIterator, RowRecord => RowParquetRecordJ}
 import io.delta.standalone.types.StructType
@@ -36,11 +37,8 @@ import io.delta.standalone.types.StructType
 private[internal] case class CloseableParquetDataIterator(
     dataFilePaths: Seq[String],
     schema: StructType,
-    timeZoneId: String) extends CloseableIterator[RowParquetRecordJ] {
-
-  /** Convert the timeZoneId to an actual timeZone that can be used for decoding. */
-  private val readTimeZone =
-    if (null == timeZoneId) TimeZone.getDefault else TimeZone.getTimeZone(timeZoneId)
+    readTimeZone: TimeZone,
+    hadoopConf: Configuration) extends CloseableIterator[RowParquetRecordJ] {
 
   /** Iterator over the `dataFilePaths`. */
   private val dataFilePathsIter = dataFilePaths.iterator
@@ -116,6 +114,7 @@ private[internal] case class CloseableParquetDataIterator(
    * @return the iterable for the next data file in `dataFilePathsIter`, not null
    */
   private def readNextFile: ParquetIterable[RowParquetRecord] = {
-    ParquetReader.read[RowParquetRecord](dataFilePathsIter.next(), Options(readTimeZone))
+    ParquetReader.read[RowParquetRecord](
+      dataFilePathsIter.next(), Options(timeZone = readTimeZone, hadoopConf = hadoopConf))
   }
 }
