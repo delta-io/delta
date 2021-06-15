@@ -164,6 +164,11 @@ If the schema in the underlying Delta metadata is not consistent with the schema
 #### Hive has three execution engines, MapReduce, Tez and Spark. Which one does this connector support?
 The connector supports MapReduce and Tez. It doesn't support Spark execution engine in Hive.
 
+## sql-delta-import
+
+[sql-delta-import](/sql-delta-import/readme.md) allows for importing data from a JDBC source into a Delta Lake table
+
+
 # Reporting issues
 
 We use [GitHub Issues](https://github.com/delta-io/connectors/issues) to track community reported issues. You can also [contact](#community) the community for getting answers.

@@ -312,3 +312,22 @@ lazy val goldenTables = (project in file("golden-tables")) settings (
     "org.apache.spark" % "spark-sql_2.12" % "3.0.0" % "test" classifier "tests"
   )
 )
+
+lazy val sqlDeltaImport = (project in file("sql-delta-import"))
+  .settings (
+    name := "sql-delta-import",
+    commonSettings,
+    publishArtifact := scalaBinaryVersion.value == "2.12",
+    publishArtifact in Test := false,
+    libraryDependencies ++= Seq(
+      "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
+      "io.delta" % "delta-core_2.12" % "0.7.0" % "provided",
+      "org.rogach" %% "scallop" % "3.5.1",
+      "org.scalatest" %% "scalatest" % "3.1.1" % "test",
+      "com.h2database" % "h2" % "1.4.200" % "test",
+      "org.apache.spark" % "spark-catalyst_2.12" % "3.0.0" % "test",
+      "org.apache.spark" % "spark-core_2.12" % "3.0.0" % "test",
+      "org.apache.spark" % "spark-sql_2.12" % "3.0.0" % "test"
+    )
+  )
+  .settings(releaseSettings)
