@@ -149,7 +149,7 @@ abstract class MergeIntoSuiteBase
 
   Seq(true, false).foreach { skippingEnabled =>
     Seq(true, false).foreach { isPartitioned =>
-     test("basic case edge - merge to Delta table by name, " +
+     test("basic case - merge to Delta table by name, " +
          s"isPartitioned: $isPartitioned skippingEnabled: $skippingEnabled") {
         withTable("delta_target", "source") {
           withSQLConf(DeltaSQLConf.DELTA_STATS_SKIPPING.key -> skippingEnabled.toString) {
@@ -921,7 +921,7 @@ abstract class MergeIntoSuiteBase
     }
   }
 
-  test("merge into cached table edge") {
+  test("merge into cached table") {
     // Merge with a cached target only works in the join-based implementation right now
     withTable("source") {
       append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
