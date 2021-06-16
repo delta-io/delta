@@ -49,7 +49,7 @@ trait DeltaSQLConfBase {
       .internal()
       .doc("Whether to lock a Delta table when doing a commit.")
       .booleanConf
-      .createWithDefault(false)
+      .createOptional
 
   val DELTA_USER_METADATA =
     buildConf("commitInfo.userMetadata")

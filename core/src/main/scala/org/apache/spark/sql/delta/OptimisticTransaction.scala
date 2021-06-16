@@ -608,8 +608,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
     }
   }
 
+  private[delta] def isCommitLockEnabled: Boolean = {
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_LOCK_ENABLED).getOrElse(
+      deltaLog.store.isPartialWriteVisible(deltaLog.logPath))
+  }
+
   private def lockCommitIfEnabled[T](body: => T): T = {
-    if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_LOCK_ENABLED)) {
+    if (isCommitLockEnabled) {
       deltaLog.lockInterruptibly(body)
     } else {
       body
