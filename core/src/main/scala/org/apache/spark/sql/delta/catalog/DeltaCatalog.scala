@@ -113,12 +113,12 @@ class DeltaCatalog extends DelegatingCatalogExtension
     } else {
       Option(allTableProperties.get("location"))
     }
-    val locUriOpt = location.map(CatalogUtils.stringToURI)
+    val id = TableIdentifier(ident.name(), ident.namespace().lastOption)
+    var locUriOpt = location.map(CatalogUtils.stringToURI)
     val storage = DataSource.buildStorageFormatFromOptions(writeOptions)
       .copy(locationUri = locUriOpt)
     val tableType =
       if (location.isDefined) CatalogTableType.EXTERNAL else CatalogTableType.MANAGED
-    val id = TableIdentifier(ident.name(), ident.namespace().lastOption)
     val loc = new Path(locUriOpt.getOrElse(spark.sessionState.catalog.defaultTablePath(id)))
     val commentOpt = Option(allTableProperties.get("comment"))
 

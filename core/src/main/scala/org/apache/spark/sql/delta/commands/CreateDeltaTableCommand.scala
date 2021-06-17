@@ -57,6 +57,8 @@ case class CreateDeltaTableCommand(
   with DeltaLogging {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
+    var table = this.table
+
     assert(table.tableType != CatalogTableType.VIEW)
     assert(table.identifier.database.isDefined, "Database should've been fixed at analysis")
     // There is a subtle race condition here, where the table can be created by someone else
