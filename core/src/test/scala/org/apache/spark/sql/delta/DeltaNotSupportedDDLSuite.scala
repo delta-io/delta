@@ -82,6 +82,14 @@ abstract class DeltaNotSupportedDDLBase extends QueryTest
     assert(allErrMessages.exists(err => e.getMessage.toLowerCase(Locale.ROOT).contains(err)))
   }
 
+  def assertUnsupportedRuntime(query: String, messages: String*): Unit = {
+    val allErrMessages = "operation not allowed" +: messages
+    val e = intercept[RuntimeException] {
+      sql(query)
+    }
+    assert(allErrMessages.exists(err => e.getMessage.toLowerCase(Locale.ROOT).contains(err)))
+  }
+
   private def assertIgnored(query: String): Unit = {
     val outputStream = new java.io.ByteArrayOutputStream()
     Console.withOut(outputStream) {
@@ -125,15 +133,15 @@ abstract class DeltaNotSupportedDDLBase extends QueryTest
   }
 
   test("ALTER TABLE ADD PARTITION") {
-    assertUnsupported(
+    assertUnsupportedRuntime(
       s"ALTER TABLE $partitionedTableName ADD PARTITION (p1=3)",
-      "can not alter partitions")
+      "manually adding partitions")
   }
 
   test("ALTER TABLE DROP PARTITION") {
-    assertUnsupported(
+    assertUnsupportedRuntime(
       s"ALTER TABLE $partitionedTableName DROP PARTITION (p1=2)",
-      "can not alter partitions")
+      "manually dropping partitions")
   }
 
   test("ALTER TABLE RECOVER PARTITIONS") {

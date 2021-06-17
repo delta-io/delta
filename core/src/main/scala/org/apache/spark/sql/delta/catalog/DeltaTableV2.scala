@@ -208,20 +208,27 @@ case class DeltaTableV2(
       name -> ident.get(i, partitionSchema.fields(i).dataType).toString
     }
 
-    val filteredFiles = snapshot.allFiles.filter { addFile =>
-      identMap.forall { case (name, value) => addFile.partitionValues(name) == value }
-    }
-
-    val uniqueParitions = filteredFiles.map { addFile =>
-      partitionColumns.map(colName => addFile.partitionValues(colName))
-    }.distinct()
-
-    uniqueParitions.collect.map { partitions =>
-      val row = new GenericInternalRow(partitions.length)
-      partitionSchema.fields.zipWithIndex.foreach { case (structField, i) =>
-        row.values(i) = Cast(Literal(partitions(i)), structField.dataType).eval()
+    withStatusCode("DELTA", "Computing partitions") {
+      // Skip the filter if no partition identifiers were provided
+      val filteredFiles = if (names.length > 0) {
+        snapshot.allFiles.filter { addFile =>
+          identMap.forall { case (name, value) => addFile.partitionValues(name) == value }
+        }
+      } else {
+        snapshot.allFiles
       }
-      row
+
+      val uniqueParitions = filteredFiles.map { addFile =>
+        partitionColumns.map(colName => addFile.partitionValues(colName))
+      }.distinct()
+
+      uniqueParitions.collect.map { partitions =>
+        val row = new GenericInternalRow(partitions.length)
+        partitionSchema.fields.zipWithIndex.foreach { case (structField, i) =>
+          row.values(i) = Cast(Literal(partitions(i)), structField.dataType).eval()
+        }
+        row
+      }
     }
   }
 }
