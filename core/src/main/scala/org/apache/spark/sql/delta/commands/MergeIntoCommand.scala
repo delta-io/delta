@@ -114,7 +114,8 @@ case class MergeStats(
     targetRowsCopied: Long,
     targetRowsUpdated: Long,
     targetRowsInserted: Long,
-    targetRowsDeleted: Long)
+    targetRowsDeleted: Long
+)
 
 object MergeStats {
 
@@ -168,8 +169,7 @@ object MergeStats {
       updateExprs = null,
       insertConditionExpr = null,
       insertExprs = null,
-      deleteConditionExpr = null
-    )
+      deleteConditionExpr = null)
   }
 }
 
