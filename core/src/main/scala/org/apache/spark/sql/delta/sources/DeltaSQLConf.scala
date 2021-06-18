@@ -108,13 +108,6 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-  val DELTA_COLLECT_STATS =
-    buildConf("stats.collect")
-      .internal()
-      .doc("When true, statistics are collected while writing files into a Delta table.")
-      .booleanConf
-      .createWithDefault(true)
-
   val DELTA_IMPORT_BATCH_SIZE_STATS_COLLECTION =
     buildConf("import.batchSize.statsCollection")
       .internal()
@@ -161,15 +154,6 @@ trait DeltaSQLConfBase {
         "they are collected to the driver. ")
       .booleanConf
       .createWithDefault(true)
-
-  val DELTA_STATS_SKIPPING_LOCAL_CACHE_MAX_NUM_FILES =
-    buildConf("stats.localCache.maxNumFiles")
-      .internal()
-      .doc("The maximum number of files for a table to be considered a 'delta small table'." +
-        "Some metadata operations (such as using data skipping) are optimized for small tables " +
-        "using driver local caching and local execution.")
-      .intConf
-      .createWithDefault(2000)
 
   val DELTA_SNAPSHOT_ISOLATION =
     buildConf("snapshotIsolation.enabled")
