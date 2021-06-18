@@ -18,7 +18,8 @@ package org.apache.spark.sql.delta
 
 import java.net.URI
 import java.nio.file.FileAlreadyExistsException
-import java.util.{ConcurrentModificationException, Locale}
+import java.util.{ConcurrentModificationException, Locale, UUID}
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeUnit.NANOSECONDS
 
 import scala.collection.mutable
@@ -167,6 +168,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
 
   protected def spark = SparkSession.active
   protected val _spark = spark
+
+  private val txnId = UUID.randomUUID().toString
 
   /** Tracks the appIds that have been seen by this transaction. */
   protected val readTxn = new ArrayBuffer[String]
@@ -759,15 +762,50 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
 
     import _spark.implicits._
 
+    val timingStats = mutable.HashMap[String, Long]()
+    val timingStatsTotal = mutable.HashMap[String, Long]()
+
+    var startTimeNs = System.nanoTime()
+
+    /* Start tracking time elapsed */
+    def startTimer(): Unit = {
+      timingStats.clear()
+      startTimeNs = System.nanoTime()
+    }
+
+    /* Record time elapsed with the given name and restart tracking */
+    def recordTimeAndRestartTimer(name: String): Unit = {
+      val timeTakenMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs)
+      timingStats += name -> timeTakenMs
+      timingStatsTotal += name -> (timingStatsTotal.getOrElse(name, 0L) + timeTakenMs)
+      startTimeNs = System.nanoTime()
+    }
+
     val nextAttemptVersion = getNextAttemptVersion(checkVersion)
+
+    val logPrefixStr = s"[attempt $attemptNumber]"
+    val txnDetailsLogStr = {
+      var adds = 0L
+      var removes = 0L
+      actions.foreach {
+        case _: AddFile => adds += 1
+        case _: RemoveFile => removes += 1
+        case _ =>
+      }
+      s"$adds adds, $removes removes, ${readPredicates.size} read predicates, " +
+        s"${readFiles.size} read files"
+    }
+
+    logInfo(s"$logPrefixStr Checking for conflicts with versions " +
+      s"[$checkVersion, $nextAttemptVersion) with current txn having $txnDetailsLogStr")
+
     (checkVersion until nextAttemptVersion).foreach { version =>
-      val totalCheckAndRetryTime = clock.getTimeMillis() - commitAttemptStartTime
-      val baseLog = s" Version: $version Attempt: $attemptNumber Time: $totalCheckAndRetryTime ms"
-      logInfo("Checking for conflict" + baseLog)
+      startTimer()
 
       // Actions of a commit which went in before ours
       val winningCommitActions =
         deltaLog.store.read(deltaFile(deltaLog.logPath, version)).map(Action.fromJson)
+      recordTimeAndRestartTimer("read-actions")
 
       // Categorize all the actions that have happened since the transaction read.
       val metadataUpdates = winningCommitActions.collect { case a: Metadata => a }
@@ -776,6 +814,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       val protocol = winningCommitActions.collect { case a: Protocol => a }
       val commitInfo = winningCommitActions.collectFirst { case a: CommitInfo => a }.map(
         ci => ci.copy(version = Some(version)))
+      recordTimeAndRestartTimer("categorized-actions")
 
       val blindAppendAddedFiles = mutable.ArrayBuffer[AddFile]()
       val changedDataAddedFiles = mutable.ArrayBuffer[AddFile]()
@@ -786,10 +825,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       } else {
         changedDataAddedFiles ++= winningCommitActions.collect { case a: AddFile => a }
       }
-      val actionsCollectionCompleteLog =
-        s"Found ${metadataUpdates.length} metadata, ${removedFiles.length} removes, " +
-           s"${changedDataAddedFiles.length + blindAppendAddedFiles.length} adds"
-      logInfo(actionsCollectionCompleteLog + baseLog)
+      logInfo(s"$logPrefixStr Checking conflict with version $version " +
+        s"having ${changedDataAddedFiles.length + blindAppendAddedFiles.length} adds and " +
+        s"${removedFiles.length} removes")
 
       // If the log protocol version was upgraded, make sure we are still okay.
       // Fail the transaction if we're trying to upgrade protocol ourselves.
@@ -815,6 +853,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
         case WriteSerializable => changedDataAddedFiles // don't conflict with blind appends
         case SnapshotIsolation => Seq.empty
       }
+      recordTimeAndRestartTimer("categorized-adds")
+
       val predicatesMatchingAddedFiles = ExpressionSet(readPredicates).iterator.flatMap { p =>
         val conflictingFile = DeltaLog.filterFileList(
           metadata.partitionSchema,
@@ -842,6 +882,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
           predicatesMatchingAddedFiles.head,
           retryMsg)
       }
+      recordTimeAndRestartTimer("checked-appends")
 
       // Fail if files have been deleted that the txn read.
       val readFilePaths = readFiles.map(f => f.path -> f.partitionValues).toMap
@@ -855,6 +896,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
         val filePath = removedFiles.head.path
         throw DeltaErrors.concurrentDeleteReadException(commitInfo, s"$filePath")
       }
+      recordTimeAndRestartTimer("checked-deletes")
+
 
       // Fail if a file is deleted twice.
       val txnDeletes = actions.collect { case r: RemoveFile => r }.map(_.path).toSet
@@ -862,6 +905,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       if (deleteOverlap.nonEmpty) {
         throw DeltaErrors.concurrentDeleteDeleteException(commitInfo, deleteOverlap.head)
       }
+      recordTimeAndRestartTimer("checked-2x-deletes")
 
       // Fail if idempotent transactions have conflicted.
       val txnOverlap = txns.map(_.appId).toSet intersect readTxn.toSet
@@ -869,10 +913,17 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
         throw DeltaErrors.concurrentTransactionException(commitInfo)
       }
 
-      logInfo("Completed checking for conflicts" + baseLog)
+      val timingStr = timingStats.keys.toSeq.sorted.map(k => s"$k=${timingStats(k)}").mkString(",")
+      logInfo(s"$logPrefixStr No conflicts in version $version, " +
+        s"${clock.getTimeMillis() - commitAttemptStartTime} ms since start ($timingStr)")
     }
 
-    logInfo(s"No logical conflicts with deltas [$checkVersion, $nextAttemptVersion), retrying.")
+    val totalTimingStr =
+      timingStatsTotal.keys.toSeq.sorted.map(k => s"$k=${timingStatsTotal(k)}").mkString(",")
+
+    logInfo(s"$logPrefixStr No conflicts with versions [$checkVersion, $nextAttemptVersion) " +
+      s"with current txn having $txnDetailsLogStr, " +
+      s"${clock.getTimeMillis() - commitAttemptStartTime} ms since start ($totalTimingStr)")
     nextAttemptVersion
   }
 
@@ -932,23 +983,28 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
     }
   }
 
+  private lazy val logPrefix: String = {
+    def truncate(uuid: String): String = uuid.split("-").head
+    s"[tableId=${truncate(snapshot.metadata.id)},txnId=${truncate(txnId)}] "
+  }
+
   override def logInfo(msg: => String): Unit = {
-    super.logInfo(s"[tableId=${snapshot.metadata.id}] " + msg)
+    super.logInfo(logPrefix + msg)
   }
 
   override def logWarning(msg: => String): Unit = {
-    super.logWarning(s"[tableId=${snapshot.metadata.id}] " + msg)
+    super.logWarning(logPrefix + msg)
   }
 
   override def logWarning(msg: => String, throwable: Throwable): Unit = {
-    super.logWarning(s"[tableId=${snapshot.metadata.id}] " + msg, throwable)
+    super.logWarning(logPrefix + msg, throwable)
   }
 
   override def logError(msg: => String): Unit = {
-    super.logError(s"[tableId=${snapshot.metadata.id}] " + msg)
+    super.logError(logPrefix + msg)
   }
 
   override def logError(msg: => String, throwable: Throwable): Unit = {
-    super.logError(s"[tableId=${snapshot.metadata.id}] " + msg, throwable)
+    super.logError(logPrefix + msg, throwable)
   }
 }
