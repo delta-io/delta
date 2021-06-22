@@ -17,9 +17,9 @@
 package io.delta.tables
 
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
+
 import org.apache.spark.annotation._
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.types.{DataType, MetadataBuilder, StructField}
 
 /**
@@ -126,10 +126,6 @@ class DeltaColumnBuilder private[tables](
       metadataBuilder.putString("comment", comment.get)
     }
     val fieldMetadata = metadataBuilder.build()
-    if (dataType == null) {
-      throw DeltaErrors.analysisException("dataType should not be null for a column," +
-        " Please Provide dataType of the column ")
-    }
     StructField(
       colName,
       dataType,
