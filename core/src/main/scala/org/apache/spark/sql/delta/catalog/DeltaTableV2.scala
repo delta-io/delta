@@ -136,6 +136,8 @@ case class DeltaTableV2(
    * paths.
    */
   def toBaseRelation: BaseRelation = {
+    // force update() if necessary in DataFrameReader.load code
+    snapshot
     if (!deltaLog.tableExists) {
       val id = catalogTable.map(ct => DeltaTableIdentifier(table = Some(ct.identifier)))
         .getOrElse(DeltaTableIdentifier(path = Some(path.toString)))
