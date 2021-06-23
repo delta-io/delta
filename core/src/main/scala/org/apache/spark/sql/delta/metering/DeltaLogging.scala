@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -69,7 +69,7 @@ trait DeltaLogging
       } else {
         Map.empty
       }
-      recordEvent(
+      recordProductEvent(
         EVENT_TAHOE,
         Map(TAG_OP_TYPE -> opType) ++ tableTags ++ tags,
         blob = json)

@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -79,7 +79,9 @@ trait AnalysisHelper {
     ).map(_.toLowerCase())
 
     def isExtensionOrCatalogError(error: Exception): Boolean = {
-      possibleErrorMsgs.exists(m => error.getMessage().toLowerCase().contains(m))
+      possibleErrorMsgs.exists { m =>
+        error.getMessage != null && error.getMessage.toLowerCase().contains(m)
+      }
     }
 
     try { f } catch {
@@ -94,5 +96,7 @@ object AnalysisHelper {
   case class FakeLogicalPlan(exprs: Seq[Expression], children: Seq[LogicalPlan])
     extends LogicalPlan {
     override def output: Seq[Attribute] = Nil
+
+    // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
   }
 }

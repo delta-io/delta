@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -98,8 +98,16 @@ class DeltaCatalog extends DelegatingCatalogExtension
     var newSchema = schema
     var newPartitionColumns = partitionColumns
     var newBucketSpec = maybeBucketSpec
+    val conf = spark.sessionState.conf
 
     val isByPath = isPathIdentifier(ident)
+    if (isByPath && !conf.getConf(DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS)
+      && allTableProperties.containsKey("location")
+      && Option(ident.name()) != Option(allTableProperties.get("location"))
+    ) {
+      throw DeltaErrors.ambiguousPathsInCreateTableException(
+        ident.name(), allTableProperties.get("location"))
+    }
     val location = if (isByPath) {
       Option(ident.name())
     } else {
@@ -135,7 +143,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
         new DeltaOptions(withDb.storage.properties, spark.sessionState.conf),
         withDb.partitionColumnNames,
         withDb.properties ++ commentOpt.map("comment" -> _),
-        df)
+        df,
+        schemaInCatalog = if (newSchema != schema) Some(newSchema) else None)
     }
 
     CreateDeltaTableCommand(

@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,6 +37,7 @@ import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.functions.{col, struct, when}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
 
@@ -121,11 +122,15 @@ trait Checkpoints extends DeltaLogging {
   val LAST_CHECKPOINT = new Path(logPath, "_last_checkpoint")
 
   /**
+   * Creates a checkpoint using the default snapshot.
+   */
+  def checkpoint(): Unit = checkpoint(snapshot)
+
+  /**
    * Creates a checkpoint using snapshotToCheckpoint. By default it uses the current log version.
    */
-  def checkpoint(_snapshotToCheckpoint: Option[Snapshot] = None): Unit =
+  def checkpoint(snapshotToCheckpoint: Snapshot): Unit =
     recordDeltaOperation(this, "delta.checkpoint") {
-      val snapshotToCheckpoint = _snapshotToCheckpoint.getOrElse(snapshot)
       if (snapshotToCheckpoint.version < 0) {
         throw DeltaErrors.checkpointNonExistTable(dataPath)
       }
@@ -341,9 +346,7 @@ object Checkpoints extends DeltaLogging {
     val sessionConf = state.sparkSession.sessionState.conf
     // We provide fine grained control using the session conf for now, until users explicitly
     // opt in our out of the struct conf.
-    val includeStructColumns = DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT
-      .fromMetaData(snapshot.metadata)
-      .getOrElse(sessionConf.getConf(DeltaSQLConf.DELTA_CHECKPOINT_V2_ENABLED))
+    val includeStructColumns = getWriteStatsAsStructConf(sessionConf, snapshot)
     if (includeStructColumns) {
       additionalCols ++= CheckpointV2.extractPartitionValues(snapshot.metadata.partitionSchema)
     }
@@ -358,6 +361,12 @@ object Checkpoints extends DeltaLogging {
         additionalCols: _*
       ))
     )
+  }
+
+  def getWriteStatsAsStructConf(conf: SQLConf, snapshot: Snapshot): Boolean = {
+    DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT
+      .fromMetaData(snapshot.metadata)
+      .getOrElse(conf.getConf(DeltaSQLConf.DELTA_CHECKPOINT_V2_ENABLED))
   }
 }
 

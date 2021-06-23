@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,8 +31,6 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.types.StructType
 
 /**
- * :: Evolving ::
- *
  * Main class for programmatically interacting with Delta tables.
  * You can create DeltaTable instances using the static methods.
  * {{{
@@ -41,7 +39,6 @@ import org.apache.spark.sql.types.StructType
  *
  * @since 0.3.0
  */
-@Evolving
 class DeltaTable private[tables](
     @transient private val _df: Dataset[Row],
     @transient private val table: DeltaTableV2)
@@ -66,40 +63,29 @@ class DeltaTable private[tables](
   }
 
   /**
-   * :: Evolving ::
-   *
    * Apply an alias to the DeltaTable. This is similar to `Dataset.as(alias)` or
    * SQL `tableName AS alias`.
    *
    * @since 0.3.0
    */
-  @Evolving
   def as(alias: String): DeltaTable = new DeltaTable(df.as(alias), table)
 
   /**
-   * :: Evolving ::
-   *
    * Apply an alias to the DeltaTable. This is similar to `Dataset.as(alias)` or
    * SQL `tableName AS alias`.
    *
    * @since 0.3.0
    */
-  @Evolving
   def alias(alias: String): DeltaTable = as(alias)
 
   /**
-   * :: Evolving ::
-   *
    * Get a DataFrame (that is, Dataset[Row]) representation of this Delta table.
    *
    * @since 0.3.0
    */
-  @Evolving
   def toDF: Dataset[Row] = df
 
   /**
-   * :: Evolving ::
-   *
    * Recursively delete files and directories in the table that are not needed by the table for
    * maintaining older versions up to the given retention threshold. This method will return an
    * empty DataFrame on successful completion.
@@ -109,14 +95,11 @@ class DeltaTable private[tables](
    *                       rest of them will be deleted.
    * @since 0.3.0
    */
-  @Evolving
   def vacuum(retentionHours: Double): DataFrame = {
     executeVacuum(deltaLog, Some(retentionHours), table.getTableIdentifierIfExists)
   }
 
   /**
-   * :: Evolving ::
-   *
    * Recursively delete files and directories in the table that are not needed by the table for
    * maintaining older versions up to the given retention threshold. This method will return an
    * empty DataFrame on successful completion.
@@ -125,14 +108,11 @@ class DeltaTable private[tables](
    *
    * @since 0.3.0
    */
-  @Evolving
   def vacuum(): DataFrame = {
     executeVacuum(deltaLog, None, table.getTableIdentifierIfExists)
   }
 
   /**
-   * :: Evolving ::
-   *
    * Get the information of the latest `limit` commits on this table as a Spark DataFrame.
    * The information is in reverse chronological order.
    *
@@ -140,27 +120,21 @@ class DeltaTable private[tables](
    *
    * @since 0.3.0
    */
-  @Evolving
   def history(limit: Int): DataFrame = {
     executeHistory(deltaLog, Some(limit), table.getTableIdentifierIfExists)
   }
 
   /**
-   * :: Evolving ::
-   *
    * Get the information available commits on this table as a Spark DataFrame.
    * The information is in reverse chronological order.
    *
    * @since 0.3.0
    */
-  @Evolving
   def history(): DataFrame = {
     executeHistory(deltaLog, tableId = table.getTableIdentifierIfExists)
   }
 
   /**
-   * :: Evolving ::
-   *
    * Generate a manifest for the given Delta Table
    *
    * @param mode Specifies the mode for the generation of the manifest.
@@ -170,56 +144,44 @@ class DeltaTable private[tables](
    *             See the online documentation for more information.
    * @since 0.5.0
    */
-  @Evolving
   def generate(mode: String): Unit = {
     val tableId = table.tableIdentifier.getOrElse(s"delta.`${deltaLog.dataPath.toString}`")
     executeGenerate(tableId, mode)
   }
 
   /**
-   * :: Evolving ::
-   *
    * Delete data from the table that match the given `condition`.
    *
    * @param condition Boolean SQL expression
    *
    * @since 0.3.0
    */
-  @Evolving
   def delete(condition: String): Unit = {
     delete(functions.expr(condition))
   }
 
   /**
-   * :: Evolving ::
-   *
    * Delete data from the table that match the given `condition`.
    *
    * @param condition Boolean SQL expression
    *
    * @since 0.3.0
    */
-  @Evolving
   def delete(condition: Column): Unit = {
     executeDelete(Some(condition.expr))
   }
 
   /**
-   * :: Evolving ::
-   *
    * Delete data from the table.
    *
    * @since 0.3.0
    */
-  @Evolving
   def delete(): Unit = {
     executeDelete(None)
   }
 
 
   /**
-   * :: Evolving ::
-   *
    * Update rows in the table based on the rules defined by `set`.
    *
    * Scala example to increment the column `data`.
@@ -233,14 +195,11 @@ class DeltaTable private[tables](
    *            corresponding update expressions as Column objects.
    * @since 0.3.0
    */
-  @Evolving
   def update(set: Map[String, Column]): Unit = {
     executeUpdate(set, None)
   }
 
   /**
-   * :: Evolving ::
-   *
    * Update rows in the table based on the rules defined by `set`.
    *
    * Java example to increment the column `data`.
@@ -259,14 +218,11 @@ class DeltaTable private[tables](
    *            corresponding update expressions as Column objects.
    * @since 0.3.0
    */
-  @Evolving
   def update(set: java.util.Map[String, Column]): Unit = {
     executeUpdate(set.asScala, None)
   }
 
   /**
-   * :: Evolving ::
-   *
    * Update data from the table on the rows that match the given `condition`
    * based on the rules defined by `set`.
    *
@@ -284,14 +240,11 @@ class DeltaTable private[tables](
    *            corresponding update expressions as Column objects.
    * @since 0.3.0
    */
-  @Evolving
   def update(condition: Column, set: Map[String, Column]): Unit = {
     executeUpdate(set, Some(condition))
   }
 
   /**
-   * :: Evolving ::
-   *
    * Update data from the table on the rows that match the given `condition`
    * based on the rules defined by `set`.
    *
@@ -313,14 +266,11 @@ class DeltaTable private[tables](
    *            corresponding update expressions as Column objects.
    * @since 0.3.0
    */
-  @Evolving
   def update(condition: Column, set: java.util.Map[String, Column]): Unit = {
     executeUpdate(set.asScala, Some(condition))
   }
 
   /**
-   * :: Evolving ::
-   *
    * Update rows in the table based on the rules defined by `set`.
    *
    * Scala example to increment the column `data`.
@@ -332,14 +282,11 @@ class DeltaTable private[tables](
    *            corresponding update expressions as SQL formatted strings.
    * @since 0.3.0
    */
-  @Evolving
   def updateExpr(set: Map[String, String]): Unit = {
     executeUpdate(toStrColumnMap(set), None)
   }
 
   /**
-   * :: Evolving ::
-   *
    * Update rows in the table based on the rules defined by `set`.
    *
    * Java example to increment the column `data`.
@@ -355,14 +302,11 @@ class DeltaTable private[tables](
    *            corresponding update expressions as SQL formatted strings.
    * @since 0.3.0
    */
-  @Evolving
   def updateExpr(set: java.util.Map[String, String]): Unit = {
     executeUpdate(toStrColumnMap(set.asScala), None)
   }
 
   /**
-   * :: Evolving ::
-   *
    * Update data from the table on the rows that match the given `condition`,
    * which performs the rules defined by `set`.
    *
@@ -379,14 +323,11 @@ class DeltaTable private[tables](
    *            corresponding update expressions as SQL formatted strings.
    * @since 0.3.0
    */
-  @Evolving
   def updateExpr(condition: String, set: Map[String, String]): Unit = {
     executeUpdate(toStrColumnMap(set), Some(functions.expr(condition)))
   }
 
   /**
-   * :: Evolving ::
-   *
    * Update data from the table on the rows that match the given `condition`,
    * which performs the rules defined by `set`.
    *
@@ -406,14 +347,11 @@ class DeltaTable private[tables](
    *            corresponding update expressions as SQL formatted strings.
    * @since 0.3.0
    */
-  @Evolving
   def updateExpr(condition: String, set: java.util.Map[String, String]): Unit = {
     executeUpdate(toStrColumnMap(set.asScala), Some(functions.expr(condition)))
   }
 
   /**
-   * :: Evolving ::
-   *
    * Merge data from the `source` DataFrame based on the given merge `condition`. This returns
    * a [[DeltaMergeBuilder]] object that can be used to specify the update, delete, or insert
    * actions to be performed on rows based on whether the rows matched the condition or not.
@@ -463,14 +401,11 @@ class DeltaTable private[tables](
    * @param condition boolean expression as SQL formatted string
    * @since 0.3.0
    */
-  @Evolving
   def merge(source: DataFrame, condition: String): DeltaMergeBuilder = {
     merge(source, functions.expr(condition))
   }
 
   /**
-   * :: Evolving ::
-   *
    * Merge data from the `source` DataFrame based on the given merge `condition`. This returns
    * a [[DeltaMergeBuilder]] object that can be used to specify the update, delete, or insert
    * actions to be performed on rows based on whether the rows matched the condition or not.
@@ -520,14 +455,11 @@ class DeltaTable private[tables](
    * @param condition boolean expression as a Column object
    * @since 0.3.0
    */
-  @Evolving
   def merge(source: DataFrame, condition: Column): DeltaMergeBuilder = {
     DeltaMergeBuilder(this, source, condition)
   }
 
   /**
-   * :: Evolving ::
-   *
    * Updates the protocol version of the table to leverage new features. Upgrading the reader
    * version will prevent all clients that have an older version of Delta Lake from accessing this
    * table. Upgrading the writer version will prevent older versions of Delta Lake to write to this
@@ -537,15 +469,12 @@ class DeltaTable private[tables](
    *
    * @since 0.8.0
    */
-  @Evolving
   def upgradeTableProtocol(readerVersion: Int, writerVersion: Int): Unit = {
     deltaLog.upgradeProtocol(Protocol(readerVersion, writerVersion))
   }
 }
 
 /**
- * :: Evolving ::
- *
  * Companion object to create DeltaTable instances.
  *
  * {{{
@@ -557,8 +486,6 @@ class DeltaTable private[tables](
 object DeltaTable {
 
   /**
-   * :: Evolving ::
-   *
    * Create a DeltaTable from the given parquet table and partition schema.
    * Takes an existing parquet table and constructs a delta transaction log in the base path of
    * that table.
@@ -577,7 +504,6 @@ object DeltaTable {
    *
    * @since 0.4.0
    */
-  @Evolving
   def convertToDelta(
       spark: SparkSession,
       identifier: String,
@@ -587,8 +513,6 @@ object DeltaTable {
   }
 
   /**
-   * :: Evolving ::
-   *
    * Create a DeltaTable from the given parquet table and partition schema.
    * Takes an existing parquet table and constructs a delta transaction log in the base path of
    * that table.
@@ -607,7 +531,6 @@ object DeltaTable {
    *
    * @since 0.4.0
    */
-  @Evolving
   def convertToDelta(
       spark: SparkSession,
       identifier: String,
@@ -617,8 +540,6 @@ object DeltaTable {
   }
 
   /**
-   * :: Evolving ::
-   *
    * Create a DeltaTable from the given parquet table. Takes an existing parquet table and
    * constructs a delta transaction log in the base path of the table.
    *
@@ -635,7 +556,6 @@ object DeltaTable {
    *
    * @since 0.4.0
    */
-  @Evolving
   def convertToDelta(
       spark: SparkSession,
       identifier: String): DeltaTable = {
@@ -644,8 +564,6 @@ object DeltaTable {
   }
 
   /**
-   * :: Evolving ::
-   *
    * Create a DeltaTable for the data at the given `path`.
    *
    * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
@@ -654,7 +572,6 @@ object DeltaTable {
    *
    * @since 0.3.0
    */
-  @Evolving
   def forPath(path: String): DeltaTable = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
       throw new IllegalArgumentException("Could not find active SparkSession")
@@ -663,13 +580,10 @@ object DeltaTable {
   }
 
   /**
-   * :: Evolving ::
-   *
    * Create a DeltaTable for the data at the given `path` using the given SparkSession.
    *
    * @since 0.3.0
    */
-  @Evolving
   def forPath(sparkSession: SparkSession, path: String): DeltaTable = {
     val hdpPath = new Path(path)
     if (DeltaTableUtils.isDeltaTable(sparkSession, hdpPath)) {
@@ -710,8 +624,6 @@ object DeltaTable {
   }
 
   /**
-   * :: Evolving ::
-   *
    * Check if the provided `identifier` string, in this case a file path,
    * is the root of a Delta table using the given SparkSession.
    *
@@ -722,7 +634,6 @@ object DeltaTable {
    *
    * @since 0.4.0
    */
-  @Evolving
   def isDeltaTable(sparkSession: SparkSession, identifier: String): Boolean = {
     val identifierPath = new Path(identifier)
     if (sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_STRICT_CHECK_DELTA_TABLE)) {
@@ -734,8 +645,6 @@ object DeltaTable {
   }
 
   /**
-   * :: Evolving ::
-   *
    * Check if the provided `identifier` string, in this case a file path,
    * is the root of a Delta table.
    *
@@ -750,11 +659,190 @@ object DeltaTable {
    *
    * @since 0.4.0
    */
-  @Evolving
   def isDeltaTable(identifier: String): Boolean = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
       throw new IllegalArgumentException("Could not find active SparkSession")
     }
     isDeltaTable(sparkSession, identifier)
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to create a Delta table,
+   * error if the table exists (the same as SQL `CREATE TABLE`).
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   *
+   * @since 1.0.0
+   */
+  @Evolving
+  def create(): DeltaTableBuilder = {
+    val sparkSession = SparkSession.getActiveSession.getOrElse {
+      throw new IllegalArgumentException("Could not find active SparkSession")
+    }
+    create(sparkSession)
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to create a Delta table,
+   * error if the table exists (the same as SQL `CREATE TABLE`).
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * @param spark sparkSession sparkSession passed by the user
+   * @since 1.0.0
+   */
+  @Evolving
+  def create(spark: SparkSession): DeltaTableBuilder = {
+    new DeltaTableBuilder(spark, CreateTableOptions(ifNotExists = false))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to create a Delta table,
+   * if it does not exists (the same as SQL `CREATE TABLE IF NOT EXISTS`).
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   *
+   * @since 1.0.0
+   */
+  @Evolving
+  def createIfNotExists(): DeltaTableBuilder = {
+    val sparkSession = SparkSession.getActiveSession.getOrElse {
+      throw new IllegalArgumentException("Could not find active SparkSession")
+    }
+    createIfNotExists(sparkSession)
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to create a Delta table,
+   * if it does not exists (the same as SQL `CREATE TABLE IF NOT EXISTS`).
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * @param spark sparkSession sparkSession passed by the user
+   * @since 1.0.0
+   */
+  @Evolving
+  def createIfNotExists(spark: SparkSession): DeltaTableBuilder = {
+    new DeltaTableBuilder(spark, CreateTableOptions(ifNotExists = true))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to replace a Delta table,
+   * error if the table doesn't exist (the same as SQL `REPLACE TABLE`)
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   *
+   * @since 1.0.0
+   */
+  @Evolving
+  def replace(): DeltaTableBuilder = {
+    val sparkSession = SparkSession.getActiveSession.getOrElse {
+      throw new IllegalArgumentException("Could not find active SparkSession")
+    }
+    replace(sparkSession)
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to replace a Delta table,
+   * error if the table doesn't exist (the same as SQL `REPLACE TABLE`)
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * @param spark sparkSession sparkSession passed by the user
+   * @since 1.0.0
+   */
+  @Evolving
+  def replace(spark: SparkSession): DeltaTableBuilder = {
+    new DeltaTableBuilder(spark, ReplaceTableOptions(orCreate = false))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to replace a Delta table
+   * or create table if not exists (the same as SQL `CREATE OR REPLACE TABLE`)
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   *
+   * @since 1.0.0
+   */
+  @Evolving
+  def createOrReplace(): DeltaTableBuilder = {
+    val sparkSession = SparkSession.getActiveSession.getOrElse {
+      throw new IllegalArgumentException("Could not find active SparkSession")
+    }
+    createOrReplace(sparkSession)
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to replace a Delta table,
+   * or create table if not exists (the same as SQL `CREATE OR REPLACE TABLE`)
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * @param spark sparkSession sparkSession passed by the user.
+   * @since 1.0.0
+   */
+  @Evolving
+  def createOrReplace(spark: SparkSession): DeltaTableBuilder = {
+    new DeltaTableBuilder(spark, ReplaceTableOptions(orCreate = true))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaColumnBuilder]] to specify a column.
+   * Refer to [[DeltaTableBuilder]] for examples and [[DeltaColumnBuilder]] detailed APIs.
+   *
+   * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   *
+   * @param colName string the column name
+   * @since 1.0.0
+   */
+  @Evolving
+  def columnBuilder(colName: String): DeltaColumnBuilder = {
+    val sparkSession = SparkSession.getActiveSession.getOrElse {
+      throw new IllegalArgumentException("Could not find active SparkSession")
+    }
+    columnBuilder(sparkSession, colName)
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaColumnBuilder]] to specify a column.
+   * Refer to [[DeltaTableBuilder]] for examples and [[DeltaColumnBuilder]] detailed APIs.
+   *
+   * @param spark sparkSession sparkSession passed by the user
+   * @param colName string the column name
+   * @since 1.0.0
+   */
+  @Evolving
+  def columnBuilder(spark: SparkSession, colName: String): DeltaColumnBuilder = {
+    new DeltaColumnBuilder(spark, colName)
   }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import org.apache.spark.sql.delta.hooks.{GenerateSymlinkManifest, PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.Logging
@@ -68,7 +69,11 @@ case class CommitStats(
   newMetadata: Option[Metadata],
   numAbsolutePathsInAdd: Int,
   numDistinctPartitionsInAdd: Int,
-  isolationLevel: String)
+  isolationLevel: String,
+  fileSizeHistogram: Option[FileSizeHistogram] = None,
+  addFilesHistogram: Option[FileSizeHistogram] = None,
+  removeFilesHistogram: Option[FileSizeHistogram] = None
+)
 
 /**
  * Used to perform a set of reads in a transaction and then commit a set of updates to the
@@ -214,6 +219,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
 
   /** The protocol of the snapshot that this transaction is reading at. */
   def protocol: Protocol = newProtocol.getOrElse(snapshot.protocol)
+
+  /** Start time of txn in nanoseconds */
+  def txnStartTimeNs: Long = txnStartNano
 
   /**
    * Returns the metadata for this transaction. The metadata refers to the metadata of the snapshot
@@ -472,7 +480,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
         finalActions,
         isolationLevelToUse)
       logInfo(s"Committed delta #$commitVersion to ${deltaLog.logPath}")
-      postCommit(commitVersion, finalActions)
+      postCommit(commitVersion)
       commitVersion
     } catch {
       case e: DeltaConcurrentModificationException =>
@@ -578,18 +586,33 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
     finalActions
   }
 
+  /**
+   * Returns true if we should checkpoint the version that has just been committed.
+   */
+  protected def shouldCheckpoint(committedVersion: Long): Boolean = {
+    committedVersion != 0 && committedVersion % deltaLog.checkpointInterval == 0
+  }
+
   /** Perform post-commit operations */
-  protected def postCommit(commitVersion: Long, commitActions: Seq[Action]): Unit = {
+  protected def postCommit(commitVersion: Long): Unit = {
     committed = true
-    if (commitVersion != 0 && commitVersion % deltaLog.checkpointInterval == 0) {
+    if (shouldCheckpoint(commitVersion)) {
       try {
         // We checkpoint the version to be committed to so that no two transactions will checkpoint
         // the same version.
-        deltaLog.checkpoint(Some(deltaLog.getSnapshotAt(commitVersion)))
+        deltaLog.checkpoint(deltaLog.getSnapshotAt(commitVersion))
       } catch {
         case e: IllegalStateException =>
           logWarning("Failed to checkpoint table state.", e)
       }
+    }
+  }
+
+  private def lockCommitIfEnabled[T](body: => T): T = {
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_LOCK_ENABLED)) {
+      deltaLog.lockInterruptibly(body)
+    } else {
+      body
     }
   }
 
@@ -602,7 +625,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   protected def doCommitRetryIteratively(
       attemptVersion: Long,
       actions: Seq[Action],
-      isolationLevel: IsolationLevel): Long = deltaLog.lockInterruptibly {
+      isolationLevel: IsolationLevel): Long = lockCommitIfEnabled {
 
     var tryCommit = true
     var commitVersion = attemptVersion
@@ -684,12 +707,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
 
     // Post stats
     var numAbsolutePaths = 0
-    var pathHolder: Path = null
     val distinctPartitions = new mutable.HashSet[Map[String, String]]
     val adds = actions.collect {
       case a: AddFile =>
-        pathHolder = new Path(new URI(a.path))
-        if (pathHolder.isAbsolute) numAbsolutePaths += 1
+        if (a.pathAsUri.isAbsolute) numAbsolutePaths += 1
         distinctPartitions += a.partitionValues
         a
     }

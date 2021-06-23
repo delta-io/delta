@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,17 +27,18 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import org.apache.spark.sql.delta.DeltaSQLCommandJavaTest;
 
-public class JavaDeltaTableSuite {
+public class JavaDeltaTableSuite implements DeltaSQLCommandJavaTest {
 
-  private transient TestSparkSession spark;
+  private transient SparkSession spark;
   private transient String input;
 
 
   @Before
   public void setUp() {
     // Trigger static initializer of TestData
-    spark = new TestSparkSession();
+    spark = buildSparkSession();
   }
 
   @After
@@ -50,25 +51,38 @@ public class JavaDeltaTableSuite {
 
   @Test
   public void testAPI() {
-    String input = Utils.createTempDir(System.getProperty("java.io.tmpdir"), "input").toString();
-    List<String> data = Arrays.asList("hello", "world");
-    Dataset<Row> dataDF = spark.createDataset(data, Encoders.STRING()).toDF();
-    List<Row> dataRows = dataDF.collectAsList();
-    dataDF.write().format("delta").mode("overwrite").save(input);
+    try {
+      String input = Utils.createTempDir(System.getProperty("java.io.tmpdir"), "input").toString();
+      List<String> data = Arrays.asList("hello", "world");
+      Dataset<Row> dataDF = spark.createDataset(data, Encoders.STRING()).toDF();
+      List<Row> dataRows = dataDF.collectAsList();
+      dataDF.write().format("delta").mode("overwrite").save(input);
 
-    // Test creating DeltaTable by path
-    DeltaTable table1 = DeltaTable.forPath(spark, input);
-    QueryTest$.MODULE$.checkAnswer(table1.toDF(), dataRows);
+      // Test creating DeltaTable by path
+      DeltaTable table1 = DeltaTable.forPath(spark, input);
+      QueryTest$.MODULE$.checkAnswer(table1.toDF(), dataRows);
 
-    // Test creating DeltaTable by path picks up active SparkSession
-    DeltaTable table2 = DeltaTable.forPath(input);
-    QueryTest$.MODULE$.checkAnswer(table2.toDF(), dataRows);
+      // Test creating DeltaTable by path picks up active SparkSession
+      DeltaTable table2 = DeltaTable.forPath(input);
+      QueryTest$.MODULE$.checkAnswer(table2.toDF(), dataRows);
 
+      dataDF.write().format("delta").mode("overwrite").saveAsTable("deltaTable");
 
-    // Test DeltaTable.as() creates subquery alias
-    QueryTest$.MODULE$.checkAnswer(table2.as("tbl").toDF().select("tbl.value"), dataRows);
+      // Test creating DeltaTable by name
+      DeltaTable table3 = DeltaTable.forName(spark, "deltaTable");
+      QueryTest$.MODULE$.checkAnswer(table3.toDF(), dataRows);
 
-    // Test DeltaTable.isDeltaTable() is true for a Delta file path.
-    Assert.assertTrue(DeltaTable.isDeltaTable(input));
+      // Test creating DeltaTable by name
+      DeltaTable table4 = DeltaTable.forName("deltaTable");
+      QueryTest$.MODULE$.checkAnswer(table4.toDF(), dataRows);
+
+      // Test DeltaTable.as() creates subquery alias
+      QueryTest$.MODULE$.checkAnswer(table2.as("tbl").toDF().select("tbl.value"), dataRows);
+
+      // Test DeltaTable.isDeltaTable() is true for a Delta file path.
+      Assert.assertTrue(DeltaTable.isDeltaTable(input));
+    } finally {
+      spark.sql("DROP TABLE IF EXISTS deltaTable");
+    }
   }
 }

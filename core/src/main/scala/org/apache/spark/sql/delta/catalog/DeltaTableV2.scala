@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -164,8 +164,13 @@ case class DeltaTableV2(
   }
 
   override def v1Table: CatalogTable = {
-    catalogTable.getOrElse {
+    if (catalogTable.isEmpty) {
       throw new IllegalStateException("v1Table call is not expected with path based DeltaTableV2")
+    }
+    if (timeTravelSpec.isDefined) {
+      catalogTable.get.copy(stats = None)
+    } else {
+      catalogTable.get
     }
   }
 }

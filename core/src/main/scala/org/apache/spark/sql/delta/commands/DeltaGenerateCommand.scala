@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,6 +23,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.execution.command.RunnableCommand
 
@@ -51,6 +52,8 @@ case class DeltaGenerateCommand(modeName: String, tableId: TableIdentifier)
     generationFunc(sparkSession, deltaLog)
     Seq.empty
   }
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 object DeltaGenerateCommand {
