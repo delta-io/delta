@@ -110,15 +110,14 @@ abstract class MergeIntoSuiteBase
   }
 
   Seq(true, false).foreach { skippingEnabled =>
-    Seq(true, false).foreach { isPartitioned =>
-      // TODO (SC-72770): enable test case when useSQLView = true
-      Seq(false).foreach { useSQLView =>
+    Seq(true, false).foreach { partitioned =>
+      Seq(true, false).foreach { useSQLView =>
         test("basic case - merge to view on a Delta table by path, " +
-          s"isPartitioned: $isPartitioned skippingEnabled: $skippingEnabled") {
+          s"partitioned: $partitioned skippingEnabled: $skippingEnabled useSqlView: $useSQLView") {
           withTable("delta_target", "source") {
             withSQLConf(DeltaSQLConf.DELTA_STATS_SKIPPING.key -> skippingEnabled.toString) {
               Seq((1, 1), (0, 3), (1, 6)).toDF("key1", "value").createOrReplaceTempView("source")
-              val partitions = if (isPartitioned) "key2" :: Nil else Nil
+              val partitions = if (partitioned) "key2" :: Nil else Nil
               append(Seq((2, 2), (1, 4)).toDF("key2", "value"), partitions)
               if (useSQLView) {
                 sql(s"CREATE OR REPLACE TEMP VIEW delta_target AS " +

@@ -230,7 +230,7 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
     }
   }
 
-  ignore("merge into a SQL temp view") {
+  test("merge into a SQL temp view") {
     withTable("tab") {
       withTempView("v") {
         withTempView("src") {
@@ -252,6 +252,40 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
       }
     }
   }
+
+  protected def testInvalidSqlTempView(name: String)(text: String, expectedError: String): Unit = {
+    test(s"can't merge into invalid SQL temp view - $name") {
+      withTable("tab") {
+        withTempView("v") {
+          withTempView("src") {
+            Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+            sql(text)
+            sql("CREATE TEMP VIEW src AS SELECT * FROM VALUES (1, 2), (3, 4) AS t(a, b)")
+            val ex = intercept[AnalysisException] {
+              sql(
+                s"""
+                   |MERGE INTO v
+                   |USING src
+                   |ON src.a = v.key AND src.b = v.value
+                   |WHEN MATCHED THEN
+                   |  UPDATE SET v.value = src.b + 1
+                   |WHEN NOT MATCHED THEN
+                   |  INSERT (v.key, v.value) VALUES (src.a, src.b)
+                   |""".stripMargin)
+            }
+            assert(ex.getMessage.contains(expectedError))
+          }
+        }
+      }
+    }
+  }
+
+  testInvalidSqlTempView("subset cols")(
+    text = "CREATE TEMP VIEW v AS SELECT key FROM tab",
+    expectedError = "cannot resolve"
+  )
+
+
 
   // This test is to capture the incorrect behavior caused by
   // https://github.com/delta-io/delta/issues/618 .
