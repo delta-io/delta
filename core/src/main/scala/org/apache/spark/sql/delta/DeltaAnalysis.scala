@@ -54,7 +54,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  * Analysis rules for Delta. Currently, these rules enable schema enforcement / evolution with
  * INSERT INTO.
  */
-class DeltaAnalysis(session: SparkSession, conf: SQLConf)
+class DeltaAnalysis(session: SparkSession)
   extends Rule[LogicalPlan] with AnalysisHelper with DeltaLogging {
 
   import session.sessionState.analyzer.SessionCatalogAndIdentifier
