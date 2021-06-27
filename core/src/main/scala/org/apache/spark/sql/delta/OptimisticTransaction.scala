@@ -733,7 +733,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       newMetadata = newMetadata,
       numAbsolutePathsInAdd = numAbsolutePaths,
       numDistinctPartitionsInAdd = distinctPartitions.size,
-      isolationLevel = null)
+      isolationLevel = isolationLevel.toString)
     recordDeltaEvent(deltaLog, "delta.commit.stats", data = stats)
 
     attemptVersion
