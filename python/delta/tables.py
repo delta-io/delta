@@ -1,5 +1,5 @@
 #
-# Copyright (2020) The Delta Lake Project Authors.
+# Copyright (2021) The Delta Lake Project Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,8 +14,12 @@
 # limitations under the License.
 #
 
+import delta.exceptions  # noqa: F401; pylint: disable=unused-variable
+
 from pyspark import since
-from pyspark.sql import Column, DataFrame, functions
+from pyspark.sql import Column, DataFrame, functions, SparkSession
+from pyspark.sql.column import _to_seq
+from pyspark.sql.types import DataType, StructType, StructField
 
 
 class DeltaTable(object):
@@ -30,8 +34,6 @@ class DeltaTable(object):
             deltaTable = DeltaTable.convertToDelta(spark, "parquet.`/path/to/table`")
 
         .. versionadded:: 0.4
-
-        .. note:: Evolving
     """
     def __init__(self, spark, jdt):
         self._spark = spark
@@ -41,8 +43,6 @@ class DeltaTable(object):
     def toDF(self):
         """
         Get a DataFrame representation of this Delta table.
-
-        .. note:: Evolving
         """
         return DataFrame(self._jdt.toDF(), self._spark._wrapped)
 
@@ -50,8 +50,6 @@ class DeltaTable(object):
     def alias(self, aliasName):
         """
         Apply an alias to the Delta table.
-
-        .. note:: Evolving
         """
         jdt = self._jdt.alias(aliasName)
         return DeltaTable(self._spark, jdt)
@@ -68,8 +66,6 @@ class DeltaTable(object):
                                                   for Presto and Athena read support.
 
                      See the online documentation for more information.
-
-        .. note:: Evolving
         """
         self._jdt.generate(mode)
 
@@ -86,8 +82,6 @@ class DeltaTable(object):
 
         :param condition: condition of the update
         :type condition: str or pyspark.sql.Column
-
-        .. note:: Evolving
         """
         if condition is None:
             self._jdt.delete()
@@ -118,8 +112,6 @@ class DeltaTable(object):
                     *Note: This param is required.* Default value None is present to allow
                     positional args in same order across languages.
         :type set: dict with str as keys and str or pyspark.sql.Column as values
-
-        .. note:: Evolving
         """
         jmap = self._dict_to_jmap(self._spark, set, "'set'")
         jcolumn = self._condition_to_jcolumn(condition)
@@ -185,8 +177,6 @@ class DeltaTable(object):
         :return: builder object to specify whether to update, delete or insert rows based on
                  whether the condition matched or not
         :rtype: :py:class:`delta.tables.DeltaMergeBuilder`
-
-        .. note:: Evolving
         """
         if source is None:
             raise ValueError("'source' in merge cannot be None")
@@ -213,8 +203,6 @@ class DeltaTable(object):
 
         :param retentionHours: Optional number of hours retain history. If not specified, then the
                                default retention period of 168 hours (7 days) will be used.
-
-        .. note:: Evolving
         """
         jdt = self._jdt
         if retentionHours is None:
@@ -237,8 +225,6 @@ class DeltaTable(object):
         :param limit: Optional, number of latest commits to returns in the history.
         :return: Table's commit history. See the online Delta Lake documentation for more details.
         :rtype: pyspark.sql.DataFrame
-
-        .. note:: Evolving
         """
         jdt = self._jdt
         if limit is None:
@@ -271,12 +257,9 @@ class DeltaTable(object):
         :type sparkSession: pyspark.sql.SparkSession
         :param identifier: Parquet table identifier formatted as "parquet.`path`"
         :type identifier: str
-        :param partitionSchema:
         :param partitionSchema: Hive DDL formatted string, or pyspark.sql.types.StructType
         :return: DeltaTable representing the converted Delta table
         :rtype: :py:class:`~delta.tables.DeltaTable`
-
-        .. note:: Evolving
         """
         assert sparkSession is not None
         if partitionSchema is None:
@@ -304,8 +287,6 @@ class DeltaTable(object):
         Example::
 
             deltaTable = DeltaTable.forPath(spark, "/path/to/table")
-
-        .. note:: Evolving
         """
         assert sparkSession is not None
         jdt = sparkSession._sc._jvm.io.delta.tables.DeltaTable.forPath(
@@ -326,13 +307,111 @@ class DeltaTable(object):
         Example::
 
             deltaTable = DeltaTable.forName(spark, "tblName")
-
-        .. note:: Evolving
         """
         assert sparkSession is not None
         jdt = sparkSession._sc._jvm.io.delta.tables.DeltaTable.forName(
             sparkSession._jsparkSession, tableOrViewName)
         return DeltaTable(sparkSession, jdt)
+
+    @classmethod
+    @since(1.0)
+    def create(cls, sparkSession=None):
+        """
+        Return :class:`DeltaTableBuilder` object that can be used to specify
+        the table name, location, columns, partitioning columns, table comment,
+        and table properties to create a Delta table, error if the table exists
+        (the same as SQL `CREATE TABLE`).
+
+        See :class:`DeltaTableBuilder` for a full description and examples
+        of this operation.
+
+        :param sparkSession: SparkSession to use for creating the table
+        :return: an instance of DeltaTableBuilder
+        :rtype: :py:class:`~delta.tables.DeltaTableBuilder`
+
+        .. note:: Evolving
+        """
+        if sparkSession is None:
+            sparkSession = SparkSession.getActiveSession()
+        assert sparkSession is not None
+        jdt = sparkSession._sc._jvm.io.delta.tables.DeltaTable.create(
+            sparkSession._jsparkSession)
+        return DeltaTableBuilder(sparkSession, jdt)
+
+    @classmethod
+    @since(1.0)
+    def createIfNotExists(cls, sparkSession=None):
+        """
+        Return :class:`DeltaTableBuilder` object that can be used to specify
+        the table name, location, columns, partitioning columns, table comment,
+        and table properties to create a Delta table,
+        if it does not exists (the same as SQL `CREATE TABLE IF NOT EXISTS`).
+
+        See :class:`DeltaTableBuilder` for a full description and examples
+        of this operation.
+
+        :param sparkSession: SparkSession to use for creating the table
+        :return: an instance of DeltaTableBuilder
+        :rtype: :py:class:`~delta.tables.DeltaTableBuilder`
+
+        .. note:: Evolving
+        """
+        if sparkSession is None:
+            sparkSession = SparkSession.getActiveSession()
+        assert sparkSession is not None
+        jdt = sparkSession._sc._jvm.io.delta.tables.DeltaTable.createIfNotExists(
+            sparkSession._jsparkSession)
+        return DeltaTableBuilder(sparkSession, jdt)
+
+    @classmethod
+    @since(1.0)
+    def replace(cls, sparkSession=None):
+        """
+        Return :class:`DeltaTableBuilder` object that can be used to specify
+        the table name, location, columns, partitioning columns, table comment,
+        and table properties to replace a Delta table,
+        error if the table doesn't exist (the same as SQL `REPLACE TABLE`).
+
+        See :class:`DeltaTableBuilder` for a full description and examples
+        of this operation.
+
+        :param sparkSession: SparkSession to use for creating the table
+        :return: an instance of DeltaTableBuilder
+        :rtype: :py:class:`~delta.tables.DeltaTableBuilder`
+
+        .. note:: Evolving
+        """
+        if sparkSession is None:
+            sparkSession = SparkSession.getActiveSession()
+        assert sparkSession is not None
+        jdt = sparkSession._sc._jvm.io.delta.tables.DeltaTable.replace(
+            sparkSession._jsparkSession)
+        return DeltaTableBuilder(sparkSession, jdt)
+
+    @classmethod
+    @since(1.0)
+    def createOrReplace(cls, sparkSession=None):
+        """
+        Return :class:`DeltaTableBuilder` object that can be used to specify
+        the table name, location, columns, partitioning columns, table comment,
+        and table properties replace a Delta table,
+        error if the table doesn't exist (the same as SQL `REPLACE TABLE`).
+
+        See :class:`DeltaTableBuilder` for a full description and examples
+        of this operation.
+
+        :param sparkSession: SparkSession to use for creating the table
+        :return: an instance of DeltaTableBuilder
+        :rtype: :py:class:`~delta.tables.DeltaTableBuilder`
+
+        .. note:: Evolving
+        """
+        if sparkSession is None:
+            sparkSession = SparkSession.getActiveSession()
+        assert sparkSession is not None
+        jdt = sparkSession._sc._jvm.io.delta.tables.DeltaTable.createOrReplace(
+            sparkSession._jsparkSession)
+        return DeltaTableBuilder(sparkSession, jdt)
 
     @classmethod
     @since(0.4)
@@ -349,8 +428,6 @@ class DeltaTable(object):
         Example::
 
             DeltaTable.isDeltaTable(spark, "/path/to/table")
-
-        .. note:: Evolving
         """
         assert sparkSession is not None
         return sparkSession._sc._jvm.io.delta.tables.DeltaTable.isDeltaTable(
@@ -365,8 +442,6 @@ class DeltaTable(object):
         to this table. The reader or writer version cannot be downgraded.
 
         See online documentation and Delta's protocol specification at PROTOCOL.md for more details.
-
-        .. note:: Evolving
         """
         jdt = self._jdt
         if not isinstance(readerVersion, int):
@@ -465,7 +540,7 @@ class DeltaMergeBuilder(object):
         corresponding column of the source DataFrame, then you can use
         ``whenNotMatchedInsertAll()``. This is equivalent to::
 
-            whenMatchedInsert(values = {
+            whenNotMatchedInsert(values = {
               "col1": "source.col1",
               "col2": "source.col2",
               ...    # for all columns in the delta table
@@ -512,8 +587,6 @@ class DeltaMergeBuilder(object):
           ).execute()
 
     .. versionadded:: 0.4
-
-    .. note:: Evolving
     """
     def __init__(self, spark, jbuilder):
         self._spark = spark
@@ -534,8 +607,6 @@ class DeltaMergeBuilder(object):
                     positional args in same order across languages.
         :type set: dict with str as keys and str or pyspark.sql.Column as values
         :return: this builder
-
-        .. note:: Evolving
         """
         jset = DeltaTable._dict_to_jmap(self._spark, set, "'set' in whenMatchedUpdate")
         new_jbuilder = self.__getMatchedBuilder(condition).update(jset)
@@ -553,8 +624,6 @@ class DeltaMergeBuilder(object):
         :param condition: Optional condition of the insert
         :type condition: str or pyspark.sql.Column
         :return: this builder
-
-        .. note:: Evolving
         """
         new_jbuilder = self.__getMatchedBuilder(condition).updateAll()
         return DeltaMergeBuilder(self._spark, new_jbuilder)
@@ -570,8 +639,6 @@ class DeltaMergeBuilder(object):
         :param condition: Optional condition of the delete
         :type condition: str or pyspark.sql.Column
         :return: this builder
-
-        .. note:: Evolving
         """
         new_jbuilder = self.__getMatchedBuilder(condition).delete()
         return DeltaMergeBuilder(self._spark, new_jbuilder)
@@ -591,8 +658,6 @@ class DeltaMergeBuilder(object):
                        positional args in same order across languages.
         :type values: dict with str as keys and str or pyspark.sql.Column as values
         :return: this builder
-
-        .. note:: Evolving
         """
         jvalues = DeltaTable._dict_to_jmap(self._spark, values, "'values' in whenNotMatchedInsert")
         new_jbuilder = self.__getNotMatchedBuilder(condition).insert(jvalues)
@@ -610,8 +675,6 @@ class DeltaMergeBuilder(object):
         :param condition: Optional condition of the insert
         :type condition: str or pyspark.sql.Column
         :return: this builder
-
-        .. note:: Evolving
         """
         new_jbuilder = self.__getNotMatchedBuilder(condition).insertAll()
         return DeltaMergeBuilder(self._spark, new_jbuilder)
@@ -622,8 +685,6 @@ class DeltaMergeBuilder(object):
         Execute the merge operation based on the built matched and not matched actions.
 
         See :py:class:`~delta.tables.DeltaMergeBuilder` for complete usage details.
-
-        .. note:: Evolving
         """
         self._jbuilder.execute()
 
@@ -638,3 +699,227 @@ class DeltaMergeBuilder(object):
             return self._jbuilder.whenNotMatched()
         else:
             return self._jbuilder.whenNotMatched(DeltaTable._condition_to_jcolumn(condition))
+
+
+class DeltaTableBuilder(object):
+    """
+    Builder to specify how to create / replace a Delta table.
+    You must specify the table name or the path before executing the builder.
+    You can specify the table columns, the partitioning columns,
+    the location of the data, the table comment and the property,
+    and how you want to create / replace the Delta table.
+
+    After executing the builder, a :py:class:`~delta.tables.DeltaTable`
+    object is returned.
+
+    Use :py:meth:`delta.tables.DeltaTable.create`,
+    :py:meth:`delta.tables.DeltaTable.createIfNotExists`,
+    :py:meth:`delta.tables.DeltaTable.replace`,
+    :py:meth:`delta.tables.DeltaTable.createOrReplace` to create an object of this class.
+
+    Example 1 to create a Delta table with separate columns, using the table name::
+
+        deltaTable = DeltaTable.create(sparkSession)
+            .tableName("testTable")
+            .addColumn("c1", dataType = "INT", nullable = False)
+            .addColumn("c2", dataType = IntegerType(), generatedAlwaysAs = "c1 + 1")
+            .partitionedBy("c1")
+            .execute()
+
+    Example 2 to replace a Delta table with existing columns, using the location::
+
+        df = spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
+
+        deltaTable = DeltaTable.replace(sparkSession)
+            .tableName("testTable")
+            .addColumns(df.schema)
+            .execute()
+
+    .. versionadded:: 1.0
+
+    .. note:: Evolving
+    """
+    def __init__(self, spark, jbuilder):
+        self._spark = spark
+        self._jbuilder = jbuilder
+
+    def _raise_type_error(self, msg, objs):
+        errorMsg = msg
+        for obj in objs:
+            errorMsg += " Found %s with type %s" % ((str(obj)), str(type(obj)))
+        raise TypeError(errorMsg)
+
+    @since(1.0)
+    def tableName(self, identifier):
+        """
+        Specify the table name.
+        Optionally qualified with a database name [database_name.] table_name.
+
+        :param identifier: the table name
+        :type identifier: str
+        :return: this builder
+
+        .. note:: Evolving
+        """
+        if type(identifier) is not str:
+            self._raise_type_error("Identifier must be str.", [identifier])
+        self._jbuilder = self._jbuilder.tableName(identifier)
+        return self
+
+    @since(1.0)
+    def location(self, location):
+        """
+        Specify the path to the directory where table data is stored,
+        which could be a path on distributed storage.
+
+        :param location: the data stored location
+        :type location: str
+        :return: this builder
+
+        .. note:: Evolving
+        """
+        if type(location) is not str:
+            self._raise_type_error("Location must be str.", [location])
+        self._jbuilder = self._jbuilder.location(location)
+        return self
+
+    @since(1.0)
+    def comment(self, comment):
+        """
+        Comment to describe the table.
+
+        :param comment: the table comment
+        :type comment: str
+        :return: this builder
+
+        .. note:: Evolving
+        """
+        if type(comment) is not str:
+            self._raise_type_error("Table comment must be str.", [comment])
+        self._jbuilder = self._jbuilder.comment(comment)
+        return self
+
+    @since(1.0)
+    def addColumn(self, colName, dataType,
+                  nullable=True, generatedAlwaysAs=None, comment=None):
+        """
+        Specify a column in the table
+
+        :param colName: the column name
+        :type colName: str
+        :param dataType: the column data type
+        :type dataType: str or pyspark.sql.types.DataType
+        :param nullable: whether column is nullable
+        :type nullable: bool
+        :param generatedAlwaysAs: a SQL expression if the column is always generated
+                                  as a function of other columns.
+                                  See online documentation for details on Generated Columns.
+        :type generatedAlwaysAs: str
+        :param comment: the column comment
+        :type comment: str
+
+        :return: this builder
+
+        .. note:: Evolving
+        """
+        if type(colName) is not str:
+            self._raise_type_error("Column name must be str.", [colName])
+        if type(dataType) is not str and not isinstance(dataType, DataType):
+            self._raise_type_error("Column data type must be str or DataType.",
+                                   [dataType])
+        _col_jbuilder = self._spark._sc._jvm.io.delta.tables.DeltaTable \
+            .columnBuilder(self._spark._jsparkSession, colName)
+        if isinstance(dataType, DataType):
+            dataType = self._spark._jsparkSession.parseDataType(dataType.json())
+        _col_jbuilder = _col_jbuilder.dataType(dataType)
+        if type(nullable) is not bool:
+            self._raise_type_error("Column nullable must be bool.", [nullable])
+        _col_jbuilder = _col_jbuilder.nullable(nullable)
+        if generatedAlwaysAs is not None:
+            if type(generatedAlwaysAs) is not str:
+                self._raise_type_error("Column generation expression must be str.",
+                                       [generatedAlwaysAs])
+            _col_jbuilder = _col_jbuilder.generatedAlwaysAs(generatedAlwaysAs)
+        if comment is not None:
+            if type(comment) is not str:
+                self._raise_type_error("Column comment must be str.", [comment])
+            _col_jbuilder = _col_jbuilder.comment(comment)
+        self._jbuilder = self._jbuilder.addColumn(_col_jbuilder.build())
+        return self
+
+    @since(1.0)
+    def addColumns(self, cols):
+        """
+        Specify columns in the table using an existing schema
+
+        :param cols: the columns in the existing schema
+        :type cols: pyspark.sql.types.StructType
+                    or a list of pyspark.sql.types.StructType.
+
+        :return: this builder
+
+        .. note:: Evolving
+        """
+        if isinstance(cols, list):
+            for col in cols:
+                if type(col) is not StructField:
+                    self._raise_type_error(
+                        "Column in existing schema must be StructField.", [col])
+            cols = StructType(cols)
+        if type(cols) is not StructType:
+            self._raise_type_error("Schema must be StructType " +
+                                   "or a list of StructField.",
+                                   [cols])
+        scalaSchema = self._spark._jsparkSession.parseDataType(cols.json())
+        self._jbuilder = self._jbuilder.addColumns(scalaSchema)
+        return self
+
+    @since(1.0)
+    def partitionedBy(self, *cols):
+        """
+        Specify columns for partitioning
+
+        :param cols: the partitioning cols
+        :type cols: str or list name of columns
+
+        :return: this builder
+
+        .. note:: Evolving
+        """
+        if len(cols) == 1 and isinstance(cols[0], (list, tuple)):
+            cols = cols[0]
+        for c in cols:
+            if type(c) is not str:
+                self._raise_type_error("Partitioning column must be str.", [c])
+        self._jbuilder = self._jbuilder.partitionedBy(_to_seq(self._spark._sc, cols))
+        return self
+
+    @since(1.0)
+    def property(self, key, value):
+        """
+        Specify a table property
+
+        :param key: the table property key
+        :type value: the table property value
+
+        :return: this builder
+
+        .. note:: Evolving
+        """
+        if type(key) is not str or type(value) is not str:
+            self._raise_type_error("Key and value of property must be string.",
+                                   [key, value])
+        self._jbuilder = self._jbuilder.property(key, value)
+        return self
+
+    @since(1.0)
+    def execute(self):
+        """
+        Execute Table Creation.
+
+        :rtype: :py:class:`~delta.tables.DeltaTable`
+
+        .. note:: Evolving
+        """
+        jdt = self._jbuilder.execute()
+        return DeltaTable(self._spark, jdt)
