@@ -26,7 +26,10 @@ import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{StringType, StructField, StructType}
 
-class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
+class OptimisticTransactionLegacySuite
+  extends QueryTest
+  with SharedSparkSession {
+
   private val addA = AddFile("a", Map.empty, 1, 1, dataChange = true)
   private val addB = AddFile("b", Map.empty, 1, 1, dataChange = true)
   private val addC = AddFile("c", Map.empty, 1, 1, dataChange = true)
