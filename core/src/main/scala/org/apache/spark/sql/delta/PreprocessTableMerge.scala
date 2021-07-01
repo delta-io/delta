@@ -18,20 +18,18 @@ package org.apache.spark.sql.delta
 
 import java.util.Locale
 
-import scala.collection.mutable
-
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.AnalysisException
-import org.apache.spark.sql.catalyst.analysis.{EliminateSubqueryAliases, TypeCoercion, UnresolvedAttribute}
-import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Cast, Expression, Literal, SubqueryExpression}
+import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, Literal, SubqueryExpression}
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{StructField, StructType}
 
 case class PreprocessTableMerge(override val conf: SQLConf)
   extends Rule[LogicalPlan] with UpdateExpressionsSupport {
@@ -73,6 +71,12 @@ case class PreprocessTableMerge(override val conf: SQLConf)
       target.schema
     }
 
+    val deltaLogicalPlan = EliminateSubqueryAliases(target)
+    val tahoeFileIndex = deltaLogicalPlan match {
+      case DeltaFullTable(index) => index
+      case o => throw DeltaErrors.notADeltaSourceException("MERGE", Some(o))
+    }
+
     val processedMatched = matched.map {
       case m: DeltaMergeIntoUpdateClause =>
         // Get any new columns which are in the insert clause, but not the target output or this
@@ -94,15 +98,6 @@ case class PreprocessTableMerge(override val conf: SQLConf)
           UpdateOperation(a.targetColNameParts, a.expr)
         }
 
-        // The operations for new columns...
-        val newOpsFromTargetSchema = target.output.filterNot { col =>
-          m.resolvedActions.exists { updateAct =>
-            conf.resolver(updateAct.targetColNameParts.head, col.name)
-          }
-        }.map { col =>
-          UpdateOperation(Seq(col.name), col)
-        }
-
         // And construct operations for columns that the insert clause will add.
         val newOpsFromInsert = newColsFromInsert.map { col =>
           UpdateOperation(Seq(col.name), Literal(null, col.dataType))
@@ -119,20 +114,30 @@ case class PreprocessTableMerge(override val conf: SQLConf)
             }
           }
 
+        val generatedColumns = GeneratedColumn.getGeneratedColumns(
+          tahoeFileIndex.snapshotAtAnalysis)
+        if (generatedColumns.nonEmpty && !deltaLogicalPlan.isInstanceOf[LogicalRelation]) {
+          throw DeltaErrors.updateOnTempViewWithGenerateColsNotSupported
+        }
+
         // Use the helper methods for in UpdateExpressionsSupport to generate expressions such
         // that nested fields can be updated (only for existing columns).
         val alignedExprs = generateUpdateExpressions(
           finalSchemaExprs,
-          existingUpdateOps ++ newOpsFromTargetSchema ++ newOpsFromInsert,
+          existingUpdateOps ++ newOpsFromInsert,
           conf.resolver,
           allowStructEvolution = shouldAutoMigrate,
-          generatedColumns = Nil)
-          .map(_.getOrElse {
-            // Should not happen
-            throw new IllegalStateException("Calling without generated columns should " +
-              "always return a update expression for each column")
-          })
-        val alignedActions: Seq[DeltaMergeAction] = alignedExprs
+          generatedColumns = generatedColumns)
+
+        val alignedExprsWithGenerationExprs =
+          if (alignedExprs.forall(_.nonEmpty)) {
+            alignedExprs.map(_.get)
+          } else {
+            generateUpdateExprsForGeneratedColumns(target, generatedColumns, alignedExprs,
+              Some(finalSchemaExprs))
+          }
+
+        val alignedActions: Seq[DeltaMergeAction] = alignedExprsWithGenerationExprs
           .zip(finalSchemaExprs)
           .map { case (expr, attrib) =>
             DeltaMergeAction(Seq(attrib.name), expr, targetColNameResolved = true)
@@ -199,11 +204,6 @@ case class PreprocessTableMerge(override val conf: SQLConf)
       }
 
       m.copy(m.condition, alignedActions)
-    }
-
-    val tahoeFileIndex = EliminateSubqueryAliases(target) match {
-      case DeltaFullTable(index) => index
-      case o => throw DeltaErrors.notADeltaSourceException("MERGE", Some(o))
     }
 
     MergeIntoCommand(
