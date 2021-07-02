@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.schema
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
 
+import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.scalatest.GivenWhenThen
 
@@ -1136,10 +1137,10 @@ class SchemaUtilsSuite extends QueryTest
 
     Seq(byteType, shortType, intType).foreach { sourceType =>
       assert(
-        longType === SchemaUtils.mergeSchemas(
+        longType === mergeSchemas(
           longType, sourceType, allowImplicitConversions = true))
       val e = intercept[AnalysisException] {
-        SchemaUtils.mergeSchemas(longType, sourceType)
+        mergeSchemas(longType, sourceType)
       }
       assert(e.getMessage.contains(
         s"Failed to merge incompatible data types LongType and ${sourceType.head.dataType}"))

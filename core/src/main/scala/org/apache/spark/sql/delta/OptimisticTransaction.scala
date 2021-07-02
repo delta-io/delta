@@ -32,7 +32,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{GenerateSymlinkManifest, PostCommitHook}
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.hadoop.fs.Path
@@ -339,8 +339,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   protected def verifyNewMetadata(metadata: Metadata): Unit = {
     assert(!CharVarcharUtils.hasCharVarchar(metadata.schema),
       "The schema in Delta log should not contain char/varchar type.")
-    SchemaUtils.checkColumnNameDuplication(metadata.schema, "in the metadata update")
-    SchemaUtils.checkFieldNames(SchemaUtils.explodeNestedFieldNames(metadata.dataSchema))
+    SchemaMergingUtils.checkColumnNameDuplication(metadata.schema, "in the metadata update")
+    SchemaUtils.checkFieldNames(SchemaMergingUtils.explodeNestedFieldNames(metadata.dataSchema))
     val partitionColCheckIsFatal =
       spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_PARTITION_COLUMN_CHECK_ENABLED)
     try {

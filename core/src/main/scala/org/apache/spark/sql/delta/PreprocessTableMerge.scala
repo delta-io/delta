@@ -19,8 +19,6 @@ package org.apache.spark.sql.delta
 import java.util.Locale
 
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
-import org.apache.spark.sql.delta.schema.SchemaUtils
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
@@ -35,11 +33,19 @@ case class PreprocessTableMerge(override val conf: SQLConf)
   extends Rule[LogicalPlan] with UpdateExpressionsSupport {
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
-    case m: DeltaMergeInto if m.resolved => apply(m)
+    case m: DeltaMergeInto if m.resolved => apply(m, true)
   }
 
-  def apply(mergeInto: DeltaMergeInto): MergeIntoCommand = {
-    val DeltaMergeInto(target, source, condition, matched, notMatched, migrateSchema) = mergeInto
+  def apply(mergeInto: DeltaMergeInto, transformToCommand: Boolean): LogicalPlan = {
+    val DeltaMergeInto(
+    target, source, condition, matched, notMatched, migrateSchema, finalSchemaOpt) = mergeInto
+
+    if (finalSchemaOpt.isEmpty) {
+      throw new AnalysisException("Target Table Final Schema is empty.")
+    }
+
+    val finalSchema = finalSchemaOpt.get
+
     def checkCondition(cond: Expression, conditionName: String): Unit = {
       if (!cond.deterministic) {
         throw DeltaErrors.nonDeterministicNotSupportedException(
@@ -58,17 +64,6 @@ case class PreprocessTableMerge(override val conf: SQLConf)
     checkCondition(condition, "search")
     (matched ++ notMatched).filter(_.condition.nonEmpty).foreach { clause =>
       checkCondition(clause.condition.get, clause.clauseType.toUpperCase(Locale.ROOT))
-    }
-
-    val shouldAutoMigrate = conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE) && migrateSchema
-    val finalSchema = if (shouldAutoMigrate) {
-      // The implicit conversions flag allows any type to be merged from source to target if Spark
-      // SQL considers the source type implicitly castable to the target. Normally, mergeSchemas
-      // enforces Parquet-level write compatibility, which would mean an INT source can't be merged
-      // into a LONG target.
-      SchemaUtils.mergeSchemas(target.schema, source.schema, allowImplicitConversions = true)
-    } else {
-      target.schema
     }
 
     val deltaLogicalPlan = EliminateSubqueryAliases(target)
@@ -126,7 +121,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
           finalSchemaExprs,
           existingUpdateOps ++ newOpsFromInsert,
           conf.resolver,
-          allowStructEvolution = shouldAutoMigrate,
+          allowStructEvolution = migrateSchema,
           generatedColumns = generatedColumns)
 
         val alignedExprsWithGenerationExprs =
@@ -191,7 +186,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
             castIfNeeded(
               a.expr,
               targetAttrib.dataType,
-              allowStructEvolution = shouldAutoMigrate),
+              allowStructEvolution = migrateSchema),
             targetColNameResolved = true)
         }.getOrElse {
           // If a target table column was not found in the INSERT columns and expressions,
@@ -206,8 +201,17 @@ case class PreprocessTableMerge(override val conf: SQLConf)
       m.copy(m.condition, alignedActions)
     }
 
-    MergeIntoCommand(
-      source, target, tahoeFileIndex, condition,
-      processedMatched, processedNotMatched, Some(finalSchema))
+    if (transformToCommand) {
+      val tahoeFileIndex = EliminateSubqueryAliases(target) match {
+        case DeltaFullTable(index) => index
+        case o => throw DeltaErrors.notADeltaSourceException("MERGE", Some(o))
+      }
+      MergeIntoCommand(
+        source, target, tahoeFileIndex, condition,
+        processedMatched, processedNotMatched, finalSchemaOpt)
+    } else {
+      DeltaMergeInto(source, target, condition,
+        processedMatched, processedNotMatched, migrateSchema, finalSchemaOpt)
+    }
   }
 }

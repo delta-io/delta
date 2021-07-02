@@ -21,6 +21,7 @@ import scala.collection.Map
 
 import org.apache.spark.sql.delta.{DeltaErrors, PreprocessTableMerge}
 import org.apache.spark.sql.delta.DeltaViewHelper
+import org.apache.spark.sql.delta.commands.MergeIntoCommand
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
@@ -223,7 +224,9 @@ class DeltaMergeBuilder private(
       target = DeltaViewHelper.stripTempViewForMerge(resolvedMergeInto.target, SQLConf.get)
     )
     // Preprocess the actions and verify
-    val mergeIntoCommand = PreprocessTableMerge(sparkSession.sessionState.conf)(strippedMergeInto)
+    val mergeIntoCommand =
+      PreprocessTableMerge(sparkSession.sessionState.conf)(strippedMergeInto)
+        .asInstanceOf[MergeIntoCommand]
     sparkSession.sessionState.analyzer.checkAnalysis(mergeIntoCommand)
     mergeIntoCommand.run(sparkSession)
   }

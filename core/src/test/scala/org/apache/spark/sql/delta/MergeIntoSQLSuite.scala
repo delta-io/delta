@@ -21,9 +21,13 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.sql.{AnalysisException, Row}
+import org.apache.spark.sql.catalyst.analysis.{Analyzer, ResolveSessionCatalog}
 import org.apache.spark.sql.catalyst.parser.ParseException
+import org.apache.spark.sql.catalyst.plans.logical.{DeltaMergeInto, LogicalPlan}
+import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.FileSourceScanExec
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 
 class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
 
@@ -309,4 +313,5 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
       }
     }
   }
+
 }
