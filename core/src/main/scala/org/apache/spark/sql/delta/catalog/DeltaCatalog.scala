@@ -115,11 +115,14 @@ class DeltaCatalog extends DelegatingCatalogExtension
     }
     val id = TableIdentifier(ident.name(), ident.namespace().lastOption)
     var locUriOpt = location.map(CatalogUtils.stringToURI)
+    val existingTableOpt = getExistingTableIfExists(id)
+    val loc = locUriOpt
+      .orElse(existingTableOpt.flatMap(_.storage.locationUri))
+      .getOrElse(spark.sessionState.catalog.defaultTablePath(id))
     val storage = DataSource.buildStorageFormatFromOptions(writeOptions)
-      .copy(locationUri = locUriOpt)
+      .copy(locationUri = Option(loc))
     val tableType =
       if (location.isDefined) CatalogTableType.EXTERNAL else CatalogTableType.MANAGED
-    val loc = new Path(locUriOpt.getOrElse(spark.sessionState.catalog.defaultTablePath(id)))
     val commentOpt = Option(allTableProperties.get("comment"))
 
     val tableDesc = new CatalogTable(
@@ -138,7 +141,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
     val writer = sourceQuery.map { df =>
       WriteIntoDelta(
-        DeltaLog.forTable(spark, loc),
+        DeltaLog.forTable(spark, new Path(loc)),
         operation.mode,
         new DeltaOptions(withDb.storage.properties, spark.sessionState.conf),
         withDb.partitionColumnNames,
@@ -149,7 +152,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
     CreateDeltaTableCommand(
       withDb,
-      getExistingTableIfExists(tableDesc),
+      existingTableOpt,
       operation.mode,
       writer,
       operation,
@@ -309,19 +312,19 @@ class DeltaCatalog extends DelegatingCatalogExtension
   }
 
   /** Checks if a table already exists for the provided identifier. */
-  private def getExistingTableIfExists(table: CatalogTable): Option[CatalogTable] = {
+  private def getExistingTableIfExists(table: TableIdentifier): Option[CatalogTable] = {
     // If this is a path identifier, we cannot return an existing CatalogTable. The Create command
     // will check the file system itself
     if (isPathIdentifier(table)) return None
-    val tableExists = catalog.tableExists(table.identifier)
+    val tableExists = catalog.tableExists(table)
     if (tableExists) {
-      val oldTable = catalog.getTableMetadata(table.identifier)
+      val oldTable = catalog.getTableMetadata(table)
       if (oldTable.tableType == CatalogTableType.VIEW) {
         throw new AnalysisException(
-          s"${table.identifier} is a view. You may not write data into a view.")
+          s"$table is a view. You may not write data into a view.")
       }
       if (!DeltaSourceUtils.isDeltaTable(oldTable.provider)) {
-        throw new AnalysisException(s"${table.identifier} is not a Delta table. Please drop this " +
+        throw new AnalysisException(s"$table is not a Delta table. Please drop this " +
           "table first if you would like to recreate it with Delta Lake.")
       }
       Some(oldTable)
@@ -589,7 +592,11 @@ trait SupportsPathIdentifier extends TableCatalog { self: DeltaCatalog =>
   }
 
   protected def isPathIdentifier(table: CatalogTable): Boolean = {
-    isPathIdentifier(Identifier.of(table.identifier.database.toArray, table.identifier.table))
+    isPathIdentifier(table.identifier)
+  }
+
+  protected def isPathIdentifier(tableIdentifier: TableIdentifier) : Boolean = {
+    isPathIdentifier(Identifier.of(tableIdentifier.database.toArray, tableIdentifier.table))
   }
 
   override def tableExists(ident: Identifier): Boolean = {
