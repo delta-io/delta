@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import java.io.FileNotFoundException
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
@@ -177,6 +178,8 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
         "`detailTestView` is a view. DESCRIBE DETAIL is only supported for tables."))
     }
   }
+
+  // TODO: run it with OSS Delta after it's supported
 }
 
 class DescribeDeltaDetailSuite

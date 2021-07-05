@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.actions.{Action, Metadata}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -214,7 +214,7 @@ case class CreateDeltaTableCommand(
       // Note that someone may have dropped and recreated the table in a separate location in the
       // meantime... Unfortunately we can't do anything there at the moment, because Hive sucks.
       logInfo(s"Table is path-based table: $tableByPath. Update catalog with mode: $operation")
-      updateCatalog(sparkSession, tableWithLocation, deltaLog.snapshot)
+      updateCatalog(sparkSession, tableWithLocation, deltaLog.snapshot, txn)
 
       result
     }
@@ -317,23 +317,30 @@ case class CreateDeltaTableCommand(
       options: Option[DeltaOptions]): DeltaOperations.Operation = operation match {
     // This is legacy saveAsTable behavior in Databricks Runtime
     case TableCreationModes.Create if existingTableOpt.isDefined && query.isDefined =>
-      DeltaOperations.Write(mode, Option(table.partitionColumnNames), options.get.replaceWhere)
+      DeltaOperations.Write(mode, Option(table.partitionColumnNames), options.get.replaceWhere,
+        options.flatMap(_.userMetadata))
 
     // DataSourceV2 table creation
+    // CREATE TABLE (non-DataFrameWriter API) doesn't have options syntax
+    // (userMetadata uses SQLConf in this case)
     case TableCreationModes.Create =>
       DeltaOperations.CreateTable(metadata, isManagedTable, query.isDefined)
 
     // DataSourceV2 table replace
+    // REPLACE TABLE (non-DataFrameWriter API) doesn't have options syntax
+    // (userMetadata uses SQLConf in this case)
     case TableCreationModes.Replace =>
       DeltaOperations.ReplaceTable(metadata, isManagedTable, orCreate = false, query.isDefined)
 
     // Legacy saveAsTable with Overwrite mode
     case TableCreationModes.CreateOrReplace if options.exists(_.replaceWhere.isDefined) =>
-      DeltaOperations.Write(mode, Option(table.partitionColumnNames), options.get.replaceWhere)
+      DeltaOperations.Write(mode, Option(table.partitionColumnNames), options.get.replaceWhere,
+        options.flatMap(_.userMetadata))
 
     // New DataSourceV2 saveAsTable with overwrite mode behavior
     case TableCreationModes.CreateOrReplace =>
-      DeltaOperations.ReplaceTable(metadata, isManagedTable, orCreate = true, query.isDefined)
+      DeltaOperations.ReplaceTable(metadata, isManagedTable, orCreate = true, query.isDefined,
+        options.flatMap(_.userMetadata))
   }
 
   /**
@@ -344,7 +351,8 @@ case class CreateDeltaTableCommand(
   private def updateCatalog(
       spark: SparkSession,
       table: CatalogTable,
-      snapshot: Snapshot): Unit = {
+      snapshot: Snapshot,
+      txn: OptimisticTransaction): Unit = {
     val cleaned = cleanupTableDefinition(table, snapshot)
     operation match {
       case _ if tableByPath => // do nothing with the metastore if this is by path
@@ -425,6 +433,8 @@ case class CreateDeltaTableCommand(
     Thread.currentThread().getStackTrace.exists(_.toString.contains(
       classOf[DataFrameWriter[_]].getCanonicalName + "."))
   }
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 object TableCreationModes {

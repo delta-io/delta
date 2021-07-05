@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@ import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{ArrayType, IntegerType, StructType}
 import org.apache.spark.util.Utils
 
 abstract class DeleteSuiteBase extends QueryTest
@@ -357,24 +356,45 @@ abstract class DeleteSuiteBase extends QueryTest
   /**
    * @param function the unsupported function.
    * @param functionType The type of the unsupported expression to be tested.
+   * @param data the data in the table.
    * @param where the where clause containing the unsupported expression.
+   * @param expectException whether an exception is expected to be thrown
+   * @param customErrorRegex customized error regex.
    */
   def testUnsupportedExpression(
       function: String,
       functionType: String,
-      where: String) {
-    test(s"$functionType functions are not supported in delete") {
+      data: => DataFrame,
+      where: String,
+      expectException: Boolean,
+      customErrorRegex: Option[String] = None) {
+    test(s"$functionType functions in delete - expect exception: $expectException") {
       withTable("deltaTable") {
-        Seq((2, 2), (1, 4)).toDF("key", "value")
-          .write.format("delta").saveAsTable("deltaTable")
+        data.write.format("delta").saveAsTable("deltaTable")
 
         val expectedErrorRegex = s"(?s).*(?i)unsupported.*(?i)$functionType" +
           s".*Invalid expressions: \\[$function.*"
 
-        val e = intercept[org.apache.spark.sql.AnalysisException] {
+        var catchException = true
+
+        var errorRegex = if (functionType.equals("Generate")) {
+          ".*Subqueries are not supported in the DELETE.*"
+        } else customErrorRegex.getOrElse(expectedErrorRegex)
+
+
+        if (catchException) {
+          val dataBeforeException = spark.read.format("delta").table("deltaTable").collect()
+          val e = intercept[Exception] {
+            executeDelete(target = "deltaTable", where = where)
+          }
+          val message = if (e.getCause != null) {
+            e.getCause.getMessage
+          } else e.getMessage
+          assert(message.matches(errorRegex))
+          checkAnswer(spark.read.format("delta").table("deltaTable"), dataBeforeException)
+        } else {
           executeDelete(target = "deltaTable", where = where)
         }
-        assert(e.message.matches(expectedErrorRegex))
       }
     }
   }
@@ -382,12 +402,36 @@ abstract class DeleteSuiteBase extends QueryTest
   testUnsupportedExpression(
     function = "row_number",
     functionType = "Window",
-    where = "row_number() over (order by value) > 1"
+    data = Seq((2, 2), (1, 4)).toDF("key", "value"),
+    where = "row_number() over (order by value) > 1",
+    expectException = true
   )
 
   testUnsupportedExpression(
     function = "max",
     functionType = "Aggregate",
-    where = "key > max(value)"
+    data = Seq((2, 2), (1, 4)).toDF("key", "value"),
+    where = "key > max(value)",
+    expectException = true
+  )
+
+  // Explode functions are supported in where if only one row generated.
+  testUnsupportedExpression(
+    function = "explode",
+    functionType = "Generate",
+    data = Seq((2, List(2))).toDF("key", "value"),
+    where = "key = (select explode(value) from deltaTable)",
+    expectException = false // generate only one row, no exception.
+  )
+
+  // Explode functions are supported in where but if there's more than one row generated,
+  // it will throw an exception.
+  testUnsupportedExpression(
+    function = "explode",
+    functionType = "Generate",
+    data = Seq((2, List(2)), (1, List(4, 5))).toDF("key", "value"),
+    where = "key = (select explode(value) from deltaTable)",
+    expectException = true, // generate more than one row. Exception expected.
+    customErrorRegex = Some("more than one row returned by a subquery used as an expression(?s).*")
   )
 }

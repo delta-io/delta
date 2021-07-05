@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,8 @@
  */
 
 package org.apache.spark.sql.delta
+
+import java.io.{PrintWriter, StringWriter}
 
 import scala.sys.process.Process
 
@@ -77,7 +79,14 @@ trait DeltaErrorsSuiteBase
         var response = ""
         (1 to MAX_URL_ACCESS_RETRIES).foreach { attempt =>
           if (attempt > 1) Thread.sleep(1000)
-          response = Process("curl -I " + url).!!
+          response = try {
+            Process("curl -I " + url).!!
+          } catch {
+            case e: RuntimeException =>
+              val sw = new StringWriter
+              e.printStackTrace(new PrintWriter(sw))
+              sw.toString
+          }
           if (!checkIfValidResponse(url, response)) {
             fail(
               s"""

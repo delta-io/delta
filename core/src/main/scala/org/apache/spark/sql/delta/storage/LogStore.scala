@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,9 @@
 
 package org.apache.spark.sql.delta.storage
 
-import org.apache.spark.sql.delta.DeltaLog
+import scala.collection.JavaConverters._
+
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -145,21 +147,107 @@ object LogStore extends LogStoreProvider
   def apply(sparkConf: SparkConf, hadoopConf: Configuration): LogStore = {
     createLogStore(sparkConf, hadoopConf)
   }
+
+  // The conf key for setting the LogStore implementation for `scheme`.
+  def logStoreSchemeConfKey(scheme: String): String = s"spark.delta.logStore.${scheme}.impl"
+
+  // Creates a LogStore with the given LogStore class name and configurations.
+  def createLogStoreWithClassName(
+      className: String,
+      sparkConf: SparkConf,
+      hadoopConf: Configuration): LogStore = {
+    if (className == classOf[DelegatingLogStore].getName) {
+      new DelegatingLogStore(hadoopConf)
+    } else {
+      val logStoreClass = Utils.classForName(className)
+      if (classOf[io.delta.storage.LogStore].isAssignableFrom(logStoreClass)) {
+        new LogStoreAdaptor(logStoreClass.getConstructor(classOf[Configuration])
+          .newInstance(hadoopConf))
+      } else {
+        logStoreClass.getConstructor(classOf[SparkConf], classOf[Configuration])
+          .newInstance(sparkConf, hadoopConf).asInstanceOf[LogStore]
+      }
+    }
+  }
 }
 
 trait LogStoreProvider {
   val logStoreClassConfKey: String = "spark.delta.logStore.class"
-  val defaultLogStoreClass: String = classOf[HDFSLogStore].getName
+  val defaultLogStoreClass: String = classOf[DelegatingLogStore].getName
 
   def createLogStore(spark: SparkSession): LogStore = {
+    // TODO: return the singleton.
     val sc = spark.sparkContext
     createLogStore(sc.getConf, sc.hadoopConfiguration)
   }
 
+  def checkLogStoreConfConflicts(sparkConf: SparkConf): Unit = {
+    val (classConf, otherConf) = sparkConf.getAllWithPrefix("spark.delta.logStore.")
+      .partition(v => v._1 == "class")
+    val schemeConf = otherConf.filter(_._1.endsWith(".impl"))
+    if (classConf.nonEmpty && schemeConf.nonEmpty) {
+      throw DeltaErrors.logStoreConfConflicts(schemeConf)
+    }
+  }
+
   def createLogStore(sparkConf: SparkConf, hadoopConf: Configuration): LogStore = {
+    checkLogStoreConfConflicts(sparkConf)
     val logStoreClassName = sparkConf.get(logStoreClassConfKey, defaultLogStoreClass)
-    val logStoreClass = Utils.classForName(logStoreClassName)
-    logStoreClass.getConstructor(classOf[SparkConf], classOf[Configuration])
-      .newInstance(sparkConf, hadoopConf).asInstanceOf[LogStore]
+    LogStore.createLogStoreWithClassName(logStoreClassName, sparkConf, hadoopConf)
+  }
+}
+
+/**
+ * An adaptor from the new public LogStore API to the old private LogStore API. The old LogStore
+ * API is still used in most places. Before we move all of them to the new API, adapting from
+ * the new API to the old API is a cheap way to ensure that implementations of both APIs work.
+ *
+ * @param logStoreImpl An implementation of the new public LogStore API.
+ */
+class LogStoreAdaptor(val logStoreImpl: io.delta.storage.LogStore) extends LogStore {
+
+  private def getHadoopConfiguration(): Configuration = {
+    SparkSession.getActiveSession.map(_.sessionState.newHadoopConf())
+      .getOrElse(logStoreImpl.initHadoopConf())
+  }
+
+  override def read(path: Path): Seq[String] = {
+    var iter: io.delta.storage.CloseableIterator[String] = null
+    try {
+      iter = logStoreImpl.read(path, getHadoopConfiguration)
+      val contents = iter.asScala.toArray
+      contents
+    } finally {
+      if (iter != null) {
+        iter.close
+      }
+    }
+  }
+
+  override def readAsIterator(path: Path): ClosableIterator[String] = {
+    val iter = logStoreImpl.read(path, getHadoopConfiguration)
+    new ClosableIterator[String] {
+      override def close(): Unit = iter.close
+      override def hasNext: Boolean = iter.hasNext
+      override def next(): String = iter.next
+    }
+  }
+
+  override def write(path: Path, actions: Iterator[String], overwrite: Boolean): Unit = {
+    logStoreImpl.write(path, actions.asJava, overwrite, getHadoopConfiguration)
+  }
+
+  override def listFrom(path: Path): Iterator[FileStatus] = {
+    logStoreImpl.listFrom(path, getHadoopConfiguration).asScala
+  }
+
+  override def invalidateCache(): Unit = {}
+
+  override def resolvePathOnPhysicalStorage(path: Path): Path = {
+    logStoreImpl.resolvePathOnPhysicalStorage(path, getHadoopConfiguration)
+  }
+
+  override def isPartialWriteVisible(path: Path): Boolean = {
+    logStoreImpl.isPartialWriteVisible(path, getHadoopConfiguration)
   }
 }

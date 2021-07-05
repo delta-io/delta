@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,8 +32,6 @@ import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.functions.expr
 
 /**
- * :: Evolving ::
- *
  * Builder to specify how to merge data from source DataFrame into the target Delta table.
  * You can specify 1, 2 or 3 `when` clauses of which there can be at most 2 `whenMatched` clauses
  * and at most 1 `whenNotMatched` clause. Here are the constraints on these clauses.
@@ -119,7 +117,6 @@ import org.apache.spark.sql.functions.expr
  *
  * @since 0.3.0
  */
-@Evolving
 class DeltaMergeBuilder private(
     private val targetTable: DeltaTable,
     private val source: DataFrame,
@@ -130,21 +127,16 @@ class DeltaMergeBuilder private(
   {
 
   /**
-   * :: Evolving ::
-   *
    * Build the actions to perform when the merge condition was matched.  This returns
    * [[DeltaMergeMatchedActionBuilder]] object which can be used to specify how
    * to update or delete the matched target table row with the source row.
    * @since 0.3.0
    */
-  @Evolving
   def whenMatched(): DeltaMergeMatchedActionBuilder = {
     DeltaMergeMatchedActionBuilder(this, None)
   }
 
   /**
-   * :: Evolving ::
-   *
    * Build the actions to perform when the merge condition was matched and
    * the given `condition` is true. This returns [[DeltaMergeMatchedActionBuilder]] object
    * which can be used to specify how to update or delete the matched target table row with the
@@ -153,14 +145,11 @@ class DeltaMergeBuilder private(
    * @param condition boolean expression as a SQL formatted string
    * @since 0.3.0
    */
-  @Evolving
   def whenMatched(condition: String): DeltaMergeMatchedActionBuilder = {
     whenMatched(expr(condition))
   }
 
   /**
-   * :: Evolving ::
-   *
    * Build the actions to perform when the merge condition was matched and
    * the given `condition` is true. This returns a [[DeltaMergeMatchedActionBuilder]] object
    * which can be used to specify how to update or delete the matched target table row with the
@@ -169,27 +158,21 @@ class DeltaMergeBuilder private(
    * @param condition boolean expression as a Column object
    * @since 0.3.0
    */
-  @Evolving
   def whenMatched(condition: Column): DeltaMergeMatchedActionBuilder = {
     DeltaMergeMatchedActionBuilder(this, Some(condition))
   }
 
   /**
-   * :: Evolving ::
-   *
    * Build the action to perform when the merge condition was not matched. This returns
    * [[DeltaMergeNotMatchedActionBuilder]] object which can be used to specify how
    * to insert the new sourced row into the target table.
    * @since 0.3.0
    */
-  @Evolving
   def whenNotMatched(): DeltaMergeNotMatchedActionBuilder = {
     DeltaMergeNotMatchedActionBuilder(this, None)
   }
 
   /**
-   * :: Evolving ::
-   *
    * Build the actions to perform when the merge condition was not matched and
    * the given `condition` is true. This returns [[DeltaMergeMatchedActionBuilder]] object
    * which can be used to specify how to insert the new sourced row into the target table.
@@ -197,14 +180,11 @@ class DeltaMergeBuilder private(
    * @param condition boolean expression as a SQL formatted string
    * @since 0.3.0
    */
-  @Evolving
   def whenNotMatched(condition: String): DeltaMergeNotMatchedActionBuilder = {
     whenNotMatched(expr(condition))
   }
 
   /**
-   * :: Evolving ::
-   *
    * Build the actions to perform when the merge condition was not matched and
    * the given `condition` is true. This returns [[DeltaMergeMatchedActionBuilder]] object
    * which can be used to specify how to insert the new sourced row into the target table.
@@ -212,19 +192,15 @@ class DeltaMergeBuilder private(
    * @param condition boolean expression as a Column object
    * @since 0.3.0
    */
-  @Evolving
   def whenNotMatched(condition: Column): DeltaMergeNotMatchedActionBuilder = {
     DeltaMergeNotMatchedActionBuilder(this, Some(condition))
   }
 
   /**
-   * :: Evolving ::
-   *
    * Execute the merge operation based on the built matched and not matched actions.
    *
    * @since 0.3.0
    */
-  @Evolving
   def execute(): Unit = improveUnsupportedOpError {
     val sparkSession = targetTable.toDF.sparkSession
     // Note: We are explicitly resolving DeltaMergeInto plan rather than going to through the
@@ -322,8 +298,6 @@ object DeltaMergeBuilder {
 }
 
 /**
- * :: Evolving ::
- *
  * Builder class to specify the actions to perform when a target table row has matched a
  * source row based on the given merge condition and optional match condition.
  *
@@ -331,75 +305,59 @@ object DeltaMergeBuilder {
  *
  * @since 0.3.0
  */
-@Evolving
 class DeltaMergeMatchedActionBuilder private(
     private val mergeBuilder: DeltaMergeBuilder,
     private val matchCondition: Option[Column]) {
 
   /**
-   * :: Evolving ::
-   *
    * Update the matched table rows based on the rules defined by `set`.
    *
    * @param set rules to update a row as a Scala map between target column names and
    *            corresponding update expressions as Column objects.
    * @since 0.3.0
    */
-  @Evolving
   def update(set: Map[String, Column]): DeltaMergeBuilder = {
     addUpdateClause(set)
   }
 
   /**
-   * :: Evolving ::
-   *
    * Update the matched table rows based on the rules defined by `set`.
    *
    * @param set rules to update a row as a Scala map between target column names and
    *            corresponding update expressions as SQL formatted strings.
    * @since 0.3.0
    */
-  @Evolving
   def updateExpr(set: Map[String, String]): DeltaMergeBuilder = {
     addUpdateClause(toStrColumnMap(set))
   }
 
   /**
-   * :: Evolving ::
-   *
    * Update a matched table row based on the rules defined by `set`.
    *
    * @param set rules to update a row as a Java map between target column names and
    *            corresponding expressions as Column objects.
    * @since 0.3.0
    */
-  @Evolving
   def update(set: java.util.Map[String, Column]): DeltaMergeBuilder = {
     addUpdateClause(set.asScala)
   }
 
   /**
-   * :: Evolving ::
-   *
    * Update a matched table row based on the rules defined by `set`.
    *
    * @param set rules to update a row as a Java map between target column names and
    *            corresponding expressions as SQL formatted strings.
    * @since 0.3.0
    */
-  @Evolving
   def updateExpr(set: java.util.Map[String, String]): DeltaMergeBuilder = {
     addUpdateClause(toStrColumnMap(set.asScala))
   }
 
   /**
-   * :: Evolving ::
-   *
    * Update all the columns of the matched table row with the values of the
    * corresponding columns in the source row.
    * @since 0.3.0
    */
-  @Evolving
   def updateAll(): DeltaMergeBuilder = {
     val updateClause = DeltaMergeIntoUpdateClause(
       matchCondition.map(_.expr),
@@ -408,12 +366,9 @@ class DeltaMergeMatchedActionBuilder private(
   }
 
   /**
-   * :: Evolving ::
-   *
    * Delete a matched row from the table.
    * @since 0.3.0
    */
-  @Evolving
   def delete(): DeltaMergeBuilder = {
     val deleteClause = DeltaMergeIntoDeleteClause(matchCondition.map(_.expr))
     mergeBuilder.withClause(deleteClause)
@@ -455,8 +410,6 @@ object DeltaMergeMatchedActionBuilder {
 
 
 /**
- * :: Evolving ::
- *
  * Builder class to specify the actions to perform when a source row has not matched any target
  * Delta table row based on the merge condition, but has matched the additional condition
  * if specified.
@@ -465,56 +418,44 @@ object DeltaMergeMatchedActionBuilder {
  *
  * @since 0.3.0
  */
-@Evolving
 class DeltaMergeNotMatchedActionBuilder private(
     private val mergeBuilder: DeltaMergeBuilder,
     private val notMatchCondition: Option[Column]) {
 
   /**
-   * :: Evolving ::
-   *
    * Insert a new row to the target table based on the rules defined by `values`.
    *
    * @param values rules to insert a row as a Scala map between target column names and
    *               corresponding expressions as Column objects.
    * @since 0.3.0
    */
-  @Evolving
   def insert(values: Map[String, Column]): DeltaMergeBuilder = {
     addInsertClause(values)
   }
 
   /**
-   * :: Evolving ::
-   *
    * Insert a new row to the target table based on the rules defined by `values`.
    *
    * @param values rules to insert a row as a Scala map between target column names and
    *               corresponding expressions as SQL formatted strings.
    * @since 0.3.0
    */
-  @Evolving
   def insertExpr(values: Map[String, String]): DeltaMergeBuilder = {
     addInsertClause(toStrColumnMap(values))
   }
 
   /**
-   * :: Evolving ::
-   *
    * Insert a new row to the target table based on the rules defined by `values`.
    *
    * @param values rules to insert a row as a Java map between target column names and
    *               corresponding expressions as Column objects.
    * @since 0.3.0
    */
-  @Evolving
   def insert(values: java.util.Map[String, Column]): DeltaMergeBuilder = {
     addInsertClause(values.asScala)
   }
 
   /**
-   * :: Evolving ::
-   *
    * Insert a new row to the target table based on the rules defined by `values`.
    *
    * @param values rules to insert a row as a Java map between target column names and
@@ -522,19 +463,15 @@ class DeltaMergeNotMatchedActionBuilder private(
    *
    * @since 0.3.0
    */
-  @Evolving
   def insertExpr(values: java.util.Map[String, String]): DeltaMergeBuilder = {
     addInsertClause(toStrColumnMap(values.asScala))
   }
 
   /**
-   * :: Evolving ::
-   *
    * Insert a new target Delta table row by assigning the target columns to the values of the
    * corresponding columns in the source row.
    * @since 0.3.0
    */
-  @Evolving
   def insertAll(): DeltaMergeBuilder = {
     val insertClause = DeltaMergeIntoInsertClause(
       notMatchCondition.map(_.expr),

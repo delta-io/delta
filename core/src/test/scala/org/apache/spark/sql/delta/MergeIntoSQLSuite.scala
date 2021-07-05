@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -61,52 +61,6 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
 
     val merge = s"MERGE INTO $tgt USING $src ON $cond\n" + clauses.map(_.sql).mkString("\n")
     sql(merge)
-  }
-
-  override protected def testUnlimitedClauses(
-      name: String)(
-      source: Seq[(Int, Int)],
-      target: Seq[(Int, Int)],
-      mergeOn: String,
-      mergeClauses: MergeClause*)(
-      result: Seq[(Int, Int)]): Unit = {
-    Seq(true, false).foreach { isPartitioned =>
-      test(s"unlimited clauses - $name - isPartitioned: $isPartitioned ") {
-        withKeyValueData(source, target, isPartitioned) { case (sourceName, targetName) =>
-          withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "true") {
-            executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
-          }
-          val deltaPath = if (targetName.startsWith("delta.`")) {
-            targetName.stripPrefix("delta.`").stripSuffix("`")
-          } else targetName
-          checkAnswer(
-            readDeltaTable(deltaPath),
-            result.map { case (k, v) => Row(k, v) })
-        }
-      }
-    }
-  }
-
-  override protected def testAnalysisErrorsInUnlimitedClauses(
-      name: String)(
-      mergeOn: String,
-      mergeClauses: MergeClause*)(
-      errorStrs: Seq[String],
-      notErrorStrs: Seq[String] = Nil): Unit = {
-    ignore(s"unlimited caluses - analysis errors - $name") {
-      withKeyValueData(
-        source = Seq.empty,
-        target = Seq.empty,
-        sourceKeyValueNames = ("key", "srcValue"),
-        targetKeyValueNames = ("key", "tgtValue")
-      ) { case (sourceName, targetName) =>
-        val errMsg = intercept[AnalysisException] {
-          executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
-        }.getMessage
-        errorStrs.foreach { s => errorContains(errMsg, s) }
-        notErrorStrs.foreach { s => errorNotContains(errMsg, s) }
-      }
-    }
   }
 
   test("CTE as a source in MERGE") {

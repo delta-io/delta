@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.util.StateCache
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
@@ -130,25 +131,34 @@ class Snapshot(
   }
 
   /**
+   * A Map of alias to aggregations which needs to be done to calculate the `computedState`
+   */
+  protected def aggregationsToComputeState: Map[String, Column] = {
+    val implicits = spark.implicits
+    import implicits._
+    Map(
+      "protocol" -> last($"protocol", ignoreNulls = true),
+      "metadata" -> last($"metaData", ignoreNulls = true),
+      "setTransactions" -> collect_set($"txn"),
+      // sum may return null for empty data set.
+      "sizeInBytes" -> coalesce(sum($"add.size"), lit(0L)),
+      "numOfFiles" -> count($"add"),
+      "numOfMetadata" -> count($"metaData"),
+      "numOfProtocol" -> count($"protocol"),
+      "numOfRemoves" -> count($"remove"),
+      "numOfSetTransactions" -> count($"txn"),
+      "fileSizeHistogram" -> lit(null).cast(FileSizeHistogram.schema)
+    )
+  }
+
+  /**
    * Computes some statistics around the transaction log, therefore on the actions made on this
    * Delta table.
    */
   protected lazy val computedState: State = {
     withStatusCode("DELTA", s"Compute snapshot for version: $version") {
-      val implicits = spark.implicits
-      import implicits._
-      var _computedState = state.select(
-        last($"protocol", ignoreNulls = true) as "protocol",
-        last($"metaData", ignoreNulls = true) as "metadata",
-        collect_set($"txn") as "setTransactions",
-        // sum may return null for empty data set.
-        coalesce(sum($"add.size"), lit(0L)) as "sizeInBytes",
-        count($"add") as "numOfFiles",
-        count($"metaData") as "numOfMetadata",
-        count($"protocol") as "numOfProtocol",
-        count($"remove") as "numOfRemoves",
-        count($"txn") as "numOfSetTransactions"
-      ).as[State](stateEncoder).first()
+      val aggregations = aggregationsToComputeState.map { case (alias, agg) => agg.as(alias) }.toSeq
+      var _computedState = state.select(aggregations: _*).as[State](stateEncoder).first()
       val stateReconstructionCheck = spark.sessionState.conf.getConf(
         DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED)
       if (_computedState.protocol == null) {
@@ -180,6 +190,7 @@ class Snapshot(
   def setTransactions: Seq[SetTransaction] = computedState.setTransactions
   def sizeInBytes: Long = computedState.sizeInBytes
   def numOfFiles: Long = computedState.numOfFiles
+  def fileSizeHistogram: Option[FileSizeHistogram] = computedState.fileSizeHistogram
   def numOfMetadata: Long = computedState.numOfMetadata
   def numOfProtocol: Long = computedState.numOfProtocol
   def numOfRemoves: Long = computedState.numOfRemoves
@@ -365,7 +376,8 @@ object Snapshot extends DeltaLogging {
       numOfMetadata: Long,
       numOfProtocol: Long,
       numOfRemoves: Long,
-      numOfSetTransactions: Long)
+      numOfSetTransactions: Long,
+      fileSizeHistogram: Option[FileSizeHistogram])
 
   private[this] lazy val _stateEncoder: ExpressionEncoder[State] = try {
     ExpressionEncoder[State]()
@@ -403,8 +415,9 @@ class InitialSnapshot(
   )
 
   override def state: Dataset[SingleAction] = emptyActions
-  override protected lazy val computedState: Snapshot.State = {
+  override protected lazy val computedState: Snapshot.State = initialState
+  private def initialState: Snapshot.State = {
     val protocol = Protocol.forNewTable(spark, metadata)
-    Snapshot.State(protocol, metadata, Nil, 0L, 0L, 1L, 1L, 0L, 0L)
+    Snapshot.State(protocol, metadata, Nil, 0L, 0L, 1L, 1L, 0L, 0L, None)
   }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 import org.scalatest.GivenWhenThen
 
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, QueryTest, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.IntervalUtils
@@ -603,4 +604,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
 }
 
 class DeltaVacuumSuite
-  extends DeltaVacuumSuiteBase with DeltaSQLCommandTest
+  extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
+  override def sparkConf: SparkConf = {
+    super.sparkConf.set("spark.sql.sources.parallelPartitionDiscovery.parallelism", "2")
+  }
+}

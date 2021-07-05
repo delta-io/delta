@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,6 +44,8 @@ case class DeltaInvariantChecker(
     deltaConstraints: Seq[Constraint])
   extends UnaryNode {
   override def output: Seq[Attribute] = child.output
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 object DeltaInvariantCheckerStrategy extends SparkStrategy {
@@ -90,6 +92,8 @@ case class DeltaInvariantCheckerExec(
   override def outputOrdering: Seq[SortOrder] = child.outputOrdering
 
   override def outputPartitioning: Partitioning = child.outputPartitioning
+
+  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 object DeltaInvariantCheckerExec {

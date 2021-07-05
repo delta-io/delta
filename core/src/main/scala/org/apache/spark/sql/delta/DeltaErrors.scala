@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -275,16 +275,23 @@ object DeltaErrors
     new AnalysisException(s"$command destination only supports Delta sources.\n$planName")
   }
 
-  def schemaChangedSinceAnalysis(atAnalysis: StructType, latestSchema: StructType): Throwable = {
+  def schemaChangedSinceAnalysis(
+      atAnalysis: StructType,
+      latestSchema: StructType,
+      mentionLegacyFlag: Boolean = false): Throwable = {
     val schemaDiff = SchemaUtils.reportDifferences(atAnalysis, latestSchema)
       .map(_.replace("Specified", "Latest"))
+    val legacyFlagMessage = if (mentionLegacyFlag) {
+      s"""
+         |This check can be turned off by setting the session configuration key
+         |${DeltaSQLConf.DELTA_SCHEMA_ON_READ_CHECK_ENABLED.key} to false.""".stripMargin
+    } else {
+      ""
+    }
     new AnalysisException(
       s"""The schema of your Delta table has changed in an incompatible way since your DataFrame or
          |DeltaTable object was created. Please redefine your DataFrame or DeltaTable object.
-         |Changes:\n${schemaDiff.mkString("\n")}
-         |This check can be turned off by setting the session configuration key
-         |${DeltaSQLConf.DELTA_SCHEMA_ON_READ_CHECK_ENABLED.key} to false.
-       """.stripMargin)
+         |Changes:\n${schemaDiff.mkString("\n")}$legacyFlagMessage""".stripMargin)
   }
 
   def invalidColumnName(name: String): Throwable = {
@@ -515,6 +522,7 @@ object DeltaErrors
     new IllegalArgumentException(
       s"Invalid value '$input' for option '$name', $explain")
   }
+
 
   def startingVersionAndTimestampBothSetException(
       versionOptKey: String,
@@ -1121,9 +1129,31 @@ object DeltaErrors
         s"but the column type is ${columnType.sql}")
   }
 
+  def updateOnTempViewWithGenerateColsNotSupported: Throwable = {
+    new AnalysisException(
+      s"Updating a temp view referring to a Delta table that contains generated columns is not " +
+        s"supported. Please run the update command on the Delta table directly")
+  }
+
 
   def missingColumnsInInsertInto(column: String): Throwable = {
     new AnalysisException(s"Column $column is not specified in INSERT")
+  }
+
+  def logStoreConfConflicts(schemeConf: Seq[(String, String)]): Throwable = {
+    val schemeConfStr = schemeConf.map("spark.delta.logStore." + _._1).mkString(", ")
+    new AnalysisException(
+      s"(`spark.delta.logStore.class`) and (`${schemeConfStr}`)" +
+      " cannot be set at the same time. Please set only one group of them.")
+  }
+
+  def ambiguousPathsInCreateTableException(identifier: String, location: String): Throwable = {
+    new AnalysisException(
+      s"""
+         |CREATE TABLE contains two different locations: ${identifier} and ${location}.
+         |You can remove the LOCATION clause from the CREATE TABLE statement, or set
+         |${DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS.key} to true to skip this check.
+         |""".stripMargin)
   }
 
   def concurrentWriteException(
@@ -1148,10 +1178,18 @@ object DeltaErrors
 
   def protocolChangedException(
       conflictingCommit: Option[CommitInfo]): io.delta.exceptions.ProtocolChangedException = {
+    val additionalInfo = conflictingCommit.map { v =>
+      if (v.version.getOrElse(-1) == 0) {
+        "This happens when multiple writers are writing to an empty directory. " +
+          "Creating the table ahead of time will avoid this conflict. "
+      } else {
+        ""
+      }
+    }.getOrElse("")
     val message = DeltaErrors.concurrentModificationExceptionMsg(
       SparkEnv.get.conf,
       "The protocol version of the Delta table has been changed by a concurrent update. " +
-        "Please try the operation again.",
+        additionalInfo + "Please try the operation again.",
       conflictingCommit)
     new io.delta.exceptions.ProtocolChangedException(message)
   }

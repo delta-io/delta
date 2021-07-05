@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -58,7 +58,7 @@ lazy val core = (project in file("core"))
         listPythonFiles(baseDirectory.value.getParentFile / "python"),
 
     antlr4Settings,
-    antlr4Version in Antlr4 := "4.7",
+    antlr4Version in Antlr4 := "4.8",
     antlr4PackageName in Antlr4 := Some("io.delta.sql.parser"),
     antlr4GenListener in Antlr4 := true,
     antlr4GenVisitor in Antlr4 := true,
@@ -72,6 +72,47 @@ lazy val core = (project in file("core"))
     scalacOptions ++= Seq(
       "-target:jvm-1.8",
       "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
+    ),
+
+    javaOptions += "-Xmx1024m",
+
+    // Configurations to speed up tests and reduce memory footprint
+    javaOptions in Test ++= Seq(
+      "-Dspark.ui.enabled=false",
+      "-Dspark.ui.showConsoleProgress=false",
+      "-Dspark.databricks.delta.snapshotPartitions=2",
+      "-Dspark.sql.shuffle.partitions=5",
+      "-Ddelta.log.cacheSize=3",
+      "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
+      "-Xmx1024m"
+    ),
+
+    // Hack to avoid errors related to missing repo-root/target/scala-2.12/classes/
+    createTargetClassesDir := {
+      val dir = baseDirectory.value.getParentFile / "target" / "scala-2.12" / "classes"
+      Files.createDirectories(dir.toPath)
+    },
+    (compile in Compile) := ((compile in Compile) dependsOn createTargetClassesDir).value
+  )
+
+lazy val contribs = (project in file("contribs"))
+  .dependsOn(core % "compile->compile;test->test;provided->provided")
+  .settings (
+    name := "delta-contribs",
+    commonSettings,
+    scalaStyleSettings,
+    releaseSettings,
+    (mappings in (Compile, packageBin)) := (mappings in (Compile, packageBin)).value ++
+      listPythonFiles(baseDirectory.value.getParentFile / "python"),
+
+    testOptions in Test += Tests.Argument("-oDF"),
+    testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
+
+    // Don't execute in parallel since we can't have multiple Sparks in the same JVM
+    parallelExecution in Test := false,
+
+    scalacOptions ++= Seq(
+      "-target:jvm-1.8"
     ),
 
     javaOptions += "-Xmx1024m",

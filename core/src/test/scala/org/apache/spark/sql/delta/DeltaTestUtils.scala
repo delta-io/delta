@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,15 @@
 
 package org.apache.spark.sql.delta
 
+import java.util.concurrent.atomic.AtomicInteger
+
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.{Action, Metadata}
 
+import org.apache.spark.SparkContext
+import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.QueryExecution
@@ -69,6 +73,28 @@ trait DeltaTestUtilsBase {
     } finally {
       spark.listenerManager.unregister(planCapturingListener)
     }
+  }
+
+  def countSparkJobs(sc: SparkContext, f: => Unit): Int = {
+    val jobCount = new AtomicInteger(0)
+    val listener = new SparkListener {
+
+      override def onJobStart(jobStart: SparkListenerJobStart): Unit = {
+        // Spark will always log a job start/end event even when the job does not launch any task.
+        if (jobStart.stageInfos.exists(_.numTasks > 0)) {
+          jobCount.incrementAndGet()
+        }
+      }
+    }
+    sc.addSparkListener(listener)
+    try {
+      sc.listenerBus.waitUntilEmpty(15000)
+      f
+      sc.listenerBus.waitUntilEmpty(15000)
+    } finally {
+      sc.removeSparkListener(listener)
+    }
+    jobCount.get()
   }
 }
 
