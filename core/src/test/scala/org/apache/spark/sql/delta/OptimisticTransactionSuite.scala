@@ -99,6 +99,7 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
   val A_P1 = "part=1/a"
   val B_P1 = "part=1/b"
   val C_P1 = "part=1/c"
+  val D_P1 = "part=1/d"
   val C_P2 = "part=2/c"
   val D_P2 = "part=2/d"
   val E_P3 = "part=3/e"
@@ -108,6 +109,7 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
   private val addA_P1 = AddFile(A_P1, Map("part" -> "1"), 1, 1, dataChange = true)
   private val addB_P1 = AddFile(B_P1, Map("part" -> "1"), 1, 1, dataChange = true)
   private val addC_P1 = AddFile(C_P1, Map("part" -> "1"), 1, 1, dataChange = true)
+  private val addD_P1 = AddFile(D_P1, Map("part" -> "1"), 1, 1, dataChange = true)
   private val addC_P2 = AddFile(C_P2, Map("part" -> "2"), 1, 1, dataChange = true)
   private val addD_P2 = AddFile(D_P2, Map("part" -> "2"), 1, 1, dataChange = true)
   private val addE_P3 = AddFile(E_P3, Map("part" -> "3"), 1, 1, dataChange = true)
@@ -594,43 +596,343 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
     }
   }
 
-  test("no data change: allow data rearrange when new files concurrently added") {
-    withLog(addA_P1 :: addB_P1 :: Nil) { log =>
-      val tx1 = log.startTransaction()
-      tx1.filterFiles()
+  Seq(true, false).foreach { toggle =>
+    test(s"no data change: allow data rearrange when new files concurrently added " +
+            s"(concurrentCompactionDetection: $toggle)") {
+      withSQLConf(DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION.key -> toggle.toString) {
+        withLog(addA_P1 :: addB_P1 :: Nil) { log =>
+          val tx1 = log.startTransaction()
+          tx1.filterFiles()
 
-      val tx2 = log.startTransaction()
-      tx2.filterFiles()
-      tx2.commit(
-        addE_P3 :: Nil,
-        ManualUpdate)
+          val tx2 = log.startTransaction()
+          tx2.filterFiles()
+          tx2.commit(
+            addE_P3 :: Nil,
+            ManualUpdate)
 
-      // tx1 rearranges files
-      tx1.commit(
-        setDataChangeFalse(addA_P1.remove :: addB_P1.remove :: addC_P1 :: Nil),
-        ManualUpdate)
+          // tx1 rearranges files
+          tx1.commit(
+            setDataChangeFalse(addA_P1.remove :: addB_P1.remove :: addC_P1 :: Nil),
+            ManualUpdate)
 
-      checkAnswer(
-        log.update().allFiles.select("path"),
-        Row(C_P1) :: Row(E_P3) ::  Nil)
+          checkAnswer(
+            log.update().allFiles.select("path"),
+            Row(C_P1) :: Row(E_P3) :: Nil)
+        }
+      }
+    }
+
+    test(s"no data change: allow data rearrange when new files concurrently added " +
+            s"(NTMT) (concurrentCompactionDetection: $toggle)") {
+      withSQLConf(DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION.key -> toggle.toString) {
+        withLog(addA_P1 :: addB_P1 :: Nil) { log =>
+          val tx1 = log.startTransaction()
+          tx1.filterFiles()
+
+          val tx2 = log.startTransaction()
+          tx2.filterFiles()
+
+          tx1.commit(
+            addE_P3 :: Nil,
+            ManualUpdate)
+
+          // tx2 rearranges files
+          tx2.commit(
+            setDataChangeFalse(addA_P1.remove :: addB_P1.remove :: addC_P1 :: Nil),
+            ManualUpdate)
+
+          checkAnswer(
+            log.update().allFiles.select("path"),
+            Row(C_P1) :: Row(E_P3) :: Nil)
+        }
+      }
+    }
+
+    test(s"no data change: block data rearrange when new files concurrently deleted " +
+            s"(concurrentCompactionDetection: $toggle)") {
+      withSQLConf(DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION.key -> toggle.toString) {
+        withLog(addA_P1 :: addB_P1 :: Nil) { log =>
+          val tx1 = log.startTransaction()
+          tx1.filterFiles()
+
+          val tx2 = log.startTransaction()
+          tx2.filterFiles()
+          tx2.commit(
+            addA_P1.remove :: Nil,
+            ManualUpdate)
+
+          // tx1 rearranges files
+          intercept[ConcurrentDeleteReadException] {
+            tx1.commit(
+              setDataChangeFalse(addA_P1.remove :: addB_P1.remove :: addC_P1 :: Nil),
+              ManualUpdate)
+          }
+        }
+      }
+    }
+
+    test(s"no data change: block data rearrange when new files concurrently deleted " +
+            s"(NTMT) (concurrentCompactionDetection: $toggle)") {
+      withSQLConf(DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION.key -> toggle.toString) {
+        withLog(addA_P1 :: addB_P1 :: Nil) { log =>
+          val tx1 = log.startTransaction()
+          tx1.filterFiles()
+
+          val tx2 = log.startTransaction()
+          tx2.filterFiles()
+
+          tx1.commit(
+            addA_P1.remove :: Nil,
+            ManualUpdate)
+
+          // tx2 rearranges files
+          intercept[ConcurrentDeleteReadException] {
+            tx2.commit(
+              setDataChangeFalse(addA_P1.remove :: addB_P1.remove :: addC_P1 :: Nil),
+              ManualUpdate)
+          }
+        }
+      }
     }
   }
 
-  test("no data change: block data rearrange when concurrently delete removes same file") {
-    withLog(addA_P1 :: addB_P1 :: Nil) { log =>
-      val tx1 = log.startTransaction()
-      tx1.filterFiles()
+  test("no data change: allow adding new files when concurrently rearrange data " +
+          "(concurrentCompactionDetection: true)") {
+    withSQLConf(DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION.key -> "true") {
+      withLog(addA_P1 :: addB_P1 :: Nil) { log =>
+        val tx1 = log.startTransaction()
+        tx1.filterFiles()
 
-      // tx2 removes file
-      val tx2 = log.startTransaction()
-      tx2.filterFiles()
-      tx2.commit(addA_P1.remove :: Nil, ManualUpdate)
+        val tx2 = log.startTransaction()
+        tx2.filterFiles()
+        // tx2 rearranges files
+        tx2.commit(
+          setDataChangeFalse(addA_P1.remove :: addB_P1.remove :: addC_P1 :: Nil),
+          ManualUpdate)
 
-      intercept[ConcurrentDeleteReadException] {
-        // tx1 reads to rearrange the same file that tx2 deleted
+        tx1.commit(
+          addD_P1 :: Nil,
+          ManualUpdate)
+
+        checkAnswer(
+          log.update().allFiles.select("path"),
+          Row(C_P1) :: Row(D_P1) :: Nil)
+      }
+    }
+  }
+
+  test("no data change: allow adding new files when concurrently rearrange data " +
+          "(concurrentCompactionDetection: false)") {
+    withSQLConf(DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION.key -> "false") {
+      withLog(addA_P1 :: addB_P1 :: Nil) { log =>
+        val tx1 = log.startTransaction()
+        tx1.filterFiles()
+
+        val tx2 = log.startTransaction()
+        tx2.filterFiles()
+        // tx2 rearranges files
+        tx2.commit(
+          setDataChangeFalse(addA_P1.remove :: addB_P1.remove :: addC_P1 :: Nil),
+          ManualUpdate)
+
+        intercept[ConcurrentAppendException] {
+          tx1.commit(
+            addD_P1 :: Nil,
+            ManualUpdate)
+        }
+      }
+    }
+  }
+
+  test("no data change: allow adding new files when concurrently rearrange data " +
+          "(NTMT) (concurrentCompactionDetection: true)") {
+    withSQLConf(DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION.key -> "true") {
+      withLog(addA_P1 :: addB_P1 :: Nil) { log =>
+        val tx1 = log.startTransaction()
+        tx1.filterFiles()
+
+        val tx2 = log.startTransaction()
+        tx2.filterFiles()
+
+        // tx1 rearranges files
         tx1.commit(
           setDataChangeFalse(addA_P1.remove :: addB_P1.remove :: addC_P1 :: Nil),
           ManualUpdate)
+
+        tx2.commit(
+          addD_P1 :: Nil,
+          ManualUpdate)
+
+        checkAnswer(
+          log.update().allFiles.select("path"),
+          Row(C_P1) :: Row(D_P1) :: Nil)
+      }
+    }
+  }
+
+  test("no data change: allow adding new files when concurrently rearrange data " +
+          "(NTMT) (concurrentCompactionDetection: false)") {
+    withSQLConf(DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION.key -> "false") {
+      withLog(addA_P1 :: addB_P1 :: Nil) { log =>
+        val tx1 = log.startTransaction()
+        tx1.filterFiles()
+
+        val tx2 = log.startTransaction()
+        tx2.filterFiles()
+
+        // tx1 rearranges files
+        tx1.commit(
+          setDataChangeFalse(addA_P1.remove :: addB_P1.remove :: addC_P1 :: Nil),
+          ManualUpdate)
+
+        intercept[ConcurrentAppendException] {
+          tx2.commit(
+            addD_P1 :: Nil,
+            ManualUpdate)
+        }
+      }
+    }
+  }
+
+  Map(
+    "true" -> intercept[ConcurrentDeleteDeleteException] _,
+    "false" -> intercept[ConcurrentAppendException] _
+  ).foreach { case (toggle, interceptExpectedException) =>
+    test(s"no data change: block deleting files when concurrently rearrange data " +
+            s"(concurrentCompactionDetection: $toggle)") {
+      withSQLConf(DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION.key -> toggle) {
+        withLog(addA_P1 :: addB_P1 :: Nil) { log =>
+          val tx1 = log.startTransaction()
+          tx1.filterFiles()
+
+          val tx2 = log.startTransaction()
+          tx2.filterFiles()
+          // tx2 rearranges files
+          tx2.commit(
+            setDataChangeFalse(addA_P1.remove :: addB_P1.remove :: addC_P1 :: Nil),
+            ManualUpdate)
+
+          interceptExpectedException {
+            tx1.commit(
+              addA_P1.remove :: Nil,
+              ManualUpdate)
+          }
+        }
+      }
+    }
+
+    test(s"no data change: block deleting files when concurrently rearrange data " +
+            s"(NTMT) (concurrentCompactionDetection: $toggle)") {
+      withSQLConf(DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION.key -> toggle) {
+        withLog(addA_P1 :: addB_P1 :: Nil) { log =>
+          val tx1 = log.startTransaction()
+          tx1.filterFiles()
+          val tx2 = log.startTransaction()
+          tx2.filterFiles()
+
+          // tx1 rearranges files
+          tx1.commit(
+            setDataChangeFalse(addA_P1.remove :: addB_P1.remove :: addC_P1 :: Nil),
+            ManualUpdate)
+
+          interceptExpectedException {
+            tx2.commit(
+              addA_P1.remove :: Nil,
+              ManualUpdate)
+          }
+        }
+      }
+    }
+
+    test(s"no data change: block data rearrange when concurrently delete removes same file " +
+            s"(concurrentCompactionDetection: $toggle)") {
+      withSQLConf(DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION.key -> toggle) {
+        withLog(addA_P1 :: addB_P1 :: Nil) { log =>
+          val tx1 = log.startTransaction()
+          tx1.filterFiles()
+
+          // tx2 removes file
+          val tx2 = log.startTransaction()
+          tx2.filterFiles()
+          tx2.commit(addA_P1.remove :: Nil, ManualUpdate)
+
+          intercept[ConcurrentDeleteReadException] {
+            // tx1 reads to rearrange the same file that tx2 deleted
+            tx1.commit(
+              setDataChangeFalse(addA_P1.remove :: addB_P1.remove :: addC_P1 :: Nil),
+              ManualUpdate)
+          }
+        }
+      }
+    }
+
+    test(s"no data change: block data rearrange when concurrently delete removes same file " +
+            s"(NTMT) (concurrentCompactionDetection: $toggle)") {
+      withSQLConf(DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION.key -> toggle) {
+        withLog(addA_P1 :: addB_P1 :: Nil) { log =>
+          val tx1 = log.startTransaction()
+          tx1.filterFiles()
+
+          val tx2 = log.startTransaction()
+          tx2.filterFiles()
+
+          // tx1 removes file
+          tx1.commit(addA_P1.remove :: Nil, ManualUpdate)
+
+          intercept[ConcurrentDeleteReadException] {
+            // tx2 reads to rearrange the same file that tx1 deleted
+            tx2.commit(
+              setDataChangeFalse(addA_P1.remove :: addB_P1.remove :: addC_P1 :: Nil),
+              ManualUpdate)
+          }
+        }
+      }
+    }
+
+    test(s"data change: block adding new files when concurrently rewrite data " +
+            s"(concurrentCompactionDetection: $toggle)") {
+      withSQLConf(DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION.key -> toggle) {
+        withLog(addA_P1 :: addB_P1 :: Nil) { log =>
+          val tx1 = log.startTransaction()
+          tx1.filterFiles()
+
+          val tx2 = log.startTransaction()
+          tx2.filterFiles()
+          // tx2 rewrites files
+          tx2.commit(
+            addA_P1.remove :: addB_P1.remove :: addC_P1 :: Nil,
+            ManualUpdate)
+
+          intercept[ConcurrentAppendException] {
+            tx1.commit(
+              addD_P1 :: Nil,
+              ManualUpdate)
+          }
+        }
+      }
+    }
+
+    test(s"data change: block adding new files when concurrently rewrite data " +
+            s"(NTMT) (concurrentCompactionDetection: $toggle)") {
+      withSQLConf(DeltaSQLConf.CONCURRENT_COMPACTION_CONFLICT_DETECTION.key -> toggle) {
+        withLog(addA_P1 :: addB_P1 :: Nil) { log =>
+          val tx1 = log.startTransaction()
+          tx1.filterFiles()
+
+          val tx2 = log.startTransaction()
+          tx2.filterFiles()
+
+          // tx1 rewrites files
+          tx1.commit(
+            addA_P1.remove :: addB_P1.remove :: addC_P1 :: Nil,
+            ManualUpdate)
+
+          intercept[ConcurrentAppendException] {
+            tx2.commit(
+              addD_P1 :: Nil,
+              ManualUpdate)
+          }
+        }
       }
     }
   }

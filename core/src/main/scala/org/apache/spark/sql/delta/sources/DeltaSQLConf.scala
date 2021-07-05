@@ -427,6 +427,7 @@ trait DeltaSQLConfBase {
              |""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+  
   val DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS =
     buildConf("legacy.allowAmbiguousPathsInCreateTable")
       .internal()
@@ -438,6 +439,16 @@ trait DeltaSQLConfBase {
              |ignored like what the old version does.""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  val CONCURRENT_COMPACTION_CONFLICT_DETECTION =
+    buildConf("concurrentCompactionConflictDetection.enabled")
+      .internal()
+      .doc("""
+           | When enabled, insert-only transactions will not fail due to concurrent data preserving
+           | transactions (i.e. transactions with dataChange=false, such as compaction).
+           |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase
