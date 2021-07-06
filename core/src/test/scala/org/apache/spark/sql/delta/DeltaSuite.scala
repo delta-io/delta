@@ -462,7 +462,7 @@ class DeltaSuite extends QueryTest
         .format("delta")
         .partitionBy("part", "sub")
         .mode("overwrite")
-        .option("replaceWhere", "part==1")
+        .option(DeltaOptions.REPLACE_WHERE_OPTION, "part = 1")
         .option("partitionOverwriteMode", "dynamic")
         .save(tempDir.getCanonicalPath)
       checkDatasetUnorderly(data.toDF.select($"value".as[Int], $"sub".as[String]),
