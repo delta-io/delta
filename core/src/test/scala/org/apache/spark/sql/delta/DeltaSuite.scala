@@ -407,7 +407,7 @@ class DeltaSuite extends QueryTest
     withTempDir { tempDir =>
       def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
 
-      Seq (1, 2, 3).toDF
+      Seq(1, 2, 3).toDF
         .withColumn("part", $"value" % 2)
         .write
         .format("delta")
