@@ -42,7 +42,7 @@ acquire_sbt_jar () {
   if [[ "${SBT_VERSION}" == "0.13.18" ]] && [[ -n "${SBT_MIRROR_JAR_URL}" ]]; then
     URL1="${SBT_MIRROR_JAR_URL}"
   else
-    URL1="https://dl.bintray.com/typesafe/ivy-releases/org.scala-sbt/sbt-launch/${SBT_VERSION}/sbt-launch.jar"
+    URL1="https://repo.typesafe.com/typesafe/ivy-releases/org.scala-sbt/sbt-launch/${SBT_VERSION}/sbt-launch.jar"
   fi
   JAR=build/sbt-launch-${SBT_VERSION}.jar
 
