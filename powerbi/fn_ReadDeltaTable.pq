@@ -7,6 +7,7 @@ let
 
     DeltaTableVersion = if DeltaTableOptions = null then null else Record.FieldOrDefault(DeltaTableOptions, "Version", null),
     PartitionFilterFunction = if DeltaTableOptions = null then (x) => true else Record.FieldOrDefault(DeltaTableOptions, "PartitionFilterFunction", (x) => true),
+    UseFileBuffer = if DeltaTableOptions = null then false else Record.FieldOrDefault(DeltaTableOptions, "UseFileBuffer", false),
 
     DeltaTableFolderContent_wFullPath = 
     let
@@ -23,11 +24,49 @@ let
     in
         Delimiter,
 
+PQ_DataTypes = 
+    let
+        Source = [
+            Any.Type = Any.Type,
+            None.Type = None.Type,
+            Day.Type = Day.Type,
+            Duration.Type = Duration.Type,
+            Record.Type = Record.Type,
+            Precision.Type = Precision.Type,
+            Number.Type = Number.Type,
+            Binary.Type = Binary.Type,
+            Byte.Type = Byte.Type,
+            Character.Type = Character.Type,
+            Text.Type = Text.Type,
+            Function.Type = Function.Type,
+            Null.Type = Null.Type,
+            List.Type = List.Type,
+            Type.Type = Type.Type,
+            Logical.Type = Logical.Type,
+            Int8.Type = Int8.Type,
+            Int16.Type = Int16.Type,
+            Int32.Type = Int32.Type,
+            Int64.Type = Int64.Type,
+            Single.Type = Single.Type,
+            Double.Type = Double.Type,
+            Decimal.Type = Decimal.Type,
+            Currency.Type = Currency.Type,
+            Percentage.Type = Percentage.Type,
+            Guid.Type = Guid.Type,
+            Date.Type = Date.Type,
+            DateTime.Type = DateTime.Type,
+            DateTimeZone.Type = DateTimeZone.Type,
+            Time.Type = Time.Type,
+            Table.Type = Table.Type
+        ]
+    in
+    Source,
+
     #"TableSchema" = 
     let
         ExpressionText = "type table [" & Text.Combine(metadata_columns[TableDataType], ", ") & "]",
         BufferedExpression = List.Buffer({ExpressionText}){0},
-        TableSchema = Expression.Evaluate(BufferedExpression, #shared)
+        TableSchema = Expression.Evaluate(BufferedExpression, PQ_DataTypes)
     in
         TableSchema,
 
@@ -37,9 +76,10 @@ let
         #"Filtered Rows" = Table.SelectRows(Source, each Text.Contains([Full_Path], Delimiter & "_delta_log" & Delimiter)),
         #"Added Version" = Table.AddColumn(#"Filtered Rows", "Version", each try Int64.From(Text.BeforeDelimiter([File_Name], ".")) otherwise -1, Int64.Type),
         #"Filtered RequestedVersion" = if DeltaTableVersion = null then #"Added Version" else Table.SelectRows(#"Added Version", each [Version] <= DeltaTableVersion),
-        buffered = Table.Buffer(#"Filtered RequestedVersion")
+        BufferedTable = Table.Buffer(#"Filtered RequestedVersion"),
+        BufferedContent = Table.TransformColumns(BufferedTable,{{"Content", Binary.Buffer}})
     in
-        buffered,
+        BufferedContent,
 
     #"DeltaTablePath" = 
     let
@@ -152,7 +192,7 @@ let
         #"Buffered Fields",
 
     #"Data" = 
-    let
+        let
         Source = #"Logs ALL",
         #"Added Counter" = Table.AddColumn(Source, "Counter", each if [remove] <> null then -1 else if [add] <> null then 1 else null, Int8.Type),
         #"Added file_name" = Table.AddColumn(#"Added Counter", "file_name", each if [add] <> null then Record.Field([add], "path") else if [remove] <> null then Record.Field([remove], "path") else null, Text.Type),
@@ -162,7 +202,7 @@ let
         #"Grouped Rows1" = Table.Group(#"Added partitionValuesJSON", {"file_name"}, {{"partitionValuesJSON", each List.Max([partitionValuesJSON]), type nullable text}, {"isRelevant", each List.Sum([Counter]), type nullable text}}),
         #"Relevant Files" = Table.SelectRows(#"Grouped Rows1", each ([isRelevant] > 0)),
         #"Added partitionValuesTable2" = Table.AddColumn(#"Relevant Files", "partitionValuesTable", each try Table.FromRecords(Json.Document([partitionValuesJSON])) otherwise null),
-        #"Added partitionValuesRecord" = Table.AddColumn(#"Added partitionValuesTable2", "partitionValuesRecord", each Record.TransformFields(Record.FromTable([partitionValuesTable]), Table.SelectRows(#"metadata_columns", each [isPartitionedBy] = true)[ColumnTransformation]), Expression.Evaluate("type [" & Text.Combine(Table.SelectRows(#"metadata_columns", each [isPartitionedBy] = true)[TableDataType], ", ") & "]", #shared)),
+        #"Added partitionValuesRecord" = Table.AddColumn(#"Added partitionValuesTable2", "partitionValuesRecord", each Record.TransformFields(Record.FromTable([partitionValuesTable]), Table.SelectRows(#"metadata_columns", each [isPartitionedBy] = true)[ColumnTransformation]), Expression.Evaluate("type [" & Text.Combine(Table.SelectRows(#"metadata_columns", each [isPartitionedBy] = true)[TableDataType], ", ") & "]", PQ_DataTypes)),
         #"Filtered Rows1" = Table.SelectRows(#"Added partitionValuesRecord", each PartitionFilterFunction([partitionValuesRecord])),
         #"Expanded partitionValuesRecord" = Table.ExpandRecordColumn(#"Filtered Rows1", "partitionValuesRecord", Table.SelectRows(#"metadata_columns", each [isPartitionedBy] = true)[name]),
         #"Added Full_Path" = Table.AddColumn(#"Expanded partitionValuesRecord", "Full_Path", each Text.Replace(DeltaTablePath & Text.Replace([file_name], "=", "%3D"), "/", Delimiter), Text.Type),
@@ -171,7 +211,8 @@ let
         #"Merged Queries" = Table.NestedJoin(#"Buffered RelevantFiles", {"Full_Path"}, DeltaTableFolderContent_wFullPath, {"Full_Path"}, "DeltaTable Folder", JoinKind.Inner),
         #"Removed Columns" = Table.RemoveColumns(#"Merged Queries",{"Full_Path"}),
         #"Expanded DeltaTable Folder" = Table.ExpandTableColumn(#"Removed Columns", "DeltaTable Folder", {"Content"}, {"Content"}),
-        #"Added Custom1" = Table.AddColumn(#"Expanded DeltaTable Folder", "Data", each Parquet.Document([Content]), Expression.Evaluate("type table [" & Text.Combine(metadata_columns[TableDataType], ", ") & "]", #shared)),
+        BufferFile = if UseFileBuffer then Table.TransformColumns(#"Expanded DeltaTable Folder",{{"Content", Binary.Buffer}}) else #"Expanded DeltaTable Folder",
+        #"Added Custom1" = Table.AddColumn(BufferFile, "Data", each Parquet.Document([Content]), Expression.Evaluate("type table [" & Text.Combine(metadata_columns[TableDataType], ", ") & "]", PQ_DataTypes)),
         #"Removed Columns1" = Table.RemoveColumns(#"Added Custom1",{"Content"}),
         #"Expanded Data" = Table.ExpandTableColumn(#"Removed Columns1", "Data", Table.SelectRows(metadata_columns, each not [isPartitionedBy])[name]),
         #"Reordered Columns" = Table.ReorderColumns(#"Expanded Data", metadata_columns[name])

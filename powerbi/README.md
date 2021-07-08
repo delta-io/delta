@@ -3,12 +3,14 @@ The provided PowerQuery/M function allows you to read a Delta Lake table directl
 
 # Features
 - Read Delta Lake table into PowerBI without having a cluster (Spark, Databricks, Azure Synapse) up and running
+- Online/Scheduled Refresh in the PowerBI service 
 - Support all storage systems that are supported by PowerBI
     - Azure Data Lake Store (tested)
     - Azure Blob Storage (tested)
     - Local Folder or Network Share (tested)
     - AWS S3 (not yet tested)
-- Support for Partition Elimination to leverage the partitioning scheme of the Delta Lake table
+    - Local Hadoop / HDFS (partially tested, check `UseFileBuffer` option)
+- Support for Partition Elimination to leverage the partitioning schema of the Delta Lake table
 - Support for Delta Lake time travel - e.g. `VERSION AS OF`
 
 # Usage
@@ -35,7 +37,7 @@ The function supports two parameters of which the second is optional:
 
 
 ## Parameter DeltaTableFolderContent
-A table that contains a file/folder listing of your Delta Lake table. Power BI supports a wide set of storage services which you can use for this. There are however some mandatory things this file/folder listing has to cotain:
+A table that contains a file/folder listing of your Delta Lake table. PowerBI supports a wide set of storage services which you can use for this. There are however some mandatory things this file/folder listing has to cotain:
 - a sub-folder `_delta_log` (which holds the Delta Log files and also ensures that the parent folder is the root of the Delta Lake table)
 - mandatory columns `Name`, `Folder Path`, `Content`, `Extension`
 - a column called `file_name`
@@ -44,6 +46,7 @@ These are all returned by default for common Storage connectors like Azure Data 
 ## Parameter DeltaTableOptions
 An optional record that be specified to control the following options:
 - `Version` - a numeric value that defines historic specific version of the Delta Lake table you want to read. This is similar to specifying `VERSION AS OF` when querying the Delta Lake table via SQL. Default is the most recent/current version.
+- `UseFileBuffer` - some data sources do not support streaming of binary files and you may receive an error message like **"Parquet.Document cannot be used with streamed binary values."**. To mitigate this issue, you can set `UseFileBuffer=true`. Details about this issue and implications are desribed [here](https://blog.crossjoin.co.uk/2021/03/07/parquet-files-in-power-bi-power-query-and-the-streamed-binary-values-error/)
 - `PartitionFilterFunction` - a fuction that is used to filter out partitions before actually reading the files. The function has to take 1 parameter of type `record` and must return a `logical` type (true/false). The record that is passed in can then be used to specify the partition filter. For each file in the delta table the metadata is checked against this function. If it is not matched, it is discarded from the final list of files that make up the Delta Lake table.
 Assuming your Delta Lake table is partitioned by Year and Month and you want to filter for `Year=2021` and `Month="Jan"` your function may look like this:
 ```
