@@ -113,9 +113,16 @@ case class WriteIntoDelta(
 
     val newFiles = txn.writeFiles(data, Some(options))
     val addFiles = newFiles.collect { case a: AddFile => a }
+    def useDynamicPartitionOverwriteMode =
+      txn.metadata.partitionColumns.nonEmpty && options.isDynamicPartitionOverwriteMode
     val deletedFiles = (mode, partitionFilters) match {
       case (SaveMode.Overwrite, None) =>
-        txn.filterFiles().map(_.remove)
+        if (useDynamicPartitionOverwriteMode) {
+          val newPartitions = addFiles.map(_.partitionValues).toSet
+          txn.filterFiles(newPartitions).map(_.remove)
+        } else {
+          txn.filterFiles().map(_.remove)
+        }
       case (SaveMode.Overwrite, Some(predicates)) =>
         // Check to make sure the files we wrote out were actually valid.
         val matchingFiles = DeltaLog.filterFileList(
@@ -129,7 +136,15 @@ case class WriteIntoDelta(
           throw DeltaErrors.replaceWhereMismatchException(replaceWhere.get, badPartitions)
         }
 
-        txn.filterFiles(predicates).map(_.remove)
+        if (useDynamicPartitionOverwriteMode) {
+          // if a replaceWhere predicate is provided and partitionOverwriteMode=dynamic then
+          // 1) replaceWhere still makes sure the newly inserted values fit the predicate, but
+          // 2) dynamic partition overwrite determines what files are deleted
+          val newPartitions = addFiles.map(_.partitionValues).toSet
+          txn.filterFiles(newPartitions).map(_.remove)
+        } else {
+          txn.filterFiles(predicates).map(_.remove)
+        }
       case _ => Nil
     }
 
