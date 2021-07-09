@@ -463,7 +463,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
           op.jsonEncodedValues,
           Map.empty,
           Some(readVersion).filter(_ >= 0),
-          None,
+          Option(isolationLevelToUse.toString),
           Some(isBlindAppend),
           getOperationMetrics(op),
           getUserMetadata(op))
@@ -735,11 +735,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       numCdcFiles = 0,
       cdcBytesNew = 0,
       protocol = postCommitSnapshot.protocol,
-      info = Option(commitInfo).map(_.copy(readVersion = None, isolationLevel = None)).orNull,
+      info = Option(commitInfo)
+        .map(_.copy(readVersion = None, isolationLevel = Option(isolationLevel.toString))).orNull,
       newMetadata = newMetadata,
       numAbsolutePathsInAdd = numAbsolutePaths,
       numDistinctPartitionsInAdd = distinctPartitions.size,
-      isolationLevel = null)
+      isolationLevel = isolationLevel.toString)
     recordDeltaEvent(deltaLog, "delta.commit.stats", data = stats)
 
     attemptVersion

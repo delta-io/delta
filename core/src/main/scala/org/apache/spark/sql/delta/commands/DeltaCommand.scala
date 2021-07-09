@@ -327,7 +327,7 @@ trait DeltaCommand extends DeltaLogging {
         numCdcFiles = 0,
         cdcBytesNew = 0,
         protocol = postCommitSnapshot.protocol,
-        info = Option(commitInfo).map(_.copy(readVersion = None, isolationLevel = None)).orNull,
+        info = Option(commitInfo).map(_.copy(readVersion = None)).orNull,
         newMetadata = Some(metadata),
         numAbsolutePathsInAdd = numAbsolutePaths,
         numDistinctPartitionsInAdd = -1, // not tracking distinct partitions as of now
