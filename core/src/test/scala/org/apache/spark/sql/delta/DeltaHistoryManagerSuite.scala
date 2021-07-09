@@ -150,7 +150,7 @@ trait DeltaTimeTravelTests extends QueryTest
   }
 }
 
-abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests // Edge // Edge
+abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
   {
 
 }

@@ -65,7 +65,7 @@ trait ImplicitMetadataOperation extends DeltaLogging {
         } else {
           Set.empty[String]
         }
-      SchemaUtils.mergeSchemas(
+      SchemaMergingUtils.mergeSchemas(
         txn.metadata.schema,
         dataSchema,
         fixedTypeColumns = fixedTypeColumns)

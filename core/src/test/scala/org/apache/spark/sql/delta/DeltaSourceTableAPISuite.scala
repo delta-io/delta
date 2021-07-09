@@ -29,7 +29,7 @@ import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.streaming.{StreamingQuery, StreamTest}
 import org.apache.spark.util.Utils
 
-class DeltaSourceTableAPISuite extends StreamTest // Edge
+class DeltaSourceTableAPISuite extends StreamTest
   with DeltaSQLCommandTest {
 
   override def beforeAll(): Unit = {
