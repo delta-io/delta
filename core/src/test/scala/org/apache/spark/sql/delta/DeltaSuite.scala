@@ -173,7 +173,7 @@ class DeltaSuite extends QueryTest
     val e = intercept[AnalysisException] {
       spark.read.format("delta").load(tempDir.toString).collect()
     }.getMessage
-    assert(e.contains("doesn't exist"))
+    assert(e.contains("is not a Delta table"))
   }
 
   test("append then read") {
@@ -1359,5 +1359,24 @@ class DeltaSuite extends QueryTest
         .saveAsTable(table)
       checkAnswer(sql(s"SELECT `a.b`, `c.d`, a.b from $table"), Row("a", "b", "c") :: Nil)
     }
+  }
+
+  test("need to update DeltaLog on DataFrameReader.load() code path") {
+    // Due to possible race conditions (like in mounting/unmounting paths) there might be an initial
+    // snapshot that gets cached for a table that should have a valid (non-initial) snapshot. In
+    // such a case we need to call deltaLog.update() in the DataFrame read paths to update the
+    // initial snapshot to a valid one.
+    //
+    // We simulate a cached InitialSnapshot + valid delta table by creating an empty DeltaLog
+    // (which creates an InitialSnapshot cached for that path) then move an actual Delta table's
+    // transaction log into the path for the empty log.
+    val dir1 = Utils.createTempDir()
+    val dir2 = Utils.createTempDir()
+    val log = DeltaLog.forTable(spark, dir1)
+    assert(!log.tableExists)
+    spark.range(10).write.format("delta").save(dir2.getCanonicalPath)
+    // rename dir2 to dir1 then read
+    dir2.renameTo(dir1)
+    checkAnswer(spark.read.format("delta").load(dir1.getCanonicalPath), spark.range(10).toDF)
   }
 }

@@ -18,13 +18,11 @@ package org.apache.spark.sql.delta
 
 import scala.collection.JavaConverters._
 
-
 // scalastyle:off import.ordering.noEmptyLine
-
 import org.apache.spark.sql.delta.DeltaErrors.{TemporallyUnstableInputException, TimestampEarlierThanCommitRetentionException}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
-import org.apache.spark.sql.delta.files.TahoeLogFileIndex
+import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaDataSource
@@ -54,7 +52,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  * Analysis rules for Delta. Currently, these rules enable schema enforcement / evolution with
  * INSERT INTO.
  */
-class DeltaAnalysis(session: SparkSession, conf: SQLConf)
+class DeltaAnalysis(session: SparkSession)
   extends Rule[LogicalPlan] with AnalysisHelper with DeltaLogging {
 
   import session.sessionState.analyzer.SessionCatalogAndIdentifier
@@ -156,7 +154,8 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
             s"WHEN NOT MATCHED clause in MERGE INTO.")
       }
       // rewrites Delta from V2 to V1
-      val newTarget = stripTempViewWrapper(target).transformUp { case DeltaRelation(lr) => lr }
+      val newTarget =
+        stripTempViewForMergeWrapper(target).transformUp { case DeltaRelation(lr) => lr }
       // Even if we're merging into a non-Delta target, we will catch it later and throw an
       // exception.
       val deltaMerge =
@@ -168,7 +167,7 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
       val d = if (deltaMerge.childrenResolved && !deltaMerge.resolved) {
         DeltaMergeInto.resolveReferences(deltaMerge, conf)(tryResolveReferences(session))
       } else deltaMerge
-      d.copy(target = stripTempViewWrapper(d.target))
+      d.copy(target = stripTempViewForMergeWrapper(d.target))
 
     case AlterTableAddConstraintStatement(
           original @ SessionCatalogAndIdentifier(catalog, ident), constraintName, expr) =>
@@ -362,8 +361,11 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
   private def stripTempViewWrapper(plan: LogicalPlan): LogicalPlan = {
     DeltaViewHelper.stripTempView(plan, conf)
   }
-}
 
+  private def stripTempViewForMergeWrapper(plan: LogicalPlan): LogicalPlan = {
+    DeltaViewHelper.stripTempViewForMerge(plan, conf)
+  }
+}
 
 /** Matchers for dealing with a Delta table. */
 object DeltaRelation {

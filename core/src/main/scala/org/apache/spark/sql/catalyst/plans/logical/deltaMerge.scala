@@ -18,6 +18,7 @@ package org.apache.spark.sql.catalyst.plans.logical
 
 import java.util.Locale
 
+import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.AnalysisException
@@ -227,7 +228,9 @@ case class DeltaMergeInto(
     condition: Expression,
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
     notMatchedClauses: Seq[DeltaMergeIntoInsertClause],
-    migrateSchema: Boolean) extends Command with SupportsSubquery {
+    migrateSchema: Boolean,
+    finalSchema: Option[StructType])
+  extends Command with SupportsSubquery {
 
   (matchedClauses ++ notMatchedClauses).foreach(_.verifyActions())
 
@@ -271,12 +274,13 @@ object DeltaMergeInto {
       condition,
       whenClauses.collect { case x: DeltaMergeIntoMatchedClause => x },
       whenClauses.collect { case x: DeltaMergeIntoInsertClause => x },
-      migrateSchema = false)
+      migrateSchema = false,
+      finalSchema = Some(target.schema))
   }
 
   def resolveReferences(merge: DeltaMergeInto, conf: SQLConf)(
       resolveExpr: (Expression, LogicalPlan) => Expression): DeltaMergeInto = {
-    val DeltaMergeInto(target, source, condition, matchedClauses, notMatchedClause, _) = merge
+    val DeltaMergeInto(target, source, condition, matchedClauses, notMatchedClause, _, _) = merge
 
     // We must do manual resolution as the expressions in different clauses of the MERGE have
     // visibility of the source, the target or both. Additionally, the resolution logic operates
@@ -403,10 +407,24 @@ object DeltaMergeInto {
     }
     val containsStarAction =
       (matchedClauses ++ notMatchedClause).flatMap(_.actions).exists(_.isInstanceOf[UnresolvedStar])
+
+    val migrateSchema = canAutoMigrate && containsStarAction
+
+    val finalSchema = if (migrateSchema) {
+      // The implicit conversions flag allows any type to be merged from source to target if Spark
+      // SQL considers the source type implicitly castable to the target. Normally, mergeSchemas
+      // enforces Parquet-level write compatibility, which would mean an INT source can't be merged
+      // into a LONG target.
+      SchemaMergingUtils.mergeSchemas(target.schema, source.schema, allowImplicitConversions = true)
+    } else {
+      target.schema
+    }
+
     val resolvedMerge = DeltaMergeInto(
       target, source, resolvedCond,
       resolvedMatchedClauses, resolvedNotMatchedClause,
-      migrateSchema = canAutoMigrate && containsStarAction)
+      migrateSchema = migrateSchema,
+      finalSchema = Some(finalSchema))
 
     // Its possible that pre-resolved expressions (e.g. `sourceDF("key") = targetDF("key")`) have
     // attribute references that are not present in the output attributes of the children (i.e.,

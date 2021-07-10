@@ -21,7 +21,6 @@ import java.io.File
 
 import scala.collection.JavaConverters._
 
- // Edge
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaOperations
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}

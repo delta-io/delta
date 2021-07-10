@@ -97,8 +97,22 @@ class DeltaTableSuite extends QueryTest
   }
 
   test("forName - with delta.`path`") {
+    // for name should work on Delta table paths
     withTempDir { dir =>
       testData.write.format("delta").save(dir.getAbsolutePath)
+      checkAnswer(
+        DeltaTable.forName(spark, s"delta.`$dir`").toDF,
+        testData.collect().toSeq)
+      checkAnswer(
+        DeltaTable.forName(s"delta.`$dir`").toDF,
+        testData.collect().toSeq)
+    }
+
+    // using forName on non Delta Table paths should fail
+    withTempDir { dir =>
+      testForNameOnNonDeltaName(s"delta.`$dir`")
+
+      testData.write.format("parquet").mode("overwrite").save(dir.getAbsolutePath)
       testForNameOnNonDeltaName(s"delta.`$dir`")
     }
   }
