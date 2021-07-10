@@ -128,8 +128,7 @@ class DeltaColumnBuilder private[tables](
     }
     val fieldMetadata = metadataBuilder.build()
     if (dataType == null) {
-      throw DeltaErrors.analysisException("dataType should not be null for a column," +
-        " Please Provide dataType of the column ")
+      throw DeltaErrors.analysisException(s"The data type of column $colName is not provided")
     }
     StructField(
       colName,
