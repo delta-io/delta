@@ -232,10 +232,10 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
     val e = intercept[AnalysisException] {
       DeltaTable.columnBuilder("value")
         .generatedAlwaysAs("true")
-        . nullable(true)
+        .nullable(true)
         .build()
     }
-    assert(e.getMessage.equals(s"The data type of column value is not provided"))
+    assert(e.getMessage == "The data type of the column value is not provided")
   }
 
   testCreateTable("create_table") { table =>
