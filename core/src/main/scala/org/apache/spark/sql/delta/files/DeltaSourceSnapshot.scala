@@ -81,12 +81,13 @@ trait SnapshotIterator {
 
   def iterator(): Iterator[IndexedFile] = {
     import spark.implicits._
+    import collection.JavaConverters._
     if (result == null) {
       result = DeltaLog.filterFileList(
         snapshot.metadata.partitionSchema,
         initialFiles.toDF(),
         partitionFilters,
-        Seq("add")).as[IndexedFile].collect().toIterable
+        Seq("add")).as[IndexedFile].toLocalIterator().asScala.toIterable
     }
     // This will always start from the beginning and re-use resources. If any exceptions were to
     // be thrown, the stream would stop, we would call stop on the source, and that will make
