@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta.files
 
 import scala.collection.mutable.ListBuffer
-
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.constraints.{Constraint, Constraints, DeltaInvariantCheckerExec}
@@ -26,13 +25,13 @@ import org.apache.spark.sql.delta.schema._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.SparkException
 import org.apache.spark.sql.Dataset
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.datasources.{BasicWriteJobStatsTracker, FileFormatWriter, WriteJobStatsTracker}
-import org.apache.spark.sql.types.{ArrayType, MapType, StructType}
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
 
 /**
@@ -131,15 +130,11 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     partitionColumns
   }
 
-  def writeFiles(data: Dataset[_], writeOptions: Option[DeltaOptions]): Seq[FileAction] = {
-    writeFiles(data)
-  }
-
   /**
    * Writes out the dataframe after performing schema validation. Returns a list of
    * actions to append these files to the reservoir.
    */
-  def writeFiles(data: Dataset[_]): Seq[FileAction] = {
+  def writeFiles(data: Dataset[_], writeOptions: Option[DeltaOptions] = None): Seq[FileAction] = {
     if (DeltaConfigs.CHANGE_DATA_CAPTURE.fromMetaData(metadata) ||
         DeltaConfigs.CHANGE_DATA_CAPTURE_LEGACY.fromMetaData(metadata)) {
       throw DeltaErrors.cdcWriteNotAllowedInThisVersion()
@@ -150,6 +145,11 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     val spark = data.sparkSession
     val partitionSchema = metadata.partitionSchema
     val outputPath = deltaLog.dataPath
+
+    val (options, _) = writeOptions match {
+      case None => (Map.empty[String, String], null.asInstanceOf[SQLConf])
+      case Some(writeOptions) => (writeOptions.options, writeOptions.sqlConf)
+    }
 
     val (queryExecution, output, generatedColumnConstraints) =
       normalizeData(deltaLog, data, metadata.partitionColumns)
@@ -189,7 +189,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
           partitionColumns = partitioningColumns,
           bucketSpec = None,
           statsTrackers = statsTrackers,
-          options = Map.empty)
+          options = options)
       } catch {
         case s: SparkException =>
           // Pull an InvariantViolationException up to the top level if it was the root cause.
