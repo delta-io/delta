@@ -228,6 +228,16 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
     }
   }
 
+  test("test addColumn using columnBuilder, without dataType") {
+    val e = intercept[AnalysisException] {
+      DeltaTable.columnBuilder("value")
+        .generatedAlwaysAs("true")
+        .nullable(true)
+        .build()
+    }
+    assert(e.getMessage == "The data type of the column value is not provided")
+  }
+
   testCreateTable("create_table") { table =>
     defaultCreateTableBuilder(ifNotExists = false, Some(table)).execute()
   }
