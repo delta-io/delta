@@ -35,10 +35,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 
 class DeltaGenerateSymlinkManifestSuite
   extends DeltaGenerateSymlinkManifestSuiteBase
-  with DeltaSQLCommandTest
-
-trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
-  with SharedSparkSession {
+  with DeltaSQLCommandTest {
 
   import testImplicits._
 
@@ -467,6 +464,12 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
       assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 2)
     }
   }
+}
+
+trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
+  with SharedSparkSession {
+
+  import testImplicits._
 
   /**
    * Assert that the manifest files in the table meet the expectations.

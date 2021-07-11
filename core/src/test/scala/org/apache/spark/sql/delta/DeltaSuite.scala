@@ -1003,6 +1003,21 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("postCommitHookClass conf from table metadata") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      withSQLConf(
+        "spark.databricks.delta.properties.defaults.postCommitHookClass" ->
+          classOf[ExternalPostCommitHook].getName) {
+        spark.range(5).write.format("delta").save(path)
+
+        val tableConfigs = DeltaLog.forTable(spark, path).update().metadata.configuration
+        assert(tableConfigs.get("delta.postCommitHookClass") ==
+          Some(classOf[ExternalPostCommitHook].getName))
+      }
+    }
+  }
+
   test("SC-24982 - initial snapshot has zero partitions") {
     withTempDir { tempDir =>
       val deltaLog = DeltaLog.forTable(spark, tempDir)

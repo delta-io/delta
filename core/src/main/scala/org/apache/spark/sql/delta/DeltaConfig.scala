@@ -394,6 +394,16 @@ trait DeltaConfigsBase extends DeltaLogging {
     _ => true,
     "needs to be a boolean.")
 
+  val EXTERNAL_POST_COMMIT_HOOK_CLASS = buildConfig[Option[String]](
+    "postCommitHookClass",
+    null,
+    v => Option(v),
+    a => a.nonEmpty,
+    "This class must be a subclass of PostCommitHook, " +
+      "and must have a zero-arg constructor. " +
+      "Note: This configuration will not be changed for next transactions, " +
+      "once it is added to a delta table, ALTER TABLE is needed to drop or change it.")
+
   /**
    * When enabled, we will write file statistics in the checkpoint in JSON format as the "stats"
    * column.
