@@ -858,7 +858,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
     }
   }
 
-  private lazy val logPrefix: String = {
+  protected lazy val logPrefix: String = {
     def truncate(uuid: String): String = uuid.split("-").head
     s"[tableId=${truncate(snapshot.metadata.id)},txnId=${truncate(txnId)}] "
   }

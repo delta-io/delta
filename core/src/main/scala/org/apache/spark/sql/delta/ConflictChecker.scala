@@ -77,6 +77,7 @@ private[delta] case class WinningCommitSummary(actions: Seq[Action], commitVersi
   }
   val onlyAddFiles: Boolean = actions.collect { case f: FileAction => f }
     .forall(_.isInstanceOf[AddFile])
+
 }
 
 private[delta] class ConflictChecker(
