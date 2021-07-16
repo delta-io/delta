@@ -728,8 +728,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       numCdcFiles = 0,
       cdcBytesNew = 0,
       protocol = postCommitSnapshot.protocol,
-      info = Option(commitInfo)
-        .map(_.copy(readVersion = None, isolationLevel = Option(isolationLevel.toString))).orNull,
+      info = Option(commitInfo).map(_.copy(readVersion = None)).orNull,
       newMetadata = newMetadata,
       numAbsolutePathsInAdd = numAbsolutePaths,
       numDistinctPartitionsInAdd = distinctPartitions.size,

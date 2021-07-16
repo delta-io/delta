@@ -765,7 +765,7 @@ class OptimisticTransactionSuite extends QueryTest with SharedSparkSession {
       txn.commit(addA :: Nil, ManualUpdate)
 
       val isolationLevels = log.history.getHistory(Some(10)).map(_.isolationLevel)
-      assert(isolationLevels === Seq(Option("Serializable"), Option("SnapshotIsolation")))
+      assert(isolationLevels === Seq(Serializable, SnapshotIsolation).map(Some.apply))
     }
   }
 }
