@@ -380,7 +380,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
              |ALTER TABLE $tableName ADD COLUMNS (m.key.mkv3 long)
          """.stripMargin)
       }
-      assert(ex.getMessage.contains("Field name m.key.mkv3 is invalid, m.key is not a struct") ||
+      assert(ex.getMessage.contains("Field name m.key.mkv3 is invalid: m.key is not a struct") ||
         ex.getMessage.contains("Cannot add m.key.mkv3"))
 
       ex = intercept[AnalysisException] {
@@ -390,7 +390,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
          """.stripMargin)
       }
       assert(ex.getMessage.contains("Cannot add m.value.mkv3") ||
-        ex.getMessage.contains("Field name m.value.mkv3 is invalid, m.value is not a struct"))
+        ex.getMessage.contains("Field name m.value.mkv3 is invalid: m.value is not a struct"))
     }
   }
 
@@ -472,7 +472,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
              |ALTER TABLE $tableName ADD COLUMNS (m.mkv3 long)
            """.stripMargin)
       }
-      assert(ex.getMessage.contains("Field name m.mkv3 is invalid, m is not a struct") ||
+      assert(ex.getMessage.contains("Field name m.mkv3 is invalid: m is not a struct") ||
         ex.getMessage.contains("Cannot add m.mkv3"))
     }
   }
@@ -536,7 +536,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       val ex = intercept[AnalysisException] {
         sql(s"ALTER TABLE $tableName ADD COLUMNS (v2.x long)")
       }
-      assert(ex.getMessage.contains("Field name v2.x is invalid, v2 is not a struct") ||
+      assert(ex.getMessage.contains("Field name v2.x is invalid: v2 is not a struct") ||
         ex.getMessage.contains("Cannot add v2.x"))
     }
   }
