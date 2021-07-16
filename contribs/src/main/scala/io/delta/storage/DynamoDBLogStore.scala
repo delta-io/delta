@@ -61,8 +61,8 @@ import com.amazonaws.regions.Regions
   - spark.delta.DynamoDBLogStore.tableName - table name (defaults to 'delta_log')
   - spark.delta.DynamoDBLogStore.endpoint - endpoint (defaults to 'Amazon AWS')
   - spark.delta.DynamoDBLogStore.region - AWS region (defaults to 'us-east-1')
-  - spark.delta.DynamoDBLogStore.fakeAuth - use for dynamodb-local (defaults to 'false')
-
+  - spark.delta.DynamoDBLogStore.credentials.provider - name of class implementing
+    `com.amazonaws.auth.AWSCredentialsProvider` (defaults to 'DefaultAWSCredentialsProviderChain')
 */
 class DynamoDBLogStore(
   sparkConf: SparkConf,
@@ -141,12 +141,17 @@ object DynamoDBLogStore {
 
   def getClient(sparkConf: SparkConf): AmazonDynamoDBClient = {
 
-    var client = new AmazonDynamoDBClient()
-    if (sparkConf.get(s"${confPrefix}fakeAuth", "false") == "true") {
-      val auth = new BasicAWSCredentials("fakeMyKeyId", "fakeSecretAccessKey")
-      client = new AmazonDynamoDBClient(auth)
-    }
-
+    val credentialsProviderName = sparkConf.get(
+      s"${confPrefix}credentials.provider",
+      "com.amazonaws.auth.DefaultAWSCredentialsProviderChain"
+    )
+    // suggested org.apache.spark.util.Utils.classForName cannot be used as is private
+    // scalastyle:off classforname
+    val authClass = Class.forName(credentialsProviderName)
+    // scalastyle:on classforname
+    val auth = authClass.getConstructor().newInstance()
+      .asInstanceOf[com.amazonaws.auth.AWSCredentialsProvider];
+    var client = new AmazonDynamoDBClient(auth)
     val regionName = sparkConf.get(s"${confPrefix}region", "us-east-1")
     if (regionName != "") {
       client.setRegion(Region.getRegion(Regions.fromName(regionName)))
