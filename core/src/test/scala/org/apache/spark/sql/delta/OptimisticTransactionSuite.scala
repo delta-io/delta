@@ -277,7 +277,8 @@ class OptimisticTransactionSuite
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
       // Initialize the log.
-      log.startTransaction().commitManually()
+
+      log.startTransaction().commit(Seq(Metadata()), ManualUpdate)
 
       val txn = log.startTransaction()
       txn.commit(addA :: Nil, ManualUpdate)
