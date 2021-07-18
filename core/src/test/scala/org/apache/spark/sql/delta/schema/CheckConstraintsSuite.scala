@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta.schema
 import scala.collection.JavaConverters._
 
 // scalastyle:off import.ordering.noEmptyLine
- // Edge
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 

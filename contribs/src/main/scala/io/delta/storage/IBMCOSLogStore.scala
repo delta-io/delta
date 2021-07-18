@@ -61,14 +61,10 @@ class IBMCOSLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
     if (exists && overwrite == false) {
       throw new FileAlreadyExistsException(path.toString)
     } else {
-      // create is atomic
+      // write is atomic when overwrite == false
       val stream = fs.create(path, overwrite)
       try {
-        var writeSize = 0L
-        actions.map(_ + "\n").map(_.getBytes(UTF_8)).foreach(action => {
-          stream.write(action)
-          writeSize += action.length
-        })
+        actions.map(_ + "\n").map(_.getBytes(UTF_8)).foreach(stream.write)
         stream.close()
       } catch {
         case e: IOException if isPreconditionFailure(e) =>

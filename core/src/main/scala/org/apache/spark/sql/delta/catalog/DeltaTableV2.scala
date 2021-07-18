@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, Delta
 import org.apache.spark.sql.delta.GeneratedColumn
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils}
 import org.apache.hadoop.fs.Path
 
@@ -101,7 +102,9 @@ case class DeltaTableV2(
   }
 
   private lazy val tableSchema: StructType =
-    GeneratedColumn.removeGenerationExpressions(snapshot.schema)
+    GeneratedColumn.removeGenerationExpressions(
+      SchemaUtils.dropNullTypeColumns(snapshot.schema))
+
 
   override def schema(): StructType = tableSchema
 
@@ -136,6 +139,8 @@ case class DeltaTableV2(
    * paths.
    */
   def toBaseRelation: BaseRelation = {
+    // force update() if necessary in DataFrameReader.load code
+    snapshot
     if (!deltaLog.tableExists) {
       val id = catalogTable.map(ct => DeltaTableIdentifier(table = Some(ct.identifier)))
         .getOrElse(DeltaTableIdentifier(path = Some(path.toString)))
