@@ -70,7 +70,9 @@ case class DeltaInvariantCheckerExec(
     child: SparkPlan,
     constraints: Seq[Constraint]) extends UnaryExecNode {
 
-  private def spark: SparkSession = sqlContext.sparkSession
+  // TODO: we can replace `SparkSession.active` with `session` once OSS Delta
+  //       upgrades to Spark 3.2
+  private def spark: SparkSession = SparkSession.active
 
   override def output: Seq[Attribute] = child.output
 

@@ -39,8 +39,9 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, Cast, NamedExpression}
-import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project, View}
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project, SubqueryAlias, View}
 import org.apache.spark.sql.internal.SQLConf
 
 object DeltaViewHelper {
@@ -85,5 +86,11 @@ object DeltaViewHelper {
           qualifier = attr.qualifier, explicitMetadata = Some(attr.metadata))
       case (_, originAttr) => originAttr
     }
+  }
+
+  def stripTempViewForMerge(plan: LogicalPlan, conf: SQLConf): LogicalPlan = {
+    // Check that the two expression lists have the same names and types in the same order, and
+    // are either attributes or direct casts of attributes.
+    stripTempView(plan, conf)
   }
 }

@@ -76,7 +76,7 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
       new DeltaSqlParser(parser)
     }
     extensions.injectResolutionRule { session =>
-      new DeltaAnalysis(session, session.sessionState.conf)
+      new DeltaAnalysis(session)
     }
     extensions.injectCheckRule { session =>
       new DeltaUnsupportedOperationsCheck(session)

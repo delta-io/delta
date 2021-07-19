@@ -21,7 +21,6 @@ import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.DebugFilesystem // EDGE
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions.typedLit
 import org.apache.spark.sql.internal.SQLConf

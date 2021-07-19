@@ -20,9 +20,11 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.SQLConfHelper
 import org.apache.spark.sql.catalyst.analysis.{CastSupport, Resolver}
-import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Cast, CreateNamedStruct, Expression, ExtractValue, GetStructField, Literal, NamedExpression}
+import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, CreateNamedStruct, Expression, ExtractValue, GetStructField, Literal, NamedExpression}
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
 import org.apache.spark.sql.types._
 
 /**
@@ -203,7 +205,7 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
                 Alias(GetStructField(fieldExpr, ordinal, Some(field.name)), field.name)()
               }
               // Recursively apply update operations to the children
-              val updatedChildExprs = generateUpdateExpressions(
+              val targetExprs = generateUpdateExpressions(
                 childExprs,
                 prefixMatchedOps.map(u => u.copy(targetColNameParts = u.targetColNameParts.tail)),
                 resolver,
@@ -218,7 +220,7 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
                 })
               // Reconstruct the expression for targetCol using its possibly updated children
               val namedStructExprs = fields
-                .zip(updatedChildExprs)
+                .zip(targetExprs)
                 .flatMap { case (field, expr) => Seq(Literal(field.name), expr) }
               Some(CreateNamedStruct(namedStructExprs))
 
@@ -243,5 +245,73 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
       case (nameParts, expr) => UpdateOperation(nameParts, expr)
     }
     generateUpdateExpressions(targetCols, updateOps, resolver, generatedColumns = generatedColumns)
+  }
+
+  /**
+   * Generate update expressions for generated columns that the user doesn't provide a update
+   * expression. For each item in `updateExprs` that's None, we will find its generation expression
+   * from `generatedColumns`. In order to resolve this generation expression, we will create a
+   * fake Project which contains all update expressions and resolve the generation expression with
+   * this project. Source columns of a generation expression will also be replaced with their
+   * corresponding update expressions.
+   *
+   * For example, given a table that has a generated column `g` defined as `c1 + 10`. For the
+   * following update command:
+   *
+   * UPDATE target SET c1 = c2 + 100, c2 = 1000
+   *
+   * We will generate the update expression `(c2 + 100) + 10`` for column `g`. Note: in this update
+   * expression, we should use the old `c2` attribute rather than its new value 1000.
+   *
+   * @param updateTarget The logical plan of the table to be updated.
+   * @param generatedColumns A list of generated columns.
+   * @param updateExprs  The aligned (with `finalSchemaExprs` if not None, or `updateTarget.output`
+   *                     otherwise) update actions.
+   * @param finalSchemaExprs In case of UPDATE in MERGE when schema evolution happened, this is
+   *                         the final schema of the target table. This might not be the same as
+   *                         the output of `updateTarget`.
+   * @return a sequence of update expressions for all of columns in the table.
+   */
+  protected def generateUpdateExprsForGeneratedColumns(
+      updateTarget: LogicalPlan,
+      generatedColumns: Seq[StructField],
+      updateExprs: Seq[Option[Expression]],
+      finalSchemaExprs: Option[Seq[Attribute]] = None): Seq[Expression] = {
+    val targetExprs = finalSchemaExprs.getOrElse(updateTarget.output)
+    assert(
+      targetExprs.size == updateExprs.length,
+      s"'generateUpdateExpressions' should return expressions that are aligned with the column " +
+        s"list. Expected size: ${updateTarget.output.size}, actual size: ${updateExprs.length}")
+    val attrsWithExprs = targetExprs.zip(updateExprs)
+    val exprsForProject = attrsWithExprs.flatMap {
+      case (attr, Some(expr)) =>
+        // Create a named expression so that we can use it in Project
+        val exprForProject = Alias(expr, attr.name)()
+        Some(exprForProject.exprId -> exprForProject)
+      case (_, None) => None
+    }.toMap
+    // Create a fake Project to resolve the generation expressions
+    val fakePlan = Project(exprsForProject.values.toArray[NamedExpression], updateTarget)
+    attrsWithExprs.map {
+      case (_, Some(expr)) => expr
+      case (targetCol, None) =>
+        // `targetCol` is a generated column and the user doesn't provide a update expression.
+        val resolvedExpr =
+          generatedColumns.find(f => conf.resolver(f.name, targetCol.name)) match {
+            case Some(field) =>
+              val expr = GeneratedColumn.getGenerationExpression(field).get
+              resolveReferencesForExpressions(SparkSession.active, expr :: Nil, fakePlan).head
+            case None =>
+              // Should not happen
+              throw new IllegalStateException(s"$targetCol is not a generated column " +
+                s"but is missing its update expression")
+          }
+        // As `resolvedExpr` will refer to attributes in `fakePlan`, we need to manually replace
+        // these attributes with their update expressions.
+        resolvedExpr.transform {
+          case a: AttributeReference if exprsForProject.contains(a.exprId) =>
+            exprsForProject(a.exprId).child
+        }
+    }
   }
 }
