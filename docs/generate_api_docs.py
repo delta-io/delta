@@ -1,6 +1,6 @@
 # !/usr/bin/env python
 #
-#  Copyright 2019 Databricks, Inc.
+#  Copyright (2021) The Delta Lake Project Authors.
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
 #  You may obtain a copy of the License at
@@ -29,8 +29,8 @@ def main():
     # Set up the directories
     docs_root_dir = os.path.dirname(os.path.realpath(__file__))
     repo_root_dir = os.path.dirname(docs_root_dir)
-    scaladoc_gen_dir = repo_root_dir + "/target/scala-2.12/unidoc"
-    javadoc_gen_dir = repo_root_dir + "/target/javaunidoc"
+    scaladoc_gen_dir = repo_root_dir + "/core/target/scala-2.12/unidoc"
+    javadoc_gen_dir = repo_root_dir + "/core/target/javaunidoc"
     all_api_docs_final_dir = docs_root_dir + "/_site/api"
     scala_api_docs_final_dir = all_api_docs_final_dir + "/scala"
     java_api_docs_final_dir = all_api_docs_final_dir + "/java"
@@ -42,11 +42,6 @@ def main():
     print("## Generating ScalaDoc and JavaDoc ...")
     with WorkingDirectory(repo_root_dir):
         run_cmd(["build/sbt", ";clean;unidoc"], stream_output=verbose)
-
-    # Generate Python docs
-    print('## Generating Python(Sphinx) docs ...')
-    with WorkingDirectory(sphinx_gen_dir):
-        run_cmd(["make", "html"], stream_output=verbose)
 
     # Update Scala docs
     print("## Patching ScalaDoc ...")
@@ -78,7 +73,7 @@ def main():
 
             # Create script elements to load new js files
             javadoc_jquery_script = \
-                js_script_start + path_to_js_file + "lib/jquery.js" + js_script_end
+                js_script_start + path_to_js_file + "lib/jquery.min.js" + js_script_end
             javadoc_api_docs_script = \
                 js_script_start + path_to_js_file + "lib/api-javadocs.js" + js_script_end
             javadoc_script_elements = javadoc_jquery_script + javadoc_api_docs_script
@@ -88,9 +83,14 @@ def main():
 
         # Patch the js and css files
         run_cmd(["mkdir", "-p", "./lib"])
-        run_cmd(["cp", scaladoc_gen_dir + "/lib/jquery.js", "./lib/"])  # copy jquery from ScalaDocs
+        run_cmd(["cp", scaladoc_gen_dir + "/lib/jquery.min.js", "./lib/"])  # copy from ScalaDocs
         run_cmd(["cp", docs_root_dir + "/api-javadocs.js", "./lib/"])   # copy new js file
         append(docs_root_dir + "/api-javadocs.css", "./stylesheet.css")  # append new styles
+
+    # Generate Python docs
+    print('## Generating Python(Sphinx) docs ...')
+    with WorkingDirectory(sphinx_gen_dir):
+        run_cmd(["make", "html"], stream_output=verbose)
 
     # Copy to final location
     log("Copying to API doc directory %s" % all_api_docs_final_dir)
