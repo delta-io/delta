@@ -26,7 +26,6 @@ import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, Delta
 import org.apache.spark.sql.delta.GeneratedColumn
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils}
 import org.apache.hadoop.fs.Path
 
@@ -102,9 +101,7 @@ case class DeltaTableV2(
   }
 
   private lazy val tableSchema: StructType =
-    GeneratedColumn.removeGenerationExpressions(
-      SchemaUtils.dropNullTypeColumns(snapshot.schema))
-
+    GeneratedColumn.removeGenerationExpressions(snapshot.schema)
 
   override def schema(): StructType = tableSchema
 

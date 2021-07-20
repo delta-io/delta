@@ -28,7 +28,6 @@ import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.spark.internal.Logging
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.{Resolver, TypeCoercion, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
@@ -39,7 +38,7 @@ import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
-object SchemaUtils extends Logging {
+object SchemaUtils {
   // We use case insensitive resolution while writing into Delta
   val DELTA_COL_RESOLVER: (String, String) => Boolean =
     org.apache.spark.sql.catalyst.analysis.caseInsensitiveResolution
@@ -114,8 +113,6 @@ object SchemaUtils extends Logging {
       case st: StructType =>
         val nested = st.fields.flatMap { f =>
           if (f.dataType.isInstanceOf[NullType]) {
-            logInfo(
-              s"Dropping column '${f.name}' from nested column because it is of NullType.")
             None
           } else {
             Some(generateSelectExpr(f, nameStack :+ sf.name))
@@ -138,12 +135,7 @@ object SchemaUtils extends Logging {
     }
 
     val selectExprs = schema.flatMap { f =>
-      if (f.dataType.isInstanceOf[NullType]) {
-        logInfo(s"Dropping column '${f.name}' from ${schema.toString} because it is of NullType.")
-        None
-      } else {
-        Some(generateSelectExpr(f, Nil))
-      }
+      if (f.dataType.isInstanceOf[NullType]) None else Some(generateSelectExpr(f, Nil))
     }
     df.select(selectExprs: _*)
   }
@@ -158,9 +150,7 @@ object SchemaUtils extends Logging {
       struct.flatMap {
         case sf @ StructField(_, s: StructType, _, _) =>
           Some(sf.copy(dataType = StructType(recurseAndRemove(s))))
-        case StructField(name, n: NullType, _, _) =>
-          logInfo(s"Dropping column '$name' because it is of NullType.")
-          None
+        case StructField(_, n: NullType, _, _) => None
         case other => Some(other)
       }
     }
