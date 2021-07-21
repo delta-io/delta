@@ -49,6 +49,7 @@ trait OptimisticTransactionSuiteBase
    * @param concurrentWrites    writes made by concurrent transactions after the test txn reads
    * @param actions             actions to be committed by the test transaction
    * @param errorMessageHint    What to expect in the error message
+   * @param exceptionClass      A substring to expect in the exception class name
    */
   protected def check(
       name: String,
@@ -57,7 +58,8 @@ trait OptimisticTransactionSuiteBase
       reads: Seq[OptimisticTransaction => Unit],
       concurrentWrites: Seq[Action],
       actions: Seq[Action],
-      errorMessageHint: Option[Seq[String]] = None): Unit = {
+      errorMessageHint: Option[Seq[String]] = None,
+      exceptionClass: Option[String] = None): Unit = {
 
     val concurrentTxn: OptimisticTransaction => Unit =
       (opt: OptimisticTransaction) => opt.commit(concurrentWrites, Truncate())
@@ -75,7 +77,8 @@ trait OptimisticTransactionSuiteBase
       reads,
       concurrentTxn,
       actions,
-      errorMessageHint
+      errorMessageHint,
+      exceptionClass
     )
   }
 
@@ -97,6 +100,7 @@ trait OptimisticTransactionSuiteBase
    * @param concurrentTxn       concurrent txn that may write data after the test txn reads
    * @param actions             actions to be committed by the test transaction
    * @param errorMessageHint    What to expect in the error message
+   * @param exceptionClass      A substring to expect in the exception class name
    */
   protected def check(
       name: String,
@@ -105,7 +109,8 @@ trait OptimisticTransactionSuiteBase
       reads: Seq[OptimisticTransaction => Unit],
       concurrentTxn: OptimisticTransaction => Unit,
       actions: Seq[Action],
-      errorMessageHint: Option[Seq[String]]): Unit = {
+      errorMessageHint: Option[Seq[String]],
+      exceptionClass: Option[String]): Unit = {
 
     val conflict = if (conflicts) "should conflict" else "should not conflict"
     test(s"$name - $conflict") {
@@ -129,6 +134,9 @@ trait OptimisticTransactionSuiteBase
         }
         errorMessageHint.foreach { expectedParts =>
           assert(expectedParts.forall(part => e.getMessage.contains(part)))
+        }
+        if (exceptionClass.nonEmpty) {
+          assert(e.getClass.getName.contains(exceptionClass.get))
         }
       } else {
         txn.commit(actions, Truncate())
