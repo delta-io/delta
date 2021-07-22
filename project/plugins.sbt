@@ -15,29 +15,35 @@
  */
 
 
-resolvers += Resolver.url("artifactory", url("http://scalasbt.artifactoryonline.com/scalasbt/sbt-plugin-releases"))(Resolver.ivyStylePatterns)
+// resolvers += Resolver.url("artifactory", url("https://scalasbt.artifactoryonline.com/scalasbt/sbt-plugin-releases"))(Resolver.ivyStylePatterns)
 
-resolvers += "bintray-spark-packages" at "https://dl.bintray.com/spark-packages/maven/"
+// resolvers += "bintray-spark-packages" at "https://dl.bintray.com/spark-packages/maven/"
 
-resolvers += "Typesafe Repository" at "http://repo.typesafe.com/typesafe/releases/"
+// resolvers += "Typesafe Repository" at "https://repo.typesafe.com/typesafe/releases/"
 
-addSbtPlugin("com.github.sbt" % "sbt-release" % "1.0.15")
+// resolvers += DefaultMavenRepository
 
-addSbtPlugin("org.xerial.sbt" % "sbt-sonatype" % "2.3")
+// resolvers += Resolver.url("bintray-sbt-plugins", url("https://dl.bintray.com/sbt/sbt-plugin-releases"))(Resolver.ivyStylePatterns)
 
-addSbtPlugin("com.jsuereth" % "sbt-pgp" % "1.0.0")
+addSbtPlugin("com.github.sbt" % "sbt-release" % "1.1.0")
 
-addSbtPlugin("com.eed3si9n" % "sbt-assembly" % "0.14.9")
+// addSbtPlugin("org.xerial.sbt" % "sbt-sonatype" % "2.3")
 
-addSbtPlugin("io.get-coursier" % "sbt-coursier" % "1.0.3")
+// addSbtPlugin("com.jsuereth" % "sbt-pgp" % "1.0.0")
+addSbtPlugin("com.github.sbt" % "sbt-pgp" % "2.1.2")
+
+// addSbtPlugin("com.eed3si9n" % "sbt-assembly" % "0.14.9")
+addSbtPlugin("com.eed3si9n" % "sbt-assembly" % "1.0.0")
+
+// addSbtPlugin("io.get-coursier" % "sbt-coursier" % "1.0.3")
 
 addSbtPlugin("org.scalastyle" %% "scalastyle-sbt-plugin" % "1.0.0")
 
-addSbtPlugin("com.eed3si9n" % "sbt-unidoc" % "0.4.2")
+addSbtPlugin("com.eed3si9n" % "sbt-unidoc" % "0.4.3")
 
-addSbtPlugin("com.typesafe" % "sbt-mima-plugin" % "0.3.0")
+addSbtPlugin("com.typesafe" % "sbt-mima-plugin" % "0.9.2")
 
-addSbtPlugin("com.simplytyped" % "sbt-antlr4" % "0.7.13")
+addSbtPlugin("com.simplytyped" % "sbt-antlr4" % "0.8.3")
 
-resolvers += Resolver.url("typesafe sbt-plugins",
-  url("https://dl.bintray.com/typesafe/sbt-plugins"))(Resolver.ivyStylePatterns)
+// resolvers += Resolver.url("typesafe sbt-plugins",
+//   url("https://dl.bintray.com/typesafe/sbt-plugins"))(Resolver.ivyStylePatterns)
