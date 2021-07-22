@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -522,6 +522,7 @@ object DeltaErrors
     new IllegalArgumentException(
       s"Invalid value '$input' for option '$name', $explain")
   }
+
 
   def startingVersionAndTimestampBothSetException(
       versionOptKey: String,
@@ -1144,6 +1145,15 @@ object DeltaErrors
     new AnalysisException(
       s"(`spark.delta.logStore.class`) and (`${schemeConfStr}`)" +
       " cannot be set at the same time. Please set only one group of them.")
+  }
+
+  def ambiguousPathsInCreateTableException(identifier: String, location: String): Throwable = {
+    new AnalysisException(
+      s"""
+         |CREATE TABLE contains two different locations: ${identifier} and ${location}.
+         |You can remove the LOCATION clause from the CREATE TABLE statement, or set
+         |${DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS.key} to true to skip this check.
+         |""".stripMargin)
   }
 
   def concurrentWriteException(

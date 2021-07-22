@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,7 +37,7 @@ class MetricDefinition
 
 object MetricDefinitions {
   object EVENT_LOGGING_FAILURE extends MetricDefinition
-  object EVENT_TAHOE extends MetricDefinition
+  object EVENT_TAHOE extends MetricDefinition with CentralizableMetric
 }
 
 trait DatabricksLogging {
@@ -76,4 +76,25 @@ trait DatabricksLogging {
       silent: Boolean = true)(thunk: => S): S = {
     thunk
   }
+
+  def recordProductUsage(
+      metric: MetricDefinition with CentralizableMetric,
+      quantity: Double,
+      additionalTags: Map[TagDefinition, String] = Map.empty,
+      blob: String = null,
+      forceSample: Boolean = false,
+      trimBlob: Boolean = true,
+      silent: Boolean = false): Unit = {
+
+  }
+
+  def recordProductEvent(
+      metric: MetricDefinition with CentralizableMetric,
+      additionalTags: Map[TagDefinition, String] = Map.empty,
+      blob: String = null,
+      trimBlob: Boolean = true): Unit = {
+    recordProductUsage(metric, 1, additionalTags, blob, trimBlob)
+  }
 }
+
+trait CentralizableMetric

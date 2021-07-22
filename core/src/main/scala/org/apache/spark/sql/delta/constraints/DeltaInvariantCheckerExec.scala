@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -70,7 +70,9 @@ case class DeltaInvariantCheckerExec(
     child: SparkPlan,
     constraints: Seq[Constraint]) extends UnaryExecNode {
 
-  private def spark: SparkSession = sqlContext.sparkSession
+  // TODO: we can replace `SparkSession.active` with `session` once OSS Delta
+  //       upgrades to Spark 3.2
+  private def spark: SparkSession = SparkSession.active
 
   override def output: Seq[Attribute] = child.output
 

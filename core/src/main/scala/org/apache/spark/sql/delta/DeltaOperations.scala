@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -212,7 +212,8 @@ object DeltaOperations {
       metadata: Metadata,
       isManaged: Boolean,
       orCreate: Boolean,
-      asSelect: Boolean = false)
+      asSelect: Boolean = false,
+      override val userMetadata: Option[String] = None)
     extends Operation(s"${if (orCreate) "CREATE OR " else ""}REPLACE TABLE" +
       s"${if (asSelect) " AS SELECT" else ""}") {
     override val parameters: Map[String, Any] = Map(

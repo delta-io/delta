@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.util.{DateFormatter, DeltaFileOperations, PartitionUtils, TimestampFormatter}
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
@@ -346,7 +346,7 @@ abstract class ConvertToDeltaCommandBase(
           // Here we explicitly mark the inferred schema nullable. This also means we don't
           // currently support specifying non-nullable columns after the table conversion.
           val batchSchema = getSchemaForBatch(spark, batch, serializableConfiguration).asNullable
-          dataSchema = SchemaUtils.mergeSchemas(dataSchema, batchSchema)
+          dataSchema = SchemaMergingUtils.mergeSchemas(dataSchema, batchSchema)
         }
       }
 
@@ -500,8 +500,8 @@ abstract class ConvertToDeltaCommandBase(
 
   /**
    * This method is forked from [[ParquetFileFormat]]. The only change here is that we use
-   * our SchemaUtils.mergeSchemas() instead of StructType.merge(), where we allow upcast between
-   * ByteType, ShortType and IntegerType.
+   * our SchemaMergingUtils.mergeSchemas() instead of StructType.merge(),
+   * where we allow upcast between ByteType, ShortType and IntegerType.
    *
    * Figures out a merged Parquet schema with a distributed Spark job.
    *
@@ -570,7 +570,7 @@ abstract class ConvertToDeltaCommandBase(
             footers.tail.foreach { footer =>
               val schema = ParquetFileFormat.readSchemaFromFooter(footer, converter)
               try {
-                mergedSchema = SchemaUtils.mergeSchemas(mergedSchema, schema)
+                mergedSchema = SchemaMergingUtils.mergeSchemas(mergedSchema, schema)
               } catch { case cause: AnalysisException =>
                 throw new SparkException(
                   s"Failed to merge schema of file ${footer.getFile}:\n${schema.treeString}", cause)
@@ -585,7 +585,7 @@ abstract class ConvertToDeltaCommandBase(
     } else {
       var finalSchema = partiallyMergedSchemas.head
       partiallyMergedSchemas.tail.foreach { schema =>
-        finalSchema = SchemaUtils.mergeSchemas(finalSchema, schema)
+        finalSchema = SchemaMergingUtils.mergeSchemas(finalSchema, schema)
       }
       Some(finalSchema)
     }

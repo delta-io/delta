@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -114,7 +114,8 @@ case class MergeStats(
     targetRowsCopied: Long,
     targetRowsUpdated: Long,
     targetRowsInserted: Long,
-    targetRowsDeleted: Long)
+    targetRowsDeleted: Long
+)
 
 object MergeStats {
 
@@ -168,8 +169,7 @@ object MergeStats {
       updateExprs = null,
       insertConditionExpr = null,
       insertExprs = null,
-      deleteConditionExpr = null
-    )
+      deleteConditionExpr = null)
   }
 }
 

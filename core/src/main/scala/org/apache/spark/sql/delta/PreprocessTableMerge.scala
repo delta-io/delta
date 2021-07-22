@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,30 +18,34 @@ package org.apache.spark.sql.delta
 
 import java.util.Locale
 
-import scala.collection.mutable
-
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
-import org.apache.spark.sql.delta.schema.SchemaUtils
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.AnalysisException
-import org.apache.spark.sql.catalyst.analysis.{EliminateSubqueryAliases, TypeCoercion, UnresolvedAttribute}
-import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Cast, Expression, Literal, SubqueryExpression}
+import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, Literal, SubqueryExpression}
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{StructField, StructType}
 
 case class PreprocessTableMerge(override val conf: SQLConf)
   extends Rule[LogicalPlan] with UpdateExpressionsSupport {
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
-    case m: DeltaMergeInto if m.resolved => apply(m)
+    case m: DeltaMergeInto if m.resolved => apply(m, true)
   }
 
-  def apply(mergeInto: DeltaMergeInto): MergeIntoCommand = {
-    val DeltaMergeInto(target, source, condition, matched, notMatched, migrateSchema) = mergeInto
+  def apply(mergeInto: DeltaMergeInto, transformToCommand: Boolean): LogicalPlan = {
+    val DeltaMergeInto(
+    target, source, condition, matched, notMatched, migrateSchema, finalSchemaOpt) = mergeInto
+
+    if (finalSchemaOpt.isEmpty) {
+      throw new AnalysisException("Target Table Final Schema is empty.")
+    }
+
+    val finalSchema = finalSchemaOpt.get
+
     def checkCondition(cond: Expression, conditionName: String): Unit = {
       if (!cond.deterministic) {
         throw DeltaErrors.nonDeterministicNotSupportedException(
@@ -62,15 +66,10 @@ case class PreprocessTableMerge(override val conf: SQLConf)
       checkCondition(clause.condition.get, clause.clauseType.toUpperCase(Locale.ROOT))
     }
 
-    val shouldAutoMigrate = conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE) && migrateSchema
-    val finalSchema = if (shouldAutoMigrate) {
-      // The implicit conversions flag allows any type to be merged from source to target if Spark
-      // SQL considers the source type implicitly castable to the target. Normally, mergeSchemas
-      // enforces Parquet-level write compatibility, which would mean an INT source can't be merged
-      // into a LONG target.
-      SchemaUtils.mergeSchemas(target.schema, source.schema, allowImplicitConversions = true)
-    } else {
-      target.schema
+    val deltaLogicalPlan = EliminateSubqueryAliases(target)
+    val tahoeFileIndex = deltaLogicalPlan match {
+      case DeltaFullTable(index) => index
+      case o => throw DeltaErrors.notADeltaSourceException("MERGE", Some(o))
     }
 
     val processedMatched = matched.map {
@@ -94,15 +93,6 @@ case class PreprocessTableMerge(override val conf: SQLConf)
           UpdateOperation(a.targetColNameParts, a.expr)
         }
 
-        // The operations for new columns...
-        val newOpsFromTargetSchema = target.output.filterNot { col =>
-          m.resolvedActions.exists { updateAct =>
-            conf.resolver(updateAct.targetColNameParts.head, col.name)
-          }
-        }.map { col =>
-          UpdateOperation(Seq(col.name), col)
-        }
-
         // And construct operations for columns that the insert clause will add.
         val newOpsFromInsert = newColsFromInsert.map { col =>
           UpdateOperation(Seq(col.name), Literal(null, col.dataType))
@@ -119,20 +109,30 @@ case class PreprocessTableMerge(override val conf: SQLConf)
             }
           }
 
+        val generatedColumns = GeneratedColumn.getGeneratedColumns(
+          tahoeFileIndex.snapshotAtAnalysis)
+        if (generatedColumns.nonEmpty && !deltaLogicalPlan.isInstanceOf[LogicalRelation]) {
+          throw DeltaErrors.updateOnTempViewWithGenerateColsNotSupported
+        }
+
         // Use the helper methods for in UpdateExpressionsSupport to generate expressions such
         // that nested fields can be updated (only for existing columns).
         val alignedExprs = generateUpdateExpressions(
           finalSchemaExprs,
-          existingUpdateOps ++ newOpsFromTargetSchema ++ newOpsFromInsert,
+          existingUpdateOps ++ newOpsFromInsert,
           conf.resolver,
-          allowStructEvolution = shouldAutoMigrate,
-          generatedColumns = Nil)
-          .map(_.getOrElse {
-            // Should not happen
-            throw new IllegalStateException("Calling without generated columns should " +
-              "always return a update expression for each column")
-          })
-        val alignedActions: Seq[DeltaMergeAction] = alignedExprs
+          allowStructEvolution = migrateSchema,
+          generatedColumns = generatedColumns)
+
+        val alignedExprsWithGenerationExprs =
+          if (alignedExprs.forall(_.nonEmpty)) {
+            alignedExprs.map(_.get)
+          } else {
+            generateUpdateExprsForGeneratedColumns(target, generatedColumns, alignedExprs,
+              Some(finalSchemaExprs))
+          }
+
+        val alignedActions: Seq[DeltaMergeAction] = alignedExprsWithGenerationExprs
           .zip(finalSchemaExprs)
           .map { case (expr, attrib) =>
             DeltaMergeAction(Seq(attrib.name), expr, targetColNameResolved = true)
@@ -186,7 +186,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
             castIfNeeded(
               a.expr,
               targetAttrib.dataType,
-              allowStructEvolution = shouldAutoMigrate),
+              allowStructEvolution = migrateSchema),
             targetColNameResolved = true)
         }.getOrElse {
           // If a target table column was not found in the INSERT columns and expressions,
@@ -201,13 +201,17 @@ case class PreprocessTableMerge(override val conf: SQLConf)
       m.copy(m.condition, alignedActions)
     }
 
-    val tahoeFileIndex = EliminateSubqueryAliases(target) match {
-      case DeltaFullTable(index) => index
-      case o => throw DeltaErrors.notADeltaSourceException("MERGE", Some(o))
+    if (transformToCommand) {
+      val tahoeFileIndex = EliminateSubqueryAliases(target) match {
+        case DeltaFullTable(index) => index
+        case o => throw DeltaErrors.notADeltaSourceException("MERGE", Some(o))
+      }
+      MergeIntoCommand(
+        source, target, tahoeFileIndex, condition,
+        processedMatched, processedNotMatched, finalSchemaOpt)
+    } else {
+      DeltaMergeInto(source, target, condition,
+        processedMatched, processedNotMatched, migrateSchema, finalSchemaOpt)
     }
-
-    MergeIntoCommand(
-      source, target, tahoeFileIndex, condition,
-      processedMatched, processedNotMatched, Some(finalSchema))
   }
 }

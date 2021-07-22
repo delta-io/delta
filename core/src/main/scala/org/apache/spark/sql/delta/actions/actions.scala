@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation.{JsonIgnore, JsonInclude}
 import com.fasterxml.jackson.core.JsonGenerator
-import com.fasterxml.jackson.databind.{JsonSerializer, SerializerProvider}
+import com.fasterxml.jackson.databind.{JsonSerializer, ObjectMapper, SerializerProvider}
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 import org.codehaus.jackson.annotate.JsonRawValue
 
@@ -255,6 +255,7 @@ case class AddFile(
 
   def copyWithoutTag(tag: AddFile.Tags.KeyType): AddFile =
     copy(tags = Option(tags).getOrElse(Map.empty) - tag.name)
+
 }
 
 object AddFile {

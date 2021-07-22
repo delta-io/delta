@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -57,6 +57,8 @@ case class CreateDeltaTableCommand(
   with DeltaLogging {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
+    var table = this.table
+
     assert(table.tableType != CatalogTableType.VIEW)
     assert(table.identifier.database.isDefined, "Database should've been fixed at analysis")
     // There is a subtle race condition here, where the table can be created by someone else
@@ -89,8 +91,9 @@ case class CreateDeltaTableCommand(
       val loc = sparkSession.sessionState.catalog.defaultTablePath(table.identifier)
       table.copy(storage = table.storage.copy(locationUri = Some(loc)))
     } else {
-      // We are defining a new external table
-      assert(table.tableType == CatalogTableType.EXTERNAL)
+      // 1. We are defining a new external table
+      // 2. It's a managed table which already has the location populated. This can happen in DSV2
+      //    CTAS flow.
       table
     }
 
@@ -317,23 +320,30 @@ case class CreateDeltaTableCommand(
       options: Option[DeltaOptions]): DeltaOperations.Operation = operation match {
     // This is legacy saveAsTable behavior in Databricks Runtime
     case TableCreationModes.Create if existingTableOpt.isDefined && query.isDefined =>
-      DeltaOperations.Write(mode, Option(table.partitionColumnNames), options.get.replaceWhere)
+      DeltaOperations.Write(mode, Option(table.partitionColumnNames), options.get.replaceWhere,
+        options.flatMap(_.userMetadata))
 
     // DataSourceV2 table creation
+    // CREATE TABLE (non-DataFrameWriter API) doesn't have options syntax
+    // (userMetadata uses SQLConf in this case)
     case TableCreationModes.Create =>
       DeltaOperations.CreateTable(metadata, isManagedTable, query.isDefined)
 
     // DataSourceV2 table replace
+    // REPLACE TABLE (non-DataFrameWriter API) doesn't have options syntax
+    // (userMetadata uses SQLConf in this case)
     case TableCreationModes.Replace =>
       DeltaOperations.ReplaceTable(metadata, isManagedTable, orCreate = false, query.isDefined)
 
     // Legacy saveAsTable with Overwrite mode
     case TableCreationModes.CreateOrReplace if options.exists(_.replaceWhere.isDefined) =>
-      DeltaOperations.Write(mode, Option(table.partitionColumnNames), options.get.replaceWhere)
+      DeltaOperations.Write(mode, Option(table.partitionColumnNames), options.get.replaceWhere,
+        options.flatMap(_.userMetadata))
 
     // New DataSourceV2 saveAsTable with overwrite mode behavior
     case TableCreationModes.CreateOrReplace =>
-      DeltaOperations.ReplaceTable(metadata, isManagedTable, orCreate = true, query.isDefined)
+      DeltaOperations.ReplaceTable(metadata, isManagedTable, orCreate = true, query.isDefined,
+        options.flatMap(_.userMetadata))
   }
 
   /**

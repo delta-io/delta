@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -150,7 +150,7 @@ trait DeltaTimeTravelTests extends QueryTest
   }
 }
 
-abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests // Edge // Edge
+abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
   {
 
 }

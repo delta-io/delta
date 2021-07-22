@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,23 +14,18 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta
+package io.delta.storage
 
-import org.apache.spark.sql.delta.storage._
+import org.apache.spark.sql.delta.{FakeFileSystem, LogStoreSuiteBase}
 
-class IBMCOSLogStoreSuite extends LogStoreSuiteBase {
+class OracleCloudLogStoreSuite extends LogStoreSuiteBase {
 
-  protected override def sparkConf = {
-    super.sparkConf.set(logStoreClassConfKey, logStoreClassName)
-      .set("spark.hadoop.fs.cos.atomic.write", "true")
-  }
-
-  override val logStoreClassName: String = classOf[IBMCOSLogStore].getName
+  override val logStoreClassName: String = classOf[OracleCloudLogStore].getName
 
   testHadoopConf(
-    expectedErrMsg = ".*No FileSystem for scheme.*fake.*",
+    expectedErrMsg = "No FileSystem for scheme \"fake\"",
     "fs.fake.impl" -> classOf[FakeFileSystem].getName,
     "fs.fake.impl.disable.cache" -> "true")
 
-  protected def shouldUseRenameToWriteCheckpoint: Boolean = false
+  protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.tables.DeltaTableBuilder
 
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.DateTimeUtils.{getZoneId, stringToDate, stringToTimestamp, toJavaDate, toJavaTimestamp}
@@ -34,6 +35,7 @@ import org.apache.spark.sql.types.{ArrayType, DateType, IntegerType, MetadataBui
 import org.apache.spark.unsafe.types.UTF8String
 
 trait GeneratedColumnTest extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
+
 
   protected def sqlDate(date: String): java.sql.Date = {
     toJavaDate(stringToDate(
@@ -991,6 +993,199 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
         .collect()
         .toSeq
       assert("foo" :: Nil == comments)
+    }
+  }
+
+  test("MERGE UPDATE basic") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (1, 3, 4);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |on ${tgt}.c1 = ${src}.c1
+               |WHEN MATCHED THEN UPDATE SET ${tgt}.c2 = ${src}.c2
+               |""".stripMargin)
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(1, 3, 4))
+        )
+      }
+    }
+  }
+
+  test("MERGE UPDATE set both generated column and its input") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (1, 3, 4);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |on ${tgt}.c1 = ${src}.c1
+               |WHEN MATCHED THEN UPDATE SET ${tgt}.c2 = ${src}.c2, ${tgt}.c3 = ${src}.c3
+               |""".stripMargin)
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(1, 3, 4))
+        )
+      }
+    }
+  }
+
+  test("MERGE UPDATE set star") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (1, 4, 5);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |on ${tgt}.c1 = ${src}.c1
+               |WHEN MATCHED THEN UPDATE SET *
+               |""".stripMargin)
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(1, 4, 5))
+        )
+      }
+    }
+  }
+
+
+  test("MERGE UPDATE using value from target") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (1, 3, 4);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |on ${tgt}.c1 = ${src}.c1
+               |WHEN MATCHED THEN UPDATE SET ${tgt}.c2 = ${tgt}.c3
+               |""".stripMargin)
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(1, 3, 4))
+        )
+      }
+    }
+  }
+
+  test("MERGE UPDATE using value from both target and source") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (1, 3, 4);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |on ${tgt}.c1 = ${src}.c1
+               |WHEN MATCHED THEN UPDATE SET ${tgt}.c2 = ${tgt}.c3 + ${src}.c3
+               |""".stripMargin)
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(1, 7, 8))
+        )
+      }
+    }
+  }
+
+  test("MERGE UPDATE set to null") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (1, 3, 4);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |on ${tgt}.c1 = ${src}.c1
+               |WHEN MATCHED THEN UPDATE SET ${tgt}.c2 = null
+               |""".stripMargin)
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(1, null, null))
+        )
+      }
+    }
+  }
+
+  test("MERGE UPDATE multiple columns") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (1, 3, 4);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |on ${tgt}.c1 = ${src}.c1
+               |WHEN MATCHED THEN UPDATE
+               |  SET ${tgt}.c2 = ${src}.c1 * 10, ${tgt}.c1 = ${tgt}.c1 * 100
+               |""".stripMargin)
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(100, 10, 11))
+        )
+      }
+    }
+  }
+
+  test("MERGE UPDATE source is a query") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (1, 3, 4);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING (SELECT c1, max(c3) + min(c2) AS m FROM ${src} GROUP BY c1) source
+               |on ${tgt}.c1 = source.c1
+               |WHEN MATCHED THEN UPDATE SET ${tgt}.c2 = source.m
+               |""".stripMargin)
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(1, 7, 8))
+        )
+      }
+    }
+  }
+
+  test("MERGE UPDATE temp view is not supported") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        withTempView("test_temp_view") {
+          createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+          sql(s"INSERT INTO ${src} values (1, 3, 4);")
+          createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+          sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+          sql(s"CREATE TEMP VIEW test_temp_view AS SELECT c1 as c2, c2 as c1, c3 FROM ${tgt}")
+          val e = intercept[AnalysisException] {
+            sql(s"""
+                   |MERGE INTO test_temp_view
+                   |USING ${src}
+                   |on test_temp_view.c2 = ${src}.c1
+                   |WHEN MATCHED THEN UPDATE SET test_temp_view.c1 = ${src}.c2
+                   |""".stripMargin)
+          }
+          assert(e.getMessage.contains("Updating a temp view"))
+        }
+      }
     }
   }
 }

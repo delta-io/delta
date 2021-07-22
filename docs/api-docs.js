@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,8 +40,9 @@
 
 $(document).ready(function() {
   var annotations = $("dt:contains('Annotations')").next("dd").children("span.name");
-  addBadges(annotations, "Unstable", ":: Unstable ::", '<span class="unstable badge">Unstable</span>');
-  addBadges(annotations, "Evolving", ":: Evolving ::", '<span class="evolving badge">Evolving</span>');
+  addBadges(annotations, "Unstable", ":: Unstable ::", '<span class="unstable badge">Unstable API</span>');
+  addBadges(annotations, "Developer", ":: DeveloperApi ::", '<span class="developer badge">Developer API</span>');
+  addBadges(annotations, "Evolving", ":: Evolving ::", '<span class="evolving badge">Evolving API</span>');
 });
 
 function addBadges(allAnnotations, name, tag, html) {

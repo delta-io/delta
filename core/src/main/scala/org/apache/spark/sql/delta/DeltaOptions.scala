@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -61,6 +61,8 @@ trait DeltaWriteOptions
 }
 
 trait DeltaWriteOptionsImpl extends DeltaOptionParser {
+  import DeltaOptions._
+
   /**
    * Whether the user has enabled auto schema merging in writes using either a DataFrame option
    * or SQL Session configuration. Automerging is off when table ACLs are enabled.

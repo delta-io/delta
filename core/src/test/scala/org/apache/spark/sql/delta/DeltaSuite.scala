@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -173,7 +173,7 @@ class DeltaSuite extends QueryTest
     val e = intercept[AnalysisException] {
       spark.read.format("delta").load(tempDir.toString).collect()
     }.getMessage
-    assert(e.contains("doesn't exist"))
+    assert(e.contains("is not a Delta table"))
   }
 
   test("append then read") {
@@ -1197,6 +1197,25 @@ class DeltaSuite extends QueryTest
     assert(lastCommitInfo(tempDir).userMetadata === Some("optionMeta2"))
   }
 
+  test("SC-77958 - history includes user-defined metadata for createOrReplace") {
+    withTable("tbl") {
+      spark.range(10).writeTo("tbl").using("delta").option("userMetadata", "meta").createOrReplace()
+
+      val history = sql("DESCRIBE HISTORY tbl LIMIT 1").as[CommitInfo].head()
+      assert(history.userMetadata === Some("meta"))
+    }
+  }
+
+  test("SC-77958 - history includes user-defined metadata for saveAsTable") {
+    withTable("tbl") {
+      spark.range(10).write.format("delta").option("userMetadata", "meta1")
+        .mode("overwrite").saveAsTable("tbl")
+
+      val history = sql("DESCRIBE HISTORY tbl LIMIT 1").as[CommitInfo].head()
+      assert(history.userMetadata === Some("meta1"))
+    }
+  }
+
   test("lastCommitVersionInSession - init") {
     spark.sessionState.conf.unsetConf(DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION)
     withTempDir { tempDir =>
@@ -1357,6 +1376,57 @@ class DeltaSuite extends QueryTest
     )
   }
 
+  test("isBlindAppend with save and saveAsTable") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withTable("blind_append") {
+        sql(s"CREATE TABLE blind_append(value INT) USING delta LOCATION '$path'") // version = 0
+        sql("INSERT INTO blind_append VALUES(1)") // version = 1
+        spark.read.format("delta").load(path)
+          .where("value = 1")
+          .write.mode("append").format("delta").save(path) // version = 2
+        checkAnswer(spark.table("blind_append"), Row(1) :: Row(1) :: Nil)
+        assert(sql("desc history blind_append")
+          .select("version", "isBlindAppend").head == Row(2, false))
+        spark.table("blind_append").where("value = 1").write.mode("append").format("delta")
+          .saveAsTable("blind_append") // version = 3
+        checkAnswer(spark.table("blind_append"), Row(1) :: Row(1) :: Row(1) :: Row(1) :: Nil)
+        assert(sql("desc history blind_append")
+          .select("version", "isBlindAppend").head == Row(3, false))
+      }
+    }
+  }
+
+  test("isBlindAppend with DataFrameWriterV2") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withTable("blind_append") {
+        sql(s"CREATE TABLE blind_append(value INT) USING delta LOCATION '$path'") // version = 0
+        sql("INSERT INTO blind_append VALUES(1)") // version = 1
+        spark.read.format("delta").load(path)
+          .where("value = 1")
+          .writeTo("blind_append").append() // version = 2
+        checkAnswer(spark.table("blind_append"), Row(1) :: Row(1) :: Nil)
+        assert(sql("desc history blind_append")
+          .select("version", "isBlindAppend").head == Row(2, false))
+      }
+    }
+  }
+
+  test("isBlindAppend with RTAS") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withTable("blind_append") {
+        sql(s"CREATE TABLE blind_append(value INT) USING delta LOCATION '$path'") // version = 0
+        sql("INSERT INTO blind_append VALUES(1)") // version = 1
+        sql("REPLACE TABLE blind_append USING delta AS SELECT * FROM blind_append") // version = 2
+        checkAnswer(spark.table("blind_append"), Row(1) :: Nil)
+        assert(sql("desc history blind_append")
+          .select("version", "isBlindAppend").head == Row(2, false))
+      }
+    }
+  }
+
   test("replaceWhere should support backtick") {
     val table = "replace_where_backtick"
     withTable(table) {
@@ -1378,5 +1448,24 @@ class DeltaSuite extends QueryTest
         .saveAsTable(table)
       checkAnswer(sql(s"SELECT `a.b`, `c.d`, a.b from $table"), Row("a", "b", "c") :: Nil)
     }
+  }
+
+  test("need to update DeltaLog on DataFrameReader.load() code path") {
+    // Due to possible race conditions (like in mounting/unmounting paths) there might be an initial
+    // snapshot that gets cached for a table that should have a valid (non-initial) snapshot. In
+    // such a case we need to call deltaLog.update() in the DataFrame read paths to update the
+    // initial snapshot to a valid one.
+    //
+    // We simulate a cached InitialSnapshot + valid delta table by creating an empty DeltaLog
+    // (which creates an InitialSnapshot cached for that path) then move an actual Delta table's
+    // transaction log into the path for the empty log.
+    val dir1 = Utils.createTempDir()
+    val dir2 = Utils.createTempDir()
+    val log = DeltaLog.forTable(spark, dir1)
+    assert(!log.tableExists)
+    spark.range(10).write.format("delta").save(dir2.getCanonicalPath)
+    // rename dir2 to dir1 then read
+    dir2.renameTo(dir1)
+    checkAnswer(spark.read.format("delta").load(dir1.getCanonicalPath), spark.range(10).toDF)
   }
 }

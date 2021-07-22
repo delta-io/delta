@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -218,8 +218,8 @@ class DeltaHistoryManager(
         smallestDeltaVersion = math.min(version, smallestDeltaVersion)
 
         // Note that we also check this condition at the end of the function - we check it
-        // here too to to try and avoid more file listing when it's unnecessary.
-        if (lastCompleteCheckpoint.exists(_ >= smallestDeltaVersion)) {
+        // here too to try and avoid more file listing when it's unnecessary.
+        if (lastCompleteCheckpoint.exists(_ >= smallestDeltaVersion - 1)) {
           return lastCompleteCheckpoint.get
         }
       } else if (FileNames.isCheckpointFile(nextFilePath)) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.Constraints
-import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.schema.SchemaUtils.transformColumnsStructs
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -205,8 +205,8 @@ case class AlterTableAddColumnsDeltaCommand(
           SchemaUtils.addColumn(schema, column, position)
       }
 
-      SchemaUtils.checkColumnNameDuplication(newSchema, "in adding columns")
-      ParquetSchemaConverter.checkFieldNames(SchemaUtils.explodeNestedFieldNames(newSchema))
+      SchemaMergingUtils.checkColumnNameDuplication(newSchema, "in adding columns")
+      ParquetSchemaConverter.checkFieldNames(SchemaMergingUtils.explodeNestedFieldNames(newSchema))
 
       val newMetadata = metadata.copy(schemaString = newSchema.json)
       txn.updateMetadata(newMetadata)
@@ -437,8 +437,8 @@ case class AlterTableReplaceColumnsDeltaCommand(
       val newSchema = SchemaUtils.changeDataType(existingSchema, changingSchema, resolver)
         .asInstanceOf[StructType]
 
-      SchemaUtils.checkColumnNameDuplication(newSchema, "in replacing columns")
-      ParquetSchemaConverter.checkFieldNames(SchemaUtils.explodeNestedFieldNames(newSchema))
+      SchemaMergingUtils.checkColumnNameDuplication(newSchema, "in replacing columns")
+      ParquetSchemaConverter.checkFieldNames(SchemaMergingUtils.explodeNestedFieldNames(newSchema))
 
       val newMetadata = metadata.copy(schemaString = newSchema.json)
       txn.updateMetadata(newMetadata)

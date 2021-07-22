@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,18 +14,23 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.storage
+package io.delta.storage
 
 import com.google.common.base.Throwables
-
 import java.io.IOException
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.FileAlreadyExistsException
+
+import org.apache.spark.sql.delta.storage.HadoopFileSystemLogStore
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
+
 import org.apache.spark.SparkConf
+import org.apache.spark.annotation.Unstable
 
 /**
+ * :: Unstable ::
+ *
  * LogStore implementation for IBM Cloud Object Storage.
  *
  * We assume the following from COS's [[FileSystem]] implementations:
@@ -35,7 +40,11 @@ import org.apache.spark.SparkConf
  *   (https://github.com/CODAIT/stocator) by setting the configuration `fs.cos.atomic.write` to true
  *   (for more info see the documentation for Stocator)
  * - List-after-write is consistent.
+ *
+ * @note This class is not meant for direct access but for configuration based on storage system.
+ *       See https://docs.delta.io/latest/delta-storage.html for details.
  */
+@Unstable
 class IBMCOSLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
   extends HadoopFileSystemLogStore(sparkConf, hadoopConf) {
   val preconditionFailedExceptionMessage =
@@ -52,14 +61,10 @@ class IBMCOSLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
     if (exists && overwrite == false) {
       throw new FileAlreadyExistsException(path.toString)
     } else {
-      // create is atomic
+      // write is atomic when overwrite == false
       val stream = fs.create(path, overwrite)
       try {
-        var writeSize = 0L
-        actions.map(_ + "\n").map(_.getBytes(UTF_8)).foreach(action => {
-          stream.write(action)
-          writeSize += action.length
-        })
+        actions.map(_ + "\n").map(_.getBytes(UTF_8)).foreach(stream.write)
         stream.close()
       } catch {
         case e: IOException if isPreconditionFailure(e) =>

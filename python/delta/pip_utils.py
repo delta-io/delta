@@ -1,5 +1,5 @@
 #
-# Copyright (2020) The Delta Lake Project Authors.
+# Copyright (2021) The Delta Lake Project Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,7 +21,9 @@ def configure_spark_with_delta_pip(spark_session_builder):
     Utility function to configure a SparkSession builder such that the generated SparkSession
     will automatically download the required Delta Lake JARs from Maven. This function is
     required when you want to
+
     1. Install Delta Lake locally using pip, and
+
     2. Execute your Python code using Delta Lake + Pyspark directly, that is, not using
        `spark-submit --packages io.delta:...` or `pyspark --packages io.delta:...`.
 
@@ -32,7 +34,7 @@ def configure_spark_with_delta_pip(spark_session_builder):
         spark = configure_spark_with_delta_pip(builder).getOrCreate()
 
     :param spark_session_builder: SparkSession.Builder object being used to configure and
-    create a SparkSession.
+                                  create a SparkSession.
     :return: Updated SparkSession.Builder object
 
     .. versionadded:: 1.0
@@ -50,7 +52,7 @@ See the online documentation for the correct usage of this function.
         raise TypeError(msg)
 
     try:
-        delta_version = importlib_metadata.version("deltalake-spark")
+        delta_version = importlib_metadata.version("delta_spark")
     except Exception as e:
         msg = '''
 This function can be used only when Delta Lake has been locally installed with pip.

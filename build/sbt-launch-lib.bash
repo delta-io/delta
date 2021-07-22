@@ -38,7 +38,12 @@ dlog () {
 
 acquire_sbt_jar () {
   SBT_VERSION=`awk -F "=" '/sbt\.version/ {print $2}' ./project/build.properties`
-  URL1=https://dl.bintray.com/typesafe/ivy-releases/org.scala-sbt/sbt-launch/${SBT_VERSION}/sbt-launch.jar
+  # Download sbt from mirror URL if the environment variable is provided
+  if [[ "${SBT_VERSION}" == "0.13.18" ]] && [[ -n "${SBT_MIRROR_JAR_URL}" ]]; then
+    URL1="${SBT_MIRROR_JAR_URL}"
+  else
+    URL1="https://repo.typesafe.com/typesafe/ivy-releases/org.scala-sbt/sbt-launch/${SBT_VERSION}/sbt-launch.jar"
+  fi
   JAR=build/sbt-launch-${SBT_VERSION}.jar
 
   sbt_jar=$JAR
@@ -47,7 +52,7 @@ acquire_sbt_jar () {
     # Download sbt launch jar if it hasn't been downloaded yet
     if [ ! -f "${JAR}" ]; then
     # Download
-    printf "Attempting to fetch sbt\n"
+    printf 'Attempting to fetch sbt from %s\n' "${URL1}"
     JAR_DL="${JAR}.part"
     if [ $(command -v curl) ]; then
       curl --fail --location --silent ${URL1} > "${JAR_DL}" &&\

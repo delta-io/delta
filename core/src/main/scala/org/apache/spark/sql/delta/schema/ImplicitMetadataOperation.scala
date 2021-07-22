@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,18 +48,6 @@ trait ImplicitMetadataOperation extends DeltaLogging {
   }
 
   protected final def updateMetadata(
-      txn: OptimisticTransaction,
-      data: Dataset[_],
-      partitionColumns: Seq[String],
-      configuration: Map[String, String],
-      isOverwriteMode: Boolean,
-      rearrangeOnly: Boolean = false): Unit = {
-    updateMetadata(
-      data.sparkSession, txn, data.schema, partitionColumns,
-      configuration, isOverwriteMode, rearrangeOnly)
-  }
-
-  protected final def updateMetadata(
       spark: SparkSession,
       txn: OptimisticTransaction,
       schema: StructType,
@@ -77,7 +65,7 @@ trait ImplicitMetadataOperation extends DeltaLogging {
         } else {
           Set.empty[String]
         }
-      SchemaUtils.mergeSchemas(
+      SchemaMergingUtils.mergeSchemas(
         txn.metadata.schema,
         dataSchema,
         fixedTypeColumns = fixedTypeColumns)

@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,6 +42,7 @@ import org.apache.spark.sql.connector.expressions.{BucketTransform, Transform}
 import org.apache.spark.sql.execution.{QueryExecution, SQLExecution}
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.streaming.IncrementalExecution
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, DateType, DoubleType, FloatType, IntegerType, Metadata => FieldMetadata, MetadataBuilder, StringType, StructField, StructType, TimestampType}
 
 /**
