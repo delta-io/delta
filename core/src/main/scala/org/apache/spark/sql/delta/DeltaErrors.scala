@@ -1129,10 +1129,10 @@ object DeltaErrors
         s"but the column type is ${columnType.sql}")
   }
 
-  def updateOnTempViewWithGenerateColsNotSupported: Throwable = {
+  def operationOnTempViewWithGenerateColsNotSupported(op: String): Throwable = {
     new AnalysisException(
-      s"Updating a temp view referring to a Delta table that contains generated columns is not " +
-        s"supported. Please run the update command on the Delta table directly")
+      s"${op} command on a temp view referring to a Delta table that contains generated columns " +
+        s"is not supported. Please run the ${op} command on the Delta table directly")
   }
 
 
