@@ -98,9 +98,49 @@ def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
 def run_python_style_checks(root_dir):
     run_cmd([os.path.join(root_dir, "dev", "lint-python")], stream_output=True)
 
+def run_pypi_packaging_tests(root_dir):
+    print("##### Running PyPi Packaging tests #####")
+    print("### Clearing Delta artifacts from ivy2 and mvn cache")
+    run_cmd(["rm", "-rf", "~/.ivy2/cache/io.delta/"], stream_output=True)
+    run_cmd(["rm", "-rf", "~/.m2/repository/io/delta/"], stream_output=True)
+    
+    install_cmd = ["pip3", "install", "wheel", "twine", "setuptools", "--upgrade"]
+    print("### Executing:" + " ".join(install_cmd))
+    run_cmd(install_cmd, stream_output=True)
+
+    dist_dir = path.join(root_dir, "dist")
+
+    if path.exists(dist_dir) and path.isdir(dist_dir):
+        print("### Deleting `dist` directory")
+        shutil.rmtree(dist_dir)
+
+    gen_artifacts_cmd_1 = ["python3", "setup.py", "bdist_wheel"]
+    print("### Executing: " + " ".join(gen_artifacts_cmd_1))
+    run_cmd(gen_artifacts_cmd_1, stream_output=True, stderr=open('/dev/null', 'w'))
+
+    gen_artifacts_cmd_2 = ["python3", "setup.py", "sdist"]
+    print("### Executing: " + " ".join(gen_artifacts_cmd_2))
+    run_cmd(gen_artifacts_cmd_2, stream_output=True)
+
+    # TODO handle different versions
+    install_whl_cmd = ["pip3", "install", path.join(dist_dir, "delta_spark-1.1.0_SNAPSHOT-py3-none-any.whl")]
+    print("### Executing: " + " ".join(install_whl_cmd))
+    run_cmd(install_whl_cmd, stream_output=True)
+
+    # run test python file directly with python and not with spark-submit
+    test_file = path.join(root_dir, path.join("examples", "python", "using_with_pip.py"))
+    test_cmd = ["python3", test_file]
+    print("Test command: %s" % str(test_cmd))
+    try:
+        run_cmd(test_cmd, stream_output=True)
+    except:
+        print("Failed pip installation tests in %s" % (test_file))
+        raise
+
 
 if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    package = prepare(root_dir)
-    run_python_style_checks(root_dir)
-    test(root_dir, package)
+    # package = prepare(root_dir)
+    # run_python_style_checks(root_dir)
+    # test(root_dir, package)
+    run_pypi_packaging_tests(root_dir)
