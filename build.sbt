@@ -26,7 +26,7 @@ lazy val commonSettings = Seq(
 )
 
 lazy val core = (project in file("core"))
-  .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin)
+  .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin, Antlr4Plugin)
   .settings (
     name := "delta-core",
     commonSettings,
@@ -52,16 +52,21 @@ lazy val core = (project in file("core"))
 
       // Compiler plugins
       // -- Bump up the genjavadoc version explicitly to 0.16 to work with Scala 2.12
-      compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.16" cross CrossVersion.full)
+      // compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.16" cross CrossVersion.full)
     ),
     (mappings in (Compile, packageBin)) := (mappings in (Compile, packageBin)).value ++
         listPythonFiles(baseDirectory.value.getParentFile / "python"),
 
-    antlr4Settings,
+    // antlr4Settings,
     antlr4Version in Antlr4 := "4.8",
     antlr4PackageName in Antlr4 := Some("io.delta.sql.parser"),
     antlr4GenListener in Antlr4 := true,
     antlr4GenVisitor in Antlr4 := true,
+
+    // Antlr4 / antlr4Version:= "4.8",
+    // Antlr4 / antlr4PackageName := Some("io.delta.sql.parser"),
+    // Antlr4 / antlr4GenListener := true,
+    // Antlr4 / antlr4GenVisitor := true,
 
     testOptions in Test += Tests.Argument("-oDF"),
     testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
@@ -148,7 +153,8 @@ def listPythonFiles(pythonBase: File): Seq[(File, String)] = {
     .filter { file => file.getName.endsWith(".py") && ! file.getName.contains("test") }
     .filter { file => ! pythonExcludeDirs.exists { base => IO.relativize(base, file).nonEmpty} }
     .toSeq
-  pythonFiles pair relativeTo(pythonBase)
+
+  pythonFiles pair Path.relativeTo(pythonBase)
 }
 
 parallelExecution in ThisBuild := false
@@ -232,15 +238,16 @@ def ignoreUndocumentedPackages(packages: Seq[Seq[java.io.File]]): Seq[Seq[java.i
 }
 
 lazy val unidocSettings = Seq(
-
+  unidocGenjavadocVersion := "0.18",
+  
   // Configure Scala unidoc
-  scalacOptions in(ScalaUnidoc, unidoc) ++= Seq(
+  ScalaUnidoc / unidoc / scalacOptions ++= Seq(
     "-skip-packages", "org:com:io.delta.sql:io.delta.tables.execution",
     "-doc-title", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " ScalaDoc"
   ),
 
   // Configure Java unidoc
-  javacOptions in(JavaUnidoc, unidoc) := Seq(
+  JavaUnidoc / unidoc / javacOptions := Seq(
     "-public",
     "-exclude", "org:com:io.delta.sql:io.delta.tables.execution",
     "-windowtitle", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
@@ -250,8 +257,8 @@ lazy val unidocSettings = Seq(
     "-Xdoclint:all"
   ),
 
-  unidocAllSources in(JavaUnidoc, unidoc) := {
-    ignoreUndocumentedPackages((unidocAllSources in(JavaUnidoc, unidoc)).value)
+  JavaUnidoc / unidoc / unidocAllSources := {
+    ignoreUndocumentedPackages((JavaUnidoc / unidoc / unidocAllSources).value)
   },
 
   // Ensure unidoc is run with tests
