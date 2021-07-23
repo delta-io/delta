@@ -127,6 +127,7 @@ case class DeltaTableV2(
     V1_BATCH_WRITE, OVERWRITE_BY_FILTER, TRUNCATE
   ).asJava
 
+
   override def newWriteBuilder(info: LogicalWriteInfo): WriteBuilder = {
     new WriteIntoDeltaBuilder(deltaLog, info.options)
   }
