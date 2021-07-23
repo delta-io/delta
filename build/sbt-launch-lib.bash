@@ -38,12 +38,11 @@ dlog () {
 
 acquire_sbt_jar () {
   SBT_VERSION=`awk -F "=" '/sbt\.version/ {print $2}' ./project/build.properties`
-  # Download sbt from mirror URL if the environment variable is provided
-  if [[ "${SBT_VERSION}" == "0.13.18" ]] && [[ -n "${SBT_MIRROR_JAR_URL}" ]]; then
-    URL1="${SBT_MIRROR_JAR_URL}"
-  else
-    URL1="https://repo.typesafe.com/typesafe/ivy-releases/org.scala-sbt/sbt-launch/${SBT_VERSION}/sbt-launch.jar"
-  fi
+  # DEFAULT_ARTIFACT_REPOSITORY env variable can be used to only fetch
+  # artifacts from internal repos only.
+  # Ex:
+  #   DEFAULT_ARTIFACT_REPOSITORY=https://artifacts.internal.com/libs-release/
+  URL1=${DEFAULT_ARTIFACT_REPOSITORY:-https://repo1.maven.org/maven2/}org/scala-sbt/sbt-launch/${SBT_VERSION}/sbt-launch-${SBT_VERSION}.jar
   JAR=build/sbt-launch-${SBT_VERSION}.jar
 
   sbt_jar=$JAR
@@ -61,13 +60,13 @@ acquire_sbt_jar () {
       wget --quiet ${URL1} -O "${JAR_DL}" &&\
         mv "${JAR_DL}" "${JAR}"
     else
-      printf "You do not have curl or wget installed, please install sbt manually from http://www.scala-sbt.org/\n"
+      printf "You do not have curl or wget installed, please install sbt manually from https://www.scala-sbt.org/\n"
       exit -1
     fi
     fi
     if [ ! -f "${JAR}" ]; then
     # We failed to download
-    printf "Our attempt to download sbt locally to ${JAR} failed. Please install sbt manually from http://www.scala-sbt.org/\n"
+    printf "Our attempt to download sbt locally to ${JAR} failed. Please install sbt manually from https://www.scala-sbt.org/\n"
     exit -1
     fi
     printf "Launching sbt from ${JAR}\n"
