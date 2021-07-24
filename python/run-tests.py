@@ -88,7 +88,7 @@ def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
             **kwargs)
         (stdout, stderr) = child.communicate()
         exit_code = child.wait()
-        if throw_on_error and exit_code is not 0:
+        if throw_on_error and exit_code != 0:
             raise Exception(
                 "Non-zero exitcode: %s\n\nSTDOUT:\n%s\n\nSTDERR:%s" %
                 (exit_code, stdout, stderr))
@@ -100,6 +100,7 @@ def run_python_style_checks(root_dir):
 
 def run_pypi_packaging_tests(root_dir):
     print("##### Running PyPi Packaging tests #####")
+
     version = '0.0.0'
     with open(os.path.join(root_dir, "version.sbt")) as fd:
         version = fd.readline().split('"')[1]
@@ -128,7 +129,7 @@ def run_pypi_packaging_tests(root_dir):
     print("### Executing: " + " ".join(gen_artifacts_cmd_2))
     run_cmd(gen_artifacts_cmd_2, stream_output=True)
 
-        # we need, for example, 1.1.0_SNAPSHOT not 1.1.0-SNAPSHOT
+    # we need, for example, 1.1.0_SNAPSHOT not 1.1.0-SNAPSHOT
     version_formatted = version.replace("-","_")
     delta_whl_name = "delta_spark-" + version_formatted + "-py3-none-any.whl"
 
@@ -150,6 +151,35 @@ def run_pypi_packaging_tests(root_dir):
 if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     package = prepare(root_dir)
-    # run_python_style_checks(root_dir)
+
+    # This line causes this error
+    #
+    # starting python compilation test...
+    # Python compilation failed with the following errors:
+    # Compiling /Users/scott.sandre/delta/python/delta/tests/test_sql.py ...
+    # File "/Users/scott.sandre/delta/python/delta/tests/test_sql.py", line 97
+    #     return self.spark.sql(f"SELECT * FROM {table}")
+    #                                                 ^
+    # SyntaxError: invalid syntax
+
+    # Compiling /Users/scott.sandre/delta/python/delta/pip_utils.py ...
+    # File "/Users/scott.sandre/delta/python/delta/pip_utils.py", line 51
+    #     msg = f'''
+    # This function must be called with a SparkSession builder as the argument.
+    # The argument found is of type {str(type(spark_session_builder))}.
+    # See the online documentation for the correct usage of this function.
+    #         '''
+                
+                                                                            
+                                                                    
+                                                                        
+    #         ^
+    # SyntaxError: invalid syntax
+    # 1
+    #
+    # run_python_style_checks(root_dir) <---------------------
+
+    # This line also causes errors for me...
     # test(root_dir, package)
+    
     run_pypi_packaging_tests(root_dir)
