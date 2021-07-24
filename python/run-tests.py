@@ -100,6 +100,13 @@ def run_python_style_checks(root_dir):
 
 def run_pypi_packaging_tests(root_dir):
     print("##### Running PyPi Packaging tests #####")
+    version = '0.0.0'
+    with open(os.path.join(root_dir, "version.sbt")) as fd:
+        version = fd.readline().split('"')[1]
+
+    # uninstall packages if they exist
+    run_cmd(["pip3", "uninstall", "--yes", "delta-spark", "pyspark"], stream_output=True)
+
     print("### Clearing Delta artifacts from ivy2 and mvn cache")
     run_cmd(["rm", "-rf", "~/.ivy2/cache/io.delta/"], stream_output=True)
     run_cmd(["rm", "-rf", "~/.m2/repository/io/delta/"], stream_output=True)
@@ -110,9 +117,8 @@ def run_pypi_packaging_tests(root_dir):
 
     dist_dir = path.join(root_dir, "dist")
 
-    if path.exists(dist_dir) and path.isdir(dist_dir):
-        print("### Deleting `dist` directory")
-        shutil.rmtree(dist_dir)
+    print("### Deleting `dist` directory if it exists")
+    delete_if_exists(dist_dir)
 
     gen_artifacts_cmd_1 = ["python3", "setup.py", "bdist_wheel"]
     print("### Executing: " + " ".join(gen_artifacts_cmd_1))
@@ -122,8 +128,11 @@ def run_pypi_packaging_tests(root_dir):
     print("### Executing: " + " ".join(gen_artifacts_cmd_2))
     run_cmd(gen_artifacts_cmd_2, stream_output=True)
 
-    # TODO handle different versions
-    install_whl_cmd = ["pip3", "install", path.join(dist_dir, "delta_spark-1.1.0_SNAPSHOT-py3-none-any.whl")]
+        # we need, for example, 1.1.0_SNAPSHOT not 1.1.0-SNAPSHOT
+    version_formatted = version.replace("-","_")
+    delta_whl_name = "delta_spark-" + version_formatted + "-py3-none-any.whl"
+
+    install_whl_cmd = ["pip3", "install", path.join(dist_dir, delta_whl_name)]
     print("### Executing: " + " ".join(install_whl_cmd))
     run_cmd(install_whl_cmd, stream_output=True)
 
@@ -140,7 +149,7 @@ def run_pypi_packaging_tests(root_dir):
 
 if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    # package = prepare(root_dir)
+    package = prepare(root_dir)
     # run_python_style_checks(root_dir)
     # test(root_dir, package)
     run_pypi_packaging_tests(root_dir)
