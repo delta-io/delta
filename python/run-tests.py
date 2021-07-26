@@ -152,34 +152,6 @@ if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     package = prepare(root_dir)
 
-    # This line causes this error
-    #
-    # starting python compilation test...
-    # Python compilation failed with the following errors:
-    # Compiling /Users/scott.sandre/delta/python/delta/tests/test_sql.py ...
-    # File "/Users/scott.sandre/delta/python/delta/tests/test_sql.py", line 97
-    #     return self.spark.sql(f"SELECT * FROM {table}")
-    #                                                 ^
-    # SyntaxError: invalid syntax
-
-    # Compiling /Users/scott.sandre/delta/python/delta/pip_utils.py ...
-    # File "/Users/scott.sandre/delta/python/delta/pip_utils.py", line 51
-    #     msg = f'''
-    # This function must be called with a SparkSession builder as the argument.
-    # The argument found is of type {str(type(spark_session_builder))}.
-    # See the online documentation for the correct usage of this function.
-    #         '''
-                
-                                                                            
-                                                                    
-                                                                        
-    #         ^
-    # SyntaxError: invalid syntax
-    # 1
-    #
-    # run_python_style_checks(root_dir) <---------------------
-
-    # This line also causes errors for me...
-    # test(root_dir, package)
-    
+    run_python_style_checks(root_dir)
+    test(root_dir, package)
     run_pypi_packaging_tests(root_dir)
