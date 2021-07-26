@@ -30,7 +30,6 @@ build/*.jar
 build/apache-maven*
 build/scala*
 build/zinc*
-build/lib
 cache
 checkpoint
 conf/*.cmd
@@ -68,7 +67,6 @@ docs/python/_build/
 python/test_coverage/coverage_data
 python/test_coverage/htmlcov
 python/pyspark/python
-python/delta_spark.egg-info
 reports/
 scalastyle-on-compile.generated.xml
 scalastyle-output.xml
