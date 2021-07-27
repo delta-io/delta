@@ -98,6 +98,7 @@ def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
 def run_python_style_checks(root_dir):
     run_cmd([os.path.join(root_dir, "dev", "lint-python")], stream_output=True)
 
+
 def run_pypi_packaging_tests(root_dir):
     print("##### Running PyPi Packaging tests #####")
 
@@ -111,7 +112,7 @@ def run_pypi_packaging_tests(root_dir):
     print("### Clearing Delta artifacts from ivy2 and mvn cache")
     run_cmd(["rm", "-rf", "~/.ivy2/cache/io.delta/"], stream_output=True)
     run_cmd(["rm", "-rf", "~/.m2/repository/io/delta/"], stream_output=True)
-    
+
     install_cmd = ["pip3", "install", "wheel", "twine", "setuptools", "--upgrade"]
     print("### Executing:" + " ".join(install_cmd))
     run_cmd(install_cmd, stream_output=True)
@@ -130,7 +131,7 @@ def run_pypi_packaging_tests(root_dir):
     run_cmd(gen_artifacts_cmd_2, stream_output=True)
 
     # we need, for example, 1.1.0_SNAPSHOT not 1.1.0-SNAPSHOT
-    version_formatted = version.replace("-","_")
+    version_formatted = version.replace("-", "_")
     delta_whl_name = "delta_spark-" + version_formatted + "-py3-none-any.whl"
 
     install_whl_cmd = ["pip3", "install", path.join(dist_dir, delta_whl_name)]
