@@ -40,7 +40,6 @@ The function supports two parameters of which the second is optional:
 A table that contains a file/folder listing of your Delta Lake table. PowerBI supports a wide set of storage services which you can use for this. There are however some mandatory things this file/folder listing has to cotain:
 - a sub-folder `_delta_log` (which holds the Delta Log files and also ensures that the parent folder is the root of the Delta Lake table)
 - mandatory columns `Name`, `Folder Path`, `Content`, `Extension`
-- a column called `file_name`
 These are all returned by default for common Storage connectors like Azure Data Lake Storage Gen2 or Azure Blob Storaage
 
 ## Parameter DeltaTableOptions
@@ -57,7 +56,10 @@ Assuming your Delta Lake table is partitioned by Year and Month and you want to 
 If you are lazy you can also use this shorter version without explicit type definitions:
 ```
 (x) => Record.Field(x, "Year") = 2021 and Record.Field(x, "Month") = "Jan"
-    
+```
+or even more lightweight
+```
+(x) => x[Year] = 2021 and x[Month] = "Jan"
 ```
 
 It supports all possible variations that are supported by Power Query/M so you can also build complex partition filters.
@@ -99,9 +101,9 @@ in
 # FAQ
 **Q:** The Power Query UI does not show the second parameter. How can I use it?
 
-**A:** To use the second parameter of the function you need to use the advanced editor.
+**A:** To use the second parameter of the function you need to use the advanced editor. Power Query does currently not support parameters of type record in the UI
 
 --------------------
 **Q:** How can I use [Delta Lake Time Travel](https://databricks.com/blog/2019/02/04/introducing-delta-time-travel-for-large-scale-data-lakes.html)?
 
-**A:** The function supports an optional second parameter to supply generic parameters. To query specific version of the Delta Lake table, you can provide a record with the field `Version` and the value of the version you want to query.
+**A:** The function supports an optional second parameter to supply generic parameters. To query specific version of the Delta Lake table, you can provide a record with the field `Version` and the value of the version you want to query. For example: `fn_ReadDeltaTable(#"Filtered Rows", [Version=123])`

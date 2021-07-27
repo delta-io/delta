@@ -20,6 +20,7 @@
 .pydevproject
 .scala_dependencies
 .settings
+*.pbix
 /lib/
 R-unit-tests.log
 R/unit-tests.out
