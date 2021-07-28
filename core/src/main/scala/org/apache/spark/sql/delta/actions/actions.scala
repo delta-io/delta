@@ -28,8 +28,8 @@ import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation.{JsonIgnore, JsonInclude}
-import com.fasterxml.jackson.core.JsonGenerator
-import com.fasterxml.jackson.databind.{JsonSerializer, ObjectMapper, SerializerProvider}
+import com.fasterxml.jackson.core.{JsonGenerator, JsonProcessingException}
+import com.fasterxml.jackson.databind.{JsonMappingException, JsonSerializer, ObjectMapper, SerializerProvider}
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 import org.codehaus.jackson.annotate.JsonRawValue
 
@@ -313,11 +313,29 @@ case class RemoveFile(
     extendedFileMetadata: Boolean = false,
     partitionValues: Map[String, String] = null,
     size: Long = 0,
-    tags: Map[String, String] = null) extends FileAction {
+    tags: Map[String, String] = null) extends FileAction with Logging {
   override def wrap: SingleAction = SingleAction(remove = this)
 
   @JsonIgnore
   val delTimestamp: Long = deletionTimestamp.getOrElse(0L)
+
+  /**
+   * Return tag value if extendedFileMetadata is true and the tag present.
+   */
+  def getTag(tagName: String): Option[String] = {
+    if (!extendedFileMetadata || tags == null) {
+      None
+    } else {
+      tags.get(tagName)
+    }
+  }
+
+  /**
+   * Create a copy with the new tag.
+   */
+  def copyWithTag(tag: String, value: String): RemoveFile =
+    copy(tags = Option(tags).getOrElse(Map.empty) + (tag -> value), extendedFileMetadata = true)
+
 }
 // scalastyle:on
 
