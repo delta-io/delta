@@ -40,7 +40,7 @@ def test(root_dir, package):
                    "--packages", package, test_file]
             print("Running tests in %s\n=============" % test_file)
             print("Command: %s" % str(cmd))
-            run_cmd(cmd, stream_output=True)
+            run_cmd(cmd, stream_output=True, print_cmd=False)
         except:
             print("Failed tests in %s" % (test_file))
             raise
@@ -68,7 +68,10 @@ def prepare(root_dir):
     return package
 
 
-def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
+def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, print_cmd=True, **kwargs):
+    if print_cmd:
+        print("### Executing cmd: " + " ".join(cmd))
+
     cmd_env = os.environ.copy()
     if env:
         cmd_env.update(env)
@@ -100,6 +103,15 @@ def run_python_style_checks(root_dir):
 
 
 def run_pypi_packaging_tests(root_dir):
+    """
+    We want to test that the PyPi artifact for this delta version can be generated,
+    locally installed, and used in pyton tests.
+
+    We will uninstall any existing local delta artifact.
+    We will generate a new local delta artifact.
+    We will install it into the local PyPi repository.
+    And then we will run relevant python tests to ensure everything works as exepcted.
+    """
     print("##### Running PyPi Packaging tests #####")
 
     version = '0.0.0'
@@ -113,36 +125,32 @@ def run_pypi_packaging_tests(root_dir):
     run_cmd(["rm", "-rf", "~/.ivy2/cache/io.delta/"], stream_output=True)
     run_cmd(["rm", "-rf", "~/.m2/repository/io/delta/"], stream_output=True)
 
-    install_cmd = ["pip3", "install", "wheel", "twine", "setuptools", "--upgrade"]
-    print("### Executing:" + " ".join(install_cmd))
-    run_cmd(install_cmd, stream_output=True)
+    # install helper pip packages
+    run_cmd(["pip3", "install", "wheel", "twine", "setuptools", "--upgrade"], stream_output=True)
 
-    dist_dir = path.join(root_dir, "dist")
+    wheel_dist_dir = path.join(root_dir, "dist")
 
     print("### Deleting `dist` directory if it exists")
-    delete_if_exists(dist_dir)
+    delete_if_exists(wheel_dist_dir)
 
-    gen_artifacts_cmd_1 = ["python3", "setup.py", "bdist_wheel"]
-    print("### Executing: " + " ".join(gen_artifacts_cmd_1))
-    run_cmd(gen_artifacts_cmd_1, stream_output=True, stderr=open('/dev/null', 'w'))
+    # generate artifacts
+    run_cmd(["python3", "setup.py", "bdist_wheel"], stream_output=True, stderr=open('/dev/null', 'w'))
 
-    gen_artifacts_cmd_2 = ["python3", "setup.py", "sdist"]
-    print("### Executing: " + " ".join(gen_artifacts_cmd_2))
-    run_cmd(gen_artifacts_cmd_2, stream_output=True)
+    run_cmd(["python3", "setup.py", "sdist"], stream_output=True)
 
     # we need, for example, 1.1.0_SNAPSHOT not 1.1.0-SNAPSHOT
     version_formatted = version.replace("-", "_")
     delta_whl_name = "delta_spark-" + version_formatted + "-py3-none-any.whl"
 
-    install_whl_cmd = ["pip3", "install", path.join(dist_dir, delta_whl_name)]
-    print("### Executing: " + " ".join(install_whl_cmd))
+    # this will install delta-spark-$version and pyspark
+    install_whl_cmd = ["pip3", "install", path.join(wheel_dist_dir, delta_whl_name)]
     run_cmd(install_whl_cmd, stream_output=True)
 
     # run test python file directly with python and not with spark-submit
     test_file = path.join(root_dir, path.join("examples", "python", "using_with_pip.py"))
     test_cmd = ["python3", test_file]
-    print("Test command: %s" % str(test_cmd))
     try:
+        print("### Starting tests...")
         run_cmd(test_cmd, stream_output=True)
     except:
         print("Failed pip installation tests in %s" % (test_file))
