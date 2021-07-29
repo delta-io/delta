@@ -40,7 +40,7 @@ def test(root_dir, package):
                    "--packages", package, test_file]
             print("Running tests in %s\n=============" % test_file)
             print("Command: %s" % str(cmd))
-            run_cmd(cmd, stream_output=True, print_cmd=False)
+            run_cmd(cmd, stream_output=True)
         except:
             print("Failed tests in %s" % (test_file))
             raise
@@ -105,10 +105,10 @@ def run_python_style_checks(root_dir):
 def run_pypi_packaging_tests(root_dir):
     """
     We want to test that the PyPi artifact for this delta version can be generated,
-    locally installed, and used in pyton tests.
+    locally installed, and used in python tests.
 
-    We will uninstall any existing local delta artifact.
-    We will generate a new local delta artifact.
+    We will uninstall any existing local delta PyPi artifact.
+    We will generate a new local delta PyPi artifact.
     We will install it into the local PyPi repository.
     And then we will run relevant python tests to ensure everything works as exepcted.
     """
@@ -120,9 +120,6 @@ def run_pypi_packaging_tests(root_dir):
 
     # uninstall packages if they exist
     run_cmd(["pip3", "uninstall", "--yes", "delta-spark", "pyspark"], stream_output=True)
-
-    # No need to rm -rf local .ivy and .m2 io/delta caches.
-    # They were deleted in `prepare`, and then new artifacts were locally published to them
 
     # install helper pip packages
     run_cmd(["pip3", "install", "wheel", "twine", "setuptools", "--upgrade"], stream_output=True)
