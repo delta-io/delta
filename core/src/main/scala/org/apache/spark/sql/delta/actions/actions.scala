@@ -20,6 +20,7 @@ package org.apache.spark.sql.delta.actions
 import java.net.URI
 import java.sql.Timestamp
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 import scala.collection.mutable.ArrayBuffer
 
@@ -245,7 +246,8 @@ case class AddFile(
 
   @JsonIgnore
   lazy val insertionTime: Long = tag(AddFile.Tags.INSERTION_TIME)
-    .getOrElse(modificationTime.toString).toLong
+    .getOrElse(TimeUnit.MICROSECONDS.convert(modificationTime, TimeUnit.MICROSECONDS).toString)
+    .toLong
 
   def tag(tag: AddFile.Tags.KeyType): Option[String] =
     Option(tags).getOrElse(Map.empty).get(tag.name)
@@ -280,7 +282,8 @@ object AddFile {
     /** [[ZCUBE_ZORDER_CURVE]]: Clustering strategy of the corresponding ZCube */
     object ZCUBE_ZORDER_CURVE extends AddFile.Tags.KeyType("ZCUBE_ZORDER_CURVE")
 
-    /** [[INSERTION_TIME]]: the latest timestamp when the data in the file was inserted */
+    /** [[INSERTION_TIME]]: the latest timestamp in micro seconds when the data in the file
+     * was inserted */
     object INSERTION_TIME extends AddFile.Tags.KeyType("INSERTION_TIME")
 
     /** [[PARTITION_ID]]: rdd partition id that has written the file, will not be stored in the
