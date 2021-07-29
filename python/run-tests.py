@@ -121,9 +121,8 @@ def run_pypi_packaging_tests(root_dir):
     # uninstall packages if they exist
     run_cmd(["pip3", "uninstall", "--yes", "delta-spark", "pyspark"], stream_output=True)
 
-    print("### Clearing Delta artifacts from ivy2 and mvn cache")
-    run_cmd(["rm", "-rf", "~/.ivy2/cache/io.delta/"], stream_output=True)
-    run_cmd(["rm", "-rf", "~/.m2/repository/io/delta/"], stream_output=True)
+    # No need to rm -rf local .ivy and .m2 io/delta caches.
+    # They were deleted in `prepare`, and then new artifacts were locally published to them
 
     # install helper pip packages
     run_cmd(["pip3", "install", "wheel", "twine", "setuptools", "--upgrade"], stream_output=True)
