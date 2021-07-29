@@ -66,6 +66,10 @@ class DeltaLog private(
   with SnapshotManagement
   with ReadChecksum {
 
+  // scalastyle:off println
+  println("pypi TEST foo")
+  // scalastyle:on println
+
   import org.apache.spark.sql.delta.util.FileNames._
 
 

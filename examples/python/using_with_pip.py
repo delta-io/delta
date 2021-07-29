@@ -18,8 +18,11 @@ import shutil
 
 # flake8: noqa
 import os
+import importlib_metadata
 from pyspark.sql import SparkSession
 from delta import *
+
+print("*** using_with_pip.py > delta version", importlib_metadata.version("delta_spark"))
 
 builder = SparkSession.builder \
     .appName("with-pip") \

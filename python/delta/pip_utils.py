@@ -53,6 +53,7 @@ See the online documentation for the correct usage of this function.
 
     try:
         delta_version = importlib_metadata.version("delta_spark")
+        print("*** pip_utils.py > configure_spark_with_delta_pip > delta_version", delta_version)
     except Exception as e:
         msg = '''
 This function can be used only when Delta Lake has been locally installed with pip.
