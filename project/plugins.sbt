@@ -14,20 +14,7 @@
  * limitations under the License.
  */
 
-
-resolvers += Resolver.url("artifactory", url("http://scalasbt.artifactoryonline.com/scalasbt/sbt-plugin-releases"))(Resolver.ivyStylePatterns)
-
-resolvers += "bintray-spark-packages" at "https://dl.bintray.com/spark-packages/maven/"
-
-resolvers += "Typesafe Repository" at "http://repo.typesafe.com/typesafe/releases/"
-
-resolvers += Resolver.url(
-  "typesafe sbt-plugins",
-  url("https://dl.bintray.com/typesafe/sbt-plugins"))(Resolver.ivyStylePatterns)
-
-addSbtPlugin("com.github.gseitz" % "sbt-release" % "1.0.13")
-
-addSbtPlugin("org.foundweekends" % "sbt-bintray" % "0.5.6")
+addSbtPlugin("com.github.sbt" % "sbt-release" % "1.0.15")
 
 addSbtPlugin("com.eed3si9n" % "sbt-assembly" % "0.14.9")
 
@@ -38,4 +25,10 @@ addSbtPlugin("org.scalastyle" %% "scalastyle-sbt-plugin" % "1.0.0")
 addSbtPlugin("net.virtual-void" % "sbt-dependency-graph" % "0.10.0-RC1")
 
 addSbtPlugin("com.eed3si9n" % "sbt-unidoc" % "0.4.2")
+
+// changing this to addSbtPlugin("com.github.sbt" % "sbt-pgp" % "2.1.2")
+// will cause issues with release
+addSbtPlugin("com.jsuereth" % "sbt-pgp" % "1.0.0")
+
+addSbtPlugin("org.xerial.sbt" % "sbt-sonatype" % "2.3")
 

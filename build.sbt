@@ -53,6 +53,15 @@ lazy val commonSettings = Seq(
 lazy val releaseSettings = Seq(
   publishMavenStyle := true,
   releaseCrossBuild := true,
+  publishTo := {
+    val nexus = "https://oss.sonatype.org/"
+    if (isSnapshot.value) {
+      Some("snapshots" at nexus + "content/repositories/snapshots")
+    } else {
+      Some("releases"  at nexus + "service/local/staging/deploy/maven2")
+    }
+  },
+  releasePublishArtifactsAction := PgpKeys.publishSigned.value,
   licenses += ("Apache-2.0", url("http://www.apache.org/licenses/LICENSE-2.0")),
   pomExtra :=
     <url>https://github.com/delta-io/connectors</url>
@@ -82,8 +91,6 @@ lazy val releaseSettings = Seq(
           <url>https://github.com/zsxwing</url>
         </developer>
       </developers>,
-  bintrayOrganization := Some("delta-io"),
-  bintrayRepository := "delta",
   releaseProcess := Seq[ReleaseStep](
     checkSnapshotDependencies,
     inquireVersions,
@@ -91,7 +98,7 @@ lazy val releaseSettings = Seq(
     setReleaseVersion,
     commitReleaseVersion,
     tagRelease,
-    publishArtifacts,
+    releaseStepCommandAndRemaining("+publishLocalSigned"),
     setNextVersion,
     commitNextVersion
   )
@@ -102,25 +109,11 @@ lazy val skipReleaseSettings = Seq(
   publish := ()
 )
 
-// Don't release the root project
-publishArtifact := false
-
-publish := ()
-
 // Looks some of release settings should be set for the root project as well.
-releaseCrossBuild := true
-
-releaseProcess := Seq[ReleaseStep](
-  checkSnapshotDependencies,
-  inquireVersions,
-  runTest,
-  setReleaseVersion,
-  commitReleaseVersion,
-  tagRelease,
-  publishArtifacts,
-  setNextVersion,
-  commitNextVersion
-)
+publishArtifact := false  // Don't release the root project
+publish := {}
+publishTo := Some("snapshots" at "https://oss.sonatype.org/content/repositories/snapshots")
+releaseCrossBuild := false
 
 lazy val hive = (project in file("hive")) dependsOn(standalone) settings (
   name := "delta-hive",
