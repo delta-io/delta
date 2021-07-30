@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta.files
 import java.net.URI
 import java.util.Objects
 
+import scala.collection.mutable.ArrayBuffer
+
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.actions.AddFile
@@ -59,7 +61,7 @@ abstract class TahoeFileIndex(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): Seq[PartitionDirectory] = {
     val partitionValuesToFiles = listAddFiles(partitionFilters, dataFilters)
-    makePartitionDirectories(partitionValuesToFiles)
+    makePartitionDirectories(partitionValuesToFiles.toSeq)
   }
 
 
@@ -70,8 +72,7 @@ abstract class TahoeFileIndex(
   }
 
   private def makePartitionDirectories(
-      partitionValuesToFiles: Map[Map[String, String],
-      Seq[AddFile]]): Seq[PartitionDirectory] = {
+      partitionValuesToFiles: Seq[(Map[String, String], Seq[AddFile])]): Seq[PartitionDirectory] = {
     val timeZone = spark.sessionState.conf.sessionLocalTimeZone
     partitionValuesToFiles.map {
       case (partitionValues, files) =>
@@ -91,7 +92,7 @@ abstract class TahoeFileIndex(
         }.toArray
 
         PartitionDirectory(new GenericInternalRow(rowValues), fileStatuses)
-    }.toSeq
+    }
   }
 
   override def partitionSchema: StructType = deltaLog.snapshot.metadata.partitionSchema
