@@ -130,7 +130,10 @@ def run_pypi_packaging_tests(root_dir):
     delete_if_exists(wheel_dist_dir)
 
     # generate artifacts
-    run_cmd(["python3", "setup.py", "bdist_wheel"], stream_output=True, stderr=open('/dev/null', 'w'))
+    run_cmd( \
+        ["python3", "setup.py", "bdist_wheel"], \
+        stream_output=True, \
+        stderr=open('/dev/null', 'w'))
 
     run_cmd(["python3", "setup.py", "sdist"], stream_output=True)
 
