@@ -116,6 +116,27 @@ public class UpdateJavaSuite implements DeltaSQLCommandJavaTest {
         QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
     }
 
+    @Test
+    public void testUpdateTableWhenSpaceInPath() {
+        Dataset<Row> targetTable = createKVDataSet(
+                Arrays.asList(tuple2(1, 10), tuple2(2, 20), tuple2(3, 30), tuple2(4, 40)),
+                "key", "value");
+        String javaIoTmpdir = System.getProperty("java.io.tmpdir");
+        String dirWithNonAscii = "/test with space/";
+        String tmpDirFullPath= javaIoTmpdir.concat(dirWithNonAscii);
+        String dir = Utils.createTempDir(tmpDirFullPath, "spark").toString();
+        targetTable.write().format("delta").save(dir);
+        spark.sql("CREATE TABLE test USING DELTA LOCATION '" +dir+ "'");
+        spark.sql("UPDATE test SET key = key + 10");
+        spark.sql("UPDATE test SET key = key + 10 WHERE true");
+        spark.sql("UPDATE test SET key = key + 10 WHERE 1 = 1");
+        spark.sql("UPDATE test SET key = key + 10 WHERE key = key");
+        DeltaTable target = DeltaTable.forPath(spark, dir);
+        List<Row> expectedAnswer = createKVDataSet(
+                Arrays.asList(tuple2(41,10),tuple2(42, 20), tuple2(43, 30), tuple2(44, 40))).collectAsList();
+        QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
+    }
+
     private Dataset<Row> createKVDataSet(
         List<Tuple2<Integer, Integer>> data, String keyName, String valueName) {
         Encoder<Tuple2<Integer, Integer>> encoder = Encoders.tuple(Encoders.INT(), Encoders.INT());
