@@ -247,6 +247,7 @@ class Snapshot(
     DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT, logSegment.checkpoint)
   }
 
+
   protected lazy val fileIndices: Seq[DeltaLogFileIndex] = {
     checkpointFileIndexOpt.toSeq ++ deltaFileIndexOpt.toSeq
   }

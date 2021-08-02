@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils.quoteIdentifier
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.util.AnalysisHelper
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, Dataset, Encoder, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.BucketSpec

@@ -125,6 +125,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
       if (location.isDefined) CatalogTableType.EXTERNAL else CatalogTableType.MANAGED
     val commentOpt = Option(allTableProperties.get("comment"))
 
+
     val tableDesc = new CatalogTable(
       identifier = id,
       tableType = tableType,
