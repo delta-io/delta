@@ -225,7 +225,7 @@ The schema of the `add` action is as follows:
 
 Field Name | Data Type | Description
 -|-|-
-path| String | A relative path, from the root of the table, to a file that should be added to the table
+path| String | A relative path, from the root of the table, to a file that should be added to the table. It is encoded using standard URL encoding. However if a table is partitioned the path contains parts like 'partitionColumn=partitionValue' and '=' in between is not encoded
 partitionValues| Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization)
 size| Long | The size of this file in bytes
 modificationTime | Long | The time this file was created, as milliseconds since the epoch
