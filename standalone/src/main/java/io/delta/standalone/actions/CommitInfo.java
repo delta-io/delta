@@ -28,7 +28,7 @@ import java.util.Optional;
  *
  * @see  <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md">Delta Transaction Log Protocol</a>
  */
-public class CommitInfo {
+public class CommitInfo implements Action {
     private final Optional<Long> version;
     private final Timestamp timestamp;
     private final Optional<String> userId;

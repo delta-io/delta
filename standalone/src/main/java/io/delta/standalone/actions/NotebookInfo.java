@@ -18,7 +18,7 @@ package io.delta.standalone.actions;
 import java.util.Objects;
 
 /** Represents the Databricks Notebook information that committed to the Delta table. */
-public class NotebookInfo {
+public class NotebookInfo implements Action {
     private final String notebookId;
 
     public NotebookInfo(String notebookId) {

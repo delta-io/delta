@@ -32,7 +32,7 @@ import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction}
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
-import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, JobInfo, Metadata, NotebookInfo, Protocol, RemoveFile, SingleAction}
+import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, JobInfo, Metadata, NotebookInfo, Protocol, RemoveFile, SetTransaction, SingleAction}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.spark.sql.test.SharedSparkSession
@@ -51,7 +51,7 @@ import org.apache.spark.SparkConf
  * GENERATE_GOLDEN_TABLES=1 build/sbt 'goldenTables/test-only *GoldenTables -- -z tbl_name'
  * ```
  *
- * After generating golden tables, ensure to package or test project standalone`, otherwise the
+ * After generating golden tables, ensure to package or test project standalone, otherwise the
  * test resources won't be available when running tests with IntelliJ.
  */
 class GoldenTables extends QueryTest with SharedSparkSession {
@@ -372,6 +372,25 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     log.store.write(
       FileNames.deltaFile(log.logPath, 0L),
       Iterator(Metadata(), Protocol(), commitInfoFile, addFile).map(a => JsonUtils.toJson(a.wrap)))
+  }
+
+  /** TEST: DeltaLogSuite > getChanges - no data loss */
+  generateGoldenTable("deltalog-getChanges") { tablePath =>
+    val log = DeltaLog.forTable(spark, new Path(tablePath))
+
+    val add1 = AddFile("fake/path/1", Map.empty, 1, 1, dataChange = true)
+    val txn1 = log.startTransaction()
+    txn1.commitManually(Metadata() :: add1 :: Nil: _*)
+
+    val addCDC2 = AddCDCFile("fake/path/2", Map("partition_foo" -> "partition_bar"), 1,
+      Map("tag_foo" -> "tag_bar"))
+    val remove2 = RemoveFile("fake/path/1", Some(100), dataChange = true)
+    val txn2 = log.startTransaction()
+    txn2.commitManually(addCDC2 :: remove2 :: Nil: _*)
+
+    val setTransaction3 = SetTransaction("fakeAppId", 3L, Some(200))
+    val txn3 = log.startTransaction()
+    txn3.commitManually(Protocol() :: setTransaction3 :: Nil: _*)
   }
 
   ///////////////////////////////////////////////////////////////////////////

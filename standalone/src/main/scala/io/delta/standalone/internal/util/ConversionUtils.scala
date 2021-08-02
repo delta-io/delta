@@ -21,8 +21,8 @@ import java.util.{Optional => OptionalJ}
 
 import collection.JavaConverters._
 
-import io.delta.standalone.actions.{AddFile => AddFileJ, CommitInfo => CommitInfoJ, Format => FormatJ, JobInfo => JobInfoJ, Metadata => MetadataJ, NotebookInfo => NotebookInfoJ}
-import io.delta.standalone.internal.actions.{AddFile, CommitInfo, Format, JobInfo, Metadata, NotebookInfo}
+import io.delta.standalone.actions.{Action => ActionJ, AddFile => AddFileJ, AddCDCFile => AddCDCFileJ, CommitInfo => CommitInfoJ, Format => FormatJ, JobInfo => JobInfoJ, Metadata => MetadataJ, NotebookInfo => NotebookInfoJ, Protocol => ProtocolJ, RemoveFile => RemoveFileJ, SetTransaction => SetTransactionJ}
+import io.delta.standalone.internal.actions.{Action, AddCDCFile, AddFile, CommitInfo, Format, JobInfo, Metadata, NotebookInfo, Protocol, RemoveFile, SetTransaction}
 
 /**
  * Provide helper methods to convert from Scala to Java types.
@@ -33,7 +33,7 @@ private[internal] object ConversionUtils {
    * This is a workaround for a known issue in Scala 2.11: `asJava` doesn't handle `null`.
    * See https://github.com/scala/scala/pull/4343
    */
-  private def mapAsJava[K, V](map: Map[K, V]): java.util.Map[K, V] = {
+  private def nullableMapAsJava[K, V](map: Map[K, V]): java.util.Map[K, V] = {
     if (map == null) {
       null
     } else {
@@ -74,7 +74,26 @@ private[internal] object ConversionUtils {
       internal.modificationTime,
       internal.dataChange,
       internal.stats,
-      mapAsJava(internal.tags))
+      nullableMapAsJava(internal.tags))
+  }
+
+  def convertAddCDCFile(internal: AddCDCFile): AddCDCFileJ = {
+    new AddCDCFileJ(
+      internal.path,
+      internal.partitionValues.asJava,
+      internal.size,
+      nullableMapAsJava(internal.tags))
+  }
+
+  def convertRemoveFile(internal: RemoveFile): RemoveFileJ = {
+    new RemoveFileJ(
+      internal.path,
+      toJavaLongOptional(internal.deletionTimestamp),
+      internal.dataChange,
+      internal.extendedFileMetadata,
+      nullableMapAsJava(internal.partitionValues),
+      internal.size,
+      nullableMapAsJava(internal.tags))
   }
 
   /**
@@ -150,5 +169,26 @@ private[internal] object ConversionUtils {
    */
   def convertNotebookInfo(internal: NotebookInfo): NotebookInfoJ = {
     new NotebookInfoJ(internal.notebookId)
+  }
+
+  def convertSetTransaction(internal: SetTransaction): SetTransactionJ = {
+    new SetTransactionJ(internal.appId, internal.version, toJavaLongOptional(internal.lastUpdated))
+  }
+
+  def convertProtocol(internal: Protocol): ProtocolJ = {
+    new ProtocolJ(internal.minReaderVersion, internal.minWriterVersion)
+  }
+
+  def convertAction(internal: Action): ActionJ = internal match {
+    case x: AddFile => convertAddFile(x)
+    case a: AddCDCFile => convertAddCDCFile(a)
+    case x: RemoveFile => convertRemoveFile(x)
+    case x: CommitInfo => convertCommitInfo(x)
+    case x: Format => convertFormat(x)
+    case x: JobInfo => convertJobInfo(x)
+    case x: Metadata => convertMetadata(x)
+    case x: NotebookInfo => convertNotebookInfo(x)
+    case x: SetTransaction => convertSetTransaction(x)
+    case x: Protocol => convertProtocol(x)
   }
 }

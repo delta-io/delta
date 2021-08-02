@@ -24,11 +24,17 @@ import org.apache.hadoop.conf.Configuration
 
 object GoldenTableUtils {
 
-  /** Load the golden table as a class resource so that it works in IntelliJ and SBT tests */
+  /**
+   * Load the golden table as a class resource so that it works in IntelliJ and SBT tests.
+   *
+   * If this is causing a `java.lang.NullPointerException` while debugging in IntelliJ, you
+   * probably just need to SBT test that specific test first.
+   */
   val goldenTable = new File(getClass.getResource("/golden").toURI)
 
   /**
-   * Create a [[DeltaLog]] for the given golden table and execute the test function.
+   * Create a [[DeltaLog]] (with Java interface) for the given golden table and execute the test
+   * function.
    *
    * @param name The name of the golden table to load.
    * @param testFunc The test to execute which takes the [[DeltaLog]] as input arg.

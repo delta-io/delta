@@ -52,10 +52,6 @@ public final class StructType extends DataType {
     private final HashMap<String, StructField> nameToField;
 
     public StructType(StructField[] fields) {
-        if (fields.length == 0) {
-            throw new IllegalArgumentException("a StructType must have at least one field");
-        }
-
         this.fields = fields;
         this.nameToField = new HashMap<>();
         Arrays.stream(fields).forEach(field -> nameToField.put(field.getName(), field));

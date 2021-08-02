@@ -99,4 +99,17 @@ private[internal] object DeltaErrors {
     new NullPointerException(s"Read a null value for field $fieldName, yet schema indicates " +
       s"that this field can't be null. Schema: ${schema.getTreeString}")
   }
+
+  def failOnDataLossException(expectedVersion: Long, seenVersion: Long): Throwable = {
+    new IllegalStateException(
+      s"""The stream from your Delta table was expecting process data from version $expectedVersion,
+         |but the earliest available version in the _delta_log directory is $seenVersion. The files
+         |in the transaction log may have been deleted due to log cleanup.
+         |
+         |If you would like to ignore the missed data and continue your stream from where it left
+         |off, you can set the .option("failOnDataLoss", "false") as part
+         |of your readStream statement.
+       """.stripMargin
+    )
+  }
 }

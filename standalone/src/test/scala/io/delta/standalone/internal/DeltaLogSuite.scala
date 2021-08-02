@@ -279,4 +279,72 @@ class DeltaLogSuite extends FunSuite {
     }
   }
 
+  test("getChanges - no data loss") {
+    withLogForGoldenTable("deltalog-getChanges") { log =>
+      val versionToActionsMap = Map(
+        0L -> Seq("CommitInfo", "Protocol", "Metadata", "AddFile"),
+        1L -> Seq("CommitInfo", "AddCDCFile", "RemoveFile"),
+        2L -> Seq("CommitInfo", "Protocol", "SetTransaction")
+      )
+
+      def verifyChanges(startVersion: Int): Unit = {
+        val versionLogs = log.getChanges(startVersion, false).asScala.toSeq
+
+        assert(versionLogs.length == 3 - startVersion,
+          s"getChanges($startVersion) skipped some versions")
+
+        for (versionLog <- versionLogs) {
+          val version = versionLog.getVersion
+          val actions = versionLog.getActions.asScala.map(_.getClass.getSimpleName)
+          val expectedActions = versionToActionsMap(version)
+          assert(expectedActions == actions,
+            s"getChanges($startVersion) had incorrect actions at version $version.")
+        }
+      }
+
+      // standard cases
+      verifyChanges(0)
+      verifyChanges(1)
+      verifyChanges(2)
+
+      // non-existant start version
+      val versionLogsIter = log.getChanges(3, false)
+      assert(!versionLogsIter.hasNext,
+        "getChanges with a non-existant start version did not return an empty iterator")
+
+      // negative start version
+      assertThrows[IllegalArgumentException] {
+        log.getChanges(-1, false)
+      }
+    }
+  }
+
+  test("getChanges - data loss") {
+    withGoldenTable("deltalog-getChanges") { tablePath =>
+      val tempDir = Files.createTempDirectory(UUID.randomUUID().toString).toFile
+      try {
+        FileUtils.copyDirectory(new File(tablePath), tempDir)
+        val log = DeltaLog.forTable(new Configuration(), tempDir.getCanonicalPath)
+
+        // we delete 2 files so that the `DeltaErrors.failOnDataLossException` is thrown
+        val logPath = new Path(log.getPath, "_delta_log")
+        new File(new Path(logPath, "00000000000000000000.json").toUri).delete()
+        new File(new Path(logPath, "00000000000000000001.json").toUri).delete()
+
+        val versionLogs = log.getChanges(0, false).asScala.toSeq
+        assert(versionLogs.length == 1)
+
+        assertThrows[IllegalStateException] {
+          val versionLogsIter = log.getChanges(0, true)
+          while (versionLogsIter.hasNext) {
+            versionLogsIter.next()
+          }
+        }
+      } finally {
+        // just in case
+        FileUtils.deleteDirectory(tempDir)
+      }
+    }
+  }
+
 }

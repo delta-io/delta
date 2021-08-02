@@ -1,0 +1,3 @@
+{"commitInfo":{"timestamp":1626806336805,"operation":"Manual Update","operationParameters":{},"readVersion":0,"isBlindAppend":false,"operationMetrics":{}}}
+{"cdc":{"path":"fake/path/2","partitionValues":{"partition_foo":"partition_bar"},"size":1,"tags":{"tag_foo":"tag_bar"},"dataChange":false}}
+{"remove":{"path":"fake/path/1","deletionTimestamp":100,"dataChange":true,"extendedFileMetadata":false,"size":0}}

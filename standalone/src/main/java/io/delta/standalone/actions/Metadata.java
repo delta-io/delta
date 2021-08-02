@@ -29,7 +29,7 @@ import io.delta.standalone.types.StructType;
  *
  * @see  <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md">Delta Transaction Log Protocol</a>
  */
-public final class Metadata {
+public final class Metadata implements Action {
     private final String id;
     private final String name;
     private final String description;
