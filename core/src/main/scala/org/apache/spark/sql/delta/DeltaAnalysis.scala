@@ -31,7 +31,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, EliminateSubqueryAliases, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, EliminateSubqueryAliases, ResolvedTable, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedTableValuedFunction
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions._
@@ -169,20 +169,21 @@ class DeltaAnalysis(session: SparkSession)
       } else deltaMerge
       d.copy(target = stripTempViewForMergeWrapper(d.target))
 
-    case AlterTableAddConstraintStatement(
-          original @ SessionCatalogAndIdentifier(catalog, ident), constraintName, expr) =>
+    // TODO: remove the 2 cases below after OSS 3.2 is released.
+    case AlterTableAddConstraint(t: ResolvedTable, constraintName, expr)
+        if t.table.isInstanceOf[DeltaTableV2] =>
       CatalogV2Util.createAlterTable(
-        original,
-        catalog,
-        ident.namespace() :+ ident.name(),
+        t.catalog.name +: t.identifier.asMultipartIdentifier,
+        t.catalog,
+        t.identifier.asMultipartIdentifier,
         Seq(AddConstraint(constraintName, expr)))
 
-    case AlterTableDropConstraintStatement(
-        original @ SessionCatalogAndIdentifier(catalog, ident), constraintName) =>
+    case AlterTableDropConstraint(t: ResolvedTable, constraintName)
+        if t.table.isInstanceOf[DeltaTableV2] =>
       CatalogV2Util.createAlterTable(
-        original,
-        catalog,
-        ident.namespace() :+ ident.name(),
+        t.catalog.name +: t.identifier.asMultipartIdentifier,
+        t.catalog,
+        t.identifier.asMultipartIdentifier,
         Seq(DropConstraint(constraintName)))
 
   }

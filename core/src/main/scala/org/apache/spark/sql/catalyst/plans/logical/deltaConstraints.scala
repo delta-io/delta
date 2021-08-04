@@ -17,26 +17,21 @@
 package org.apache.spark.sql.catalyst.plans.logical
 
 /**
- * ALTER TABLE ... ADD CONSTRAINT command, as parsed from SQL
+ * The logical plan of the ALTER TABLE ... ADD CONSTRAINT command.
  */
-case class AlterTableAddConstraintStatement(
-    tableName: Seq[String],
-    constraintName: String,
-    expr: String) extends ParsedStatement {
-  // TODO: extend LeafParsedStatement when new Spark version released, now fails on OSS Delta build
-  override def children: Seq[LogicalPlan] = Nil
-
+case class AlterTableAddConstraint(
+    table: LogicalPlan, constraintName: String, expr: String) extends Command {
+  // TODO: extend UnaryCommand when new Spark version released, now fails on OSS Delta build
+  override def children: Seq[LogicalPlan] = Seq(table)
   // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 /**
- * ALTER TABLE ... DROP CONSTRAINT command, as parsed from SQL
+ * The logical plan of the ALTER TABLE ... DROP CONSTRAINT command.
  */
-case class AlterTableDropConstraintStatement(
-    tableName: Seq[String],
-    constraintName: String) extends ParsedStatement {
-  // TODO: extend LeafParsedStatement when new Spark version released, now fails on OSS Delta build
-  override def children: Seq[LogicalPlan] = Nil
-
+case class AlterTableDropConstraint(
+    table: LogicalPlan, constraintName: String) extends Command {
+  // TODO: extend UnaryCommand when new Spark version released, now fails on OSS Delta build
+  override def children: Seq[LogicalPlan] = Seq(table)
   // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
