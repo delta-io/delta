@@ -225,7 +225,7 @@ The schema of the `add` action is as follows:
 
 Field Name | Data Type | Description
 -|-|-
-path| String | A relative path to a file from the root of the table, or an absolute path to a file, that should be added to the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt) which needs to be decoded to get the file path.
+path| String | A relative path to a file from the root of the table, or an absolute path to a file that should be added to the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the file path.
 partitionValues| Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization)
 size| Long | The size of this file in bytes
 modificationTime | Long | The time this file was created, as milliseconds since the epoch
