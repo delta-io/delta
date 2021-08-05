@@ -60,7 +60,7 @@ class UpdateScalaSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
   }
 
   test("update usage test - with space in path") {
-    val tmpDirForTest = System.getProperty("java.io.tmpdir").concat("test with space/")
+    val tmpDirForTest = System.getProperty("java.io.tmpdir").concat("/test with space/")
     val dirFile = Utils.createTempDir(tmpDirForTest, "spark")
     val dir = dirFile.toString
     val df = Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value")
