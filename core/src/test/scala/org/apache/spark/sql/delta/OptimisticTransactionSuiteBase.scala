@@ -75,10 +75,11 @@ trait OptimisticTransactionSuiteBase
       conflicts,
       initialSetup _,
       reads,
-      concurrentTxn,
+      Seq(concurrentTxn),
       actions,
       errorMessageHint,
-      exceptionClass
+      exceptionClass,
+      Seq.empty
     )
   }
 
@@ -97,7 +98,7 @@ trait OptimisticTransactionSuiteBase
    * @param conflicts           should test transaction is expected to conflict or not
    * @param initialSetup        sets up the initial delta log state (set schema, partitioning, etc.)
    * @param reads               reads made in the test transaction
-   * @param concurrentTxn       concurrent txn that may write data after the test txn reads
+   * @param concurrentTxns      concurrent txns that may write data after the test txn reads
    * @param actions             actions to be committed by the test transaction
    * @param errorMessageHint    What to expect in the error message
    * @param exceptionClass      A substring to expect in the exception class name
@@ -107,39 +108,42 @@ trait OptimisticTransactionSuiteBase
       conflicts: Boolean,
       initialSetup: DeltaLog => Unit,
       reads: Seq[OptimisticTransaction => Unit],
-      concurrentTxn: OptimisticTransaction => Unit,
+      concurrentTxns: Seq[OptimisticTransaction => Unit],
       actions: Seq[Action],
       errorMessageHint: Option[Seq[String]],
-      exceptionClass: Option[String]): Unit = {
+      exceptionClass: Option[String],
+      additionalSQLConfs: Seq[(String, String)]): Unit = {
 
     val conflict = if (conflicts) "should conflict" else "should not conflict"
     test(s"$name - $conflict") {
-      val tempDir = Utils.createTempDir()
-      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+      withSQLConf(additionalSQLConfs: _*) {
+        val tempDir = Utils.createTempDir()
+        val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
 
-      // Setup the log
-      initialSetup(log)
+        // Setup the log
+        initialSetup(log)
 
-      // Perform reads
-      val txn = log.startTransaction()
-      reads.foreach(_(txn))
+        // Perform reads
+        val txn = log.startTransaction()
+        reads.foreach(_ (txn))
 
-      // Execute concurrent txn while current transaction is active
-      concurrentTxn(log.startTransaction())
+        // Execute concurrent txn while current transaction is active
+        concurrentTxns.foreach(txn => txn(log.startTransaction()))
 
-      // Try commit and check expected conflict behavior
-      if (conflicts) {
-        val e = intercept[ConcurrentModificationException] {
+        // Try commit and check expected conflict behavior
+        if (conflicts) {
+          val e = intercept[ConcurrentModificationException] {
+            txn.commit(actions, Truncate())
+          }
+          errorMessageHint.foreach { expectedParts =>
+            assert(expectedParts.forall(part => e.getMessage.contains(part)))
+          }
+          if (exceptionClass.nonEmpty) {
+            assert(e.getClass.getName.contains(exceptionClass.get))
+          }
+        } else {
           txn.commit(actions, Truncate())
         }
-        errorMessageHint.foreach { expectedParts =>
-          assert(expectedParts.forall(part => e.getMessage.contains(part)))
-        }
-        if (exceptionClass.nonEmpty) {
-          assert(e.getClass.getName.contains(exceptionClass.get))
-        }
-      } else {
-        txn.commit(actions, Truncate())
       }
     }
   }
