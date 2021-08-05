@@ -272,8 +272,9 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
       schema: StructType,
       df: DataFrame): (DataFrame, Seq[Constraint]) = {
     val topLevelOutputNames = CaseInsensitiveMap(df.schema.map(f => f.name -> f).toMap)
+    lazy val metadataOutputNames = CaseInsensitiveMap(schema.map(f => f.name -> f).toMap)
     val constraints = mutable.ArrayBuffer[Constraint]()
-    val selectExprs = schema.map { f =>
+    var selectExprs = schema.map { f =>
       getGenerationExpressionStr(f) match {
         case Some(exprString) =>
           val expr = parseGenerationExpression(df.sparkSession, exprString)
