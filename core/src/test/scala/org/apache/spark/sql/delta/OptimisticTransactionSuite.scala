@@ -272,4 +272,20 @@ class OptimisticTransactionSuite
       }
     }
   }
+
+  test("isolation level shouldn't be null") {
+    withTempDir { tempDir =>
+      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+
+      log.startTransaction().commit(Seq(Metadata()), ManualUpdate)
+
+      val txn = log.startTransaction()
+      txn.commit(addA :: Nil, ManualUpdate)
+
+      val isolationLevels = log.history.getHistory(Some(10)).map(_.isolationLevel)
+      assert(isolationLevels.size == 2)
+      assert(isolationLevels(0).exists(_.contains("Serializable")))
+      assert(isolationLevels(1) == Some(SnapshotIsolation.toString))
+    }
+  }
 }

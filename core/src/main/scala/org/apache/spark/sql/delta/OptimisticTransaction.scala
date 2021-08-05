@@ -168,7 +168,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
 
   protected def spark = SparkSession.active
 
-  private val txnId = UUID.randomUUID().toString
+  protected val txnId = UUID.randomUUID().toString
 
   /** Tracks the appIds that have been seen by this transaction. */
   protected val readTxn = new ArrayBuffer[String]
@@ -463,7 +463,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
           op.jsonEncodedValues,
           Map.empty,
           Some(readVersion).filter(_ >= 0),
-          None,
+          Option(isolationLevelToUse.toString),
           Some(isBlindAppend),
           getOperationMetrics(op),
           getUserMetadata(op))
@@ -739,7 +739,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       newMetadata = newMetadata,
       numAbsolutePathsInAdd = numAbsolutePaths,
       numDistinctPartitionsInAdd = distinctPartitions.size,
-      isolationLevel = null)
+      isolationLevel = isolationLevel.toString)
     recordDeltaEvent(deltaLog, "delta.commit.stats", data = stats)
 
     attemptVersion
@@ -858,7 +858,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
     }
   }
 
-  private lazy val logPrefix: String = {
+  protected lazy val logPrefix: String = {
     def truncate(uuid: String): String = uuid.split("-").head
     s"[tableId=${truncate(snapshot.metadata.id)},txnId=${truncate(txnId)}] "
   }

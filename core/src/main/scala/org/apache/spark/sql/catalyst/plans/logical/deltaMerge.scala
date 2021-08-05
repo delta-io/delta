@@ -278,7 +278,7 @@ object DeltaMergeInto {
       finalSchema = Some(target.schema))
   }
 
-  def resolveReferences(merge: DeltaMergeInto, conf: SQLConf)(
+  def resolveReferencesAndSchema(merge: DeltaMergeInto, conf: SQLConf)(
       resolveExpr: (Expression, LogicalPlan) => Expression): DeltaMergeInto = {
     val DeltaMergeInto(target, source, condition, matchedClauses, notMatchedClause, _, _) = merge
 

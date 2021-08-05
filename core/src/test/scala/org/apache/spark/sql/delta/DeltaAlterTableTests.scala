@@ -380,15 +380,17 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
              |ALTER TABLE $tableName ADD COLUMNS (m.key.mkv3 long)
          """.stripMargin)
       }
-      assert(ex.getMessage.contains("Cannot add"))
+      assert(ex.getMessage.contains("Field name m.key.mkv3 is invalid: m.key is not a struct") ||
+        ex.getMessage.contains("Cannot add m.key.mkv3"))
 
       ex = intercept[AnalysisException] {
         sql(
           s"""
-             |ALTER TABLE $tableName ADD COLUMNS (m.key.mkv3 long)
+             |ALTER TABLE $tableName ADD COLUMNS (m.value.mkv3 long)
          """.stripMargin)
       }
-      assert(ex.getMessage.contains("Cannot add"))
+      assert(ex.getMessage.contains("Cannot add m.value.mkv3") ||
+        ex.getMessage.contains("Field name m.value.mkv3 is invalid: m.value is not a struct"))
     }
   }
 
@@ -470,7 +472,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
              |ALTER TABLE $tableName ADD COLUMNS (m.mkv3 long)
            """.stripMargin)
       }
-      assert(ex.getMessage.contains("Cannot add"))
+      assert(ex.getMessage.contains("Field name m.mkv3 is invalid: m is not a struct") ||
+        ex.getMessage.contains("Cannot add m.mkv3"))
     }
   }
 
@@ -533,8 +536,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       val ex = intercept[AnalysisException] {
         sql(s"ALTER TABLE $tableName ADD COLUMNS (v2.x long)")
       }
-      assert(ex.getMessage.contains("Cannot add"))
-      assert(ex.getMessage.contains("not a StructType"))
+      assert(ex.getMessage.contains("Field name v2.x is invalid: v2 is not a struct") ||
+        ex.getMessage.contains("Cannot add v2.x"))
     }
   }
 
@@ -1098,8 +1101,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       val ex = intercept[AnalysisException] {
         sql(s"ALTER TABLE $tableName CHANGE COLUMN v1 v1 integer AFTER unknown")
       }
-      assert(ex.getMessage.contains("Couldn't"))
-      assert(ex.getMessage.contains("unknown"))
+      assert(ex.getMessage.contains("Missing field unknown") ||
+        ex.getMessage.contains("Couldn't resolve positional argument AFTER unknown"))
     }
   }
 
@@ -1111,8 +1114,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       val ex = intercept[AnalysisException] {
         sql(s"ALTER TABLE $tableName CHANGE COLUMN struct.v1 v1 integer AFTER unknown")
       }
-      assert(ex.getMessage.contains("Couldn't"))
-      assert(ex.getMessage.contains("unknown"))
+      assert(ex.getMessage.contains("Missing field struct.unknown") ||
+        ex.getMessage.contains("Couldn't resolve positional argument AFTER unknown"))
     }
   }
 
@@ -1219,7 +1222,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       val ex = intercept[AnalysisException] {
         sql(s"ALTER TABLE $tableName CHANGE COLUMN unknown unknown string FIRST")
       }
-      assert(ex.getMessage.contains("Cannot update missing field unknown"))
+      assert(ex.getMessage.contains("Missing field unknown") ||
+        ex.getMessage.contains("Cannot update missing field unknown"))
     }
   }
 
@@ -1231,7 +1235,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       val ex = intercept[AnalysisException] {
         sql(s"ALTER TABLE $tableName CHANGE COLUMN struct.unknown unknown string FIRST")
       }
-      assert(ex.getMessage.contains("Cannot update missing field struct.unknown in"))
+      assert(ex.getMessage.contains("Missing field struct.unknown") ||
+        ex.getMessage.contains("Cannot update missing field struct.unknown"))
     }
   }
 
@@ -1285,7 +1290,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         val ex1 = intercept[AnalysisException] {
           sql(s"ALTER TABLE $tableName CHANGE COLUMN V1 V1 integer")
         }
-        assert(ex1.getMessage.contains("Cannot update missing field V1"))
+        assert(ex1.getMessage.contains("Missing field V1") ||
+          ex1.getMessage.contains("Cannot update missing field V1"))
 
         val ex2 = intercept[AnalysisException] {
           sql(s"ALTER TABLE $tableName CHANGE COLUMN v1 V1 integer")
@@ -1295,7 +1301,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         val ex3 = intercept[AnalysisException] {
           sql(s"ALTER TABLE $tableName CHANGE COLUMN v1 v1 integer AFTER V2")
         }
-        assert(ex3.getMessage.contains("Couldn't resolve positional argument"))
+        assert(ex3.getMessage.contains("Missing field V2") ||
+          ex3.getMessage.contains("Couldn't resolve positional argument AFTER V2"))
 
         val ex4 = intercept[AnalysisException] {
           sql(s"ALTER TABLE $tableName CHANGE COLUMN s s struct<V1:integer,v2:string> AFTER v2")
