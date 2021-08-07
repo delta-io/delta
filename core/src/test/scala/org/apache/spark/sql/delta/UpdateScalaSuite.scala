@@ -58,24 +58,7 @@ class UpdateScalaSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
     checkAnswer(readDeltaTable(tempPath),
       Row(100, 101) :: Row(100, 101) :: Row(3, 30) :: Row(4, 40) :: Nil)
   }
-
-  test("update usage test - with space in path") {
-    val tmpDirForTest = System.getProperty("java.io.tmpdir").concat("/test with space/")
-    val dirFile = Utils.createTempDir(tmpDirForTest, "spark")
-    val dir = dirFile.toString
-    val df = Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value")
-    val writer = df.write.format("delta").mode("append")
-    writer.save(dir)
-    spark.sql("CREATE TABLE test USING DELTA LOCATION '" + dir + "'")
-    spark.sql("UPDATE test SET key = key + 10")
-    spark.sql("UPDATE test SET key = key + 10 WHERE true")
-    spark.sql("UPDATE test SET key = key + 10 WHERE 1 = 1")
-    spark.sql("UPDATE test SET key = key + 10 WHERE key = key")
-    checkAnswer(readDeltaTable(dir),
-      Row(41, 10) :: Row(42, 20) :: Row(43, 30) :: Row(44, 40) :: Nil)
-    Utils.deleteRecursively(dirFile)
-  }
-
+  
   override protected def executeUpdate(
       target: String,
       set: String,
