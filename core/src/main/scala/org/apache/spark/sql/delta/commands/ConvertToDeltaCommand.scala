@@ -77,7 +77,6 @@ abstract class ConvertToDeltaCommandBase(
 
   lazy val partitionColNames : Seq[String] = partitionSchema.map(_.fieldNames.toSeq).getOrElse(Nil)
   lazy val partitionFields : Seq[StructField] = partitionSchema.map(_.fields.toSeq).getOrElse(Nil)
-  val timestampPartitionPattern = "yyyy-MM-dd HH:mm:ss[.S]"
 
   override def run(spark: SparkSession): Seq[Row] = {
     val convertProperties = resolveConvertTarget(spark, tableIdentifier) match {
@@ -290,7 +289,9 @@ abstract class ConvertToDeltaCommandBase(
       fs: FileSystem): Iterator[AddFile] = {
     val statsBatchSize = conf.getConf(DeltaSQLConf.DELTA_IMPORT_BATCH_SIZE_STATS_COLLECTION)
     manifest.getFiles.grouped(statsBatchSize).flatMap { batch =>
-      val adds = batch.map(createAddFile(_, txn.deltaLog.dataPath, fs, conf))
+      val adds = batch.map(
+        ConvertToDeltaCommand.createAddFile(
+          _, txn.deltaLog.dataPath, fs, conf, partitionSchema, deltaPath.isDefined))
       adds.toIterator
     }
   }
@@ -379,76 +380,6 @@ abstract class ConvertToDeltaCommandBase(
     }
 
     Seq.empty[Row]
-  }
-
-  protected def createAddFile(
-      file: SerializableFileStatus,
-      basePath: Path,
-      fs: FileSystem,
-      conf: SQLConf): AddFile = {
-    val path = file.getPath
-    val pathStr = file.getPath.toUri.toString
-    val dateFormatter = DateFormatter()
-    val timestampFormatter =
-      TimestampFormatter(timestampPartitionPattern, java.util.TimeZone.getDefault)
-    val resolver = conf.resolver
-    val dir = if (file.isDir) file.getPath else file.getPath.getParent
-    val (partitionOpt, _) = PartitionUtils.parsePartition(
-      dir,
-      typeInference = false,
-      basePaths = Set(basePath),
-      userSpecifiedDataTypes = Map.empty,
-      validatePartitionColumns = false,
-      java.util.TimeZone.getDefault,
-      dateFormatter,
-      timestampFormatter)
-
-    val partition = partitionOpt.map { partValues =>
-      if (partitionColNames.size != partValues.columnNames.size) {
-        throw DeltaErrors.unexpectedNumPartitionColumnsFromFileNameException(
-          pathStr, partValues.columnNames, partitionColNames)
-      }
-
-      val tz = Option(conf.sessionLocalTimeZone)
-      // Check if the partition value can be casted to the provided type
-      partValues.literals.zip(partitionFields).foreach { case (literal, field) =>
-        if (literal.eval() != null && Cast(literal, field.dataType, tz).eval() == null) {
-          val partitionValue = Cast(literal, StringType, tz).eval()
-          val partitionValueStr = Option(partitionValue).map(_.toString).orNull
-          throw DeltaErrors.castPartitionValueException(partitionValueStr, field.dataType)
-        }
-      }
-
-      val values = partValues
-        .literals
-        .map(l => Cast(l, StringType, tz).eval())
-        .map(Option(_).map(_.toString).orNull)
-
-      partitionColNames.zip(partValues.columnNames).foreach { case (expected, parsed) =>
-        if (!resolver(expected, parsed)) {
-          throw DeltaErrors.unexpectedPartitionColumnFromFileNameException(
-            pathStr, parsed, expected)
-        }
-      }
-      partitionColNames.zip(values).toMap
-    }.getOrElse {
-      if (partitionColNames.nonEmpty) {
-        throw DeltaErrors.unexpectedNumPartitionColumnsFromFileNameException(
-          pathStr, Seq.empty, partitionColNames)
-      }
-      Map[String, String]()
-    }
-
-    val pathStrForAddFile = if (deltaPath.isEmpty) {
-      val relativePath = DeltaFileOperations.tryRelativizePath(fs, basePath, path)
-      assert(!relativePath.isAbsolute,
-        s"Fail to relativize path $path against base path $basePath.")
-      relativePath.toUri.toString
-    } else {
-      path.toUri.toString
-    }
-
-    AddFile(pathStrForAddFile, partition, file.length, file.modificationTime, dataChange = true)
   }
 
   /**
@@ -652,4 +583,81 @@ case class ConvertToDeltaCommand(
     deltaPath: Option[String])
   extends ConvertToDeltaCommandBase(tableIdentifier, partitionSchema, deltaPath) {
   // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+}
+
+object ConvertToDeltaCommand {
+  val timestampPartitionPattern = "yyyy-MM-dd HH:mm:ss[.S]"
+  def createAddFile(
+      file: SerializableFileStatus,
+      basePath: Path,
+      fs: FileSystem,
+      conf: SQLConf,
+      partitionSchema: Option[StructType],
+      useAbsolutePath: Boolean = false): AddFile = {
+    val partitionFields = partitionSchema.map(_.fields.toSeq).getOrElse(Nil)
+    val partitionColNames = partitionSchema.map(_.fieldNames.toSeq).getOrElse(Nil)
+    val path = file.getPath
+    val pathStr = file.getPath.toUri.toString
+    val dateFormatter = DateFormatter()
+    val timestampFormatter =
+      TimestampFormatter(timestampPartitionPattern, java.util.TimeZone.getDefault)
+    val resolver = conf.resolver
+    val dir = if (file.isDir) file.getPath else file.getPath.getParent
+    val (partitionOpt, _) = PartitionUtils.parsePartition(
+      dir,
+      typeInference = false,
+      basePaths = Set(basePath),
+      userSpecifiedDataTypes = Map.empty,
+      validatePartitionColumns = false,
+      java.util.TimeZone.getDefault,
+      dateFormatter,
+      timestampFormatter)
+
+    val partition = partitionOpt.map { partValues =>
+      if (partitionColNames.size != partValues.columnNames.size) {
+        throw DeltaErrors.unexpectedNumPartitionColumnsFromFileNameException(
+          pathStr, partValues.columnNames, partitionColNames)
+      }
+
+      val tz = Option(conf.sessionLocalTimeZone)
+      // Check if the partition value can be casted to the provided type
+      partValues.literals.zip(partitionFields).foreach { case (literal, field) =>
+        if (literal.eval() != null && Cast(literal, field.dataType, tz).eval() == null) {
+          val partitionValue = Cast(literal, StringType, tz).eval()
+          val partitionValueStr = Option(partitionValue).map(_.toString).orNull
+          throw DeltaErrors.castPartitionValueException(partitionValueStr, field.dataType)
+        }
+      }
+
+      val values = partValues
+        .literals
+        .map(l => Cast(l, StringType, tz).eval())
+        .map(Option(_).map(_.toString).orNull)
+
+      partitionColNames.zip(partValues.columnNames).foreach { case (expected, parsed) =>
+        if (!resolver(expected, parsed)) {
+          throw DeltaErrors.unexpectedPartitionColumnFromFileNameException(
+            pathStr, parsed, expected)
+        }
+      }
+      partitionColNames.zip(values).toMap
+    }.getOrElse {
+      if (partitionColNames.nonEmpty) {
+        throw DeltaErrors.unexpectedNumPartitionColumnsFromFileNameException(
+          pathStr, Seq.empty, partitionColNames)
+      }
+      Map[String, String]()
+    }
+
+    val pathStrForAddFile = if (!useAbsolutePath) {
+      val relativePath = DeltaFileOperations.tryRelativizePath(fs, basePath, path)
+      assert(!relativePath.isAbsolute,
+        s"Fail to relativize path $path against base path $basePath.")
+      relativePath.toUri.toString
+    } else {
+      path.toUri.toString
+    }
+
+    AddFile(pathStrForAddFile, partition, file.length, file.modificationTime, dataChange = true)
+  }
 }
