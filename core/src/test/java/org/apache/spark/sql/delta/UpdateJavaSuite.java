@@ -115,7 +115,6 @@ public class UpdateJavaSuite implements DeltaSQLCommandJavaTest {
             tuple2(100, 10), tuple2(100, 20), tuple2(3, 30), tuple2(4, 40))).collectAsList();
         QueryTest$.MODULE$.checkAnswer(target.toDF(), expectedAnswer);
     }
-    
 
     private Dataset<Row> createKVDataSet(
         List<Tuple2<Integer, Integer>> data, String keyName, String valueName) {
