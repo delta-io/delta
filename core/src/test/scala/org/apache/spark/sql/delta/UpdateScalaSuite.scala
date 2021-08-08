@@ -17,10 +17,10 @@
 package org.apache.spark.sql.delta
 
 import java.util.Locale
+
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.tables.DeltaTableTestUtils
-import org.apache.spark.sql.{Row, functions}
-import org.apache.spark.util.Utils
+import org.apache.spark.sql.{functions, Row}
 
 class UpdateScalaSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
 
@@ -58,6 +58,7 @@ class UpdateScalaSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
     checkAnswer(readDeltaTable(tempPath),
       Row(100, 101) :: Row(100, 101) :: Row(3, 30) :: Row(4, 40) :: Nil)
   }
+  
   override protected def executeUpdate(
       target: String,
       set: String,
