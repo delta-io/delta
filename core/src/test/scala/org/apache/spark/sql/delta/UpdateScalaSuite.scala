@@ -58,7 +58,6 @@ class UpdateScalaSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
     checkAnswer(readDeltaTable(tempPath),
       Row(100, 101) :: Row(100, 101) :: Row(3, 30) :: Row(4, 40) :: Nil)
   }
-  
   override protected def executeUpdate(
       target: String,
       set: String,
