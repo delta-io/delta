@@ -936,9 +936,11 @@ class DeltaSuite extends QueryTest
       spark.sql(s"UPDATE delta.`${directory.getCanonicalPath}` SET value = value + 10")
       spark.sql(s"DELETE FROM delta.`${directory.getCanonicalPath}` WHERE key = 4")
       val inbound = Seq((3, 30)).toDF("key", "value").createOrReplaceTempView("inbound")
-      spark.sql(s"MERGE INTO delta.`${directory.getCanonicalPath}` AS base USING inbound" +
-        s" ON base.key = inbound.key WHEN MATCHED THEN UPDATE" +
-        s" SET base.value = base.value+inbound.value")
+      val mergeInto = s"MERGE INTO delta.`${directory.getCanonicalPath}` AS base"
+      val inboundDF = "USING inbound"
+      val mergeOn = "ON base.key = inbound.key"
+      val whenMatched = "WHEN MATCHED THEN UPDATE SET base.value = base.value+inbound.value"
+      spark.sql(mergeInto + inboundDF + mergeOn + whenMatched)
       checkAnswer(
         spark.read.format("delta").load(directory.getCanonicalPath),
         Seq((1, 20), (2, 30), (3, 70)).toDF("key", "value")
