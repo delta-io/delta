@@ -247,6 +247,8 @@ lazy val standalone = (project in file("standalone"))
   .settings(
     name := "delta-standalone",
     commonSettings,
+    releaseSettings,
+    mimaSettings,
     unmanagedResourceDirectories in Test += file("golden-tables/src/test/resources"),
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided",
@@ -288,7 +290,49 @@ lazy val standalone = (project in file("standalone"))
     // Ensure unidoc is run with tests. Must be cleaned before test for unidoc to be generated.
     (test in Test) := ((test in Test) dependsOn unidoc.in(Compile)).value
   )
-  .settings(releaseSettings)
+
+/*
+ ********************
+ *  MIMA settings   *
+ ********************
+ */
+def getPrevVersion(currentVersion: String): String = {
+  implicit def extractInt(str: String): Int = {
+    """\d+""".r.findFirstIn(str).map(java.lang.Integer.parseInt).getOrElse {
+      throw new Exception(s"Could not extract version number from $str in $version")
+    }
+  }
+
+  val (major, minor, patch): (Int, Int, Int) = {
+    currentVersion.split("\\.").toList match {
+      case majorStr :: minorStr :: patchStr :: _ =>
+        (majorStr, minorStr, patchStr)
+      case _ => throw new Exception(s"Could not find previous version for $version.")
+    }
+  }
+
+  val majorToLastMinorVersions: Map[Int, Int] = Map(
+    // TODO add mapping when required
+    // e.g. 0 -> 8
+  )
+  if (minor == 0) {  // 1.0.0
+    val prevMinor = majorToLastMinorVersions.getOrElse(major - 1, {
+      throw new Exception(s"Last minor version of ${major - 1}.x.x not configured.")
+    })
+    s"${major - 1}.$prevMinor.0"  // 1.0.0 -> 0.8.0
+  } else if (patch == 0) {
+    s"$major.${minor - 1}.0"      // 1.1.0 -> 1.0.0
+  } else {
+    s"$major.$minor.${patch - 1}" // 1.1.1 -> 1.1.0
+  }
+}
+
+lazy val mimaSettings = Seq(
+  (test in Test) := ((test in Test) dependsOn mimaReportBinaryIssues).value,
+  mimaPreviousArtifacts := Set("io.delta" %% "delta-standalone" %  getPrevVersion(version.value)),
+  mimaBinaryIssueFilters ++= StandaloneMimaExcludes.ignoredABIProblems
+)
+
 
 lazy val goldenTables = (project in file("golden-tables")) settings (
   name := "golden-tables",
