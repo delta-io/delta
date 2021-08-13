@@ -878,7 +878,8 @@ trait CompleteOutputModeTests extends SchemaEnforcementSuiteBase with SharedSpar
 class SchemaEnforcementWithPathSuite
   extends AppendSaveModeTests
   with AppendSaveModeNullTests
-  with OverwriteSaveModeTests {
+  with OverwriteSaveModeTests
+  with DeltaSQLCommandTest {
   override val saveOperation = SaveWithPath()
 }
 

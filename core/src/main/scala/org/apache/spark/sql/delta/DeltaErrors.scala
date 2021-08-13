@@ -512,6 +512,15 @@ object DeltaErrors
       s"Data written into Delta needs to contain at least one non-partitioned column.$msg")
   }
 
+  def replaceWhereMismatchException(
+      replaceWhere: String,
+      invariantViolation: InvariantViolationException): Throwable = {
+    new AnalysisException(
+      s"Data written out does not match replaceWhere '$replaceWhere'.\n" +
+        invariantViolation.getMessage,
+      cause = Some(invariantViolation))
+  }
+
   def replaceWhereMismatchException(replaceWhere: String, badPartitions: String): Throwable = {
     new AnalysisException(
       s"""Data written out does not match replaceWhere '$replaceWhere'.

@@ -131,15 +131,30 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     partitionColumns
   }
 
-  def writeFiles(data: Dataset[_], writeOptions: Option[DeltaOptions]): Seq[FileAction] = {
-    writeFiles(data)
+  def writeFiles(
+      data: Dataset[_],
+      writeOptions: Option[DeltaOptions],
+      additionalConstraints: Seq[Constraint]): Seq[FileAction] = {
+    writeFiles(data, additionalConstraints)
+  }
+
+  def writeFiles(
+      data: Dataset[_],
+      writeOptions: Option[DeltaOptions]): Seq[FileAction] = {
+    writeFiles(data, writeOptions, Nil)
+  }
+
+  def writeFiles(data: Dataset[_]): Seq[FileAction] = {
+    writeFiles(data, Nil)
   }
 
   /**
    * Writes out the dataframe after performing schema validation. Returns a list of
    * actions to append these files to the reservoir.
    */
-  def writeFiles(data: Dataset[_]): Seq[FileAction] = {
+  def writeFiles(
+      data: Dataset[_],
+      additionalConstraints: Seq[Constraint]): Seq[FileAction] = {
     if (DeltaConfigs.CHANGE_DATA_CAPTURE.fromMetaData(metadata) ||
         DeltaConfigs.CHANGE_DATA_CAPTURE_LEGACY.fromMetaData(metadata)) {
       throw DeltaErrors.cdcWriteNotAllowedInThisVersion()
@@ -158,7 +173,9 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
     val committer = getCommitter(outputPath)
 
-    val constraints = Constraints.getAll(metadata, spark) ++ generatedColumnConstraints
+
+    val constraints =
+      Constraints.getAll(metadata, spark) ++ generatedColumnConstraints ++ additionalConstraints
 
     SQLExecution.withNewExecutionId(queryExecution, Option("deltaTransactionalWrite")) {
       val outputSpec = FileFormatWriter.OutputSpec(
