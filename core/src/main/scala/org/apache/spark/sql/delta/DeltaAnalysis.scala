@@ -25,7 +25,6 @@ import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
-import org.apache.spark.sql.delta.sources.DeltaDataSource
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import org.apache.hadoop.fs.Path
 
