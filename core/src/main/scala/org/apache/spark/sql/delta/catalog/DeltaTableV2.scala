@@ -115,6 +115,11 @@ case class DeltaTableV2(
     val base = snapshot.getProperties
     base.put(TableCatalog.PROP_PROVIDER, "delta")
     base.put(TableCatalog.PROP_LOCATION, CatalogUtils.URIToString(path.toUri))
+    catalogTable.foreach { table =>
+      if (table.owner != null && table.owner.nonEmpty) {
+        base.put(TableCatalog.PROP_OWNER, table.owner)
+      }
+    }
     Option(snapshot.metadata.description).foreach(base.put(TableCatalog.PROP_COMMENT, _))
     // this reports whether the table is an external or managed catalog table as
     // the old DescribeTable command would
