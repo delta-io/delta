@@ -444,6 +444,10 @@ object DeltaErrors
     new AnalysisException(s"$path doesn't exist")
   }
 
+  def directoryNotFoundException(path: String): Throwable = {
+    new FileNotFoundException(s"$path doesn't exist")
+  }
+
   def pathAlreadyExistsException(path: Path): Throwable = {
     new AnalysisException(s"$path already exists.")
   }
