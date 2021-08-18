@@ -23,6 +23,7 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 import scala.collection.mutable.ArrayBuffer
+import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, GeneratedColumn}
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
@@ -316,7 +317,7 @@ case class RemoveFile(
     extendedFileMetadata: Boolean = false,
     partitionValues: Map[String, String] = null,
     size: Long = 0,
-    tags: Map[String, String] = null) extends FileAction with Logging {
+    tags: Map[String, String] = null) extends FileAction {
   override def wrap: SingleAction = SingleAction(remove = this)
 
   @JsonIgnore
