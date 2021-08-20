@@ -22,7 +22,9 @@ scalaVersion := "2.12.10"
 lazy val commonSettings = Seq(
   organization := "io.delta",
   scalaVersion := "2.12.10",
-  fork := true
+  fork := true,
+  resolvers += "Apache Spark RC1" at
+    "https://repository.apache.org/content/repositories/orgapachespark-1388/"
 )
 
 lazy val core = (project in file("core"))
@@ -258,8 +260,6 @@ lazy val unidocSettings = Seq(
   Test / test := ((Test / test) dependsOn (Compile / unidoc)).value
 )
 
-resolvers += "Apache Spark RC1" at
-  "https://repository.apache.org/content/repositories/orgapachespark-1388/"
 
 /*
  ********************
