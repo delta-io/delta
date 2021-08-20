@@ -520,7 +520,7 @@ float| 4-byte single-precision floating-point numbers
 double| 8-byte double-precision floating-point numbers
 boolean| `true` or `false`
 binary| A sequence of binary data.
-date| A calendar date, represented as a year-month-day triple without a timezone. Stored as a 4 bytes incrementing count of days where day 0 is 1970-01-01. Negative numbers represent earlier days. Range: 0001-01-01 to 9999-12-31.
+date| A calendar date, represented as a year-month-day triple without a timezone. 0 prepresents 1970-01-01. Negative numbers represent earlier days. Range: 0001-01-01 to 9999-12-31.
 timestamp| Microsecond precision timestamp without a timezone.
 
 ### Struct Type
