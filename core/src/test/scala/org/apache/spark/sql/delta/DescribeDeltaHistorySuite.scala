@@ -587,9 +587,12 @@ trait DescribeDeltaHistorySuiteBase
         val expectedMetrics = Map(
           "numTargetRowsInserted" -> "50",
           "numTargetRowsUpdated" -> "50",
+          "numTargetRowsDeleted" -> "0",
           "numOutputRows" -> "100",
           "numSourceRows" -> "100"
         )
+        val copiedRows = operationMetrics("numTargetRowsCopied").toInt
+        assert(0 <= copiedRows && copiedRows <= 50)
         checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.MERGE)
         val expectedTimeMetrics = Set("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
         checkOperationTimeMetricsInvariant(expectedTimeMetrics, operationMetrics)
