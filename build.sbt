@@ -16,7 +16,7 @@
 
 import java.nio.file.Files
 
-val sparkVersion = "3.1.1"
+val sparkVersion = "3.2.0"
 scalaVersion := "2.12.10"
 
 lazy val commonSettings = Seq(
@@ -257,6 +257,9 @@ lazy val unidocSettings = Seq(
   // Ensure unidoc is run with tests
   Test / test := ((Test / test) dependsOn (Compile / unidoc)).value
 )
+
+resolvers += "Apache Spark RC1" at
+  "https://repository.apache.org/content/repositories/orgapachespark-1388/"
 
 /*
  ********************
