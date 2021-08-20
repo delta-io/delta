@@ -926,6 +926,7 @@ class DeltaSuite extends QueryTest
       )
     }
   }
+
   test("get touched files for update, delete and merge") {
     withTempDir { dir =>
       val directory = new File(dir, "test with space")
@@ -934,18 +935,21 @@ class DeltaSuite extends QueryTest
       writer.save(directory.getCanonicalPath)
       spark.sql(s"UPDATE delta.`${directory.getCanonicalPath}` SET value = value + 10")
       spark.sql(s"DELETE FROM delta.`${directory.getCanonicalPath}` WHERE key = 4")
-      val inbound = Seq((3, 30)).toDF("key", "value").createOrReplaceTempView("inbound")
-      var mergeInto = s"MERGE INTO delta.`${directory.getCanonicalPath}` AS base "
-      val inboundDF = "USING inbound "
-      val mergeOn = "ON base.key = inbound.key "
-      val whenMatched = "WHEN MATCHED THEN UPDATE SET base.value = base.value+inbound.value"
-      spark.sql(mergeInto + inboundDF  + mergeOn  + whenMatched)
+      Seq((3, 30)).toDF("key", "value").createOrReplaceTempView("inbound")
+      spark.sql(s"""|MERGE INTO delta.`${directory.getCanonicalPath}` AS base
+                       |USING inbound
+                       |ON base.key = inbound.key
+                       |WHEN MATCHED THEN UPDATE SET base.value =
+                       |base.value+inbound.value""".stripMargin)
+      spark.sql(s"UPDATE delta.`${directory.getCanonicalPath}` SET value = 40 WHERE key = 1")
+      spark.sql(s"DELETE FROM delta.`${directory.getCanonicalPath}` WHERE key = 2")
       checkAnswer(
         spark.read.format("delta").load(directory.getCanonicalPath),
-        Seq((1, 20), (2, 30), (3, 70)).toDF("key", "value")
+        Seq((1, 40), (3, 70)).toDF("key", "value")
       )
     }
   }
+
   test("can't create zero-column table with a write") {
     withTempDir { dir =>
       intercept[AnalysisException] {
