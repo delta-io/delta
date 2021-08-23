@@ -179,6 +179,8 @@ case class WriteIntoDelta(
     fileActions
   }
 
+  override protected def withNewChildrenInternal(
+    newChildren: IndexedSeq[LogicalPlan]): WriteIntoDelta = this
 
   private def extractConstraints(expr: Seq[Expression]): Seq[Constraint] = {
     expr.flatMap { e =>

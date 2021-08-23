@@ -309,7 +309,7 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
              |""".stripMargin)
         val result = readDeltaTable(tempPath).as[(Long, Long)].collect().toSet
         // This is expected to fail until the issue mentioned above is resolved.
-        assert(result != Set((0, 0), (1, 10)))
+        assert(result == Set((0, 0), (1, 10)))
       }
     }
   }

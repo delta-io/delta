@@ -37,7 +37,7 @@ import org.apache.spark.sql.catalyst.expressions.{Expression, IsNotNull, IsNull,
 import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, LogicalPlan, QualifiedColType}
 import org.apache.spark.sql.connector.catalog.TableCatalog
 import org.apache.spark.sql.connector.catalog.TableChange.{After, ColumnPosition, First}
-import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
 import org.apache.spark.sql.types._
 
@@ -68,7 +68,7 @@ trait AlterDeltaTableCommand extends DeltaCommand {
 case class AlterTableSetPropertiesDeltaCommand(
     table: DeltaTableV2,
     configuration: Map[String, String])
-  extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
@@ -115,7 +115,7 @@ case class AlterTableUnsetPropertiesDeltaCommand(
     table: DeltaTableV2,
     propKeys: Seq[String],
     ifExists: Boolean)
-  extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
@@ -163,7 +163,7 @@ case class AlterTableUnsetPropertiesDeltaCommand(
 case class AlterTableAddColumnsDeltaCommand(
     table: DeltaTableV2,
     colsToAddWithPosition: Seq[QualifiedColType])
-  extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
@@ -206,7 +206,7 @@ case class AlterTableAddColumnsDeltaCommand(
       }
 
       SchemaMergingUtils.checkColumnNameDuplication(newSchema, "in adding columns")
-      ParquetSchemaConverter.checkFieldNames(SchemaMergingUtils.explodeNestedFieldNames(newSchema))
+      SchemaUtils.checkParquetFieldNames(SchemaMergingUtils.explodeNestedFieldNames(newSchema))
 
       val newMetadata = metadata.copy(schemaString = newSchema.json)
       txn.updateMetadata(newMetadata)
@@ -224,7 +224,7 @@ case class AlterTableAddColumnsDeltaCommand(
   object QualifiedColTypeWithPosition {
 
     private def toV2Position(input: Any): ColumnPosition = {
-      input.asInstanceOf[ColumnPosition]
+      input.asInstanceOf[org.apache.spark.sql.catalyst.analysis.FieldPosition].position
     }
 
     def unapply(
@@ -258,7 +258,7 @@ case class AlterTableChangeColumnDeltaCommand(
     columnName: String,
     newColumn: StructField,
     colPosition: Option[ColumnPosition])
-  extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
@@ -404,8 +404,6 @@ case class AlterTableChangeColumnDeltaCommand(
           s" (nullable = ${newColumn.nullable})'")
     }
   }
-
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 /**
@@ -420,7 +418,7 @@ case class AlterTableChangeColumnDeltaCommand(
 case class AlterTableReplaceColumnsDeltaCommand(
     table: DeltaTableV2,
     columns: Seq[StructField])
-  extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
@@ -442,7 +440,7 @@ case class AlterTableReplaceColumnsDeltaCommand(
         .asInstanceOf[StructType]
 
       SchemaMergingUtils.checkColumnNameDuplication(newSchema, "in replacing columns")
-      ParquetSchemaConverter.checkFieldNames(SchemaMergingUtils.explodeNestedFieldNames(newSchema))
+      SchemaUtils.checkParquetFieldNames(SchemaMergingUtils.explodeNestedFieldNames(newSchema))
 
       val newMetadata = metadata.copy(schemaString = newSchema.json)
       txn.updateMetadata(newMetadata)
@@ -471,7 +469,7 @@ case class AlterTableReplaceColumnsDeltaCommand(
 case class AlterTableSetLocationDeltaCommand(
     table: DeltaTableV2,
     location: String)
-  extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val catalog = sparkSession.sessionState.catalog
@@ -524,7 +522,7 @@ case class AlterTableAddConstraintDeltaCommand(
     table: DeltaTableV2,
     name: String,
     exprText: String)
-  extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
@@ -577,7 +575,7 @@ case class AlterTableAddConstraintDeltaCommand(
 case class AlterTableDropConstraintDeltaCommand(
     table: DeltaTableV2,
     name: String)
-  extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog

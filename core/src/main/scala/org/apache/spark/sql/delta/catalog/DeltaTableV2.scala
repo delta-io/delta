@@ -35,7 +35,7 @@ import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogUtils}
 import org.apache.spark.sql.connector.catalog.{SupportsWrite, Table, TableCapability, TableCatalog, V2TableWithV1Fallback}
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.expressions._
-import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsOverwrite, SupportsTruncate, V1WriteBuilder, WriteBuilder}
+import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsOverwrite, SupportsTruncate, V1Write, WriteBuilder}
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.sources.{BaseRelation, Filter, InsertableRelation}
 import org.apache.spark.sql.types.StructType
@@ -186,7 +186,7 @@ case class DeltaTableV2(
 private class WriteIntoDeltaBuilder(
     log: DeltaLog,
     writeOptions: CaseInsensitiveStringMap)
-  extends WriteBuilder with V1WriteBuilder with SupportsOverwrite with SupportsTruncate {
+  extends WriteBuilder with SupportsOverwrite with SupportsTruncate {
 
   private var forceOverwrite = false
 
@@ -208,24 +208,26 @@ private class WriteIntoDeltaBuilder(
     this
   }
 
-  override def buildForV1Write(): InsertableRelation = {
-    new InsertableRelation {
-      override def insert(data: DataFrame, overwrite: Boolean): Unit = {
-        val session = data.sparkSession
+  override def build(): V1Write = new V1Write {
+    override def toInsertableRelation(): InsertableRelation = {
+      new InsertableRelation {
+        override def insert(data: DataFrame, overwrite: Boolean): Unit = {
+          val session = data.sparkSession
 
-        WriteIntoDelta(
-          log,
-          if (forceOverwrite) SaveMode.Overwrite else SaveMode.Append,
-          new DeltaOptions(options.toMap, session.sessionState.conf),
-          Nil,
-          log.snapshot.metadata.configuration,
-          data).run(session)
+          WriteIntoDelta(
+            log,
+            if (forceOverwrite) SaveMode.Overwrite else SaveMode.Append,
+            new DeltaOptions(options.toMap, session.sessionState.conf),
+            Nil,
+            log.snapshot.metadata.configuration,
+            data).run(session)
 
-        // TODO: Push this to Apache Spark
-        // Re-cache all cached plans(including this relation itself, if it's cached) that refer
-        // to this data source relation. This is the behavior for InsertInto
-        session.sharedState.cacheManager.recacheByPlan(
-          session, LogicalRelation(log.createRelation()))
+          // TODO: Push this to Apache Spark
+          // Re-cache all cached plans(including this relation itself, if it's cached) that refer
+          // to this data source relation. This is the behavior for InsertInto
+          session.sharedState.cacheManager.recacheByPlan(
+            session, LogicalRelation(log.createRelation()))
+        }
       }
     }
   }

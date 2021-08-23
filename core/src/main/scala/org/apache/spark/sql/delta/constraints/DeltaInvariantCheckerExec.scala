@@ -45,7 +45,8 @@ case class DeltaInvariantChecker(
   extends UnaryNode {
   override def output: Seq[Attribute] = child.output
 
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+  override protected def withNewChildInternal(newChild: LogicalPlan): DeltaInvariantChecker =
+    copy(child = newChild)
 }
 
 object DeltaInvariantCheckerStrategy extends SparkStrategy {
@@ -95,7 +96,8 @@ case class DeltaInvariantCheckerExec(
 
   override def outputPartitioning: Partitioning = child.outputPartitioning
 
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+  override protected def withNewChildInternal(newChild: SparkPlan): DeltaInvariantCheckerExec =
+    copy(child = newChild)
 }
 
 object DeltaInvariantCheckerExec {

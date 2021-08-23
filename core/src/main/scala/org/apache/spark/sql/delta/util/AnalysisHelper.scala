@@ -97,6 +97,7 @@ object AnalysisHelper {
     extends LogicalPlan {
     override def output: Seq[Attribute] = Nil
 
-    // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+    override protected def withNewChildrenInternal(
+      newChildren: IndexedSeq[LogicalPlan]): FakeLogicalPlan = copy(children = newChildren)
   }
 }

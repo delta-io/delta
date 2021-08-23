@@ -91,7 +91,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
   }
 
 
-  test("removefile") {
+  test("remove file deserialization") {
     val removeJson = RemoveFile("a", Some(2L)).json
     assert(removeJson.contains(""""deletionTimestamp":2"""))
     assert(!removeJson.contains("""delTimestamp"""))
@@ -100,7 +100,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
     val json4 = """{"remove":{"path":"a","deletionTimestamp":5}}"""
     assert(Action.fromJson(json1) === RemoveFile("a", Some(2L), dataChange = true))
     assert(Action.fromJson(json2) === RemoveFile("a", None, dataChange = false))
-    assert(Action.fromJson(json4) === RemoveFile("a", Some(5L), dataChange = false))
+    assert(Action.fromJson(json4) === RemoveFile("a", Some(5L), dataChange = true))
   }
 
   roundTripCompare("SetTransaction",

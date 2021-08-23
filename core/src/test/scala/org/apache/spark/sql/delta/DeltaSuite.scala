@@ -711,7 +711,8 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  test("columns with commas as partition columns") {
+  // TODO Discuss whether we should still support this
+  ignore("columns with commas as partition columns") {
     withTempDir { tempDir =>
       if (tempDir.exists()) {
         assert(tempDir.delete())

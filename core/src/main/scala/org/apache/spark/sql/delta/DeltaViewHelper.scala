@@ -51,11 +51,7 @@ object DeltaViewHelper {
    * doesn't exist in Spark 3.0.x and below.
    */
   def stripTempView(plan: LogicalPlan, conf: SQLConf): LogicalPlan = plan transformUp {
-    case v @ View(desc, true, output, child) if child.resolved && !v.sameOutput(child) =>
-      val newOutput = makeNewOutput(desc, output, child, conf)
-      Project(newOutput, child)
-
-    case View(_, true, _, child) =>
+    case View(_, true, child) =>
       child
   }
 

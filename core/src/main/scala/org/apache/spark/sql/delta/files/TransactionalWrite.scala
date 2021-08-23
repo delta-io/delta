@@ -191,7 +191,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         val basicWriteJobStatsTracker = new BasicWriteJobStatsTracker(
           new SerializableConfiguration(spark.sessionState.newHadoopConf()),
           BasicWriteJobStatsTracker.metrics)
-        registerSQLMetrics(spark, basicWriteJobStatsTracker.metrics)
+        registerSQLMetrics(spark, basicWriteJobStatsTracker.driverSideMetrics)
         statsTrackers.append(basicWriteJobStatsTracker)
       }
 

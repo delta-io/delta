@@ -836,7 +836,7 @@ object SchemaUtils {
    * columns have these characters.
    */
   def checkFieldNames(names: Seq[String]): Unit = {
-    ParquetSchemaConverter.checkFieldNames(names)
+    checkParquetFieldNames(names)
     // The method checkFieldNames doesn't have a valid regex to search for '\n'. That should be
     // fixed in Apache Spark, and we can remove this additional check here.
     names.find(_.contains("\n")).foreach(col => throw DeltaErrors.invalidColumnName(col))
@@ -898,4 +898,8 @@ object SchemaUtils {
   // Escapes back-ticks within the identifier name with double-back-ticks, and then quote the
   // identifier with back-ticks.
   def quoteIdentifier(part: String): String = s"`${part.replace("`", "``")}`"
+
+  def checkParquetFieldNames(names: Seq[String]): Unit = {
+    names.foreach(ParquetSchemaConverter.checkFieldName)
+  }
 }

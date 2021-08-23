@@ -236,8 +236,8 @@ case class UpdateCommand(
     }
   }
 
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
-
+  override protected def withNewChildrenInternal(
+    newChildren: IndexedSeq[LogicalPlan]): UpdateCommand = this
 }
 
 object UpdateCommand {

@@ -393,7 +393,9 @@ case class ConvertToDeltaCommand(
     partitionSchema: Option[StructType],
     deltaPath: Option[String])
   extends ConvertToDeltaCommandBase(tableIdentifier, partitionSchema, deltaPath) {
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+
+  override protected def withNewChildrenInternal(
+    newChildren: IndexedSeq[LogicalPlan]): ConvertToDeltaCommand = this
 }
 
 /**

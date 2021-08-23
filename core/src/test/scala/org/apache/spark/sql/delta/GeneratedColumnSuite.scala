@@ -38,9 +38,7 @@ trait GeneratedColumnTest extends QueryTest with SharedSparkSession with DeltaSQ
 
 
   protected def sqlDate(date: String): java.sql.Date = {
-    toJavaDate(stringToDate(
-      UTF8String.fromString(date),
-      getZoneId(SQLConf.get.sessionLocalTimeZone)).get)
+    toJavaDate(stringToDate(UTF8String.fromString(date)).get)
   }
 
   protected def sqlTimestamp(timestamp: String): java.sql.Timestamp = {
