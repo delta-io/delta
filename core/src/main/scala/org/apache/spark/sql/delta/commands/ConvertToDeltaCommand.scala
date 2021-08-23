@@ -333,7 +333,7 @@ abstract class ConvertToDeltaCommandBase(
       val metadata = Metadata(
         schemaString = schema.json,
         partitionColumns = partitionFields.fieldNames,
-        configuration = convertProperties.properties)
+        configuration = convertProperties.properties ++ targetTable.properties)
       txn.updateMetadataForNewTable(metadata)
 
       val numFiles = targetTable.numFiles
@@ -402,6 +402,9 @@ case class ConvertToDeltaCommand(
 trait ConvertTargetTable {
   /** The table schema of the target table */
   def tableSchema: StructType
+
+  /** The table properties of the target table */
+  def properties: Map[String, String] = Map.empty
 
   /** The partition schema of the target table, if known */
   def partitionSchema: Option[StructType] = None
