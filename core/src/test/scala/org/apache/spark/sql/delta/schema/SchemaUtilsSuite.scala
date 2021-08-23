@@ -1289,8 +1289,9 @@ class SchemaUtilsSuite extends QueryTest
 
     badCharacters.foreach { char =>
       Seq(s"a${char}b", s"${char}ab", s"ab${char}", char.toString).foreach { name =>
+        val schema = StructType(Array(StructField(name, StringType)))
         val e = intercept[AnalysisException] {
-          SchemaUtils.checkFieldNames(Seq(name))
+          SchemaUtils.checkFieldNames(schema)
         }
         assert(e.getMessage.contains("invalid character"))
       }
@@ -1298,7 +1299,11 @@ class SchemaUtilsSuite extends QueryTest
 
     goodCharacters.foreach { char =>
       // no issues here
-      SchemaUtils.checkFieldNames(Seq(s"a${char}b", s"${char}ab", s"ab${char}", char.toString))
+      val fields = Seq(s"a${char}b", s"${char}ab", s"ab${char}", char.toString).map( name =>
+        StructField(name, StringType)
+      ).toArray
+      val schema = StructType(fields)
+      SchemaUtils.checkFieldNames(schema)
     }
   }
 

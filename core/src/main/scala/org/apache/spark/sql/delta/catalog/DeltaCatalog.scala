@@ -138,7 +138,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
       comment = commentOpt)
 
     val withDb = verifyTableAndSolidify(tableDesc, None)
-    ParquetSchemaConverter.checkFieldNames(tableDesc.schema.fieldNames)
+    ParquetSchemaConverter.checkFieldNames(tableDesc.schema)
 
     val writer = sourceQuery.map { df =>
       WriteIntoDelta(

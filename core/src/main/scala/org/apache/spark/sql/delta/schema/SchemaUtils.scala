@@ -835,11 +835,8 @@ object SchemaUtils {
    * accept the characters ' ,;{}()\n\t'. We ensure that neither the data columns nor the partition
    * columns have these characters.
    */
-  def checkFieldNames(names: Seq[String]): Unit = {
-    ParquetSchemaConverter.checkFieldNames(names)
-    // The method checkFieldNames doesn't have a valid regex to search for '\n'. That should be
-    // fixed in Apache Spark, and we can remove this additional check here.
-    names.find(_.contains("\n")).foreach(col => throw DeltaErrors.invalidColumnName(col))
+  def checkFieldNames(schema: StructType): Unit = {
+    ParquetSchemaConverter.checkFieldNames(schema)
   }
 
   /**

@@ -339,11 +339,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
     assert(!CharVarcharUtils.hasCharVarchar(metadata.schema),
       "The schema in Delta log should not contain char/varchar type.")
     SchemaMergingUtils.checkColumnNameDuplication(metadata.schema, "in the metadata update")
-    SchemaUtils.checkFieldNames(SchemaMergingUtils.explodeNestedFieldNames(metadata.dataSchema))
+    SchemaUtils.checkFieldNames(metadata.dataSchema)
     val partitionColCheckIsFatal =
       spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_PARTITION_COLUMN_CHECK_ENABLED)
     try {
-      SchemaUtils.checkFieldNames(metadata.partitionColumns)
+      SchemaUtils.checkFieldNames(metadata.partitionSchema)
     } catch {
       case e: AnalysisException =>
         recordDeltaEvent(

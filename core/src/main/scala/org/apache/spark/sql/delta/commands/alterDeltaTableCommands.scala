@@ -206,7 +206,7 @@ case class AlterTableAddColumnsDeltaCommand(
       }
 
       SchemaMergingUtils.checkColumnNameDuplication(newSchema, "in adding columns")
-      ParquetSchemaConverter.checkFieldNames(SchemaMergingUtils.explodeNestedFieldNames(newSchema))
+      ParquetSchemaConverter.checkFieldNames(newSchema)
 
       val newMetadata = metadata.copy(schemaString = newSchema.json)
       txn.updateMetadata(newMetadata)
@@ -442,7 +442,7 @@ case class AlterTableReplaceColumnsDeltaCommand(
         .asInstanceOf[StructType]
 
       SchemaMergingUtils.checkColumnNameDuplication(newSchema, "in replacing columns")
-      ParquetSchemaConverter.checkFieldNames(SchemaMergingUtils.explodeNestedFieldNames(newSchema))
+      ParquetSchemaConverter.checkFieldNames(newSchema)
 
       val newMetadata = metadata.copy(schemaString = newSchema.json)
       txn.updateMetadata(newMetadata)
