@@ -73,4 +73,4 @@ if __name__ == "__main__":
     else:
         root_dir = os.path.dirname(os.path.dirname(__file__))
         run_sbt_tests(root_dir)
-        run_python_tests(root_dir)
+        # run_python_tests(root_dir)
