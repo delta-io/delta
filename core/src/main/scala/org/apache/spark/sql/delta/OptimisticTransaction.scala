@@ -476,7 +476,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
         readAppIds = readTxn.toSet,
         metadata = metadata,
         actions = preparedActions,
-        deltaLog = deltaLog,
+        readSnapshot = snapshot,
         commitInfo = Option(commitInfo))
 
       // Register post-commit hooks if any
