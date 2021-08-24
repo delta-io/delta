@@ -2548,6 +2548,25 @@ abstract class MergeIntoSuiteBase
     expectErrorWithoutEvolutionContains = "cannot resolve targetVal"
   )
 
+  testEvolution("multiple INSERT * clauses with UPDATE")(
+    // 1 and 2 should be updated from the source, 3 and 4 should be deleted. Only 5 is unchanged
+    targetData = Seq((1, "a"), (2, "b"), (3, "c"), (4, "d"), (5, "e")).toDF("key", "targetVal"),
+    // 1 and 2 should be updated into the target, 6 and 7 should be inserted. 8 should be ignored
+    sourceData = Seq((1, "t"), (2, "u"), (3, "v"), (4, "w"), (6, "x"), (7, "y"), (8, "z"))
+      .toDF("key", "srcVal"),
+    clauses =
+      update("targetVal = srcVal", "s.key = 1") :: update("*", "s.key = 2") ::
+      delete("s.key = 3") :: delete("s.key = 4") ::
+      insert("*", "s.key = 6") :: insert("*", "s.key = 7") :: Nil,
+    expected =
+      ((1, "t", null) :: (2, "b", "u") :: (5, "e", null) ::
+        (6, null, "x") :: (7, null, "y") :: Nil)
+        .asInstanceOf[List[(Integer, String, String)]].toDF("key", "targetVal", "srcVal"),
+    // The UPDATE * clause won't resolve without evolution because the source and target columns
+    // don't match.
+    expectErrorWithoutEvolutionContains = "cannot resolve targetVal"
+  )
+
   /* unlimited number of merge clauses tests */
 
   protected def testUnlimitedClauses(
