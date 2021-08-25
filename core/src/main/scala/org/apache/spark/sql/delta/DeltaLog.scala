@@ -453,19 +453,21 @@ object DeltaLog extends DeltaLogging {
     val hadoopConf = spark.sessionState.newHadoopConf()
     val fs = rawPath.getFileSystem(hadoopConf)
     val path = fs.makeQualified(rawPath)
+    def createDeltaLog(): DeltaLog = recordDeltaOperation(
+      null,
+      "delta.log.create",
+      Map(TAG_TAHOE_PATH -> path.getParent.toString)) {
+        AnalysisHelper.allowInvokingTransformsInAnalyzer {
+          new DeltaLog(path, path.getParent, clock)
+        }
+    }
     // The following cases will still create a new ActionLog even if there is a cached
     // ActionLog using a different format path:
     // - Different `scheme`
     // - Different `authority` (e.g., different user tokens in the path)
     // - Different mount point.
     try {
-      deltaLogCache.get(path, () => { recordDeltaOperation(
-            null, "delta.log.create", Map(TAG_TAHOE_PATH -> path.getParent.toString)) {
-          AnalysisHelper.allowInvokingTransformsInAnalyzer {
-            new DeltaLog(path, path.getParent, clock)
-          }
-        }
-      })
+      deltaLogCache.get(path, () => createDeltaLog())
     } catch {
       case e: com.google.common.util.concurrent.UncheckedExecutionException =>
         throw e.getCause
