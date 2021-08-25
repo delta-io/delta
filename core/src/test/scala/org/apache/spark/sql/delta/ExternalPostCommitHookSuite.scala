@@ -32,10 +32,11 @@ class ExternalPostCommitHookSuite extends DeltaGenerateSymlinkManifestSuiteBase
       withSQLConf(
         "spark.databricks.delta.properties.defaults.postCommitHookClass" ->
           classOf[ExternalPostCommitHook].getName) {
-        spark.createDataset(spark.sparkContext.parallelize(1 to 100, 7))
+        val numPartitions = 7
+        spark.range(100).repartition(numPartitions)
           .write.format("delta").mode("overwrite").save(tablePath.toString)
 
-        assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 7)
+        assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = numPartitions)
       }
     }
   }
