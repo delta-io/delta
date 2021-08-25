@@ -53,9 +53,10 @@ import org.antlr.v4.runtime.tree._
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
+import org.apache.spark.sql.catalyst.analysis.UnresolvedTable
 import org.apache.spark.sql.catalyst.parser.{ParseErrorListener, ParseException, ParserInterface}
 import org.apache.spark.sql.catalyst.parser.ParserUtils.{string, withOrigin}
-import org.apache.spark.sql.catalyst.plans.logical.{AlterTableAddConstraintStatement, AlterTableDropConstraintStatement, LogicalPlan}
+import org.apache.spark.sql.catalyst.plans.logical.{AlterTableAddConstraint, AlterTableDropConstraint, LogicalPlan}
 import org.apache.spark.sql.catalyst.trees.Origin
 import org.apache.spark.sql.types._
 
@@ -213,6 +214,12 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       builder.build())
   }
 
+  private def createUnresolvedTable(
+      tableName: Seq[String],
+      commandName: String): UnresolvedTable = {
+    UnresolvedTable(tableName, commandName)
+  }
+
   // Build the text of the CHECK constraint expression. The user-specified whitespace is in the
   // HIDDEN channel where we can't get to it, so we just paste together all the tokens with a single
   // space. This produces some strange spacing (e.g. `structCol . arr [ 0 ]`), but right now we
@@ -226,16 +233,18 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       ctx: AddTableConstraintContext): LogicalPlan = withOrigin(ctx) {
     val checkConstraint = ctx.constraint().asInstanceOf[CheckConstraintContext]
 
-    AlterTableAddConstraintStatement(
-      ctx.table.identifier.asScala.map(_.getText),
+    AlterTableAddConstraint(
+      createUnresolvedTable(ctx.table.identifier.asScala.map(_.getText),
+        "ALTER TABLE ... ADD CONSTRAINT"),
       ctx.name.getText,
       buildCheckConstraintText(checkConstraint.checkExprToken().asScala))
   }
 
   override def visitDropTableConstraint(
       ctx: DropTableConstraintContext): LogicalPlan = withOrigin(ctx) {
-    AlterTableDropConstraintStatement(
-      ctx.table.identifier.asScala.map(_.getText),
+    AlterTableDropConstraint(
+      createUnresolvedTable(ctx.table.identifier.asScala.map(_.getText),
+        "ALTER TABLE ... DROP CONSTRAINT"),
       ctx.name.getText)
   }
 

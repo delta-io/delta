@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.stats
 
-import java.util
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.types.StructType
@@ -30,8 +30,9 @@ import org.apache.spark.sql.types.StructType
  * @param totalBytes - an array of Long representing total number of bytes in different bins
  */
 private[delta] case class FileSizeHistogram(
-    sortedBinBoundaries: Array[Long],
-    fileCounts: Array[Int],
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    sortedBinBoundaries: IndexedSeq[Long],
+    fileCounts: Array[Long],
     totalBytes: Array[Long]) {
 
   require(sortedBinBoundaries.nonEmpty)
@@ -45,16 +46,7 @@ private[delta] case class FileSizeHistogram(
    * Insert a given value into the appropriate histogram bin
    */
   def insert(fileSize: Long): Unit = {
-    var index = util.Arrays.binarySearch(sortedBinBoundaries, fileSize)
-    // If the element is present in the array, it returns a non-negative result and that
-    // represents the bucket in which fileSize belongs.
-    // If the element is not present in the array, then it returns (-1 * insertion_point) - 1
-    // where insertion_point is the index of the first element greater than the key.
-    if (index < 0) {
-      index = ((index + 1) * -1) - 1
-    }
-
-    // If fileSize is lesser than min bucket of histogram, then no need to update the histogram.
+    val index = FileSizeHistogram.getBinIndex(fileSize, sortedBinBoundaries)
     if (index >= 0) {
       fileCounts(index) += 1
       totalBytes(index) += fileSize
@@ -64,9 +56,27 @@ private[delta] case class FileSizeHistogram(
 
 private[delta] object FileSizeHistogram {
 
-  def apply(sortedBinBoundaries: Seq[Long]): FileSizeHistogram = {
+  /**
+   * Returns the index of the bin to which given fileSize belongs OR -1 if given fileSize doesn't
+   * belongs to any bin
+   */
+  def getBinIndex(fileSize: Long, sortedBinBoundaries: IndexedSeq[Long]): Int = {
+    import scala.collection.Searching._
+    // The search function on IndexedSeq uses binary search.
+    val searchResult = sortedBinBoundaries.search(fileSize)
+    searchResult match {
+      case Found(index) =>
+        index
+      case InsertionPoint(insertionPoint) =>
+        // insertionPoint=0 means that fileSize is lesser than min bucket of histogram
+        // return -1 in that case
+        insertionPoint - 1
+    }
+  }
+
+  def apply(sortedBinBoundaries: IndexedSeq[Long]): FileSizeHistogram = {
     new FileSizeHistogram(
-      sortedBinBoundaries.toArray,
+      sortedBinBoundaries,
       Array.fill(sortedBinBoundaries.size)(0),
       Array.fill(sortedBinBoundaries.size)(0)
     )

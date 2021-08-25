@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.Constraints
-import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.schema.SchemaUtils.transformColumnsStructs
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -205,8 +205,8 @@ case class AlterTableAddColumnsDeltaCommand(
           SchemaUtils.addColumn(schema, column, position)
       }
 
-      SchemaUtils.checkColumnNameDuplication(newSchema, "in adding columns")
-      ParquetSchemaConverter.checkFieldNames(SchemaUtils.explodeNestedFieldNames(newSchema))
+      SchemaMergingUtils.checkColumnNameDuplication(newSchema, "in adding columns")
+      ParquetSchemaConverter.checkFieldNames(SchemaMergingUtils.explodeNestedFieldNames(newSchema))
 
       val newMetadata = metadata.copy(schemaString = newSchema.json)
       txn.updateMetadata(newMetadata)
@@ -223,6 +223,10 @@ case class AlterTableAddColumnsDeltaCommand(
 
   object QualifiedColTypeWithPosition {
 
+    private def toV2Position(input: Any): ColumnPosition = {
+      input.asInstanceOf[ColumnPosition]
+    }
+
     def unapply(
         col: QualifiedColType): Option[(Seq[String], StructField, Option[ColumnPosition])] = {
       val builder = new MetadataBuilder
@@ -230,7 +234,7 @@ case class AlterTableAddColumnsDeltaCommand(
 
       val field = StructField(col.name.last, col.dataType, col.nullable, builder.build())
 
-      Some((col.name.init, field, col.position))
+      Some((col.name.init, field, col.position.map(toV2Position)))
     }
   }
 
@@ -437,8 +441,8 @@ case class AlterTableReplaceColumnsDeltaCommand(
       val newSchema = SchemaUtils.changeDataType(existingSchema, changingSchema, resolver)
         .asInstanceOf[StructType]
 
-      SchemaUtils.checkColumnNameDuplication(newSchema, "in replacing columns")
-      ParquetSchemaConverter.checkFieldNames(SchemaUtils.explodeNestedFieldNames(newSchema))
+      SchemaMergingUtils.checkColumnNameDuplication(newSchema, "in replacing columns")
+      ParquetSchemaConverter.checkFieldNames(SchemaMergingUtils.explodeNestedFieldNames(newSchema))
 
       val newMetadata = metadata.copy(schemaString = newSchema.json)
       txn.updateMetadata(newMetadata)

@@ -87,14 +87,14 @@ abstract class EvolvabilitySuiteBase extends QueryTest
  *
  * scalastyle:off
  * ```
- * build/sbt "test:runMain org.apache.spark.sql.delta.EvolvabilitySuite src/test/resources/delta/delta-0.1.0 generateData"
+ * build/sbt "core/test:runMain org.apache.spark.sql.delta.EvolvabilitySuite src/test/resources/delta/delta-0.1.0 generateData"
  * ```
  *
  * You can also use this tool to generate DeltaLog that contains a checkpoint a json log with a new column.
  *
  * scalastyle:off
  * ```
- * build/sbt "test:runMain org.apache.spark.sql.delta.EvolvabilitySuite /path/src/test/resources/delta/transaction_log_schema_evolvability generateTransactionLogWithExtraColumn"
+ * build/sbt "core/test:runMain org.apache.spark.sql.delta.EvolvabilitySuite /path/src/test/resources/delta/transaction_log_schema_evolvability generateTransactionLogWithExtraColumn"
  * ```
  */
 // scalastyle:on
@@ -266,11 +266,15 @@ object EvolvabilitySuiteBase {
       throw new AssertionError(s"${path.getCanonicalPath} exists. Please delete it and retry.")
       // scalastyle:on throwerror
     }
-    if (args(1) == "generateData") {
-      generateData(spark, path.toString)
-      validateData(spark, path.toString)
-    } else {
-      generateTransactionLogWithExtraColumn(spark, path.toString)
+    args(1) match {
+      case "generateData" =>
+        generateData(spark, path.toString)
+        validateData(spark, path.toString)
+      case "generateTransactionLogWithExtraColumn" =>
+        generateTransactionLogWithExtraColumn(spark, path.toString)
+      case _ =>
+        throw new RuntimeException("Unrecognized (or omitted) argument. " +
+          "Please try again (no data generated).")
     }
   }
 }

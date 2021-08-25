@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.hooks.GenerateSymlinkManifest
 import org.apache.spark.sql.delta.test.DeltaHiveTest
 
 import org.apache.spark.sql.AnalysisException
@@ -23,6 +24,7 @@ import org.apache.spark.sql.hive.test.TestHiveSingleton
 
 abstract class HiveDeltaDDLSuiteBase
   extends DeltaDDLTestBase {
+  import testImplicits._
 
   override protected def verifyDescribeTable(tblName: String): Unit = {
     val res = sql(s"DESCRIBE TABLE $tblName").collect()
@@ -32,6 +34,7 @@ abstract class HiveDeltaDDLSuiteBase
   override protected def verifyNullabilityFailure(exception: AnalysisException): Unit = {
     exception.getMessage.contains("not supported for changing column")
   }
+
 }
 
 class HiveDeltaDDLSuite extends HiveDeltaDDLSuiteBase with DeltaHiveTest

@@ -18,22 +18,19 @@ package org.apache.spark.sql.delta
 
 import scala.collection.JavaConverters._
 
-
 // scalastyle:off import.ordering.noEmptyLine
-
 import org.apache.spark.sql.delta.DeltaErrors.{TemporallyUnstableInputException, TimestampEarlierThanCommitRetentionException}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
-import org.apache.spark.sql.delta.files.TahoeLogFileIndex
+import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
-import org.apache.spark.sql.delta.sources.DeltaDataSource
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, EliminateSubqueryAliases, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, EliminateSubqueryAliases, ResolvedTable, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedTableValuedFunction
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions._
@@ -54,7 +51,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  * Analysis rules for Delta. Currently, these rules enable schema enforcement / evolution with
  * INSERT INTO.
  */
-class DeltaAnalysis(session: SparkSession, conf: SQLConf)
+class DeltaAnalysis(session: SparkSession)
   extends Rule[LogicalPlan] with AnalysisHelper with DeltaLogging {
 
   import session.sessionState.analyzer.SessionCatalogAndIdentifier
@@ -156,34 +153,36 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
             s"WHEN NOT MATCHED clause in MERGE INTO.")
       }
       // rewrites Delta from V2 to V1
-      val newTarget = stripTempViewWrapper(target).transformUp { case DeltaRelation(lr) => lr }
+      val newTarget =
+        stripTempViewForMergeWrapper(target).transformUp { case DeltaRelation(lr) => lr }
       // Even if we're merging into a non-Delta target, we will catch it later and throw an
       // exception.
       val deltaMerge =
         DeltaMergeInto(newTarget, source, condition, matchedActions ++ notMatchedActions)
 
-      DeltaMergeInto.resolveReferences(deltaMerge, conf)(tryResolveReferences(session))
+      DeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(tryResolveReferences(session))
 
     case deltaMerge: DeltaMergeInto =>
       val d = if (deltaMerge.childrenResolved && !deltaMerge.resolved) {
-        DeltaMergeInto.resolveReferences(deltaMerge, conf)(tryResolveReferences(session))
+        DeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(tryResolveReferences(session))
       } else deltaMerge
-      d.copy(target = stripTempViewWrapper(d.target))
+      d.copy(target = stripTempViewForMergeWrapper(d.target))
 
-    case AlterTableAddConstraintStatement(
-          original @ SessionCatalogAndIdentifier(catalog, ident), constraintName, expr) =>
+    // TODO: remove the 2 cases below after OSS 3.2 is released.
+    case AlterTableAddConstraint(t: ResolvedTable, constraintName, expr)
+        if t.table.isInstanceOf[DeltaTableV2] =>
       CatalogV2Util.createAlterTable(
-        original,
-        catalog,
-        ident.namespace() :+ ident.name(),
+        t.catalog.name +: t.identifier.asMultipartIdentifier,
+        t.catalog,
+        t.identifier.asMultipartIdentifier,
         Seq(AddConstraint(constraintName, expr)))
 
-    case AlterTableDropConstraintStatement(
-        original @ SessionCatalogAndIdentifier(catalog, ident), constraintName) =>
+    case AlterTableDropConstraint(t: ResolvedTable, constraintName)
+        if t.table.isInstanceOf[DeltaTableV2] =>
       CatalogV2Util.createAlterTable(
-        original,
-        catalog,
-        ident.namespace() :+ ident.name(),
+        t.catalog.name +: t.identifier.asMultipartIdentifier,
+        t.catalog,
+        t.identifier.asMultipartIdentifier,
         Seq(DropConstraint(constraintName)))
 
   }
@@ -362,8 +361,11 @@ class DeltaAnalysis(session: SparkSession, conf: SQLConf)
   private def stripTempViewWrapper(plan: LogicalPlan): LogicalPlan = {
     DeltaViewHelper.stripTempView(plan, conf)
   }
-}
 
+  private def stripTempViewForMergeWrapper(plan: LogicalPlan): LogicalPlan = {
+    DeltaViewHelper.stripTempViewForMerge(plan, conf)
+  }
+}
 
 /** Matchers for dealing with a Delta table. */
 object DeltaRelation {

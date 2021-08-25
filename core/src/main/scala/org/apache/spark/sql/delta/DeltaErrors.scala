@@ -444,6 +444,10 @@ object DeltaErrors
     new AnalysisException(s"$path doesn't exist")
   }
 
+  def directoryNotFoundException(path: String): Throwable = {
+    new FileNotFoundException(s"$path doesn't exist")
+  }
+
   def pathAlreadyExistsException(path: Path): Throwable = {
     new AnalysisException(s"$path already exists.")
   }
@@ -510,6 +514,15 @@ object DeltaErrors
     }
     new AnalysisException(
       s"Data written into Delta needs to contain at least one non-partitioned column.$msg")
+  }
+
+  def replaceWhereMismatchException(
+      replaceWhere: String,
+      invariantViolation: InvariantViolationException): Throwable = {
+    new AnalysisException(
+      s"Data written out does not match replaceWhere '$replaceWhere'.\n" +
+        invariantViolation.getMessage,
+      cause = Some(invariantViolation))
   }
 
   def replaceWhereMismatchException(replaceWhere: String, badPartitions: String): Throwable = {
@@ -1129,10 +1142,10 @@ object DeltaErrors
         s"but the column type is ${columnType.sql}")
   }
 
-  def updateOnTempViewWithGenerateColsNotSupported: Throwable = {
+  def operationOnTempViewWithGenerateColsNotSupported(op: String): Throwable = {
     new AnalysisException(
-      s"Updating a temp view referring to a Delta table that contains generated columns is not " +
-        s"supported. Please run the update command on the Delta table directly")
+      s"${op} command on a temp view referring to a Delta table that contains generated columns " +
+        s"is not supported. Please run the ${op} command on the Delta table directly")
   }
 
 

@@ -640,7 +640,7 @@ abstract class UpdateSuiteBase
     val arrayStructData = spark.read.json(Seq("""{"a": [{"b": 1}, {"b": 2}]}""").toDS())
     testAnalysisException(
       arrayStructData,
-      set = "a.b = -1" :: Nil,
+      set = "a.b = array(-1)" :: Nil,
       errMsgs = "Updating nested fields is only supported for StructType" :: Nil)
   }
 

@@ -43,6 +43,8 @@ import org.apache.spark.util.{ThreadUtils, Utils}
  */
 trait SnapshotManagement { self: DeltaLog =>
 
+  @volatile private[delta] var asyncUpdateTask: Future[Unit] = _
+
   /** The timestamp when the last successful update action is finished. */
   @volatile protected var lastUpdateTimestamp: Long = -1L
 

@@ -173,7 +173,7 @@ class DeltaSuite extends QueryTest
     val e = intercept[AnalysisException] {
       spark.read.format("delta").load(tempDir.toString).collect()
     }.getMessage
-    assert(e.contains("doesn't exist"))
+    assert(e.contains("is not a Delta table"))
   }
 
   test("append then read") {
@@ -231,69 +231,201 @@ class DeltaSuite extends QueryTest
   }
 
   test("invalid replaceWhere") {
-    val tempDir = Utils.createTempDir()
-    Seq(1, 2, 3, 4).toDF()
-      .withColumn("is_odd", $"value" % 2 =!= 0)
-      .write
-      .format("delta")
-      .partitionBy("is_odd")
-      .save(tempDir.toString)
+    Seq(true, false).foreach { enabled =>
+      withSQLConf(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_ENABLED.key -> enabled.toString) {
+        val tempDir = Utils.createTempDir()
+        Seq(1, 2, 3, 4).toDF()
+          .withColumn("is_odd", $"value" % 2 =!= 0)
+          .write
+          .format("delta")
+          .partitionBy("is_odd")
+          .save(tempDir.toString)
+        val e1 = intercept[AnalysisException] {
+          Seq(6).toDF()
+            .withColumn("is_odd", $"value" % 2 =!= 0)
+            .write
+            .format("delta")
+            .mode("overwrite")
+            .option(DeltaOptions.REPLACE_WHERE_OPTION, "is_odd = true")
+            .save(tempDir.toString)
+        }.getMessage
+        assert(e1.contains("Data written out does not match replaceWhere"))
 
-    val e1 = intercept[AnalysisException] {
-      Seq(6).toDF()
+        val e2 = intercept[AnalysisException] {
+          Seq(true).toDF("is_odd")
+            .write
+            .format("delta")
+            .mode("overwrite")
+            .option(DeltaOptions.REPLACE_WHERE_OPTION, "is_odd = true")
+            .save(tempDir.toString)
+        }.getMessage
+        assert(e2.contains(
+          "Data written into Delta needs to contain at least one non-partitioned"))
+
+        val e3 = intercept[AnalysisException] {
+          Seq(6).toDF()
+            .withColumn("is_odd", $"value" % 2 =!= 0)
+            .write
+            .format("delta")
+            .mode("overwrite")
+            .option(DeltaOptions.REPLACE_WHERE_OPTION, "not_a_column = true")
+            .save(tempDir.toString)
+        }.getMessage
+        if (enabled) {
+          assert(e3.contains(
+            "Data written out does not match replaceWhere 'not_a_column = true'"))
+        } else {
+          assert(e3.contains(
+            "Predicate references non-partition column 'not_a_column'. Only the " +
+              "partition columns may be referenced: [is_odd]"))
+        }
+
+        val e4 = intercept[AnalysisException] {
+          Seq(6).toDF()
+            .withColumn("is_odd", $"value" % 2 =!= 0)
+            .write
+            .format("delta")
+            .mode("overwrite")
+            .option(DeltaOptions.REPLACE_WHERE_OPTION, "value = 1")
+            .save(tempDir.toString)
+        }.getMessage
+        if (enabled) {
+          assert(e4.contains("Data written out does not match replaceWhere 'value = 1'"))
+        } else {
+          assert(e4.contains("Predicate references non-partition column 'value'. Only the " +
+            "partition columns may be referenced: [is_odd]"))
+        }
+
+        val e5 = intercept[AnalysisException] {
+          Seq(6).toDF()
+            .withColumn("is_odd", $"value" % 2 =!= 0)
+            .write
+            .format("delta")
+            .mode("overwrite")
+            .option(DeltaOptions.REPLACE_WHERE_OPTION, "")
+            .save(tempDir.toString)
+        }.getMessage
+        assert(e5.contains("Cannot recognize the predicate ''"))
+      }
+    }
+  }
+
+  test("replaceWhere with rearrangeOnly") {
+    withTempDir { dir =>
+      Seq(1, 2, 3, 4).toDF()
+        .withColumn("is_odd", $"value" % 2 =!= 0)
+        .write
+        .format("delta")
+        .partitionBy("is_odd")
+        .save(dir.toString)
+
+      // dataFilter non empty
+      val e = intercept[AnalysisException] {
+        Seq(9).toDF()
+          .withColumn("is_odd", $"value" % 2 =!= 0)
+          .write
+          .format("delta")
+          .mode("overwrite")
+          .option(DeltaOptions.REPLACE_WHERE_OPTION, "is_odd = true and value < 2")
+          .option(DeltaOptions.DATA_CHANGE_OPTION, "false")
+          .save(dir.toString)
+      }.getMessage
+      assert(e.contains(
+        "'replaceWhere' cannot be used with data filters when 'dataChange' is set to false"))
+
+      Seq(9).toDF()
         .withColumn("is_odd", $"value" % 2 =!= 0)
         .write
         .format("delta")
         .mode("overwrite")
         .option(DeltaOptions.REPLACE_WHERE_OPTION, "is_odd = true")
-        .save(tempDir.toString)
-    }.getMessage
-    assert(e1.contains("Data written out does not match replaceWhere"))
+        .option(DeltaOptions.DATA_CHANGE_OPTION, "false")
+        .save(dir.toString)
+      checkAnswer(
+        spark.read.format("delta").load(dir.toString),
+        Seq(2, 4, 9).toDF().withColumn("is_odd", $"value" % 2 =!= 0))
+    }
+  }
 
-    val e2 = intercept[AnalysisException] {
-      Seq(true).toDF("is_odd")
+  test("valid replaceWhere") {
+    Seq(true, false).foreach { enabled =>
+      withSQLConf(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_ENABLED.key -> enabled.toString) {
+        Seq(true, false).foreach { partitioned =>
+          // Skip when it's not enabled and not partitioned.
+          if (enabled || partitioned) {
+            withTempDir { dir =>
+              val writer = Seq(1, 2, 3, 4).toDF()
+                .withColumn("is_odd", $"value" % 2 =!= 0)
+                .withColumn("is_even", $"value" % 2 === 0)
+                .write
+                .format("delta")
+
+              if (partitioned) {
+                writer.partitionBy("is_odd").save(dir.toString)
+              } else {
+                writer.save(dir.toString)
+              }
+
+              def data: DataFrame = spark.read.format("delta").load(dir.toString)
+
+              Seq(5, 7).toDF()
+                .withColumn("is_odd", $"value" % 2 =!= 0)
+                .withColumn("is_even", $"value" % 2 === 0)
+                .write
+                .format("delta")
+                .mode("overwrite")
+                .option(DeltaOptions.REPLACE_WHERE_OPTION, "is_odd = true")
+                .save(dir.toString)
+              checkAnswer(
+                data,
+                Seq(2, 4, 5, 7).toDF()
+                  .withColumn("is_odd", $"value" % 2 =!= 0)
+                  .withColumn("is_even", $"value" % 2 === 0))
+
+              // replaceWhere on non-partitioning columns if enabled.
+              if (enabled) {
+                Seq(6, 8).toDF()
+                  .withColumn("is_odd", $"value" % 2 =!= 0)
+                  .withColumn("is_even", $"value" % 2 === 0)
+                  .write
+                  .format("delta")
+                  .mode("overwrite")
+                  .option(DeltaOptions.REPLACE_WHERE_OPTION, "is_even = true")
+                  .save(dir.toString)
+                checkAnswer(
+                  data,
+                  Seq(5, 6, 7, 8).toDF()
+                    .withColumn("is_odd", $"value" % 2 =!= 0)
+                    .withColumn("is_even", $"value" % 2 === 0))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  test("replace arbitrary with multiple references") {
+    withTempDir { dir =>
+      def data: DataFrame = spark.read.format("delta").load(dir.toString)
+
+      Seq((1, 3, 8), (1, 5, 9)).toDF("a", "b", "c")
         .write
         .format("delta")
         .mode("overwrite")
-        .option(DeltaOptions.REPLACE_WHERE_OPTION, "is_odd = true")
-        .save(tempDir.toString)
-    }.getMessage
-    assert(e2.contains("Data written into Delta needs to contain at least one non-partitioned"))
+        .save(dir.toString)
 
-    val e3 = intercept[AnalysisException] {
-      Seq(6).toDF()
-        .withColumn("is_odd", $"value" % 2 =!= 0)
+      Seq((2, 4, 6)).toDF("a", "b", "c")
         .write
         .format("delta")
         .mode("overwrite")
-        .option(DeltaOptions.REPLACE_WHERE_OPTION, "not_a_column = true")
-        .save(tempDir.toString)
-    }.getMessage
-    assert(e3.contains("Predicate references non-partition column 'not_a_column'. Only the " +
-      "partition columns may be referenced: [is_odd]"))
+        .option(DeltaOptions.REPLACE_WHERE_OPTION, "a + c < 10")
+        .save(dir.toString)
 
-    val e4 = intercept[AnalysisException] {
-      Seq(6).toDF()
-        .withColumn("is_odd", $"value" % 2 =!= 0)
-        .write
-        .format("delta")
-        .mode("overwrite")
-        .option(DeltaOptions.REPLACE_WHERE_OPTION, "value = 1")
-        .save(tempDir.toString)
-    }.getMessage
-    assert(e4.contains("Predicate references non-partition column 'value'. Only the " +
-      "partition columns may be referenced: [is_odd]"))
-
-    val e5 = intercept[AnalysisException] {
-      Seq(6).toDF()
-        .withColumn("is_odd", $"value" % 2 =!= 0)
-        .write
-        .format("delta")
-        .mode("overwrite")
-        .option(DeltaOptions.REPLACE_WHERE_OPTION, "")
-        .save(tempDir.toString)
-    }.getMessage
-    assert(e5.contains("Cannot recognize the predicate ''"))
+      checkAnswer(
+        data,
+        Seq((1, 5, 9), (2, 4, 6)).toDF("a", "b", "c"))
+    }
   }
 
   test("move delta table") {
@@ -1353,26 +1485,106 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  test("replaceWhere should support backtick") {
+  test("replaceWhere should support backtick when flag is disabled") {
+    val table = "replace_where_backtick"
+    withSQLConf(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_ENABLED.key -> "false") {
+      withTable(table) {
+        // The STRUCT column is added to prevent us from introducing any ambiguity in future
+        sql(s"CREATE TABLE $table(`a.b` STRING, `c.d` STRING, a STRUCT<b:STRING>)" +
+          s"USING delta PARTITIONED BY (`a.b`)")
+        Seq(("a", "b", "c"))
+          .toDF("a.b", "c.d", "ab")
+          .withColumn("a", struct($"ab".alias("b")))
+          .drop("ab")
+          .write
+          .format("delta")
+          // "replaceWhere" should support backtick and remove it correctly. Technically,
+          // "a.b" is not correct, but some users may already use it,
+          // so we keep supporting both. This is not ambiguous since "replaceWhere" only
+          // supports partition columns and it doesn't support struct type or map type.
+          .option("replaceWhere", "`a.b` = 'a' AND a.b = 'a'")
+          .mode("overwrite")
+          .saveAsTable(table)
+        checkAnswer(sql(s"SELECT `a.b`, `c.d`, a.b from $table"), Row("a", "b", "c") :: Nil)
+      }
+    }
+  }
+
+  test("replaceArbitrary should enforce proper usage of backtick") {
     val table = "replace_where_backtick"
     withTable(table) {
-      // The STRUCT column is added to prevent us from introducing any ambiguity in future
       sql(s"CREATE TABLE $table(`a.b` STRING, `c.d` STRING, a STRUCT<b:STRING>)" +
         s"USING delta PARTITIONED BY (`a.b`)")
+
+      // User has to use backtick properly. If they want to use a.b to match on `a.b`,
+      // error will be thrown if `a.b` doesn't have the value.
+      val e = intercept[AnalysisException] {
+        Seq(("a", "b", "c"))
+          .toDF("a.b", "c.d", "ab")
+          .withColumn("a", struct($"ab".alias("b")))
+          .drop("ab")
+          .write
+          .format("delta")
+          .option("replaceWhere", "a.b = 'a' AND `a.b` = 'a'")
+          .mode("overwrite")
+          .saveAsTable(table)
+      }
+      assert(e.getMessage.startsWith("Data written out does not match replaceWhere"))
+
+      Seq(("a", "b", "c"), ("d", "e", "f"))
+        .toDF("a.b", "c.d", "ab")
+        .withColumn("a", struct($"ab".alias("b")))
+        .drop("ab")
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .saveAsTable(table)
+
+      // Use backtick properly for `a.b`
+      Seq(("a", "h", "c"))
+        .toDF("a.b", "c.d", "ab")
+        .withColumn("a", struct($"ab".alias("b")))
+        .drop("ab")
+        .write
+        .format("delta")
+        .option("replaceWhere", "`a.b` = 'a'")
+        .mode("overwrite")
+        .saveAsTable(table)
+
+      checkAnswer(sql(s"SELECT `a.b`, `c.d`, a.b from $table"),
+        Row("a", "h", "c") :: Row("d", "e", "f") :: Nil)
+
+      // struct field can only be referred by "a.b".
       Seq(("a", "b", "c"))
         .toDF("a.b", "c.d", "ab")
         .withColumn("a", struct($"ab".alias("b")))
         .drop("ab")
         .write
         .format("delta")
-        // "replaceWhere" should support backtick and remove it correctly. Technically, "a.b" is not
-        // correct, but some users may already use it, so we keep supporting both. This is not
-        // ambiguous since "replaceWhere" only supports partition columns and it doesn't support
-        // struct type or map type.
-        .option("replaceWhere", "`a.b` = 'a' AND a.b = 'a'")
+        .option("replaceWhere", "a.b = 'c'")
         .mode("overwrite")
         .saveAsTable(table)
-      checkAnswer(sql(s"SELECT `a.b`, `c.d`, a.b from $table"), Row("a", "b", "c") :: Nil)
+      checkAnswer(sql(s"SELECT `a.b`, `c.d`, a.b from $table"),
+        Row("a", "b", "c") :: Row("d", "e", "f") :: Nil)
     }
+  }
+
+  test("need to update DeltaLog on DataFrameReader.load() code path") {
+    // Due to possible race conditions (like in mounting/unmounting paths) there might be an initial
+    // snapshot that gets cached for a table that should have a valid (non-initial) snapshot. In
+    // such a case we need to call deltaLog.update() in the DataFrame read paths to update the
+    // initial snapshot to a valid one.
+    //
+    // We simulate a cached InitialSnapshot + valid delta table by creating an empty DeltaLog
+    // (which creates an InitialSnapshot cached for that path) then move an actual Delta table's
+    // transaction log into the path for the empty log.
+    val dir1 = Utils.createTempDir()
+    val dir2 = Utils.createTempDir()
+    val log = DeltaLog.forTable(spark, dir1)
+    assert(!log.tableExists)
+    spark.range(10).write.format("delta").save(dir2.getCanonicalPath)
+    // rename dir2 to dir1 then read
+    dir2.renameTo(dir1)
+    checkAnswer(spark.read.format("delta").load(dir1.getCanonicalPath), spark.range(10).toDF)
   }
 }

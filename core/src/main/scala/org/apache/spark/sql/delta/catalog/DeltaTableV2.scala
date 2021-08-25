@@ -115,6 +115,11 @@ case class DeltaTableV2(
     val base = snapshot.getProperties
     base.put(TableCatalog.PROP_PROVIDER, "delta")
     base.put(TableCatalog.PROP_LOCATION, CatalogUtils.URIToString(path.toUri))
+    catalogTable.foreach { table =>
+      if (table.owner != null && table.owner.nonEmpty) {
+        base.put(TableCatalog.PROP_OWNER, table.owner)
+      }
+    }
     Option(snapshot.metadata.description).foreach(base.put(TableCatalog.PROP_COMMENT, _))
     // this reports whether the table is an external or managed catalog table as
     // the old DescribeTable command would
@@ -127,6 +132,7 @@ case class DeltaTableV2(
     V1_BATCH_WRITE, OVERWRITE_BY_FILTER, TRUNCATE
   ).asJava
 
+
   override def newWriteBuilder(info: LogicalWriteInfo): WriteBuilder = {
     new WriteIntoDeltaBuilder(deltaLog, info.options)
   }
@@ -136,6 +142,8 @@ case class DeltaTableV2(
    * paths.
    */
   def toBaseRelation: BaseRelation = {
+    // force update() if necessary in DataFrameReader.load code
+    snapshot
     if (!deltaLog.tableExists) {
       val id = catalogTable.map(ct => DeltaTableIdentifier(table = Some(ct.identifier)))
         .getOrElse(DeltaTableIdentifier(path = Some(path.toString)))

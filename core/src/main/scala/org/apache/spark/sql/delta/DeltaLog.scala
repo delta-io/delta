@@ -30,7 +30,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStoreProvider
 import com.google.common.cache.{CacheBuilder, RemovalNotification}
@@ -70,8 +70,6 @@ class DeltaLog private(
 
 
   private lazy implicit val _clock = clock
-
-  @volatile private[delta] var asyncUpdateTask: Future[Unit] = _
 
   protected def spark = SparkSession.active
 
@@ -205,7 +203,7 @@ class DeltaLog private(
 
     val txn = startTransaction()
     try {
-      SchemaUtils.checkColumnNameDuplication(txn.metadata.schema, "in the table schema")
+      SchemaMergingUtils.checkColumnNameDuplication(txn.metadata.schema, "in the table schema")
     } catch {
       case e: AnalysisException =>
         throw new AnalysisException(

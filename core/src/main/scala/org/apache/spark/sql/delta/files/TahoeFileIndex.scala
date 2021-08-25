@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta.files
 import java.net.URI
 import java.util.Objects
 
+import scala.collection.mutable.ArrayBuffer
+
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.actions.AddFile
@@ -58,15 +60,28 @@ abstract class TahoeFileIndex(
   override def listFiles(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): Seq[PartitionDirectory] = {
+    val partitionValuesToFiles = listAddFiles(partitionFilters, dataFilters)
+    makePartitionDirectories(partitionValuesToFiles.toSeq)
+  }
+
+
+  private def listAddFiles(
+      partitionFilters: Seq[Expression],
+      dataFilters: Seq[Expression]): Map[Map[String, String], Seq[AddFile]] = {
+    matchingFiles(partitionFilters, dataFilters).groupBy(_.partitionValues)
+  }
+
+  private def makePartitionDirectories(
+      partitionValuesToFiles: Seq[(Map[String, String], Seq[AddFile])]): Seq[PartitionDirectory] = {
     val timeZone = spark.sessionState.conf.sessionLocalTimeZone
-    matchingFiles(partitionFilters, dataFilters).groupBy(_.partitionValues).map {
+    partitionValuesToFiles.map {
       case (partitionValues, files) =>
         val rowValues: Array[Any] = partitionSchema.map { p =>
           Cast(Literal(partitionValues(p.name)), p.dataType, Option(timeZone)).eval()
         }.toArray
 
 
-        val fileStats = files.map { f =>
+        val fileStatuses = files.map { f =>
           new FileStatus(
             /* length */ f.size,
             /* isDir */ false,
@@ -76,8 +91,8 @@ abstract class TahoeFileIndex(
             absolutePath(f.path))
         }.toArray
 
-        PartitionDirectory(new GenericInternalRow(rowValues), fileStats)
-    }.toSeq
+        PartitionDirectory(new GenericInternalRow(rowValues), fileStatuses)
+    }
   }
 
   override def partitionSchema: StructType = deltaLog.snapshot.metadata.partitionSchema

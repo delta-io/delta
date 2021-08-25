@@ -68,7 +68,10 @@ def prepare(root_dir):
     return package
 
 
-def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
+def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, print_cmd=True, **kwargs):
+    if print_cmd:
+        print("### Executing cmd: " + " ".join(cmd))
+
     cmd_env = os.environ.copy()
     if env:
         cmd_env.update(env)
@@ -88,7 +91,7 @@ def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
             **kwargs)
         (stdout, stderr) = child.communicate()
         exit_code = child.wait()
-        if throw_on_error and exit_code is not 0:
+        if throw_on_error and exit_code != 0:
             raise Exception(
                 "Non-zero exitcode: %s\n\nSTDOUT:\n%s\n\nSTDERR:%s" %
                 (exit_code, stdout, stderr))
@@ -99,8 +102,64 @@ def run_python_style_checks(root_dir):
     run_cmd([os.path.join(root_dir, "dev", "lint-python")], stream_output=True)
 
 
+def run_pypi_packaging_tests(root_dir):
+    """
+    We want to test that the PyPi artifact for this delta version can be generated,
+    locally installed, and used in python tests.
+
+    We will uninstall any existing local delta PyPi artifact.
+    We will generate a new local delta PyPi artifact.
+    We will install it into the local PyPi repository.
+    And then we will run relevant python tests to ensure everything works as exepcted.
+    """
+    print("##### Running PyPi Packaging tests #####")
+
+    version = '0.0.0'
+    with open(os.path.join(root_dir, "version.sbt")) as fd:
+        version = fd.readline().split('"')[1]
+
+    # uninstall packages if they exist
+    run_cmd(["pip3", "uninstall", "--yes", "delta-spark", "pyspark"], stream_output=True)
+
+    # install helper pip packages
+    run_cmd(["pip3", "install", "wheel", "twine", "setuptools", "--upgrade"], stream_output=True)
+
+    wheel_dist_dir = path.join(root_dir, "dist")
+
+    print("### Deleting `dist` directory if it exists")
+    delete_if_exists(wheel_dist_dir)
+
+    # generate artifacts
+    run_cmd(
+        ["python3", "setup.py", "bdist_wheel"],
+        stream_output=True,
+        stderr=open('/dev/null', 'w'))
+
+    run_cmd(["python3", "setup.py", "sdist"], stream_output=True)
+
+    # we need, for example, 1.1.0_SNAPSHOT not 1.1.0-SNAPSHOT
+    version_formatted = version.replace("-", "_")
+    delta_whl_name = "delta_spark-" + version_formatted + "-py3-none-any.whl"
+
+    # this will install delta-spark-$version and pyspark
+    install_whl_cmd = ["pip3", "install", path.join(wheel_dist_dir, delta_whl_name)]
+    run_cmd(install_whl_cmd, stream_output=True)
+
+    # run test python file directly with python and not with spark-submit
+    test_file = path.join(root_dir, path.join("examples", "python", "using_with_pip.py"))
+    test_cmd = ["python3", test_file]
+    try:
+        print("### Starting tests...")
+        run_cmd(test_cmd, stream_output=True)
+    except:
+        print("Failed pip installation tests in %s" % (test_file))
+        raise
+
+
 if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     package = prepare(root_dir)
+
     run_python_style_checks(root_dir)
     test(root_dir, package)
+    run_pypi_packaging_tests(root_dir)
