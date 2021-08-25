@@ -42,9 +42,10 @@ import io.delta.standalone.types._
 
 import org.json4s._
 import org.json4s.jackson.JsonMethods._
+import org.json4s.JsonDSL._
 import org.json4s.JsonAST.JValue
 
-private[internal] object DataTypeParser {
+private[standalone] object DataTypeParser {
 
   private val FIXED_DECIMAL = """decimal\(\s*(\d+)\s*,\s*(\-?\d+)\s*\)""".r
 
@@ -81,6 +82,39 @@ private[internal] object DataTypeParser {
     case other =>
       throw new IllegalArgumentException(
         s"Failed to convert the JSON string '${compact(render(other))}' to a data type.")
+  }
+
+  def toJson(value : DataType): String = {
+    compact(render(dataTypeToJValue(value)))
+  }
+
+  def dataTypeToJValue(dataType: DataType): JValue = dataType match {
+    case array: ArrayType =>
+      ("type" -> "array") ~
+        ("elementType" -> dataTypeToJValue(array.getElementType)) ~
+        ("containsNull" -> array.containsNull())
+    case map: MapType =>
+      ("type" -> "map") ~
+        ("keyType" -> dataTypeToJValue(map.getKeyType())) ~
+        ("valueType" -> dataTypeToJValue(map.getValueType())) ~
+        ("valueContainsNull" -> map.valueContainsNull())
+    case struct: StructType =>
+      ("type" -> "struct") ~
+        ("fields" -> struct.getFields().map(structFieldToJValue).toList)
+    case decimal: DecimalType =>
+      s"decimal(${decimal.getPrecision()},${decimal.getScale()})"
+    case _: DataType =>
+      dataType.getTypeName()
+  }
+
+  def structFieldToJValue(field: StructField): JValue = {
+    val name = field.getName()
+    val dataType = field.getDataType()
+    val nullable = field.isNullable()
+
+    ("name" -> name) ~
+      ("type" -> dataTypeToJValue(dataType)) ~
+      ("nullable" -> nullable)
   }
 
   /** Given the string representation of a type, return its DataType */

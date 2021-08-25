@@ -41,6 +41,8 @@ package io.delta.standalone.types;
 import java.util.Locale;
 import java.util.Objects;
 
+import io.delta.standalone.internal.util.DataTypeParser;
+
 /**
  * The base type of all {@code io.delta.standalone} data types.
  * Represents a bare-bones Java implementation of the Spark SQL
@@ -73,6 +75,11 @@ public abstract class DataType {
     public String getCatalogString() {
         return getSimpleString();
     }
+
+    /**
+     * @return a JSON (@code String} representation of the type
+     */
+    public String toJson() { return DataTypeParser.toJson(this); }
 
     /**
      * Builds a readable {@code String} representation of the {@code ArrayType}
