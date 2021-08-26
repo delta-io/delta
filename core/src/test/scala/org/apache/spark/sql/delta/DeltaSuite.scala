@@ -1059,6 +1059,29 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("get touched files for update, delete and merge") {
+    withTempDir { dir =>
+      val directory = new File(dir, "test with space")
+      val df = Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value")
+      val writer = df.write.format("delta").mode("append")
+      writer.save(directory.getCanonicalPath)
+      spark.sql(s"UPDATE delta.`${directory.getCanonicalPath}` SET value = value + 10")
+      spark.sql(s"DELETE FROM delta.`${directory.getCanonicalPath}` WHERE key = 4")
+      Seq((3, 30)).toDF("key", "value").createOrReplaceTempView("inbound")
+      spark.sql(s"""|MERGE INTO delta.`${directory.getCanonicalPath}` AS base
+                       |USING inbound
+                       |ON base.key = inbound.key
+                       |WHEN MATCHED THEN UPDATE SET base.value =
+                       |base.value+inbound.value""".stripMargin)
+      spark.sql(s"UPDATE delta.`${directory.getCanonicalPath}` SET value = 40 WHERE key = 1")
+      spark.sql(s"DELETE FROM delta.`${directory.getCanonicalPath}` WHERE key = 2")
+      checkAnswer(
+        spark.read.format("delta").load(directory.getCanonicalPath),
+        Seq((1, 40), (3, 70)).toDF("key", "value")
+      )
+    }
+  }
+
   test("can't create zero-column table with a write") {
     withTempDir { dir =>
       intercept[AnalysisException] {
