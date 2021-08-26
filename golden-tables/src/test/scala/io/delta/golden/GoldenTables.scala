@@ -81,10 +81,14 @@ class GoldenTables extends QueryTest with SharedSparkSession {
 
   private def createGoldenTableFile(name: String): File = new File(goldenTablePath, name)
 
-  private def generateGoldenTable(name: String)(generator: String => Unit): Unit = {
+  private def createHiveGoldenTableFile(name: String): File =
+    new File(createGoldenTableFile("hive"), name)
+
+  private def generateGoldenTable(name: String,
+      createTableFile: String => File = createGoldenTableFile) (generator: String => Unit): Unit = {
     if (shouldGenerateGoldenTables) {
       test(name) {
-        val tablePath = createGoldenTableFile(name)
+        val tablePath = createTableFile(name)
         JavaUtils.deleteRecursively(tablePath)
         generator(tablePath.getCanonicalPath)
       }
@@ -663,4 +667,110 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       Seq(row).toDF().write.format("delta").mode("append").partitionBy("_2").save(tablePath)
     }
   }
+  generateGoldenTable("deltatbl-not-allow-write", createHiveGoldenTableFile) { tablePath =>
+    val data = (0 until 10).map(x => (x, s"foo${x % 2}"))
+    data.toDF("a", "b").write.format("delta").save(tablePath)
+  }
+
+  generateGoldenTable("deltatbl-schema-match", createHiveGoldenTableFile) { tablePath =>
+    val data = (0 until 10).map(x => (x, s"foo${x % 2}", s"test${x % 3}"))
+    data.toDF("a", "b", "c").write.format("delta").partitionBy("b").save(tablePath)
+  }
+
+  generateGoldenTable("deltatbl-non-partitioned", createHiveGoldenTableFile) { tablePath =>
+    val data = (0 until 10).map(x => (x, s"foo${x % 2}"))
+    data.toDF("c1", "c2").write.format("delta").save(tablePath)
+  }
+
+  generateGoldenTable("deltatbl-partitioned", createHiveGoldenTableFile) { tablePath =>
+    val data = (0 until 10).map(x => (x, s"foo${x % 2}"))
+    data.toDF("c1", "c2").write.format("delta").partitionBy("c2").save(tablePath)
+  }
+
+  generateGoldenTable("deltatbl-partition-prune", createHiveGoldenTableFile) { tablePath =>
+    val data = Seq(
+      ("hz", "20180520", "Jim", 3),
+      ("hz", "20180718", "Jone", 7),
+      ("bj", "20180520", "Trump", 1),
+      ("sh", "20180512", "Jay", 4),
+      ("sz", "20181212", "Linda", 8)
+    )
+    data.toDF("city", "date", "name", "cnt")
+    .write.format("delta").partitionBy("date", "city").save(tablePath)
+  }
+
+  generateGoldenTable("deltatbl-touch-files-needed-for-partitioned", createHiveGoldenTableFile) {
+    tablePath =>
+      val data = (0 until 10).map(x => (x, s"foo${x % 2}"))
+      data.toDF("c1", "c2").write.format("delta").partitionBy("c2").save(tablePath)
+  }
+
+  generateGoldenTable("deltatbl-special-chars-in-partition-column", createHiveGoldenTableFile) {
+    tablePath =>
+      val data = (0 until 10).map(x => (x, s"+ =%${x % 2}"))
+      data.toDF("c1", "c2").write.format("delta").partitionBy("c2").save(tablePath)
+  }
+
+  generateGoldenTable("deltatbl-map-types-correctly", createHiveGoldenTableFile) { tablePath =>
+    val data = Seq(
+      TestClass(
+        97.toByte,
+        Array(98.toByte, 99.toByte),
+        true,
+        4,
+        5L,
+        "foo",
+        6.0f,
+        7.0,
+        8.toShort,
+        new java.sql.Date(60000000L),
+        new java.sql.Timestamp(60000000L),
+        new java.math.BigDecimal(12345.6789),
+        Array("foo", "bar"),
+        Map("foo" -> 123L),
+        TestStruct("foo", 456L)
+      )
+    )
+    data.toDF.write.format("delta").save(tablePath)
+  }
+
+  generateGoldenTable("deltatbl-column-names-case-insensitive", createHiveGoldenTableFile) {
+    tablePath =>
+      val data = (0 until 10).map(x => (x, s"foo${x % 2}"))
+      data.toDF("FooBar", "BarFoo").write.format("delta").partitionBy("BarFoo").save(tablePath)
+  }
+
+  generateGoldenTable("deltatbl-deleted-path", createHiveGoldenTableFile) {
+    tablePath =>
+      val data = (0 until 10).map(x => (x, s"foo${x % 2}"))
+      data.toDF("c1", "c2").write.format("delta").save(tablePath)
+  }
+
+  generateGoldenTable("deltatbl-incorrect-format-config", createHiveGoldenTableFile) { tablePath =>
+    val data = (0 until 10).map(x => (x, s"foo${x % 2}"))
+    data.toDF("a", "b").write.format("delta").save(tablePath)
+  }
 }
+
+case class TestStruct(f1: String, f2: Long)
+
+/** A special test class that covers all Spark types we support in the Hive connector. */
+case class TestClass(
+  c1: Byte,
+  c2: Array[Byte],
+  c3: Boolean,
+  c4: Int,
+  c5: Long,
+  c6: String,
+  c7: Float,
+  c8: Double,
+  c9: Short,
+  c10: java.sql.Date,
+  c11: java.sql.Timestamp,
+  c12: BigDecimal,
+  c13: Array[String],
+  c14: Map[String, Long],
+  c15: TestStruct
+)
+
+case class OneItem[T](t: T)

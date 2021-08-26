@@ -20,6 +20,8 @@ import java.io.{Closeable, File}
 import java.nio.file.Files
 import java.util.{Locale, TimeZone}
 
+import io.delta.hive.util.JavaUtils
+
 import scala.collection.JavaConverters._
 
 import org.apache.hadoop.conf.Configuration
@@ -30,10 +32,6 @@ import org.apache.hadoop.hive.ql.Driver
 import org.apache.hadoop.hive.ql.metadata.Hive
 import org.apache.hadoop.hive.ql.session.SessionState
 
-import org.apache.spark.network.util.JavaUtils
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.delta.{DeltaLog, SparkSessionHelper}
-// scalastyle:off funsuite
 import org.scalatest.{BeforeAndAfterAll, FunSuite}
 
 // TODO Yarn is using log4j2. Disable its verbose logs.
@@ -164,15 +162,6 @@ trait HiveTest extends FunSuite with BeforeAndAfterAll {
 
     try f(dir) finally {
       JavaUtils.deleteRecursively(dir)
-    }
-  }
-
-  protected def withSparkSession(f: SparkSession => Unit): Unit = {
-    val spark = SparkSessionHelper.spark
-    try f(spark) finally {
-      // Clean up resources so that we can use new DeltaLog and SparkSession
-      spark.stop()
-      DeltaLog.clearCache()
     }
   }
 

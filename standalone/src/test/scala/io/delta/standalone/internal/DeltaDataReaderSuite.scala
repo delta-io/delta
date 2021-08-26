@@ -30,7 +30,7 @@ import io.delta.standalone.internal.util.DataTypeParser
 import io.delta.standalone.internal.util.GoldenTableUtils._
 import io.delta.standalone.types._
 import org.apache.hadoop.conf.Configuration
-// scalastyle:off funsuite
+
 import org.scalatest.FunSuite
 
 /**

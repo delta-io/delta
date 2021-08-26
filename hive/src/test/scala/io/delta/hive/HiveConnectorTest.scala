@@ -19,12 +19,24 @@ package io.delta.hive
 import java.io.File
 
 import io.delta.hive.test.HiveTest
-import io.delta.tables.DeltaTable
+import io.delta.hive.util.JavaUtils
 
-import org.apache.spark.network.util.JavaUtils
 import org.scalatest.BeforeAndAfterEach
 
 abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
+
+  val hiveGoldenTable = new File(getClass.getResource("/golden/hive").toURI)
+
+  /**
+   * Create the full table path for the given golden table and execute the test function.
+   *
+   * @param name The name of the golden table to load.
+   * @param testFunc The test to execute which takes the full table path as input arg.
+   */
+  def withHiveGoldenTable(name: String)(testFunc: String => Unit): Unit = {
+    val tablePath = new File(hiveGoldenTable, name).getCanonicalPath
+    testFunc(tablePath)
+  }
 
   test("should not allow to create a non external Delta table") {
     val e = intercept[Exception] {
@@ -68,18 +80,13 @@ abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
 
   test("should not allow to write to a Delta table") {
     withTable("deltaTbl") {
-      withTempDir { dir =>
-        withSparkSession { spark =>
-          import spark.implicits._
-          val testData = (0 until 10).map(x => (x, s"foo${x % 2}"))
-          testData.toDS.toDF("a", "b").write.format("delta").save(dir.getCanonicalPath)
-        }
+      withHiveGoldenTable("deltatbl-not-allow-write") { tablePath =>
 
         runQuery(
           s"""
              |CREATE EXTERNAL TABLE deltaTbl(a INT, b STRING)
              |STORED BY 'io.delta.hive.DeltaStorageHandler'
-             |LOCATION '${dir.getCanonicalPath}'""".stripMargin)
+             |LOCATION '${tablePath}'""".stripMargin)
         val e = intercept[Exception] {
           runQuery("INSERT INTO deltaTbl(a, b) VALUES(123, 'foo')")
         }
@@ -129,21 +136,13 @@ abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
 
   test("Hive schema should match delta's schema") {
     withTable("deltaTbl") {
-      withTempDir { dir =>
-        val testData = (0 until 10).map(x => (x, s"foo${x % 2}", s"test${x % 3}"))
-
-        withSparkSession { spark =>
-          import spark.implicits._
-          testData.toDS.toDF("a", "b", "c").write.format("delta")
-            .partitionBy("b").save(dir.getCanonicalPath)
-        }
-
+      withHiveGoldenTable("deltatbl-schema-match") { tablePath =>
         // column number mismatch
         var e = intercept[Exception] {
           runQuery(
             s"""
                |create external table deltaTbl(a string, b string)
-               |stored by 'io.delta.hive.DeltaStorageHandler' location '${dir.getCanonicalPath}'
+               |stored by 'io.delta.hive.DeltaStorageHandler' location '${tablePath}'
          """.stripMargin
           )
         }
@@ -154,7 +153,7 @@ abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
           runQuery(
             s"""
                |create external table deltaTbl(e int, c string, b string)
-               |stored by 'io.delta.hive.DeltaStorageHandler' location '${dir.getCanonicalPath}'
+               |stored by 'io.delta.hive.DeltaStorageHandler' location '${tablePath}'
          """.stripMargin
           )
         }
@@ -165,7 +164,7 @@ abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
           runQuery(
             s"""
                |create external table deltaTbl(a int, c string, b string)
-               |stored by 'io.delta.hive.DeltaStorageHandler' location '${dir.getCanonicalPath}'
+               |stored by 'io.delta.hive.DeltaStorageHandler' location '${tablePath}'
          """.stripMargin
           )
         }
@@ -174,75 +173,70 @@ abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
     }
   }
 
-  test("detect schema changes outside Hive") {
-    withTable("deltaTbl") {
-      withTempDir { dir =>
-        val testData = (0 until 10).map(x => (x, s"foo${x % 2}"))
-
-        withSparkSession { spark =>
-          import spark.implicits._
-          testData.toDF("a", "b").write.format("delta").save(dir.getCanonicalPath)
-        }
-
-        runQuery(
-          s"""
-             |CREATE EXTERNAL TABLE deltaTbl(a INT, b STRING)
-             |STORED BY 'io.delta.hive.DeltaStorageHandler'
-             |LOCATION '${dir.getCanonicalPath}'""".stripMargin
-        )
-
-        checkAnswer("SELECT * FROM deltaTbl", testData)
-
-        // Change the underlying Delta table to a different schema
-        val testData2 = testData.map(_.swap)
-
-        withSparkSession { spark =>
-          import spark.implicits._
-          testData2.toDF("a", "b")
-            .write
-            .format("delta")
-            .mode("overwrite")
-            .option("overwriteSchema", "true")
-            .save(dir.getCanonicalPath)
-        }
-
-        // Should detect the underlying schema change and fail the query
-        val e = intercept[Exception] {
-          runQuery("SELECT * FROM deltaTbl")
-        }
-        assert(e.getMessage.contains(s"schema is not the same"))
-
-        // Re-create the table because Hive doesn't allow `ALTER TABLE` on a non-native table.
-        // TODO Investigate whether there is a more convenient way to update the table schema.
-        runQuery("DROP TABLE deltaTbl")
-        runQuery(
-          s"""
-             |CREATE EXTERNAL TABLE deltaTbl(a STRING, b INT)
-             |STORED BY 'io.delta.hive.DeltaStorageHandler'
-             |LOCATION '${dir.getCanonicalPath}'""".stripMargin
-        )
-
-        // After fixing the schema, the query should work again.
-        checkAnswer("SELECT * FROM deltaTbl", testData2)
-      }
-    }
-  }
+//  test("detect schema changes outside Hive") {
+//    withTable("deltaTbl") {
+//      withTempDir { dir =>
+//        val testData = (0 until 10).map(x => (x, s"foo${x % 2}"))
+//
+//        withSparkSession { spark =>
+//          import spark.implicits._
+//          testData.toDF("a", "b").write.format("delta").save(dir.getCanonicalPath)
+//        }
+//
+//        runQuery(
+//          s"""
+//             |CREATE EXTERNAL TABLE deltaTbl(a INT, b STRING)
+//             |STORED BY 'io.delta.hive.DeltaStorageHandler'
+//             |LOCATION '${dir.getCanonicalPath}'""".stripMargin
+//        )
+//
+//        checkAnswer("SELECT * FROM deltaTbl", testData)
+//
+//        // Change the underlying Delta table to a different schema
+//        val testData2 = testData.map(_.swap)
+//
+//        withSparkSession { spark =>
+//          import spark.implicits._
+//          testData2.toDF("a", "b")
+//            .write
+//            .format("delta")
+//            .mode("overwrite")
+//            .option("overwriteSchema", "true")
+//            .save(dir.getCanonicalPath)
+//        }
+//
+//        // Should detect the underlying schema change and fail the query
+//        val e = intercept[Exception] {
+//          runQuery("SELECT * FROM deltaTbl")
+//        }
+//        assert(e.getMessage.contains(s"schema is not the same"))
+//
+//        // Re-create the table because Hive doesn't allow `ALTER TABLE` on a non-native table.
+//        // TODO Investigate whether there is a more convenient way to update the table schema.
+//        runQuery("DROP TABLE deltaTbl")
+//        runQuery(
+//          s"""
+//             |CREATE EXTERNAL TABLE deltaTbl(a STRING, b INT)
+//             |STORED BY 'io.delta.hive.DeltaStorageHandler'
+//             |LOCATION '${dir.getCanonicalPath}'""".stripMargin
+//        )
+//
+//        // After fixing the schema, the query should work again.
+//        checkAnswer("SELECT * FROM deltaTbl", testData2)
+//      }
+//    }
+//  }
 
   test("read a non-partitioned table") {
     // Create a Delta table
     withTable("deltaNonPartitionTbl") {
-      withTempDir { dir =>
+      withHiveGoldenTable("deltatbl-non-partitioned") { tablePath =>
         val testData = (0 until 10).map(x => (x, s"foo${x % 2}"))
-
-        withSparkSession{ spark =>
-          import spark.implicits._
-          testData.toDS.toDF("c1", "c2").write.format("delta").save(dir.getCanonicalPath)
-        }
 
         runQuery(
           s"""
              |create external table deltaNonPartitionTbl(c1 int, c2 string)
-             |stored by 'io.delta.hive.DeltaStorageHandler' location '${dir.getCanonicalPath}'
+             |stored by 'io.delta.hive.DeltaStorageHandler' location '${tablePath}'
          """.stripMargin
         )
 
@@ -254,19 +248,13 @@ abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
   test("read a partitioned table") {
     // Create a Delta table
     withTable("deltaPartitionTbl") {
-      withTempDir { dir =>
+      withHiveGoldenTable("deltatbl-partitioned") { tablePath =>
         val testData = (0 until 10).map(x => (x, s"foo${x % 2}"))
-
-        withSparkSession { spark =>
-          import spark.implicits._
-          testData.toDS.toDF("c1", "c2").write.format("delta")
-            .partitionBy("c2").save(dir.getCanonicalPath)
-        }
 
         runQuery(
           s"""
              |create external table deltaPartitionTbl(c1 int, c2 string)
-             |stored by 'io.delta.hive.DeltaStorageHandler' location '${dir.getCanonicalPath}'
+             |stored by 'io.delta.hive.DeltaStorageHandler' location '${tablePath}'
          """.stripMargin
         )
 
@@ -284,7 +272,7 @@ abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
 
   test("partition prune") {
     withTable("deltaPartitionTbl") {
-      withTempDir { dir =>
+      withHiveGoldenTable("deltatbl-partition-prune") { tablePath =>
         val testData = Seq(
           ("hz", "20180520", "Jim", 3),
           ("hz", "20180718", "Jone", 7),
@@ -293,12 +281,6 @@ abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
           ("sz", "20181212", "Linda", 8)
         )
 
-        withSparkSession { spark =>
-          import spark.implicits._
-          testData.toDS.toDF("city", "date", "name", "cnt").write.format("delta")
-            .partitionBy("date", "city").save(dir.getCanonicalPath)
-        }
-
         runQuery(
           s"""
              |create external table deltaPartitionTbl(
@@ -306,7 +288,7 @@ abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
              |  `date` string,
              |  name string,
              |  cnt int)
-             |stored by 'io.delta.hive.DeltaStorageHandler' location '${dir.getCanonicalPath}'
+             |stored by 'io.delta.hive.DeltaStorageHandler' location '${tablePath}'
          """.stripMargin
         )
 
@@ -370,24 +352,18 @@ abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
 
   test("should not touch files not needed when querying a partitioned table") {
     withTable("deltaPartitionTbl") {
-      withTempDir { dir =>
+      withHiveGoldenTable("deltatbl-touch-files-needed-for-partitioned") { tablePath =>
         val testData = (0 until 10).map(x => (x, s"foo${x % 2}"))
-
-        withSparkSession { spark =>
-          import spark.implicits._
-          testData.toDS.toDF("c1", "c2").write.format("delta")
-            .partitionBy("c2").save(dir.getCanonicalPath)
-        }
 
         runQuery(
           s"""
              |create external table deltaPartitionTbl(c1 int, c2 string)
-             |stored by 'io.delta.hive.DeltaStorageHandler' location '${dir.getCanonicalPath}'
+             |stored by 'io.delta.hive.DeltaStorageHandler' location '${tablePath}'
          """.stripMargin
         )
 
         // Delete the partition not needed in the below query to verify the partition pruning works
-        val foo1PartitionFile = new File(dir, "c2=foo1")
+        val foo1PartitionFile = new File(tablePath, "c2=foo1")
         assert(foo1PartitionFile.exists())
         JavaUtils.deleteRecursively(foo1PartitionFile)
         checkFilterPushdown(
@@ -398,63 +374,57 @@ abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
     }
   }
 
-  test("auto-detected delta partition change") {
-    withTable("deltaPartitionTbl") {
-      withTempDir { dir =>
-        val testData1 = Seq(
-          ("hz", "20180520", "Jim", 3),
-          ("hz", "20180718", "Jone", 7)
-        )
-
-        withSparkSession { spark =>
-          import spark.implicits._
-          testData1.toDS.toDF("city", "date", "name", "cnt").write.format("delta")
-            .partitionBy("date", "city").save(dir.getCanonicalPath)
-
-          runQuery(
-            s"""
-               |create external table deltaPartitionTbl(
-               |  city string,
-               |  `date` string,
-               |  name string,
-               |  cnt int)
-               |stored by 'io.delta.hive.DeltaStorageHandler' location '${dir.getCanonicalPath}'
-         """.stripMargin
-          )
-
-          checkAnswer("select * from deltaPartitionTbl", testData1)
-
-          // insert another partition data
-          val testData2 = Seq(("bj", "20180520", "Trump", 1))
-          testData2.toDS.toDF("city", "date", "name", "cnt").write.mode("append").format("delta")
-            .partitionBy("date", "city").save(dir.getCanonicalPath)
-          val testData = testData1 ++ testData2
-          checkAnswer("select * from deltaPartitionTbl", testData)
-
-          // delete one partition
-          val deltaTable = DeltaTable.forPath(spark, dir.getCanonicalPath)
-          deltaTable.delete("city='hz'")
-          checkAnswer("select * from deltaPartitionTbl", testData.filterNot(_._1 == "hz"))
-        }
-      }
-    }
-  }
+//  test("auto-detected delta partition change") {
+//    withTable("deltaPartitionTbl") {
+//      withTempDir { dir =>
+//        val testData1 = Seq(
+//          ("hz", "20180520", "Jim", 3),
+//          ("hz", "20180718", "Jone", 7)
+//        )
+//
+//        withSparkSession { spark =>
+//          import spark.implicits._
+//          testData1.toDS.toDF("city", "date", "name", "cnt").write.format("delta")
+//            .partitionBy("date", "city").save(dir.getCanonicalPath)
+//
+//          runQuery(
+//            s"""
+//               |create external table deltaPartitionTbl(
+//               |  city string,
+//               |  `date` string,
+//               |  name string,
+//               |  cnt int)
+//               |stored by 'io.delta.hive.DeltaStorageHandler' location '${dir.getCanonicalPath}'
+//         """.stripMargin
+//          )
+//
+//          checkAnswer("select * from deltaPartitionTbl", testData1)
+//
+//          // insert another partition data
+//          val testData2 = Seq(("bj", "20180520", "Trump", 1))
+//          testData2.toDS.toDF("city", "date", "name", "cnt").write.mode("append").format("delta")
+//            .partitionBy("date", "city").save(dir.getCanonicalPath)
+//          val testData = testData1 ++ testData2
+//          checkAnswer("select * from deltaPartitionTbl", testData)
+//
+//          // delete one partition
+//          val deltaTable = DeltaTable.forPath(spark, dir.getCanonicalPath)
+//          deltaTable.delete("city='hz'")
+//          checkAnswer("select * from deltaPartitionTbl", testData.filterNot(_._1 == "hz"))
+//        }
+//      }
+//    }
+//  }
 
   test("read a partitioned table that contains special chars in a partition column") {
     withTable("deltaPartitionTbl") {
-      withTempDir { dir =>
+      withHiveGoldenTable("deltatbl-special-chars-in-partition-column") { tablePath =>
         val testData = (0 until 10).map(x => (x, s"+ =%${x % 2}"))
-
-        withSparkSession { spark =>
-          import spark.implicits._
-          testData.toDS.toDF("c1", "c2").write.format("delta")
-            .partitionBy("c2").save(dir.getCanonicalPath)
-        }
 
         runQuery(
           s"""
              |create external table deltaPartitionTbl(c1 int, c2 string)
-             |stored by 'io.delta.hive.DeltaStorageHandler' location '${dir.getCanonicalPath}'
+             |stored by 'io.delta.hive.DeltaStorageHandler' location '${tablePath}'
          """.stripMargin
         )
 
@@ -465,39 +435,14 @@ abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
 
   test("map Spark types to Hive types correctly") {
     withTable("deltaTbl") {
-      withTempDir { dir =>
-        val testData = Seq(
-          TestClass(
-            97.toByte,
-            Array(98.toByte, 99.toByte),
-            true,
-            4,
-            5L,
-            "foo",
-            6.0f,
-            7.0,
-            8.toShort,
-            new java.sql.Date(60000000L),
-            new java.sql.Timestamp(60000000L),
-            new java.math.BigDecimal(12345.6789),
-            Array("foo", "bar"),
-            Map("foo" -> 123L),
-            TestStruct("foo", 456L)
-          )
-        )
-
-        withSparkSession { spark =>
-          import spark.implicits._
-          testData.toDF.write.format("delta").save(dir.getCanonicalPath)
-        }
-
+      withHiveGoldenTable("deltatbl-map-types-correctly") { tablePath =>
         runQuery(
           s"""
              |create external table deltaTbl(
              |c1 tinyint, c2 binary, c3 boolean, c4 int, c5 bigint, c6 string, c7 float, c8 double,
              |c9 smallint, c10 date, c11 timestamp, c12 decimal(38, 18), c13 array<string>,
              |c14 map<string, bigint>, c15 struct<f1: string, f2: bigint>)
-             |stored by 'io.delta.hive.DeltaStorageHandler' location '${dir.getCanonicalPath}'
+             |stored by 'io.delta.hive.DeltaStorageHandler' location '${tablePath}'
          """.stripMargin
         )
 
@@ -526,19 +471,13 @@ abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
   test("column names should be case insensitive") {
     // Create a Delta table
     withTable("deltaCaseInsensitiveTest") {
-      withTempDir { dir =>
+      withHiveGoldenTable("deltatbl-column-names-case-insensitive") { tablePath =>
         val testData = (0 until 10).map(x => (x, s"foo${x % 2}"))
-
-        withSparkSession{ spark =>
-          import spark.implicits._
-          testData.toDS.toDF("FooBar", "BarFoo").write.format("delta")
-            .partitionBy("BarFoo").save(dir.getCanonicalPath)
-        }
 
         runQuery(
           s"""
              |create external table deltaCaseInsensitiveTest(fooBar int, Barfoo string)
-             |stored by 'io.delta.hive.DeltaStorageHandler' location '${dir.getCanonicalPath}'
+             |stored by 'io.delta.hive.DeltaStorageHandler' location '${tablePath}'
          """.stripMargin
         )
 
@@ -574,24 +513,19 @@ abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
 
   test("fail the query when the path is deleted after the table is created") {
     withTable("deltaTbl") {
-      withTempDir { dir =>
+      withHiveGoldenTable("deltatbl-deleted-path") { tablePath =>
         val testData = (0 until 10).map(x => (x, s"foo${x % 2}"))
-
-        withSparkSession{ spark =>
-          import spark.implicits._
-          testData.toDS.toDF("c1", "c2").write.format("delta").save(dir.getCanonicalPath)
-        }
 
         runQuery(
           s"""
              |create external table deltaTbl(c1 int, c2 string)
-             |stored by 'io.delta.hive.DeltaStorageHandler' location '${dir.getCanonicalPath}'
+             |stored by 'io.delta.hive.DeltaStorageHandler' location '${tablePath}'
          """.stripMargin
         )
 
         checkAnswer("select * from deltaTbl", testData)
 
-        JavaUtils.deleteRecursively(dir)
+        JavaUtils.deleteRecursively(new File(tablePath))
 
         val e = intercept[Exception] {
           checkAnswer("select * from deltaTbl", testData)
@@ -607,19 +541,14 @@ abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
       case "tez" => "hive.tez.input.format"
       case other => throw new UnsupportedOperationException(s"Unsupported engine: $other")
     }
-    withTempDir { dir =>
+    withHiveGoldenTable("deltatbl-incorrect-format-config") { tablePath =>
       withTable("deltaTbl") {
-        withSparkSession { spark =>
-          import spark.implicits._
-          val testData = (0 until 10).map(x => (x, s"foo${x % 2}"))
-          testData.toDS.toDF("a", "b").write.format("delta").save(dir.getCanonicalPath)
-        }
 
         runQuery(
           s"""
              |CREATE EXTERNAL TABLE deltaTbl(a INT, b STRING)
              |STORED BY 'io.delta.hive.DeltaStorageHandler'
-             |LOCATION '${dir.getCanonicalPath}'""".stripMargin)
+             |LOCATION '${tablePath}'""".stripMargin)
 
         withHiveConf(formatKey, "org.apache.hadoop.hive.ql.io.HiveInputFormat") {
           val e = intercept[Exception] {
@@ -632,26 +561,5 @@ abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
     }
   }
 }
-
-case class TestStruct(f1: String, f2: Long)
-
-/** A special test class that covers all Spark types we support in the Hive connector. */
-case class TestClass(
-  c1: Byte,
-  c2: Array[Byte],
-  c3: Boolean,
-  c4: Int,
-  c5: Long,
-  c6: String,
-  c7: Float,
-  c8: Double,
-  c9: Short,
-  c10: java.sql.Date,
-  c11: java.sql.Timestamp,
-  c12: BigDecimal,
-  c13: Array[String],
-  c14: Map[String, Long],
-  c15: TestStruct
-)
 
 case class OneItem[T](t: T)

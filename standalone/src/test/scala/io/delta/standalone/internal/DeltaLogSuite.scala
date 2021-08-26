@@ -32,7 +32,6 @@ import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
-// scalastyle:off funsuite
 import org.scalatest.FunSuite
 
 /**

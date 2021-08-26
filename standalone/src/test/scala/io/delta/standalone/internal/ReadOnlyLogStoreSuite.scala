@@ -23,7 +23,6 @@ import io.delta.standalone.internal.util.GoldenTableUtils._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
-// scalastyle:off funsuite
 import org.scalatest.FunSuite
 
 /**
