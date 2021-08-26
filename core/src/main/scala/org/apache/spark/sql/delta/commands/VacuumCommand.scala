@@ -165,13 +165,21 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
 
       val partitionColumns = snapshot.metadata.partitionSchema.fieldNames
       val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
-      val allFilesAndDirs =
-        DeltaFileOperations.recursiveListDirs(
+
+      val allFilesAndDirs = DeltaFileOperations.recursiveListDirs(
           spark,
           Seq(basePath),
           hadoopConf,
           hiddenFileNameFilter = DeltaTableUtils.isHiddenDirectory(partitionColumns, _),
-          fileListingParallelism = Option(parallelism))
+          fileListingParallelism = Option(parallelism)
+        )
+        .groupByKey(x => x.path)
+        .mapGroups { (k, v) =>
+          val duplicates = v.toSeq
+          // of all the duplicates we can return the newest file.
+          duplicates.maxBy(_.modificationTime)
+        }
+
       try {
         allFilesAndDirs.cache()
 

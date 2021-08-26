@@ -215,7 +215,7 @@ class DeltaMergeBuilder private(
     // MergeIntoTable instead, which blocked by the different issue with MergeIntoTable as explained
     // in the function `mergePlan` and https://issues.apache.org/jira/browse/SPARK-34962.
     val resolvedMergeInto =
-      DeltaMergeInto.resolveReferences(mergePlan, sparkSession.sessionState.conf)(
+      DeltaMergeInto.resolveReferencesAndSchema(mergePlan, sparkSession.sessionState.conf)(
         tryResolveReferences(sparkSession) _)
     if (!resolvedMergeInto.resolved) {
       throw DeltaErrors.analysisException("Failed to resolve\n", plan = Some(resolvedMergeInto))

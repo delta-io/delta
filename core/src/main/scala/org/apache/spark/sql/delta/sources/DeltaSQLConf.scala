@@ -422,6 +422,17 @@ trait DeltaSQLConfBase {
              |ignored like what the old version does.""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  val REPLACEWHERE_DATACOLUMNS_ENABLED =
+    buildConf("replaceWhere.dataColumns.enabled")
+    .internal()
+    .doc(
+      """
+        |When enabled, replaceWhere on arbitrary expression and arbitrary columns is enabled.
+        |If disabled, it falls back to the old behavior
+        |to replace on partition columns only.""".stripMargin)
+    .booleanConf
+    .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

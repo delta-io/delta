@@ -196,7 +196,7 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaTestUtils
       val ae = intercept[FileNotFoundException] {
         convertToDelta(s"parquet.`$tempDir`")
       }
-      assert(ae.getMessage.contains("No file found in the directory"))
+      assert(ae.getMessage.contains("doesn't exist"))
     }
   }
 
@@ -1031,7 +1031,7 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestU
           }
 
           // If the path incorrectly used the default scheme, this would be file: at the end.
-          assert(ex.getMessage.contains(s"No file found in the directory: s3:$dir"))
+          assert(ex.getMessage.contains(s"s3:$dir doesn't exist"))
         }
       }
     }

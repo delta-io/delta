@@ -19,7 +19,15 @@
 import os
 import subprocess
 from os import path
+import shutil
 import argparse
+
+
+def delete_if_exists(path):
+    # if path exists, delete it.
+    if os.path.exists(path):
+        shutil.rmtree(path)
+        print("Deleted %s " % path)
 
 
 def run_scala_integration_tests(root_dir, version, test_name, extra_maven_repo):
@@ -119,8 +127,8 @@ def run_pip_installation_tests(root_dir, version, use_testpypi, extra_maven_repo
 
 def clear_artifact_cache():
     print("Clearing Delta artifacts from ivy2 and mvn cache")
-    run_cmd(["rm", "-rf", "~/.ivy2/cache/io.delta/"], stream_output=True)
-    run_cmd(["rm", "-rf", "~/.m2/repository/io/delta/"], stream_output=True)
+    delete_if_exists(os.path.expanduser("~/.ivy2/cache/io.delta"))
+    delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
 
 
 def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):

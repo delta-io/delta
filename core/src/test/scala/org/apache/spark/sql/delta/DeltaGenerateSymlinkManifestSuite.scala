@@ -179,12 +179,14 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
       spark.emptyDataset[Int].write.format("delta").mode("overwrite").save(tablePath.toString)
       assertManifest(tablePath, expectSameFiles = false, expectedNumFiles = 5)
       generateSymlinkManifest(tablePath.toString)
-      assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 1)
+      assertManifest(
+        tablePath, expectSameFiles = true, expectedNumFiles = expectedNumberOfFilesInEmptyTable)
       assert(spark.read.format("delta").load(tablePath.toString).count() == 0)
 
       // delete all data
       write(5)
-      assertManifest(tablePath, expectSameFiles = false, expectedNumFiles = 1)
+      assertManifest(
+        tablePath, expectSameFiles = false, expectedNumFiles = expectedNumberOfFilesInEmptyTable)
       val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tablePath.toString)
       deltaTable.delete()
       generateSymlinkManifest(tablePath.toString)
@@ -299,9 +301,12 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
       // Remove all data
       spark.emptyDataset[Int].write.format("delta").mode("overwrite").save(tablePath.toString)
       assert(spark.read.format("delta").load(tablePath.toString).count() == 0)
-      assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 1)
+      assertManifest(
+        tablePath, expectSameFiles = true, expectedNumFiles = expectedNumberOfFilesInEmptyTable)
     }
   }
+
+
 
   test("incremental manifest: partitioned table") {
     withTempDir { tablePath =>
@@ -535,6 +540,9 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
     val deltaLog = DeltaLog.forTable(spark, tablePath)
     GenerateSymlinkManifest.generateFullManifest(spark, deltaLog)
   }
+
+  // Open Source Spark writes at least one file, even if its empty, to preserve metadata.
+  protected val expectedNumberOfFilesInEmptyTable = 1
 }
 
 class SymlinkManifestFailureTestAbstractFileSystem(

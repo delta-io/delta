@@ -71,8 +71,6 @@ class DeltaLog private(
 
   private lazy implicit val _clock = clock
 
-  @volatile private[delta] var asyncUpdateTask: Future[Unit] = _
-
   protected def spark = SparkSession.active
 
   /** Used to read and write physical log files and checkpoints. */

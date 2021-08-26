@@ -20,6 +20,7 @@ package org.apache.spark.sql.delta.actions
 import java.net.URI
 import java.sql.Timestamp
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 import scala.collection.mutable.ArrayBuffer
 
@@ -28,8 +29,8 @@ import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation.{JsonIgnore, JsonInclude}
-import com.fasterxml.jackson.core.JsonGenerator
-import com.fasterxml.jackson.databind.{JsonSerializer, ObjectMapper, SerializerProvider}
+import com.fasterxml.jackson.core.{JsonGenerator, JsonProcessingException}
+import com.fasterxml.jackson.databind.{JsonMappingException, JsonSerializer, ObjectMapper, SerializerProvider}
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 import org.codehaus.jackson.annotate.JsonRawValue
 
@@ -245,7 +246,8 @@ case class AddFile(
 
   @JsonIgnore
   lazy val insertionTime: Long = tag(AddFile.Tags.INSERTION_TIME)
-    .getOrElse(modificationTime.toString).toLong
+    .getOrElse(TimeUnit.MICROSECONDS.convert(modificationTime, TimeUnit.MICROSECONDS).toString)
+    .toLong
 
   def tag(tag: AddFile.Tags.KeyType): Option[String] =
     Option(tags).getOrElse(Map.empty).get(tag.name)
@@ -280,7 +282,8 @@ object AddFile {
     /** [[ZCUBE_ZORDER_CURVE]]: Clustering strategy of the corresponding ZCube */
     object ZCUBE_ZORDER_CURVE extends AddFile.Tags.KeyType("ZCUBE_ZORDER_CURVE")
 
-    /** [[INSERTION_TIME]]: the latest timestamp when the data in the file was inserted */
+    /** [[INSERTION_TIME]]: the latest timestamp in micro seconds when the data in the file
+     * was inserted */
     object INSERTION_TIME extends AddFile.Tags.KeyType("INSERTION_TIME")
 
     /** [[PARTITION_ID]]: rdd partition id that has written the file, will not be stored in the
@@ -313,11 +316,29 @@ case class RemoveFile(
     extendedFileMetadata: Boolean = false,
     partitionValues: Map[String, String] = null,
     size: Long = 0,
-    tags: Map[String, String] = null) extends FileAction {
+    tags: Map[String, String] = null) extends FileAction with Logging {
   override def wrap: SingleAction = SingleAction(remove = this)
 
   @JsonIgnore
   val delTimestamp: Long = deletionTimestamp.getOrElse(0L)
+
+  /**
+   * Return tag value if extendedFileMetadata is true and the tag present.
+   */
+  def getTag(tagName: String): Option[String] = {
+    if (!extendedFileMetadata || tags == null) {
+      None
+    } else {
+      tags.get(tagName)
+    }
+  }
+
+  /**
+   * Create a copy with the new tag.
+   */
+  def copyWithTag(tag: String, value: String): RemoveFile =
+    copy(tags = Option(tags).getOrElse(Map.empty) + (tag -> value), extendedFileMetadata = true)
+
 }
 // scalastyle:on
 

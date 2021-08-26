@@ -38,6 +38,7 @@ import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionSet}
  * @param metadata - table metadata for the transaction
  * @param actions - delta log actions that the transaction wants to commit
  * @param deltaLog - [[DeltaLog]] corresponding to the target table
+ * @param commitInfo - [[CommitInfo]] for the commit
  */
 private[delta] case class CurrentTransactionInfo(
     readPredicates: Seq[Expression],
@@ -46,7 +47,11 @@ private[delta] case class CurrentTransactionInfo(
     readAppIds: Set[String],
     metadata: Metadata,
     actions: Seq[Action],
-    deltaLog: DeltaLog) {
+    deltaLog: DeltaLog,
+    commitInfo: Option[CommitInfo]) {
+
+  /** Final actions to commit - including the [[CommitInfo]] */
+  lazy val finalActionsToCommit: Seq[Action] = actions ++ commitInfo
 
 }
 
@@ -77,19 +82,21 @@ private[delta] case class WinningCommitSummary(actions: Seq[Action], commitVersi
   }
   val onlyAddFiles: Boolean = actions.collect { case f: FileAction => f }
     .forall(_.isInstanceOf[AddFile])
+
 }
 
 private[delta] class ConflictChecker(
     spark: SparkSession,
-    currentTransactionInfo: CurrentTransactionInfo,
+    initialCurrentTransactionInfo: CurrentTransactionInfo,
     winningCommitVersion: Long,
     isolationLevel: IsolationLevel,
     logPrefixStr: String) extends DeltaLogging {
 
   protected val timingStats = mutable.HashMap[String, Long]()
+  protected var currentTransactionInfo: CurrentTransactionInfo = initialCurrentTransactionInfo
   protected val winningCommitSummary: WinningCommitSummary = createWinningCommitSummary()
 
-  def checkConflicts(): Unit = {
+  def checkConflicts(): CurrentTransactionInfo = {
     checkProtocolCompatibility()
     checkNoMetadataUpdates()
     checkForAddedFilesThatShouldHaveBeenReadByCurrentTxn()
@@ -97,6 +104,7 @@ private[delta] class ConflictChecker(
     checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
     checkForUpdatedApplicationTransactionIdsThatCurrentTxnDependsOn()
     reportMetrics()
+    currentTransactionInfo
   }
 
   /**

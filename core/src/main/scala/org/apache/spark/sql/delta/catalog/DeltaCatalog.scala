@@ -18,8 +18,8 @@ package org.apache.spark.sql.delta.catalog
 
 import java.util
 import java.util.Locale
-
 // scalastyle:off import.ordering.noEmptyLine
+
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
@@ -125,6 +125,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
       if (location.isDefined) CatalogTableType.EXTERNAL else CatalogTableType.MANAGED
     val commentOpt = Option(allTableProperties.get("comment"))
 
+
     val tableDesc = new CatalogTable(
       identifier = id,
       tableType = tableType,
@@ -183,7 +184,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
     }
   }
 
-  private def newDeltaPathTable(ident: Identifier): DeltaTableV2 = {
+  protected def newDeltaPathTable(ident: Identifier): DeltaTableV2 = {
     DeltaTableV2(spark, new Path(ident.name()))
   }
 

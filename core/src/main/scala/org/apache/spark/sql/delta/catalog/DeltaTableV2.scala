@@ -26,7 +26,6 @@ import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, Delta
 import org.apache.spark.sql.delta.GeneratedColumn
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils}
 import org.apache.hadoop.fs.Path
 
@@ -102,9 +101,7 @@ case class DeltaTableV2(
   }
 
   private lazy val tableSchema: StructType =
-    GeneratedColumn.removeGenerationExpressions(
-      SchemaUtils.dropNullTypeColumns(snapshot.schema))
-
+    GeneratedColumn.removeGenerationExpressions(snapshot.schema)
 
   override def schema(): StructType = tableSchema
 
@@ -118,6 +115,11 @@ case class DeltaTableV2(
     val base = snapshot.getProperties
     base.put(TableCatalog.PROP_PROVIDER, "delta")
     base.put(TableCatalog.PROP_LOCATION, CatalogUtils.URIToString(path.toUri))
+    catalogTable.foreach { table =>
+      if (table.owner != null && table.owner.nonEmpty) {
+        base.put(TableCatalog.PROP_OWNER, table.owner)
+      }
+    }
     Option(snapshot.metadata.description).foreach(base.put(TableCatalog.PROP_COMMENT, _))
     // this reports whether the table is an external or managed catalog table as
     // the old DescribeTable command would
@@ -129,6 +131,7 @@ case class DeltaTableV2(
     ACCEPT_ANY_SCHEMA, BATCH_READ,
     V1_BATCH_WRITE, OVERWRITE_BY_FILTER, TRUNCATE
   ).asJava
+
 
   override def newWriteBuilder(info: LogicalWriteInfo): WriteBuilder = {
     new WriteIntoDeltaBuilder(deltaLog, info.options)

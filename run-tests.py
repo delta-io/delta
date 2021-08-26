@@ -68,7 +68,7 @@ if __name__ == "__main__":
         # JENKINS_URL is passed here so that the Docker container
         # can be in line with Jenkins build behavior(usage of sbt sources)
         cmd = ["docker", "run", "-e", "JENKINS_URL",
-               "-e", "SBT_MIRROR_JAR_URL", "pydeltalake:latest"]
+               "-e", "SBT_1_5_5_MIRROR_JAR_URL", "pydeltalake:latest"]
         run_cmd(cmd, stream_output=True)
     else:
         root_dir = os.path.dirname(os.path.dirname(__file__))
