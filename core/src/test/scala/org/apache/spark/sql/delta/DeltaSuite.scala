@@ -599,7 +599,8 @@ class DeltaSuite extends QueryTest
           .option("partitionOverwriteMode", "dynamic")
           .save(tempDir.getCanonicalPath)
       }
-      assert(e.getMessage.contains("`partitionOverwriteMode=dynamic` cannot be used with replaceWhere"))
+      assert(e.getMessage.contains(
+        "`partitionOverwriteMode=dynamic` cannot be used with replaceWhere"))
     }
   }
 
