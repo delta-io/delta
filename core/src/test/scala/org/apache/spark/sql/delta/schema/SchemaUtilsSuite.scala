@@ -1182,7 +1182,7 @@ class SchemaUtilsSuite extends QueryTest
 
     // Identity.
     var visitedFields = 0
-    val res1 = transformColumns(base) {
+    val res1 = SchemaMergingUtils.transformColumns(base) {
       case (Seq(), field, _) =>
         visitedFields += 1
         field
@@ -1192,7 +1192,7 @@ class SchemaUtilsSuite extends QueryTest
 
     // Rename a -> c
     visitedFields = 0
-    val res2 = transformColumns(base) {
+    val res2 = SchemaMergingUtils.transformColumns(base) {
       case (Seq(), field, _) =>
         visitedFields += 1
         val name = field.name
@@ -1239,7 +1239,7 @@ class SchemaUtilsSuite extends QueryTest
 
     // Identity.
     var visitedFields = 0
-    val res1 = transformColumns(base) {
+    val res1 = SchemaMergingUtils.transformColumns(base) {
       case (_, field, _) =>
         visitedFields += 1
         field
@@ -1249,7 +1249,7 @@ class SchemaUtilsSuite extends QueryTest
 
     // Rename
     visitedFields = 0
-    val res2 = transformColumns(base) { (path, field, _) =>
+    val res2 = SchemaMergingUtils.transformColumns(base) { (path, field, _) =>
       visitedFields += 1
       val name = path :+ field.name match {
         case Seq("nested", "s1") => "t1"

@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import java.util.Locale
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
-import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 
 import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
 
@@ -97,7 +97,7 @@ object DeltaColumnMapping {
    */
   def createPhysicalSchema(schema: StructType, mode: DeltaColumnMappingMode): StructType = {
     if (mode == NoMapping) return schema
-    SchemaUtils.transformColumns(schema) { (_, field, _) =>
+    SchemaMergingUtils.transformColumns(schema) { (_, field, _) =>
       mode match {
         case IdMapping =>
           if (!hasColumnId(field)) {
