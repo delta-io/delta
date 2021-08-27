@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, GeneratedColumn}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaConfigs, DeltaErrors, GeneratedColumn}
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -52,8 +52,8 @@ class ProtocolDowngradeException(oldProtocol: Protocol, newProtocol: Protocol)
 
 object Action {
   /** The maximum version of the protocol that this version of Delta understands. */
-  val readerVersion = 1
-  val writerVersion = 4
+  val readerVersion = 2
+  val writerVersion = 5
   val protocolVersion: Protocol = Protocol(readerVersion, writerVersion)
 
   def fromJson(json: String): Action = {
@@ -155,6 +155,10 @@ object Protocol {
       minimumRequired = Protocol(0, minWriterVersion = 4)
       featuresUsed.append("Change data feed")
       throw DeltaErrors.cdcNotAllowedInThisVersion()
+    }
+
+    if (DeltaColumnMapping.requiresNewProtocol(metadata)) {
+      minimumRequired = DeltaColumnMapping.MIN_PROTOCOL_VERSION
     }
 
     minimumRequired -> featuresUsed
@@ -389,6 +393,12 @@ case class Metadata(
     Option(schemaString).map { s =>
       DataType.fromJson(s).asInstanceOf[StructType]
     }.getOrElse(StructType.apply(Nil))
+
+  /** Returns the schema to be used for reads and writes. */
+  @JsonIgnore
+  lazy val physicalSchema = DeltaColumnMapping.createPhysicalSchema(
+    schema,
+    DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(this))
 
   /** Returns the partitionSchema as a [[StructType]] */
   @JsonIgnore

@@ -309,7 +309,7 @@ class DeltaLog private(
     val relation = HadoopFsRelation(
       fileIndex,
       partitionSchema = snapshot.metadata.partitionSchema,
-      dataSchema = GeneratedColumn.removeGenerationExpressions(snapshot.metadata.schema),
+      dataSchema = GeneratedColumn.removeGenerationExpressions(snapshot.metadata.physicalSchema),
       bucketSpec = None,
       snapshot.fileFormat,
       snapshot.metadata.format.options)(spark)
@@ -343,7 +343,7 @@ class DeltaLog private(
       fileIndex,
       partitionSchema = snapshotToUse.metadata.partitionSchema,
       dataSchema = GeneratedColumn.removeGenerationExpressions(
-        SchemaUtils.dropNullTypeColumns(snapshotToUse.metadata.schema)
+        SchemaUtils.dropNullTypeColumns(snapshotToUse.metadata.physicalSchema)
       ),
       bucketSpec = bucketSpec,
       snapshotToUse.fileFormat,

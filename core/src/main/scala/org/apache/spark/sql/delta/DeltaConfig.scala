@@ -436,6 +436,14 @@ trait DeltaConfigsBase extends DeltaLogging {
     _.toBoolean,
     _ => true,
     "needs to be a boolean.")
+
+  val COLUMN_MAPPING_MODE = buildConfig[DeltaColumnMappingMode](
+    "columnMappingMode",
+    "none",
+    DeltaColumnMappingMode(_),
+    _ => true,
+    "",
+    minimumProtocolVersion = Some(DeltaColumnMapping.MIN_PROTOCOL_VERSION))
 }
 
 object DeltaConfigs extends DeltaConfigsBase

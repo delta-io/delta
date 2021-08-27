@@ -1148,6 +1148,64 @@ object DeltaErrors
         s"is not supported. Please run the ${op} command on the Delta table directly")
   }
 
+  /**
+   * We have plans to support more column mapping modes, but they are not implemented yet,
+   * so we error for now to be forward compatible with tables created in the future.
+   */
+  def unknownColumnMappingMode(mode: String): Throwable =
+    throw new UnsupportedOperationException(s"The column mapping mode `$mode` is not" +
+      s" supported. Supported modes in this version are: `none` and `id`." +
+      s" Please upgrade Delta to access this table.")
+
+  def missingColumnId(mode: String, field: StructField): Throwable =
+    throw new IllegalArgumentException(s"Missing column ID in column mapping $mode" +
+      s" in the field: $field")
+
+  def changeColumnMappingModeNotSupported: Throwable = {
+    throw new UnsupportedOperationException("Changing column mapping mode using" +
+      s" config ${DeltaConfigs.COLUMN_MAPPING_MODE.key} is not supported.")
+  }
+
+  def setColumnMappingModeOnOldProtocol(oldProtocol: Protocol): Throwable = {
+    // scalastyle:off line.size.limit
+    throw new UnsupportedOperationException(
+      s"""
+         |Your current table protocol version does not support the setting of column mapping mode
+         |using ${DeltaConfigs.COLUMN_MAPPING_MODE.key}.
+         |
+         |Required Delta protocol version for column mapping:
+         |${DeltaColumnMapping.MIN_PROTOCOL_VERSION}
+         |
+         |Your table's current Delta protocol version:
+         |$oldProtocol
+         |
+         |Please upgrade your table's protocol version using ALTER TABLE SET TBLPROPERTIES and try again.
+         |
+         |""".stripMargin)
+    // scalastyle:on line.size.limit
+  }
+
+  def schemaChangeInColumnMappingProtocolNotSupported(
+      oldSchema: StructType,
+      newSchema: StructType,
+      mappingMode: DeltaColumnMappingMode): Throwable = {
+    // scalastyle:off line.size.limit
+    throw new UnsupportedOperationException(
+      s"""
+         |Schema change is detected:
+         |
+         |old schema:
+         |${formatSchema(oldSchema)}
+         |
+         |new schema:
+         |${formatSchema(newSchema)}
+         |
+         |Schema changes are not allowed in column mapping mode `$mappingMode`.
+         |
+         |""".stripMargin)
+    // scalastyle:on line.size.limit
+  }
+
 
   def missingColumnsInInsertInto(column: String): Throwable = {
     new AnalysisException(s"Column $column is not specified in INSERT")
