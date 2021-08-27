@@ -468,7 +468,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
           Option(isolationLevelToUse.toString),
           Some(isBlindAppend),
           getOperationMetrics(op),
-          getUserMetadata(op))
+          getUserMetadata(op),
+          tags = None)
       }
 
       val currentTransactionInfo = CurrentTransactionInfo(
