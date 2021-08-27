@@ -251,7 +251,8 @@ case class AddFile(
 
   @JsonIgnore
   lazy val insertionTime: Long = tag(AddFile.Tags.INSERTION_TIME)
-    .getOrElse(TimeUnit.MICROSECONDS.convert(modificationTime, TimeUnit.MICROSECONDS).toString)
+    // From modification time in milliseconds to microseconds.
+    .getOrElse(TimeUnit.MICROSECONDS.convert(modificationTime, TimeUnit.MILLISECONDS).toString)
     .toLong
 
   def tag(tag: AddFile.Tags.KeyType): Option[String] =
