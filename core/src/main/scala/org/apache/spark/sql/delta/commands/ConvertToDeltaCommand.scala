@@ -414,6 +414,7 @@ trait ConvertTargetTable {
 
   /** The number of files from the target table */
   def numFiles: Long
+
 }
 
 class ParquetTable(
