@@ -29,16 +29,36 @@ class DeltaColumnMappingSuite extends QueryTest with SharedSparkSession with Del
 
   import testImplicits._
 
+  private val physicalNames = Map(
+    1 -> DeltaColumnMapping.generatePhysicalName,
+    2 -> DeltaColumnMapping.generatePhysicalName)
+
   private def withId(id: Int): Metadata =
     new MetadataBuilder()
       .putLong(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY, id)
+      .putString(DeltaColumnMapping.COLUMN_MAPPING_METADATA_PHYSICAL_NAME_KEY, physicalNames(id))
       .build()
 
-  private def withParquetId(id: Int): Metadata =
+  private def withPhysicalMetadata(id: Int, name: String): Metadata =
     new MetadataBuilder()
       .putLong(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY, id)
-      .putLong("parquet.field.id", id)
+      .putString(DeltaColumnMapping.COLUMN_MAPPING_METADATA_PHYSICAL_NAME_KEY, physicalNames(id))
+      .putString(DeltaColumnMapping.COLUMN_MAPPING_METADATA_DISPLAY_NAME_KEY, name)
+      .putLong(DeltaColumnMapping.PARQUET_FIELD_ID_METADATA_KEY, id)
       .build()
+
+  private def assertEqual(actual: StructType, expected: StructType): Unit = {
+    assert(expected === actual,
+      s"""
+         |Schema mismatch:
+         |
+         |expected:
+         |${expected.prettyJson}
+         |
+         |actual:
+         |${actual.prettyJson}
+         |""".stripMargin)
+  }
 
   private val schema = new StructType()
     .add("a", StringType, true)
@@ -49,8 +69,8 @@ class DeltaColumnMappingSuite extends QueryTest with SharedSparkSession with Del
     .add("b", IntegerType, true, withId(2))
 
   private val physicalSchema = new StructType()
-    .add("a", StringType, true, withParquetId(1))
-    .add("b", IntegerType, true, withParquetId(2))
+    .add("a", StringType, true, withPhysicalMetadata(1, "a"))
+    .add("b", IntegerType, true, withPhysicalMetadata(2, "b"))
 
   private def dfWithoutIds(spark: SparkSession) =
     spark.createDataFrame(Seq(Row("str1", 1), Row("str2", 2)).asJava, schema)
@@ -113,14 +133,17 @@ class DeltaColumnMappingSuite extends QueryTest with SharedSparkSession with Del
   private def createTableWithSQLAPI(
       tableName: String,
       props: Map[String, String] = Map.empty,
-      withColumnIds: Boolean = false): Unit = {
+      withColumnIds: Boolean = false,
+      isPartitioned: Boolean = false): Unit = {
     withTable("source") {
       val dfToWrite = if (withColumnIds) dfWithIds(spark) else dfWithoutIds(spark)
       dfToWrite.write.saveAsTable("source")
+      val partitionStmt = if (isPartitioned) "PARTITIONED BY (a)" else ""
       spark.sql(
         s"""
            |CREATE TABLE $tableName
            |USING DELTA
+           |$partitionStmt
            |${propString(props)}
            |AS SELECT * FROM source
            |""".stripMargin)
@@ -144,12 +167,10 @@ class DeltaColumnMappingSuite extends QueryTest with SharedSparkSession with Del
       tableName: String,
       props: Map[String, String] = Map.empty,
       withColumnIds: Boolean = false): Unit = {
-    withTable("source") {
-      val dfToWrite = if (withColumnIds) dfWithIds(spark) else dfWithoutIds(spark)
-      val writer = dfToWrite.writeTo(tableName).using("delta")
-      props.foreach(prop => writer.tableProperty(prop._1, prop._2))
-      writer.create()
-    }
+    val dfToWrite = if (withColumnIds) dfWithIds(spark) else dfWithoutIds(spark)
+    val writer = dfToWrite.writeTo(tableName).using("delta")
+    props.foreach(prop => writer.tableProperty(prop._1, prop._2))
+    writer.create()
   }
 
   private def testCreateTableIdMode(tableName: String)(createFunc: => Unit): Unit = {
@@ -160,10 +181,10 @@ class DeltaColumnMappingSuite extends QueryTest with SharedSparkSession with Del
         writerVersion = 5,
         mode = Some("id"))
 
-      assert(spark.table(tableName).schema == schemaWithId)
-      assert(
-        DeltaLog.forTable(spark, TableIdentifier(tableName)).update().metadata.physicalSchema ==
-          physicalSchema)
+      assertEqual(spark.table(tableName).schema, schemaWithId)
+      assertEqual(
+        DeltaLog.forTable(spark, TableIdentifier(tableName)).update().metadata.physicalSchema,
+        physicalSchema)
     }
   }
 
@@ -221,7 +242,26 @@ class DeltaColumnMappingSuite extends QueryTest with SharedSparkSession with Del
       val e = intercept[IllegalArgumentException] {
         createTableWithSQLAPI("t1", Map("delta.columnMappingMode" -> "id"))
       }
-      assert(e.getMessage.contains("Missing column ID in column mapping"))
+      assert(e.getMessage.contains("Missing column ID in column mapping mode"))
+    }
+  }
+
+  test("blocked case: id mode but schema has no physical name") {
+    withTable("t1") {
+      val e = intercept[IllegalArgumentException] {
+        val schemaWithNoPhysicalName = StructType(schemaWithId.map { field =>
+          val metadata = new MetadataBuilder().withMetadata(field.metadata)
+            .remove(DeltaColumnMapping.COLUMN_MAPPING_METADATA_PHYSICAL_NAME_KEY)
+            .build()
+          field.copy(metadata = metadata)})
+
+        spark.createDataFrame(Seq(Row("str1", 1), Row("str2", 2)).asJava, schemaWithNoPhysicalName)
+            .writeTo("t1")
+            .using("delta")
+            .tableProperty("delta.columnMappingMode", "id")
+            .create()
+      }
+      assert(e.getMessage.contains("Missing physical name in column mapping mode"))
     }
   }
 
@@ -270,6 +310,20 @@ class DeltaColumnMappingSuite extends QueryTest with SharedSparkSession with Del
       }
 
       assert(e.getMessage.contains("Schema changes are not allowed in column mapping mode"))
+    }
+  }
+
+  test("physical data and partition schema") {
+    withTable("t1") {
+      createTableWithSQLAPI("t1",
+        Map("delta.columnMappingMode" -> "id"), withColumnIds = true)
+      val metadata =
+        DeltaLog.forTable(spark, TableIdentifier("t1")).update().metadata
+
+      assertEqual(metadata.physicalSchema, physicalSchema)
+      assertEqual(
+        StructType(metadata.physicalPartitionSchema ++ metadata.physicalDataSchema),
+          metadata.physicalSchema)
     }
   }
 }

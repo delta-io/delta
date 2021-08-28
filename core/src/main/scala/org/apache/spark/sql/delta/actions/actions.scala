@@ -408,10 +408,22 @@ case class Metadata(
 
   /** Columns written out to files. */
   @JsonIgnore
+  lazy val physicalPartitionSchema: StructType = DeltaColumnMapping.createPhysicalSchema(
+    partitionSchema,
+    DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(this))
+
+  /** Columns written out to files. */
+  @JsonIgnore
   lazy val dataSchema: StructType = {
     val partitions = partitionColumns.toSet
     StructType(schema.filterNot(f => partitions.contains(f.name)))
   }
+
+  /** Columns written out to files. */
+  @JsonIgnore
+  lazy val physicalDataSchema: StructType = DeltaColumnMapping.createPhysicalSchema(
+    dataSchema,
+    DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(this))
 
   /**
    * Columns whose type should never be changed. For example, if a column is used by a generated

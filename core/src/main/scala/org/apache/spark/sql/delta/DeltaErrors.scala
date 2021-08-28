@@ -1158,7 +1158,11 @@ object DeltaErrors
       s" Please upgrade Delta to access this table.")
 
   def missingColumnId(mode: String, field: StructField): Throwable =
-    throw new IllegalArgumentException(s"Missing column ID in column mapping $mode" +
+    throw new IllegalArgumentException(s"Missing column ID in column mapping mode `$mode``" +
+      s" in the field: $field")
+
+  def missingPhysicalName(mode: String, field: StructField): Throwable =
+    throw new IllegalArgumentException(s"Missing physical name in column mapping mode `$mode`" +
       s" in the field: $field")
 
   def changeColumnMappingModeNotSupported: Throwable = {

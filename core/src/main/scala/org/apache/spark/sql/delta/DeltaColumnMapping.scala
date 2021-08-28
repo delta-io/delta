@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import java.util.Locale
+import java.util.{Locale, UUID}
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
@@ -28,8 +28,11 @@ object DeltaColumnMapping {
   val MIN_READER_VERSION = 2
   val MIN_PROTOCOL_VERSION = Protocol(MIN_READER_VERSION, MIN_WRITER_VERSION)
 
+  val PARQUET_FIELD_ID_METADATA_KEY = "parquet.field.id"
   val COLUMN_MAPPING_METADATA_PREFIX = "delta.columnMapping."
   val COLUMN_MAPPING_METADATA_ID_KEY = COLUMN_MAPPING_METADATA_PREFIX + "id"
+  val COLUMN_MAPPING_METADATA_PHYSICAL_NAME_KEY = COLUMN_MAPPING_METADATA_PREFIX + "physicalName"
+  val COLUMN_MAPPING_METADATA_DISPLAY_NAME_KEY = COLUMN_MAPPING_METADATA_PREFIX + "displayName"
 
   def requiresNewProtocol(metadata: Metadata): Boolean =
     DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(metadata) match {
@@ -81,6 +84,12 @@ object DeltaColumnMapping {
   def getColumnId(field: StructField): Int =
     field.metadata.getLong(COLUMN_MAPPING_METADATA_ID_KEY).toInt
 
+  def hasPhysicalName(field: StructField): Boolean =
+    field.metadata.contains(COLUMN_MAPPING_METADATA_PHYSICAL_NAME_KEY)
+
+  def getPhysicalName(field: StructField): String =
+    field.metadata.getString(COLUMN_MAPPING_METADATA_PHYSICAL_NAME_KEY)
+
   /**
    * Prepares the table schema, to be used by the readers and writers of the table.
    *
@@ -103,17 +112,33 @@ object DeltaColumnMapping {
           if (!hasColumnId(field)) {
             throw DeltaErrors.missingColumnId(IdMapping.name, field)
           }
+          if (!hasPhysicalName(field)) {
+            throw DeltaErrors.missingPhysicalName(IdMapping.name, field)
+          }
           val metadata = new MetadataBuilder()
             .withMetadata(field.metadata)
-            // TODO: Use this as a constant after it's defined for Parquet readers
-            .putLong("parquet.field.id", getColumnId(field))
+            .putLong(DeltaColumnMapping.PARQUET_FIELD_ID_METADATA_KEY, getColumnId(field))
+            .putString(DeltaColumnMapping.COLUMN_MAPPING_METADATA_DISPLAY_NAME_KEY, field.name)
             .build()
+          // TODO: replace name with getPhysicalName(field)
           field.copy(metadata = metadata)
         case mode =>
           throw DeltaErrors.unknownColumnMappingMode(mode.name)
       }
     }
   }
+
+  def assignPhysicalNames(schema: StructType): StructType = {
+    SchemaMergingUtils.transformColumns(schema) { (_, field, _) =>
+      val metadata = new MetadataBuilder()
+        .withMetadata(field.metadata)
+        .putString(COLUMN_MAPPING_METADATA_PHYSICAL_NAME_KEY, generatePhysicalName)
+        .build()
+      field.copy(metadata = metadata)
+    }
+  }
+
+  def generatePhysicalName: String = "col-" + UUID.randomUUID()
 }
 
 /**
