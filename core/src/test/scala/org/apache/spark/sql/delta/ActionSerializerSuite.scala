@@ -127,28 +127,6 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
     Action.fromJson("""{"txn": {"test": 1}}""")
   }
 
-  test("deserialization of CommitInfo without tags") {
-    val expectedCommitInfo = CommitInfo(
-      time = 123L,
-      operation = "CONVERT",
-      operationParameters = Map.empty,
-      commandContext = Map.empty,
-      readVersion = Some(23),
-      isolationLevel = Some("SnapshotIsolation"),
-      isBlindAppend = Some(true),
-      operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
-      userMetadata = Some("123"),
-      tags = None)
-
-    // json of commit info actions without tag field
-    val json1 =
-      """{"commitInfo":{"timestamp":123,"operation":"CONVERT",""" +
-        """"operationParameters":{},"readVersion":23,""" +
-        """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
-        """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123"}}""".stripMargin
-    assert(Action.fromJson(json1) === expectedCommitInfo)
-  }
-
   testActionSerDe(
     "Protocol - json serialization/deserialization",
     Protocol(minReaderVersion = 1, minWriterVersion = 2),
@@ -236,8 +214,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
       isolationLevel = Some("SnapshotIsolation"),
       isBlindAppend = Some(true),
       operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
-      userMetadata = Some("123"),
-      tags = Some(Map("k1" -> "v1")))
+      userMetadata = Some("123"))
 
     testActionSerDe(
       "CommitInfo (without operationParameters) - json serialization/deserialization",
@@ -245,8 +222,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
       expectedJson = """{"commitInfo":{"timestamp":123,"operation":"CONVERT",""" +
         """"operationParameters":{},"clusterId":"23","readVersion":23,""" +
         """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
-        """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
-        """"tags":{"k1":"v1"}}}""".stripMargin)
+        """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123"}}""".stripMargin)
 
     test("CommitInfo (with operationParameters) - json serialization/deserialization") {
       val operation = DeltaOperations.Convert(
@@ -261,8 +237,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
           """"operationParameters":{"numFiles":23,"partitionedBy":"[\"a\",\"b\"]",""" +
           """"collectStats":false,"catalogTable":"t1"},"clusterId":"23","readVersion":23,""" +
           """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
-          """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
-          """"tags":{"k1":"v1"}}}""".stripMargin
+          """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123"}}""".stripMargin
       assert(commitInfo1.json == expectedCommitInfoJson1)
       val newCommitInfo1 = Action.fromJson(expectedCommitInfoJson1).asInstanceOf[CommitInfo]
       // TODO: operationParameters serialization/deserialization is broken as it uses a custom
