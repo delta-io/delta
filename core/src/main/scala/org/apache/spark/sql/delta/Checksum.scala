@@ -36,6 +36,8 @@ import org.apache.spark.util.Utils
  * Stats calculated within a snapshot, which we store along individual transactions for
  * verification.
  *
+ * Note: we no longer check the number of `SetTransaction` actions in the snapshot during validation
+ *
  * @param tableSizeBytes The size of the table in bytes
  * @param numFiles Number of `AddFile` actions in the snapshot
  * @param numMetadata Number of `Metadata` actions in the snapshot
@@ -187,7 +189,7 @@ trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
     compare(checksum.numFiles, computedState.numOfFiles, "Number of files")
     compare(checksum.numMetadata, computedState.numOfMetadata, "Metadata updates")
     compare(checksum.numProtocol, computedState.numOfProtocol, "Protocol updates")
-    compare(checksum.numTransactions, computedState.numOfSetTransactions, "Transactions")
+
     if (result.isEmpty) None else Some(result.mkString("\n"))
   }
 }
