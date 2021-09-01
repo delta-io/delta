@@ -392,25 +392,20 @@ case class Metadata(
   @JsonIgnore
   lazy val schema: StructType =
     Option(schemaString).map { s =>
-      DataType.fromJson(s).asInstanceOf[StructType]
+      DeltaColumnMapping.setColumnMetadata(
+        DataType.fromJson(s).asInstanceOf[StructType],
+        DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(this)
+      )
     }.getOrElse(StructType.apply(Nil))
-
-  /** Returns the schema to be used for reads and writes. */
-  @JsonIgnore
-  lazy val physicalSchema = DeltaColumnMapping.createPhysicalSchema(
-    schema,
-    DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(this))
 
   /** Returns the partitionSchema as a [[StructType]] */
   @JsonIgnore
   lazy val partitionSchema: StructType =
     new StructType(partitionColumns.map(c => schema(c)).toArray)
 
-  /** Columns written out to files. */
+  /** Partition value keys in the AddFile map. */
   @JsonIgnore
-  lazy val physicalPartitionSchema: StructType = DeltaColumnMapping.createPhysicalSchema(
-    partitionSchema,
-    DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(this))
+  lazy val physicalPartitionSchema: StructType = DeltaColumnMapping.renameColumns(partitionSchema)
 
   /** Columns written out to files. */
   @JsonIgnore
@@ -418,12 +413,6 @@ case class Metadata(
     val partitions = partitionColumns.toSet
     StructType(schema.filterNot(f => partitions.contains(f.name)))
   }
-
-  /** Columns written out to files. */
-  @JsonIgnore
-  lazy val physicalDataSchema: StructType = DeltaColumnMapping.createPhysicalSchema(
-    dataSchema,
-    DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(this))
 
   /**
    * Columns whose type should never be changed. For example, if a column is used by a generated

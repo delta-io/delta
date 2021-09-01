@@ -225,7 +225,7 @@ class Snapshot(
   def schema: StructType = metadata.schema
 
   /** Returns the data schema of the table, the schema of the columns written out to file. */
-  def dataSchema: StructType = metadata.physicalDataSchema
+  def dataSchema: StructType = metadata.dataSchema
 
   /** Number of columns to collect stats on for data skipping */
   lazy val numIndexedCols: Int = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(metadata)
@@ -257,6 +257,11 @@ class Snapshot(
 
   protected lazy val fileIndices: Seq[DeltaLogFileIndex] = {
     checkpointFileIndexOpt.toSeq ++ deltaFileIndexOpt.toSeq
+  }
+
+  /** Whether the table uses column mapping. */
+  def usesColumnMapping: Boolean = {
+    DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(metadata) != NoMapping
   }
 
   /** Creates a LogicalRelation with the given schema from a DeltaLogFileIndex. */

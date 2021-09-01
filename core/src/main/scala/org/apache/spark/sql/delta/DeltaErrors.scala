@@ -151,6 +151,11 @@ object DeltaErrors
       s"For more information, see $faqPath"
   }
 
+  def columnNotFound(path: Seq[String], schema: StructType): Throwable = {
+    val name = UnresolvedAttribute(path).name
+    new AnalysisException(s"Can't resolve column ${name} in ${schema.treeString}")
+  }
+
 
   def formatColumn(colName: String): String = s"`$colName`"
 
@@ -1161,17 +1166,23 @@ object DeltaErrors
       s" supported. Supported modes in this version are: `none` and `id`." +
       s" Please upgrade Delta to access this table.")
 
-  def missingColumnId(mode: String, field: StructField): Throwable =
-    throw new IllegalArgumentException(s"Missing column ID in column mapping mode `$mode``" +
-      s" in the field: $field")
+  def missingColumnId(mode: DeltaColumnMappingMode, field: String): Throwable = {
+    ColumnMappingException(s"Missing column ID in column mapping mode `${mode.name}``" +
+      s" in the field: $field", mode)
+  }
 
-  def missingPhysicalName(mode: String, field: StructField): Throwable =
-    throw new IllegalArgumentException(s"Missing physical name in column mapping mode `$mode`" +
-      s" in the field: $field")
+  def missingPhysicalName(mode: DeltaColumnMappingMode, field: String): Throwable =
+    ColumnMappingException(s"Missing physical name in column mapping mode `${mode.name}`" +
+      s" in the field: $field", mode)
 
   def changeColumnMappingModeNotSupported: Throwable = {
     throw new UnsupportedOperationException("Changing column mapping mode using" +
       s" config ${DeltaConfigs.COLUMN_MAPPING_MODE.key} is not supported.")
+  }
+
+  def writesWithColumnMappingNotSupported: Throwable = {
+    new UnsupportedOperationException("Writing data with column mapping mode is not " +
+      "supported.")
   }
 
   def setColumnMappingModeOnOldProtocol(oldProtocol: Protocol): Throwable = {
@@ -1489,3 +1500,7 @@ class MetadataMismatchErrorBuilder {
     throw new AnalysisException(bits.mkString("\n"))
   }
 }
+
+/** Errors thrown around column mapping. */
+case class ColumnMappingException(msg: String, mode: DeltaColumnMappingMode)
+  extends AnalysisException(msg)

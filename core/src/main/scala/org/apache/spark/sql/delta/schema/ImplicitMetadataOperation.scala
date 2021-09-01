@@ -64,7 +64,7 @@ trait ImplicitMetadataOperation extends DeltaLogging {
           metadata = new MetadataBuilder()
             .withMetadata(field.metadata)
             .remove(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY)
-            .remove(DeltaColumnMapping.COLUMN_MAPPING_METADATA_PHYSICAL_NAME_KEY)
+            .remove(DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
             .remove(DeltaColumnMapping.PARQUET_FIELD_ID_METADATA_KEY)
             .build()
         )

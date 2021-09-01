@@ -268,7 +268,8 @@ object SchemaMergingUtils {
         case StructType(fields) =>
           StructType(fields.map { field =>
             val newField = tf(path, field, DELTA_COL_RESOLVER)
-            newField.copy(dataType = transform(path :+ newField.name, newField.dataType))
+            // maintain the old name as we recurse into the subfields
+            newField.copy(dataType = transform(path :+ field.name, newField.dataType))
           })
         case ArrayType(elementType, containsNull) =>
           ArrayType(transform(path :+ "element", elementType), containsNull)

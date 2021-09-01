@@ -444,15 +444,19 @@ trait DeltaConfigsBase extends DeltaLogging {
     "needs to be a boolean.")
 
   val COLUMN_MAPPING_MODE = buildConfig[DeltaColumnMappingMode](
-    "columnMappingMode",
+    "columnMapping.mode",
     "none",
     DeltaColumnMappingMode(_),
     _ => true,
     "",
     minimumProtocolVersion = Some(DeltaColumnMapping.MIN_PROTOCOL_VERSION))
 
+  /**
+   * Maximum columnId used in the schema so far for column mapping. Internal property that cannot
+   * be set by users.
+   */
   val COLUMN_MAPPING_MAX_ID = buildConfig[Long](
-    "columnMappingMaxId",
+    "columnMapping.maxColumnId",
     "0",
     _.toLong,
     _ => true,

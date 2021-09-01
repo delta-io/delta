@@ -22,7 +22,7 @@ import java.util.Objects
 import scala.collection.mutable.ArrayBuffer
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.actions.SingleAction.addFileEncoder
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -77,7 +77,8 @@ abstract class TahoeFileIndex(
     partitionValuesToFiles.map {
       case (partitionValues, files) =>
         val rowValues: Array[Any] = partitionSchema.map { p =>
-          Cast(Literal(partitionValues(p.name)), p.dataType, Option(timeZone)).eval()
+          val colName = DeltaColumnMapping.getPhysicalName(p)
+          Cast(Literal(partitionValues(colName)), p.dataType, Option(timeZone)).eval()
         }.toArray
 
 
