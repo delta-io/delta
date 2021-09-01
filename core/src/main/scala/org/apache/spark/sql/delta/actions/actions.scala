@@ -477,7 +477,8 @@ case class CommitInfo(
     /** Whether this commit has blindly appended without caring about existing files */
     isBlindAppend: Option[Boolean],
     operationMetrics: Option[Map[String, String]],
-    userMetadata: Option[String]) extends Action with CommitMarker {
+    userMetadata: Option[String],
+    tags: Option[Map[String, String]]) extends Action with CommitMarker {
   override def wrap: SingleAction = SingleAction(commitInfo = this)
 
   override def withTimestamp(timestamp: Long): CommitInfo = {
@@ -487,6 +488,7 @@ case class CommitInfo(
   override def getTimestamp: Long = timestamp.getTime
   @JsonIgnore
   override def getVersion: Long = version.get
+
 }
 
 case class JobInfo(
@@ -520,7 +522,7 @@ object NotebookInfo {
 object CommitInfo {
   def empty(version: Option[Long] = None): CommitInfo = {
     CommitInfo(version, null, None, None, null, null, None, None,
-                None, None, None, None, None, None)
+                None, None, None, None, None, None, None)
   }
 
   def apply(
@@ -532,7 +534,8 @@ object CommitInfo {
       isolationLevel: Option[String],
       isBlindAppend: Option[Boolean],
       operationMetrics: Option[Map[String, String]],
-      userMetadata: Option[String]): CommitInfo = {
+      userMetadata: Option[String],
+      tags: Option[Map[String, String]]): CommitInfo = {
     val getUserName = commandContext.get("user").flatMap {
       case "unknown" => None
       case other => Option(other)
@@ -552,8 +555,10 @@ object CommitInfo {
       isolationLevel,
       isBlindAppend,
       operationMetrics,
-      userMetadata)
+      userMetadata,
+      tags)
   }
+
 }
 
 /** A serialization helper to create a common action envelope. */

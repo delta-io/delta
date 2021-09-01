@@ -271,7 +271,8 @@ trait DeltaCommand extends DeltaLogging {
         isolationLevel = Some(Serializable.toString),
         isBlindAppend = Some(false),
         Some(metrics),
-        userMetadata = txn.getUserMetadata(op))
+        userMetadata = txn.getUserMetadata(op),
+        tags = None)
 
       val extraActions = Seq(commitInfo, metadata)
       // We don't expect commits to have more than 2 billion actions
