@@ -314,4 +314,25 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
     }
   }
 
+
+  test("Complex Data Type - Array of Struct") {
+    withTable("source") {
+      withTable("target") {
+        // scalastyle:off line.size.limit
+        sql("CREATE TABLE source(`smtUidNr` STRING,`evt` ARRAY<STRUCT<`busLinCd`: STRING, `cmyHdrOidNr`: STRING, `cmyLinNr`: STRING, `coeOidNr`: STRING, `dclOidNr`: STRING, `evtCd`: STRING, `evtDclUidNr`: STRING, `evtDscTe`: STRING, `evtDt`: STRING, `evtLclTmZnNa`: STRING, `evtLclTs`: STRING, `evtOidNr`: STRING, `evtRef`: ARRAY<STRUCT<`refDt`: STRING, `refNr`: STRING, `refTypCd`: STRING, `refTypDscTe`: STRING>>, `evtShu`: ARRAY<STRUCT<`ledPkgIr`: STRING, `shuNr`: STRING, `shuRef`: ARRAY<STRUCT<`shuRefDscTe`: STRING, `shuRefDt`: STRING, `shuRefEffDt`: STRING, `shuRefNr`: STRING, `shuRefTe`: STRING, `shuRefTypCd`: STRING>>>>, `evtTypCd`: STRING, `evtUsrNr`: STRING, `evtUtcTcfQy`: STRING, `evtUtcTs`: STRING, `evtWstNa`: STRING, `loc`: ARRAY<STRUCT<`adCnySdvCd`: STRING, `adMunNa`: STRING, `adPslCd`: STRING, `al1Te`: STRING, `al2Te`: STRING, `al3Te`: STRING, `locAdCnyCd`: STRING, `locOgzNr`: STRING, `locXcpDclPorCd`: STRING, `upsDisNr`: STRING, `upsRegNr`: STRING>>, `mltDelOdrNr`: STRING, `mltPrfOfDelNa`: STRING, `mltSmtConNr`: STRING, `mnfOidNr`: STRING, `rpnEntLinNr`: STRING, `rpnEntLvlStsCd`: STRING, `rpnGovAcoTe`: STRING, `rpnInfSrcCrtLclTmZnNa`: STRING, `rpnInfSrcCrtLclTs`: STRING, `rpnInfSrcCrtUtcTcfQy`: STRING, `rpnInfSrcCrtUtcTs`: STRING, `rpnLinLvlStsCd`: STRING, `rpnPgaLinNr`: STRING, `smtDcvDt`: STRING, `smtNr`: STRING, `smtUidNr`: STRING, `xcpCtmDspCd`: STRING, `xcpGovAcoTe`: STRING, `xcpPgmCd`: STRING, `xcpRlvCd`: STRING, `xcpRlvDscTe`: STRING, `xcpRlvLclTmZnNa`: STRING, `xcpRlvLclTs`: STRING, `xcpRlvUtcTcfQy`: STRING, `xcpRlvUtcTs`: STRING, `xcpRsnCd`: STRING, `xcpRsnDscTe`: STRING, `xcpStsCd`: STRING, `xcpStsDscTe`: STRING>>,`msgTs` TIMESTAMP) using delta")
+        sql("CREATE TABLE target(`smtUidNr` STRING,`evt` ARRAY<STRUCT<`busLinCd`: STRING, `dclOidNr`: STRING, `evtCd`: STRING, `evtDclUidNr`: STRING, `evtDscTe`: STRING, `evtDt`: STRING, `evtLclTmZnNa`: STRING, `evtLclTs`: STRING, `evtOidNr`: STRING, `evtRef`: ARRAY<STRUCT<`refDt`: STRING, `refNr`: STRING, `refTypCd`: STRING, `refTypDscTe`: STRING>>, `evtShu`: ARRAY<STRUCT<`ledPkgIr`: STRING, `shuNr`: STRING, `shuRef`: ARRAY<STRUCT<`shuRefDscTe`: STRING, `shuRefDt`: STRING, `shuRefEffDt`: STRING, `shuRefNr`: STRING, `shuRefTe`: STRING, `shuRefTypCd`: STRING>>>>, `evtTypCd`: STRING, `evtUsrNr`: STRING, `evtUtcTcfQy`: STRING, `evtUtcTs`: STRING, `evtWstNa`: STRING, `loc`: ARRAY<STRUCT<`adCnySdvCd`: STRING, `adMunNa`: STRING, `adPslCd`: STRING, `al1Te`: STRING, `al2Te`: STRING, `al3Te`: STRING, `locAdCnyCd`: STRING, `locOgzNr`: STRING, `locXcpDclPorCd`: STRING, `upsDisNr`: STRING, `upsRegNr`: STRING>>, `mltDelOdrNr`: STRING, `mltPrfOfDelNa`: STRING, `mltSmtConNr`: STRING, `mnfOidNr`: STRING, `rpnEntLinNr`: STRING, `rpnEntLvlStsCd`: STRING, `rpnGovAcoTe`: STRING, `rpnInfSrcCrtLclTmZnNa`: STRING, `rpnInfSrcCrtLclTs`: STRING, `rpnInfSrcCrtUtcTcfQy`: STRING, `rpnInfSrcCrtUtcTs`: STRING, `rpnLinLvlStsCd`: STRING, `smtDcvDt`: STRING, `smtNr`: STRING, `smtUidNr`: STRING, `xcpCtmDspCd`: STRING, `xcpRlvCd`: STRING, `xcpRlvDscTe`: STRING, `xcpRlvLclTmZnNa`: STRING, `xcpRlvLclTs`: STRING, `xcpRlvUtcTcfQy`: STRING, `xcpRlvUtcTs`: STRING, `xcpRsnCd`: STRING, `xcpRsnDscTe`: STRING, `xcpStsCd`: STRING, `xcpStsDscTe`: STRING, `cmyHdrOidNr`: STRING, `cmyLinNr`: STRING, `coeOidNr`: STRING, `rpnPgaLinNr`: STRING, `xcpGovAcoTe`: STRING, `xcpPgmCd`: STRING>>,`msgTs` TIMESTAMP) using delta")
+        // scalastyle:on line.size.limit
+        sql(
+          s"""
+             |MERGE INTO target as r
+             |USING source as u
+             |ON u.smtUidNr = r.smtUidNr
+             |WHEN MATCHED and u.msgTs > r.msgTs THEN
+             |  UPDATE SET *
+             |WHEN NOT MATCHED THEN
+             |  INSERT *
+             """.stripMargin)
+      }
+    }
+  }
 }

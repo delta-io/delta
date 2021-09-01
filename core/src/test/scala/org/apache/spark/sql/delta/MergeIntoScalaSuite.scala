@@ -697,7 +697,12 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
 
           if (result != null) {
             execMerge()
-            checkAnswer(readDeltaTable(pathOrName), spark.read.json(strToJsonSeq(result).toDS))
+            val expectedDf = if (targetSchema != null) {
+              spark.read.schema(targetSchema).json(strToJsonSeq(result).toDS)
+            } else {
+              spark.read.json(strToJsonSeq(result).toDS)
+            }
+            checkAnswer(readDeltaTable(pathOrName), expectedDf)
           } else {
             val e = intercept[AnalysisException] {
               execMerge()
