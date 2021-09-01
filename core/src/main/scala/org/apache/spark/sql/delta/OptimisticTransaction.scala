@@ -314,11 +314,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       }
     val noProtocolVersions = generationExpressionsFixed.copy(configuration = configs)
     verifyNewMetadata(noProtocolVersions)
-    DeltaColumnMapping.verifyMetadataChange(
+    val updatedNewMetadata = DeltaColumnMapping.verifyAndUpdateMetadataChange(
       protocolBeforeUpdate, snapshot.metadata, noProtocolVersions, isCreatingNewTable)
     logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $noProtocolVersions")
 
-    newMetadata = Some(noProtocolVersions)
+    newMetadata = Some(updatedNewMetadata)
   }
 
   /**

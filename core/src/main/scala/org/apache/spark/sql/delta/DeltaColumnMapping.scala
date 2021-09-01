@@ -46,36 +46,35 @@ object DeltaColumnMapping {
 
   /**
    * If the table is already on the column mapping protocol, we block:
-   *     - all schema changes
-   *     - setting of column mapping config
+   *     - changing column mapping config
    * otherwise, we block
    *     - upgrading to the column mapping Protocol through configurations
    */
-  def verifyMetadataChange(
+  def verifyAndUpdateMetadataChange(
       oldProtocol: Protocol,
       oldMetadata: Metadata,
       newMetadata: Metadata,
-      isCreatingNewTable: Boolean): Unit = {
-    // Force the generation of physicalSchema, which throws exception if it fails,
-    // e.g., some columns don't have IDs in ID mode
-    newMetadata.physicalSchema
-    if (isCreatingNewTable) return
+      isCreatingNewTable: Boolean): Metadata = {
+    // field in new metadata should have been dropped
     val oldMappingMode = DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(oldMetadata)
     val newMappingMode = DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(newMetadata)
+    var updatedMetadata = newMetadata
     if (satisfyColumnMappingProtocol(oldProtocol)) {
-      if (oldMetadata.schemaString != newMetadata.schemaString && oldMappingMode != NoMapping) {
-        // This is only temporary, until we implement the schema change logic on the new protocol
-        throw DeltaErrors.schemaChangeInColumnMappingProtocolNotSupported(
-          oldMetadata.schema, newMetadata.schema, oldMappingMode)
-      }
-      if (oldMappingMode != newMappingMode) {
+      if (oldMappingMode != newMappingMode && !isCreatingNewTable) {
+        // block changing modes on new protocol
         throw DeltaErrors.changeColumnMappingModeNotSupported
       }
     } else {
-      if (oldMappingMode != newMappingMode) {
+      if (oldMappingMode != newMappingMode && !isCreatingNewTable) {
+        // block changing modes on old protocol
         throw DeltaErrors.setColumnMappingModeOnOldProtocol(oldProtocol)
       }
     }
+    updatedMetadata = tryFixMetadata(newMetadata, newMappingMode)
+    // Force the generation of physicalSchema, which throws exception if it fails,
+    // e.g., some columns don't have IDs in ID mode
+    updatedMetadata.physicalSchema
+    updatedMetadata
   }
 
   def hasColumnId(field: StructField): Boolean =
@@ -139,6 +138,63 @@ object DeltaColumnMapping {
   }
 
   def generatePhysicalName: String = "col-" + UUID.randomUUID()
+
+  def tryFixMetadata(
+      metadata: Metadata,
+      mappingMode: DeltaColumnMappingMode): Metadata = {
+    mappingMode match {
+      case IdMapping =>
+        assignColumnIdAndPhysicalName(metadata)
+      case NoMapping =>
+        metadata
+      case mode =>
+         throw DeltaErrors.unknownColumnMappingMode(mode.name)
+    }
+  }
+
+  def findMaxColumnId(schema: StructType): Long = {
+    var maxId: Long = 0
+    SchemaMergingUtils.transformColumns(schema)((_, f, _) => {
+      if (hasColumnId(f)) {
+        maxId = maxId max getColumnId(f)
+      }
+      f
+    })
+    maxId
+  }
+
+  /**
+   * For each column/field in a Metadata's schema, assign id using the current maximum id
+   * as the basis and increment from there, and assign physical name using UUID
+   * @param metadata Metadata whose schema to modify
+   * @return updated metadata
+   */
+  private def assignColumnIdAndPhysicalName(metadata: Metadata): Metadata = {
+    var maxId = DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(metadata) max
+                findMaxColumnId(metadata.schema)
+
+    val newSchema =
+      SchemaMergingUtils.transformColumns(metadata.schema)((_, field, _) => {
+        val builder = new MetadataBuilder()
+          .withMetadata(field.metadata)
+        if (!hasColumnId(field)) {
+          maxId += 1
+          builder.putLong(COLUMN_MAPPING_METADATA_ID_KEY, maxId)
+        }
+        if (!hasPhysicalName(field)) {
+          builder.putString(COLUMN_MAPPING_METADATA_PHYSICAL_NAME_KEY, generatePhysicalName)
+        }
+        field.copy(metadata = builder.build())
+      })
+
+    metadata.copy(
+      schemaString = newSchema.json,
+      configuration =
+        metadata.configuration ++
+          Map(DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> maxId.toString)
+    )
+  }
+
 }
 
 /**

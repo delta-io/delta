@@ -1148,6 +1148,10 @@ object DeltaErrors
         s"is not supported. Please run the ${op} command on the Delta table directly")
   }
 
+  def cannotModifyTableProperty(prop: String): Throwable =
+    throw new UnsupportedOperationException(
+      s"The Delta table configuration $prop cannot be specified by the user")
+
   /**
    * We have plans to support more column mapping modes, but they are not implemented yet,
    * so we error for now to be forward compatible with tables created in the future.
