@@ -65,7 +65,8 @@ object SchemaUtils {
           val includeLevel = if (f(sf)) Seq((columnStack, sf)) else Nil
           includeLevel ++ recurseIntoComplexTypes(sf.dataType, columnStack :+ sf.name)
         }
-      case a: ArrayType if checkComplexTypes => recurseIntoComplexTypes(a.elementType, columnStack)
+      case a: ArrayType if checkComplexTypes =>
+        recurseIntoComplexTypes(a.elementType, columnStack :+ "element")
       case m: MapType if checkComplexTypes =>
         recurseIntoComplexTypes(m.keyType, columnStack :+ "key") ++
           recurseIntoComplexTypes(m.valueType, columnStack :+ "value")
@@ -652,7 +653,7 @@ object SchemaUtils {
       (fromDt, toDt) match {
         case (ArrayType(fromElement, fn), ArrayType(toElement, tn)) =>
           verifyNullability(fn, tn, columnPath)
-          check(fromElement, toElement, columnPath)
+          check(fromElement, toElement, columnPath :+ "element")
 
         case (MapType(fromKey, fromValue, fn), MapType(toKey, toValue, tn)) =>
           verifyNullability(fn, tn, columnPath)

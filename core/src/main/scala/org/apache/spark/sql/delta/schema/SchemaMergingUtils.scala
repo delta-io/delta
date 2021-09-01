@@ -52,7 +52,7 @@ object SchemaMergingUtils {
       def recurseIntoComplexTypes(complexType: DataType): Seq[Seq[String]] = {
         complexType match {
           case s: StructType => explode(s)
-          case a: ArrayType => recurseIntoComplexTypes(a.elementType)
+          case a: ArrayType => recurseIntoComplexTypes(a.elementType).map(Seq("element") ++ _)
           case m: MapType =>
             recurseIntoComplexTypes(m.keyType).map(Seq("key") ++ _) ++
               recurseIntoComplexTypes(m.valueType).map(Seq("value") ++ _)
@@ -271,7 +271,7 @@ object SchemaMergingUtils {
             newField.copy(dataType = transform(path :+ newField.name, newField.dataType))
           })
         case ArrayType(elementType, containsNull) =>
-          ArrayType(transform(path, elementType), containsNull)
+          ArrayType(transform(path :+ "element", elementType), containsNull)
         case MapType(keyType, valueType, valueContainsNull) =>
           MapType(
             transform(path :+ "key", keyType),
