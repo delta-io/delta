@@ -29,7 +29,8 @@ import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 
-class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
+class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
+  with DeltaTestUtilsForTempViews {
 
   import testImplicits._
 
@@ -211,85 +212,6 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
     }
   }
 
-  test("merge into a dataset temp view") {
-    withTable("tab") {
-      withTempView("v") {
-        withTempView("src") {
-          Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
-          spark.table("tab").as("name").createTempView("v")
-          sql("CREATE TEMP VIEW src AS SELECT * FROM VALUES (1, 2), (3, 4) AS t(a, b)")
-          sql(
-            s"""
-               |MERGE INTO v
-               |USING src
-               |ON src.a = v.key AND src.b = v.value
-               |WHEN MATCHED THEN
-               |  UPDATE SET v.value = src.b + 1
-               |WHEN NOT MATCHED THEN
-               |  INSERT (v.key, v.value) VALUES (src.a, src.b)
-               |""".stripMargin)
-          checkAnswer(spark.table("tab"), Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
-        }
-      }
-    }
-  }
-
-  test("merge into a SQL temp view") {
-    withTable("tab") {
-      withTempView("v") {
-        withTempView("src") {
-          Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
-          sql("CREATE TEMP VIEW v AS SELECT * FROM tab")
-          sql("CREATE TEMP VIEW src AS SELECT * FROM VALUES (1, 2), (3, 4) AS t(a, b)")
-          sql(
-            s"""
-               |MERGE INTO v
-               |USING src
-               |ON src.a = v.key AND src.b = v.value
-               |WHEN MATCHED THEN
-               |  UPDATE SET v.value = src.b + 1
-               |WHEN NOT MATCHED THEN
-               |  INSERT (v.key, v.value) VALUES (src.a, src.b)
-               |""".stripMargin)
-          checkAnswer(spark.table("tab"), Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
-        }
-      }
-    }
-  }
-
-  protected def testInvalidSqlTempView(name: String)(text: String, expectedError: String): Unit = {
-    test(s"can't merge into invalid SQL temp view - $name") {
-      withTable("tab") {
-        withTempView("v") {
-          withTempView("src") {
-            Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
-            sql(text)
-            sql("CREATE TEMP VIEW src AS SELECT * FROM VALUES (1, 2), (3, 4) AS t(a, b)")
-            val ex = intercept[AnalysisException] {
-              sql(
-                s"""
-                   |MERGE INTO v
-                   |USING src
-                   |ON src.a = v.key AND src.b = v.value
-                   |WHEN MATCHED THEN
-                   |  UPDATE SET v.value = src.b + 1
-                   |WHEN NOT MATCHED THEN
-                   |  INSERT (v.key, v.value) VALUES (src.a, src.b)
-                   |""".stripMargin)
-            }
-            assert(ex.getMessage.contains(expectedError))
-          }
-        }
-      }
-    }
-  }
-
-  testInvalidSqlTempView("subset cols")(
-    text = "CREATE TEMP VIEW v AS SELECT key FROM tab",
-    expectedError = "cannot resolve"
-  )
-
-
 
   // This test is to capture the incorrect behavior caused by
   // https://github.com/delta-io/delta/issues/618 .
@@ -314,6 +236,26 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
     }
   }
 
+
+  testWithTempView("Update specific column does not work in temp views") { isSQLTempView =>
+    withJsonData(
+      """{ "key": "A", "value": { "a": { "x": 1 } } }""",
+      """{ "key": "A", "value": { "a": { "x": 2 } } }"""
+    ) { (sourceName, targetName) =>
+      createTempViewFromTable(targetName, isSQLTempView)
+      val fieldNames = spark.table(targetName).schema.fieldNames
+      val fieldNamesStr = fieldNames.mkString("`", "`, `", "`")
+      val e = intercept[AnalysisException] {
+        executeMerge(
+          target = "v t",
+          source = s"$sourceName s",
+          condition = "s.key = t.key",
+          update = "value.a.x = s.value.a.x",
+          insert = s"($fieldNamesStr) VALUES ($fieldNamesStr)")
+      }
+      assert(e.getMessage.contains("Unexpected assignment key"))
+    }
+  }
 
   test("Complex Data Type - Array of Struct") {
     withTable("source") {

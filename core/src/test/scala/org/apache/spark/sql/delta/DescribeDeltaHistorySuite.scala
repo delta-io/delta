@@ -37,7 +37,7 @@ import org.apache.spark.util.Utils
 
 trait DescribeDeltaHistorySuiteBase
   extends QueryTest
-  with SharedSparkSession  with DeltaSQLCommandTest {
+  with SharedSparkSession  with DeltaSQLCommandTest  with DeltaTestUtilsForTempViews {
 
   import testImplicits._
 
@@ -204,6 +204,21 @@ trait DescribeDeltaHistorySuiteBase
         sql(s"DESCRIBE HISTORY $viewName").collect()
       }
       assert(e.getMessage.contains("history of a view"))
+    }
+  }
+
+  testWithTempView("describe history fails on temp views") { isSQLTempView =>
+    withSQLConf(DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "true") {
+      withTable("t1") {
+        Seq(1, 2, 3).toDF().write.format("delta").saveAsTable("t1")
+        val viewName = "v"
+        createTempViewFromTable("t1", isSQLTempView)
+
+        val e = intercept[AnalysisException] {
+          sql(s"DESCRIBE HISTORY $viewName").collect()
+        }
+        assert(e.getMessage.contains("not found in database"))
+      }
     }
   }
 

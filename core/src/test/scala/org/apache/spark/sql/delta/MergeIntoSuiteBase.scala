@@ -36,7 +36,8 @@ abstract class MergeIntoSuiteBase
     extends QueryTest
     with SharedSparkSession
     with BeforeAndAfterEach
-    with SQLTestUtils {
+    with SQLTestUtils
+    with DeltaTestUtilsForTempViews {
 
   import testImplicits._
 
@@ -4583,5 +4584,104 @@ abstract class MergeIntoSuiteBase
     clauseAction = "max(s.c)",
     customConditionErrorRegex =
       Option("Aggregate functions are not supported in the .* condition of MERGE operation.*")
+  )
+
+  testWithTempView("test merge on temp view - basic") { isSQLTempView =>
+    withTable("tab") {
+      withTempView("src") {
+        Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+        createTempViewFromTable("tab", isSQLTempView)
+        sql("CREATE TEMP VIEW src AS SELECT * FROM VALUES (1, 2), (3, 4) AS t(a, b)")
+        executeMerge(
+          target = "v",
+          source = "src",
+          condition = "src.a = v.key AND src.b = v.value",
+          update = "v.value = src.b + 1",
+          insert = "(v.key, v.value) VALUES (src.a, src.b)")
+        checkAnswer(spark.table("v"), Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
+      }
+    }
+  }
+
+  protected def testInvalidTempViews(name: String)(
+      text: String,
+      expectedErrorForSQLTempView: String,
+      expectedErrorForDataSetTempView: String): Unit = {
+    testWithTempView(s"test merge on temp view - $name") { isSQLTempView =>
+      withTable("tab") {
+        withTempView("src") {
+          Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+          createTempViewFromSelect(text, isSQLTempView)
+          sql("CREATE TEMP VIEW src AS SELECT * FROM VALUES (1, 2), (3, 4) AS t(a, b)")
+          val expectedError = if (isSQLTempView) {
+            expectedErrorForSQLTempView
+          } else expectedErrorForDataSetTempView
+          if (expectedError != null) {
+            val ex = intercept[AnalysisException] {
+              executeMerge(
+                target = "v",
+                source = "src",
+                condition = "src.a = v.key AND src.b = v.value",
+                update = "v.value = src.b + 1",
+                insert = "(v.key, v.value) VALUES (src.a, src.b)")
+            }
+            assert(ex.getMessage.contains(expectedError))
+          } else {
+            executeMerge(
+              target = "v",
+              source = "src",
+              condition = "src.a = v.key AND src.b = v.value",
+              update = "v.value = src.b + 1",
+              insert = "(v.key, v.value) VALUES (src.a, src.b)")
+            checkAnswer(spark.table("v"), Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
+          }
+        }
+      }
+    }
+  }
+
+  testInvalidTempViews("subset cols")(
+    text = "SELECT key FROM tab",
+    expectedErrorForSQLTempView = "cannot resolve",
+    expectedErrorForDataSetTempView = "cannot resolve"
+  )
+
+  testInvalidTempViews("superset cols")(
+    text = "SELECT key, value, 1 FROM tab",
+    // The analyzer can't tell whether the table originally had the extra column or not.
+    expectedErrorForSQLTempView =
+      "The schema of your Delta table has changed in an incompatible way",
+    expectedErrorForDataSetTempView =
+      "The schema of your Delta table has changed in an incompatible way"
+  )
+
+
+  private def testComplexTempViewOnMerge(name: String)(text: String, expectedResult: Seq[Row]) = {
+    testOssOnlyWithTempView(s"test merge on temp view - $name") { isSQLTempView =>
+      withTable("tab") {
+        withTempView("src") {
+          Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+          createTempViewFromSelect(text, isSQLTempView)
+          sql("CREATE TEMP VIEW src AS SELECT * FROM VALUES (1, 2), (3, 4) AS t(a, b)")
+          executeMerge(
+            target = "v",
+            source = "src",
+            condition = "src.a = v.key AND src.b = v.value",
+            update = "v.value = src.b + 1",
+            insert = "(v.key, v.value) VALUES (src.a, src.b)")
+          checkAnswer(spark.table("v"), expectedResult)
+        }
+      }
+    }
+  }
+
+  testComplexTempViewOnMerge("nontrivial projection")(
+    "SELECT value as key, key as value FROM tab",
+    Seq(Row(3, 0), Row(3, 1), Row(4, 3))
+  )
+
+  testComplexTempViewOnMerge("view with too many internal aliases")(
+    "SELECT * FROM (SELECT * FROM tab AS t1) AS t2",
+    Seq(Row(0, 3), Row(1, 3), Row(3, 4))
   )
 }

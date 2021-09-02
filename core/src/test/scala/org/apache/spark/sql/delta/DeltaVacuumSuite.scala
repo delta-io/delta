@@ -45,7 +45,7 @@ import org.apache.spark.util.ManualClock
 trait DeltaVacuumSuiteBase extends QueryTest
   with SharedSparkSession
   with GivenWhenThen
-  with SQLTestUtils {
+  with SQLTestUtils  with DeltaTestUtilsForTempViews {
 
   testQuietly("basic case - SQL command on path-based tables with direct 'path'") {
     withEnvironment { (tempDir, _) =>
@@ -68,6 +68,24 @@ trait DeltaVacuumSuiteBase extends QueryTest
         val tablePath =
           new File(spark.sessionState.catalog.getTableMetadata(TableIdentifier(tableName)).location)
         vacuumSQLTest(tablePath, tableName)
+      }
+    }
+  }
+
+  testQuietlyWithTempView("basic case - SQL command on temp view not supported") { isSQLTempView =>
+    val tableName = "deltaTable"
+    val viewName = "v"
+    withEnvironment { (_, _) =>
+      withTable(tableName) {
+        import testImplicits._
+        spark.emptyDataset[Int].write.format("delta").saveAsTable(tableName)
+        createTempViewFromTable(tableName, isSQLTempView)
+        val tablePath = new File(
+          spark.sessionState.catalog.getTableMetadata(TableIdentifier(tableName)).location)
+        val e = intercept[AnalysisException] {
+          vacuumSQLTest(tablePath, viewName)
+        }
+        assert(e.getMessage.contains("not found in database"))
       }
     }
   }
