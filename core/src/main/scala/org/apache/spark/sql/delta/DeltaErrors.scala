@@ -1167,13 +1167,32 @@ object DeltaErrors
       s" Please upgrade Delta to access this table.")
 
   def missingColumnId(mode: DeltaColumnMappingMode, field: String): Throwable = {
-    ColumnMappingException(s"Missing column ID in column mapping mode `${mode.name}``" +
+    ColumnMappingException(s"Missing column ID in column mapping mode `${mode.name}`" +
       s" in the field: $field", mode)
   }
 
   def missingPhysicalName(mode: DeltaColumnMappingMode, field: String): Throwable =
     ColumnMappingException(s"Missing physical name in column mapping mode `${mode.name}`" +
       s" in the field: $field", mode)
+
+  def duplicatedColumnId(
+      mode: DeltaColumnMappingMode,
+      field: String,
+      field2: String): Throwable = {
+    ColumnMappingException(
+      s"Duplicated column IDs found in column mapping mode `${mode.name}`" +
+      s" for field $field and $field2", mode
+    )
+  }
+
+  def duplicatedPhysicalName(
+      mode: DeltaColumnMappingMode,
+      field: String,
+      field2: String): Throwable =
+    ColumnMappingException(
+      s"Duplicated physical names found in column mapping mode `${mode.name}`" +
+      s" for field $field and $field2", mode
+    )
 
   def changeColumnMappingModeNotSupported: Throwable = {
     throw new UnsupportedOperationException("Changing column mapping mode using" +

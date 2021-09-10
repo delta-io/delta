@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta
 
 import java.util.{Locale, UUID}
 
+import scala.collection.mutable
+
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 
@@ -208,6 +210,36 @@ object DeltaColumnMapping {
       f
     })
     maxId
+  }
+
+  def checkColumnIdAndPhysicalNameAssignments(
+      schema: StructType,
+      mode: DeltaColumnMappingMode): Unit = {
+    // physical name/column id -> full field path
+    val columnIds = mutable.Map[Int, String]()
+    val physicalNames = mutable.Map[String, String]()
+
+    SchemaMergingUtils.transformColumns(schema) ( (parentPath, field, _) => {
+      val curFullPath = (parentPath :+ field.name).mkString(".")
+      if (!hasColumnId(field)) {
+        throw DeltaErrors.missingColumnId(IdMapping, field.name)
+      }
+      if (!hasPhysicalName(field)) {
+        throw DeltaErrors.missingPhysicalName(IdMapping, field.name)
+      }
+      val columnId = getColumnId(field)
+      if (columnIds.contains(columnId)) {
+        throw DeltaErrors.duplicatedColumnId(mode, curFullPath, columnIds(columnId))
+      }
+      columnIds.update(columnId, curFullPath)
+      val physicalName = getPhysicalName(field)
+      if (physicalNames.contains(physicalName)) {
+        throw DeltaErrors.duplicatedPhysicalName(mode, curFullPath, physicalNames(physicalName))
+      }
+      physicalNames.update(physicalName, curFullPath)
+      field
+    })
+
   }
 
   /**
