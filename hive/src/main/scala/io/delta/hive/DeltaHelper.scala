@@ -80,8 +80,12 @@ object DeltaHelper {
         snapshotToUse.getAllFiles.asScala
       ).map { addF =>
         // Drop unused potential huge fields
-        val f = new AddFile(addF.getPath, addF.getPartitionValues, addF.getSize,
-          addF.getModificationTime, addF.isDataChange, null, null)
+        val f = AddFile.builder(
+          addF.getPath,
+          addF.getPartitionValues,
+          addF.getSize,
+          addF.getModificationTime,
+          addF.isDataChange).build()
 
         val status = toFileStatus(fs, rootPath, f, blockSize)
         localFileToPartition +=

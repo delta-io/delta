@@ -69,4 +69,57 @@ public class JobInfo implements Action {
     public int hashCode() {
         return Objects.hash(jobId, jobName, runId, jobOwnerId, triggerType);
     }
+
+    /**
+     * @return a new {@code JobInfo.Builder}
+     */
+    public static Builder builder(String jobId) {
+        return new Builder(jobId);
+    }
+
+    /**
+     * Builder class for JobInfo. Enables construction of JobInfo object with default values.
+     */
+    public static class Builder {
+        // required JobInfo fields
+        private final String jobId;
+        // optional JobInfo fields
+        private String jobName;
+        private String runId;
+        private String jobOwnerId;
+        private String triggerType;
+
+        public Builder(String jobId) {
+            this.jobId = jobId;
+        }
+
+        public Builder jobName(String jobName) {
+            this.jobName = jobName;
+            return this;
+        }
+
+        public Builder runId(String runId) {
+            this.runId = runId;
+            return this;
+        }
+
+        public Builder jobOwnerId(String jobOwnerId) {
+            this.jobOwnerId = jobOwnerId;
+            return this;
+        }
+
+        public Builder triggerType(String triggerType) {
+            this.triggerType = triggerType;
+            return this;
+        }
+
+        /**
+         * @return a new {@code JobInfo} with the same properties as {@code this}
+         */
+        public JobInfo build() {
+            JobInfo jobInfo = new JobInfo(this.jobId, this.jobName, this.runId, this.jobOwnerId,
+                    this.triggerType);
+            return jobInfo;
+        }
+    }
 }

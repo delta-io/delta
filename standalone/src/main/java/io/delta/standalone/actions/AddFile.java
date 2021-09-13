@@ -127,4 +127,55 @@ public final class AddFile implements FileAction {
     public int hashCode() {
         return Objects.hash(path, partitionValues, size, modificationTime, dataChange, stats, tags);
     }
+
+    /**
+     * @return a new {@code AddFile.Builder}
+     */
+    public static Builder builder(String path, Map<String, String> partitionValues, long size,
+                                  long modificationTime, boolean dataChange) {
+        return new Builder(path, partitionValues, size, modificationTime, dataChange);
+    }
+
+    /**
+     * Builder class for AddFile. Enables construction of AddFile object with default values.
+     */
+    public static class Builder {
+        // required AddFile fields
+        private final String path;
+        private final Map<String, String> partitionValues;
+        private final long size;
+        private final long modificationTime;
+        private final boolean dataChange;
+        //  optional AddFile fields
+        private String stats;
+        private Map<String, String> tags;
+
+        public Builder(String path, Map<String, String> partitionValues, long size,
+                              long modificationTime, boolean dataChange) {
+            this.path = path;
+            this.partitionValues = partitionValues;
+            this.size = size;
+            this.modificationTime = modificationTime;
+            this.dataChange = dataChange;
+        }
+
+        public Builder stats(String stats) {
+            this.stats = stats;
+            return this;
+        }
+
+        public Builder tags(Map<String, String> tags) {
+            this.tags = tags;
+            return this;
+        }
+
+        /**
+         * @return a new {@code AddFile} with the same properties as {@code this}
+         */
+        public AddFile build() {
+            AddFile addFile = new AddFile(this.path, this.partitionValues, this.size,
+                    this.modificationTime, this.dataChange, this.stats, this.tags);
+            return addFile;
+        }
+    }
 }
