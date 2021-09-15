@@ -384,10 +384,10 @@ object CheckpointV2 {
    */
   def extractPartitionValues(partitionSchema: StructType): Option[Column] = {
     val partitionValues = partitionSchema.map { field =>
-      val colName = field.name
-      new Column(UnresolvedAttribute("add" :: "partitionValues" :: colName :: Nil).name)
+      val physicalName = DeltaColumnMapping.getPhysicalName(field)
+      new Column(UnresolvedAttribute("add" :: "partitionValues" :: physicalName :: Nil))
         .cast(field.dataType)
-        .as(colName)
+        .as(physicalName)
     }
     if (partitionValues.isEmpty) None else Some(struct(partitionValues: _*).as(PARTITIONS_COL_NAME))
   }

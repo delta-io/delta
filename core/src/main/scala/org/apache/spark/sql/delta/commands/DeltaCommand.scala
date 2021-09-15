@@ -17,13 +17,11 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.net.URI
 import java.util.concurrent.TimeUnit.NANOSECONDS
 
-import scala.collection.mutable
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{CommitStats, DeltaErrors, DeltaLog, DeltaOperations, OptimisticTransaction, Serializable, Snapshot}
+import org.apache.spark.sql.delta.{CommitStats, DeltaErrors, DeltaLog, DeltaOperations, OptimisticTransaction, Serializable}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -51,7 +49,7 @@ trait DeltaCommand extends DeltaLogging {
    *
    * @throws AnalysisException if a non-partition column is referenced.
    */
-  protected def parsePartitionPredicates(
+  protected def parsePredicates(
       spark: SparkSession,
       predicate: String): Seq[Expression] = {
     try {
@@ -77,9 +75,7 @@ trait DeltaCommand extends DeltaLogging {
           case u: UnresolvedAttribute =>
             // Note: `UnresolvedAttribute(Seq("a.b"))` and `UnresolvedAttribute(Seq("a", "b"))` will
             // return the same name. We accidentally treated the latter as the same as the former.
-            // Because some users may already rely on it, we keep supporting both. This is not
-            // ambiguous since "replaceWhere" only supports partition columns and it doesn't support
-            // struct type or map type.
+            // Because some users may already rely on it, we keep supporting both.
             u.nameParts.mkString(".")
           case _ => col.name
         }
@@ -166,7 +162,7 @@ trait DeltaCommand extends DeltaLogging {
       basePath: Path,
       filePath: String,
       nameToAddFileMap: Map[String, AddFile]): AddFile = {
-    val absolutePath = DeltaFileOperations.absolutePath(basePath.toUri.toString, filePath).toString
+    val absolutePath = DeltaFileOperations.absolutePath(basePath.toString, filePath).toString
     nameToAddFileMap.getOrElse(absolutePath, {
       throw new IllegalStateException(s"File ($absolutePath) to be rewritten not found " +
         s"among candidate files:\n${nameToAddFileMap.keys.mkString("\n")}")
@@ -275,7 +271,8 @@ trait DeltaCommand extends DeltaLogging {
         isolationLevel = Some(Serializable.toString),
         isBlindAppend = Some(false),
         Some(metrics),
-        userMetadata = txn.getUserMetadata(op))
+        userMetadata = txn.getUserMetadata(op),
+        tags = None)
 
       val extraActions = Seq(commitInfo, metadata)
       // We don't expect commits to have more than 2 billion actions

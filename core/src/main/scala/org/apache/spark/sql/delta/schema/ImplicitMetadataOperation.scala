@@ -22,7 +22,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.PartitionUtils
 
 import org.apache.spark.sql.{Dataset, SparkSession}
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{MetadataBuilder, StructType}
 
 /**
  * A trait that writers into Delta can extend to update the schema and/or partitioning of the table.
@@ -55,7 +55,20 @@ trait ImplicitMetadataOperation extends DeltaLogging {
       configuration: Map[String, String],
       isOverwriteMode: Boolean,
       rearrangeOnly: Boolean): Unit = {
-    val dataSchema = schema.asNullable
+    // To support the new column mapping mode, we drop existing metadata on data schema
+    // so that all the column mapping related properties can be reinitialized in
+    // OptimisticTransaction.updateMetadata
+    val dataSchema =
+      SchemaMergingUtils.transformColumns(schema.asNullable) { (_, field, _) =>
+        field.copy(
+          metadata = new MetadataBuilder()
+            .withMetadata(field.metadata)
+            .remove(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY)
+            .remove(DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
+            .remove(DeltaColumnMapping.PARQUET_FIELD_ID_METADATA_KEY)
+            .build()
+        )
+      }
     val mergedSchema = if (isOverwriteMode && canOverwriteSchema) {
       dataSchema
     } else {
@@ -65,7 +78,7 @@ trait ImplicitMetadataOperation extends DeltaLogging {
         } else {
           Set.empty[String]
         }
-      SchemaUtils.mergeSchemas(
+      SchemaMergingUtils.mergeSchemas(
         txn.metadata.schema,
         dataSchema,
         fixedTypeColumns = fixedTypeColumns)

@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.tables.DeltaTableBuilder
 
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.DateTimeUtils.{getZoneId, stringToDate, stringToTimestamp, toJavaDate, toJavaTimestamp}
@@ -34,6 +35,7 @@ import org.apache.spark.sql.types.{ArrayType, DateType, IntegerType, MetadataBui
 import org.apache.spark.unsafe.types.UTF8String
 
 trait GeneratedColumnTest extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
+
 
   protected def sqlDate(date: String): java.sql.Date = {
     toJavaDate(stringToDate(
@@ -404,7 +406,7 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
         val e = intercept[AnalysisException] {
           sql(s"UPDATE test_view SET c1 = 2 WHERE c1 = 1")
         }
-        assert(e.getMessage.contains("Updating a temp view"))
+        assert(e.getMessage.contains("a temp view"))
       }
     }
   }
@@ -991,6 +993,593 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
         .collect()
         .toSeq
       assert("foo" :: Nil == comments)
+    }
+  }
+
+  test("MERGE UPDATE basic") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (1, 3, 4);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |on ${tgt}.c1 = ${src}.c1
+               |WHEN MATCHED THEN UPDATE SET ${tgt}.c2 = ${src}.c2
+               |""".stripMargin)
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(1, 3, 4))
+        )
+      }
+    }
+  }
+
+  test("MERGE UPDATE set both generated column and its input") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (1, 3, 4);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |on ${tgt}.c1 = ${src}.c1
+               |WHEN MATCHED THEN UPDATE SET ${tgt}.c2 = ${src}.c2, ${tgt}.c3 = ${src}.c3
+               |""".stripMargin)
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(1, 3, 4))
+        )
+      }
+    }
+  }
+
+  test("MERGE UPDATE set star") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (1, 4, 5);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |on ${tgt}.c1 = ${src}.c1
+               |WHEN MATCHED THEN UPDATE SET *
+               |""".stripMargin)
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(1, 4, 5))
+        )
+      }
+    }
+  }
+
+  test("MERGE UPDATE set star add column") {
+    withSQLConf(("spark.databricks.delta.schema.autoMerge.enabled", "true")) {
+      withTableName("source") { src =>
+        withTableName("target") { tgt =>
+          createTable(src, None, "c1 INT, c2 INT, c4 INT", Map.empty, Seq.empty)
+          sql(s"INSERT INTO ${src} values (1, 20, 40);")
+          createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+          sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+          sql(
+            s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |on ${tgt}.c1 = ${src}.c1
+               |WHEN MATCHED THEN UPDATE SET *
+               |""".stripMargin)
+          checkAnswer(
+            sql(s"SELECT * FROM ${tgt}"),
+            Seq(Row(1, 20, 21, 40))
+          )
+        }
+      }
+    }
+  }
+
+  test("MERGE UPDATE using value from target") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (1, 3, 4);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |on ${tgt}.c1 = ${src}.c1
+               |WHEN MATCHED THEN UPDATE SET ${tgt}.c2 = ${tgt}.c3
+               |""".stripMargin)
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(1, 3, 4))
+        )
+      }
+    }
+  }
+
+  test("MERGE UPDATE using value from both target and source") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (1, 3, 4);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |on ${tgt}.c1 = ${src}.c1
+               |WHEN MATCHED THEN UPDATE SET ${tgt}.c2 = ${tgt}.c3 + ${src}.c3
+               |""".stripMargin)
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(1, 7, 8))
+        )
+      }
+    }
+  }
+
+  test("MERGE UPDATE set to null") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (1, 3, 4);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |on ${tgt}.c1 = ${src}.c1
+               |WHEN MATCHED THEN UPDATE SET ${tgt}.c2 = null
+               |""".stripMargin)
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(1, null, null))
+        )
+      }
+    }
+  }
+
+  test("MERGE UPDATE multiple columns") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (1, 3, 4);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |on ${tgt}.c1 = ${src}.c1
+               |WHEN MATCHED THEN UPDATE
+               |  SET ${tgt}.c2 = ${src}.c1 * 10, ${tgt}.c1 = ${tgt}.c1 * 100
+               |""".stripMargin)
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(100, 10, 11))
+        )
+      }
+    }
+  }
+
+  test("MERGE UPDATE source is a query") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (1, 3, 4);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING (SELECT c1, max(c3) + min(c2) AS m FROM ${src} GROUP BY c1) source
+               |on ${tgt}.c1 = source.c1
+               |WHEN MATCHED THEN UPDATE SET ${tgt}.c2 = source.m
+               |""".stripMargin)
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(1, 7, 8))
+        )
+      }
+    }
+  }
+
+  test("MERGE UPDATE temp view is not supported") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        withTempView("test_temp_view") {
+          createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+          sql(s"INSERT INTO ${src} values (1, 3, 4);")
+          createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+          sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+          sql(s"CREATE TEMP VIEW test_temp_view AS SELECT c1 as c2, c2 as c1, c3 FROM ${tgt}")
+          val e = intercept[AnalysisException] {
+            sql(s"""
+                   |MERGE INTO test_temp_view
+                   |USING ${src}
+                   |on test_temp_view.c2 = ${src}.c1
+                   |WHEN MATCHED THEN UPDATE SET test_temp_view.c1 = ${src}.c2
+                   |""".stripMargin)
+          }
+          assert(e.getMessage.contains("a temp view"))
+        }
+      }
+    }
+  }
+
+  test("MERGE INSERT star satisfies constraint") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (2, 3, 4);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |on ${tgt}.c1 = ${src}.c1
+               |WHEN NOT MATCHED THEN INSERT *
+               |""".stripMargin)
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(1, 2, 3), Row(2, 3, 4))
+        )
+      }
+    }
+  }
+
+  test("MERGE INSERT star violates constraint") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (2, 3, 5);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        val e = intercept[InvariantViolationException](
+          sql(s"""
+                 |MERGE INTO ${tgt}
+                 |USING ${src}
+                 |on ${tgt}.c1 = ${src}.c1
+                 |WHEN NOT MATCHED THEN INSERT *
+                 |""".stripMargin)
+        )
+        assert(e.getMessage.contains("CHECK constraint Generated Column"))
+      }
+    }
+  }
+
+  test("MERGE INSERT star add column") {
+    withSQLConf(("spark.databricks.delta.schema.autoMerge.enabled", "true")) {
+      withTableName("source") { src =>
+        withTableName("target") { tgt =>
+          createTable(src, None, "c1 INT, c2 INT, c4 INT", Map.empty, Seq.empty)
+          sql(s"INSERT INTO ${src} values (2, 3, 5);")
+          createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+          sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+          sql(s"""
+                 |MERGE INTO ${tgt}
+                 |USING ${src}
+                 |on ${tgt}.c1 = ${src}.c1
+                 |WHEN NOT MATCHED THEN INSERT *
+                 |""".stripMargin)
+          checkAnswer(
+            sql(s"SELECT * FROM ${tgt}"),
+            Seq(Row(1, 2, 3, null), Row(2, 3, 4, 5))
+          )
+        }
+      }
+    }
+  }
+
+  test("MERGE INSERT star add column violates constraint") {
+    withSQLConf(("spark.databricks.delta.schema.autoMerge.enabled", "true")) {
+      withTableName("source") { src =>
+        withTableName("target") { tgt =>
+          createTable(src, None, "c1 INT, c3 INT, c4 INT", Map.empty, Seq.empty)
+          sql(s"INSERT INTO ${src} values (2, 3, 5);")
+          createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+          sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+          val e = intercept[InvariantViolationException](
+            sql(s"""
+                 |MERGE INTO ${tgt}
+                 |USING ${src}
+                 |on ${tgt}.c1 = ${src}.c1
+                 |WHEN NOT MATCHED THEN INSERT *
+                 |""".stripMargin)
+          )
+          assert(e.getMessage.contains("CHECK constraint Generated Column"))
+        }
+      }
+    }
+  }
+
+  test("MERGE INSERT star add column unrelated to generated columns") {
+    withSQLConf(("spark.databricks.delta.schema.autoMerge.enabled", "true")) {
+      withTableName("source") { src =>
+        withTableName("target") { tgt =>
+          createTable(src, None, "c1 INT, c4 INT, c5 INT", Map.empty, Seq.empty)
+          sql(s"INSERT INTO ${src} values (2, 3, 5);")
+          createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+          sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+          sql(s"""
+                 |MERGE INTO ${tgt}
+                 |USING ${src}
+                 |on ${tgt}.c1 = ${src}.c1
+                 |WHEN NOT MATCHED THEN INSERT *
+                 |""".stripMargin)
+          checkAnswer(
+            sql(s"SELECT * FROM ${tgt}"),
+            Seq(Row(1, 2, 3, null, null), Row(2, null, null, 3, 5))
+          )
+        }
+      }
+    }
+  }
+
+  test("MERGE INSERT unrelated columns") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (2, 3, 4);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |on ${tgt}.c1 = ${src}.c1
+               |WHEN NOT MATCHED THEN INSERT (c1) VALUES (${src}.c1)
+               |""".stripMargin)
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(1, 2, 3), Row(2, null, null))
+        )
+      }
+    }
+  }
+
+  test("MERGE INSERT unrelated columns with const") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (2, 3, 4);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |on ${tgt}.c1 = ${src}.c1
+               |WHEN NOT MATCHED THEN INSERT (c1) VALUES (3)
+               |""".stripMargin)
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(1, 2, 3), Row(3, null, null))
+        )
+      }
+    }
+  }
+
+  test("MERGE INSERT referenced column only") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (2, 3, 4);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |on ${tgt}.c1 = ${src}.c1
+               |WHEN NOT MATCHED THEN INSERT (c2) VALUES (10)
+               |""".stripMargin)
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(1, 2, 3), Row(null, 10, 11))
+        )
+      }
+    }
+  }
+
+  test("MERGE INSERT referenced column with null") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (2, 3, 4);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |on ${tgt}.c1 = ${src}.c1
+               |WHEN NOT MATCHED THEN INSERT (c2) VALUES (null)
+               |""".stripMargin)
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(1, 2, 3), Row(null, null, null))
+        )
+      }
+    }
+  }
+
+  test("MERGE INSERT not all referenced column inserted") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (2, 3, 4);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + c1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |on ${tgt}.c1 = ${src}.c1
+               |WHEN NOT MATCHED THEN INSERT (c2) VALUES (5)
+               |""".stripMargin)
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(1, 2, 3), Row(null, 5, null))
+        )
+      }
+    }
+  }
+
+  test("MERGE INSERT generated column only") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (2, 3, 4);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        val e = intercept[InvariantViolationException](
+          sql(s"""
+                 |MERGE INTO ${tgt}
+                 |USING ${src}
+                 |on ${tgt}.c1 = ${src}.c1
+                 |WHEN NOT MATCHED THEN INSERT (c3) VALUES (10)
+                 |""".stripMargin)
+        )
+        assert(e.getMessage.contains("CHECK constraint Generated Column"))
+      }
+    }
+  }
+
+  test("MERGE INSERT referenced and generated columns satisfies constraint") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (2, 3, 4);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |on ${tgt}.c1 = ${src}.c1
+               |WHEN NOT MATCHED THEN INSERT (c2, c3) VALUES (${src}.c2, ${src}.c3)
+               |""".stripMargin)
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(1, 2, 3), Row(null, 3, 4))
+        )
+      }
+    }
+  }
+
+  test("MERGE INSERT referenced and generated columns violates constraint") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (2, 3, 5);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+        val e = intercept[InvariantViolationException](
+          sql(s"""
+                 |MERGE INTO ${tgt}
+                 |USING ${src}
+                 |on ${tgt}.c1 = ${src}.c1
+                 |WHEN NOT MATCHED THEN INSERT (c2, c3) VALUES (${src}.c2, ${src}.c3)
+                 |""".stripMargin)
+        )
+        assert(e.getMessage.contains("CHECK constraint Generated Column"))
+      }
+    }
+  }
+
+  test("MERGE INSERT and UPDATE") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT, c3 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (1, 11, 12), (2, 3, 4), (3, 20, 21), (4, 5, 6), (5, 6, 7);")
+        createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3), (2, 100, 101);")
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |on ${tgt}.c1 = ${src}.c1
+               |WHEN MATCHED AND ${src}.c1 = 1 THEN UPDATE SET ${tgt}.c2 = 100
+               |WHEN MATCHED THEN UPDATE SET *
+               |WHEN NOT MATCHED AND ${src}.c1 = 4 THEN INSERT (c1, c2) values (${src}.c1, 22)
+               |WHEN NOT MATCHED AND ${src}.c1 = 5 THEN INSERT (c1, c2) values (5, ${src}.c3)
+               |WHEN NOT MATCHED THEN INSERT *
+               |""".stripMargin)
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(1, 100, 101), Row(2, 3, 4), Row(3, 20, 21), Row(4, 22, 23), Row(5, 7, 8))
+        )
+      }
+    }
+  }
+
+  test("MERGE INSERT and UPDATE schema evolution") {
+    withSQLConf(("spark.databricks.delta.schema.autoMerge.enabled", "true")) {
+      withTableName("source") { src =>
+        withTableName("target") { tgt =>
+          createTable(src, None, "c1 INT, c2 INT, c4 INT", Map.empty, Seq.empty)
+          sql(s"INSERT INTO ${src} values (1, 11, 12), (2, 3, 4), (3, 20, 21), " +
+            "(4, 5, 6), (5, 6, 7);")
+          createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+          sql(s"INSERT INTO ${tgt} values (1, 2, 3), (2, 100, 101);")
+          sql(
+            s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |on ${tgt}.c1 = ${src}.c1
+               |WHEN MATCHED AND ${src}.c1 = 1 THEN UPDATE SET ${tgt}.c2 = 100
+               |WHEN MATCHED THEN UPDATE SET *
+               |WHEN NOT MATCHED AND ${src}.c1 = 4 THEN INSERT (c1, c2) values (${src}.c1, 22)
+               |WHEN NOT MATCHED AND ${src}.c1 = 5 THEN INSERT (c1, c2) values (5, ${src}.c4)
+               |WHEN NOT MATCHED THEN INSERT *
+               |""".stripMargin)
+          checkAnswer(
+            sql(s"SELECT * FROM ${tgt}"),
+            Seq(
+              Row(1, 100, 101, null),
+              Row(2, 3, 4, 4),
+              Row(3, 20, 21, 21),
+              Row(4, 22, 23, null),
+              Row(5, 7, 8, null)
+            )
+          )
+        }
+      }
+    }
+  }
+
+  test("MERGE INSERT and UPDATE schema evolution multiple referenced columns") {
+    withSQLConf(("spark.databricks.delta.schema.autoMerge.enabled", "true")) {
+      withTableName("source") { src =>
+        withTableName("target") { tgt =>
+          createTable(src, None, "c1 INT, c2 INT, c4 INT", Map.empty, Seq.empty)
+          sql(s"INSERT INTO ${src} values (1, 11, 12), (2, null, 4), (3, 20, 21), " +
+            "(4, 5, 6), (5, 6, 7);")
+          createTable(tgt, None, "c1 INT, c2 INT, c3 INT",
+            Map("c3" -> "c1 + CAST(ISNULL(c2) AS INT)"), Seq.empty)
+          sql(s"INSERT INTO ${tgt} values (1, 2, 1), (2, 100, 2);")
+          sql(
+            s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |on ${tgt}.c1 = ${src}.c1
+               |WHEN MATCHED AND ${src}.c1 = 1 THEN UPDATE SET ${tgt}.c2 = 100
+               |WHEN MATCHED THEN UPDATE SET *
+               |WHEN NOT MATCHED AND ${src}.c1 = 4 THEN INSERT (c1, c2) values (${src}.c1, 22)
+               |WHEN NOT MATCHED AND ${src}.c1 = 5 THEN INSERT (c1) values (5)
+               |WHEN NOT MATCHED THEN INSERT *
+               |""".stripMargin)
+          checkAnswer(
+            sql(s"SELECT * FROM ${tgt}"),
+            Seq(
+              Row(1, 100, 1, null),
+              Row(2, null, 3, 4),
+              Row(3, 20, 3, 21),
+              Row(4, 22, 4, null),
+              Row(5, null, 6, null)
+            )
+          )
+        }
+      }
     }
   }
 }

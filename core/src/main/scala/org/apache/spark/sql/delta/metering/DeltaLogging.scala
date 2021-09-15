@@ -27,6 +27,7 @@ import com.databricks.spark.util.TagDefinitions.{TAG_OP_TYPE, TAG_TAHOE_ID, TAG_
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.util.DeltaProgressReporter
 import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.hadoop.fs.Path
 
 /**
  * Convenience wrappers for logging that include delta specific options and
@@ -54,21 +55,27 @@ trait DeltaLogging
   /**
    * Used to record the occurrence of a single event or report detailed, operation specific
    * statistics.
+   *
+   * @param path Used to log the path of the delta table when `deltaLog` is null.
    */
   protected def recordDeltaEvent(
       deltaLog: DeltaLog,
       opType: String,
       tags: Map[TagDefinition, String] = Map.empty,
-      data: AnyRef = null): Unit = {
+      data: AnyRef = null,
+      path: Option[Path] = None): Unit = {
     try {
       val json = if (data != null) JsonUtils.toJson(data) else ""
       val tableTags = if (deltaLog != null) {
         Map(
           TAG_TAHOE_PATH -> Try(deltaLog.dataPath.toString).getOrElse(null),
           TAG_TAHOE_ID -> Try(deltaLog.snapshot.metadata.id).getOrElse(null))
+      } else if (path.isDefined) {
+        Map(TAG_TAHOE_PATH -> path.get.toString)
       } else {
-        Map.empty
+        Map.empty[TagDefinition, String]
       }
+
       recordProductEvent(
         EVENT_TAHOE,
         Map(TAG_OP_TYPE -> opType) ++ tableTags ++ tags,

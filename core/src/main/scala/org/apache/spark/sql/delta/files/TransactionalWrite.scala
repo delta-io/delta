@@ -32,7 +32,7 @@ import org.apache.spark.sql.Dataset
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.datasources.{BasicWriteJobStatsTracker, FileFormatWriter, WriteJobStatsTracker}
-import org.apache.spark.sql.types.{ArrayType, MapType, StructType}
+import org.apache.spark.sql.types.{ArrayType, MapType, MetadataBuilder, StructType}
 import org.apache.spark.util.SerializableConfiguration
 
 /**
@@ -65,6 +65,13 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     }
   }
 
+  /** Replace the output attributes with the physical mapping information. */
+  protected def mapColumnAttributes(
+      output: Seq[Attribute],
+      mappingMode: DeltaColumnMappingMode): Seq[Attribute] = {
+    throw DeltaErrors.writesWithColumnMappingNotSupported
+  }
+
   /**
    * Normalize the schema of the query, and return the QueryExecution to execute. If the table has
    * generated columns and users provide these columns in the output, we will also return
@@ -78,8 +85,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
    */
   protected def normalizeData(
       deltaLog: DeltaLog,
-      data: Dataset[_],
-      partitionCols: Seq[String]): (QueryExecution, Seq[Attribute], Seq[Constraint]) = {
+      data: Dataset[_]): (QueryExecution, Seq[Attribute], Seq[Constraint]) = {
     val normalizedData = SchemaUtils.normalizeColumnNames(metadata.schema, data)
     val enforcesGeneratedColumns = GeneratedColumn.enforcesGeneratedColumns(protocol, metadata)
     val (dataWithGeneratedColumns, generatedColumnConstraints) =
@@ -111,7 +117,12 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       data.queryExecution
     }
     val nullableOutput = makeOutputNullable(cleanedData.queryExecution.analyzed.output)
-    (queryExecution, nullableOutput, generatedColumnConstraints)
+    val columnMapping = DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(metadata)
+    // Rewrite column physical names if using a mapping mode
+    val mappedOutput = if (columnMapping == NoMapping) nullableOutput else {
+      mapColumnAttributes(nullableOutput, columnMapping)
+    }
+    (queryExecution, mappedOutput, generatedColumnConstraints)
   }
 
   protected def getPartitioningColumns(
@@ -131,15 +142,30 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     partitionColumns
   }
 
-  def writeFiles(data: Dataset[_], writeOptions: Option[DeltaOptions]): Seq[FileAction] = {
-    writeFiles(data)
+  def writeFiles(
+      data: Dataset[_],
+      writeOptions: Option[DeltaOptions],
+      additionalConstraints: Seq[Constraint]): Seq[FileAction] = {
+    writeFiles(data, additionalConstraints)
+  }
+
+  def writeFiles(
+      data: Dataset[_],
+      writeOptions: Option[DeltaOptions]): Seq[FileAction] = {
+    writeFiles(data, writeOptions, Nil)
+  }
+
+  def writeFiles(data: Dataset[_]): Seq[FileAction] = {
+    writeFiles(data, Nil)
   }
 
   /**
    * Writes out the dataframe after performing schema validation. Returns a list of
    * actions to append these files to the reservoir.
    */
-  def writeFiles(data: Dataset[_]): Seq[FileAction] = {
+  def writeFiles(
+      data: Dataset[_],
+      additionalConstraints: Seq[Constraint]): Seq[FileAction] = {
     if (DeltaConfigs.CHANGE_DATA_CAPTURE.fromMetaData(metadata) ||
         DeltaConfigs.CHANGE_DATA_CAPTURE_LEGACY.fromMetaData(metadata)) {
       throw DeltaErrors.cdcWriteNotAllowedInThisVersion()
@@ -148,17 +174,18 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     hasWritten = true
 
     val spark = data.sparkSession
-    val partitionSchema = metadata.partitionSchema
+    val partitionSchema = metadata.physicalPartitionSchema
     val outputPath = deltaLog.dataPath
 
-    val (queryExecution, output, generatedColumnConstraints) =
-      normalizeData(deltaLog, data, metadata.partitionColumns)
+    val (queryExecution, output, generatedColumnConstraints) = normalizeData(deltaLog, data)
     val partitioningColumns =
       getPartitioningColumns(partitionSchema, output, output.length < data.schema.size)
 
     val committer = getCommitter(outputPath)
 
-    val constraints = Constraints.getAll(metadata, spark) ++ generatedColumnConstraints
+
+    val constraints =
+      Constraints.getAll(metadata, spark) ++ generatedColumnConstraints ++ additionalConstraints
 
     SQLExecution.withNewExecutionId(queryExecution, Option("deltaTransactionalWrite")) {
       val outputSpec = FileFormatWriter.OutputSpec(

@@ -913,8 +913,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
           ).map { name => new Path(inputDir.toString + "/_delta_log" + name) }
           for (logFilePath <- possibleFiles) {
             if (fs.exists(logFilePath)) {
-              // The cleanup logic has an edge case when files for higher versions don't have higher
-              // timestamps, so we set the timestamp to scale with version rather than just being 0.
+              // The cleanup logic has a corner case when files for higher versions don't have
+              // higher timestamps, so we set the timestamp to scale with version rather than just
+              // being 0.
               fs.setTimes(logFilePath, version * 1000, 0)
             }
           }
@@ -958,8 +959,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
           ).map { name => new Path(inputDir.toString + "/_delta_log" + name) }
           for (logFilePath <- possibleFiles) {
             if (fs.exists(logFilePath)) {
-              // The cleanup logic has an edge case when files for higher versions don't have higher
-              // timestamps, so we set the timestamp to scale with version rather than just being 0.
+              // The cleanup logic has a corner case when files for higher versions don't have
+              // higher timestamps, so we set the timestamp to scale with version rather than just
+              // being 0.
               fs.setTimes(logFilePath, version * 1000, 0)
             }
           }

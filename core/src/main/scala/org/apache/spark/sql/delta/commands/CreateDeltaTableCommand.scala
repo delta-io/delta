@@ -57,6 +57,8 @@ case class CreateDeltaTableCommand(
   with DeltaLogging {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
+    var table = this.table
+
     assert(table.tableType != CatalogTableType.VIEW)
     assert(table.identifier.database.isDefined, "Database should've been fixed at analysis")
     // There is a subtle race condition here, where the table can be created by someone else
@@ -89,8 +91,9 @@ case class CreateDeltaTableCommand(
       val loc = sparkSession.sessionState.catalog.defaultTablePath(table.identifier)
       table.copy(storage = table.storage.copy(locationUri = Some(loc)))
     } else {
-      // We are defining a new external table
-      assert(table.tableType == CatalogTableType.EXTERNAL)
+      // 1. We are defining a new external table
+      // 2. It's a managed table which already has the location populated. This can happen in DSV2
+      //    CTAS flow.
       table
     }
 

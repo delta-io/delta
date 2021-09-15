@@ -20,6 +20,8 @@ import scala.collection.JavaConverters._
 import scala.collection.Map
 
 import org.apache.spark.sql.delta.{DeltaErrors, PreprocessTableMerge}
+import org.apache.spark.sql.delta.DeltaViewHelper
+import org.apache.spark.sql.delta.commands.MergeIntoCommand
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
@@ -30,6 +32,7 @@ import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, NamedExpression}
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.functions.expr
+import org.apache.spark.sql.internal.SQLConf
 
 /**
  * Builder to specify how to merge data from source DataFrame into the target Delta table.
@@ -212,13 +215,18 @@ class DeltaMergeBuilder private(
     // MergeIntoTable instead, which blocked by the different issue with MergeIntoTable as explained
     // in the function `mergePlan` and https://issues.apache.org/jira/browse/SPARK-34962.
     val resolvedMergeInto =
-      DeltaMergeInto.resolveReferences(mergePlan, sparkSession.sessionState.conf)(
+      DeltaMergeInto.resolveReferencesAndSchema(mergePlan, sparkSession.sessionState.conf)(
         tryResolveReferences(sparkSession) _)
     if (!resolvedMergeInto.resolved) {
       throw DeltaErrors.analysisException("Failed to resolve\n", plan = Some(resolvedMergeInto))
     }
+    val strippedMergeInto = resolvedMergeInto.copy(
+      target = DeltaViewHelper.stripTempViewForMerge(resolvedMergeInto.target, SQLConf.get)
+    )
     // Preprocess the actions and verify
-    val mergeIntoCommand = PreprocessTableMerge(sparkSession.sessionState.conf)(resolvedMergeInto)
+    val mergeIntoCommand =
+      PreprocessTableMerge(sparkSession.sessionState.conf)(strippedMergeInto)
+        .asInstanceOf[MergeIntoCommand]
     sparkSession.sessionState.analyzer.checkAnalysis(mergeIntoCommand)
     mergeIntoCommand.run(sparkSession)
   }
