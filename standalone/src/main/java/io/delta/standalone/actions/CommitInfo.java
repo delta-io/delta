@@ -46,6 +46,32 @@ public class CommitInfo implements Action {
     private final Optional<String> userMetadata;
     private final Optional<String> engineInfo;
 
+    // For binary compatibility with version 0.2.0
+    public CommitInfo(Optional<Long> version, Timestamp timestamp, Optional<String> userId,
+                      Optional<String> userName, String operation,
+                      Map<String, String> operationParameters, Optional<JobInfo> jobInfo,
+                      Optional<NotebookInfo> notebookInfo, Optional<String> clusterId,
+                      Optional<Long> readVersion, Optional<String> isolationLevel,
+                      Optional<Boolean> isBlindAppend,
+                      Optional<Map<String, String>> operationMetrics,
+                      Optional<String> userMetadata) {
+        this.version = version;
+        this.timestamp = timestamp;
+        this.userId = userId;
+        this.userName = userName;
+        this.operation = operation;
+        this.operationParameters = operationParameters;
+        this.jobInfo = jobInfo;
+        this.notebookInfo = notebookInfo;
+        this.clusterId = clusterId;
+        this.readVersion = readVersion;
+        this.isolationLevel = isolationLevel;
+        this.isBlindAppend = isBlindAppend;
+        this.operationMetrics = operationMetrics;
+        this.userMetadata = userMetadata;
+        this.engineInfo = Optional.empty();
+    }
+
     public CommitInfo(Optional<Long> version, Timestamp timestamp, Optional<String> userId,
                       Optional<String> userName, String operation,
                       Map<String, String> operationParameters, Optional<JobInfo> jobInfo,

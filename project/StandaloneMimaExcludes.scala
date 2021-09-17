@@ -22,10 +22,15 @@ import com.typesafe.tools.mima.core.ProblemFilters._
  */
 object StandaloneMimaExcludes {
   val ignoredABIProblems = Seq(
+    // scalastyle:off line.size.limit
+
     // Ignore changes to internal Scala codes
     ProblemFilters.exclude[Problem]("io.delta.standalone.internal.*"),
 
     // Public API changes in 0.2.0 -> 0.3.0
-    ProblemFilters.exclude[ReversedMissingMethodProblem]("io.delta.standalone.DeltaLog.getChanges")
+    ProblemFilters.exclude[ReversedMissingMethodProblem]("io.delta.standalone.DeltaLog.getChanges"),
+    ProblemFilters.exclude[ReversedMissingMethodProblem]("io.delta.standalone.DeltaLog.startTransaction")
+
+    // scalastyle:on line.size.limit
   )
 }

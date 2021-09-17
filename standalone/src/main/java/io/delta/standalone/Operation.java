@@ -75,16 +75,14 @@ public final class Operation {
     }
 
     /**
-     * TODO
-     * @return
+     * @return operation name
      */
     public Name getName() {
         return name;
     }
 
     /**
-     * TODO
-     * @return
+     * @return operation parameters
      */
     public Map<String, Object> getParameters() {
         // TODO: be consistent with AddFile getter ternary
@@ -92,16 +90,14 @@ public final class Operation {
     }
 
     /**
-     * TODO
-     * @return
+     * @return operation metrics
      */
     public Map<String, String> getOperationMetrics() {
         return null == operationMetrics ? null : Collections.unmodifiableMap(operationMetrics);
     }
 
     /**
-     * TODO
-     * @return
+     * @return user metadata for this operation
      */
     public Optional<String> getUserMetadata() {
         return null == userMetadata ? Optional.empty() : userMetadata;
