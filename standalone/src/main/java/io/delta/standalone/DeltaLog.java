@@ -69,6 +69,16 @@ public interface DeltaLog {
     Snapshot getSnapshotForTimestampAsOf(long timestamp);
 
     /**
+     * Returns a new {@link OptimisticTransaction} that can be used to read the current state of the
+     * log and then commit updates. The reads and updates will be checked for logical conflicts
+     * with any concurrent writes to the log.
+     *
+     * Note that all reads in a transaction must go through the returned transaction object, and not
+     * directly to the {@link DeltaLog} otherwise they will not be checked for conflicts.
+     */
+    OptimisticTransaction startTransaction();
+
+    /**
      * @param version  the commit version to retrieve {@link CommitInfo}
      * @return the {@link CommitInfo} of the commit at the provided version.
      */

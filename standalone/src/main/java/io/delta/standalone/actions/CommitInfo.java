@@ -43,6 +43,7 @@ public class CommitInfo implements Action {
     private final Optional<Boolean> isBlindAppend;
     private final Optional<Map<String, String>> operationMetrics;
     private final Optional<String> userMetadata;
+    private final Optional<String> writerId;
 
     public CommitInfo(Optional<Long> version, Timestamp timestamp, Optional<String> userId,
                       Optional<String> userName, String operation,
@@ -51,7 +52,7 @@ public class CommitInfo implements Action {
                       Optional<Long> readVersion, Optional<String> isolationLevel,
                       Optional<Boolean> isBlindAppend,
                       Optional<Map<String, String>> operationMetrics,
-                      Optional<String> userMetadata) {
+                      Optional<String> userMetadata, Optional<String> writerId) {
         this.version = version;
         this.timestamp = timestamp;
         this.userId = userId;
@@ -66,6 +67,7 @@ public class CommitInfo implements Action {
         this.isBlindAppend = isBlindAppend;
         this.operationMetrics = operationMetrics;
         this.userMetadata = userMetadata;
+        this.writerId = writerId;
     }
 
     /**
@@ -169,6 +171,14 @@ public class CommitInfo implements Action {
         return userMetadata;
     }
 
+    /**
+     * @return the writerId of the operation that performed this commit. It should be of the form
+     *         "{engineName}-{engineVersion}-deltaStandalone-{deltaStandaloneVersion}"
+     */
+    public Optional<String> getWriterId() {
+        return writerId;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -187,14 +197,15 @@ public class CommitInfo implements Action {
                 Objects.equals(isolationLevel, that.isolationLevel) &&
                 Objects.equals(isBlindAppend, that.isBlindAppend) &&
                 Objects.equals(operationMetrics, that.operationMetrics) &&
-                Objects.equals(userMetadata, that.userMetadata);
+                Objects.equals(userMetadata, that.userMetadata) &&
+                Objects.equals(writerId, that.writerId);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(version, timestamp, userId, userName, operation, operationParameters,
                 jobInfo, notebookInfo, clusterId, readVersion, isolationLevel, isBlindAppend,
-                operationMetrics, userMetadata);
+                operationMetrics, userMetadata, writerId);
     }
 
     /**
