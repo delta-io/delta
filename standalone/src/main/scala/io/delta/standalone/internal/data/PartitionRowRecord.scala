@@ -1,3 +1,19 @@
+/*
+ * Copyright (2021) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package io.delta.standalone.internal.data
 
 import java.sql.{Date, Timestamp}
@@ -43,11 +59,11 @@ private[internal] class PartitionRowRecord(
     partitionValues(fieldName).toInt
   }
 
-  override def getLong(fieldName: String): Long = ???
+  override def getLong(fieldName: String): Long = 0 // TODO
 
-  override def getByte(fieldName: String): Byte = ???
+  override def getByte(fieldName: String): Byte = 0 // TODO
 
-  override def getShort(fieldName: String): Short = ???
+  override def getShort(fieldName: String): Short = 0 // TODO
 
   override def getBoolean(fieldName: String): Boolean = {
     requireFieldExists(fieldName)
@@ -55,23 +71,23 @@ private[internal] class PartitionRowRecord(
     partitionValues(fieldName).toBoolean
   }
 
-  override def getFloat(fieldName: String): Float = ???
+  override def getFloat(fieldName: String): Float = 0 // TODO
 
-  override def getDouble(fieldName: String): Double = ???
+  override def getDouble(fieldName: String): Double = 0 // TODO
 
-  override def getString(fieldName: String): String = ???
+  override def getString(fieldName: String): String = null // TODO
 
-  override def getBinary(fieldName: String): Array[Byte] = ???
+  override def getBinary(fieldName: String): Array[Byte] = null // TODO
 
-  override def getBigDecimal(fieldName: String): java.math.BigDecimal = ???
+  override def getBigDecimal(fieldName: String): java.math.BigDecimal = null // TODO
 
-  override def getTimestamp(fieldName: String): Timestamp = ???
+  override def getTimestamp(fieldName: String): Timestamp = null // TODO
 
-  override def getDate(fieldName: String): Date = ???
+  override def getDate(fieldName: String): Date = null // TODO
 
-  override def getRecord(fieldName: String): RowRecordJ = ???
+  override def getRecord(fieldName: String): RowRecordJ = null // TODO
 
-  override def getList[T](fieldName: String): java.util.List[T] = ???
+  override def getList[T](fieldName: String): java.util.List[T] = null // TODO
 
-  override def getMap[K, V](fieldName: String): java.util.Map[K, V] = ???
+  override def getMap[K, V](fieldName: String): java.util.Map[K, V] = null // TODO
 }

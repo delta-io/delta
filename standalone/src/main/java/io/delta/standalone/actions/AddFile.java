@@ -66,7 +66,7 @@ public final class AddFile implements FileAction {
      * @see <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#Partition-Value-Serialization" target="_blank">Delta Protocol Partition Value Serialization</a>
      */
     public Map<String, String> getPartitionValues() {
-        return Collections.unmodifiableMap(partitionValues);
+        return partitionValues != null ? Collections.unmodifiableMap(partitionValues) : null;
     }
 
     /**
@@ -106,7 +106,7 @@ public final class AddFile implements FileAction {
      * @return an unmodifiable {@code Map} containing metadata about this file
      */
     public Map<String, String> getTags() {
-        return Collections.unmodifiableMap(tags);
+        return tags != null ? Collections.unmodifiableMap(tags) : null;
     }
 
     @Override

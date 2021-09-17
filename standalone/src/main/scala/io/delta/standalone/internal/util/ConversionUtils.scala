@@ -19,15 +19,19 @@ package io.delta.standalone.internal.util
 import java.lang.{String => StringJ}
 import java.util.{Optional => OptionalJ}
 
-import collection.JavaConverters._
+import scala.collection.JavaConverters._
 
 import io.delta.standalone.actions.{Action => ActionJ, AddFile => AddFileJ, AddCDCFile => AddCDCFileJ, CommitInfo => CommitInfoJ, Format => FormatJ, JobInfo => JobInfoJ, Metadata => MetadataJ, NotebookInfo => NotebookInfoJ, Protocol => ProtocolJ, RemoveFile => RemoveFileJ, SetTransaction => SetTransactionJ}
 import io.delta.standalone.internal.actions.{Action, AddCDCFile, AddFile, CommitInfo, Format, JobInfo, Metadata, NotebookInfo, Protocol, RemoveFile, SetTransaction}
 
 /**
- * Provide helper methods to convert from Scala to Java types.
+ * Provide helper methods to convert from Scala to Java types and vice versa.
  */
 private[internal] object ConversionUtils {
+
+  ///////////////////////////////////////////////////////////////////////////
+  // Scala to Java conversions
+  ///////////////////////////////////////////////////////////////////////////
 
   /**
    * This is a workaround for a known issue in Scala 2.11: `asJava` doesn't handle `null`.
@@ -148,7 +152,8 @@ private[internal] object ConversionUtils {
       toJavaStringOptional(internal.isolationLevel),
       toJavaBooleanOptional(internal.isBlindAppend),
       toJavaMapOptional(internal.operationMetrics),
-      toJavaStringOptional(internal.userMetadata)
+      toJavaStringOptional(internal.userMetadata),
+      toJavaStringOptional(internal.engineInfo)
     )
   }
 
@@ -181,7 +186,7 @@ private[internal] object ConversionUtils {
 
   def convertAction(internal: Action): ActionJ = internal match {
     case x: AddFile => convertAddFile(x)
-    case a: AddCDCFile => convertAddCDCFile(a)
+    case x: AddCDCFile => convertAddCDCFile(x)
     case x: RemoveFile => convertRemoveFile(x)
     case x: CommitInfo => convertCommitInfo(x)
     case x: Format => convertFormat(x)
@@ -191,4 +196,104 @@ private[internal] object ConversionUtils {
     case x: SetTransaction => convertSetTransaction(x)
     case x: Protocol => convertProtocol(x)
   }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // Java to Scala conversions
+  ///////////////////////////////////////////////////////////////////////////
+
+//  private implicit def toScalaLongOption(opt: OptionalJ[java.lang.Long]): Option[Long] =
+//    if (opt.isPresent) Some(opt.get()) else None
+//
+//  private implicit def toScalaStringOption(opt: OptionalJ[StringJ]): Option[String] =
+//    if (opt.isPresent) Some(opt.get()) else None
+
+  // TODO verify this actually works
+  private implicit def toScalaOption[J, S](opt: OptionalJ[J]): Option[S] =
+    if (opt.isPresent) Some(opt.get().asInstanceOf[S]) else None
+
+  def convertActionJ(external: ActionJ): Action = external match {
+    case x: AddFileJ => convertAddFileJ(x)
+    case x: RemoveFileJ => convertRemoveFileJ(x)
+    case x: CommitInfoJ => convertCommitInfoJ(x)
+    case x: MetadataJ => convertMetadataJ(x)
+    case x: ProtocolJ => convertProtocolJ(x)
+    // TODO others
+    case _ => throw new UnsupportedOperationException("cannot convert this Java Action")
+  }
+
+  def convertAddFileJ(external: AddFileJ): AddFile = {
+    AddFile(
+      external.getPath,
+      external.getPartitionValues.asScala.toMap,
+      external.getSize,
+      external.getModificationTime,
+      external.isDataChange,
+      external.getStats,
+      if (external.getTags != null) external.getTags.asScala.toMap else null
+    )
+  }
+
+  def convertRemoveFileJ(external: RemoveFileJ): RemoveFile = {
+    RemoveFile(
+      external.getPath,
+      external.getDeletionTimestamp, // implicit check this!
+      external.isDataChange,
+      external.isExtendedFileMetadata,
+      if (external.isExtendedFileMetadata && external.getPartitionValues != null) {
+        external.getPartitionValues.asScala.toMap
+      } else null,
+      if (external.isExtendedFileMetadata) external.getSize else 0,
+      if (external.isExtendedFileMetadata && external.getTags != null) {
+        external.getTags.asScala.toMap
+      } else null
+    )
+  }
+
+  def convertCommitInfoJ(external: CommitInfoJ): CommitInfo = {
+    CommitInfo(
+      external.getVersion, // implicit check this!
+      external.getTimestamp,
+      external.getUserId, // implicit check this!
+      external.getUserName, // implicit check this!
+      external.getOperation,
+      external.getOperationParameters.asScala.toMap,
+      None, // TODO: Option[JobInfo]
+      None, // TODO: Option[NotebookInfo]
+      external.getClusterId, // implicit check this!
+      external.getReadVersion, // implicit check this!
+      external.getIsolationLevel, // implicit check this!
+      external.getIsBlindAppend, // implicit check this!
+      external.getOperationMetrics, // implicit check this!
+      external.getUserMetadata, // implicit check this!
+      external.getEngineInfo // implicit check this!
+    )
+  }
+
+  def convertMetadataJ(external: MetadataJ): Metadata = {
+    Metadata(
+      external.getId,
+      external.getName,
+      external.getDescription,
+      convertFormatJ(external.getFormat),
+      external.getSchema.toJson,
+      external.getPartitionColumns.asScala,
+      external.getConfiguration.asScala.toMap,
+      external.getCreatedTime // implicit check this!
+    )
+  }
+
+  def convertProtocolJ(external: ProtocolJ): Protocol = {
+    Protocol(
+      external.getMinReaderVersion,
+      external.getMinWriterVersion
+    )
+  }
+
+  def convertFormatJ(external: FormatJ): Format = {
+    Format(
+      external.getProvider,
+      external.getOptions.asScala.toMap
+    )
+  }
+
 }

@@ -16,21 +16,30 @@
 
 package io.delta.standalone.internal.exception
 
-import java.io.FileNotFoundException
+import java.io.{FileNotFoundException, IOException}
+import java.util.ConcurrentModificationException
 
+import io.delta.standalone.internal.actions.Protocol
+import io.delta.standalone.internal.sources.StandaloneHadoopConf
 import org.apache.hadoop.fs.Path
-
 import io.delta.standalone.types.StructType
 
 /** A holder object for Delta errors. */
 private[internal] object DeltaErrors {
 
-  /** Thrown when the protocol version of a table is greater than supported by this client. */
-  case class InvalidProtocolVersionException(
-      clientProtocolVersion: Int,
-      tableProtocolVersion: Int) extends RuntimeException(
-    s"Delta protocol version $tableProtocolVersion is too new for this version of Delta " +
-      s"Standalone Reader $clientProtocolVersion. Please upgrade to a newer release.")
+  /**
+   * Thrown when the protocol version of a table is greater than the one supported by this client
+   */
+  class InvalidProtocolVersionException(
+      clientProtocol: Protocol,
+      tableProtocol: Protocol) extends RuntimeException(
+    s"""
+       |Delta protocol version ${tableProtocol.simpleString} is too new for this version of Delta
+       |Standalone Reader/Writer ${clientProtocol.simpleString}. Please upgrade to a newer release.
+       |""".stripMargin)
+
+  class DeltaConcurrentModificationException(message: String)
+    extends ConcurrentModificationException(message)
 
   def deltaVersionsNotContiguousException(deltaVersions: Seq[Long]): Throwable = {
     new IllegalStateException(s"Versions ($deltaVersions) are not contiguous.")
@@ -61,6 +70,7 @@ private[internal] object DeltaErrors {
   }
 
   def noReproducibleHistoryFound(logPath: Path): Throwable = {
+    // TODO: AnalysisException ?
     new RuntimeException(s"No reproducible commits found at $logPath")
   }
 
@@ -83,6 +93,7 @@ private[internal] object DeltaErrors {
   }
 
   def noHistoryFound(logPath: Path): Throwable = {
+    // TODO: AnalysisException ?
     new RuntimeException(s"No commits found at $logPath")
   }
 
@@ -112,4 +123,71 @@ private[internal] object DeltaErrors {
        """.stripMargin
     )
   }
+
+  def metadataAbsentException(): Throwable = {
+    new IllegalStateException(
+      "Couldn't find Metadata while committing the first version of the Delta table.")
+  }
+
+  def protocolDowngradeException(oldProtocol: Protocol, newProtocol: Protocol): Throwable = {
+    // TODO: class ProtocolDowngradeException ?
+    new RuntimeException("Protocol version cannot be downgraded from " +
+      s"${oldProtocol.simpleString} to ${newProtocol.simpleString}")
+  }
+
+  def addFilePartitioningMismatchException(
+      addFilePartitions: Seq[String],
+      metadataPartitions: Seq[String]): Throwable = {
+    new IllegalStateException(
+      s"""
+         |The AddFile contains partitioning schema different from the table's partitioning schema
+         |expected: ${DeltaErrors.formatColumnList(metadataPartitions)}
+         |actual: ${DeltaErrors.formatColumnList(addFilePartitions)}
+      """.stripMargin)
+  }
+
+  def modifyAppendOnlyTableException: Throwable = {
+    new UnsupportedOperationException(
+      "This table is configured to only allow appends. If you would like to permit " +
+        s"updates or deletes, use 'ALTER TABLE <table_name> SET TBLPROPERTIES " +
+        s"(appendOnly=false)'.")
+  }
+
+  def invalidColumnName(name: String): Throwable = {
+    // TODO: AnalysisException ??
+    new RuntimeException(
+      s"""Attribute name "$name" contains invalid character(s) among " ,;{}()\\n\\t=".
+         |Please use alias to rename it.
+       """.stripMargin.split("\n").mkString(" ").trim)
+  }
+
+  // TODO: AnalysisException ??
+  def invalidPartitionColumn(e: RuntimeException): Throwable = {
+    // TODO: AnalysisException ??
+    new RuntimeException(
+      """Found partition columns having invalid character(s) among " ,;{}()\n\t=". Please """ +
+        "change the name to your partition columns. This check can be turned off by setting " +
+        """spark.conf.set("spark.databricks.delta.partitionColumnValidity.enabled", false) """ +
+        "however this is not recommended as other features of Delta may not work properly.",
+      e)
+  }
+
+  def incorrectLogStoreImplementationException(cause: Throwable): Throwable = {
+    new IOException(s"""
+     |The error typically occurs when the default LogStore implementation, that
+     |is, HDFSLogStore, is used to write into a Delta table on a non-HDFS storage system.
+     |In order to get the transactional ACID guarantees on table updates, you have to use the
+     |correct implementation of LogStore that is appropriate for your storage system.
+     |See https://docs.delta.io/latest/delta-storage.html for details.
+      """.stripMargin, cause)
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // Helper Methods
+  ///////////////////////////////////////////////////////////////////////////
+
+  private def formatColumn(colName: String): String = s"`$colName`"
+
+  private def formatColumnList(colNames: Seq[String]): String =
+    colNames.map(formatColumn).mkString("[", ", ", "]")
 }

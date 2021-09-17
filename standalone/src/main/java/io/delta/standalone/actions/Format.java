@@ -33,6 +33,11 @@ public final class Format implements Action {
         this.options = options;
     }
 
+    public Format() {
+        this.provider = "parquet";
+        this.options = Collections.emptyMap();
+    }
+
     /**
      * @return the name of the encoding for files in this table
      */

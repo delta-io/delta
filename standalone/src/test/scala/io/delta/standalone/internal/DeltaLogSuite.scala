@@ -29,7 +29,7 @@ import io.delta.standalone.{DeltaLog, Snapshot}
 import io.delta.standalone.actions.{AddFile => AddFileJ, CommitInfo => CommitInfoJ,
   Format => FormatJ, JobInfo => JobInfoJ, Metadata => MetadataJ, NotebookInfo => NotebookInfoJ,
  RemoveFile => RemoveFileJ}
-import io.delta.standalone.internal.actions.Action
+import io.delta.standalone.internal.actions.{Action, Protocol}
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.util.GoldenTableUtils._
 import io.delta.standalone.types.{IntegerType, StructField => StructFieldJ, StructType => StructTypeJ}
@@ -239,8 +239,8 @@ class DeltaLogSuite extends FunSuite {
       withLogForGoldenTable("deltalog-invalid-protocol-version") { _ => }
     }
 
-    assert(e.getMessage ===
-      DeltaErrors.InvalidProtocolVersionException(Action.readerVersion, 99).getMessage)
+    assert(e.getMessage ===new DeltaErrors.InvalidProtocolVersionException(Action.protocolVersion,
+      Protocol(99)).getMessage)
   }
 
   test("get commit info") {
@@ -495,6 +495,7 @@ class DeltaLogSuite extends FunSuite {
       Optional.empty(),
       Optional.empty(),
       Optional.empty(),
+      Optional.empty(),
       Optional.empty())
     assert(commitInfoFromBuilderDefaults == commitInfoFromConstructorDefaults)
 
@@ -513,6 +514,7 @@ class DeltaLogSuite extends FunSuite {
       .isBlindAppend(true)
       .operationMetrics(Map("test"->"metric").asJava)
       .userMetadata("user_metadata")
+      .engineInfo("engine_info")
       .build()
     val commitInfoFromConstructor = new CommitInfoJ(
       Optional.of(0L),
@@ -528,7 +530,8 @@ class DeltaLogSuite extends FunSuite {
       Optional.of("test_level"),
       Optional.of(true),
       Optional.of(Map("test"->"metric").asJava),
-      Optional.of("user_metadata"))
+      Optional.of("user_metadata"),
+      Optional.of("engine_info"))
     assert(commitInfoFromBuilder == commitInfoFromConstructor)
   }
 }

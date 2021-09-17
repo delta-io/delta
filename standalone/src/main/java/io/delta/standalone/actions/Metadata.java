@@ -128,8 +128,7 @@ public final class Metadata implements Action {
 
     @Override
     public int hashCode() {
-        return Objects.hash(id, name, description, format, partitionColumns,
-                configuration, createdTime, schema);
+        return Objects.hash(id, name, description, format, partitionColumns, configuration, createdTime, schema);
     }
 
     /**

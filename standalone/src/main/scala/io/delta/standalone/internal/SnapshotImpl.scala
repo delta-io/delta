@@ -151,11 +151,11 @@ private[internal] class SnapshotImpl(
    */
   private def assertProtocolRead(): Unit = {
     if (null != protocolScala) {
-      val clientVersion = Action.readerVersion
-      val tblVersion = protocolScala.minReaderVersion
+      val clientReadVersion = Action.readerVersion
+      val tblReadVersion = protocolScala.minReaderVersion
 
-      if (clientVersion < tblVersion) {
-        throw DeltaErrors.InvalidProtocolVersionException(clientVersion, tblVersion)
+      if (clientReadVersion < tblReadVersion) {
+        throw new DeltaErrors.InvalidProtocolVersionException(Action.protocolVersion, protocolScala)
       }
     }
   }
