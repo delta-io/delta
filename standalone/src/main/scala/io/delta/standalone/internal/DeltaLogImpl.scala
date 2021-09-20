@@ -60,6 +60,14 @@ private[internal] class DeltaLogImpl private(
   /** Delta History Manager containing version and commit history. */
   protected lazy val history = DeltaHistoryManager(this)
 
+  /** Returns the checkpoint interval for this log. Not transactional. */
+  // TODO: DeltaConfigs.CHECKPOINT_INTERVAL
+  def checkpointInterval: Int = metadata.configuration.getOrElse("checkpointInterval", "10").toInt
+
+  ///////////////////////////////////////////////////////////////////////////
+  // Public Java API Methods
+  ///////////////////////////////////////////////////////////////////////////
+
   override def getPath: Path = dataPath
 
   override def getCommitInfoAt(version: Long): CommitInfoJ = {
@@ -94,6 +102,10 @@ private[internal] class DeltaLogImpl private(
     update()
     new OptimisticTransactionImpl(this, snapshot)
   }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // Internal Methods
+  ///////////////////////////////////////////////////////////////////////////
 
   /**
    * Run `body` inside `deltaLogLock` lock using `lockInterruptibly` so that the thread can be
@@ -132,6 +144,7 @@ private[internal] class DeltaLogImpl private(
    * can remove data such as DELETE/UPDATE/MERGE.
    */
   def assertRemovable(): Unit = {
+    // TODO: DeltaConfig.IS_APPEND_ONLY
     if (metadata.configuration.getOrElse("appendOnly", "false").toBoolean) {
       throw DeltaErrors.modifyAppendOnlyTableException
     }

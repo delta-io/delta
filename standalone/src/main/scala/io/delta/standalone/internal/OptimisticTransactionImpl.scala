@@ -196,7 +196,11 @@ private[internal] class OptimisticTransactionImpl(
   private def postCommit(commitVersion: Long): Unit = {
     committed = true
 
-    // TODO: checkpoint
+    if (shouldCheckpoint(commitVersion)) {
+      // We checkpoint the version to be committed to so that no two transactions will checkpoint
+      // the same version.
+      deltaLog.checkpoint(deltaLog.getSnapshotForVersionAsOf(commitVersion))
+    }
   }
 
   ///////////////////////////////////////////////////////////////////////////
@@ -235,5 +239,12 @@ private[internal] class OptimisticTransactionImpl(
     } else {
       body
     }
+  }
+
+  /**
+   * Returns true if we should checkpoint the version that has just been committed.
+   */
+  private def shouldCheckpoint(committedVersion: Long): Boolean = {
+    committedVersion != 0 && committedVersion % deltaLog.checkpointInterval == 0
   }
 }

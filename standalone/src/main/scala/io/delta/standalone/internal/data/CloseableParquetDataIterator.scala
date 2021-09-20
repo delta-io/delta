@@ -31,7 +31,7 @@ import io.delta.standalone.types.StructType
  *
  * @param dataFilePaths paths of files to iterate over, not null
  * @param schema data schema, not null. Used to read and verify the parquet data
- * @param timeZoneId time zone ID for data, can be null. Used to ensure proper Date and Timestamp
+ * @param readTimeZone time zone ID for data, can be null. Used to ensure proper Date and Timestamp
  *                   decoding
  */
 private[internal] case class CloseableParquetDataIterator(

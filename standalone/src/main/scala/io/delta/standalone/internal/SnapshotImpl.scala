@@ -51,7 +51,9 @@ private[internal] class SnapshotImpl(
   import SnapshotImpl._
 
   /** Convert the timeZoneId to an actual timeZone that can be used for decoding. */
-  private val readTimeZone = {
+  // TODO: this should be at the log level
+  // TODO: rename to timeZone
+  val readTimeZone = {
     if (hadoopConf.get(StandaloneHadoopConf.PARQUET_DATA_TIME_ZONE_ID) == null) {
       TimeZone.getDefault
     } else {
@@ -86,6 +88,7 @@ private[internal] class SnapshotImpl(
   def allFilesScala: Seq[AddFile] = state.activeFiles.values.toSeq
   def protocolScala: Protocol = state.protocol
   def metadataScala: Metadata = state.metadata
+  def numOfFiles: Long = state.numOfFiles
 
   private def load(paths: Seq[Path]): Seq[SingleAction] = {
     paths.map(_.toString).sortWith(_ < _).par.flatMap { path =>

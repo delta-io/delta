@@ -14,13 +14,11 @@
  * limitations under the License.
  */
 
-package io.delta.standalone.internal.sources
 
-/**
- * [[org.apache.hadoop.conf.Configuration]] entries for Delta Standalone Reader features.
- */
-private[internal] object StandaloneHadoopConf {
+package io.delta.standalone.internal
 
-  /** time zone as which time-based parquet values will be encoded and decoded */
-  val PARQUET_DATA_TIME_ZONE_ID = "io.delta.standalone.PARQUET_DATA_TIME_ZONE_ID"
+object DeltaConfig {
+  // TODO IS_APPEND_ONLY
+
+  // TODO CHECKPOINT_INTERVAL
 }

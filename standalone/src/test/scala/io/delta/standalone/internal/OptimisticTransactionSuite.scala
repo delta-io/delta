@@ -21,7 +21,7 @@ import java.util.{Collections, Optional, UUID}
 import scala.collection.JavaConverters._
 
 import io.delta.standalone.{DeltaLog, Operation}
-import io.delta.standalone.actions.{AddFile => AddFileJ, Format => FormatJ, Metadata => MetadataJ}
+import io.delta.standalone.actions.{Action => ActionJ, AddFile => AddFileJ, Format => FormatJ, Metadata => MetadataJ, RemoveFile => RemoveFileJ}
 import io.delta.standalone.types.{IntegerType, StringType, StructField, StructType}
 import io.delta.standalone.internal.util.TestUtils._
 import org.apache.hadoop.conf.Configuration
@@ -44,6 +44,14 @@ class OptimisticTransactionSuite extends FunSuite {
 
   val ManualUpdate = new Operation(Operation.Name.MANUAL_UPDATE)
 
+  def createAddFileJ(path: String): AddFileJ = {
+    new AddFileJ(path, Collections.emptyMap(), 100, 100, true, null, null)
+  }
+
+  def createRemoveFileJ(path: String): RemoveFileJ = {
+    new RemoveFileJ(path, Optional.of(100L), true, false, null, 0, null)
+  }
+
   test("basic") {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
@@ -55,6 +63,27 @@ class OptimisticTransactionSuite extends FunSuite {
       val readActions = versionLogs(0).getActions.asScala
 
       assert(actions.toSet.subsetOf(readActions.toSet))
+    }
+  }
+
+  test("checkpoint") {
+    withTempDir { dir =>
+      val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
+      (1 to 15).foreach { i =>
+        val meta = if (i == 1) metadata :: Nil else Nil
+        val txn = log.startTransaction()
+        val file = createAddFileJ(i.toString) :: Nil
+        val delete: Seq[ActionJ] = if (i > 1) {
+          createRemoveFileJ(i - 1 toString) :: Nil
+        } else {
+          Nil
+        }
+        txn.commit((meta ++ delete ++ file).asJava, ManualUpdate, "test-writer-id")
+      }
+
+      val log2 = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
+      assert(log2.snapshot.getVersion == 14)
+      assert(log2.snapshot.getAllFiles.size == 1)
     }
   }
 
