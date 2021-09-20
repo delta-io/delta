@@ -29,7 +29,6 @@ import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
-import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
 import org.apache.hadoop.mapreduce.{Job, TaskType}
@@ -234,8 +233,6 @@ object Checkpoints extends DeltaLogging {
       snapshot: Snapshot): CheckpointMetaData = {
     import SingleAction._
 
-    val hadoopConf = spark.sessionState.newHadoopConf
-
     // The writing of checkpoints doesn't go through log store, so we need to check with the
     // log store and decide whether to use rename.
     val useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath)
@@ -258,7 +255,7 @@ object Checkpoints extends DeltaLogging {
 
     val (factory, serConf) = {
       val format = new ParquetFileFormat()
-      val job = Job.getInstance(hadoopConf)
+      val job = Job.getInstance()
       (format.prepareWrite(spark, job, Map.empty, schema),
         new SerializableConfiguration(job.getConfiguration))
     }
@@ -280,40 +277,28 @@ object Checkpoints extends DeltaLogging {
           } else {
             path
           }
-        val writeAction = () => {
-          try {
-            val writer = factory.newInstance(
-              writtenPath,
-              schema,
-              new TaskAttemptContextImpl(
-                new JobConf(serConf.value),
-                new TaskAttemptID("", 0, TaskType.REDUCE, 0, 0)))
+        try {
+          val writer = factory.newInstance(
+            writtenPath,
+            schema,
+            new TaskAttemptContextImpl(
+              new JobConf(serConf.value),
+              new TaskAttemptID("", 0, TaskType.REDUCE, 0, 0)))
 
-            iter.foreach { row =>
-              checkpointSize.add(1)
-              writer.write(row)
+          iter.foreach { row =>
+            checkpointSize.add(1)
+            writer.write(row)
+          }
+          writer.close()
+        } catch {
+          case e: org.apache.hadoop.fs.FileAlreadyExistsException if !useRename =>
+            val p = new Path(writtenPath)
+            if (p.getFileSystem(serConf.value).exists(p)) {
+              // The file has been written by a zombie task. We can just use this checkpoint file
+              // rather than failing a Delta commit.
+            } else {
+              throw e
             }
-            writer.close()
-          } catch {
-            case e: org.apache.hadoop.fs.FileAlreadyExistsException if !useRename =>
-              val p = new Path(writtenPath)
-              if (p.getFileSystem(serConf.value).exists(p)) {
-                // The file has been written by a zombie task. We can just use this checkpoint file
-                // rather than failing a Delta commit.
-              } else {
-                throw e
-              }
-          }
-        }
-        if (isGCSPath(serConf.value, new Path(writtenPath))) {
-          // GCS may upload an incomplete file when the current thread is interrupted, hence we move
-          // the write to a new thread so that the write cannot be interrupted.
-          // TODO Remove this hack when the GCS Hadoop connector fixes the issue.
-          DeltaFileOperations.runInNewThread("delta-gcs-checkpoint-write") {
-            writeAction()
-          }
-        } else {
-          writeAction()
         }
         Iterator(writtenPath)
       }.collect().head
@@ -321,7 +306,7 @@ object Checkpoints extends DeltaLogging {
     if (useRename) {
       val src = new Path(writtenPath)
       val dest = new Path(path)
-      val fs = dest.getFileSystem(hadoopConf)
+      val fs = dest.getFileSystem(spark.sessionState.newHadoopConf)
       var renameDone = false
       try {
         if (fs.rename(src, dest)) {
@@ -348,15 +333,6 @@ object Checkpoints extends DeltaLogging {
       logWarning(DeltaErrors.EmptyCheckpointErrorMessage)
     }
     CheckpointMetaData(snapshot.version, checkpointSize.value, None)
-  }
-
-  private[delta] def isGCSPath(hadoopConf: Configuration, path: Path): Boolean = {
-    val scheme = path.toUri.getScheme
-    if (scheme != null) {
-      scheme == "gs"
-    } else {
-      path.getFileSystem(hadoopConf).getScheme == "gs"
-    }
   }
 
   /**
@@ -408,10 +384,10 @@ object CheckpointV2 {
    */
   def extractPartitionValues(partitionSchema: StructType): Option[Column] = {
     val partitionValues = partitionSchema.map { field =>
-      val colName = field.name
-      new Column(UnresolvedAttribute("add" :: "partitionValues" :: colName :: Nil).name)
+      val physicalName = DeltaColumnMapping.getPhysicalName(field)
+      new Column(UnresolvedAttribute("add" :: "partitionValues" :: physicalName :: Nil))
         .cast(field.dataType)
-        .as(colName)
+        .as(physicalName)
     }
     if (partitionValues.isEmpty) None else Some(struct(partitionValues: _*).as(PARTITIONS_COL_NAME))
   }
