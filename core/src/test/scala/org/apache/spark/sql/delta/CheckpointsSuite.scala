@@ -32,7 +32,7 @@ class CheckpointsSuite extends QueryTest with SharedSparkSession {
     super.sparkConf.set("spark.delta.logStore.gs.impl", classOf[LocalLogStore].getName)
   }
 
-  ignore("isGCSPath") {
+  test("isGCSPath") {
     val conf = new Configuration()
     assert(Checkpoints.isGCSPath(conf, new Path("gs://foo/bar")))
     assert(!Checkpoints.isGCSPath(conf, new Path("non-gs://foo/bar")))
