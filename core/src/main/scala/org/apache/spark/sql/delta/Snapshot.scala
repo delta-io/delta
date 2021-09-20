@@ -60,7 +60,8 @@ class Snapshot(
     val minFileRetentionTimestamp: Long,
     val deltaLog: DeltaLog,
     val timestamp: Long,
-    val checksumOpt: Option[VersionChecksum])
+    val checksumOpt: Option[VersionChecksum],
+    val minSetTransactionRetentionTimestamp: Option[Long] = None)
   extends StateCache
   with PartitionFiltering
   with DeltaFileFormat
@@ -90,22 +91,28 @@ class Snapshot(
     val implicits = spark.implicits
     import implicits._
 
-    val time = minFileRetentionTimestamp
+    // for serializability
+    val localMinFileRetentionTimestamp = minFileRetentionTimestamp
+    val localMinSetTransactionRetentionTimestamp = minSetTransactionRetentionTimestamp
+    val localLogPath = path.toUri
+
     val hadoopConf = spark.sparkContext.broadcast(
       new SerializableConfiguration(spark.sessionState.newHadoopConf()))
-    val logPath = path.toUri // for serializability
     var wrapPath = false
 
     loadActions.mapPartitions { actions =>
         val hdpConf = hadoopConf.value.value
         actions.flatMap(canonicalizePath(_, hdpConf, wrapPath))
       }
-      .withColumn("file", assertLogBelongsToTable(logPath)(input_file_name()))
+      .withColumn("file", assertLogBelongsToTable(localLogPath)(input_file_name()))
       .repartition(getNumPartitions, coalesce($"add.path", $"remove.path"))
       .sortWithinPartitions("file")
       .as[SingleAction]
       .mapPartitions { iter =>
-        val state = new InMemoryLogReplay(time)
+        val state = new InMemoryLogReplay(
+          localMinFileRetentionTimestamp,
+          localMinSetTransactionRetentionTimestamp)
+
         state.append(0, iter.map(_.unwrap))
         state.checkpoint.map(_.wrap)
       }
@@ -250,6 +257,11 @@ class Snapshot(
 
   protected lazy val fileIndices: Seq[DeltaLogFileIndex] = {
     checkpointFileIndexOpt.toSeq ++ deltaFileIndexOpt.toSeq
+  }
+
+  /** Whether the table uses column mapping. */
+  def usesColumnMapping: Boolean = {
+    DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(metadata) != NoMapping
   }
 
   /** Creates a LogicalRelation with the given schema from a DeltaLogFileIndex. */

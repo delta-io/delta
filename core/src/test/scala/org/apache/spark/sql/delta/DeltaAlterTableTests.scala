@@ -35,7 +35,7 @@ import org.apache.spark.util.Utils
 
 trait DeltaAlterTableTestBase
   extends QueryTest
-  with SharedSparkSession {
+  with SharedSparkSession  with DeltaTestUtilsForTempViews {
 
   protected def createTable(schema: String, tblProperties: Map[String, String]): String
 
@@ -123,6 +123,25 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       assert(deltaLog.deltaRetentionMillis == 2 * 7 * 24 * 60 * 60 * 1000)
       assert(deltaLog.checkpointInterval ==
         CHECKPOINT_INTERVAL.fromString(CHECKPOINT_INTERVAL.defaultValue))
+    }
+  }
+
+  testQuietlyWithTempView("negative case - not supported on temp views") { isSQLTempView =>
+    withDeltaTable("v1 int, v2 string") { tableName =>
+      createTempViewFromTable(tableName, isSQLTempView)
+
+      val e = intercept[AnalysisException] {
+        sql(
+          """
+            |ALTER TABLE v
+            |SET TBLPROPERTIES (
+            |  'delta.logRetentionDuration' = '2 weeks',
+            |  'delta.checkpointInterval' = '20',
+            |  'key' = 'value'
+            |)""".stripMargin)
+      }
+      assert(e.getMessage.contains("expects a table. Please use ALTER VIEW instead.") ||
+        e.getMessage.contains("'v' is a view not a table."))
     }
   }
 

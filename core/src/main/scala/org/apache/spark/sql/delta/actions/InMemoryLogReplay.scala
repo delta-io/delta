@@ -32,7 +32,10 @@ import java.net.URI
  *
  * This class is not thread safe.
  */
-class InMemoryLogReplay(minFileRetentionTimestamp: Long) {
+class InMemoryLogReplay(
+    minFileRetentionTimestamp: Long,
+    minSetTransactionRetentionTimestamp: Option[Long]) {
+
   var currentProtocolVersion: Protocol = null
   var currentVersion: Long = -1
   var currentMetaData: Metadata = null
@@ -68,11 +71,15 @@ class InMemoryLogReplay(minFileRetentionTimestamp: Long) {
     tombstones.values.filter(_.delTimestamp > minFileRetentionTimestamp)
   }
 
+  private def getTransactions: Iterable[SetTransaction] = {
+      transactions.values
+  }
+
   /** Returns the current state of the Table as an iterator of actions. */
   def checkpoint: Iterator[Action] = {
     Option(currentProtocolVersion).toIterator ++
     Option(currentMetaData).toIterator ++
-    transactions.values.toIterator ++
+    getTransactions ++
     (activeFiles.values ++ getTombstones).toSeq.sortBy(_.path).iterator
   }
 }

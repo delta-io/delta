@@ -636,6 +636,9 @@ object ConvertToDeltaCommand {
       useAbsolutePath: Boolean = false): AddFile = {
     val partitionFields = partitionSchema.map(_.fields.toSeq).getOrElse(Nil)
     val partitionColNames = partitionSchema.map(_.fieldNames.toSeq).getOrElse(Nil)
+    val physicalPartitionColNames = partitionSchema.map(_.map { f =>
+      DeltaColumnMapping.getPhysicalName(f)
+    }).getOrElse(Nil)
     val path = file.getPath
     val pathStr = file.getPath.toUri.toString
     val dateFormatter = DateFormatter()
@@ -680,7 +683,7 @@ object ConvertToDeltaCommand {
             pathStr, parsed, expected)
         }
       }
-      partitionColNames.zip(values).toMap
+      physicalPartitionColNames.zip(values).toMap
     }.getOrElse {
       if (partitionColNames.nonEmpty) {
         throw DeltaErrors.unexpectedNumPartitionColumnsFromFileNameException(

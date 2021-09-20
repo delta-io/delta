@@ -16,10 +16,14 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.actions.Metadata
+
 import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 
 trait DeltaFileFormat {
+  // TODO: Use this for supporting column mapping
+  def metadata: Metadata
   /** Return the underlying Spark `FileFormat` of the Delta table. */
   def fileFormat: FileFormat = new ParquetFileFormat()
 }

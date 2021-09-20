@@ -76,7 +76,7 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaTestUtils
   with SharedSparkSession
   with SQLTestUtils
   with ConvertToDeltaHiveTableTests
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest  with DeltaTestUtilsForTempViews {
 
   import org.apache.spark.sql.functions._
   import testImplicits._
@@ -116,6 +116,23 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaTestUtils
         }
         assert(ae.getMessage.contains(parquetOnlyMsg))
       }
+    }
+  }
+
+  testQuietlyWithTempView("negative case: convert temp views to delta") { isSQLTempView =>
+    val tableName = "pqtbl"
+    withTable(tableName) {
+      // Create view
+      simpleDF.write.format("parquet").saveAsTable(tableName)
+      createTempViewFromTable(tableName, isSQLTempView, format = Some("parquet"))
+
+      // Attempt to convert to delta
+      val ae = intercept[AnalysisException] {
+        convertToDelta("v")
+      }
+
+      assert(ae.getMessage.contains("Converting a view to a Delta table") ||
+        ae.getMessage.contains("Table default.v not found"))
     }
   }
 
@@ -672,6 +689,7 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaTestUtils
  * mixed in with the Hive test utilities.
  */
 trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestUtils {
+
   protected def getPathForTableName(tableName: String): String = {
     spark
       .sessionState

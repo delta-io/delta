@@ -251,7 +251,8 @@ case class AddFile(
 
   @JsonIgnore
   lazy val insertionTime: Long = tag(AddFile.Tags.INSERTION_TIME)
-    .getOrElse(TimeUnit.MICROSECONDS.convert(modificationTime, TimeUnit.MICROSECONDS).toString)
+    // From modification time in milliseconds to microseconds.
+    .getOrElse(TimeUnit.MICROSECONDS.convert(modificationTime, TimeUnit.MILLISECONDS).toString)
     .toLong
 
   def tag(tag: AddFile.Tags.KeyType): Option[String] =
@@ -391,19 +392,20 @@ case class Metadata(
   @JsonIgnore
   lazy val schema: StructType =
     Option(schemaString).map { s =>
-      DataType.fromJson(s).asInstanceOf[StructType]
+      DeltaColumnMapping.setColumnMetadata(
+        DataType.fromJson(s).asInstanceOf[StructType],
+        DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(this)
+      )
     }.getOrElse(StructType.apply(Nil))
-
-  /** Returns the schema to be used for reads and writes. */
-  @JsonIgnore
-  lazy val physicalSchema = DeltaColumnMapping.createPhysicalSchema(
-    schema,
-    DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(this))
 
   /** Returns the partitionSchema as a [[StructType]] */
   @JsonIgnore
   lazy val partitionSchema: StructType =
     new StructType(partitionColumns.map(c => schema(c)).toArray)
+
+  /** Partition value keys in the AddFile map. */
+  @JsonIgnore
+  lazy val physicalPartitionSchema: StructType = DeltaColumnMapping.renameColumns(partitionSchema)
 
   /** Columns written out to files. */
   @JsonIgnore
@@ -464,7 +466,8 @@ case class CommitInfo(
     /** Whether this commit has blindly appended without caring about existing files */
     isBlindAppend: Option[Boolean],
     operationMetrics: Option[Map[String, String]],
-    userMetadata: Option[String]) extends Action with CommitMarker {
+    userMetadata: Option[String],
+    tags: Option[Map[String, String]]) extends Action with CommitMarker {
   override def wrap: SingleAction = SingleAction(commitInfo = this)
 
   override def withTimestamp(timestamp: Long): CommitInfo = {
@@ -474,6 +477,7 @@ case class CommitInfo(
   override def getTimestamp: Long = timestamp.getTime
   @JsonIgnore
   override def getVersion: Long = version.get
+
 }
 
 case class JobInfo(
@@ -507,7 +511,7 @@ object NotebookInfo {
 object CommitInfo {
   def empty(version: Option[Long] = None): CommitInfo = {
     CommitInfo(version, null, None, None, null, null, None, None,
-                None, None, None, None, None, None)
+                None, None, None, None, None, None, None)
   }
 
   def apply(
@@ -519,7 +523,8 @@ object CommitInfo {
       isolationLevel: Option[String],
       isBlindAppend: Option[Boolean],
       operationMetrics: Option[Map[String, String]],
-      userMetadata: Option[String]): CommitInfo = {
+      userMetadata: Option[String],
+      tags: Option[Map[String, String]]): CommitInfo = {
     val getUserName = commandContext.get("user").flatMap {
       case "unknown" => None
       case other => Option(other)
@@ -539,8 +544,10 @@ object CommitInfo {
       isolationLevel,
       isBlindAppend,
       operationMetrics,
-      userMetadata)
+      userMetadata,
+      tags)
   }
+
 }
 
 /** A serialization helper to create a common action envelope. */

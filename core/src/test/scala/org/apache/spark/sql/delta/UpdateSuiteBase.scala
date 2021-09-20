@@ -35,7 +35,8 @@ abstract class UpdateSuiteBase
   extends QueryTest
   with SharedSparkSession
   with BeforeAndAfterEach
-  with SQLTestUtils {
+  with SQLTestUtils
+  with DeltaTestUtilsForTempViews {
   import testImplicits._
 
   var tempDir: File = _
@@ -784,4 +785,80 @@ abstract class UpdateSuiteBase
       }
     }
   }
+
+  Seq(true, false).foreach { isPartitioned =>
+    val testName = s"test update on temp view - basic - Partition=$isPartitioned"
+    testWithTempView(testName) { isSQLTempView =>
+      val partitions = if (isPartitioned) "key" :: Nil else Nil
+      append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"), partitions)
+      createTempViewFromTable(s"delta.`$tempPath`", isSQLTempView)
+        checkUpdate(
+          condition = Some("key >= 1"),
+          setClauses = "value = key + value, key = key + 1",
+          expectedResults = Row(0, 3) :: Row(2, 5) :: Row(2, 2) :: Row(3, 4) :: Nil,
+          tableName = Some("v"))
+    }
+  }
+
+  protected def testInvalidTempViews(name: String)(
+      text: String,
+      expectedErrorForSQLTempView: String,
+      expectedErrorForDataSetTempView: String): Unit = {
+    testWithTempView(s"test update on temp view - $name") { isSQLTempView =>
+      withTable("tab") {
+        Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+        createTempViewFromSelect(text, isSQLTempView)
+        val expectedError = if (isSQLTempView) {
+          expectedErrorForSQLTempView
+        } else expectedErrorForDataSetTempView
+        val ex = intercept[AnalysisException] {
+          executeUpdate(
+            "v",
+            where = "key >= 1 and value < 3",
+            set = "value = key + value, key = key + 1"
+          )
+        }
+        assert(ex.getMessage.contains(expectedError))
+      }
+    }
+  }
+
+  testInvalidTempViews("subset cols")(
+    text = "SELECT key FROM tab",
+    expectedErrorForSQLTempView = "cannot resolve",
+    expectedErrorForDataSetTempView = "cannot resolve"
+  )
+
+  testInvalidTempViews("superset cols")(
+    text = "SELECT key, value, 1 FROM tab",
+    // The analyzer can't tell whether the table originally had the extra column or not.
+    expectedErrorForSQLTempView = "Can't resolve column 1 in root",
+    expectedErrorForDataSetTempView = "Can't resolve column 1 in root"
+  )
+
+  protected def testComplexTempViews(name: String)(text: String, expectedResult: Seq[Row]) = {
+    testWithTempView(s"test update on temp view - $name") { isSQLTempView =>
+      withTable("tab") {
+        Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+        createTempViewFromSelect(text, isSQLTempView)
+        executeUpdate(
+          "v",
+          where = "key >= 1 and value < 3",
+          set = "value = key + value, key = key + 1"
+        )
+        var result = expectedResult
+        checkAnswer(spark.read.format("delta").table("v"), result)
+      }
+    }
+  }
+
+  testComplexTempViews("nontrivial projection")(
+    text = "SELECT value as key, key as value FROM tab",
+    expectedResult = Seq(Row(3, 3), Row(3, 4))
+  )
+
+  testComplexTempViews("view with too many internal aliases")(
+    text = "SELECT * FROM (SELECT * FROM tab AS t1) AS t2",
+    expectedResult = Seq(Row(0, 3), Row(2, 3))
+  )
 }

@@ -34,7 +34,8 @@ case class DeltaConfig[T](
     fromString: String => T,
     validationFunction: T => Boolean,
     helpMessage: String,
-    minimumProtocolVersion: Option[Protocol] = None) {
+    minimumProtocolVersion: Option[Protocol] = None,
+    editable: Boolean = true) {
   /**
    * Recover the saved value of this configuration from `Metadata` or return the default if this
    * value hasn't been changed.
@@ -45,6 +46,9 @@ case class DeltaConfig[T](
 
   /** Validate the setting for this configuration */
   private def validate(value: String): Unit = {
+    if (!editable) {
+      throw DeltaErrors.cannotModifyTableProperty(key)
+    }
     val onErrorMessage = s"$key $helpMessage"
     try {
       require(validationFunction(fromString(value)), onErrorMessage)
@@ -117,13 +121,15 @@ trait DeltaConfigsBase extends DeltaLogging {
       fromString: String => T,
       validationFunction: T => Boolean,
       helpMessage: String,
-      minimumProtocolVersion: Option[Protocol] = None): DeltaConfig[T] = {
+      minimumProtocolVersion: Option[Protocol] = None,
+      userConfigurable: Boolean = true): DeltaConfig[T] = {
     val deltaConfig = DeltaConfig(s"delta.$key",
       defaultValue,
       fromString,
       validationFunction,
       helpMessage,
-      minimumProtocolVersion)
+      minimumProtocolVersion,
+      userConfigurable)
     entries.put(key.toLowerCase(Locale.ROOT), deltaConfig)
     deltaConfig
   }
@@ -438,12 +444,25 @@ trait DeltaConfigsBase extends DeltaLogging {
     "needs to be a boolean.")
 
   val COLUMN_MAPPING_MODE = buildConfig[DeltaColumnMappingMode](
-    "columnMappingMode",
+    "columnMapping.mode",
     "none",
     DeltaColumnMappingMode(_),
     _ => true,
     "",
     minimumProtocolVersion = Some(DeltaColumnMapping.MIN_PROTOCOL_VERSION))
+
+  /**
+   * Maximum columnId used in the schema so far for column mapping. Internal property that cannot
+   * be set by users.
+   */
+  val COLUMN_MAPPING_MAX_ID = buildConfig[Long](
+    "columnMapping.maxColumnId",
+    "0",
+    _.toLong,
+    _ => true,
+    "",
+    minimumProtocolVersion = Some(DeltaColumnMapping.MIN_PROTOCOL_VERSION),
+    userConfigurable = false)
 }
 
 object DeltaConfigs extends DeltaConfigsBase

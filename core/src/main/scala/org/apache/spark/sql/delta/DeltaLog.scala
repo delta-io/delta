@@ -309,7 +309,7 @@ class DeltaLog private(
     val relation = HadoopFsRelation(
       fileIndex,
       partitionSchema = snapshot.metadata.partitionSchema,
-      dataSchema = GeneratedColumn.removeGenerationExpressions(snapshot.metadata.physicalSchema),
+      dataSchema = GeneratedColumn.removeGenerationExpressions(snapshot.metadata.schema),
       bucketSpec = None,
       snapshot.fileFormat,
       snapshot.metadata.format.options)(spark)
@@ -343,7 +343,7 @@ class DeltaLog private(
       fileIndex,
       partitionSchema = snapshotToUse.metadata.partitionSchema,
       dataSchema = GeneratedColumn.removeGenerationExpressions(
-        SchemaUtils.dropNullTypeColumns(snapshotToUse.metadata.physicalSchema)
+        SchemaUtils.dropNullTypeColumns(snapshotToUse.metadata.schema)
       ),
       bucketSpec = bucketSpec,
       snapshotToUse.fileFormat,
@@ -533,10 +533,11 @@ object DeltaLog extends DeltaLogging {
         val unquoted = a.name.stripPrefix("`").stripSuffix("`")
         val partitionCol = partitionSchema.find { field => resolver(field.name, unquoted) }
         partitionCol match {
-          case Some(StructField(name, dataType, _, _)) =>
+          case Some(f: StructField) =>
+            val name = DeltaColumnMapping.getPhysicalName(f)
             Cast(
               UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", name)),
-              dataType)
+              f.dataType)
           case None =>
             // This should not be able to happen, but the case was present in the original code so
             // we kept it to be safe.

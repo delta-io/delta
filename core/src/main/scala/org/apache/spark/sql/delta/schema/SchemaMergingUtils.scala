@@ -21,11 +21,11 @@ import java.util.Locale
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.AnalysisException
-import org.apache.spark.sql.catalyst.analysis.{TypeCoercion, UnresolvedAttribute}
+import org.apache.spark.sql.catalyst.analysis.{Resolver, TypeCoercion, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.plans.logical.DeltaMergeInto
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
-import org.apache.spark.sql.types.{ArrayType, ByteType, DataType, DecimalType, IntegerType, MapType, NullType, ShortType, StructField, StructType}
+import org.apache.spark.sql.types.{ArrayType, ByteType, DataType, DecimalType, IntegerType, MapType, Metadata, NullType, ShortType, StructField, StructType}
 
 /**
  * Utils to merge table schema with data schema.
@@ -33,6 +33,9 @@ import org.apache.spark.sql.types.{ArrayType, ByteType, DataType, DecimalType, I
  * and resolving the final schema is now part of [[DeltaMergeInto.resolveReferencesAndSchema]].
  */
 object SchemaMergingUtils {
+
+  val DELTA_COL_RESOLVER: (String, String) => Boolean =
+    org.apache.spark.sql.catalyst.analysis.caseInsensitiveResolution
   /**
    * Returns all column names in this schema as a flat list. For example, a schema like:
    *   | - a
@@ -49,7 +52,7 @@ object SchemaMergingUtils {
       def recurseIntoComplexTypes(complexType: DataType): Seq[Seq[String]] = {
         complexType match {
           case s: StructType => explode(s)
-          case a: ArrayType => recurseIntoComplexTypes(a.elementType)
+          case a: ArrayType => recurseIntoComplexTypes(a.elementType).map(Seq("element") ++ _)
           case m: MapType =>
             recurseIntoComplexTypes(m.keyType).map(Seq("key") ++ _) ++
               recurseIntoComplexTypes(m.valueType).map(Seq("value") ++ _)
@@ -142,7 +145,8 @@ object SchemaMergingUtils {
             updateFieldMap.get(currentField.name) match {
               case Some(updateField) =>
                 if (fixedTypeColumnsSet.contains(currentField.name.toLowerCase(Locale.ROOT)) &&
-                    currentField.dataType != updateField.dataType) {
+                    !equalsIgnoreCaseAndCompatibleNullability(
+                      currentField.dataType, updateField.dataType)) {
                   throw new AnalysisException(
                     s"Column ${currentField.name} is a generated column " +
                       "or a column used by a generated column. " +
@@ -247,5 +251,77 @@ object SchemaMergingUtils {
 
   def toFieldMap(fields: Seq[StructField]): Map[String, StructField] = {
     CaseInsensitiveMap(fields.map(field => field.name -> field).toMap)
+  }
+
+  /**
+   * Transform (nested) columns in a schema.
+   *
+   * @param schema to transform.
+   * @param tf function to apply.
+   * @return the transformed schema.
+   */
+  def transformColumns(
+      schema: StructType)(
+      tf: (Seq[String], StructField, Resolver) => StructField): StructType = {
+    def transform[E <: DataType](path: Seq[String], dt: E): E = {
+      val newDt = dt match {
+        case StructType(fields) =>
+          StructType(fields.map { field =>
+            val newField = tf(path, field, DELTA_COL_RESOLVER)
+            // maintain the old name as we recurse into the subfields
+            newField.copy(dataType = transform(path :+ field.name, newField.dataType))
+          })
+        case ArrayType(elementType, containsNull) =>
+          ArrayType(transform(path :+ "element", elementType), containsNull)
+        case MapType(keyType, valueType, valueContainsNull) =>
+          MapType(
+            transform(path :+ "key", keyType),
+            transform(path :+ "value", valueType),
+            valueContainsNull)
+        case other => other
+      }
+      newDt.asInstanceOf[E]
+    }
+    transform(Seq.empty, schema)
+  }
+
+  /**
+   *
+   * Taken from DataType
+   *
+   * Compares two types, ignoring compatible nullability of ArrayType, MapType, StructType, and
+   * ignoring case sensitivity of field names in StructType.
+   *
+   * Compatible nullability is defined as follows:
+   *   - If `from` and `to` are ArrayTypes, `from` has a compatible nullability with `to`
+   *   if and only if `to.containsNull` is true, or both of `from.containsNull` and
+   *   `to.containsNull` are false.
+   *   - If `from` and `to` are MapTypes, `from` has a compatible nullability with `to`
+   *   if and only if `to.valueContainsNull` is true, or both of `from.valueContainsNull` and
+   *   `to.valueContainsNull` are false.
+   *   - If `from` and `to` are StructTypes, `from` has a compatible nullability with `to`
+   *   if and only if for all every pair of fields, `to.nullable` is true, or both
+   *   of `fromField.nullable` and `toField.nullable` are false.
+   */
+  def equalsIgnoreCaseAndCompatibleNullability(from: DataType, to: DataType): Boolean = {
+    (from, to) match {
+      case (ArrayType(fromElement, fn), ArrayType(toElement, tn)) =>
+        (tn || !fn) && equalsIgnoreCaseAndCompatibleNullability(fromElement, toElement)
+
+      case (MapType(fromKey, fromValue, fn), MapType(toKey, toValue, tn)) =>
+        (tn || !fn) &&
+          equalsIgnoreCaseAndCompatibleNullability(fromKey, toKey) &&
+          equalsIgnoreCaseAndCompatibleNullability(fromValue, toValue)
+
+      case (StructType(fromFields), StructType(toFields)) =>
+        fromFields.length == toFields.length &&
+          fromFields.zip(toFields).forall { case (fromField, toField) =>
+            fromField.name.equalsIgnoreCase(toField.name) &&
+              (toField.nullable || !fromField.nullable) &&
+              equalsIgnoreCaseAndCompatibleNullability(fromField.dataType, toField.dataType)
+          }
+
+      case (fromDataType, toDataType) => fromDataType == toDataType
+    }
   }
 }
