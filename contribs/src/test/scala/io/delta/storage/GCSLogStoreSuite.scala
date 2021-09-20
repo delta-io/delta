@@ -32,7 +32,7 @@ class GCSLogStoreSuite extends LogStoreSuiteBase {
 
   test("gcs write should happen in a new thread") {
     withTempDir { tempDir =>
-      // Use `FakeGSCFileSystem` to v
+      // Use `FakeGSCFileSystem` to verify we write in the correct thread.
       withSQLConf(
           "fs.gs.impl" -> classOf[FakeGSCFileSystem].getName,
           "fs.gs.impl.disable.cache" -> "true") {
