@@ -80,6 +80,7 @@ private[internal] object SchemaMergingUtils {
         case (x, ys) if ys.length > 1 => s"$x"
       }
 
+      // TODO: AnalysisException ?
       throw new RuntimeException(
         s"Found duplicate column(s) $colType: ${duplicateColumns.mkString(", ")}")
     }

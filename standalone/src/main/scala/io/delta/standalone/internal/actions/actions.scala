@@ -270,6 +270,41 @@ private[internal] object CommitInfo {
     CommitInfo(version, null, None, None, null, null, None, None,
       None, None, None, None, None, None, None)
   }
+
+  def apply(
+      time: Long,
+      operation: String,
+      operationParameters: Map[String, String],
+      commandContext: Map[String, String],
+      readVersion: Option[Long],
+      isolationLevel: Option[String],
+      isBlindAppend: Option[Boolean],
+      operationMetrics: Option[Map[String, String]],
+      userMetadata: Option[String],
+      engineInfo: Option[String]): CommitInfo = {
+    val getUserName = commandContext.get("user").flatMap {
+      case "unknown" => None
+      case other => Option(other)
+    }
+
+    CommitInfo(
+      None,
+      new Timestamp(time),
+      commandContext.get("userId"),
+      getUserName,
+      operation,
+      operationParameters,
+      JobInfo.fromContext(commandContext),
+      NotebookInfo.fromContext(commandContext),
+      commandContext.get("clusterId"),
+      readVersion,
+      isolationLevel,
+      isBlindAppend,
+      operationMetrics,
+      userMetadata,
+      engineInfo
+    )
+  }
 }
 
 private[internal] case class JobInfo(
@@ -279,7 +314,26 @@ private[internal] case class JobInfo(
     jobOwnerId: String,
     triggerType: String)
 
+private[internal] object JobInfo {
+  def fromContext(context: Map[String, String]): Option[JobInfo] = {
+    context.get("jobId").map { jobId =>
+      JobInfo(
+        jobId,
+        context.get("jobName").orNull,
+        context.get("runId").orNull,
+        context.get("jobOwnerId").orNull,
+        context.get("jobTriggerType").orNull)
+    }
+  }
+}
+
 private[internal] case class NotebookInfo(notebookId: String)
+
+private[internal] object NotebookInfo {
+  def fromContext(context: Map[String, String]): Option[NotebookInfo] = {
+    context.get("notebookId").map { nbId => NotebookInfo(nbId) }
+  }
+}
 
 /** A serialization helper to create a common action envelope. */
 private[internal] case class SingleAction(
