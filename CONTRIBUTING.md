@@ -1,4 +1,4 @@
-We happily welcome contributions to Delta Lake. We use [GitHub Issues](/../../issues/) to track community reported issues and [GitHub Pull Requests ](/../../pulls/) for accepting changes.
+We happily welcome contributions to Delta Lake Connectors. We use [GitHub Issues](/../../issues/) to track community reported issues and [GitHub Pull Requests ](/../../pulls/) for accepting changes.
 
 # Governance
 Delta lake governance is conducted by the Technical Steering Committee (TSC), which is currently composed of the following members:
