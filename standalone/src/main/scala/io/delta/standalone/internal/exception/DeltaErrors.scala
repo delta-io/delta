@@ -17,12 +17,12 @@
 package io.delta.standalone.internal.exception
 
 import java.io.{FileNotFoundException, IOException}
-import java.util.ConcurrentModificationException
 
-import io.delta.standalone.internal.actions.Protocol
-import io.delta.standalone.internal.sources.StandaloneHadoopConf
-import org.apache.hadoop.fs.Path
+import io.delta.standalone.internal.actions.{CommitInfo, Protocol}
 import io.delta.standalone.types.StructType
+import io.delta.standalone.exceptions._
+
+import org.apache.hadoop.fs.Path
 
 /** A holder object for Delta errors. */
 private[internal] object DeltaErrors {
@@ -37,9 +37,6 @@ private[internal] object DeltaErrors {
        |Delta protocol version ${tableProtocol.simpleString} is too new for this version of Delta
        |Standalone Reader/Writer ${clientProtocol.simpleString}. Please upgrade to a newer release.
        |""".stripMargin)
-
-  class DeltaConcurrentModificationException(message: String)
-    extends ConcurrentModificationException(message)
 
   def deltaVersionsNotContiguousException(deltaVersions: Seq[Long]): Throwable = {
     new IllegalStateException(s"Versions ($deltaVersions) are not contiguous.")
@@ -180,6 +177,50 @@ private[internal] object DeltaErrors {
      |correct implementation of LogStore that is appropriate for your storage system.
      |See https://docs.delta.io/latest/delta-storage.html for details.
       """.stripMargin, cause)
+  }
+
+  def concurrentModificationExceptionMsg(
+      baseMessage: String,
+      commit: Option[CommitInfo]): String = {
+    // TODO
+    ""
+  }
+
+  def concurrentAppendException(
+      conflictingCommit: Option[CommitInfo]): ConcurrentAppendException = {
+    // TODO: include partition?
+    val message = DeltaErrors.concurrentModificationExceptionMsg(
+      s"Files were added by a concurrent update. Please try the operation again.",
+      conflictingCommit)
+    new ConcurrentAppendException(message)
+  }
+
+  def concurrentDeleteReadException(
+      conflictingCommit: Option[CommitInfo],
+      file: String): ConcurrentDeleteReadException = {
+    val message = DeltaErrors.concurrentModificationExceptionMsg(
+      "This transaction attempted to read one or more files that were deleted" +
+        s" (for example $file) by a concurrent update. Please try the operation again.",
+      conflictingCommit)
+    new ConcurrentDeleteReadException(message)
+  }
+
+  def maxCommitRetriesExceededException(
+      attemptNumber: Int,
+      attemptVersion: Long,
+      initAttemptVersion: Long,
+      numActions: Int,
+      totalCommitAttemptTime: Long): Throwable = {
+    new IllegalStateException(
+      s"""This commit has failed as it has been tried $attemptNumber times but did not succeed.
+         |This can be caused by the Delta table being committed continuously by many concurrent
+         |commits.
+         |
+         |Commit started at version: $initAttemptVersion
+         |Commit failed at version: $attemptVersion
+         |Number of actions attempted to commit: $numActions
+         |Total time spent attempting this commit: $totalCommitAttemptTime ms
+       """.stripMargin)
   }
 
   ///////////////////////////////////////////////////////////////////////////

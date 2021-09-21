@@ -16,14 +16,16 @@
 
 package io.delta.standalone.internal
 
+import java.nio.file.FileAlreadyExistsException
 import java.util.ConcurrentModificationException
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable.ArrayBuffer
 
 import io.delta.standalone.{CommitResult, Operation, OptimisticTransaction}
 import io.delta.standalone.actions.{Action => ActionJ, AddFile => AddFileJ, Metadata => MetadataJ}
 import io.delta.standalone.expressions.Expression
-import io.delta.standalone.internal.actions.{Action, AddFile, CommitInfo, Metadata, Protocol, RemoveFile}
+import io.delta.standalone.internal.actions.{Action, AddFile, CommitInfo, FileAction, Metadata, Protocol, RemoveFile}
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.sources.StandaloneHadoopConf
 import io.delta.standalone.internal.util.{ConversionUtils, FileNames, SchemaMergingUtils, SchemaUtils}
@@ -31,6 +33,16 @@ import io.delta.standalone.internal.util.{ConversionUtils, FileNames, SchemaMerg
 private[internal] class OptimisticTransactionImpl(
     deltaLog: DeltaLogImpl,
     snapshot: SnapshotImpl) extends OptimisticTransaction {
+  import OptimisticTransactionImpl._
+
+  /**
+   * Tracks the data that could have been seen by recording the partition
+   * predicates by which files have been queried by this transaction.
+   */
+  protected val readPredicates = new ArrayBuffer[Expression]
+
+  /** Tracks specific files that have been seen by this transaction. */
+  protected val readFiles = new scala.collection.mutable.HashSet[AddFile]
 
   /** Tracks if this transaction has already committed. */
   private var committed = false
@@ -41,8 +53,14 @@ private[internal] class OptimisticTransactionImpl(
   /** Stores the updated protocol (if any) that will result from this txn. */
   private var newProtocol: Option[Protocol] = None
 
-  // Whether this transaction is creating a new table.
+  /** Whether this transaction is creating a new table. */
   private var isCreatingNewTable: Boolean = false
+
+  /**
+   * Tracks the start time since we started trying to write a particular commit.
+   * Used for logging duration of retried transactions.
+   */
+  private var commitAttemptStartTime: Long = _
 
   /** The protocol of the snapshot that this transaction is reading at. */
   def protocol: Protocol = newProtocol.getOrElse(snapshot.protocolScala)
@@ -66,9 +84,32 @@ private[internal] class OptimisticTransactionImpl(
     // Try to commit at the next version.
     var finalActions = prepareCommit(actions)
 
+    // Find the isolation level to use for this commit
+    val noDataChanged = actions.collect { case f: FileAction => f.dataChange }.forall(_ == false)
+    val isolationLevelToUse = if (noDataChanged) {
+      // If no data has changed (i.e. its is only being rearranged), then SnapshotIsolation
+      // provides Serializable guarantee. Hence, allow reduced conflict detection by using
+      // SnapshotIsolation of what the table isolation level is.
+      SnapshotIsolation
+    } else {
+      Serializable
+    }
+
+    val isBlindAppend = {
+      val dependsOnFiles = readPredicates.nonEmpty || readFiles.nonEmpty
+      val onlyAddFiles =
+        finalActions.collect { case f: FileAction => f }.forall(_.isInstanceOf[AddFile])
+      onlyAddFiles && !dependsOnFiles
+    }
+
     // TODO blind append check & create commitInfo using engineInfo
 
-    val commitVersion = doCommit(snapshot.version + 1, finalActions)
+    commitAttemptStartTime = System.currentTimeMillis()
+
+    val commitVersion = doCommitRetryIteratively(
+      snapshot.version + 1,
+      finalActions,
+      isolationLevelToUse)
 
     postCommit(commitVersion)
 
@@ -76,8 +117,14 @@ private[internal] class OptimisticTransactionImpl(
   }
 
   override def markFilesAsRead(
-      readPredicates: java.lang.Iterable[Expression]): java.util.List[AddFileJ] = {
+      _readPredicates: java.lang.Iterable[Expression]): java.util.List[AddFileJ] = {
+    // TODO: PartitionFiltering::filesForScan
     // TODO
+    //    val partitionFilters = filters.filter { f =>
+    //      DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
+    //    }
+    // TODO readPredicates += ...
+    // TODO readFiles ++=
     null
   }
 
@@ -160,6 +207,44 @@ private[internal] class OptimisticTransactionImpl(
   }
 
   /**
+   * Commit `actions` using `attemptVersion` version number. If there are any conflicts that are
+   * found, we will retry a fixed number of times.
+   *
+   * @return the real version that was committed
+   */
+  protected def doCommitRetryIteratively(
+      attemptVersion: Long,
+      actions: Seq[Action],
+      isolationLevel: IsolationLevel): Long = lockCommitIfEnabled {
+    var tryCommit = true
+    var commitVersion = attemptVersion
+    var attemptNumber = 0
+
+    while (tryCommit) {
+      try {
+        if (attemptNumber == 0) {
+          doCommit(commitVersion, actions)
+        } else if (attemptNumber > DELTA_MAX_RETRY_COMMIT_ATTEMPTS) {
+          val totalCommitAttemptTime = System.currentTimeMillis() - commitAttemptStartTime
+          throw DeltaErrors.maxCommitRetriesExceededException(
+            attemptNumber,
+            commitVersion,
+            attemptVersion,
+            actions.length,
+            totalCommitAttemptTime)
+        } else {
+          commitVersion = checkForConflicts(commitVersion, actions, isolationLevel)
+          doCommit(commitVersion, actions)
+        }
+        tryCommit = false
+      } catch {
+        case _: FileAlreadyExistsException => attemptNumber += 1
+      }
+    }
+    commitVersion
+  }
+
+  /**
    * Commit `actions` using `attemptVersion` version number.
    *
    * If you detect any conflicts, try to resolve logical conflicts and commit using a new version.
@@ -167,27 +252,21 @@ private[internal] class OptimisticTransactionImpl(
    * @return the real version that was committed.
    * @throws IllegalStateException if the attempted commit version is ahead of the current delta log
    *                               version
-   * @throws ConcurrentModificationException if any conflicts are detected
    */
   private def doCommit(attemptVersion: Long, actions: Seq[Action]): Long = lockCommitIfEnabled {
-    try {
-      deltaLog.store.write(
-        FileNames.deltaFile(deltaLog.logPath, attemptVersion),
-        actions.map(_.json).toIterator
-      )
+    deltaLog.store.write(
+      FileNames.deltaFile(deltaLog.logPath, attemptVersion),
+      actions.map(_.json).toIterator
+    )
 
-      val postCommitSnapshot = deltaLog.update()
-      if (postCommitSnapshot.version < attemptVersion) {
-        throw new IllegalStateException(
-          s"The committed version is $attemptVersion " +
-            s"but the current version is ${postCommitSnapshot.version}.")
-      }
-
-      attemptVersion
-    } catch {
-      case _: java.nio.file.FileAlreadyExistsException =>
-        throw new DeltaErrors.DeltaConcurrentModificationException("TODO msg")
+    val postCommitSnapshot = deltaLog.update()
+    if (postCommitSnapshot.version < attemptVersion) {
+      throw new IllegalStateException(
+        s"The committed version is $attemptVersion " +
+          s"but the current version is ${postCommitSnapshot.version}.")
     }
+
+    attemptVersion
   }
 
   /**
@@ -201,6 +280,38 @@ private[internal] class OptimisticTransactionImpl(
       // the same version.
       deltaLog.checkpoint(deltaLog.getSnapshotForVersionAsOf(commitVersion))
     }
+  }
+
+  /**
+   * Looks at actions that have happened since the txn started and checks for logical
+   * conflicts with the read/writes. If no conflicts are found return the commit version to attempt
+   * next.
+   */
+  private def checkForConflicts(
+      checkVersion: Long,
+      actions: Seq[Action],
+      commitIsolationLevel: IsolationLevel): Long = {
+    val nextAttemptVersion = getNextAttemptVersion
+
+    val currentTransactionInfo = CurrentTransactionInfo(
+      readPredicates = readPredicates,
+      readFiles = readFiles.toSet,
+      readWholeTable = false, // TODO readTheWholeTable
+      readAppIds = Nil.toSet, // TODO: readTxn.toSet,
+      metadata = metadata,
+      actions = actions,
+      deltaLog = deltaLog)
+
+    (checkVersion until nextAttemptVersion).foreach { otherCommitVersion =>
+      val conflictChecker = new ConflictChecker(
+        currentTransactionInfo,
+        otherCommitVersion,
+        commitIsolationLevel)
+
+      conflictChecker.checkConflicts()
+    }
+
+    nextAttemptVersion
   }
 
   ///////////////////////////////////////////////////////////////////////////
@@ -247,4 +358,14 @@ private[internal] class OptimisticTransactionImpl(
   private def shouldCheckpoint(committedVersion: Long): Boolean = {
     committedVersion != 0 && committedVersion % deltaLog.checkpointInterval == 0
   }
+
+  /** Returns the next attempt version given the last attempted version */
+  private def getNextAttemptVersion: Long = {
+    deltaLog.update()
+    deltaLog.snapshot.version + 1
+  }
+}
+
+private[internal] object OptimisticTransactionImpl {
+  val DELTA_MAX_RETRY_COMMIT_ATTEMPTS = 10000000
 }

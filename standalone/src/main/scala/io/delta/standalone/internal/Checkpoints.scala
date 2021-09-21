@@ -192,7 +192,7 @@ private[internal] trait Checkpoints {
   }
 }
 
-object Checkpoints {
+private[internal] object Checkpoints {
   /**
    * Writes out the contents of a [[Snapshot]] into a checkpoint file that
    * can be used to short-circuit future replays of the log.
@@ -200,9 +200,7 @@ object Checkpoints {
    * Returns the checkpoint metadata to be committed to a file. We will use the value
    * in this file as the source of truth of the last valid checkpoint.
    */
-  private[delta] def writeCheckpoint(
-      deltaLog: DeltaLogImpl,
-      snapshot: SnapshotImpl): CheckpointMetaData = {
+  def writeCheckpoint(deltaLog: DeltaLogImpl, snapshot: SnapshotImpl): CheckpointMetaData = {
 
     // The writing of checkpoints doesn't go through log store, so we need to check with the
     // log store and decide whether to use rename.
