@@ -23,4 +23,7 @@ private[internal] object StandaloneHadoopConf {
 
   /** time zone as which time-based parquet values will be encoded and decoded */
   val PARQUET_DATA_TIME_ZONE_ID = "io.delta.standalone.PARQUET_DATA_TIME_ZONE_ID"
+
+  /** TODO */
+  val LOG_STORE_CLASS_KEY = "io.delta.standalone.LOG_STORE_CLASS_KEY"
 }

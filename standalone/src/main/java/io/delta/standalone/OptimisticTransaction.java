@@ -62,6 +62,7 @@ public interface OptimisticTransaction {
     void readWholeTable();
 
     /**
+     * @param id TODO
      * @return the latest version that has committed for the idempotent transaction with given `id`.
      */
     long txnVersion(String id);
