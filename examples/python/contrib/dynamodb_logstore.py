@@ -30,21 +30,22 @@ import uuid
 create required dynamodb table with:
 
 $ aws --region us-west-2 dynamodb create-table \
-    --table-name delta_log \
+    --table-name delta_log_test \
     --attribute-definitions AttributeName=parentPath,AttributeType=S \
                             AttributeName=filename,AttributeType=S \
     --key-schema AttributeName=parentPath,KeyType=HASH \
                 AttributeName=filename,KeyType=RANGE \
     --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5
 
-run this script with:
+run this script in root dir of repository with:
 
-$ PYTHONPATH=./python spark-submit \
-  --jars core/target/scala-2.12/delta-core_2.12-1.0.0-SNAPSHOT.jar,contribs/target/scala-2.12/delta-contribs_2.12-1.0.0-SNAPSHOT.jar \
+VERSION=$(cat version.sbt | grep version | sed 's/.*"\(.*\)"/\1/g')
+PYTHONPATH=./python $SPARK_HOME/bin/spark-submit \
+  --jars core/target/scala-2.12/delta-core_2.12-${VERSION}.jar,contribs/target/scala-2.12/delta-contribs_2.12-${VERSION}.jar \
   --packages org.apache.hadoop:hadoop-aws:2.7.3,com.amazonaws:aws-java-sdk:1.7.4 \
   --conf spark.delta.DynamoDBLogStore.tableName=delta_log_test \
   --conf spark.delta.DynamoDBLogStore.region=us-west-2 \
-  examples/python/extra/dynamodb_logstore.py
+  examples/python/contrib/dynamodb_logstore.py
 
 """
 
