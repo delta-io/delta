@@ -17,11 +17,11 @@
 import java.nio.file.Files
 
 val sparkVersion = "3.1.1"
-scalaVersion := "2.12.10"
+scalaVersion := "2.12.14"
 
 lazy val commonSettings = Seq(
   organization := "io.delta",
-  scalaVersion := "2.12.10",
+  scalaVersion := "2.12.14",
   fork := true
 )
 
