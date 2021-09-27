@@ -239,7 +239,7 @@ class DeltaLogSuite extends FunSuite {
       withLogForGoldenTable("deltalog-invalid-protocol-version") { _ => }
     }
 
-    assert(e.getMessage ===new DeltaErrors.InvalidProtocolVersionException(Action.protocolVersion,
+    assert(e.getMessage === new DeltaErrors.InvalidProtocolVersionException(Action.protocolVersion,
       Protocol(99)).getMessage)
   }
 

@@ -71,19 +71,11 @@ private[internal] object Protocol {
   val MIN_READER_VERSION_PROP = "delta.minReaderVersion"
   val MIN_WRITER_VERSION_PROP = "delta.minWriterVersion"
 
-  /**
-   * Verify that the protocol version of the table satisfies the version requirements of all the
-   * configurations to be set for the table. Returns the minimum required protocol if not.
-   */
-  def checkProtocolRequirements(metadata: Metadata, protocol: Protocol): Option[Protocol] = {
+  def checkMetadataProtocolProperties(metadata: Metadata, protocol: Protocol): Unit = {
     assert(!metadata.configuration.contains(MIN_READER_VERSION_PROP), s"Should not have the " +
       s"protocol version ($MIN_READER_VERSION_PROP) as part of table properties")
     assert(!metadata.configuration.contains(MIN_WRITER_VERSION_PROP), s"Should not have the " +
       s"protocol version ($MIN_WRITER_VERSION_PROP) as part of table properties")
-
-    // TODO: requiredMinimumProtocol(...)
-
-    Some(protocol)
   }
 }
 

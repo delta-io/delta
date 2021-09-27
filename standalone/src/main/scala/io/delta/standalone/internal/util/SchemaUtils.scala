@@ -17,6 +17,7 @@
 package io.delta.standalone.internal.util
 
 import io.delta.standalone.internal.exception.DeltaErrors
+import io.delta.standalone.types.StructType
 
 private[internal] object SchemaUtils {
 
@@ -31,6 +32,20 @@ private[internal] object SchemaUtils {
     // The method checkFieldNames doesn't have a valid regex to search for '\n'. That should be
     // fixed in Apache Spark, and we can remove this additional check here.
     names.find(_.contains("\n")).foreach(col => throw DeltaErrors.invalidColumnName(col))
+  }
+
+  /**
+   * Go through the schema to look for unenforceable NOT NULL constraints. By default we'll throw
+   * when they're encountered, but if this is suppressed through SQLConf they'll just be silently
+   * removed.
+   *
+   * Note that this should only be applied to schemas created from explicit user DDL - in other
+   * scenarios, the nullability information may be inaccurate and Delta should always coerce the
+   * nullability flag to true.
+   */
+  def removeUnenforceableNotNullConstraints(schema: StructType): StructType = {
+    // TODO
+    schema
   }
 
   private object ParquetSchemaConverter {
