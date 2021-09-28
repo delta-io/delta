@@ -24,9 +24,10 @@ import scala.collection.JavaConverters._
 import com.github.mjakubowski84.parquet4s.ParquetReader
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
-import io.delta.standalone.Snapshot
+import io.delta.standalone.{DeltaScan, Snapshot}
 import io.delta.standalone.actions.{AddFile => AddFileJ, Metadata => MetadataJ}
 import io.delta.standalone.data.{CloseableIterator, RowRecord => RowParquetRecordJ}
+import io.delta.standalone.expressions.Expression
 import io.delta.standalone.internal.actions.{Action, AddFile, InMemoryLogReplay, Metadata, Parquet4sSingleActionWrapper, Protocol, SingleAction}
 import io.delta.standalone.internal.data.CloseableParquetDataIterator
 import io.delta.standalone.internal.exception.DeltaErrors
@@ -62,6 +63,11 @@ private[internal] class SnapshotImpl(
   ///////////////////////////////////////////////////////////////////////////
   // Public API Methods
   ///////////////////////////////////////////////////////////////////////////
+
+  override def scan(): DeltaScan = new DeltaScanImpl(activeFiles)
+
+  override def scan(predicate: Expression): DeltaScan =
+    new DeltaScanImpl(activeFiles, Some(predicate))
 
   override def getAllFiles: java.util.List[AddFileJ] = activeFiles
 
@@ -218,4 +224,9 @@ private class InitialSnapshotImpl(
       Map.empty[URI, AddFile],
       0L, 0L, 1L, 1L)
   }
+
+  override def scan(): DeltaScan = new DeltaScanImpl(Nil.asJava)
+
+  override def scan(predicate: Expression): DeltaScan =
+    new DeltaScanImpl(Nil.asJava, Some(predicate))
 }

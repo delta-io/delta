@@ -13,14 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.standalone;
 
-import java.util.List;
+package io.delta.standalone;
 
 import io.delta.standalone.actions.AddFile;
 import io.delta.standalone.actions.Metadata;
 import io.delta.standalone.data.CloseableIterator;
 import io.delta.standalone.data.RowRecord;
+import io.delta.standalone.expressions.Expression;
+
+import java.util.List;
 
 /**
  * {@link Snapshot} provides APIs to access the Delta table state (such as table metadata, active
@@ -30,6 +32,17 @@ import io.delta.standalone.data.RowRecord;
  * for more details about the transaction logs.
  */
 public interface Snapshot {
+
+    /**
+     * @return a {@link DeltaScan} of the files in this snapshot.
+     */
+    DeltaScan scan();
+
+    /**
+     * @param predicate  the predicate to be used to filter the files in this snapshot.
+     * @return a {@link DeltaScan} of the files in this snapshot.
+     */
+    DeltaScan scan(Expression predicate);
 
     /**
      * @return all of the files present in this snapshot
