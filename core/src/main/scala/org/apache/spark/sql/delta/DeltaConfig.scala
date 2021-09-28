@@ -35,13 +35,17 @@ case class DeltaConfig[T](
     validationFunction: T => Boolean,
     helpMessage: String,
     minimumProtocolVersion: Option[Protocol] = None,
-    editable: Boolean = true) {
+    editable: Boolean = true,
+    alternateKeys: Seq[String] = Seq.empty) {
   /**
-   * Recover the saved value of this configuration from `Metadata` or return the default if this
-   * value hasn't been changed.
+   * Recover the saved value of this configuration from `Metadata`. If undefined, fall back to
+   * alternate keys, returning defaultValue if none match.
    */
   def fromMetaData(metadata: Metadata): T = {
-    fromString(metadata.configuration.getOrElse(key, defaultValue))
+    for (usedKey <- key +: alternateKeys) {
+      metadata.configuration.get(usedKey).map { value => return fromString(value) }
+    }
+    fromString(defaultValue)
   }
 
   /** Validate the setting for this configuration */
@@ -122,14 +126,18 @@ trait DeltaConfigsBase extends DeltaLogging {
       validationFunction: T => Boolean,
       helpMessage: String,
       minimumProtocolVersion: Option[Protocol] = None,
-      userConfigurable: Boolean = true): DeltaConfig[T] = {
+      userConfigurable: Boolean = true,
+      alternateConfs: Seq[DeltaConfig[T]] = Seq.empty): DeltaConfig[T] = {
+
     val deltaConfig = DeltaConfig(s"delta.$key",
       defaultValue,
       fromString,
       validationFunction,
       helpMessage,
       minimumProtocolVersion,
-      userConfigurable)
+      userConfigurable,
+      alternateConfs.map(_.key))
+
     entries.put(key.toLowerCase(Locale.ROOT), deltaConfig)
     deltaConfig
   }
@@ -424,24 +432,25 @@ trait DeltaConfigsBase extends DeltaLogging {
     "needs to be a boolean.")
 
   /**
-   * Enable change data feed output. Not implemented.
+   * Deprecated in favor of CHANGE_DATA_FEED.
    */
-  val CHANGE_DATA_CAPTURE = buildConfig[Boolean](
-    "enableChangeDataFeed",
+  private val CHANGE_DATA_FEED_LEGACY = buildConfig[Boolean](
+    "enableChangeDataCapture",
     "false",
     _.toBoolean,
     _ => true,
     "needs to be a boolean.")
 
   /**
-   *  Old configuration which has been replaced by CHANGE_DATA_CAPTURE
+   * Enable change data feed output. Not implemented.
    */
-  val CHANGE_DATA_CAPTURE_LEGACY = buildConfig[Boolean](
-    "enableChangeDataCapture",
+  val CHANGE_DATA_FEED = buildConfig[Boolean](
+    "enableChangeDataFeed",
     "false",
     _.toBoolean,
     _ => true,
-    "needs to be a boolean.")
+    "needs to be a boolean.",
+    alternateConfs = Seq(CHANGE_DATA_FEED_LEGACY))
 
   val COLUMN_MAPPING_MODE = buildConfig[DeltaColumnMappingMode](
     "columnMapping.mode",

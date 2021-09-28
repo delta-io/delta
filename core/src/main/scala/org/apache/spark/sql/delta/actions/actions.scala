@@ -150,8 +150,7 @@ object Protocol {
       featuresUsed.append("Using Generated Columns")
     }
 
-    if (DeltaConfigs.CHANGE_DATA_CAPTURE.fromMetaData(metadata) ||
-        DeltaConfigs.CHANGE_DATA_CAPTURE_LEGACY.fromMetaData(metadata)) {
+    if (DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(metadata)) {
       minimumRequired = Protocol(0, minWriterVersion = 4)
       featuresUsed.append("Change data feed")
       throw DeltaErrors.cdcNotAllowedInThisVersion()

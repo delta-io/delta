@@ -1441,7 +1441,7 @@ class DeltaSuite extends QueryTest
     withTable("tbl") {
       sql("CREATE TABLE tbl(id INT) USING DELTA")
       val ex = intercept[AnalysisException] {
-        sql(s"ALTER TABLE tbl SET TBLPROPERTIES (${DeltaConfigs.CHANGE_DATA_CAPTURE.key} = true)")
+        sql(s"ALTER TABLE tbl SET TBLPROPERTIES (${DeltaConfigs.CHANGE_DATA_FEED.key} = true)")
       }
 
       assert(ex.getMessage.contains("Configuration delta.enableChangeDataFeed cannot be set"))
@@ -1458,7 +1458,7 @@ class DeltaSuite extends QueryTest
       log.store.write(
         deltaFile(log.logPath, 1),
         Iterator(log.snapshot.metadata.copy(
-          configuration = Map(DeltaConfigs.CHANGE_DATA_CAPTURE.key -> "true")).json))
+          configuration = Map(DeltaConfigs.CHANGE_DATA_FEED.key -> "true")).json))
       log.update()
 
       val ex = intercept[AnalysisException] {
