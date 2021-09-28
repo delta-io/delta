@@ -38,7 +38,6 @@ import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.BucketSpec
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
@@ -579,8 +578,11 @@ object DeltaErrors
        """.stripMargin)
   }
 
-  def schemaChangedException(oldSchema: StructType, newSchema: StructType): Throwable = {
-    new IllegalStateException(
+  def schemaChangedException(
+      oldSchema: StructType,
+      newSchema: StructType,
+      retryable: Boolean): Throwable = {
+    val msg =
       s"""Detected schema change:
         |old schema: ${formatSchema(oldSchema)}
         |
@@ -589,7 +591,8 @@ object DeltaErrors
         |Please try restarting the query. If this issue repeats across query restarts without making
         |progress, you have made an incompatible schema change and need to start your query from
         |scratch using a new checkpoint directory.
-      """.stripMargin)
+      """.stripMargin
+    new IllegalStateException(msg)
   }
 
   def streamWriteNullTypeException: Throwable = {
