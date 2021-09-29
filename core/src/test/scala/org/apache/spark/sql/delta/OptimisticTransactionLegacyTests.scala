@@ -662,13 +662,13 @@ trait OptimisticTransactionLegacyTests
       test: DeltaLog => Unit): Unit = {
 
     val schema = StructType(partitionCols.map(p => StructField(p, StringType)).toArray)
-    val actionWithMetaData =
-      actions :+ Metadata(partitionColumns = partitionCols, schemaString = schema.json)
+    val metadata = Metadata(partitionColumns = partitionCols, schemaString = schema.json)
+    val actionWithMetaData = actions :+ metadata
 
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
       // Initialize the log and add data. ManualUpdate is just a no-op placeholder.
-      log.startTransaction().commit(Seq(Metadata(partitionColumns = partitionCols)), ManualUpdate)
+      log.startTransaction().commit(Seq(metadata), ManualUpdate)
       log.startTransaction().commitManually(actionWithMetaData: _*)
       test(log)
     }

@@ -38,7 +38,8 @@ class DeltaGenerateSymlinkManifestSuite
   with DeltaSQLCommandTest
 
 trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
-  with SharedSparkSession {
+  with SharedSparkSession
+  with DeltaTestUtilsForTempViews {
 
   import testImplicits._
 
@@ -105,6 +106,17 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
 
       e = intercept[AnalysisException] {
         spark.sql(s"GENERATE symlink_format_manifest FOR TABLE parquet.`$dir`")
+      }
+      assert(e.getMessage.contains("not found"))
+    }
+  }
+
+  testWithTempView("basic case: SQL command - throw error on temp views") { isSQLTempView =>
+    withTable("t1") {
+      spark.range(2).write.format("delta").saveAsTable("t1")
+      createTempViewFromTable("t1", isSQLTempView)
+      val e = intercept[AnalysisException] {
+        spark.sql(s"GENERATE symlink_format_manifest FOR TABLE v")
       }
       assert(e.getMessage.contains("not found"))
     }

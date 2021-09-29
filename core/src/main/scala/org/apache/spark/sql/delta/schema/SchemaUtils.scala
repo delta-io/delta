@@ -65,7 +65,8 @@ object SchemaUtils {
           val includeLevel = if (f(sf)) Seq((columnStack, sf)) else Nil
           includeLevel ++ recurseIntoComplexTypes(sf.dataType, columnStack :+ sf.name)
         }
-      case a: ArrayType if checkComplexTypes => recurseIntoComplexTypes(a.elementType, columnStack)
+      case a: ArrayType if checkComplexTypes =>
+        recurseIntoComplexTypes(a.elementType, columnStack :+ "element")
       case m: MapType if checkComplexTypes =>
         recurseIntoComplexTypes(m.keyType, columnStack :+ "key") ++
           recurseIntoComplexTypes(m.valueType, columnStack :+ "value")
@@ -652,7 +653,7 @@ object SchemaUtils {
       (fromDt, toDt) match {
         case (ArrayType(fromElement, fn), ArrayType(toElement, tn)) =>
           verifyNullability(fn, tn, columnPath)
-          check(fromElement, toElement, columnPath)
+          check(fromElement, toElement, columnPath :+ "element")
 
         case (MapType(fromKey, fromValue, fn), MapType(toKey, toValue, tn)) =>
           verifyNullability(fn, tn, columnPath)
@@ -726,37 +727,6 @@ object SchemaUtils {
   }
 
   /**
-   * Transform (nested) columns in a schema.
-   *
-   * @param schema to transform.
-   * @param tf function to apply.
-   * @return the transformed schema.
-   */
-  def transformColumns(
-      schema: StructType)(
-      tf: (Seq[String], StructField, Resolver) => StructField): StructType = {
-    def transform[E <: DataType](path: Seq[String], dt: E): E = {
-      val newDt = dt match {
-        case StructType(fields) =>
-          StructType(fields.map { field =>
-            val newField = tf(path, field, DELTA_COL_RESOLVER)
-            newField.copy(dataType = transform(path :+ newField.name, newField.dataType))
-          })
-        case ArrayType(elementType, containsNull) =>
-          ArrayType(transform(path, elementType), containsNull)
-        case MapType(keyType, valueType, valueContainsNull) =>
-          MapType(
-            transform(path :+ "key", keyType),
-            transform(path :+ "value", valueType),
-            valueContainsNull)
-        case other => other
-      }
-      newDt.asInstanceOf[E]
-    }
-    transform(Seq.empty, schema)
-  }
-
-  /**
    * Transform (nested) columns in a schema. Runs the transform function on all nested StructTypes
    *
    * @param schema to transform.
@@ -812,7 +782,7 @@ object SchemaUtils {
       tf: (Seq[String], StructField, Seq[(Seq[String], E)]) => StructField): StructType = {
     // scalastyle:off caselocale
     val inputLookup = input.groupBy(_._1.map(_.toLowerCase))
-    SchemaUtils.transformColumns(schema) { (path, field, resolver) =>
+    SchemaMergingUtils.transformColumns(schema) { (path, field, resolver) =>
       // Find the parameters that match this field name.
       val fullPath = path :+ field.name
       val normalizedFullPath = fullPath.map(_.toLowerCase)
@@ -888,7 +858,7 @@ object SchemaUtils {
       case s: StructField => s
     }
 
-    SchemaUtils.transformColumns(schema)(checkField)
+    SchemaMergingUtils.transformColumns(schema)(checkField)
   }
 
   def fieldToColumn(field: StructField): Column = {

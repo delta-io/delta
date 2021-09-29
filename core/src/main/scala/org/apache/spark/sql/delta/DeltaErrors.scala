@@ -151,6 +151,11 @@ object DeltaErrors
       s"For more information, see $faqPath"
   }
 
+  def columnNotFound(path: Seq[String], schema: StructType): Throwable = {
+    val name = UnresolvedAttribute(path).name
+    new AnalysisException(s"Can't resolve column ${name} in ${schema.treeString}")
+  }
+
 
   def formatColumn(colName: String): String = s"`$colName`"
 
@@ -1148,6 +1153,97 @@ object DeltaErrors
         s"is not supported. Please run the ${op} command on the Delta table directly")
   }
 
+  def cannotModifyTableProperty(prop: String): Throwable =
+    throw new UnsupportedOperationException(
+      s"The Delta table configuration $prop cannot be specified by the user")
+
+  /**
+   * We have plans to support more column mapping modes, but they are not implemented yet,
+   * so we error for now to be forward compatible with tables created in the future.
+   */
+  def unknownColumnMappingMode(mode: String): Throwable =
+    throw new UnsupportedOperationException(s"The column mapping mode `$mode` is not" +
+      s" supported. Supported modes in this version are: `none` and `id`." +
+      s" Please upgrade Delta to access this table.")
+
+  def missingColumnId(mode: DeltaColumnMappingMode, field: String): Throwable = {
+    ColumnMappingException(s"Missing column ID in column mapping mode `${mode.name}`" +
+      s" in the field: $field", mode)
+  }
+
+  def missingPhysicalName(mode: DeltaColumnMappingMode, field: String): Throwable =
+    ColumnMappingException(s"Missing physical name in column mapping mode `${mode.name}`" +
+      s" in the field: $field", mode)
+
+  def duplicatedColumnId(
+      mode: DeltaColumnMappingMode,
+      field: String,
+      field2: String): Throwable = {
+    ColumnMappingException(
+      s"Duplicated column IDs found in column mapping mode `${mode.name}`" +
+      s" for field $field and $field2", mode
+    )
+  }
+
+  def duplicatedPhysicalName(
+      mode: DeltaColumnMappingMode,
+      field: String,
+      field2: String): Throwable =
+    ColumnMappingException(
+      s"Duplicated physical names found in column mapping mode `${mode.name}`" +
+      s" for field $field and $field2", mode
+    )
+
+  def changeColumnMappingModeNotSupported: Throwable = {
+    throw new UnsupportedOperationException("Changing column mapping mode using" +
+      s" config ${DeltaConfigs.COLUMN_MAPPING_MODE.key} is not supported.")
+  }
+
+  def writesWithColumnMappingNotSupported: Throwable = {
+    new UnsupportedOperationException("Writing data with column mapping mode is not " +
+      "supported.")
+  }
+
+  def setColumnMappingModeOnOldProtocol(oldProtocol: Protocol): Throwable = {
+    // scalastyle:off line.size.limit
+    throw new UnsupportedOperationException(
+      s"""
+         |Your current table protocol version does not support the setting of column mapping mode
+         |using ${DeltaConfigs.COLUMN_MAPPING_MODE.key}.
+         |
+         |Required Delta protocol version for column mapping:
+         |${DeltaColumnMapping.MIN_PROTOCOL_VERSION}
+         |
+         |Your table's current Delta protocol version:
+         |$oldProtocol
+         |
+         |Please upgrade your table's protocol version using ALTER TABLE SET TBLPROPERTIES and try again.
+         |
+         |""".stripMargin)
+    // scalastyle:on line.size.limit
+  }
+
+  def schemaChangeInColumnMappingProtocolNotSupported(
+      oldSchema: StructType,
+      newSchema: StructType,
+      mappingMode: DeltaColumnMappingMode): Throwable = {
+    // scalastyle:off line.size.limit
+    throw new UnsupportedOperationException(
+      s"""
+         |Schema change is detected:
+         |
+         |old schema:
+         |${formatSchema(oldSchema)}
+         |
+         |new schema:
+         |${formatSchema(newSchema)}
+         |
+         |Schema changes are not allowed in column mapping mode `$mappingMode`.
+         |
+         |""".stripMargin)
+    // scalastyle:on line.size.limit
+  }
+
 
   def missingColumnsInInsertInto(column: String): Throwable = {
     new AnalysisException(s"Column $column is not specified in INSERT")
@@ -1423,3 +1519,7 @@ class MetadataMismatchErrorBuilder {
     throw new AnalysisException(bits.mkString("\n"))
   }
 }
+
+/** Errors thrown around column mapping. */
+case class ColumnMappingException(msg: String, mode: DeltaColumnMappingMode)
+  extends AnalysisException(msg)

@@ -1060,6 +1060,29 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("get touched files for update, delete and merge") {
+    withTempDir { dir =>
+      val directory = new File(dir, "test with space")
+      val df = Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value")
+      val writer = df.write.format("delta").mode("append")
+      writer.save(directory.getCanonicalPath)
+      spark.sql(s"UPDATE delta.`${directory.getCanonicalPath}` SET value = value + 10")
+      spark.sql(s"DELETE FROM delta.`${directory.getCanonicalPath}` WHERE key = 4")
+      Seq((3, 30)).toDF("key", "value").createOrReplaceTempView("inbound")
+      spark.sql(s"""|MERGE INTO delta.`${directory.getCanonicalPath}` AS base
+                       |USING inbound
+                       |ON base.key = inbound.key
+                       |WHEN MATCHED THEN UPDATE SET base.value =
+                       |base.value+inbound.value""".stripMargin)
+      spark.sql(s"UPDATE delta.`${directory.getCanonicalPath}` SET value = 40 WHERE key = 1")
+      spark.sql(s"DELETE FROM delta.`${directory.getCanonicalPath}` WHERE key = 2")
+      checkAnswer(
+        spark.read.format("delta").load(directory.getCanonicalPath),
+        Seq((1, 40), (3, 70)).toDF("key", "value")
+      )
+    }
+  }
+
   test("can't create zero-column table with a write") {
     withTempDir { dir =>
       intercept[AnalysisException] {
@@ -1167,8 +1190,8 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  def lastCommitInfo(dir: String): CommitInfo =
-    io.delta.tables.DeltaTable.forPath(spark, dir).history(1).as[CommitInfo].head
+  def lastDeltaHistory(dir: String): DeltaHistory =
+    io.delta.tables.DeltaTable.forPath(spark, dir).history(1).as[DeltaHistory].head
 
   test("history includes user-defined metadata for DataFrame.Write API") {
     val tempDir = Utils.createTempDir().toString
@@ -1177,12 +1200,12 @@ class DeltaSuite extends QueryTest
     df.option("userMetadata", "meta1")
       .save(tempDir)
 
-    assert(lastCommitInfo(tempDir).userMetadata === Some("meta1"))
+    assert(lastDeltaHistory(tempDir).userMetadata === Some("meta1"))
 
     df.option("userMetadata", "meta2")
       .save(tempDir)
 
-    assert(lastCommitInfo(tempDir).userMetadata === Some("meta2"))
+    assert(lastDeltaHistory(tempDir).userMetadata === Some("meta2"))
   }
 
   test("history includes user-defined metadata for SQL API") {
@@ -1193,17 +1216,17 @@ class DeltaSuite extends QueryTest
       withSQLConf(DeltaSQLConf.DELTA_USER_METADATA.key -> "meta1") {
         spark.sql(s"CREATE TABLE $tblName (data STRING) USING delta LOCATION '$tempDir';")
       }
-      assert(lastCommitInfo(tempDir).userMetadata === Some("meta1"))
+      assert(lastDeltaHistory(tempDir).userMetadata === Some("meta1"))
 
       withSQLConf(DeltaSQLConf.DELTA_USER_METADATA.key -> "meta2") {
         spark.sql(s"INSERT INTO $tblName VALUES ('test');")
       }
-      assert(lastCommitInfo(tempDir).userMetadata === Some("meta2"))
+      assert(lastDeltaHistory(tempDir).userMetadata === Some("meta2"))
 
       withSQLConf(DeltaSQLConf.DELTA_USER_METADATA.key -> "meta3") {
         spark.sql(s"INSERT INTO $tblName VALUES ('test2');")
       }
-      assert(lastCommitInfo(tempDir).userMetadata === Some("meta3"))
+      assert(lastDeltaHistory(tempDir).userMetadata === Some("meta3"))
     }
   }
 
@@ -1214,13 +1237,13 @@ class DeltaSuite extends QueryTest
     withSQLConf(DeltaSQLConf.DELTA_USER_METADATA.key -> "meta1") {
       df.save(tempDir)
     }
-    assert(lastCommitInfo(tempDir).userMetadata === Some("meta1"))
+    assert(lastDeltaHistory(tempDir).userMetadata === Some("meta1"))
 
     withSQLConf(DeltaSQLConf.DELTA_USER_METADATA.key -> "meta2") {
       df.option("userMetadata", "optionMeta2")
         .save(tempDir)
     }
-    assert(lastCommitInfo(tempDir).userMetadata === Some("optionMeta2"))
+    assert(lastDeltaHistory(tempDir).userMetadata === Some("optionMeta2"))
   }
 
   test("history includes user-defined metadata for SQL + DF.Write API") {
@@ -1232,20 +1255,20 @@ class DeltaSuite extends QueryTest
       df.option("userMetadata", "optionMeta1")
         .save(tempDir)
     }
-    assert(lastCommitInfo(tempDir).userMetadata === Some("optionMeta1"))
+    assert(lastDeltaHistory(tempDir).userMetadata === Some("optionMeta1"))
 
     withSQLConf(DeltaSQLConf.DELTA_USER_METADATA.key -> "meta2") {
       df.option("userMetadata", "optionMeta2")
         .save(tempDir)
     }
-    assert(lastCommitInfo(tempDir).userMetadata === Some("optionMeta2"))
+    assert(lastDeltaHistory(tempDir).userMetadata === Some("optionMeta2"))
   }
 
   test("SC-77958 - history includes user-defined metadata for createOrReplace") {
     withTable("tbl") {
       spark.range(10).writeTo("tbl").using("delta").option("userMetadata", "meta").createOrReplace()
 
-      val history = sql("DESCRIBE HISTORY tbl LIMIT 1").as[CommitInfo].head()
+      val history = sql("DESCRIBE HISTORY tbl LIMIT 1").as[DeltaHistory].head()
       assert(history.userMetadata === Some("meta"))
     }
   }
@@ -1255,7 +1278,7 @@ class DeltaSuite extends QueryTest
       spark.range(10).write.format("delta").option("userMetadata", "meta1")
         .mode("overwrite").saveAsTable("tbl")
 
-      val history = sql("DESCRIBE HISTORY tbl LIMIT 1").as[CommitInfo].head()
+      val history = sql("DESCRIBE HISTORY tbl LIMIT 1").as[DeltaHistory].head()
       assert(history.userMetadata === Some("meta1"))
     }
   }

@@ -162,7 +162,7 @@ trait DeltaCommand extends DeltaLogging {
       basePath: Path,
       filePath: String,
       nameToAddFileMap: Map[String, AddFile]): AddFile = {
-    val absolutePath = DeltaFileOperations.absolutePath(basePath.toUri.toString, filePath).toString
+    val absolutePath = DeltaFileOperations.absolutePath(basePath.toString, filePath).toString
     nameToAddFileMap.getOrElse(absolutePath, {
       throw new IllegalStateException(s"File ($absolutePath) to be rewritten not found " +
         s"among candidate files:\n${nameToAddFileMap.keys.mkString("\n")}")
@@ -271,7 +271,8 @@ trait DeltaCommand extends DeltaLogging {
         isolationLevel = Some(Serializable.toString),
         isBlindAppend = Some(false),
         Some(metrics),
-        userMetadata = txn.getUserMetadata(op))
+        userMetadata = txn.getUserMetadata(op),
+        tags = None)
 
       val extraActions = Seq(commitInfo, metadata)
       // We don't expect commits to have more than 2 billion actions

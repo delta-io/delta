@@ -22,7 +22,7 @@ import java.sql.Timestamp
 
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.actions.{Action, CommitInfo, CommitMarker}
+import org.apache.spark.sql.delta.actions.{Action, CommitInfo, CommitMarker, JobInfo, NotebookInfo}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.{DateTimeUtils, FileNames, TimestampFormatter}
@@ -59,7 +59,7 @@ class DeltaHistoryManager(
    * Returns the information of the latest `limit` commits made to this table in reverse
    * chronological order.
    */
-  def getHistory(limitOpt: Option[Int]): Seq[CommitInfo] = {
+  def getHistory(limitOpt: Option[Int]): Seq[DeltaHistory] = {
     val listStart = limitOpt.map { limit =>
       math.max(deltaLog.update().version - limit + 1, 0)
     }.getOrElse(getEarliestDeltaFile)
@@ -72,7 +72,7 @@ class DeltaHistoryManager(
    */
   def getHistory(
       start: Long,
-      end: Option[Long] = None): Seq[CommitInfo] = {
+      end: Option[Long] = None): Seq[DeltaHistory] = {
     val _spark = spark
     import _spark.implicits._
     val conf = getSerializableHadoopConf
@@ -94,7 +94,7 @@ class DeltaHistoryManager(
               // skip those files
               None
           }
-        }
+        }.map(DeltaHistory.fromCommitInfo)
       }
     // Spark should return the commits in increasing order as well
     monotonizeCommitTimestamps(info.collect()).reverse
@@ -536,3 +536,54 @@ object DeltaHistoryManager extends DeltaLogging {
     }
   }
 }
+
+/**
+ * class describing the output schema of
+ * [[org.apache.spark.sql.delta.commands.DescribeDeltaHistoryCommand]]
+ */
+case class DeltaHistory(
+    version: Option[Long],
+    timestamp: Timestamp,
+    userId: Option[String],
+    userName: Option[String],
+    operation: String,
+    operationParameters: Map[String, String],
+    job: Option[JobInfo],
+    notebook: Option[NotebookInfo],
+    clusterId: Option[String],
+    readVersion: Option[Long],
+    isolationLevel: Option[String],
+    isBlindAppend: Option[Boolean],
+    operationMetrics: Option[Map[String, String]],
+    userMetadata: Option[String]) extends CommitMarker {
+
+  override def withTimestamp(timestamp: Long): DeltaHistory = {
+    this.copy(timestamp = new Timestamp(timestamp))
+  }
+
+  override def getTimestamp: Long = timestamp.getTime
+
+  override def getVersion: Long = version.get
+}
+
+object DeltaHistory {
+  /** Create an instance of [[DeltaHistory]] from [[CommitInfo]] */
+  def fromCommitInfo(ci: CommitInfo): DeltaHistory = {
+    DeltaHistory(
+      version = ci.version,
+      timestamp = ci.timestamp,
+      userId = ci.userId,
+      userName = ci.userName,
+      operation = ci.operation,
+      operationParameters = ci.operationParameters,
+      job = ci.job,
+      notebook = ci.notebook,
+      clusterId = ci.clusterId,
+      readVersion = ci.readVersion,
+      isolationLevel = ci.isolationLevel,
+      isBlindAppend = ci.isBlindAppend,
+      operationMetrics = ci.operationMetrics,
+      userMetadata = ci.userMetadata)
+  }
+}
+

@@ -124,7 +124,7 @@ class SchemaUtilsSuite extends QueryTest
           .add("dupColName", StringType))))
         .add("d", IntegerType)
       )
-    expectFailure("top.b.dupColName") { checkColumnNameDuplication(schema, "") }
+    expectFailure("top.b.element.element.dupColName") { checkColumnNameDuplication(schema, "") }
   }
 
   test("duplicate column name in double nested map") {
@@ -160,7 +160,7 @@ class SchemaUtilsSuite extends QueryTest
         .add("b", IntegerType)
         .add("dupColName", StringType))
       )
-    expectFailure("top.dupColName") { checkColumnNameDuplication(schema, "") }
+    expectFailure("top.element.dupColName") { checkColumnNameDuplication(schema, "") }
   }
 
   test("duplicate column name in nested array - case sensitivity") {
@@ -170,7 +170,7 @@ class SchemaUtilsSuite extends QueryTest
         .add("b", IntegerType)
         .add("dupCOLNAME", StringType))
       )
-    expectFailure("top.dupColName") { checkColumnNameDuplication(schema, "") }
+    expectFailure("top.element.dupColName") { checkColumnNameDuplication(schema, "") }
   }
 
   test("non duplicate column because of back tick") {
@@ -1182,7 +1182,7 @@ class SchemaUtilsSuite extends QueryTest
 
     // Identity.
     var visitedFields = 0
-    val res1 = transformColumns(base) {
+    val res1 = SchemaMergingUtils.transformColumns(base) {
       case (Seq(), field, _) =>
         visitedFields += 1
         field
@@ -1192,7 +1192,7 @@ class SchemaUtilsSuite extends QueryTest
 
     // Rename a -> c
     visitedFields = 0
-    val res2 = transformColumns(base) {
+    val res2 = SchemaMergingUtils.transformColumns(base) {
       case (Seq(), field, _) =>
         visitedFields += 1
         val name = field.name
@@ -1210,6 +1210,103 @@ class SchemaUtilsSuite extends QueryTest
     }
     assert(visitedFields === 1)
     assert(update === res3)
+  }
+
+  test("transform element field type") {
+    val base = new StructType()
+      .add("a", new StructType()
+        .add("element", StringType))
+
+    val update = new StructType()
+      .add("a", new StructType()
+        .add("element", IntegerType))
+
+    // Update type
+    var visitedFields = 0
+    val res = SchemaMergingUtils.transformColumns(base) { (path, field, _) =>
+      visitedFields += 1
+      val dataType = path :+ field.name match {
+        case Seq("a", "element") => IntegerType
+        case _ => field.dataType
+      }
+      field.copy(dataType = dataType)
+    }
+    assert(visitedFields === 2)
+    assert(update === res)
+  }
+
+  test("transform array nested field type") {
+    val nested = new StructType()
+      .add("s1", IntegerType)
+      .add("s2", LongType)
+    val base = new StructType()
+      .add("arr", ArrayType(nested))
+
+    val updatedNested = new StructType()
+      .add("s1", StringType)
+      .add("s2", LongType)
+    val update = new StructType()
+      .add("arr", ArrayType(updatedNested))
+
+    // Update type
+    var visitedFields = 0
+    val res = SchemaMergingUtils.transformColumns(base) { (path, field, _) =>
+      visitedFields += 1
+      val dataType = path :+ field.name match {
+        case Seq("arr", "element", "s1") => StringType
+        case _ => field.dataType
+      }
+      field.copy(dataType = dataType)
+    }
+    assert(visitedFields === 3)
+    assert(update === res)
+  }
+
+  test("transform map nested field type") {
+    val nested = new StructType()
+      .add("s1", IntegerType)
+      .add("s2", LongType)
+    val base = new StructType()
+      .add("m", MapType(StringType, nested))
+
+    val updatedNested = new StructType()
+      .add("s1", StringType)
+      .add("s2", LongType)
+    val update = new StructType()
+      .add("m", MapType(StringType, updatedNested))
+
+    // Update type
+    var visitedFields = 0
+    val res = SchemaMergingUtils.transformColumns(base) { (path, field, _) =>
+      visitedFields += 1
+      val dataType = path :+ field.name match {
+        case Seq("m", "value", "s1") => StringType
+        case _ => field.dataType
+      }
+      field.copy(dataType = dataType)
+    }
+    assert(visitedFields === 3)
+    assert(update === res)
+  }
+
+  test("transform map type") {
+    val base = new StructType()
+      .add("m", MapType(StringType, IntegerType))
+    val update = new StructType()
+      .add("m", MapType(StringType, StringType))
+
+    // Update type
+    var visitedFields = 0
+    val res = SchemaMergingUtils.transformColumns(base) { (path, field, _) =>
+      visitedFields += 1
+      val dataType = path :+ field.name match {
+        case Seq("m") => MapType(field.dataType.asInstanceOf[MapType].keyType, StringType)
+        case _ => field.dataType
+      }
+      field.copy(dataType = dataType)
+    }
+    assert(visitedFields === 1)
+    assert(update === res)
   }
 
   test("transform columns - nested") {
@@ -1239,7 +1336,7 @@ class SchemaUtilsSuite extends QueryTest
 
     // Identity.
     var visitedFields = 0
-    val res1 = transformColumns(base) {
+    val res1 = SchemaMergingUtils.transformColumns(base) {
       case (_, field, _) =>
         visitedFields += 1
         field
@@ -1249,11 +1346,11 @@ class SchemaUtilsSuite extends QueryTest
 
     // Rename
     visitedFields = 0
-    val res2 = transformColumns(base) { (path, field, _) =>
+    val res2 = SchemaMergingUtils.transformColumns(base) { (path, field, _) =>
       visitedFields += 1
       val name = path :+ field.name match {
         case Seq("nested", "s1") => "t1"
-        case Seq("arr", "s2") => "a2"
+        case Seq("arr", "element", "s2") => "a2"
         case Seq("kvs", "key", "s1") => "k1"
         case Seq("kvs", "value", "s2") => "v2"
         case _ => field.name
@@ -1267,7 +1364,7 @@ class SchemaUtilsSuite extends QueryTest
     visitedFields = 0
     val mapping = Seq(
       Seq("nested", "s1") -> "t1",
-      Seq("arr", "s2") -> "a2",
+      Seq("arr", "element", "s2") -> "a2",
       Seq("kvs", "key", "S1") -> "k1",
       Seq("kvs", "value", "s2") -> "v2")
     val res3 = transformColumns(base, mapping) {

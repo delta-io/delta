@@ -453,19 +453,21 @@ object DeltaLog extends DeltaLogging {
     val hadoopConf = spark.sessionState.newHadoopConf()
     val fs = rawPath.getFileSystem(hadoopConf)
     val path = fs.makeQualified(rawPath)
+    def createDeltaLog(): DeltaLog = recordDeltaOperation(
+      null,
+      "delta.log.create",
+      Map(TAG_TAHOE_PATH -> path.getParent.toString)) {
+        AnalysisHelper.allowInvokingTransformsInAnalyzer {
+          new DeltaLog(path, path.getParent, clock)
+        }
+    }
     // The following cases will still create a new ActionLog even if there is a cached
     // ActionLog using a different format path:
     // - Different `scheme`
     // - Different `authority` (e.g., different user tokens in the path)
     // - Different mount point.
     try {
-      deltaLogCache.get(path, () => { recordDeltaOperation(
-            null, "delta.log.create", Map(TAG_TAHOE_PATH -> path.getParent.toString)) {
-          AnalysisHelper.allowInvokingTransformsInAnalyzer {
-            new DeltaLog(path, path.getParent, clock)
-          }
-        }
-      })
+      deltaLogCache.get(path, () => createDeltaLog())
     } catch {
       case e: com.google.common.util.concurrent.UncheckedExecutionException =>
         throw e.getCause
@@ -531,10 +533,11 @@ object DeltaLog extends DeltaLogging {
         val unquoted = a.name.stripPrefix("`").stripSuffix("`")
         val partitionCol = partitionSchema.find { field => resolver(field.name, unquoted) }
         partitionCol match {
-          case Some(StructField(name, dataType, _, _)) =>
+          case Some(f: StructField) =>
+            val name = DeltaColumnMapping.getPhysicalName(f)
             Cast(
               UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", name)),
-              dataType)
+              f.dataType)
           case None =>
             // This should not be able to happen, but the case was present in the original code so
             // we kept it to be safe.

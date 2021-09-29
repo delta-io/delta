@@ -37,7 +37,7 @@ import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionSet}
  * @param readAppIds - appIds that have been seen by the transaction
  * @param metadata - table metadata for the transaction
  * @param actions - delta log actions that the transaction wants to commit
- * @param deltaLog - [[DeltaLog]] corresponding to the target table
+ * @param readSnapshot - read [[Snapshot]] used for the transaction
  * @param commitInfo - [[CommitInfo]] for the commit
  */
 private[delta] case class CurrentTransactionInfo(
@@ -47,7 +47,7 @@ private[delta] case class CurrentTransactionInfo(
     readAppIds: Set[String],
     metadata: Metadata,
     actions: Seq[Action],
-    deltaLog: DeltaLog,
+    readSnapshot: Snapshot,
     commitInfo: Option[CommitInfo]) {
 
   /** Final actions to commit - including the [[CommitInfo]] */
@@ -93,9 +93,15 @@ private[delta] class ConflictChecker(
     logPrefixStr: String) extends DeltaLogging {
 
   protected val timingStats = mutable.HashMap[String, Long]()
+  protected val deltaLog = initialCurrentTransactionInfo.readSnapshot.deltaLog
   protected var currentTransactionInfo: CurrentTransactionInfo = initialCurrentTransactionInfo
   protected val winningCommitSummary: WinningCommitSummary = createWinningCommitSummary()
 
+  /**
+   * This function checks conflict of the `initialCurrentTransactionInfo` against the
+   * `winningCommitVersion` and returns an updated [[CurrentTransactionInfo]] that represents
+   * the transaction as if it had started while reading the `winningCommitVersion`.
+   */
   def checkConflicts(): CurrentTransactionInfo = {
     checkProtocolCompatibility()
     checkNoMetadataUpdates()
@@ -113,7 +119,6 @@ private[delta] class ConflictChecker(
    */
   protected def createWinningCommitSummary(): WinningCommitSummary = {
     recordTime("initialize-old-commit") {
-      val deltaLog = currentTransactionInfo.deltaLog
       val winningCommitActions = deltaLog.store.read(
         FileNames.deltaFile(deltaLog.logPath, winningCommitVersion)).map(Action.fromJson)
       WinningCommitSummary(winningCommitActions, winningCommitVersion)
@@ -127,8 +132,8 @@ private[delta] class ConflictChecker(
   protected def checkProtocolCompatibility(): Unit = {
     if (winningCommitSummary.protocol.nonEmpty) {
       winningCommitSummary.protocol.foreach { p =>
-        currentTransactionInfo.deltaLog.protocolRead(p)
-        currentTransactionInfo.deltaLog.protocolWrite(p)
+        deltaLog.protocolRead(p)
+        deltaLog.protocolWrite(p)
       }
       currentTransactionInfo.actions.foreach {
         case Protocol(_, _) =>

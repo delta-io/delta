@@ -524,7 +524,7 @@ class DeltaSinkSuite extends StreamTest {
         query.processAllAvailable()
 
         val lastCommitInfo = io.delta.tables.DeltaTable.forPath(spark, outputDir.getCanonicalPath)
-            .history(1).as[CommitInfo].head
+            .history(1).as[DeltaHistory].head
 
         assert(lastCommitInfo.userMetadata === Some("testMeta!"))
         query.stop()

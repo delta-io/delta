@@ -17,8 +17,7 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier}
-import org.apache.spark.sql.delta.actions.CommitInfo
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistory, DeltaLog, DeltaTableIdentifier}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.hadoop.fs.Path
 
@@ -39,7 +38,7 @@ case class DescribeDeltaHistory(
     path: Option[String],
     tableIdentifier: Option[TableIdentifier],
     limit: Option[Int],
-    output: Seq[Attribute] = ExpressionEncoder[CommitInfo]().schema.toAttributes)
+    output: Seq[Attribute] = ExpressionEncoder[DeltaHistory]().schema.toAttributes)
   extends LeafNode with MultiInstanceRelation  {
   override def computeStats(): Statistics = Statistics(sizeInBytes = conf.defaultSizeInBytes)
 
@@ -53,7 +52,7 @@ case class DescribeDeltaHistoryCommand(
     path: Option[String],
     tableIdentifier: Option[TableIdentifier],
     limit: Option[Int],
-    override val output: Seq[Attribute] = ExpressionEncoder[CommitInfo]().schema.toAttributes)
+    override val output: Seq[Attribute] = ExpressionEncoder[DeltaHistory]().schema.toAttributes)
   extends LeafRunnableCommand with DeltaLogging {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
