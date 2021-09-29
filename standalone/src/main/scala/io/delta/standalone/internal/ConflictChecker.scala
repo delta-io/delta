@@ -74,15 +74,16 @@ private[internal] class ConflictChecker(
     winningCommitVersion: Long,
     isolationLevel: IsolationLevel) {
 
+  private val deltaLog = currentTransactionInfo.deltaLog
   private val winningCommitSummary: WinningCommitSummary = createWinningCommitSummary()
 
   def checkConflicts(): Unit = {
-    //    TODO checkProtocolCompatibility()
-    //    TODO checkNoMetadataUpdates()
+    checkProtocolCompatibility()
+    checkNoMetadataUpdates()
     checkForAddedFilesThatShouldHaveBeenReadByCurrentTxn()
     checkForDeletedFilesAgainstCurrentTxnReadFiles()
-    //    TODO checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
-    //    TODO checkForUpdatedApplicationTransactionIdsThatCurrentTxnDependsOn()
+    checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
+    checkForUpdatedApplicationTransactionIdsThatCurrentTxnDependsOn()
   }
 
   /**
@@ -97,10 +98,38 @@ private[internal] class ConflictChecker(
   }
 
   /**
+   * Asserts that the client is up to date with the protocol and is allowed to read and write
+   * against the protocol set by the committed transaction.
+   */
+  private def checkProtocolCompatibility(): Unit = {
+    if (winningCommitSummary.protocol.nonEmpty) {
+      winningCommitSummary.protocol.foreach { p =>
+        deltaLog.assertProtocolRead(p)
+        deltaLog.assertProtocolWrite(p)
+      }
+      currentTransactionInfo.actions.foreach {
+        case Protocol(_, _) =>
+          throw DeltaErrors.protocolChangedException(winningCommitSummary.commitInfo)
+        case _ =>
+      }
+    }
+  }
+
+  /**
+   * Check if the committed transaction has changed metadata.
+   */
+  private def checkNoMetadataUpdates(): Unit = {
+    // Fail if the metadata is different than what the txn read.
+    if (winningCommitSummary.metadataUpdates.nonEmpty) {
+      throw DeltaErrors.metadataChangedException(winningCommitSummary.commitInfo)
+    }
+  }
+
+  /**
    * Check if the new files added by the already committed transactions should have been read by
    * the current transaction.
    */
-  def checkForAddedFilesThatShouldHaveBeenReadByCurrentTxn(): Unit = {
+  private def checkForAddedFilesThatShouldHaveBeenReadByCurrentTxn(): Unit = {
     // Fail if new files have been added that the txn should have read.
     val addedFilesToCheckForConflicts = isolationLevel match {
       case Serializable =>
@@ -109,14 +138,27 @@ private[internal] class ConflictChecker(
         Seq.empty
     }
 
-    // TODO
+    val predicatesMatchingAddedFiles = currentTransactionInfo.readPredicates.flatMap { p =>
+      val conflictingFile = DeltaLogImpl.filterFileList(
+        currentTransactionInfo.metadata.partitionSchema,
+        addedFilesToCheckForConflicts,
+        p :: Nil
+      ).headOption
+
+      conflictingFile.map(f => getPrettyPartitionMessage(f.partitionValues))
+    }.headOption
+
+    if (predicatesMatchingAddedFiles.isDefined) {
+      throw DeltaErrors.concurrentAppendException(
+          winningCommitSummary.commitInfo, predicatesMatchingAddedFiles.get)
+    }
   }
 
   /**
    * Check if [[RemoveFile]] actions added by already committed transactions conflicts with files
    * read by the current transaction.
    */
-  def checkForDeletedFilesAgainstCurrentTxnReadFiles(): Unit = {
+  private def checkForDeletedFilesAgainstCurrentTxnReadFiles(): Unit = {
     // Fail if files have been deleted that the txn read.
     val readFilePaths = currentTransactionInfo.readFiles.map(
       f => f.path -> f.partitionValues).toMap
@@ -132,6 +174,38 @@ private[internal] class ConflictChecker(
       val filePath = winningCommitSummary.removedFiles.head.path
       throw DeltaErrors.concurrentDeleteReadException(
         winningCommitSummary.commitInfo, s"$filePath")
+    }
+  }
+
+  /**
+   * Check if [[RemoveFile]] actions added by already committed transactions conflicts with
+   * [[RemoveFile]] actions this transaction is trying to add.
+   */
+  private def checkForDeletedFilesAgainstCurrentTxnDeletedFiles(): Unit = {
+    // Fail if a file is deleted twice.
+    val txnDeletes = currentTransactionInfo.actions
+      .collect { case r: RemoveFile => r }
+      .map(_.path).toSet
+    val deleteOverlap = winningCommitSummary.removedFiles.map(_.path).toSet intersect txnDeletes
+    if (deleteOverlap.nonEmpty) {
+      throw DeltaErrors.concurrentDeleteDeleteException(
+        winningCommitSummary.commitInfo, deleteOverlap.head)
+    }
+  }
+
+  /**
+   * Checks if the winning transaction corresponds to some AppId on which current transaction
+   * also depends.
+   */
+  private def checkForUpdatedApplicationTransactionIdsThatCurrentTxnDependsOn(): Unit = {
+    // Fail if the appIds seen by the current transaction has been updated by the winning
+    // transaction i.e. the winning transaction have [[SetTransaction]] corresponding to
+    // some appId on which current transaction depends on. Example - This can happen when
+    // multiple instances of the same streaming query are running at the same time.
+    val txnOverlap = winningCommitSummary.appLevelTransactions.map(_.appId).toSet intersect
+      currentTransactionInfo.readAppIds
+    if (txnOverlap.nonEmpty) {
+      throw DeltaErrors.concurrentTransactionException(winningCommitSummary.commitInfo)
     }
   }
 

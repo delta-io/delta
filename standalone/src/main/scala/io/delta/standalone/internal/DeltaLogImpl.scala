@@ -146,6 +146,16 @@ private[internal] class DeltaLogImpl private(
 
   /**
    * Asserts that the client is up to date with the protocol and
+   * allowed to read the table that is using the given `protocol`.
+   */
+  def assertProtocolRead(protocol: Protocol): Unit = {
+    if (protocol != null && Action.readerVersion < protocol.minReaderVersion) {
+      throw new DeltaErrors.InvalidProtocolVersionException(Action.protocolVersion, protocol)
+    }
+  }
+
+  /**
+   * Asserts that the client is up to date with the protocol and
    * allowed to write to the table that is using the given `protocol`.
    */
   def assertProtocolWrite(protocol: Protocol): Unit = {

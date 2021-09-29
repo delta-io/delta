@@ -217,6 +217,7 @@ private[internal] object ConversionUtils {
     case x: CommitInfoJ => convertCommitInfoJ(x)
     case x: MetadataJ => convertMetadataJ(x)
     case x: ProtocolJ => convertProtocolJ(x)
+    case x: SetTransactionJ => convertSetTransactionJ(x)
     // TODO others
     case _ => throw new UnsupportedOperationException("cannot convert this Java Action")
   }
@@ -295,6 +296,14 @@ private[internal] object ConversionUtils {
     Format(
       external.getProvider,
       external.getOptions.asScala.toMap
+    )
+  }
+
+  def convertSetTransactionJ(external: SetTransactionJ): SetTransaction = {
+    SetTransaction(
+      external.getAppId,
+      external.getVerion,
+      external.getLastUpdated // implicit check this!
     )
   }
 

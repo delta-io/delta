@@ -27,6 +27,8 @@ public final class Column extends LeafExpression {
             evaluator = (record -> record.getInt(name));
         } else if (dataType instanceof BooleanType) {
             evaluator = (record -> record.getBoolean(name));
+        } else if (dataType instanceof StringType) {
+            evaluator = (record -> record.getString(name));
         } else {
             throw new RuntimeException("Couldn't find matching rowRecord DataType for column: " + name);
         }

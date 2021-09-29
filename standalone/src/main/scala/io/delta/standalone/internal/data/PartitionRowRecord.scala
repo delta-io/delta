@@ -19,7 +19,7 @@ package io.delta.standalone.internal.data
 import java.sql.{Date, Timestamp}
 
 import io.delta.standalone.data.{RowRecord => RowRecordJ}
-import io.delta.standalone.types.{BooleanType, IntegerType, StructType}
+import io.delta.standalone.types.{BooleanType, IntegerType, StringType, StructType}
 
 /**
  * A RowRecord representing a Delta Lake partition of Map(partitionKey -> partitionValue)
@@ -75,7 +75,11 @@ private[internal] class PartitionRowRecord(
 
   override def getDouble(fieldName: String): Double = 0 // TODO
 
-  override def getString(fieldName: String): String = null // TODO
+  override def getString(fieldName: String): String = {
+    requireFieldExists(fieldName)
+    require(partitionFieldToType(fieldName).isInstanceOf[StringType])
+    partitionValues(fieldName)
+  }
 
   override def getBinary(fieldName: String): Array[Byte] = null // TODO
 

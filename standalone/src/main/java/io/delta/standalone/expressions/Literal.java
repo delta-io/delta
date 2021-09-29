@@ -4,6 +4,7 @@ import io.delta.standalone.data.RowRecord;
 import io.delta.standalone.types.BooleanType;
 import io.delta.standalone.types.DataType;
 import io.delta.standalone.types.IntegerType;
+import io.delta.standalone.types.StringType;
 
 import java.util.Objects;
 
@@ -64,5 +65,9 @@ public final class Literal extends LeafExpression {
 
     public static Literal of(boolean value) {
         return new Literal(value, new BooleanType());
+    }
+
+    public static Literal of(String value) {
+        return new Literal(value, new StringType());
     }
 }

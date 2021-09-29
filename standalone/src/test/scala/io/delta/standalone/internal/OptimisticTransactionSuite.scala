@@ -20,8 +20,9 @@ import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
 
 import io.delta.standalone.{DeltaLog, Operation}
-import io.delta.standalone.actions.{Action => ActionJ, AddFile => AddFileJ, CommitInfo => CommitInfoJ, Metadata => MetadataJ, Protocol => ProtocolJ, RemoveFile => RemoveFileJ}
-import io.delta.standalone.expressions.Literal
+import io.delta.standalone.actions.{AddFile => AddFileJ, CommitInfo => CommitInfoJ, Metadata => MetadataJ, Protocol => ProtocolJ, RemoveFile => RemoveFileJ}
+import io.delta.standalone.exceptions.{ConcurrentAppendException, ConcurrentDeleteDeleteException, ConcurrentDeleteReadException, ConcurrentTransactionException, MetadataChangedException, ProtocolChangedException}
+import io.delta.standalone.expressions.{EqualTo, Expression, Literal}
 import io.delta.standalone.internal.actions._
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.util.ConversionUtils
@@ -36,6 +37,10 @@ import org.scalatest.FunSuite
 
 class OptimisticTransactionSuite extends FunSuite {
   // scalastyle:on funsuite
+
+  implicit def exprSeqToList[T <: Expression](seq: Seq[T]): java.util.List[Expression] =
+    seq.asInstanceOf[Seq[Expression]].asJava
+
   val engineInfo = "test-engine-info"
   val manualUpdate = new Operation(Operation.Name.MANUAL_UPDATE)
 
@@ -63,8 +68,7 @@ class OptimisticTransactionSuite extends FunSuite {
       test: DeltaLog => Unit): Unit = {
     val schemaFields = partitionCols.map { p => new StructField(p, new StringType()) }.toArray
     val schema = new StructType(schemaFields)
-    //  TODO  val metadata = Metadata(partitionColumns = partitionCols, schemaString = schema.json)
-    val metadata = Metadata(partitionColumns = partitionCols)
+    val metadata = Metadata(partitionColumns = partitionCols, schemaString = schema.toJson)
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
       log.startTransaction().commit(metadata :: Nil, manualUpdate, engineInfo)
@@ -398,14 +402,193 @@ class OptimisticTransactionSuite extends FunSuite {
   // checkForConflicts() tests
   ///////////////////////////////////////////////////////////////////////////
 
+  private def setDataChangeFalse(fileActions: Seq[FileAction]): Seq[FileAction] = {
+    fileActions.map {
+      case a: AddFile => a.copy(dataChange = false)
+      case r: RemoveFile => r.copy(dataChange = false)
+      case cdc: AddCDCFile => cdc // change files are always dataChange = false
+    }
+  }
+
+  //////////////////////////////////
+  // protocolChangedException tests
+  //////////////////////////////////
+
+  test("concurrent protocol update should fail") {
+    withLog(Nil) { log =>
+      val tx1 = log.startTransaction()
+      val tx2 = log.startTransaction()
+      tx2.commit(Protocol(1, 2) :: Nil, manualUpdate, engineInfo)
+
+      assertThrows[ProtocolChangedException] {
+        tx1.commit(Protocol(1, 2) :: Nil, manualUpdate, engineInfo)
+      }
+    }
+  }
+
+  //////////////////////////////////
+  // metadataChangedException tests
+  //////////////////////////////////
+
+  test("concurrent metadata update should fail") {
+    withLog(Nil) { log =>
+      val tx1 = log.startTransaction()
+      val tx2 = log.startTransaction()
+      tx2.updateMetadata(ConversionUtils.convertMetadata(Metadata(name = "foo")))
+      tx2.commit(Nil, manualUpdate, engineInfo)
+
+      assertThrows[MetadataChangedException] {
+        tx1.updateMetadata(ConversionUtils.convertMetadata(Metadata(name = "bar")))
+        tx1.commit(Nil, manualUpdate, engineInfo)
+      }
+    }
+  }
+
+  //////////////////////////////////
+  // concurrentAppend tests
+  //////////////////////////////////
+
+  test("block concurrent commit when read partition was appended to by concurrent write") {
+    withLog(addA_P1 :: addD_P2 :: addE_P3 :: Nil) { log =>
+      val schema = log.update().getMetadata.getSchema
+      val tx1 = log.startTransaction()
+      // TX1 reads only P1
+      val tx1Read = tx1.markFilesAsRead(new EqualTo(schema.column("part"), Literal.of("1")) :: Nil)
+      assert(tx1Read.asScala.map(_.getPath) == A_P1 :: Nil)
+
+      val tx2 = log.startTransaction()
+      tx2.markFilesAsRead(Literal.True :: Nil)
+      // TX2 modifies only P1
+      tx2.commit(addB_P1 :: Nil, manualUpdate, engineInfo)
+
+      intercept[ConcurrentAppendException] {
+        // P1 was modified
+        tx1.commit(addC_P2 :: addE_P3 :: Nil, manualUpdate, engineInfo)
+      }
+    }
+  }
+
+  test("block concurrent commit on full table scan") {
+    withLog(addA_P1 :: addD_P2 :: Nil) { log =>
+      val schema = log.update().getMetadata.getSchema
+      val tx1 = log.startTransaction()
+      // TX1 full table scan
+      tx1.markFilesAsRead(Literal.True :: Nil)
+      tx1.markFilesAsRead(new EqualTo(schema.column("part"), Literal.of("1")) :: Nil)
+
+      val tx2 = log.startTransaction()
+      tx2.markFilesAsRead(Literal.True :: Nil)
+      tx2.commit(addC_P2 :: addD_P2.remove :: Nil, manualUpdate, engineInfo)
+
+      intercept[ConcurrentAppendException] {
+        tx1.commit(addE_P3 :: addF_P3 :: Nil, manualUpdate, engineInfo)
+      }
+    }
+  }
+
+  test("no data change: allow data rearrange when new files concurrently added") {
+    // This tests the case when isolationLevel == SnapshotIsolation
+    withLog(addA_P1 :: addB_P1 :: Nil) { log =>
+      val tx1 = log.startTransaction()
+      tx1.markFilesAsRead(Literal.True :: Nil)
+
+      val tx2 = log.startTransaction()
+      tx1.markFilesAsRead(Literal.True :: Nil)
+      tx2.commit(addE_P3 :: Nil, manualUpdate, engineInfo)
+
+      // tx1 rearranges files (dataChange = false)
+      tx1.commit(
+        setDataChangeFalse(addA_P1.remove :: addB_P1.remove :: addC_P1 :: Nil),
+        manualUpdate, engineInfo)
+
+      assert(log.update().getAllFiles.asScala.map(_.getPath) == C_P1 :: E_P3 :: Nil)
+    }
+  }
+
+  //////////////////////////////////
+  // concurrentDeleteRead tests
+  //////////////////////////////////
+
+  test("block concurrent commit on read & delete conflicting partitions") {
+    // txn.readFiles will be non-empty, so this covers the first ConcurrentDeleteReadException
+    // case in checkForDeletedFilesAgainstCurrentTxnReadFiles
+    withLog(addA_P1 :: addB_P1 :: Nil) { log =>
+      val schema = log.update().getMetadata.getSchema
+      val tx1 = log.startTransaction()
+      // read P1
+      tx1.markFilesAsRead(new EqualTo(schema.column("part"), Literal.of("1")) :: Nil)
+
+      // tx2 commits before tx1
+      val tx2 = log.startTransaction()
+      tx2.markFilesAsRead(Literal.True :: Nil)
+      tx2.commit(addA_P1.remove :: Nil, manualUpdate, engineInfo)
+
+      intercept[ConcurrentDeleteReadException] {
+        // P1 read by TX1 was removed by TX2
+        tx1.commit(addE_P3 :: Nil, manualUpdate, engineInfo)
+      }
+    }
+  }
+
+  test("readWholeTable should block concurrent delete") {
+    // txn.readFiles will be empty, so this covers the second ConcurrentDeleteReadException
+    // case in checkForDeletedFilesAgainstCurrentTxnReadFiles
+    withLog(addA_P1 :: Nil) { log =>
+      val tx1 = log.startTransaction()
+      tx1.readWholeTable()
+
+      // tx2 removes file
+      val tx2 = log.startTransaction()
+      tx2.commit(addA_P1.remove :: Nil, manualUpdate, engineInfo)
+
+      intercept[ConcurrentDeleteReadException] {
+        // tx1 reads the whole table but tx2 removes files before tx1 commits
+        tx1.commit(addB_P1 :: Nil, manualUpdate, engineInfo)
+      }
+    }
+  }
+
+  //////////////////////////////////
+  // concurrentDeleteDelete tests
+  //////////////////////////////////
+
+  test("block commit with concurrent removes on same file") {
+    withLog(addA_P1 :: Nil) { log =>
+      val tx1 = log.startTransaction()
+
+      // tx2 removes file
+      val tx2 = log.startTransaction()
+      tx2.commit(addA_P1.remove :: Nil, manualUpdate, engineInfo)
+
+      intercept[ConcurrentDeleteDeleteException] {
+        // tx1 tries to remove the same file
+        tx1.commit(addA_P1.remove :: Nil, manualUpdate, engineInfo)
+      }
+    }
+  }
+
+  //////////////////////////////////
+  // concurrentTransaction tests
+  //////////////////////////////////
+
+  test("block concurrent set-txns with the same app id") {
+    withLog(Nil) { log =>
+      val tx1 = log.startTransaction()
+      tx1.txnVersion("t1")
+
+      val winningTxn = log.startTransaction()
+      winningTxn.txnVersion("t1")
+      winningTxn.commit(SetTransaction("t1", 1, Some(1234L)) :: Nil, manualUpdate, engineInfo)
+
+      intercept[ConcurrentTransactionException] {
+        tx1.commit(Nil, manualUpdate, engineInfo)
+      }
+    }
+  }
+
   // TODO multiple concurrent commits, not just one (i.e. 1st doesn't conflict, 2nd does)
 
-  // TODO: test more ConcurrentAppendException
-
-  // TODO: test more ConcurrentDeleteReadException (including readWholeTable)
-
-  // TODO: test checkForAddedFilesThatShouldHaveBeenReadByCurrentTxn with SnapshotIsolation
-  // i.e. datachange = false
+  // TODO: readWholeTable tests
 
   // TODO: test Checkpoint > partialWriteVisible (==> useRename)
 

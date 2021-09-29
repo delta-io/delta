@@ -19,6 +19,7 @@ package io.delta.standalone.internal.exception
 import java.io.{FileNotFoundException, IOException}
 
 import io.delta.standalone.internal.actions.{CommitInfo, Protocol}
+import io.delta.standalone.internal.util.JsonUtils
 import io.delta.standalone.types.StructType
 import io.delta.standalone.exceptions._
 
@@ -176,15 +177,43 @@ private[internal] object DeltaErrors {
   def concurrentModificationExceptionMsg(
       baseMessage: String,
       commit: Option[CommitInfo]): String = {
-    // TODO
-    ""
+    baseMessage +
+      commit.map(ci => s"\nConflicting commit: ${JsonUtils.toJson(ci)}").getOrElse("") +
+      s"\nRefer to https://docs.delta.io/latest/concurrency-control.html for more details."
+  }
+
+  def metadataChangedException(
+      conflictingCommit: Option[CommitInfo]): MetadataChangedException = {
+    val message = DeltaErrors.concurrentModificationExceptionMsg(
+      "The metadata of the Delta table has been changed by a concurrent update. " +
+        "Please try the operation again.",
+      conflictingCommit)
+    new MetadataChangedException(message)
+  }
+
+  def protocolChangedException(conflictingCommit: Option[CommitInfo]): ProtocolChangedException = {
+    val additionalInfo = conflictingCommit.map { v =>
+      if (v.version.getOrElse(-1) == 0) {
+        "This happens when multiple writers are writing to an empty directory. " +
+          "Creating the table ahead of time will avoid this conflict. "
+      } else {
+        ""
+      }
+    }.getOrElse("")
+
+    val message = DeltaErrors.concurrentModificationExceptionMsg(
+      "The protocol version of the Delta table has been changed by a concurrent update. " +
+        additionalInfo + "Please try the operation again.",
+      conflictingCommit)
+    new ProtocolChangedException(message)
   }
 
   def concurrentAppendException(
-      conflictingCommit: Option[CommitInfo]): ConcurrentAppendException = {
-    // TODO: include partition?
+      conflictingCommit: Option[CommitInfo],
+      partition: String): ConcurrentAppendException = {
     val message = DeltaErrors.concurrentModificationExceptionMsg(
-      s"Files were added by a concurrent update. Please try the operation again.",
+      s"Files were added to $partition by a concurrent update. " +
+        s"Please try the operation again.",
       conflictingCommit)
     new ConcurrentAppendException(message)
   }
@@ -197,6 +226,26 @@ private[internal] object DeltaErrors {
         s" (for example $file) by a concurrent update. Please try the operation again.",
       conflictingCommit)
     new ConcurrentDeleteReadException(message)
+  }
+
+  def concurrentDeleteDeleteException(
+      conflictingCommit: Option[CommitInfo],
+      file: String): ConcurrentDeleteDeleteException = {
+    val message = DeltaErrors.concurrentModificationExceptionMsg(
+      "This transaction attempted to delete one or more files that were deleted " +
+        s"(for example $file) by a concurrent update. Please try the operation again.",
+      conflictingCommit)
+    new ConcurrentDeleteDeleteException(message)
+  }
+
+  def concurrentTransactionException(
+      conflictingCommit: Option[CommitInfo]): ConcurrentTransactionException = {
+    val message = DeltaErrors.concurrentModificationExceptionMsg(
+      s"This error occurs when multiple streaming queries are using the same checkpoint to write " +
+        "into this table. Did you run multiple instances of the same streaming query" +
+        " at the same time?",
+      conflictingCommit)
+    new ConcurrentTransactionException(message)
   }
 
   def maxCommitRetriesExceededException(
