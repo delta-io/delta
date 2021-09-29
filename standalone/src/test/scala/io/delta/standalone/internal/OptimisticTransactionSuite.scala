@@ -23,10 +23,10 @@ import io.delta.standalone.{DeltaLog, Operation}
 import io.delta.standalone.actions.{Action => ActionJ, AddFile => AddFileJ, CommitInfo => CommitInfoJ, Metadata => MetadataJ, Protocol => ProtocolJ, RemoveFile => RemoveFileJ}
 import io.delta.standalone.internal.actions._
 import io.delta.standalone.internal.exception.DeltaErrors
-import io.delta.standalone.internal.exception.DeltaErrors.InvalidProtocolVersionException
 import io.delta.standalone.internal.util.ConversionUtils
 import io.delta.standalone.types.{StringType, StructField, StructType}
 import io.delta.standalone.internal.util.TestUtils._
+
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -55,12 +55,6 @@ class OptimisticTransactionSuite extends FunSuite {
   private val addE_P3 = AddFile(E_P3, Map("part" -> "3"), 1, 1, dataChange = true)
   private val addF_P3 = AddFile(F_P3, Map("part" -> "3"), 1, 1, dataChange = true)
   private val addG_P4 = AddFile(G_P4, Map("part" -> "4"), 1, 1, dataChange = true)
-
-  implicit def actionSeqToList[T <: Action](seq: Seq[T]): java.util.List[ActionJ] =
-    seq.map(ConversionUtils.convertAction).asJava
-
-  implicit def addFileSeqToList(seq: Seq[AddFile]): java.util.List[AddFileJ] =
-    seq.map(ConversionUtils.convertAddFile).asJava
 
   def withLog(
       actions: Seq[Action],
@@ -142,6 +136,10 @@ class OptimisticTransactionSuite extends FunSuite {
     }
   }
 
+  ///////////////////////////////////////////////////////////////////////////
+  // prepareCommit() tests
+  ///////////////////////////////////////////////////////////////////////////
+
   test("committing twice in the same transaction should fail") {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
@@ -176,6 +174,7 @@ class OptimisticTransactionSuite extends FunSuite {
     }
   }
 
+  // DeltaLog::ensureLogDirectoryExists
   test("transaction should throw if it cannot read log directory during first commit") {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
@@ -191,7 +190,7 @@ class OptimisticTransactionSuite extends FunSuite {
     }
   }
 
-  test("first commit must have a Metadata") {
+  test("initial commit without metadata should fail") {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
       val txn = log.startTransaction()
@@ -216,7 +215,6 @@ class OptimisticTransactionSuite extends FunSuite {
     }
   }
 
-  // TODO test create a table with protocol too high
   test("Can't create table with invalid protocol version") {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
@@ -256,6 +254,10 @@ class OptimisticTransactionSuite extends FunSuite {
       assert(e.getMessage.contains("This table is configured to only allow appends"))
     }
   }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // updateMetadata() tests
+  ///////////////////////////////////////////////////////////////////////////
 
   test("can't update metadata more than once in a transaction") {
     withTempDir { dir =>
@@ -298,7 +300,7 @@ class OptimisticTransactionSuite extends FunSuite {
     }
   }
 
-  test("commit new metadataa with Protocol properties should fail") {
+  test("commit new metadata with Protocol properties should fail") {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
       log.startTransaction().commit(Metadata() :: Nil, manualUpdate, writerId)
@@ -314,6 +316,10 @@ class OptimisticTransactionSuite extends FunSuite {
         s"(${Protocol.MIN_READER_VERSION_PROP}) as part of table properties"))
     }
   }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // verifyNewMetadata() tests
+  ///////////////////////////////////////////////////////////////////////////
 
   test("can't have duplicate column names") {
     // TODO: just call myStruct.getJson()
@@ -339,15 +345,22 @@ class OptimisticTransactionSuite extends FunSuite {
 
   // TODO: test updateMetadata > unenforceable not null constraints removed from metadata schemaStr
 
-  // TODO: test commit
-  // - commitInfo is actually added to final actions
-  // - isBlindAppend == true
-  // - isBlindAppend == false
-  // - different operation names
+  // TODO: test updateMetadata > withGlobalConfigDefaults
 
-  // TODO: test doCommit > IllegalStateException
+  ///////////////////////////////////////////////////////////////////////////
+  // commit() tests
+  ///////////////////////////////////////////////////////////////////////////
 
-  // TODO: test doCommit > DeltaConcurrentModificationException
+  // - TODO commitInfo is actually added to final actions (with correct engineInfo)
+  // - TODO isBlindAppend == true cases
+  // - TODO isBlindAppend == false case
+  // - TODO different operation names
+
+  ///////////////////////////////////////////////////////////////////////////
+  // checkForConflicts() tests
+  ///////////////////////////////////////////////////////////////////////////
+
+  // TODO multiple concurrent commits, not just one (i.e. 1st doesn't conflict, 2nd does)
 
   // TODO: test more ConcurrentAppendException
 
@@ -355,4 +368,10 @@ class OptimisticTransactionSuite extends FunSuite {
 
   // TODO: test checkForAddedFilesThatShouldHaveBeenReadByCurrentTxn with SnapshotIsolation
   // i.e. datachange = false
+
+  // TODO: test Checkpoint > partialWriteVisible (==> useRename)
+
+  // TODO: test Checkpoint > !partialWriteVisible (==> !useRename)
+
+  // TODO: test Checkpoint > correctly checkpoints all action types
 }

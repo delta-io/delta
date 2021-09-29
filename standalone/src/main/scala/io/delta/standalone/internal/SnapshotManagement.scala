@@ -226,6 +226,7 @@ private[internal] trait SnapshotManagement { self: DeltaLogImpl =>
       logPath,
       segment.version,
       segment,
+      minFileRetentionTimestamp,
       this,
       lastCommitTimestamp)
   }

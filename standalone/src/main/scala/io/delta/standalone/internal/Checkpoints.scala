@@ -17,6 +17,7 @@
 package io.delta.standalone.internal
 
 import java.io.FileNotFoundException
+import java.util.UUID
 
 import com.github.mjakubowski84.parquet4s.ParquetWriter
 import scala.util.control.NonFatal
@@ -105,6 +106,11 @@ private[internal] trait Checkpoints {
   }
 
   /**
+   * Creates a checkpoint using the default snapshot.
+   */
+  def checkpoint(): Unit = checkpoint(snapshot)
+
+  /**
    * Creates a checkpoint using snapshotToCheckpoint. By default it uses the current log version.
    */
   def checkpoint(snapshotToCheckpoint: SnapshotImpl): Unit = {
@@ -115,7 +121,7 @@ private[internal] trait Checkpoints {
     val json = JsonUtils.toJson(checkpointMetaData)
     store.write(LAST_CHECKPOINT, Iterator(json), overwrite = true)
 
-    // TODO: doLogCleanup()
+    doLogCleanup()
   }
 
   /** Loads the checkpoint metadata from the _last_checkpoint file. */
@@ -207,41 +213,77 @@ private[internal] object Checkpoints {
     val useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath)
 
     var checkpointSize = 0L
-    var numOfAddFiles = 0L
+    var numOfFiles = 0L
 
     // Use the string in the closure as Path is not Serializable.
     val path = checkpointFileSingular(snapshot.path, snapshot.version).toString
 
-    // TODO ++ snapshot.removeFiles ++ snapshot.addFiles ++ snapshot.transaction
-    // TODO SingleAction instead of Action?
-    // do NOT include commitInfo
-    // see https://github.com/delta-io/delta/blob/master/PROTOCOL.md#checkpoint-schema
-     val actions: Seq[SingleAction] =
-      (Seq(snapshot.protocolScala, snapshot.metadataScala) ++ snapshot.allFilesScala).map(_.wrap)
+     val actions: Seq[SingleAction] = (
+       Seq(snapshot.metadataScala, snapshot.protocolScala) ++
+       snapshot.setTransactions ++
+       snapshot.allFilesScala ++
+       snapshot.tombstonesScala).map(_.wrap)
+
+    val writtenPath =
+      if (useRename) {
+        val p = new Path(path)
+        // Two instances of the same task may run at the same time in some cases (e.g.,
+        // speculation, stage retry), so generate the temp path here to avoid two tasks
+        // using the same path.
+        val tempPath = new Path(p.getParent, s".${p.getName}.${UUID.randomUUID}.tmp")
+        tempPath.toString
+      } else {
+        path
+      }
 
     val writerOptions = ParquetWriter.Options(
       compressionCodecName = CompressionCodecName.SNAPPY,
       timeZone = snapshot.readTimeZone // TODO: this should just be timeZone
     )
-    val writer = ParquetWriter.writer[SingleAction](path, writerOptions)
+    val writer = ParquetWriter.writer[SingleAction](writtenPath, writerOptions)
 
     try {
-      // TODO useRename
-
       actions.foreach { singleAction =>
         writer.write(singleAction)
         checkpointSize += 1
         if (singleAction.add != null) {
-          numOfAddFiles += 1
+          numOfFiles += 1
         }
       }
+    } catch {
+      case e: org.apache.hadoop.fs.FileAlreadyExistsException if !useRename =>
+        val p = new Path(writtenPath)
+        if (p.getFileSystem(deltaLog.hadoopConf).exists(p)) {
+          // The file has been written by a zombie task. We can just use this checkpoint file
+          // rather than failing a Delta commit.
+        } else {
+          throw e
+        }
     } finally {
       writer.close()
     }
 
-    // TODO: more useRename stuff
+    if (useRename) {
+      val src = new Path(writtenPath)
+      val dest = new Path(path)
+      val fs = dest.getFileSystem(deltaLog.hadoopConf)
+      var renameDone = false
+      try {
+        if (fs.rename(src, dest)) {
+          renameDone = true
+        } else {
+          // There should be only one writer writing the checkpoint file, so there must be
+          // something wrong here.
+          throw new IllegalStateException(s"Cannot rename $src to $dest")
+        }
+      } finally {
+        if (!renameDone) {
+          fs.delete(src, false)
+        }
+      }
+    }
 
-    if (numOfAddFiles != snapshot.numOfFiles) {
+    if (numOfFiles != snapshot.numOfFiles) {
       throw new IllegalStateException(
         "State of the checkpoint doesn't match that of the snapshot.")
     }

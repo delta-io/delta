@@ -27,7 +27,7 @@ import org.apache.hadoop.fs.{FileSystem, Path}
 import io.delta.standalone.Snapshot
 import io.delta.standalone.actions.{AddFile => AddFileJ, Metadata => MetadataJ}
 import io.delta.standalone.data.{CloseableIterator, RowRecord => RowParquetRecordJ}
-import io.delta.standalone.internal.actions.{Action, AddFile, InMemoryLogReplay, Metadata, Parquet4sSingleActionWrapper, Protocol, SingleAction}
+import io.delta.standalone.internal.actions.{Action, AddFile, InMemoryLogReplay, Metadata, Parquet4sSingleActionWrapper, Protocol, RemoveFile, SetTransaction, SingleAction}
 import io.delta.standalone.internal.data.CloseableParquetDataIterator
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.sources.StandaloneHadoopConf
@@ -45,6 +45,7 @@ private[internal] class SnapshotImpl(
     val path: Path,
     val version: Long,
     val logSegment: LogSegment,
+    val minFileRetentionTimestamp: Long,
     val deltaLog: DeltaLogImpl,
     val timestamp: Long) extends Snapshot {
 
@@ -85,7 +86,9 @@ private[internal] class SnapshotImpl(
   // Internal-Only Methods
   ///////////////////////////////////////////////////////////////////////////
 
-  def allFilesScala: Seq[AddFile] = state.activeFiles.values.toSeq
+  def allFilesScala: Seq[AddFile] = state.activeFiles.toSeq
+  def tombstonesScala: Seq[RemoveFile] = state.tombstones.toSeq
+  def setTransactions: Seq[SetTransaction] = state.setTransactions
   def protocolScala: Protocol = state.protocol
   def metadataScala: Metadata = state.metadata
   def numOfFiles: Long = state.numOfFiles
@@ -110,7 +113,7 @@ private[internal] class SnapshotImpl(
    */
   protected lazy val state: State = {
     val logPathURI = path.toUri
-    val replay = new InMemoryLogReplay(hadoopConf)
+    val replay = new InMemoryLogReplay(hadoopConf, minFileRetentionTimestamp)
     val files = (logSegment.deltas ++ logSegment.checkpoints).map(_.getPath)
 
     // assert that the log belongs to table
@@ -137,16 +140,19 @@ private[internal] class SnapshotImpl(
     State(
       replay.currentProtocolVersion,
       replay.currentMetaData,
+      replay.getSetTransactions,
       replay.getActiveFiles,
+      replay.getTombstones,
       replay.sizeInBytes,
       replay.getActiveFiles.size,
       replay.numMetadata,
-      replay.numProtocol
+      replay.numProtocol,
+      replay.getTombstones.size,
+      replay.getSetTransactions.size
     )
   }
 
-  private lazy val activeFiles =
-    state.activeFiles.values.map(ConversionUtils.convertAddFile).toList.asJava
+  private lazy val activeFiles = state.activeFiles.map(ConversionUtils.convertAddFile).toList.asJava
 
   /**
    * Asserts that the client is up to date with the protocol and allowed
@@ -185,20 +191,28 @@ private[internal] object SnapshotImpl {
    *
    * @param protocol The protocol version of the Delta table
    * @param metadata The metadata of the table
+   * @param setTransactions The streaming queries writing to this table
    * @param activeFiles The files in this table
+   * @param tombstones The unexpired tombstones
    * @param sizeInBytes The total size of the table (of active files, not including tombstones)
    * @param numOfFiles The number of files in this table
    * @param numOfMetadata The number of metadata actions in the state. Should be 1
    * @param numOfProtocol The number of protocol actions in the state. Should be 1
+   * @param numOfRemoves The number of tombstones in the state
+   * @param numOfSetTransactions Number of streams writing to this table
    */
   case class State(
       protocol: Protocol,
       metadata: Metadata,
-      activeFiles: scala.collection.immutable.Map[URI, AddFile],
+      setTransactions: Seq[SetTransaction],
+      activeFiles: Iterable[AddFile],
+      tombstones: Iterable[RemoveFile],
       sizeInBytes: Long,
       numOfFiles: Long,
       numOfMetadata: Long,
-      numOfProtocol: Long)
+      numOfProtocol: Long,
+      numOfRemoves: Long,
+      numOfSetTransactions: Long)
 }
 
 /**
@@ -212,13 +226,9 @@ private class InitialSnapshotImpl(
     override val hadoopConf: Configuration,
     val logPath: Path,
     override val deltaLog: DeltaLogImpl)
-  extends SnapshotImpl(hadoopConf, logPath, -1, LogSegment.empty(logPath), deltaLog, -1) {
+  extends SnapshotImpl(hadoopConf, logPath, -1, LogSegment.empty(logPath), -1, deltaLog, -1) {
 
   override lazy val state: SnapshotImpl.State = {
-    SnapshotImpl.State(
-      Protocol(),
-      Metadata(),
-      Map.empty[URI, AddFile],
-      0L, 0L, 1L, 1L)
+    SnapshotImpl.State(Protocol(), Metadata(), Nil, Nil, Nil, 0L, 0L, 1L, 1L, 0L, 0L)
   }
 }

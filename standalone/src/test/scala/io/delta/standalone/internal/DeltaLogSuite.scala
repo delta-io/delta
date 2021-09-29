@@ -58,6 +58,8 @@ class DeltaLogSuite extends FunSuite {
     }
   }
 
+  // TODO: another checkpoint test
+
   test("snapshot") {
     def getDirDataFiles(tablePath: String): Array[File] = {
       val correctTablePath =
@@ -146,6 +148,8 @@ class DeltaLogSuite extends FunSuite {
     }
   }
 
+  // TODO: update should pick up checkpoints
+
   test("handle corrupted '_last_checkpoint' file") {
     withLogImplForGoldenTable("corrupted-last-checkpoint") { log1 =>
       assert(log1.lastCheckpoint.isDefined)
@@ -190,6 +194,8 @@ class DeltaLogSuite extends FunSuite {
       assert(log.snapshot.getAllFiles.size == 0)
     }
   }
+
+  // TODO: do not relativize paths in RemoveFiles
 
   test("delete and re-add the same file in different transactions") {
     withLogForGoldenTable("delete-re-add-same-file-different-transactions") { log =>

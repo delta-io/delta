@@ -29,8 +29,8 @@ import io.delta.standalone.expressions.{And, Expression, Literal}
 import io.delta.standalone.internal.actions.{Action, AddFile, Metadata, Protocol}
 import io.delta.standalone.internal.data.PartitionRowRecord
 import io.delta.standalone.internal.exception.DeltaErrors
-import io.delta.standalone.internal.storage.{HDFSLogStore, LogStoreProvider}
-import io.delta.standalone.internal.util.{ConversionUtils, FileNames}
+import io.delta.standalone.internal.storage.LogStoreProvider
+import io.delta.standalone.internal.util.{Clock, ConversionUtils, FileNames, SystemClock}
 import io.delta.standalone.types.StructType
 
 /**
@@ -39,9 +39,11 @@ import io.delta.standalone.types.StructType
 private[internal] class DeltaLogImpl private(
     val hadoopConf: Configuration,
     val logPath: Path,
-    val dataPath: Path)
+    val dataPath: Path,
+    val clock: Clock)
   extends DeltaLog
   with Checkpoints
+  with MetadataCleanup
   with LogStoreProvider
   with SnapshotManagement {
 
@@ -49,11 +51,23 @@ private[internal] class DeltaLogImpl private(
   lazy val store = createLogStore(hadoopConf)
 
   /** Direct access to the underlying storage system. */
-  private lazy val fs = logPath.getFileSystem(hadoopConf)
+  protected lazy val fs = logPath.getFileSystem(hadoopConf)
 
   // TODO: There is a race here where files could get dropped when increasing the
   // retention interval...
-  private def metadata = if (snapshot == null) Metadata() else snapshot.metadataScala
+  protected def metadata = if (snapshot == null) Metadata() else snapshot.metadataScala
+
+  /** How long to keep around logically deleted files before physically deleting them. */
+  def tombstoneRetentionMillis: Long =
+    // TODO DeltaConfigs.getMilliSeconds(DeltaConfigs.TOMBSTONE_RETENTION.fromMetaData(metadata))
+    // 1 week
+    metadata.configuration.getOrElse("deletedFileRetentionDuration", "604800000").toLong
+
+  /**
+   * Tombstones before this timestamp will be dropped from the state and the files can be
+   * garbage collected.
+   */
+  def minFileRetentionTimestamp: Long = clock.getTimeMillis() - tombstoneRetentionMillis
 
   /** Use ReentrantLock to allow us to call `lockInterruptibly`. */
   private val deltaLogLock = new ReentrantLock()
@@ -161,11 +175,22 @@ private[standalone] object DeltaLogImpl {
     apply(hadoopConf, new Path(dataPath, "_delta_log"))
   }
 
-  def apply(hadoopConf: Configuration, rawPath: Path): DeltaLogImpl = {
+  def forTable(hadoopConf: Configuration, dataPath: String, clock: Clock): DeltaLogImpl = {
+    apply(hadoopConf, new Path(dataPath, "_delta_log"), clock)
+  }
+
+  def forTable(hadoopConf: Configuration, dataPath: Path, clock: Clock): DeltaLogImpl = {
+    apply(hadoopConf, new Path(dataPath, "_delta_log"), clock)
+  }
+
+  def apply(
+      hadoopConf: Configuration,
+      rawPath: Path,
+      clock: Clock = new SystemClock): DeltaLogImpl = {
     val fs = rawPath.getFileSystem(hadoopConf)
     val path = fs.makeQualified(rawPath)
 
-    new DeltaLogImpl(hadoopConf, path, path.getParent)
+    new DeltaLogImpl(hadoopConf, path, path.getParent, clock)
   }
 
   /**

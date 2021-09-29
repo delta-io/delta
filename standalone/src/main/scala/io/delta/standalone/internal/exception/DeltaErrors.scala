@@ -126,12 +126,6 @@ private[internal] object DeltaErrors {
       "Couldn't find Metadata while committing the first version of the Delta table.")
   }
 
-  def protocolDowngradeException(oldProtocol: Protocol, newProtocol: Protocol): Throwable = {
-    // TODO: class ProtocolDowngradeException ?
-    new RuntimeException("Protocol version cannot be downgraded from " +
-      s"${oldProtocol.simpleString} to ${newProtocol.simpleString}")
-  }
-
   def addFilePartitioningMismatchException(
       addFilePartitions: Seq[String],
       metadataPartitions: Seq[String]): Throwable = {
