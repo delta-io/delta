@@ -237,6 +237,7 @@ object Checkpoints extends DeltaLogging {
     // log store and decide whether to use rename.
     val useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath)
 
+    val hadoopConf = spark.sessionState.newHadoopConf
     val checkpointSize = spark.sparkContext.longAccumulator("checkpointSize")
     val numOfFiles = spark.sparkContext.longAccumulator("numOfFiles")
     // Use the string in the closure as Path is not Serializable.
@@ -255,7 +256,7 @@ object Checkpoints extends DeltaLogging {
 
     val (factory, serConf) = {
       val format = new ParquetFileFormat()
-      val job = Job.getInstance()
+      val job = Job.getInstance(hadoopConf)
       (format.prepareWrite(spark, job, Map.empty, schema),
         new SerializableConfiguration(job.getConfiguration))
     }
@@ -306,7 +307,7 @@ object Checkpoints extends DeltaLogging {
     if (useRename) {
       val src = new Path(writtenPath)
       val dest = new Path(path)
-      val fs = dest.getFileSystem(spark.sessionState.newHadoopConf)
+      val fs = dest.getFileSystem(hadoopConf)
       var renameDone = false
       try {
         if (fs.rename(src, dest)) {

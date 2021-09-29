@@ -78,6 +78,21 @@ class DeltaLogSuite extends QueryTest
     }
   }
 
+  test("checkpoint write should use the correct Hadoop configuration") {
+    withTempDir { dir =>
+      withSQLConf(
+          "fs.AbstractFileSystem.fake.impl" -> classOf[FakeAbstractFileSystem].getName,
+          "fs.fake.impl" -> classOf[FakeFileSystem].getName,
+          "fs.fake.impl.disable.cache" -> "true") {
+        val path = s"fake://${dir.getCanonicalPath}"
+        val log = DeltaLog.forTable(spark, path)
+        val txn = log.startTransaction()
+        txn.commitManually(AddFile("foo", Map.empty, 1, 1, true))
+        log.checkpoint()
+      }
+    }
+  }
+
   testQuietly("update should pick up checkpoints") {
     withTempDir { tempDir =>
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
