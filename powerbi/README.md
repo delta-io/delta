@@ -5,9 +5,10 @@ The provided PowerQuery/M function allows you to read a Delta Lake table directl
 - Read Delta Lake table into PowerBI without having a cluster (Spark, Databricks, Azure Synapse) up and running
 - Online/Scheduled Refresh in the PowerBI service 
 - Support all storage systems that are supported by PowerBI
-    - Azure Data Lake Store (tested)
+    - Azure Data Lake Store Gen2 (tested)
     - Azure Blob Storage (tested)
     - Local Folder or Network Share (tested)
+    - Azure Data Lake Store Gen1 (tested)
     - AWS S3 (not yet tested)
     - Local Hadoop / HDFS (partially tested, check `UseFileBuffer` option)
 - Support for Partition Elimination to leverage the partitioning schema of the Delta Lake table
@@ -18,11 +19,11 @@ The provided PowerQuery/M function allows you to read a Delta Lake table directl
 2. Once you are in the Power Query Editor use Home -> New Source -> Blank query
 3. Go to Home -> Query -> Advanced Editor
 4. Paste the code of the custom function: [fn_ReadDeltaTable.pq](fn_ReadDeltaTable.pq) and name the query `fn_ReadDeltaTable`
-5. Connect to your storage - e.g. create a PQ query with the following code and call it `Blob_Content`
+5. Connect to your storage - e.g. create a PQ query with the following code (paste it via the Advanced Editor) and call it `Blob_Content`
 ```
 let
     Source = AzureStorage.Blobs("https://gbadls01.blob.core.windows.net/public"),
-    #"Filtered Rows" = Table.SelectRows(Source, each Text.StartsWith([Name], "powerbi_delta/FactInternetSales_part.delta/")),
+    #"Filtered Rows" = Table.SelectRows(Source, each Text.StartsWith([Name], "powerbi_delta/FactInternetSales_part.delta/"))
 in
     #"Filtered Rows"
 ```
@@ -44,9 +45,14 @@ These are all returned by default for common Storage connectors like Azure Data 
 
 ## Parameter DeltaTableOptions
 An optional record that be specified to control the following options:
-- `Version` - a numeric value that defines historic specific version of the Delta Lake table you want to read. This is similar to specifying `VERSION AS OF` when querying the Delta Lake table via SQL. Default is the most recent/current version.
-- `UseFileBuffer` - some data sources do not support streaming of binary files and you may receive an error message like **"Parquet.Document cannot be used with streamed binary values."**. To mitigate this issue, you can set `UseFileBuffer=true`. Details about this issue and implications are desribed [here](https://blog.crossjoin.co.uk/2021/03/07/parquet-files-in-power-bi-power-query-and-the-streamed-binary-values-error/)
-- `PartitionFilterFunction` - a fuction that is used to filter out partitions before actually reading the files. The function has to take 1 parameter of type `record` and must return a `logical` type (true/false). The record that is passed in can then be used to specify the partition filter. For each file in the delta table the metadata is checked against this function. If it is not matched, it is discarded from the final list of files that make up the Delta Lake table.
+### **Version**
+A numeric value that defines historic specific version of the Delta Lake table you want to read. This is similar to specifying 
+`VERSION AS OF` When querying the Delta Lake table via SQL. Default is the most recent/current version.
+### **UseFileBuffer** 
+Some data sources do not support streaming of binary files and you may receive an error message like **"Parquet.Document cannot be used with streamed binary values."**. To mitigate this issue, you can set `UseFileBuffer=true`. Details about this issue and implications are desribed [here](https://blog.crossjoin.co.uk/2021/03/07/parquet-files-in-power-bi-power-query-and-the-streamed-binary-values-error/).
+Please be aware that this option can have negative performance impact!
+### **PartitionFilterFunction**
+A fuction that is used to filter out partitions before actually reading the files. The function has to take 1 parameter of type `record` and must return a `logical` type (true/false). The record that is passed in can then be used to specify the partition filter. For each file in the delta table the metadata is checked against this function. If it is not matched, it is discarded from the final list of files that make up the Delta Lake table.
 Assuming your Delta Lake table is partitioned by Year and Month and you want to filter for `Year=2021` and `Month="Jan"` your function may look like this:
 ```
 (PartitionValues as record) as logical =>
@@ -63,19 +69,28 @@ or even more lightweight
 ```
 
 It supports all possible variations that are supported by Power Query/M so you can also build complex partition filters.
-- additional options may be added in the future!
+### **IterateFolderContent**
+Some data sources (like Azure Data Lake Store Gen1) do not automatically expand all sub-folders to get the single files. To make the function work with those data sources you can set `IterateFolderContent=true`. 
+Please be aware that this option can have negative performance impact!
+### **TimeZoneOffset**
+Apache Parquet has no built-in data type for timestamps with offset hence all timestamps are stored physically as UTC. As Delta Lake is also based on Apache Parquet, this also applies here. So, to explicitly change the timezone for all timestamps that are read from the Delta Lake table, you can use `TimeZoneOffset="+02:00"`. The resulting columns will then be of type DateTimeZone with the offset of `+02:00` and the DateTime-value shifted by +2 hours. The parameter supports the following format only: `[+|-][HH:mm]`
+### **additional options may be added in the future!**
 
 # Known limitations
 - Time Travel
-   - currently only supports `VERSION AS OF`
-   - `TIMESTAMP AS OF` not yet supported
+    - currently only supports `VERSION AS OF`
+    - `TIMESTAMP AS OF` not yet supported
+- complex data types are currently not supported
+    - map
+    - struct
+    - array
 
 # Examples
 The examples below can be used *as-is* in Power BI desktop. If you are prompted for authentication, just select `Anonymous` for your authentication method.
-> Note: In the examples the root folder of the Delta Lake table ends with `.delta`. This is not mandatory and can be any path.
+> **Note:** In the examples the root folder of the Delta Lake table ends with `.delta`. This is not mandatory and can be any path.
 
 ## Using Delta Lake Time Travel
-To use Delta Lake Time Travel you need to specify the `Version`-option as part of the second argument. The following example reads the Version 123 of a Delta Lake table from an Azure Blob Storage. 
+To use Delta Lake Time Travel you need to specify the `Version`-option as part of the second argument. The following example reads the Version 1 of a Delta Lake table from an Azure Blob Storage. 
 ```
 let
     Source = AzureStorage.Blobs("https://gbadls01.blob.core.windows.net/public"),
@@ -86,7 +101,7 @@ in
 ```
 
 ## Using Delta Lake Partition Elimination
-Partition Elimination is a crucial feature when working with large amounts of data. Without it, you would need to read the whole table and discard a majority of
+Partition Elimination is a crucial feature when working with large amounts of data. Without it, you would need to read the whole table and discard a majority of the rows afterwards which is not very efficient. This can be accomplished by using the `PartitionFilterFunction`-option as part of the second argument. In the example below our table is partitioned by `SalesTerritoryKey` (integer) and we only want to load data from Sales Territories where the `SalesTerritoryKey` is greater or equal to `5`:
 ```
 let
     Source = AzureStorage.Blobs("https://gbadls01.blob.core.windows.net/public"),
@@ -95,6 +110,18 @@ let
 in
     DeltaTable
 ```
+
+## Reading from Azure Data Lake Store Gen1
+To read diretly from an Azure Data Lake Store Gen1 folder, you need to specify the options `UseFileBuffer=true` and `IterateFolderContent=true`:
+```
+let
+    Source = DataLake.Contents("adl://myadlsgen1.azuredatalakestore.net/DeltaSamples/FactInternetSales_part.delta", [PageSize=null]),
+    DeltaTable = fn_ReadDeltaTable(Source, [UseFileBuffer = true, IterateFolderContent = true])
+in
+    DeltaTable
+```
+
+If you are reading from Azure Data Lake Store **Gen2** with `[HierarchicalNavigation = true]` you can also use `IterateFolderContent=true` which may speed up overall performance - but this can vary from case to case so please test this on your own data first!
 
 
 
@@ -106,4 +133,9 @@ in
 --------------------
 **Q:** How can I use [Delta Lake Time Travel](https://databricks.com/blog/2019/02/04/introducing-delta-time-travel-for-large-scale-data-lakes.html)?
 
-**A:** The function supports an optional second parameter to supply generic parameters. To query specific version of the Delta Lake table, you can provide a record with the field `Version` and the value of the version you want to query. For example: `fn_ReadDeltaTable(#"Filtered Rows", [Version=123])`
+**A:** The function supports an optional second parameter to supply generic parameters. To query specific version of the Delta Lake table, you can provide a record with the field `Version` and the value of the version you want to query. For example, to read Version 123 of your Delta Table, you can use the following M code: `fn_ReadDeltaTable(DeltaTableFolderContents, [Version=123])`
+
+--------------------
+**Q:** The data source I am using does not work with the `fn_ReadDeltaTable` function - what can I do?
+
+**A:** Please open a support ticket/issue in the git repository.

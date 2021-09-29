@@ -29,7 +29,8 @@ object StandaloneMimaExcludes {
 
     // Public API changes in 0.2.0 -> 0.3.0
     ProblemFilters.exclude[ReversedMissingMethodProblem]("io.delta.standalone.DeltaLog.getChanges"),
-    ProblemFilters.exclude[ReversedMissingMethodProblem]("io.delta.standalone.DeltaLog.startTransaction")
+    ProblemFilters.exclude[ReversedMissingMethodProblem]("io.delta.standalone.DeltaLog.startTransaction"),
+    ProblemFilters.exclude[ReversedMissingMethodProblem]("io.delta.standalone.Snapshot.scan")
 
     // scalastyle:on line.size.limit
   )
