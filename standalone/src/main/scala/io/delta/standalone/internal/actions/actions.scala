@@ -202,6 +202,11 @@ private[internal] case class Metadata(
     new StructType(schema.getFields.filterNot(f => partitions.contains(f.getName)))
   }
 
+  /** Returns the partitionSchema as a [[StructType]] */
+  @JsonIgnore
+  lazy val partitionSchema: StructType =
+    new StructType(partitionColumns.map(c => schema.get(c)).toArray)
+
   override def wrap: SingleAction = SingleAction(metaData = this)
 }
 

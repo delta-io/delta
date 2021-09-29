@@ -183,7 +183,7 @@ private[standalone] object DeltaLogImpl {
     apply(hadoopConf, new Path(dataPath, "_delta_log"), clock)
   }
 
-  def apply(
+  private def apply(
       hadoopConf: Configuration,
       rawPath: Path,
       clock: Clock = new SystemClock): DeltaLogImpl = {
@@ -199,7 +199,7 @@ private[standalone] object DeltaLogImpl {
    *              information
    * @param partitionFilters Filters on the partition columns
    */
-  def filterFileList(
+  private[internal] def filterFileList(
       partitionSchema: StructType,
       files: Seq[AddFile],
       partitionFilters: Seq[Expression]): Seq[AddFile] = {
@@ -209,7 +209,7 @@ private[standalone] object DeltaLogImpl {
     files.filter { addFile =>
       val partitionRowRecord = new PartitionRowRecord(partitionSchema, addFile.partitionValues)
       val result = expr.eval(partitionRowRecord)
-      result == true
+      result.asInstanceOf[Boolean]
     }
   }
 }

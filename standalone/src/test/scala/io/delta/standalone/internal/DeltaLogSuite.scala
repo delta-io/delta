@@ -28,7 +28,7 @@ import scala.collection.JavaConverters._
 import io.delta.standalone.{DeltaLog, Snapshot}
 import io.delta.standalone.actions.{AddFile => AddFileJ, CommitInfo => CommitInfoJ,
   Format => FormatJ, JobInfo => JobInfoJ, Metadata => MetadataJ, NotebookInfo => NotebookInfoJ,
- RemoveFile => RemoveFileJ}
+  RemoveFile => RemoveFileJ}
 import io.delta.standalone.internal.actions.{Action, Protocol}
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.util.GoldenTableUtils._

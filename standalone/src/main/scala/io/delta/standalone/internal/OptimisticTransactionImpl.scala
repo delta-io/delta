@@ -23,7 +23,7 @@ import scala.collection.mutable.ArrayBuffer
 
 import io.delta.standalone.{CommitResult, Operation, OptimisticTransaction}
 import io.delta.standalone.actions.{Action => ActionJ, AddFile => AddFileJ, Metadata => MetadataJ}
-import io.delta.standalone.expressions.Expression
+import io.delta.standalone.expressions.{And, Column, Expression, Literal}
 import io.delta.standalone.internal.actions.{Action, AddFile, CommitInfo, FileAction, Metadata, Protocol, RemoveFile}
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.util.{ConversionUtils, FileNames, JsonUtils, SchemaMergingUtils, SchemaUtils}
@@ -130,16 +130,24 @@ private[internal] class OptimisticTransactionImpl(
     new CommitResult(commitVersion)
   }
 
+  /** Returns files matching the given predicates. */
   override def markFilesAsRead(
       _readPredicates: java.lang.Iterable[Expression]): java.util.List[AddFileJ] = {
-    // TODO: PartitionFiltering::filesForScan
-    // TODO
-    //    val partitionFilters = filters.filter { f =>
-    //      DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
-    //    }
-    // TODO readPredicates += ...
-    // TODO readFiles ++=
-    null
+
+    val partitionFilters = _readPredicates.asScala.filter { f =>
+      isPredicatePartitionColumnsOnly(f, metadata.partitionColumns)
+    }.toSeq
+
+    val matchedFiles = DeltaLogImpl.filterFileList(
+      metadata.partitionSchema,
+      snapshot.allFilesScala,
+      partitionFilters
+    )
+
+    readPredicates += partitionFilters.reduceLeftOption(new And(_, _)).getOrElse(Literal.True)
+    readFiles ++= matchedFiles
+
+    matchedFiles.map(ConversionUtils.convertAddFile).asJava
   }
 
   override def updateMetadata(metadataJ: MetadataJ): Unit = {
@@ -403,6 +411,17 @@ private[internal] object OptimisticTransactionImpl {
   val DELTA_MAX_RETRY_COMMIT_ATTEMPTS = 10000000
 
   def getOperationJsonEncodedParameters(op: Operation): Map[String, String] = {
-      op.getParameters.asScala.mapValues(JsonUtils.toJson(_)).toMap
+    op.getParameters.asScala.mapValues(JsonUtils.toJson(_)).toMap
+  }
+
+  /**
+   * Does the predicate only contains partition columns?
+   */
+  def isPredicatePartitionColumnsOnly(
+      condition: Expression,
+      partitionColumns: Seq[String]): Boolean = {
+    // TODO: name equality resolver
+
+    condition.references().asScala.forall(partitionColumns.contains(_))
   }
 }

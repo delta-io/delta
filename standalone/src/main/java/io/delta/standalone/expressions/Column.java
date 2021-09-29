@@ -1,5 +1,8 @@
 package io.delta.standalone.expressions;
 
+import java.util.Collections;
+import java.util.Set;
+
 import io.delta.standalone.data.RowRecord;
 import io.delta.standalone.types.*;
 
@@ -46,6 +49,11 @@ public final class Column extends LeafExpression {
     @Override
     public String toString() {
         return "Column(" + name + ")";
+    }
+
+    @Override
+    public Set<String> references() {
+        return Collections.singleton(name);
     }
 
     @FunctionalInterface

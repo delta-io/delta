@@ -21,6 +21,7 @@ import scala.reflect.ClassTag
 
 import io.delta.standalone.{DeltaLog, Operation}
 import io.delta.standalone.actions.{Action => ActionJ, AddFile => AddFileJ, CommitInfo => CommitInfoJ, Metadata => MetadataJ, Protocol => ProtocolJ, RemoveFile => RemoveFileJ}
+import io.delta.standalone.expressions.Literal
 import io.delta.standalone.internal.actions._
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.util.ConversionUtils
@@ -35,7 +36,7 @@ import org.scalatest.FunSuite
 
 class OptimisticTransactionSuite extends FunSuite {
   // scalastyle:on funsuite
-  val writerId = "test-writer-id"
+  val engineInfo = "test-engine-info"
   val manualUpdate = new Operation(Operation.Name.MANUAL_UPDATE)
 
   val A_P1 = "part=1/a"
@@ -66,8 +67,8 @@ class OptimisticTransactionSuite extends FunSuite {
     val metadata = Metadata(partitionColumns = partitionCols)
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
-      log.startTransaction().commit(metadata :: Nil, manualUpdate, writerId)
-      log.startTransaction().commit(actions, manualUpdate, writerId)
+      log.startTransaction().commit(metadata :: Nil, manualUpdate, engineInfo)
+      log.startTransaction().commit(actions, manualUpdate, engineInfo)
 
       test(log)
     }
@@ -82,7 +83,7 @@ class OptimisticTransactionSuite extends FunSuite {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
       val e1 = intercept[T] {
-        log.startTransaction().commit(metadata :: Nil, manualUpdate, writerId)
+        log.startTransaction().commit(metadata :: Nil, manualUpdate, engineInfo)
       }
       assert(e1.getMessage.contains(expectedExceptionMessageSubStr))
 
@@ -95,7 +96,7 @@ class OptimisticTransactionSuite extends FunSuite {
 
   test("basic commit") {
     withLog(addA_P1 :: addB_P1 :: Nil) { log =>
-      log.startTransaction().commit(addA_P1.remove :: Nil, manualUpdate, writerId)
+      log.startTransaction().commit(addA_P1.remove :: Nil, manualUpdate, engineInfo)
 
       // [...] is what is automatically added by OptimisticTransaction
       // 0 -> metadata [CommitInfo, Protocol]
@@ -127,7 +128,7 @@ class OptimisticTransactionSuite extends FunSuite {
         } else {
           Nil
         }
-        txn.commit(meta ++ delete ++ file, manualUpdate, writerId)
+        txn.commit(meta ++ delete ++ file, manualUpdate, engineInfo)
       }
 
       val log2 = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
@@ -144,9 +145,9 @@ class OptimisticTransactionSuite extends FunSuite {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
       val txn = log.startTransaction()
-      txn.commit(Metadata() :: Nil, manualUpdate, writerId)
+      txn.commit(Metadata() :: Nil, manualUpdate, engineInfo)
       val e = intercept[AssertionError] {
-        txn.commit(Nil, manualUpdate, writerId)
+        txn.commit(Nil, manualUpdate, engineInfo)
       }
       assert(e.getMessage.contains("Transaction already committed."))
     }
@@ -155,9 +156,9 @@ class OptimisticTransactionSuite extends FunSuite {
   test("user cannot commit their own CommitInfo") {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
-      log.startTransaction().commit(Metadata() :: Nil, manualUpdate, writerId)
+      log.startTransaction().commit(Metadata() :: Nil, manualUpdate, engineInfo)
       val e = intercept[AssertionError] {
-        log.startTransaction().commit(CommitInfo.empty() :: Nil, manualUpdate, writerId)
+        log.startTransaction().commit(CommitInfo.empty() :: Nil, manualUpdate, engineInfo)
       }
       assert(e.getMessage.contains("Cannot commit a custom CommitInfo in a transaction."))
     }
@@ -168,7 +169,7 @@ class OptimisticTransactionSuite extends FunSuite {
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
       val txn = log.startTransaction()
       val e = intercept[AssertionError] {
-        txn.commit(Metadata() :: Metadata() :: Nil, manualUpdate, writerId)
+        txn.commit(Metadata() :: Metadata() :: Nil, manualUpdate, engineInfo)
       }
       assert(e.getMessage.contains("Cannot change the metadata more than once in a transaction."))
     }
@@ -182,7 +183,7 @@ class OptimisticTransactionSuite extends FunSuite {
 
       val txn = log.startTransaction()
       val e = intercept[java.io.IOException] {
-        txn.commit(Metadata() :: Nil, manualUpdate, writerId)
+        txn.commit(Metadata() :: Nil, manualUpdate, engineInfo)
       }
 
       val logPath = new Path(log.getPath, "_delta_log")
@@ -195,7 +196,7 @@ class OptimisticTransactionSuite extends FunSuite {
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
       val txn = log.startTransaction()
       val e = intercept[IllegalStateException] {
-        txn.commit(Nil, manualUpdate, writerId)
+        txn.commit(Nil, manualUpdate, engineInfo)
       }
       assert(e.getMessage == DeltaErrors.metadataAbsentException().getMessage)
     }
@@ -206,9 +207,9 @@ class OptimisticTransactionSuite extends FunSuite {
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
 
       // Note that Metadata() has no partition schema specified and addA_P1 does
-      log.startTransaction().commit(Metadata() :: Nil, manualUpdate, writerId)
+      log.startTransaction().commit(Metadata() :: Nil, manualUpdate, engineInfo)
       val e = intercept[IllegalStateException] {
-        log.startTransaction().commit(addA_P1 :: Nil, manualUpdate, writerId)
+        log.startTransaction().commit(addA_P1 :: Nil, manualUpdate, engineInfo)
       }
       assert(e.getMessage.contains("The AddFile contains partitioning schema different from the " +
         "table's partitioning schema"))
@@ -221,7 +222,7 @@ class OptimisticTransactionSuite extends FunSuite {
 
       Seq(Protocol(1, 3), Protocol(1, 1), Protocol(2, 2)).foreach { protocol =>
         val e = intercept[AssertionError] {
-          log.startTransaction().commit(Metadata() :: protocol :: Nil, manualUpdate, writerId)
+          log.startTransaction().commit(Metadata() :: protocol :: Nil, manualUpdate, engineInfo)
         }
         assert(e.getMessage.contains("Invalid Protocol"))
       }
@@ -231,27 +232,31 @@ class OptimisticTransactionSuite extends FunSuite {
   test("can't change protocol to invalid version") {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
-      log.startTransaction().commit(Metadata() :: Protocol() :: Nil, manualUpdate, writerId)
+      log.startTransaction().commit(Metadata() :: Protocol() :: Nil, manualUpdate, engineInfo)
 
       Seq(Protocol(1, 3), Protocol(1, 1), Protocol(2, 2)).foreach { protocol =>
         val e = intercept[AssertionError] {
-          log.startTransaction().commit(protocol :: Nil, manualUpdate, writerId)
+          log.startTransaction().commit(protocol :: Nil, manualUpdate, engineInfo)
         }
         assert(e.getMessage.contains("Invalid Protocol"))
       }
     }
   }
 
-  test("can't remove from an append-only table") {
+  test("Removing from an append-only table") {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
       val metadata = Metadata(configuration = Map("appendOnly" -> "true"))
-      log.startTransaction().commit(metadata :: Nil, manualUpdate, writerId)
+      log.startTransaction().commit(metadata :: Nil, manualUpdate, engineInfo)
 
+      val removeWithDataChange = addA_P1.remove.copy(dataChange = true)
       val e = intercept[UnsupportedOperationException] {
-        log.startTransaction().commit(addA_P1.remove :: Nil, manualUpdate, writerId)
+        log.startTransaction().commit(removeWithDataChange :: Nil, manualUpdate, engineInfo)
       }
       assert(e.getMessage.contains("This table is configured to only allow appends"))
+
+      val removeWithoutDataChange = addA_P1.remove.copy(dataChange = false)
+      log.startTransaction().commit(removeWithoutDataChange :: Nil, manualUpdate, engineInfo)
     }
   }
 
@@ -275,7 +280,7 @@ class OptimisticTransactionSuite extends FunSuite {
   test("Protocol Action should be automatically added to transaction for new table") {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
-      log.startTransaction().commit(Metadata() :: Nil, manualUpdate, writerId)
+      log.startTransaction().commit(Metadata() :: Nil, manualUpdate, engineInfo)
       assert(log.getChanges(0, true).asScala.next().getActions.contains(new ProtocolJ(1, 2)))
     }
   }
@@ -292,7 +297,7 @@ class OptimisticTransactionSuite extends FunSuite {
         Protocol.MIN_WRITER_VERSION_PROP -> "2"
       ))
       txn.updateMetadata(ConversionUtils.convertMetadata(metadata))
-      txn.commit(Nil, manualUpdate, writerId)
+      txn.commit(Nil, manualUpdate, engineInfo)
 
       val writtenConfig = log.update().getMetadata.getConfiguration
       assert(!writtenConfig.containsKey(Protocol.MIN_READER_VERSION_PROP))
@@ -303,14 +308,14 @@ class OptimisticTransactionSuite extends FunSuite {
   test("commit new metadata with Protocol properties should fail") {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
-      log.startTransaction().commit(Metadata() :: Nil, manualUpdate, writerId)
+      log.startTransaction().commit(Metadata() :: Nil, manualUpdate, engineInfo)
       val newMetadata = Metadata(configuration = Map(
         Protocol.MIN_READER_VERSION_PROP -> "1",
         Protocol.MIN_WRITER_VERSION_PROP -> "2"
       ))
 
       val e = intercept[AssertionError] {
-        log.startTransaction().commit(newMetadata:: Nil, manualUpdate, writerId)
+        log.startTransaction().commit(newMetadata:: Nil, manualUpdate, engineInfo)
       }
       assert(e.getMessage.contains(s"Should not have the protocol version " +
         s"(${Protocol.MIN_READER_VERSION_PROP}) as part of table properties"))
@@ -351,10 +356,43 @@ class OptimisticTransactionSuite extends FunSuite {
   // commit() tests
   ///////////////////////////////////////////////////////////////////////////
 
-  // - TODO commitInfo is actually added to final actions (with correct engineInfo)
-  // - TODO isBlindAppend == true cases
-  // - TODO isBlindAppend == false case
-  // - TODO different operation names
+  test("CommitInfo operation and engineInfo is persisted to the delta log") {
+    withTempDir { dir =>
+      val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
+      log.startTransaction().commit(Metadata() :: Nil, manualUpdate, engineInfo)
+
+      val log2 = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
+      val commitInfo = log2.getCommitInfoAt(0)
+      assert(commitInfo.getEngineInfo.isPresent)
+      assert(commitInfo.getEngineInfo.get() == engineInfo)
+      assert(commitInfo.getOperation == manualUpdate.getName.toString)
+    }
+  }
+
+  test("CommitInfo isBlindAppend is correctly set") {
+    withTempDir { dir =>
+      def verifyIsBlindAppend(version: Int, expected: Boolean): Unit = {
+        val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
+        assert(log.getCommitInfoAt(version).getIsBlindAppend.get() == expected)
+      }
+
+      val add = AddFile("test", Map.empty, 1, 1, dataChange = false)
+
+      val log0 = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
+      log0.startTransaction().commit(Metadata() :: add :: Nil, manualUpdate, engineInfo)
+      verifyIsBlindAppend(0, expected = true)
+
+      val log1 = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
+      log1.startTransaction().commit(add.remove :: Nil, manualUpdate, engineInfo)
+      verifyIsBlindAppend(1, expected = false)
+
+      val log2 = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
+      val txn2 = log2.startTransaction()
+      txn2.markFilesAsRead(java.util.Arrays.asList(Literal.True))
+      txn2.commit(add :: Nil, manualUpdate, engineInfo)
+      verifyIsBlindAppend(2, expected = false)
+    }
+  }
 
   ///////////////////////////////////////////////////////////////////////////
   // checkForConflicts() tests

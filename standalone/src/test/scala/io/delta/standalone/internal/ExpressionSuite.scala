@@ -21,6 +21,7 @@ import scala.collection.JavaConverters._
 import io.delta.standalone.data.RowRecord
 import io.delta.standalone.expressions._
 import io.delta.standalone.internal.actions.AddFile
+import io.delta.standalone.internal.OptimisticTransactionImpl.isPredicatePartitionColumnsOnly
 import io.delta.standalone.types.{IntegerType, StructField, StructType}
 
 // scalastyle:off funsuite
@@ -30,22 +31,31 @@ import org.scalatest.FunSuite
 class ExpressionSuite extends FunSuite {
   // scalastyle:on funsuite
 
+  private val dataSchema = new StructType(Array(
+    new StructField("col1", new IntegerType(), true),
+    new StructField("col2", new IntegerType(), true),
+    new StructField("col3", new IntegerType(), true)))
+
+  private val partitionSchema = new StructType(Array(
+    new StructField("col1", new IntegerType(), true),
+    new StructField("col2", new IntegerType(), true)))
+
   private def testPredicate(
       predicate: Expression,
       expectedResult: Boolean,
-      record: RowRecord = null) = {
+      record: RowRecord = null): Unit = {
     println(predicate.toString())
     println(predicate.eval(record))
     assert(predicate.eval(record) == expectedResult)
   }
 
   private def testPartitionFilter(
-      inputSchema: StructType,
+      partitionSchema: StructType,
       inputFiles: Seq[AddFile],
       filters: Seq[Expression],
-      expectedMatchedFiles: Seq[AddFile]) = {
+      expectedMatchedFiles: Seq[AddFile]): Unit = {
     println("filters:\n\t" + filters.map(_.toString()).mkString("\n\t"))
-    val matchedFiles = DeltaLogImpl.filterFileList(inputSchema, inputFiles, filters)
+    val matchedFiles = DeltaLogImpl.filterFileList(partitionSchema, inputFiles, filters)
     assert(matchedFiles.length == expectedMatchedFiles.length)
     assert(matchedFiles.forall(expectedMatchedFiles.contains(_)))
   }
@@ -76,10 +86,6 @@ class ExpressionSuite extends FunSuite {
   }
 
   test("basic partition filter") {
-    val schema = new StructType(Array(
-      new StructField("col1", new IntegerType()),
-      new StructField("col2", new IntegerType())))
-
     val add00 = AddFile("1", Map("col1" -> "0", "col2" -> "0"), 0, 0, dataChange = true)
     val add01 = AddFile("2", Map("col1" -> "0", "col2" -> "1"), 0, 0, dataChange = true)
     val add02 = AddFile("2", Map("col1" -> "0", "col2" -> "2"), 0, 0, dataChange = true)
@@ -91,43 +97,57 @@ class ExpressionSuite extends FunSuite {
     val add22 = AddFile("4", Map("col1" -> "2", "col2" -> "2"), 0, 0, dataChange = true)
     val inputFiles = Seq(add00, add01, add02, add10, add11, add12, add20, add21, add22)
 
-    val f1Expr1 = new EqualTo(schema.column("col1"), Literal.of(0))
-    val f1Expr2 = new EqualTo(schema.column("col2"), Literal.of(1))
+    val f1Expr1 = new EqualTo(partitionSchema.column("col1"), Literal.of(0))
+    val f1Expr2 = new EqualTo(partitionSchema.column("col2"), Literal.of(1))
     val f1 = new And(f1Expr1, f1Expr2)
 
-    testPartitionFilter(schema, inputFiles, f1 :: Nil, add01 :: Nil)
-    testPartitionFilter(schema, inputFiles, f1Expr1 :: f1Expr2 :: Nil, add01 :: Nil)
+    testPartitionFilter(partitionSchema, inputFiles, f1 :: Nil, add01 :: Nil)
+    testPartitionFilter(partitionSchema, inputFiles, f1Expr1 :: f1Expr2 :: Nil, add01 :: Nil)
 
-    val f2Expr1 = new LessThan(schema.column("col1"), Literal.of(1))
-    val f2Expr2 = new LessThan(schema.column("col2"), Literal.of(1))
+    val f2Expr1 = new LessThan(partitionSchema.column("col1"), Literal.of(1))
+    val f2Expr2 = new LessThan(partitionSchema.column("col2"), Literal.of(1))
     val f2 = new And(f2Expr1, f2Expr2)
-    testPartitionFilter(schema, inputFiles, f2 :: Nil, add00 :: Nil)
-    testPartitionFilter(schema, inputFiles, f2Expr1 :: f2Expr2 :: Nil, add00 :: Nil)
+    testPartitionFilter(partitionSchema, inputFiles, f2 :: Nil, add00 :: Nil)
+    testPartitionFilter(partitionSchema, inputFiles, f2Expr1 :: f2Expr2 :: Nil, add00 :: Nil)
 
-    val f3Expr1 = new EqualTo(schema.column("col1"), Literal.of(2))
-    val f3Expr2 = new LessThan(schema.column("col2"), Literal.of(1))
+    val f3Expr1 = new EqualTo(partitionSchema.column("col1"), Literal.of(2))
+    val f3Expr2 = new LessThan(partitionSchema.column("col2"), Literal.of(1))
     val f3 = new Or(f3Expr1, f3Expr2)
-    testPartitionFilter(schema, inputFiles, f3 :: Nil, Seq(add20, add21, add22, add00, add10))
+    testPartitionFilter(
+      partitionSchema, inputFiles, f3 :: Nil, Seq(add20, add21, add22, add00, add10))
 
     val inSet4 = (2 to 10).map(Literal.of).asJava
-    val f4 = new In(schema.column("col1"), inSet4)
-    testPartitionFilter(schema, inputFiles, f4 :: Nil, add20 :: add21 :: add22 :: Nil)
+    val f4 = new In(partitionSchema.column("col1"), inSet4)
+    testPartitionFilter(partitionSchema, inputFiles, f4 :: Nil, add20 :: add21 :: add22 :: Nil)
 
     val inSet5 = (100 to 110).map(Literal.of).asJava
-    val f5 = new In(schema.column("col1"), inSet5)
-    testPartitionFilter(schema, inputFiles, f5 :: Nil, Nil)
+    val f5 = new In(partitionSchema.column("col1"), inSet5)
+    testPartitionFilter(partitionSchema, inputFiles, f5 :: Nil, Nil)
   }
 
   test("not null partition filter") {
-    val schema = new StructType(Array(
-      new StructField("col1", new IntegerType(), true),
-      new StructField("col2", new IntegerType(), true)))
-
     val add0Null = AddFile("1", Map("col1" -> "0", "col2" -> null), 0, 0, dataChange = true)
     val addNull1 = AddFile("1", Map("col1" -> null, "col2" -> "1"), 0, 0, dataChange = true)
     val inputFiles = Seq(add0Null, addNull1)
 
-    val f1 = new IsNotNull(schema.column("col1"))
-    testPartitionFilter(schema, inputFiles, f1 :: Nil, add0Null :: Nil)
+    val f1 = new IsNotNull(partitionSchema.column("col1"))
+    testPartitionFilter(partitionSchema, inputFiles, f1 :: Nil, add0Null :: Nil)
+  }
+
+  test("Expr.references() and OptimisticTransaction.isPredicatePartitionColumnsOnly()") {
+    val dataExpr = new And(
+      new LessThan(dataSchema.column("col1"), Literal.of(5)),
+      new Or(
+        new EqualTo(dataSchema.column("col1"), dataSchema.column("col2")),
+        new EqualTo(dataSchema.column("col1"), dataSchema.column("col3"))
+      )
+    )
+
+    assert(dataExpr.references().size() == 3)
+
+    val partitionExpr = new EqualTo(dataSchema.column("col1"), dataSchema.column("col2"))
+
+    assert(!isPredicatePartitionColumnsOnly(dataExpr, partitionSchema.getFieldNames.toSeq))
+    assert(isPredicatePartitionColumnsOnly(partitionExpr, partitionSchema.getFieldNames.toSeq))
   }
 }
