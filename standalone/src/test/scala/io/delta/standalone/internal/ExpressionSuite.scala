@@ -20,9 +20,9 @@ import scala.collection.JavaConverters._
 
 import io.delta.standalone.data.RowRecord
 import io.delta.standalone.expressions._
-import io.delta.standalone.internal.actions.AddFile
-import io.delta.standalone.internal.OptimisticTransactionImpl.isPredicatePartitionColumnsOnly
 import io.delta.standalone.types.{IntegerType, StructField, StructType}
+import io.delta.standalone.internal.actions.AddFile
+import io.delta.standalone.internal.util.PartitionUtils
 
 // scalastyle:off funsuite
 import org.scalatest.FunSuite
@@ -31,14 +31,14 @@ import org.scalatest.FunSuite
 class ExpressionSuite extends FunSuite {
   // scalastyle:on funsuite
 
-  private val dataSchema = new StructType(Array(
-    new StructField("col1", new IntegerType(), true),
-    new StructField("col2", new IntegerType(), true),
-    new StructField("col3", new IntegerType(), true)))
-
   private val partitionSchema = new StructType(Array(
     new StructField("col1", new IntegerType(), true),
     new StructField("col2", new IntegerType(), true)))
+
+  private val dataSchema = new StructType(Array(
+    new StructField("col3", new IntegerType(), true),
+    new StructField("col4", new IntegerType(), true),
+    new StructField("col5", new IntegerType(), true)))
 
   private def testPredicate(
       predicate: Expression,
@@ -52,10 +52,10 @@ class ExpressionSuite extends FunSuite {
   private def testPartitionFilter(
       partitionSchema: StructType,
       inputFiles: Seq[AddFile],
-      filters: Seq[Expression],
+      filter: Expression,
       expectedMatchedFiles: Seq[AddFile]): Unit = {
-    println("filters:\n\t" + filters.map(_.toString()).mkString("\n\t"))
-    val matchedFiles = DeltaLogImpl.filterFileList(partitionSchema, inputFiles, filters)
+    println("filter: " + filter.toString)
+    val matchedFiles = PartitionUtils.filterFileList(partitionSchema, inputFiles, filter)
     assert(matchedFiles.length == expectedMatchedFiles.length)
     assert(matchedFiles.forall(expectedMatchedFiles.contains(_)))
   }
@@ -101,28 +101,26 @@ class ExpressionSuite extends FunSuite {
     val f1Expr2 = new EqualTo(partitionSchema.column("col2"), Literal.of(1))
     val f1 = new And(f1Expr1, f1Expr2)
 
-    testPartitionFilter(partitionSchema, inputFiles, f1 :: Nil, add01 :: Nil)
-    testPartitionFilter(partitionSchema, inputFiles, f1Expr1 :: f1Expr2 :: Nil, add01 :: Nil)
+    testPartitionFilter(partitionSchema, inputFiles, f1, add01 :: Nil)
 
     val f2Expr1 = new LessThan(partitionSchema.column("col1"), Literal.of(1))
     val f2Expr2 = new LessThan(partitionSchema.column("col2"), Literal.of(1))
     val f2 = new And(f2Expr1, f2Expr2)
-    testPartitionFilter(partitionSchema, inputFiles, f2 :: Nil, add00 :: Nil)
-    testPartitionFilter(partitionSchema, inputFiles, f2Expr1 :: f2Expr2 :: Nil, add00 :: Nil)
+    testPartitionFilter(partitionSchema, inputFiles, f2, add00 :: Nil)
 
     val f3Expr1 = new EqualTo(partitionSchema.column("col1"), Literal.of(2))
     val f3Expr2 = new LessThan(partitionSchema.column("col2"), Literal.of(1))
     val f3 = new Or(f3Expr1, f3Expr2)
     testPartitionFilter(
-      partitionSchema, inputFiles, f3 :: Nil, Seq(add20, add21, add22, add00, add10))
+      partitionSchema, inputFiles, f3, Seq(add20, add21, add22, add00, add10))
 
     val inSet4 = (2 to 10).map(Literal.of).asJava
     val f4 = new In(partitionSchema.column("col1"), inSet4)
-    testPartitionFilter(partitionSchema, inputFiles, f4 :: Nil, add20 :: add21 :: add22 :: Nil)
+    testPartitionFilter(partitionSchema, inputFiles, f4, add20 :: add21 :: add22 :: Nil)
 
     val inSet5 = (100 to 110).map(Literal.of).asJava
     val f5 = new In(partitionSchema.column("col1"), inSet5)
-    testPartitionFilter(partitionSchema, inputFiles, f5 :: Nil, Nil)
+    testPartitionFilter(partitionSchema, inputFiles, f5, Nil)
   }
 
   test("not null partition filter") {
@@ -131,23 +129,49 @@ class ExpressionSuite extends FunSuite {
     val inputFiles = Seq(add0Null, addNull1)
 
     val f1 = new IsNotNull(partitionSchema.column("col1"))
-    testPartitionFilter(partitionSchema, inputFiles, f1 :: Nil, add0Null :: Nil)
+    testPartitionFilter(partitionSchema, inputFiles, f1, add0Null :: Nil)
   }
 
-  test("Expr.references() and OptimisticTransaction.isPredicatePartitionColumnsOnly()") {
+  test("Expr.references() and PredicateUtils.isPredicateMetadataOnly()") {
     val dataExpr = new And(
-      new LessThan(dataSchema.column("col1"), Literal.of(5)),
+      new LessThan(dataSchema.column("col3"), Literal.of(5)),
       new Or(
-        new EqualTo(dataSchema.column("col1"), dataSchema.column("col2")),
-        new EqualTo(dataSchema.column("col1"), dataSchema.column("col3"))
+        new EqualTo(dataSchema.column("col3"), dataSchema.column("col4")),
+        new EqualTo(dataSchema.column("col3"), dataSchema.column("col5"))
       )
     )
 
     assert(dataExpr.references().size() == 3)
 
-    val partitionExpr = new EqualTo(dataSchema.column("col1"), dataSchema.column("col2"))
+    val partitionExpr = new EqualTo(partitionSchema.column("col1"), partitionSchema.column("col2"))
 
-    assert(!isPredicatePartitionColumnsOnly(dataExpr, partitionSchema.getFieldNames.toSeq))
-    assert(isPredicatePartitionColumnsOnly(partitionExpr, partitionSchema.getFieldNames.toSeq))
+    assert(
+      !PartitionUtils.isPredicateMetadataOnly(dataExpr, partitionSchema.getFieldNames.toSeq))
+
+    assert(
+      PartitionUtils.isPredicateMetadataOnly(partitionExpr, partitionSchema.getFieldNames.toSeq))
+  }
+
+  test("expression equality") {
+    // BinaryExpression
+    val and = new And(partitionSchema.column("col1"), partitionSchema.column("col2"))
+    val andCopy = new And(partitionSchema.column("col1"), partitionSchema.column("col2"))
+    val and2 = new And(dataSchema.column("col3"), Literal.of(44))
+    assert(and == andCopy)
+    assert(and != and2)
+
+    // UnaryExpression
+    val not = new Not(new EqualTo(Literal.of(1), Literal.of(1)))
+    val notCopy = new Not(new EqualTo(Literal.of(1), Literal.of(1)))
+    val not2 = new Not(new EqualTo(Literal.of(45), dataSchema.column("col4")))
+    assert(not == notCopy)
+    assert(not != not2)
+
+    // LeafExpression
+    val col1 = partitionSchema.column("col1")
+    val col1Copy = partitionSchema.column("col1")
+    val col2 = partitionSchema.column("col2")
+    assert(col1 == col1Copy)
+    assert(col1 != col2)
   }
 }

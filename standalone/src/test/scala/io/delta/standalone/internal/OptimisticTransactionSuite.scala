@@ -38,9 +38,6 @@ import org.scalatest.FunSuite
 class OptimisticTransactionSuite extends FunSuite {
   // scalastyle:on funsuite
 
-  implicit def exprSeqToList[T <: Expression](seq: Seq[T]): java.util.List[Expression] =
-    seq.asInstanceOf[Seq[Expression]].asJava
-
   val engineInfo = "test-engine-info"
   val manualUpdate = new Operation(Operation.Name.MANUAL_UPDATE)
 
@@ -392,7 +389,7 @@ class OptimisticTransactionSuite extends FunSuite {
 
       val log2 = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
       val txn2 = log2.startTransaction()
-      txn2.markFilesAsRead(java.util.Arrays.asList(Literal.True))
+      txn2.markFilesAsRead(Literal.True)
       txn2.commit(add :: Nil, manualUpdate, engineInfo)
       verifyIsBlindAppend(2, expected = false)
     }
@@ -453,11 +450,11 @@ class OptimisticTransactionSuite extends FunSuite {
       val schema = log.update().getMetadata.getSchema
       val tx1 = log.startTransaction()
       // TX1 reads only P1
-      val tx1Read = tx1.markFilesAsRead(new EqualTo(schema.column("part"), Literal.of("1")) :: Nil)
-      assert(tx1Read.asScala.map(_.getPath) == A_P1 :: Nil)
+      val tx1Read = tx1.markFilesAsRead(new EqualTo(schema.column("part"), Literal.of("1")))
+      assert(tx1Read.getFiles.asScala.toSeq.map(_.getPath) == A_P1 :: Nil)
 
       val tx2 = log.startTransaction()
-      tx2.markFilesAsRead(Literal.True :: Nil)
+      tx2.markFilesAsRead(Literal.True)
       // TX2 modifies only P1
       tx2.commit(addB_P1 :: Nil, manualUpdate, engineInfo)
 
@@ -473,11 +470,11 @@ class OptimisticTransactionSuite extends FunSuite {
       val schema = log.update().getMetadata.getSchema
       val tx1 = log.startTransaction()
       // TX1 full table scan
-      tx1.markFilesAsRead(Literal.True :: Nil)
-      tx1.markFilesAsRead(new EqualTo(schema.column("part"), Literal.of("1")) :: Nil)
+      tx1.markFilesAsRead(Literal.True)
+      tx1.markFilesAsRead(new EqualTo(schema.column("part"), Literal.of("1")))
 
       val tx2 = log.startTransaction()
-      tx2.markFilesAsRead(Literal.True :: Nil)
+      tx2.markFilesAsRead(Literal.True)
       tx2.commit(addC_P2 :: addD_P2.remove :: Nil, manualUpdate, engineInfo)
 
       intercept[ConcurrentAppendException] {
@@ -490,10 +487,10 @@ class OptimisticTransactionSuite extends FunSuite {
     // This tests the case when isolationLevel == SnapshotIsolation
     withLog(addA_P1 :: addB_P1 :: Nil) { log =>
       val tx1 = log.startTransaction()
-      tx1.markFilesAsRead(Literal.True :: Nil)
+      tx1.markFilesAsRead(Literal.True)
 
       val tx2 = log.startTransaction()
-      tx1.markFilesAsRead(Literal.True :: Nil)
+      tx1.markFilesAsRead(Literal.True)
       tx2.commit(addE_P3 :: Nil, manualUpdate, engineInfo)
 
       // tx1 rearranges files (dataChange = false)
@@ -516,11 +513,11 @@ class OptimisticTransactionSuite extends FunSuite {
       val schema = log.update().getMetadata.getSchema
       val tx1 = log.startTransaction()
       // read P1
-      tx1.markFilesAsRead(new EqualTo(schema.column("part"), Literal.of("1")) :: Nil)
+      tx1.markFilesAsRead(new EqualTo(schema.column("part"), Literal.of("1")))
 
       // tx2 commits before tx1
       val tx2 = log.startTransaction()
-      tx2.markFilesAsRead(Literal.True :: Nil)
+      tx2.markFilesAsRead(Literal.True)
       tx2.commit(addA_P1.remove :: Nil, manualUpdate, engineInfo)
 
       intercept[ConcurrentDeleteReadException] {

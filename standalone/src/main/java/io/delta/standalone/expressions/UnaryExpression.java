@@ -4,6 +4,7 @@ import io.delta.standalone.data.RowRecord;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * An expression with one input and one output. The output is by default evaluated to null
@@ -14,6 +15,10 @@ public abstract class UnaryExpression implements Expression {
 
     public UnaryExpression(Expression child) {
         this.child = child;
+    }
+
+    public Expression getChild() {
+        return child;
     }
 
     @Override
@@ -32,5 +37,18 @@ public abstract class UnaryExpression implements Expression {
     @Override
     public List<Expression> children() {
         return Collections.singletonList(child);
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        UnaryExpression that = (UnaryExpression) o;
+        return Objects.equals(child, that.child);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(child);
     }
 }

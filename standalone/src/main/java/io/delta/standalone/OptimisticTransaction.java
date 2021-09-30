@@ -39,10 +39,11 @@ public interface OptimisticTransaction {
      *   readFiles were changed by TXN2. Thus there are no logical conflicts and TXN1 can commit at
      *   table version N+1.
      *
-     * @param readPredicates  Predicates used to determine which files were read.
-     * @return Files matching the given predicates.
+     * @param readPredicate  Predicates used to determine which files were read.
+     * @return a {@link DeltaScan} containing the list of files matching the push portion of the
+     *         readPredicate.
      */
-    List<AddFile> markFilesAsRead(Iterable<Expression> readPredicates);
+    DeltaScan markFilesAsRead(Expression readPredicate);
 
     /**
      * Records an update to the metadata that should be committed with this transaction.
