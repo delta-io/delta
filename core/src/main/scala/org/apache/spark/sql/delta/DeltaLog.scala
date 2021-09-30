@@ -308,8 +308,11 @@ class DeltaLog private(
 
     val relation = HadoopFsRelation(
       fileIndex,
-      partitionSchema = snapshot.metadata.partitionSchema,
-      dataSchema = GeneratedColumn.removeGenerationExpressions(snapshot.metadata.schema),
+      partitionSchema =
+        DeltaColumnMapping.dropColumnMappingMetadata(snapshot.metadata.partitionSchema),
+      dataSchema =
+        DeltaColumnMapping.dropColumnMappingMetadata(
+          GeneratedColumn.removeGenerationExpressions(snapshot.metadata.schema)),
       bucketSpec = None,
       snapshot.fileFormat,
       snapshot.metadata.format.options)(spark)
@@ -341,10 +344,11 @@ class DeltaLog private(
     var bucketSpec: Option[BucketSpec] = None
     new HadoopFsRelation(
       fileIndex,
-      partitionSchema = snapshotToUse.metadata.partitionSchema,
-      dataSchema = GeneratedColumn.removeGenerationExpressions(
-        SchemaUtils.dropNullTypeColumns(snapshotToUse.metadata.schema)
-      ),
+      partitionSchema = DeltaColumnMapping.dropColumnMappingMetadata(
+        snapshotToUse.metadata.partitionSchema),
+      dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
+        GeneratedColumn.removeGenerationExpressions(
+          SchemaUtils.dropNullTypeColumns(snapshotToUse.metadata.schema))),
       bucketSpec = bucketSpec,
       snapshotToUse.fileFormat,
       snapshotToUse.metadata.format.options)(spark) with InsertableRelation {

@@ -262,11 +262,6 @@ class Snapshot(
     checkpointFileIndexOpt.toSeq ++ deltaFileIndexOpt.toSeq
   }
 
-  /** Whether the table uses column mapping. */
-  def usesColumnMapping: Boolean = {
-    DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(metadata) != NoMapping
-  }
-
   /** Creates a LogicalRelation with the given schema from a DeltaLogFileIndex. */
   protected def indexToRelation(
       index: DeltaLogFileIndex,

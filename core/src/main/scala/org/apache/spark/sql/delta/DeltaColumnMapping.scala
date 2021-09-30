@@ -23,10 +23,10 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 
-import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.types.{DataType, Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
 
-object DeltaColumnMapping {
+object DeltaColumnMapping
+{
   val MIN_WRITER_VERSION = 5
   val MIN_READER_VERSION = 2
   val MIN_PROTOCOL_VERSION = Protocol(MIN_READER_VERSION, MIN_WRITER_VERSION)
@@ -180,14 +180,6 @@ object DeltaColumnMapping {
     }
   }
 
-  def getPhysicalName(field: Attribute): String = {
-    if (field.metadata.contains(COLUMN_MAPPING_PHYSICAL_NAME_KEY)) {
-      field.metadata.getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY)
-    } else {
-      field.name
-    }
-  }
-
   def tryFixMetadata(
       metadata: Metadata,
       mappingMode: DeltaColumnMappingMode): Metadata = {
@@ -276,6 +268,19 @@ object DeltaColumnMapping {
         metadata.configuration ++
           Map(DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> maxId.toString)
     )
+  }
+
+  def dropColumnMappingMetadata(schema: StructType): StructType = {
+    SchemaMergingUtils.transformColumns(schema) { (_, field, _) =>
+      field.copy(
+        metadata = new MetadataBuilder()
+          .withMetadata(field.metadata)
+          .remove(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY)
+          .remove(DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
+          .remove(DeltaColumnMapping.PARQUET_FIELD_ID_METADATA_KEY)
+          .build()
+      )
+    }
   }
 }
 
