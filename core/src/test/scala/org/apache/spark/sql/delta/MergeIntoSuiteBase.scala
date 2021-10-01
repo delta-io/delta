@@ -2199,24 +2199,28 @@ abstract class MergeIntoSuiteBase
         source = (1, 10) :: (3, 30) :: Nil,
         target = (1, 1) :: Nil
       ) { case (sourceName, targetName) =>
-        executeMerge(
-          s"$targetName t",
-          s"$sourceName s",
-          "s.key = t.key",
-          insert(values = "(key, value) VALUES (s.key, s.value)"))
-
-        checkAnswer(sql(s"SELECT key, value FROM $targetName"),
-          Row(1, 1) :: Row(3, 30) :: Nil)
-
-        val metrics = spark.sql(s"DESCRIBE HISTORY $targetName LIMIT 1")
-          .select("operationMetrics")
-          .collect().head.getMap(0).asInstanceOf[Map[String, String]]
-        assert(metrics.contains("numTargetFilesRemoved"))
-        // If insert-only code path is not used, then the general code path will rewrite existing
-        // target files.
-        assert(metrics("numTargetFilesRemoved").toInt > 0)
+        insertOnlyMergeFeatureFlagOff(sourceName, targetName)
       }
     }
+  }
+
+  protected def insertOnlyMergeFeatureFlagOff(sourceName: String, targetName: String): Unit = {
+    executeMerge(
+      tgt = s"$targetName t",
+      src = s"$sourceName s",
+      cond = "s.key = t.key",
+      insert(values = "(key, value) VALUES (s.key, s.value)"))
+
+    checkAnswer(sql(s"SELECT key, value FROM $targetName"),
+      Row(1, 1) :: Row(3, 30) :: Nil)
+
+    val metrics = spark.sql(s"DESCRIBE HISTORY $targetName LIMIT 1")
+      .select("operationMetrics")
+      .collect().head.getMap(0).asInstanceOf[Map[String, String]]
+    assert(metrics.contains("numTargetFilesRemoved"))
+    // If insert-only code path is not used, then the general code path will rewrite existing
+    // target files.
+    assert(metrics("numTargetFilesRemoved").toInt > 0)
   }
 
   test("insert only merge - multiple matches when feature flag off") {
