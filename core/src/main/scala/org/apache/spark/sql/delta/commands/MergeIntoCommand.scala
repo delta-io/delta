@@ -499,7 +499,7 @@ case class MergeIntoCommand(
     val joinedPlan = joinedDF.queryExecution.analyzed
 
     def resolveOnJoinedPlan(exprs: Seq[Expression]): Seq[Expression] = {
-      exprs.map { expr => tryResolveReferences(spark)(expr, joinedPlan) }
+      resolveReferencesForExpressions(spark, exprs, joinedPlan)
     }
 
     def matchedClauseOutput(clause: DeltaMergeIntoMatchedClause): Seq[Expression] = {
