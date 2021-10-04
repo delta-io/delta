@@ -162,20 +162,9 @@ private[internal] class OptimisticTransactionImpl(
       newProtocol = Some(Protocol())
     }
 
-    latestMetadata = if (snapshot.metadataScala.schemaString == latestMetadata.schemaString) {
-        // Shortcut when the schema hasn't changed to avoid generating spurious schema change logs.
-        // It's fine if two different but semantically equivalent schema strings skip this special
-        // case - that indicates that something upstream attempted to do a no-op schema change, and
-        // we'll just end up doing a bit of redundant work in the else block.
-        latestMetadata
-      } else {
-        // TODO getJson()
-        //   val fixedSchema =
-        //   SchemaUtils.removeUnenforceableNotNullConstraints(metadata.schema).getJson()
-        // metadata.copy(schemaString = fixedSchema)
-
-        latestMetadata
-      }
+    if (snapshot.metadataScala.schemaString != latestMetadata.schemaString) {
+      SchemaUtils.checkUnenforceableNotNullConstraints(latestMetadata.schema)
+    }
 
     // Remove the protocol version properties
     val noProtocolVersionConfig = latestMetadata.configuration.filter {
@@ -403,8 +392,32 @@ private[internal] class OptimisticTransactionImpl(
 
   /** Creates new metadata with global Delta configuration defaults. */
   private def withGlobalConfigDefaults(metadata: Metadata): Metadata = {
-    // TODO
-    metadata
+    // TODO DeltaConfigs.mergeGlobalConfigs
+
+    val defaultConfigs = Map(
+      "deletedFileRetentionDuration" -> "604800000", // 1 week
+      "checkpointInterval" -> "10",
+      "enableExpiredLogCleanup" -> "true",
+      "logRetentionDuration" -> "2592000000", // 30 days
+      "appendOnly" -> "false"
+    )
+
+    // Priority is:
+    // 1. user-provided configs (via metadata.configuration)
+    // 2. global hadoop configs
+    // 3. default configs
+    val newMetadataConfig = defaultConfigs.keySet.map { key =>
+      val value = if (metadata.configuration.contains(key)) {
+          metadata.configuration(key)
+        } else {
+          deltaLog.hadoopConf.get(key, defaultConfigs(key))
+        }
+
+      key -> value
+    }.toMap
+
+    // User provided configs take precedence.
+    metadata.copy(configuration = newMetadataConfig)
   }
 }
 

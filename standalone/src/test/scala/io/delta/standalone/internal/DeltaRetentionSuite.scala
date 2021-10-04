@@ -22,19 +22,16 @@ import io.delta.standalone.internal.actions.{Action, AddFile, Metadata, RemoveFi
 import io.delta.standalone.internal.util.ManualClock
 import io.delta.standalone.internal.util.TestUtils._
 import io.delta.standalone.Operation
-import org.apache.hadoop.conf.Configuration
-
 
 // scalastyle:off funsuite
 import org.scalatest.FunSuite
 
 // scalastyle:off removeFile
-class DeltaRetentionSuite extends FunSuite with DeltaRetentionSuiteBase {
+class DeltaRetentionSuite extends DeltaRetentionSuiteBase {
   // scalastyle:on funsuite
 
   val writerId = "test-writer-id"
   val manualUpdate = new Operation(Operation.Name.MANUAL_UPDATE)
-  val manualLogCleanupMetadata = Metadata(configuration = Map("enableExpiredLogCleanup" -> "false"))
 
   protected def getLogFiles(dir: File): Seq[File] =
     getDeltaFiles(dir) ++ getCheckpointFiles(dir)
@@ -42,18 +39,17 @@ class DeltaRetentionSuite extends FunSuite with DeltaRetentionSuiteBase {
   test("delete expired logs") {
     withTempDir { dir =>
       val clock = new ManualClock(System.currentTimeMillis())
-      val log = DeltaLogImpl.forTable(new Configuration(), dir.getCanonicalPath, clock)
+      val log = DeltaLogImpl.forTable(hadoopConf, dir.getCanonicalPath, clock)
       val logPath = new File(log.logPath.toUri)
       (1 to 5).foreach { i =>
-        val txn = log.startTransaction()
-        val metadata = if (i == 1) manualLogCleanupMetadata :: Nil else Nil
+        val txn = if (i == 1) startTxnWithManualLogCleanup(log) else log.startTransaction()
         val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
         val delete: Seq[Action] = if (i > 1) {
           RemoveFile(i - 1 toString, Some(System.currentTimeMillis()), true) :: Nil
         } else {
           Nil
         }
-        txn.commit(metadata ++ delete ++ file, manualUpdate, writerId)
+        txn.commit(delete ++ file, manualUpdate, writerId)
       }
 
       val initialFiles = getLogFiles(logPath)
@@ -85,15 +81,13 @@ class DeltaRetentionSuite extends FunSuite with DeltaRetentionSuiteBase {
   test("delete expired logs 2") {
     withTempDir { dir =>
       val clock = new ManualClock(System.currentTimeMillis())
-      val conf = new Configuration()
-      val log = DeltaLogImpl.forTable(conf, dir.getCanonicalPath, clock)
+      val log = DeltaLogImpl.forTable(hadoopConf, dir.getCanonicalPath, clock)
       val logPath = new File(log.logPath.toUri)
 
       // write 000.json to 009.json
       (0 to 9).foreach { i =>
-        val txn = log.startTransaction()
-        val metadata = if (i == 0) manualLogCleanupMetadata :: Nil else Nil
-        txn.commit(metadata :+ AddFile(i.toString, Map.empty, 1, 1, true), manualUpdate, writerId)
+        val txn = if (i == 0) startTxnWithManualLogCleanup(log) else log.startTransaction()
+        txn.commit(AddFile(i.toString, Map.empty, 1, 1, true) :: Nil, manualUpdate, writerId)
       }
 
       assert(log.update().version == 9)
@@ -139,13 +133,15 @@ class DeltaRetentionSuite extends FunSuite with DeltaRetentionSuiteBase {
 
   test("Can set enableExpiredLogCleanup") {
     withTempDir { tempDir =>
-      val log = DeltaLogImpl.forTable(new Configuration(), tempDir.getCanonicalPath)
+      val log = DeltaLogImpl.forTable(hadoopConf, tempDir.getCanonicalPath)
       log.startTransaction().commit(
           Metadata(configuration = Map("enableExpiredLogCleanup" -> "true")) :: Nil,
           manualUpdate, writerId)
       assert(log.enableExpiredLogCleanup)
 
-      log.startTransaction().commit(manualLogCleanupMetadata :: Nil, manualUpdate, writerId)
+      log.startTransaction().commit(
+        Metadata(configuration = Map("enableExpiredLogCleanup" -> "false")) :: Nil,
+        manualUpdate, writerId)
       assert(!log.enableExpiredLogCleanup)
 
       log.startTransaction().commit(Metadata() :: Nil, manualUpdate, writerId)
@@ -157,17 +153,17 @@ class DeltaRetentionSuite extends FunSuite with DeltaRetentionSuiteBase {
     "RemoveFiles persist across checkpoints as tombstones if retention time hasn't expired") {
     withTempDir { tempDir =>
       val clock = new ManualClock(System.currentTimeMillis())
-      val log1 = DeltaLogImpl.forTable(new Configuration(), tempDir.getCanonicalPath, clock)
+      val log1 = DeltaLogImpl.forTable(hadoopConf, tempDir.getCanonicalPath, clock)
 
-      val txn1 = log1.startTransaction()
+      val txn1 = startTxnWithManualLogCleanup(log1)
       val files1 = (1 to 10).map(f => AddFile(f.toString, Map.empty, 1, 1, true))
-      txn1.commit(files1 :+ manualLogCleanupMetadata, manualUpdate, writerId)
+      txn1.commit(files1, manualUpdate, writerId)
       val txn2 = log1.startTransaction()
       val files2 = (1 to 4).map(f => RemoveFile(f.toString, Some(clock.getTimeMillis())))
       txn2.commit(files2, manualUpdate, writerId)
       log1.checkpoint()
 
-      val log2 = DeltaLogImpl.forTable(new Configuration(), tempDir.getCanonicalPath, clock)
+      val log2 = DeltaLogImpl.forTable(hadoopConf, tempDir.getCanonicalPath, clock)
       assert(log2.snapshot.tombstonesScala.size === 4)
       assert(log2.snapshot.allFilesScala.size === 6)
     }
@@ -176,11 +172,11 @@ class DeltaRetentionSuite extends FunSuite with DeltaRetentionSuiteBase {
   test("RemoveFiles get deleted during checkpoint if retention time has passed") {
     withTempDir { tempDir =>
       val clock = new ManualClock(System.currentTimeMillis())
-      val log1 = DeltaLogImpl.forTable(new Configuration(), tempDir.getCanonicalPath, clock)
+      val log1 = DeltaLogImpl.forTable(hadoopConf, tempDir.getCanonicalPath, clock)
 
-      val txn = log1.startTransaction()
+      val txn1 = startTxnWithManualLogCleanup(log1)
       val files1 = (1 to 10).map(f => AddFile(f.toString, Map.empty, 1, 1, true))
-      txn.commit(files1 :+ manualLogCleanupMetadata, manualUpdate, writerId)
+      txn1.commit(files1, manualUpdate, writerId)
       val txn2 = log1.startTransaction()
       val files2 = (1 to 4).map(f => RemoveFile(f.toString, Some(clock.getTimeMillis())))
       txn2.commit(files2, manualUpdate, writerId)
@@ -190,7 +186,7 @@ class DeltaRetentionSuite extends FunSuite with DeltaRetentionSuiteBase {
 
       log1.checkpoint()
 
-      val log2 = DeltaLogImpl.forTable(new Configuration(), tempDir.getCanonicalPath, clock)
+      val log2 = DeltaLogImpl.forTable(hadoopConf, tempDir.getCanonicalPath, clock)
       assert(log2.snapshot.tombstonesScala.size === 0)
       assert(log2.snapshot.allFilesScala.size === 6)
     }

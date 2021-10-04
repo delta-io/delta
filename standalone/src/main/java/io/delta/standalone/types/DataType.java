@@ -82,6 +82,11 @@ public abstract class DataType {
     public String toJson() { return DataTypeParser.toJson(this); }
 
     /**
+     * @return a pretty (i.e. indented) JSON (@code String} representation of the type
+     */
+    public String toPrettyJson() { return DataTypeParser.toPrettyJson(this); }
+
+    /**
      * Builds a readable {@code String} representation of the {@code ArrayType}
      */
     protected static void buildFormattedString(

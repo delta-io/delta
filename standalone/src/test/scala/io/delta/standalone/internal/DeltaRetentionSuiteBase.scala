@@ -18,12 +18,24 @@ package io.delta.standalone.internal
 
 import java.io.File
 
-import io.delta.standalone.{DeltaLog, OptimisticTransaction}
+import io.delta.standalone.{DeltaLog, Operation, OptimisticTransaction}
 import io.delta.standalone.internal.actions.Metadata
+import io.delta.standalone.internal.util.TestUtils._
 import io.delta.standalone.internal.util.{ConversionUtils, FileNames}
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
-trait DeltaRetentionSuiteBase {
+// scalastyle:off funsuite
+import org.scalatest.FunSuite
+
+trait DeltaRetentionSuiteBase extends FunSuite {
+  // scalastyle:on removeFile
+
+  protected def hadoopConf: Configuration = {
+    val conf = new Configuration()
+    conf.set("enableExpiredLogCleanup", "false")
+    conf
+  }
 
   protected def getDeltaFiles(dir: File): Seq[File] =
     dir.listFiles().filter(_.getName.endsWith(".json"))
@@ -35,10 +47,18 @@ trait DeltaRetentionSuiteBase {
    * Start a txn that disables automatic log cleanup. Some tests may need to manually clean up logs
    * to get deterministic behaviors.
    */
-  // TODO: this is dependent on withGlobalConfigDefaults
-  //  protected def startTxnWithManualLogCleanup(log: DeltaLog): OptimisticTransaction = {
-  //    val txn = log.startTransaction()
-  //    txn.updateMetadata(ConversionUtils.convertMetadata(Metadata()))
-  //    txn
-  //  }
+  protected def startTxnWithManualLogCleanup(log: DeltaLog): OptimisticTransaction = {
+    val txn = log.startTransaction()
+    txn.updateMetadata(ConversionUtils.convertMetadata(Metadata()))
+    txn
+  }
+
+  test("startTxnWithManualLogCleanup") {
+    withTempDir { dir =>
+      val log = DeltaLogImpl.forTable(hadoopConf, dir.getCanonicalPath)
+      startTxnWithManualLogCleanup(log)
+        .commit(Nil, new Operation(Operation.Name.MANUAL_UPDATE), "test-writer-id")
+      assert(!log.enableExpiredLogCleanup)
+    }
+  }
 }

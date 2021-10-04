@@ -84,9 +84,9 @@ private[standalone] object DataTypeParser {
         s"Failed to convert the JSON string '${compact(render(other))}' to a data type.")
   }
 
-  def toJson(value : DataType): String = {
-    compact(render(dataTypeToJValue(value)))
-  }
+  def toJson(value: DataType): String = compact(render(dataTypeToJValue(value)))
+
+  def toPrettyJson(value: DataType): String = pretty(render(dataTypeToJValue(value)))
 
   private def dataTypeToJValue(dataType: DataType): JValue = dataType match {
     case array: ArrayType =>

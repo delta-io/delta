@@ -20,7 +20,7 @@ import java.io.{FileNotFoundException, IOException}
 
 import io.delta.standalone.internal.actions.{CommitInfo, Protocol}
 import io.delta.standalone.internal.util.JsonUtils
-import io.delta.standalone.types.StructType
+import io.delta.standalone.types.{DataType, StructType}
 import io.delta.standalone.exceptions._
 
 import org.apache.hadoop.fs.Path
@@ -264,6 +264,13 @@ private[internal] object DeltaErrors {
          |Number of actions attempted to commit: $numActions
          |Total time spent attempting this commit: $totalCommitAttemptTime ms
        """.stripMargin)
+  }
+
+  def nestedNotNullConstraint(
+      parent: String, nested: DataType, nestType: String): RuntimeException = {
+    new RuntimeException(s"The $nestType type of the field $parent contains a NOT NULL " +
+      s"constraint. Delta does not support NOT NULL constraints nested within arrays or maps. " +
+      s"Parsed $nestType type:\n${nested.toPrettyJson}")
   }
 
   ///////////////////////////////////////////////////////////////////////////
