@@ -1,0 +1,38 @@
+name: "first try"
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+
+jobs:
+  build:
+    name: "Build the jar on ubuntu"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      - name: install java
+      - uses: AdoptOpenJDK/install-jdk@v1
+        with:
+          version: '8.0.282'
+          architecture: x64
+      - name: Install dependencies and build the jar
+        shell: bash -l {0}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python-openssl git
+          sudo apt install libedit-dev
+          sudo apt install python3-pip --fix-missing
+          sudo pip3 install pipenv
+          curl https://pyenv.run | bash
+          export PATH="~/.pyenv/bin:$PATH"
+          eval "$(pyenv init -)"
+          eval "$(pyenv virtualenv-init -)"
+          pyenv install 3.7.4
+          pyenv global system 3.7.4
+          pipenv --python 3.7 install
+          pipenv run pip install pyspark==3.1.1
+          pipenv run pip install flake8==3.5.0 pypandoc==1.3.3
+          pipenv run pip install importlib_metadata==3.10.0
