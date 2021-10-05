@@ -252,7 +252,7 @@ The schema of the `remove` action is as follows:
 Field Name | Data Type | Description
 -|-|-
 path| String | A relative path to a file from the root of the table or an absolute path to a file that should be removed from the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the file path.
-deletionTimestamp | Long | The time the deletion occurred, represented as milliseconds since the epoch
+deletionTimestamp | Option[Long] | The time the deletion occurred, represented as milliseconds since the epoch
 dataChange | Boolean | When `false` the records in the removed file must be contained in one or more `add` file actions in the same version
 extendedFileMetadata | Boolean | When `true` the fields `partitionValues`, `size`, and `tags` are present
 partitionValues| Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization)
@@ -518,6 +518,7 @@ short| 2-byte signed integer numbers. Range: -32768 to 32767
 byte| 1-byte signed integer number. Range: -128 to 127
 float| 4-byte single-precision floating-point numbers
 double| 8-byte double-precision floating-point numbers
+decimal| signed decimal number with fixed precision (maximum number of digits) and scale (number of digits on right side of dot). The precision and scale can be up to 38.
 boolean| `true` or `false`
 binary| A sequence of binary data.
 date| A calendar date, represented as a year-month-day triple without a timezone.

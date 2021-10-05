@@ -153,7 +153,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
         AssertOnQuery { q => q.processAllAvailable(); true },
         CheckAnswer((0 until 5).map(_.toString): _*),
         AssertOnQuery { _ =>
-          withMetadata(deltaLog, StructType.fromDDL("id LONG, value STRING"))
+          withMetadata(deltaLog, StructType.fromDDL("id int, value int"))
           true
         },
         ExpectFailure[IllegalStateException](t =>

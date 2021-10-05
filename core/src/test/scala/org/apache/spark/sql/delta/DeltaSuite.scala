@@ -397,6 +397,38 @@ class DeltaSuite extends QueryTest
                   Seq(5, 6, 7, 8).toDF()
                     .withColumn("is_odd", $"value" % 2 =!= 0)
                     .withColumn("is_even", $"value" % 2 === 0))
+
+                // nothing to be replaced because the condition is false.
+                Seq(10, 12).toDF()
+                  .withColumn("is_odd", $"value" % 2 =!= 0)
+                  .withColumn("is_even", $"value" % 2 === 0)
+                  .write
+                  .format("delta")
+                  .mode("overwrite")
+                  .option(DeltaOptions.REPLACE_WHERE_OPTION, "1 = 2")
+                  .save(dir.toString)
+                checkAnswer(
+                  data,
+                  Seq(5, 6, 7, 8, 10, 12).toDF()
+                    .withColumn("is_odd", $"value" % 2 =!= 0)
+                    .withColumn("is_even", $"value" % 2 === 0)
+                )
+
+                // replace the whole thing because the condition is true.
+                Seq(10, 12).toDF()
+                  .withColumn("is_odd", $"value" % 2 =!= 0)
+                  .withColumn("is_even", $"value" % 2 === 0)
+                  .write
+                  .format("delta")
+                  .mode("overwrite")
+                  .option(DeltaOptions.REPLACE_WHERE_OPTION, "1 = 1")
+                  .save(dir.toString)
+                checkAnswer(
+                  data,
+                  Seq(10, 12).toDF()
+                    .withColumn("is_odd", $"value" % 2 =!= 0)
+                    .withColumn("is_even", $"value" % 2 === 0)
+                )
               }
             }
           }
@@ -425,6 +457,31 @@ class DeltaSuite extends QueryTest
       checkAnswer(
         data,
         Seq((1, 5, 9), (2, 4, 6)).toDF("a", "b", "c"))
+    }
+  }
+
+  test("replaceWhere with constraint check disabled") {
+    withSQLConf(DeltaSQLConf.REPLACEWHERE_CONSTRAINT_CHECK_ENABLED.key -> "false") {
+      withTempDir { dir =>
+        Seq(1, 2, 3, 4).toDF()
+          .withColumn("is_odd", $"value" % 2 =!= 0)
+          .write
+          .format("delta")
+          .partitionBy("is_odd")
+          .save(dir.toString)
+
+        def data: DataFrame = spark.read.format("delta").load(dir.toString)
+
+        Seq(6).toDF()
+          .withColumn("is_odd", $"value" % 2 =!= 0)
+          .write
+          .format("delta")
+          .mode("overwrite")
+          .option(DeltaOptions.REPLACE_WHERE_OPTION, "is_odd = true")
+          .save(dir.toString)
+
+        checkAnswer(data, Seq(2, 4, 6).toDF().withColumn("is_odd", $"value" % 2 =!= 0))
+      }
     }
   }
 
@@ -1384,7 +1441,7 @@ class DeltaSuite extends QueryTest
     withTable("tbl") {
       sql("CREATE TABLE tbl(id INT) USING DELTA")
       val ex = intercept[AnalysisException] {
-        sql(s"ALTER TABLE tbl SET TBLPROPERTIES (${DeltaConfigs.CHANGE_DATA_CAPTURE.key} = true)")
+        sql(s"ALTER TABLE tbl SET TBLPROPERTIES (${DeltaConfigs.CHANGE_DATA_FEED.key} = true)")
       }
 
       assert(ex.getMessage.contains("Configuration delta.enableChangeDataFeed cannot be set"))
@@ -1401,7 +1458,7 @@ class DeltaSuite extends QueryTest
       log.store.write(
         deltaFile(log.logPath, 1),
         Iterator(log.snapshot.metadata.copy(
-          configuration = Map(DeltaConfigs.CHANGE_DATA_CAPTURE.key -> "true")).json))
+          configuration = Map(DeltaConfigs.CHANGE_DATA_FEED.key -> "true")).json))
       log.update()
 
       val ex = intercept[AnalysisException] {

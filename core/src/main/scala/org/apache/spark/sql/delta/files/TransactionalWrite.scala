@@ -166,8 +166,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
   def writeFiles(
       data: Dataset[_],
       additionalConstraints: Seq[Constraint]): Seq[FileAction] = {
-    if (DeltaConfigs.CHANGE_DATA_CAPTURE.fromMetaData(metadata) ||
-        DeltaConfigs.CHANGE_DATA_CAPTURE_LEGACY.fromMetaData(metadata)) {
+    if (DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(metadata)) {
       throw DeltaErrors.cdcWriteNotAllowedInThisVersion()
     }
 

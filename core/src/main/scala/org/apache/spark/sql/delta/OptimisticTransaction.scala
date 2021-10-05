@@ -360,6 +360,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
           )
           if (partitionColCheckIsFatal) throw DeltaErrors.invalidPartitionColumn(e)
       }
+    } else if (DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(metadata) == IdMapping) {
+      DeltaColumnMapping.checkColumnIdAndPhysicalNameAssignments(metadata.schema, IdMapping)
     }
 
     if (GeneratedColumn.hasGeneratedColumns(metadata.schema)) {

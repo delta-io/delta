@@ -425,14 +425,25 @@ trait DeltaSQLConfBase {
 
   val REPLACEWHERE_DATACOLUMNS_ENABLED =
     buildConf("replaceWhere.dataColumns.enabled")
-    .internal()
-    .doc(
-      """
-        |When enabled, replaceWhere on arbitrary expression and arbitrary columns is enabled.
-        |If disabled, it falls back to the old behavior
-        |to replace on partition columns only.""".stripMargin)
-    .booleanConf
-    .createWithDefault(true)
+      .doc(
+        """
+          |When enabled, replaceWhere on arbitrary expression and arbitrary columns is enabled.
+          |If disabled, it falls back to the old behavior
+          |to replace on partition columns only.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val REPLACEWHERE_CONSTRAINT_CHECK_ENABLED =
+    buildConf("replaceWhere.constraintCheck.enabled")
+      .doc(
+        """
+          |When enabled, replaceWhere on arbitrary expression and arbitrary columns will
+          |enforce the constraint check to replace the target table only when all the
+          |rows in the source dataframe match that constraint.
+          |If disabled, it will skip the constraint check and replace with all the rows
+          |from the new dataframe.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

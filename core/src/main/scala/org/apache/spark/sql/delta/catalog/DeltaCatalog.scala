@@ -89,8 +89,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case TableCatalog.PROP_PROVIDER => false
       case TableCatalog.PROP_COMMENT => false
       case TableCatalog.PROP_OWNER => false
-      // TODO: use TableCatalog.PROP_EXTERNAL after Spark 3.1.0 is released.
-      case "external" => false
+      case TableCatalog.PROP_EXTERNAL => false
       case "path" => false
       case _ => true
     }
@@ -113,7 +112,9 @@ class DeltaCatalog extends DelegatingCatalogExtension
     } else {
       Option(allTableProperties.get("location"))
     }
-    val id = TableIdentifier(ident.name(), ident.namespace().lastOption)
+    val id = {
+      TableIdentifier(ident.name(), ident.namespace().lastOption)
+    }
     var locUriOpt = location.map(CatalogUtils.stringToURI)
     val existingTableOpt = getExistingTableIfExists(id)
     val loc = locUriOpt

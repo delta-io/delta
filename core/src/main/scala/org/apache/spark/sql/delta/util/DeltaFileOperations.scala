@@ -399,4 +399,11 @@ object DeltaFileOperations extends DeltaLogging {
     }
     ret
   }
+
+  /** Expose `org.apache.spark.util.ThreadUtils.runInNewThread` to use in Delta code. */
+  def runInNewThread[T](
+      threadName: String,
+      isDaemon: Boolean = true)(body: => T): T = {
+    ThreadUtils.runInNewThread(threadName, isDaemon)(body)
+  }
 }
