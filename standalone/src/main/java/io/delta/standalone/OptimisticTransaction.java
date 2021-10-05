@@ -20,7 +20,7 @@ public interface OptimisticTransaction {
      *                 "{engineName}-{engineVersion}".
      * @return a {@link CommitResult}, wrapping the table version that was committed.
      */
-    CommitResult commit(Iterable<Action> actions, Operation op, String engineInfo);
+     <T extends Action> CommitResult commit(Iterable<T> actions, Operation op, String engineInfo);
 
     /**
      * Mark files matched by the `readPredicates` as read by this transaction.

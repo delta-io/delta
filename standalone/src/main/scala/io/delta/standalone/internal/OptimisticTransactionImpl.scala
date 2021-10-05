@@ -22,7 +22,7 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 import io.delta.standalone.{CommitResult, DeltaScan, Operation, OptimisticTransaction}
-import io.delta.standalone.actions.{Action => ActionJ, Metadata => MetadataJ}
+import io.delta.standalone.actions.{Action => ActionJ, AddFile => AddFileJ, Metadata => MetadataJ}
 import io.delta.standalone.expressions.{Expression, Literal}
 import io.delta.standalone.internal.actions.{Action, AddFile, CommitInfo, FileAction, Metadata, Protocol, RemoveFile}
 import io.delta.standalone.internal.exception.DeltaErrors
@@ -83,8 +83,8 @@ private[internal] class OptimisticTransactionImpl(
   // Public Java API Methods
   ///////////////////////////////////////////////////////////////////////////
 
-  override def commit(
-      actionsJ: java.lang.Iterable[ActionJ],
+  override def commit[T <: ActionJ](
+      actionsJ: java.lang.Iterable[T],
       op: Operation,
       engineInfo: String): CommitResult = {
     val actions = actionsJ.asScala.map(ConversionUtils.convertActionJ).toSeq
