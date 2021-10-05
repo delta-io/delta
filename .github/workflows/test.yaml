@@ -16,7 +16,7 @@ jobs:
       - name: install java
         uses: AdoptOpenJDK/install-jdk@v1
         with:
-          version: '8.0.282'
+          version: '8.0.282+8'
           architecture: x64
       - name: Install dependencies and build the jar
         shell: bash -l {0}
