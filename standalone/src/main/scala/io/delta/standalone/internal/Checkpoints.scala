@@ -238,7 +238,7 @@ private[internal] object Checkpoints {
 
     val writerOptions = ParquetWriter.Options(
       compressionCodecName = CompressionCodecName.SNAPPY,
-      timeZone = snapshot.readTimeZone // TODO: this should just be timeZone
+      timeZone = deltaLog.timezone
     )
     val writer = ParquetWriter.writer[SingleAction](writtenPath, writerOptions)
 

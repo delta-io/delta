@@ -191,4 +191,46 @@ class DeltaRetentionSuite extends DeltaRetentionSuiteBase {
       assert(log2.snapshot.allFilesScala.size === 6)
     }
   }
+
+  test("the checkpoint file for version 0 should be cleaned") {
+    withTempDir { tempDir =>
+      val now = System.currentTimeMillis()
+      val clock = new ManualClock(now)
+      val log = DeltaLogImpl.forTable(hadoopConf, tempDir.getCanonicalPath, clock)
+      val logPath = new File(log.logPath.toUri)
+      startTxnWithManualLogCleanup(log)
+        .commit(AddFile("0", Map.empty, 1, 1, true) :: Nil, manualUpdate, writerId)
+      log.checkpoint()
+
+      val initialFiles = getLogFiles(logPath)
+      clock.advance(log.deltaRetentionMillis + 1000*60*60*24) // 1 day
+
+      // Create a new checkpoint so that the previous version can be deleted
+      log.startTransaction()
+        .commit(AddFile("1", Map.empty, 1, 1, true) :: Nil, manualUpdate, writerId)
+      log.checkpoint()
+
+      // We need to manually set the last modified timestamp to match that expected by the manual
+      // clock. If we don't, then sometimes the version 00 and version 01 log files will have the
+      // exact same lastModified time, since the local filesystem truncates the lastModified time
+      // to seconds instead of milliseconds. Here's what that looks like:
+      //
+      // _delta_log/00000000000000000000.checkpoint.parquet   1632267876000
+      // _delta_log/00000000000000000000.json                 1632267876000
+      // _delta_log/00000000000000000001.checkpoint.parquet   1632267876000
+      // _delta_log/00000000000000000001.json                 1632267876000
+      //
+      // By modifying the lastModified time, this better resembles the real-world lastModified
+      // times that the latest log files should have.
+      getLogFiles(logPath)
+        .filter(_.getName.contains("001."))
+        .foreach(_.setLastModified(now + log.deltaRetentionMillis + 1000*60*60*24))
+
+      log.cleanUpExpiredLogs()
+      val afterCleanup = getLogFiles(logPath)
+      initialFiles.foreach { file =>
+        assert(!afterCleanup.contains(file))
+      }
+    }
+  }
 }

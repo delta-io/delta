@@ -18,6 +18,7 @@ package io.delta.standalone.internal
 
 import java.io.IOException
 import java.util.concurrent.locks.ReentrantLock
+import java.util.TimeZone
 
 import scala.collection.JavaConverters._
 
@@ -27,6 +28,7 @@ import io.delta.standalone.{DeltaLog, OptimisticTransaction, VersionLog}
 import io.delta.standalone.actions.{CommitInfo => CommitInfoJ}
 import io.delta.standalone.internal.actions.{Action, Metadata, Protocol}
 import io.delta.standalone.internal.exception.DeltaErrors
+import io.delta.standalone.internal.sources.StandaloneHadoopConf
 import io.delta.standalone.internal.storage.LogStoreProvider
 import io.delta.standalone.internal.util.{Clock, ConversionUtils, FileNames, SystemClock}
 
@@ -75,6 +77,15 @@ private[internal] class DeltaLogImpl private(
   /** Returns the checkpoint interval for this log. Not transactional. */
   // TODO: DeltaConfigs.CHECKPOINT_INTERVAL
   def checkpointInterval: Int = metadata.configuration.getOrElse("checkpointInterval", "10").toInt
+
+  /** Convert the timeZoneId to an actual timeZone that can be used for decoding. */
+  def timezone: TimeZone = {
+    if (hadoopConf.get(StandaloneHadoopConf.PARQUET_DATA_TIME_ZONE_ID) == null) {
+      TimeZone.getDefault
+    } else {
+      TimeZone.getTimeZone(hadoopConf.get(StandaloneHadoopConf.PARQUET_DATA_TIME_ZONE_ID))
+    }
+  }
 
   ///////////////////////////////////////////////////////////////////////////
   // Public Java API Methods
