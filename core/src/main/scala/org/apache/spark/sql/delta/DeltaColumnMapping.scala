@@ -61,7 +61,6 @@ object DeltaColumnMapping
     // field in new metadata should have been dropped
     val oldMappingMode = DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(oldMetadata)
     val newMappingMode = DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(newMetadata)
-    var updatedMetadata = newMetadata
     if (satisfyColumnMappingProtocol(oldProtocol)) {
       if (oldMappingMode != newMappingMode && !isCreatingNewTable) {
         // block changing modes on new protocol
@@ -73,7 +72,7 @@ object DeltaColumnMapping
         throw DeltaErrors.setColumnMappingModeOnOldProtocol(oldProtocol)
       }
     }
-    updatedMetadata = tryFixMetadata(newMetadata, newMappingMode)
+    val updatedMetadata = tryFixMetadata(newMetadata, newMappingMode)
     // Force the generation of the physical schema, which throws an exception if it fails,
     // e.g., some columns don't have IDs in ID mode
     updatedMetadata.schema

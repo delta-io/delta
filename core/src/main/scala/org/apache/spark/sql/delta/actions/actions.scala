@@ -413,6 +413,10 @@ case class Metadata(
     StructType(schema.filterNot(f => partitions.contains(f.name)))
   }
 
+  /** Partition value written out to files */
+  @JsonIgnore
+  lazy val physicalPartitionColumns: Seq[String] = physicalPartitionSchema.fieldNames.toSeq
+
   /**
    * Columns whose type should never be changed. For example, if a column is used by a generated
    * column, changing its type may break the constraint defined by the generation expression. Hence,
