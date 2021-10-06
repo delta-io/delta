@@ -1,4 +1,4 @@
-name: "first try"
+name: "Delta Lake Tests"
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    name: "Prepare Python env"
+    name: "Prepare Env"
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -21,7 +21,7 @@ jobs:
         with:
           version: '8'
           architecture: x64
-      - name: Install dependencies
+      - name: Install Job dependencies
         shell: bash -l {0}
         run: |
           sudo apt-get update
@@ -44,9 +44,6 @@ jobs:
           pipenv run python run-tests.py 
         env:
           lang: ${{ matrix.lang }}
-      - name: Setup tmate session
-        if: ${{ failure() }}
-        uses: mxschmitt/action-tmate@v3
       # - name: Run Scala test
       #   shell: bash -l {0}
       #   run: |
