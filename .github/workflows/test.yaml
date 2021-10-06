@@ -21,7 +21,7 @@ jobs:
         with:
           version: '8'
           architecture: x64
-      - name: Install dependencies and build the jar
+      - name: Install dependencies
         shell: bash -l {0}
         run: |
           sudo apt-get update
@@ -47,6 +47,9 @@ jobs:
           python run-tests.py 
         env:
           lang: ${{ matrix.lang }}
+      - name: Setup tmate session
+        if: ${{ failure() }}
+        uses: mxschmitt/action-tmate@v3
       # - name: Run Scala test
       #   shell: bash -l {0}
       #   run: |
