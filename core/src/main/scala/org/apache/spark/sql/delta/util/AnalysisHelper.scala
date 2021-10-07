@@ -42,6 +42,22 @@ trait AnalysisHelper {
     }
   }
 
+  protected def tryResolveReferencesForExpressions(
+      sparkSession: SparkSession,
+      exprs: Seq[Expression],
+      planContainingExpr: LogicalPlan): Seq[Expression] = {
+    val newPlan = FakeLogicalPlan(exprs, planContainingExpr.children)
+    sparkSession.sessionState.analyzer.execute(newPlan) match {
+      case FakeLogicalPlan(resolvedExprs, _) =>
+        // Return even if it did not successfully resolve
+        resolvedExprs
+      case _ =>
+        // This is unexpected
+        throw DeltaErrors.analysisException(
+          s"Could not resolve expression $exprs", plan = Option(planContainingExpr))
+    }
+  }
+
   /**
    * Resolve expressions using the attributes provided by `planProvidingAttrs`. Throw an error if
    * failing to resolve any expressions.
