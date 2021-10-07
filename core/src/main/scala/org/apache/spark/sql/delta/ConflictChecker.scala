@@ -268,12 +268,12 @@ private[delta] class ConflictChecker(
 
   /** A helper function for pretty printing a specific partition directory. */
   protected def getPrettyPartitionMessage(partitionValues: Map[String, String]): String = {
-    val partitionColumns = currentTransactionInfo.metadata.partitionColumns
+    val partitionColumns = currentTransactionInfo.metadata.partitionSchema
     if (partitionColumns.isEmpty) {
       "the root of the table"
     } else {
-      val partition = partitionColumns.map { name =>
-        s"$name=${partitionValues(name)}"
+      val partition = partitionColumns.map { field =>
+        s"${field.name}=${partitionValues(DeltaColumnMapping.getPhysicalName(field))}"
       }.mkString("[", ", ", "]")
       s"partition ${partition}"
     }

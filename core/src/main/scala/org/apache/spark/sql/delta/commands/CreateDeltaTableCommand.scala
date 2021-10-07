@@ -285,7 +285,11 @@ case class CreateDeltaTableCommand(
     if (txn.readVersion > -1) {
       if (tableDesc.schema.nonEmpty) {
         // We check exact alignment on create table if everything is provided
-        val differences = SchemaUtils.reportDifferences(existingMetadata.schema, tableDesc.schema)
+        // However, if in column mapping mode, we can safely ignore the related metadata fields in
+        // existing metadata because new table desc will not have related metadata assigned yet
+        val differences = SchemaUtils.reportDifferences(
+          DeltaColumnMapping.dropColumnMappingMetadata(existingMetadata.schema),
+          tableDesc.schema)
         if (differences.nonEmpty) {
           throw DeltaErrors.createTableWithDifferentSchemaException(
             path, tableDesc.schema, existingMetadata.schema, differences)
