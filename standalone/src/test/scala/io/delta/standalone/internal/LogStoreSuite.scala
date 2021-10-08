@@ -25,6 +25,7 @@ import io.delta.standalone.storage.LogStore
 import io.delta.standalone.internal.sources.StandaloneHadoopConf
 import io.delta.standalone.internal.storage.{HDFSLogStore, LogStoreProvider}
 import io.delta.standalone.internal.util.GoldenTableUtils._
+import io.delta.standalone.internal.util.TestUtils._
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -54,21 +55,57 @@ abstract class LogStoreSuiteBase extends FunSuite with LogStoreProvider {
     conf
   }
 
-  test("instantiation") {
+  test("instantiation through HadoopConf") {
     val expectedClassName = logStoreClassName.getOrElse(LogStoreProvider.defaultLogStoreClassName)
     assert(createLogStore(hadoopConf).getClass.getName == expectedClassName)
   }
 
-  test("read") {
-    withGoldenTable("log-store-read") { tablePath =>
+  test("read / write") {
+    def assertNoLeakedCrcFiles(dir: File): Unit = {
+      // crc file should not be leaked when origin file doesn't exist.
+      // The implementation of Hadoop filesystem may filter out checksum file, so
+      // listing files from local filesystem.
+      val fileNames = dir.listFiles().toSeq.filter(p => p.isFile).map(p => p.getName)
+      val crcFiles = fileNames.filter(n => n.startsWith(".") && n.endsWith(".crc"))
+      val originFileNamesForExistingCrcFiles = crcFiles.map { name =>
+        // remove first "." and last ".crc"
+        name.substring(1, name.length - 4)
+      }
+
+      // Check all origin files exist for all crc files.
+      assert(originFileNamesForExistingCrcFiles.toSet.subsetOf(fileNames.toSet),
+        s"Some of origin files for crc files don't exist - crc files: $crcFiles / " +
+          s"expected origin files: $originFileNamesForExistingCrcFiles / actual files: $fileNames")
+    }
+
+    withTempDir { dir =>
       import io.delta.standalone.internal.util.Implicits._
 
-      val logStore = createLogStore(hadoopConf)
-      val deltas = Seq(0, 1).map(i => new File(tablePath, i.toString)).map(_.getCanonicalPath)
+      val store = createLogStore(hadoopConf)
 
-      assert(logStore.read(new Path(deltas.head), hadoopConf).toArray sameElements
+      val deltas = Seq(0, 1).map(i => new File(dir, i.toString)).map(_.getCanonicalPath)
+      store.write(new Path(deltas.head), Iterator("zero", "none").asJava, false, hadoopConf)
+      store.write(new Path(deltas(1)), Iterator("one").asJava, false, hadoopConf)
+
+      assert(store.read(new Path(deltas.head), hadoopConf).toArray sameElements
         Array("zero", "none"))
-      assert(logStore.read(new Path(deltas(1)), hadoopConf).toArray sameElements Array("one"))
+      assert(store.read(new Path(deltas(1)), hadoopConf).toArray sameElements Array("one"))
+
+      assertNoLeakedCrcFiles(dir)
+    }
+  }
+
+  test("detects conflict") {
+    withTempDir { dir =>
+      val store = createLogStore(hadoopConf)
+
+      val deltas = Seq(0, 1).map(i => new File(dir, i.toString)).map(_.getCanonicalPath)
+      store.write(new Path(deltas.head), Iterator("zero").asJava, false, hadoopConf)
+      store.write(new Path(deltas(1)), Iterator("one").asJava, false, hadoopConf)
+
+      intercept[java.nio.file.FileAlreadyExistsException] {
+        store.write(new Path(deltas(1)), Iterator("uno").asJava, false, hadoopConf)
+      }
     }
   }
 
@@ -93,8 +130,6 @@ abstract class LogStoreSuiteBase extends FunSuite with LogStoreProvider {
         .filterNot(_ == "_delta_log").toArray === Nil)
     }
   }
-
-  // TODO: log store write tests
 }
 
 /**
