@@ -17,7 +17,7 @@
 package io.delta.standalone.internal
 
 sealed trait IsolationLevel {
-  // TODO override def toString: String = this.getClass.getSimpleName.stripSuffix("$")
+  override def toString: String = this.getClass.getSimpleName.stripSuffix("$")
 }
 
 case object Serializable extends IsolationLevel

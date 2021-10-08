@@ -265,7 +265,7 @@ class OptimisticTransactionLegacySuite extends FunSuite {
   // updateMetadata() tests
   ///////////////////////////////////////////////////////////////////////////
 
-  test("can't update metadata more than once in a transaction") {
+  test("initial commit with multiple metadata actions should fail") {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
       val txn = log.startTransaction()
