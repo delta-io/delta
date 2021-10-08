@@ -62,8 +62,6 @@ def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
 
 
 if __name__ == "__main__":
-    lang = os.environ['lang']
-    root_dir = os.path.dirname(os.path.dirname(__file__))
     if os.getenv("USE_DOCKER") is not None:
         prepare_docker_img = ["docker", "build", "--tag=pydeltalake", "."]
         run_cmd(prepare_docker_img, stream_output=True)
@@ -72,7 +70,7 @@ if __name__ == "__main__":
         cmd = ["docker", "run", "-e", "JENKINS_URL",
                "-e", "SBT_1_5_5_MIRROR_JAR_URL", "pydeltalake:latest"]
         run_cmd(cmd, stream_output=True)
-    elif lang=="scala":
+    else:
+        root_dir = os.path.dirname(os.path.dirname(__file__))
         run_sbt_tests(root_dir)
-    elif lang=="python":        
         run_python_tests(root_dir)

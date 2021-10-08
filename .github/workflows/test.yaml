@@ -1,26 +1,27 @@
 name: "Delta Lake Tests"
 
-on:
-  push:
-    branches:
-      - master
-  pull_request:
+on: [push, pull_request]
 
 
 jobs:
   build:
     name: "Prepare Env"
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        lang: [scala,python]
+    runs-on: ubuntu-20.04
     steps:
-      - uses: actions/checkout@v1
+      - uses: actions/checkout@v2
       - name: install java
         uses: AdoptOpenJDK/install-jdk@v1
         with:
           version: '8'
           architecture: x64
+      - name: Cache Scala, SBT
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2
+            ~/.cache/coursier
+          key: delta-sbt-cache
       - name: Install Job dependencies
         shell: bash -l {0}
         run: |
@@ -42,24 +43,3 @@ jobs:
       - name: Run Scala /Python Test
         run: |
           pipenv run python run-tests.py 
-        env:
-          lang: ${{ matrix.lang }}
-      # - name: Run Scala test
-      #   shell: bash -l {0}
-      #   run: |
-      #     build/sbt "clean" "test"
-      # - name: Run Python test
-      #   shell: bash -l {0}
-      #   run: |
-      #     cd python
-      #     python run-tests.py
-      # - name: Set up Docker Buildx
-      #   uses: docker/setup-buildx-action@v1
-      # -name: Run Docker build
-      #   shell: bash -l {0}
-      #   run: |
-      #     docker  build --tag=pydeltalake .
-      #     docker run -e  JENKINS_URL -e SBT_1_5_5_MIRROR_JAR_URL pydeltalake:latest
-
-
-
