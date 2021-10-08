@@ -220,7 +220,7 @@ private[internal] object Checkpoints {
 
      val actions: Seq[SingleAction] = (
        Seq(snapshot.metadataScala, snapshot.protocolScala) ++
-       snapshot.setTransactions ++
+       snapshot.setTransactionsScala ++
        snapshot.allFilesScala ++
        snapshot.tombstonesScala).map(_.wrap)
 

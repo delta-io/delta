@@ -15,17 +15,17 @@
  */
 
 
-package io.delta.standalone.internal.util // need this to access internal.util.JsonUtils
+package io.delta.standalone.internal.util
 
 import java.util.Collections
 
 import scala.collection.JavaConverters._
 
-import io.delta.standalone.Operation
-import io.delta.standalone.actions.{AddFile, Format, Metadata, RemoveFile}
+import io.delta.standalone.actions.{AddFile, Format, Metadata, RemoveFile, SetTransaction}
 import io.delta.standalone.types.{IntegerType, StringType, StructField, StructType}
+import io.delta.standalone.Operation
 
-object StandaloneUtil {
+class StandaloneUtil(now: Long) {
 
   val engineInfo = "standaloneEngineInfo"
 
@@ -50,7 +50,7 @@ object StandaloneUtil {
     .format(new Format("parquet", Collections.singletonMap("format_key", "format_value")))
     .partitionColumns(partitionColumns.asJava)
     .schema(schema)
-    .createdTime(1000L)
+    .createdTime(now)
     .build()
 
   val addFiles: Seq[AddFile] = (0 until 50).map { i =>
@@ -58,7 +58,7 @@ object StandaloneUtil {
       i.toString, // path
       partitionColumns.map { col => col -> i.toString }.toMap.asJava, // partition values
       100L, // size
-      1000, // modification time
+      now, // modification time
       true, // data change
       null, // stats
       Map("tag_key" -> "tag_val").asJava // tags
@@ -67,7 +67,7 @@ object StandaloneUtil {
 
   val removeFiles: Seq[RemoveFile] = addFiles.map { a =>
     RemoveFile.builder(a.getPath)
-      .deletionTimestamp(2000L)
+      .deletionTimestamp(now + 100)
       .dataChange(true)
       .extendedFileMetadata(true)
       .partitionValues(a.getPartitionValues)
@@ -75,4 +75,7 @@ object StandaloneUtil {
       .tags(a.getTags)
       .build()
   }
+
+  val setTransaction: SetTransaction =
+    new SetTransaction("appId", 123, java.util.Optional.of(now + 200))
 }

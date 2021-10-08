@@ -14,15 +14,14 @@
  * limitations under the License.
  */
 
-
-package io.delta.standalone.util
+package io.delta.standalone.internal.util
 
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.types.{IntegerType, StringType, StructField, StructType}
 import org.apache.spark.sql.SaveMode
 
-object OSSUtil {
+class OSSUtil(now: Long) {
 
   val schema: StructType = StructType(Array(
     StructField("col1_part", IntegerType, nullable = true),
@@ -41,7 +40,7 @@ object OSSUtil {
     format = Format(provider = "parquet", options = Map("format_key" -> "format_value")),
     partitionColumns = partitionColumns,
     schemaString = schema.json,
-    createdTime = Some(1000L)
+    createdTime = Some(now)
   )
 
   val addFiles: Seq[AddFile] = (0 until 50).map { i =>
@@ -49,14 +48,17 @@ object OSSUtil {
       path = i.toString,
       partitionValues = partitionColumns.map { col => col -> i.toString }.toMap,
       size = 100L,
-      modificationTime = 1000L,
+      modificationTime = now,
       dataChange = true,
       stats = null,
       tags = Map("tag_key" -> "tag_val")
     )
   }
 
-  val removeFiles: Seq[RemoveFile] = addFiles.map(_.removeWithTimestamp(2000L, dataChange = true))
+  val removeFiles: Seq[RemoveFile] =
+    addFiles.map(_.removeWithTimestamp(now + 100, dataChange = true))
+
+  val setTransaction: SetTransaction = SetTransaction("appId", 123, Some(now + 200))
 
   def getCommitInfoAt(log: DeltaLog, version: Long): CommitInfo = {
     log.update()
