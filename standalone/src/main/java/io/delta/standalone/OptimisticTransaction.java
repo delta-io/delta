@@ -67,4 +67,10 @@ public interface OptimisticTransaction {
      * @return the latest version that has committed for the idempotent transaction with given `id`.
      */
     long txnVersion(String id);
+
+    /**
+     * @return the metadata for this transaction. The metadata refers to the metadata of the snapshot
+     *         at the transaction's read version unless updated during the transaction.
+     */
+    Metadata metadata();
 }

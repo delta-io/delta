@@ -278,7 +278,7 @@ private[internal] object ConversionUtils {
       external.getName,
       external.getDescription,
       convertFormatJ(external.getFormat),
-      external.getSchema.toJson,
+      if (external.getSchema == null) null else external.getSchema.toJson,
       external.getPartitionColumns.asScala,
       external.getConfiguration.asScala.toMap,
       external.getCreatedTime // implicit check this!

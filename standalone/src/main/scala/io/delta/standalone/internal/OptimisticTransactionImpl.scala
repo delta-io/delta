@@ -74,7 +74,7 @@ private[internal] class OptimisticTransactionImpl(
    * Returns the metadata for this transaction. The metadata refers to the metadata of the snapshot
    * at the transaction's read version unless updated during the transaction.
    */
-  def metadata: Metadata = newMetadata.getOrElse(snapshot.metadataScala)
+  def metadataScala: Metadata = newMetadata.getOrElse(snapshot.metadataScala)
 
   /** The version that this transaction is reading from. */
   private def readVersion: Long = snapshot.version
@@ -82,6 +82,8 @@ private[internal] class OptimisticTransactionImpl(
   ///////////////////////////////////////////////////////////////////////////
   // Public Java API Methods
   ///////////////////////////////////////////////////////////////////////////
+
+  override def metadata(): MetadataJ = ConversionUtils.convertMetadata(metadataScala)
 
   override def commit[T <: ActionJ](
       actionsJ: java.lang.Iterable[T],
@@ -233,7 +235,7 @@ private[internal] class OptimisticTransactionImpl(
         s"Currently only Protocol readerVersion 1 and writerVersion 2 is supported.")
     }
 
-    val partitionColumns = metadata.partitionColumns.toSet
+    val partitionColumns = metadataScala.partitionColumns.toSet
     finalActions.foreach {
       case a: AddFile if partitionColumns != a.partitionValues.keySet =>
         throw DeltaErrors.addFilePartitioningMismatchException(
@@ -345,7 +347,7 @@ private[internal] class OptimisticTransactionImpl(
       readFiles = readFiles.toSet,
       readWholeTable = readTheWholeTable,
       readAppIds = readTxn.toSet,
-      metadata = metadata,
+      metadata = metadataScala,
       actions = actions,
       deltaLog = deltaLog)
 
