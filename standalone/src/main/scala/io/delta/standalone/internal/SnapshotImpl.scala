@@ -20,9 +20,6 @@ import java.net.URI
 
 import scala.collection.JavaConverters._
 
-import com.github.mjakubowski84.parquet4s.ParquetReader
-import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileSystem, Path}
 import io.delta.standalone.{DeltaScan, Snapshot}
 import io.delta.standalone.actions.{AddFile => AddFileJ, Metadata => MetadataJ, RemoveFile => RemoveFileJ, SetTransaction => SetTransactionJ, Protocol => ProtocolJ}
 import io.delta.standalone.data.{CloseableIterator, RowRecord => RowParquetRecordJ}
@@ -32,6 +29,10 @@ import io.delta.standalone.internal.data.CloseableParquetDataIterator
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.scan.{DeltaScanImpl, FilteredDeltaScanImpl}
 import io.delta.standalone.internal.util.{ConversionUtils, FileNames, JsonUtils}
+
+import com.github.mjakubowski84.parquet4s.ParquetReader
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{FileSystem, Path}
 
 /**
  * Scala implementation of Java interface [[Snapshot]].
@@ -112,13 +113,17 @@ private[internal] class SnapshotImpl(
   private def load(paths: Seq[Path]): Seq[SingleAction] = {
     paths.map(_.toString).sortWith(_ < _).par.flatMap { path =>
       if (path.endsWith("json")) {
-        deltaLog.store.read(path).map { line =>
-          JsonUtils.mapper.readValue[SingleAction](line)
-        }
+        import io.delta.standalone.internal.util.Implicits._
+        deltaLog.store
+          .read(new Path(path), hadoopConf)
+          .toArray
+          .map { line => JsonUtils.mapper.readValue[SingleAction](line) }
       } else if (path.endsWith("parquet")) {
         ParquetReader.read[Parquet4sSingleActionWrapper](
-          path, ParquetReader.Options(
-          timeZone = deltaLog.timezone, hadoopConf = hadoopConf)
+          path,
+          ParquetReader.Options(
+            timeZone = deltaLog.timezone,
+            hadoopConf = hadoopConf)
         ).toSeq.map(_.unwrap)
       } else Seq.empty[SingleAction]
     }.toList

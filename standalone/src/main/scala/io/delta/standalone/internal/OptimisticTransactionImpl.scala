@@ -301,7 +301,9 @@ private[internal] class OptimisticTransactionImpl(
     deltaLog.lockInterruptibly {
       deltaLog.store.write(
         FileNames.deltaFile(deltaLog.logPath, attemptVersion),
-        actions.map(_.json).toIterator
+        actions.map(_.json).toIterator.asJava,
+        false, // overwrite = false
+        deltaLog.hadoopConf
       )
 
       val postCommitSnapshot = deltaLog.update()

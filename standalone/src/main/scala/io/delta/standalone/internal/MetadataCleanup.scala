@@ -18,6 +18,8 @@ package io.delta.standalone.internal
 
 import java.util.{Calendar, TimeZone}
 
+import scala.collection.JavaConverters._
+
 import io.delta.standalone.internal.util.FileNames.{checkpointPrefix, isCheckpointFile, isDeltaFile, checkpointVersion, deltaVersion}
 
 import org.apache.commons.lang.time.DateUtils
@@ -66,7 +68,8 @@ private[internal] trait MetadataCleanup {
     val latestCheckpoint = lastCheckpoint
     if (latestCheckpoint.isEmpty) return Iterator.empty
     val threshold = latestCheckpoint.get.version - 1L
-    val files = store.listFrom(checkpointPrefix(logPath, 0))
+    val files = store.listFrom(checkpointPrefix(logPath, 0), hadoopConf)
+      .asScala
       .filter(f => isCheckpointFile(f.getPath) || isDeltaFile(f.getPath))
     def getVersion(filePath: Path): Long = {
       if (isCheckpointFile(filePath)) {

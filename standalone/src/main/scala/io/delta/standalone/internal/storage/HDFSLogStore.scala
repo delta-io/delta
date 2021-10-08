@@ -16,18 +16,18 @@
 
 package io.delta.standalone.internal.storage
 
-import java.io.{BufferedReader, FileNotFoundException, InputStreamReader, IOException}
+import java.io.IOException
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.FileAlreadyExistsException
-import java.util.{EnumSet, UUID}
+import java.util.EnumSet
 
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 import io.delta.standalone.internal.exception.DeltaErrors
-import org.apache.commons.io.IOUtils
+
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileContext, FileStatus, Options, Path, RawLocalFileSystem}
+import org.apache.hadoop.fs.{FileContext, Options, Path, RawLocalFileSystem}
 import org.apache.hadoop.fs.CreateFlag.CREATE
 import org.apache.hadoop.fs.Options.{ChecksumOpt, CreateOpts}
 
@@ -39,49 +39,41 @@ import org.apache.hadoop.fs.Options.{ChecksumOpt, CreateOpts}
  *
  * 2. Consistent file listing: HDFS file listing is consistent.
  */
-private[internal] class HDFSLogStore(hadoopConf: Configuration) extends LogStore {
+private[internal] class HDFSLogStore(override val initHadoopConf: Configuration)
+  extends HadoopFileSystemLogStore(initHadoopConf) {
 
   val noAbstractFileSystemExceptionMessage = "No AbstractFileSystem"
 
-  override def read(path: Path): Seq[String] = {
-    val fs = path.getFileSystem(hadoopConf)
-    val stream = fs.open(path)
-    try {
-      val reader = new BufferedReader(new InputStreamReader(stream, UTF_8))
-      IOUtils.readLines(reader).asScala.map(_.trim)
-    } finally {
-      stream.close()
-    }
-  }
-
-  override def listFrom(path: Path): Iterator[FileStatus] = {
-    val fs = path.getFileSystem(hadoopConf)
-    if (!fs.exists(path.getParent)) {
-      throw new FileNotFoundException(s"No such file or directory: ${path.getParent}")
-    }
-    val files = fs.listStatus(path.getParent)
-    files.filter(_.getPath.getName >= path.getName).sortBy(_.getPath.getName).iterator
-  }
-
-  override def write(path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit = {
+  override def write(
+      path: Path,
+      actions: java.util.Iterator[String],
+      overwrite: java.lang.Boolean,
+      hadoopConf: Configuration): Unit = {
     val isLocalFs = path.getFileSystem(hadoopConf).isInstanceOf[RawLocalFileSystem]
     if (isLocalFs) {
       // We need to add `synchronized` for RawLocalFileSystem as its rename will not throw an
       // exception when the target file exists. Hence we must make sure `exists + rename` in
       // `writeInternal` for RawLocalFileSystem is atomic in our tests.
       synchronized {
-        writeInternal(path, actions, overwrite)
+        writeInternal(path, actions.asScala, overwrite, hadoopConf)
       }
     } else {
       // rename is atomic and also will fail when the target file exists. Not need to add the extra
       // `synchronized`.
-      writeInternal(path, actions, overwrite)
+      writeInternal(path, actions.asScala, overwrite, hadoopConf)
     }
   }
 
-  private def writeInternal(path: Path, actions: Iterator[String], overwrite: Boolean): Unit = {
+  override def isPartialWriteVisible(
+      path: Path, hadoopConf: Configuration): java.lang.Boolean = false
+
+  private def writeInternal(
+      path: Path,
+      actions: Iterator[String],
+      overwrite: Boolean,
+      hadoopConf: Configuration): Unit = {
     val fc: FileContext = try {
-      getFileContext(path)
+      getFileContext(path, hadoopConf)
     } catch {
       case e: IOException if e.getMessage.contains(noAbstractFileSystemExceptionMessage) =>
         val newException = DeltaErrors.incorrectLogStoreImplementationException(e)
@@ -122,11 +114,7 @@ private[internal] class HDFSLogStore(hadoopConf: Configuration) extends LogStore
     }
   }
 
-  private def createTempPath(path: Path): Path = {
-    new Path(path.getParent, s".${path.getName}.${UUID.randomUUID}.tmp")
-  }
-
-  private def getFileContext(path: Path): FileContext = {
+  private def getFileContext(path: Path, hadoopConf: Configuration): FileContext = {
     FileContext.getFileContext(path.toUri, hadoopConf)
   }
 

@@ -46,7 +46,6 @@
 package io.delta.standalone.internal.data
 
 import java.sql.{Date, Timestamp}
-import java.util
 import java.util.TimeZone
 
 import scala.collection.JavaConverters._
@@ -113,9 +112,11 @@ private[internal] case class RowParquetRecordImpl(
 
   override def getRecord(fieldName: String): RowParquetRecordJ = getAs[RowParquetRecordJ](fieldName)
 
-  override def getList[T](fieldName: String): util.List[T] = getAs[util.List[T]](fieldName)
+  override def getList[T](fieldName: String): java.util.List[T] =
+    getAs[java.util.List[T]](fieldName)
 
-  override def getMap[K, V](fieldName: String): util.Map[K, V] = getAs[util.Map[K, V]](fieldName)
+  override def getMap[K, V](fieldName: String): java.util.Map[K, V] =
+    getAs[java.util.Map[K, V]](fieldName)
 
   ///////////////////////////////////////////////////////////////////////////
   // Decoding Helper Methods

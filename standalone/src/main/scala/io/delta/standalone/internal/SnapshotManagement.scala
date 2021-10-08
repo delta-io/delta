@@ -19,10 +19,12 @@ package io.delta.standalone.internal
 import java.io.FileNotFoundException
 import java.sql.Timestamp
 
-import org.apache.hadoop.fs.{FileStatus, Path}
+import scala.collection.JavaConverters._
 
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.util.FileNames._
+
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 /**
  * Manages the creation, computation, and access of Snapshot's for Delta tables. Responsibilities
@@ -99,7 +101,9 @@ private[internal] trait SnapshotManagement { self: DeltaLogImpl =>
 
     // List from the starting checkpoint. If a checkpoint doesn't exist, this will still return
     // deltaVersion=0.
-    val newFiles = store.listFrom(checkpointPrefix(logPath, startCheckpoint.getOrElse(0L)))
+    val newFiles = store
+      .listFrom(checkpointPrefix(logPath, startCheckpoint.getOrElse(0L)), hadoopConf)
+      .asScala
       // Pick up all checkpoint and delta files
       .filter { file => isCheckpointFile(file.getPath) || isDeltaFile(file.getPath) }
       // filter out files that aren't atomically visible. Checkpoint files of 0 size are invalid

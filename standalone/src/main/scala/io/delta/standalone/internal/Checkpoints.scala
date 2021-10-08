@@ -19,14 +19,16 @@ package io.delta.standalone.internal
 import java.io.FileNotFoundException
 import java.util.UUID
 
-import com.github.mjakubowski84.parquet4s.ParquetWriter
+import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
-import io.delta.standalone.internal.actions.{Action, AddFile, Metadata, SingleAction}
-import org.apache.hadoop.fs.Path
+import io.delta.standalone.internal.actions.SingleAction
 import io.delta.standalone.internal.util.JsonUtils
 import io.delta.standalone.internal.util.FileNames._
+import org.apache.hadoop.fs.Path
 import org.apache.parquet.hadoop.metadata.CompressionCodecName
+import com.github.mjakubowski84.parquet4s.ParquetWriter
+import io.delta.standalone.data.CloseableIterator
 
 /**
  * Records information about a checkpoint.
@@ -119,17 +121,18 @@ private[internal] trait Checkpoints {
     }
     val checkpointMetaData = Checkpoints.writeCheckpoint(this, snapshotToCheckpoint)
     val json = JsonUtils.toJson(checkpointMetaData)
-    store.write(LAST_CHECKPOINT, Iterator(json), overwrite = true)
+    store.write(LAST_CHECKPOINT, Iterator(json).asJava, true, hadoopConf) // overwrite = true
 
     doLogCleanup()
   }
 
   /** Loads the checkpoint metadata from the _last_checkpoint file. */
   private def loadMetadataFromFile(tries: Int): Option[CheckpointMetaData] = {
+    var checkpointMetadataJson: CloseableIterator[String] = null
     try {
-      val checkpointMetadataJson = store.read(LAST_CHECKPOINT)
+      checkpointMetadataJson = store.read(LAST_CHECKPOINT, hadoopConf)
       val checkpointMetadata =
-        JsonUtils.mapper.readValue[CheckpointMetaData](checkpointMetadataJson.head)
+        JsonUtils.mapper.readValue[CheckpointMetaData](checkpointMetadataJson.next())
       Some(checkpointMetadata)
     } catch {
       case _: FileNotFoundException =>
@@ -151,6 +154,10 @@ private[internal] trait Checkpoints {
         // CheckpointMetaData from it.
         val verifiedCheckpoint = findLastCompleteCheckpoint(CheckpointInstance(-1L, None))
         verifiedCheckpoint.map(manuallyLoadCheckpoint)
+    } finally {
+      if (null != checkpointMetadataJson) {
+        checkpointMetadataJson.close()
+      }
     }
   }
 
@@ -167,7 +174,9 @@ private[internal] trait Checkpoints {
   protected def findLastCompleteCheckpoint(cv: CheckpointInstance): Option[CheckpointInstance] = {
     var cur = math.max(cv.version, 0L)
     while (cur >= 0) {
-      val checkpoints = store.listFrom(checkpointPrefix(logPath, math.max(0, cur - 1000)))
+      val checkpoints = store
+        .listFrom(checkpointPrefix(logPath, math.max(0, cur - 1000)), hadoopConf)
+        .asScala
         .map(_.getPath)
         .filter(isCheckpointFile)
         .map(CheckpointInstance(_))
@@ -210,7 +219,7 @@ private[internal] object Checkpoints {
 
     // The writing of checkpoints doesn't go through log store, so we need to check with the
     // log store and decide whether to use rename.
-    val useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath)
+    val useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath, deltaLog.hadoopConf)
 
     var checkpointSize = 0L
     var numOfFiles = 0L

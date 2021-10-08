@@ -16,6 +16,8 @@
 
 package io.delta.standalone.internal
 
+import scala.collection.JavaConverters._
+
 import io.delta.standalone.expressions.Expression
 import io.delta.standalone.internal.actions._
 import io.delta.standalone.internal.exception.DeltaErrors
@@ -91,9 +93,14 @@ private[internal] class ConflictChecker(
    * transaction (winning transaction).
    */
   private def createWinningCommitSummary(): WinningCommitSummary = {
+    import io.delta.standalone.internal.util.Implicits._
+
     val deltaLog = currentTransactionInfo.deltaLog
-    val winningCommitActions = deltaLog.store.read(
-      FileNames.deltaFile(deltaLog.logPath, winningCommitVersion)).map(Action.fromJson)
+    val winningCommitActions = deltaLog.store
+      .read(FileNames.deltaFile(deltaLog.logPath, winningCommitVersion), deltaLog.hadoopConf)
+      .toArray
+      .map(Action.fromJson)
+
     WinningCommitSummary(winningCommitActions, winningCommitVersion)
   }
 
@@ -222,7 +229,7 @@ private[internal] class ConflictChecker(
       val partition = partitionColumns.map { name =>
         s"$name=${partitionValues(name)}"
       }.mkString("[", ", ", "]")
-      s"partition ${partition}"
+      s"partition $partition"
     }
   }
 }

@@ -18,11 +18,14 @@ package io.delta.standalone.internal
 
 import java.sql.Timestamp
 
-import org.apache.hadoop.fs.Path
+import scala.collection.JavaConverters._
+
 import io.delta.standalone.internal.actions.{Action, CommitInfo, CommitMarker}
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.util.FileNames
-import io.delta.standalone.internal.storage.LogStore
+import io.delta.standalone.storage.LogStore
+
+import org.apache.hadoop.fs.Path
 
 /**
  * This class keeps tracks of the version of commits and their timestamps for a Delta table to
@@ -34,8 +37,11 @@ private[internal] case class DeltaHistoryManager(deltaLog: DeltaLogImpl) {
 
   /** Get the persisted commit info for the given delta file. */
   def getCommitInfo(version: Long): CommitInfo = {
-    val info = deltaLog.store.read(FileNames.deltaFile(deltaLog.logPath, version))
-      .iterator
+    import io.delta.standalone.internal.util.Implicits._
+
+    val info = deltaLog.store
+      .read(FileNames.deltaFile(deltaLog.logPath, version), deltaLog.hadoopConf)
+      .toArray
       .map(Action.fromJson)
       .collectFirst { case c: CommitInfo => c }
     if (info.isEmpty) {
@@ -98,7 +104,9 @@ private[internal] case class DeltaHistoryManager(deltaLog: DeltaLogImpl) {
    * commits are contiguous.
    */
   private def getEarliestReproducibleCommitVersion: Long = {
-    val files = deltaLog.store.listFrom(FileNames.deltaFile(deltaLog.logPath, 0))
+    val files = deltaLog.store
+      .listFrom(FileNames.deltaFile(deltaLog.logPath, 0), deltaLog.hadoopConf)
+      .asScala
       .filter(f => FileNames.isDeltaFile(f.getPath) || FileNames.isCheckpointFile(f.getPath))
 
     // A map of checkpoint version and number of parts, to number of parts observed
@@ -158,7 +166,8 @@ private[internal] case class DeltaHistoryManager(deltaLog: DeltaLogImpl) {
       logPath: Path,
       start: Long,
       end: Long): Array[Commit] = {
-    val commits = logStore.listFrom(FileNames.deltaFile(logPath, start))
+    val commits = logStore.listFrom(FileNames.deltaFile(logPath, start), deltaLog.hadoopConf)
+      .asScala
       .filter(f => FileNames.isDeltaFile(f.getPath))
       .map { fileStatus =>
         Commit(FileNames.deltaVersion(fileStatus.getPath), fileStatus.getModificationTime)
