@@ -481,8 +481,8 @@ class DeltaTable(object):
                 raise TypeError(e)
         return jmap
 
-    @classmethod
-    def _condition_to_jcolumn(cls, condition, argname="'condition'"):
+    @staticmethod
+    def _condition_to_jcolumn(condition, argname="'condition'"):
         if condition is None:
             jcondition = None
         elif type(condition) is Column:
