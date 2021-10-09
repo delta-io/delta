@@ -86,7 +86,7 @@ class DeltaTable(object):
         if condition is None:
             self._jdt.delete()
         else:
-            self._jdt.delete(self._condition_to_jcolumn(condition))
+            self._jdt.delete(DeltaTable._condition_to_jcolumn(condition))
 
     @since(0.4)
     def update(self, condition=None, set=None):
@@ -113,8 +113,8 @@ class DeltaTable(object):
                     positional args in same order across languages.
         :type set: dict with str as keys and str or pyspark.sql.Column as values
         """
-        jmap = self._dict_to_jmap(self._spark, set, "'set'")
-        jcolumn = self._condition_to_jcolumn(condition)
+        jmap = DeltaTable._dict_to_jmap(self._spark, set, "'set'")
+        jcolumn = DeltaTable._condition_to_jcolumn(condition)
         if condition is None:
             self._jdt.update(jmap)
         else:
@@ -185,7 +185,7 @@ class DeltaTable(object):
         if condition is None:
             raise ValueError("'condition' in merge cannot be None")
 
-        jbuilder = self._jdt.merge(source._jdf, self._condition_to_jcolumn(condition))
+        jbuilder = self._jdt.merge(source._jdf, DeltaTable._condition_to_jcolumn(condition))
         return DeltaMergeBuilder(self._spark, jbuilder)
 
     @since(0.4)
