@@ -452,8 +452,8 @@ class DeltaTable(object):
                              type(writerVersion))
         jdt.upgradeTableProtocol(readerVersion, writerVersion)
 
-    @classmethod
-    def _dict_to_jmap(cls, sparkSession, pydict, argname):
+    @staticmethod
+    def _dict_to_jmap(sparkSession, pydict, argname):
         """
         convert dict<str, pColumn/str> to Map<str, jColumn>
         """
