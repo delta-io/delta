@@ -22,15 +22,15 @@ import java.util.{TimeZone, List => JList, Map => JMap}
 import java.util.Arrays.{asList => asJList}
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable.ListBuffer
 
-import io.delta.standalone.data.{RowRecord => JRowRecord}
+import io.delta.standalone.data.{CloseableIterator, RowRecord => JRowRecord}
 import io.delta.standalone.DeltaLog
 import io.delta.standalone.internal.sources.StandaloneHadoopConf
 import io.delta.standalone.internal.util.DataTypeParser
 import io.delta.standalone.internal.util.GoldenTableUtils._
 import io.delta.standalone.types._
 import org.apache.hadoop.conf.Configuration
-
 import org.scalatest.FunSuite
 
 /**
@@ -360,6 +360,28 @@ class DeltaDataReaderSuite extends FunSuite {
       new StructField("multipleEntriesMetadata", new BooleanType, true, multipleEntriesMetadata))
     val struct = new StructType(field_array)
     assert(struct == DataTypeParser.fromJson(struct.toJson()))
+  }
+
+  // scalastyle:off line.size.limit
+  test("#125: CloseableParquetDataIterator should not stop iteration when processing an empty file") {
+    // scalastyle:on line.size.limit
+    withLogForGoldenTable("125-iterator-bug") { log =>
+      var datas = new ListBuffer[Int]()
+      var dataIter: CloseableIterator[JRowRecord] = null
+      try {
+        dataIter = log.update().open()
+        while (dataIter.hasNext) {
+          datas += dataIter.next().getInt("col1")
+        }
+
+        assert(datas.length == 5)
+        assert(datas.toSet == Set(1, 2, 3, 4, 5))
+      } finally {
+        if (null != dataIter) {
+          dataIter.close()
+        }
+      }
+    }
   }
 }
 
