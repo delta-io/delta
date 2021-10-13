@@ -101,8 +101,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
     recordDeltaOperation(deltaLog, "delta.gc") {
 
       val path = deltaLog.dataPath
-      val sessionHadoopConf = spark.sessionState.newHadoopConf()
-      val fs = path.getFileSystem(sessionHadoopConf)
+      val deltaHadoopConf = deltaLog.newDeltaHadoopConf()
+      val fs = path.getFileSystem(deltaHadoopConf)
 
       import spark.implicits._
 
@@ -120,7 +120,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       logInfo(s"Starting garbage collection (dryRun = $dryRun) of untracked files older than " +
         s"${new Date(deleteBeforeTimestamp).toGMTString} in $path")
       val hadoopConf = spark.sparkContext.broadcast(
-        new SerializableConfiguration(sessionHadoopConf))
+        new SerializableConfiguration(deltaHadoopConf))
       val basePath = fs.makeQualified(path).toString
       var isBloomFiltered = false
       val parallelDeleteEnabled =

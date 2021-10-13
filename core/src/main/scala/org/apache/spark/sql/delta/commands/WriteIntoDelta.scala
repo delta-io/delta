@@ -125,7 +125,7 @@ case class WriteIntoDelta(
 
     if (txn.readVersion < 0) {
       // Initialize the log path
-      deltaLog.fs.mkdirs(deltaLog.logPath)
+      deltaLog.createLogDirectory()
     }
 
     val (newFiles, addFiles, deletedFiles) = (mode, replaceWhere) match {

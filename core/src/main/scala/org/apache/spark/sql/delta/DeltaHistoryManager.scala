@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.{DateTimeUtils, FileNames, TimestampFormatter}
 import org.apache.spark.sql.delta.util.FileNames._
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.SparkEnv
@@ -50,7 +51,7 @@ class DeltaHistoryManager(
   private def spark: SparkSession = SparkSession.active
 
   private def getSerializableHadoopConf: SerializableConfiguration = {
-    new SerializableConfiguration(spark.sessionState.newHadoopConf())
+    new SerializableConfiguration(deltaLog.newDeltaHadoopConf())
   }
 
   import DeltaHistoryManager._
@@ -85,7 +86,7 @@ class DeltaHistoryManager(
         val fs = basePath.getFileSystem(conf.value)
         versions.flatMap { commit =>
           try {
-            val ci = DeltaHistoryManager.getCommitInfo(logStore, basePath, commit)
+            val ci = DeltaHistoryManager.getCommitInfo(logStore, basePath, commit, conf.value)
             val metadata = fs.getFileStatus(FileNames.deltaFile(basePath, commit))
             Some(ci.withTimestamp(metadata.getModificationTime))
           } catch {
@@ -122,7 +123,12 @@ class DeltaHistoryManager(
     val commit = if (latestVersion - earliest > 2 * maxKeysPerList) {
       parallelSearch(time, earliest, latestVersion + 1)
     } else {
-      val commits = getCommits(deltaLog.store, deltaLog.logPath, earliest, Some(latestVersion + 1))
+      val commits = getCommits(
+        deltaLog.store,
+        deltaLog.logPath,
+        earliest,
+        Some(latestVersion + 1),
+        deltaLog.newDeltaHadoopConf())
       // If it returns empty, we will fail below with `timestampEarlierThanCommitRetention`.
       lastCommitBeforeTimestamp(commits, time).getOrElse(commits.head)
     }
@@ -180,7 +186,9 @@ class DeltaHistoryManager(
    * This value must be used as a lower bound.
    */
   private def getEarliestDeltaFile: Long = {
-    val earliestVersionOpt = deltaLog.store.listFrom(FileNames.deltaFile(deltaLog.logPath, 0))
+    val earliestVersionOpt = deltaLog.store.listFrom(
+         FileNames.deltaFile(deltaLog.logPath, 0),
+         deltaLog.newDeltaHadoopConf())
       .filter(f => FileNames.isDeltaFile(f.getPath))
       .take(1).toArray.headOption
     if (earliestVersionOpt.isEmpty) {
@@ -199,7 +207,9 @@ class DeltaHistoryManager(
    * commits are contiguous.
    */
   private[delta] def getEarliestReproducibleCommit: Long = {
-    val files = deltaLog.store.listFrom(FileNames.deltaFile(deltaLog.logPath, 0))
+    val files = deltaLog.store.listFrom(
+        FileNames.deltaFile(deltaLog.logPath, 0),
+        deltaLog.newDeltaHadoopConf())
       .filter(f => FileNames.isDeltaFile(f.getPath) || FileNames.isCheckpointFile(f.getPath))
 
     // A map of checkpoint version and number of parts, to number of parts observed
@@ -252,8 +262,12 @@ class DeltaHistoryManager(
 /** Contains many utility methods that can also be executed on Spark executors. */
 object DeltaHistoryManager extends DeltaLogging {
   /** Get the persisted commit info for the given delta file. */
-  private def getCommitInfo(logStore: LogStore, basePath: Path, version: Long): CommitInfo = {
-    val logs = logStore.readAsIterator(FileNames.deltaFile(basePath, version))
+  private def getCommitInfo(
+      logStore: LogStore,
+      basePath: Path,
+      version: Long,
+      hadoopConf: Configuration): CommitInfo = {
+    val logs = logStore.readAsIterator(FileNames.deltaFile(basePath, version), hadoopConf)
     try {
       val info = logs.map(Action.fromJson).collectFirst { case c: CommitInfo => c }
       if (info.isEmpty) {
@@ -283,9 +297,10 @@ object DeltaHistoryManager extends DeltaLogging {
       logStore: LogStore,
       logPath: Path,
       start: Long,
-      end: Option[Long] = None): Array[Commit] = {
+      end: Option[Long],
+      hadoopConf: Configuration): Array[Commit] = {
     val until = end.getOrElse(Long.MaxValue)
-    val commits = logStore.listFrom(deltaFile(logPath, start))
+    val commits = logStore.listFrom(deltaFile(logPath, start), hadoopConf)
       .filter(f => isDeltaFile(f.getPath))
       .map { fileStatus =>
         Commit(deltaVersion(fileStatus.getPath), fileStatus.getModificationTime)
@@ -365,7 +380,11 @@ object DeltaHistoryManager extends DeltaLogging {
       val basePath = new Path(logPath)
       startVersions.map { startVersion =>
         val commits = getCommits(
-          logStore, basePath, startVersion, Some(math.min(startVersion + step, end)))
+          logStore,
+          basePath,
+          startVersion,
+          Some(math.min(startVersion + step, end)),
+          conf.value)
         lastCommitBeforeTimestamp(commits, time).getOrElse(commits.head)
       }
     }.collect()

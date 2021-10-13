@@ -442,7 +442,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
   protected def gcTest(deltaLog: DeltaLog, clock: ManualClock)(actions: Action*): Unit = {
     import testImplicits._
     val basePath = deltaLog.dataPath.toString
-    val fs = new Path(basePath).getFileSystem(spark.sessionState.newHadoopConf())
+    val fs = new Path(basePath).getFileSystem(deltaLog.newDeltaHadoopConf())
     actions.foreach {
       case CreateFile(path, commit, partitionValues) =>
         Given(s"*** Writing file to $path. Commit to log: $commit")

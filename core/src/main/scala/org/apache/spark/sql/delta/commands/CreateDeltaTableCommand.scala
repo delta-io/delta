@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.actions.{Action, Metadata}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.sql._
@@ -99,8 +100,9 @@ case class CreateDeltaTableCommand(
 
     val isManagedTable = tableWithLocation.tableType == CatalogTableType.MANAGED
     val tableLocation = new Path(tableWithLocation.location)
-    val fs = tableLocation.getFileSystem(sparkSession.sessionState.newHadoopConf())
     val deltaLog = DeltaLog.forTable(sparkSession, tableLocation)
+    val hadoopConf = deltaLog.newDeltaHadoopConf()
+    val fs = tableLocation.getFileSystem(hadoopConf)
     val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
     var result: Seq[Row] = Nil
 
@@ -115,7 +117,7 @@ case class CreateDeltaTableCommand(
           // We may have failed a previous write. The retry should still succeed even if we have
           // garbage data
           if (txn.readVersion > -1 || !fs.exists(deltaLog.logPath)) {
-            assertPathEmpty(sparkSession, tableWithLocation)
+            assertPathEmpty(hadoopConf, tableWithLocation)
           }
         }
         // We are either appending/overwriting with saveAsTable or creating a new table with CTAS or
@@ -162,7 +164,7 @@ case class CreateDeltaTableCommand(
             // When creating a managed table, the table path should not exist or is empty, or
             // users would be surprised to see the data, or see the data directory being dropped
             // after the table is dropped.
-            assertPathEmpty(sparkSession, tableWithLocation)
+            assertPathEmpty(hadoopConf, tableWithLocation)
           }
 
           // This is either a new table, or, we never defined the schema of the table. While it is
@@ -171,7 +173,7 @@ case class CreateDeltaTableCommand(
           val noExistingMetadata = txn.readVersion == -1 || txn.metadata.schema.isEmpty
           if (noExistingMetadata) {
             assertTableSchemaDefined(fs, tableLocation, tableWithLocation, sparkSession)
-            assertPathEmpty(sparkSession, tableWithLocation)
+            assertPathEmpty(hadoopConf, tableWithLocation)
             // This is a user provided schema.
             // Doesn't come from a query, Follow nullability invariants.
             val newMetadata = getProvidedMetadata(table, table.schema.json)
@@ -232,10 +234,10 @@ case class CreateDeltaTableCommand(
   }
 
   private def assertPathEmpty(
-      sparkSession: SparkSession,
+      hadoopConf: Configuration,
       tableWithLocation: CatalogTable): Unit = {
     val path = new Path(tableWithLocation.location)
-    val fs = path.getFileSystem(sparkSession.sessionState.newHadoopConf())
+    val fs = path.getFileSystem(hadoopConf)
     // Verify that the table location associated with CREATE TABLE doesn't have any data. Note that
     // we intentionally diverge from this behavior w.r.t regular datasource tables (that silently
     // overwrite any previous data)

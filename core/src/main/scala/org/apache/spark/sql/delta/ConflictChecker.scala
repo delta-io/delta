@@ -128,7 +128,9 @@ private[delta] class ConflictChecker(
   protected def createWinningCommitSummary(): WinningCommitSummary = {
     recordTime("initialize-old-commit") {
       val winningCommitActions = deltaLog.store.read(
-        FileNames.deltaFile(deltaLog.logPath, winningCommitVersion)).map(Action.fromJson)
+        FileNames.deltaFile(deltaLog.logPath, winningCommitVersion),
+        deltaLog.newDeltaHadoopConf()
+      ).map(Action.fromJson)
       new WinningCommitSummary(winningCommitActions, winningCommitVersion)
     }
   }

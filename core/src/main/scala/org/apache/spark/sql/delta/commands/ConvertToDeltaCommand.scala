@@ -279,7 +279,9 @@ abstract class ConvertToDeltaCommandBase(
       spark: SparkSession,
       target: ConvertTarget): ConvertTargetTable = {
     val targetPath = new Path(target.targetDir)
+    // scalastyle:off deltahadoopconfiguration
     val sessionHadoopConf = spark.sessionState.newHadoopConf()
+    // scalastyle:on deltahadoopconfiguration
     val fs = targetPath.getFileSystem(sessionHadoopConf)
     val qualifiedPath = fs.makeQualified(targetPath)
     val qualifiedDir = qualifiedPath.toString
@@ -315,7 +317,9 @@ abstract class ConvertToDeltaCommandBase(
     recordDeltaOperation(txn.deltaLog, "delta.convert") {
     txn.deltaLog.ensureLogDirectoryExist()
     val targetPath = new Path(convertProperties.targetDir)
+    // scalastyle:off deltahadoopconfiguration
     val sessionHadoopConf = spark.sessionState.newHadoopConf()
+    // scalastyle:on deltahadoopconfiguration
     val fs = targetPath.getFileSystem(sessionHadoopConf)
     val manifest = targetTable.fileManifest
 
@@ -427,7 +431,9 @@ class ParquetTable(
   private var _tableSchema: Option[StructType] = None
 
   protected lazy val serializableConf = {
+    // scalastyle:off deltahadoopconfiguration
     new SerializableConfiguration(spark.sessionState.newHadoopConf())
+    // scalastyle:on deltahadoopconfiguration
   }
 
   def numFiles: Long = {

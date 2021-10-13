@@ -136,7 +136,11 @@ trait Checkpoints extends DeltaLogging {
       }
       val checkpointMetaData = writeCheckpointFiles(snapshotToCheckpoint)
       val json = JsonUtils.toJson(checkpointMetaData)
-      store.write(LAST_CHECKPOINT, Iterator(json), overwrite = true)
+      store.write(
+        LAST_CHECKPOINT,
+        Iterator(json),
+        overwrite = true,
+        newDeltaHadoopConf())
 
       doLogCleanup()
     }
@@ -153,7 +157,7 @@ trait Checkpoints extends DeltaLogging {
   /** Loads the checkpoint metadata from the _last_checkpoint file. */
   private def loadMetadataFromFile(tries: Int): Option[CheckpointMetaData] = {
     try {
-      val checkpointMetadataJson = store.read(LAST_CHECKPOINT)
+      val checkpointMetadataJson = store.read(LAST_CHECKPOINT, newDeltaHadoopConf())
       val checkpointMetadata =
         JsonUtils.mapper.readValue[CheckpointMetaData](checkpointMetadataJson.head)
       Some(checkpointMetadata)
@@ -187,8 +191,11 @@ trait Checkpoints extends DeltaLogging {
    */
   protected def findLastCompleteCheckpoint(cv: CheckpointInstance): Option[CheckpointInstance] = {
     var cur = math.max(cv.version, 0L)
+    val hadoopConf = newDeltaHadoopConf()
     while (cur >= 0) {
-      val checkpoints = store.listFrom(checkpointPrefix(logPath, math.max(0, cur - 1000)))
+      val checkpoints = store.listFrom(
+            checkpointPrefix(logPath, math.max(0, cur - 1000)),
+            hadoopConf)
           .map(_.getPath)
           .filter(isCheckpointFile)
           .map(CheckpointInstance(_))
@@ -233,11 +240,12 @@ object Checkpoints extends DeltaLogging {
       snapshot: Snapshot): CheckpointMetaData = {
     import SingleAction._
 
+    val hadoopConf = deltaLog.newDeltaHadoopConf()
+
     // The writing of checkpoints doesn't go through log store, so we need to check with the
     // log store and decide whether to use rename.
-    val useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath)
+    val useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath, hadoopConf)
 
-    val hadoopConf = spark.sessionState.newHadoopConf
     val checkpointSize = spark.sparkContext.longAccumulator("checkpointSize")
     val numOfFiles = spark.sparkContext.longAccumulator("numOfFiles")
     // Use the string in the closure as Path is not Serializable.

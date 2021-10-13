@@ -97,7 +97,7 @@ class Snapshot(
       val localLogPath = path.toUri
 
       val hadoopConf = spark.sparkContext.broadcast(
-        new SerializableConfiguration(spark.sessionState.newHadoopConf()))
+        new SerializableConfiguration(deltaLog.newDeltaHadoopConf()))
       var wrapPath = false
 
       loadActions.mapPartitions { actions =>

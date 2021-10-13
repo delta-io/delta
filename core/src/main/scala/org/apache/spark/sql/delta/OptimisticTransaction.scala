@@ -632,7 +632,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
 
   private[delta] def isCommitLockEnabled: Boolean = {
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_LOCK_ENABLED).getOrElse(
-      deltaLog.store.isPartialWriteVisible(deltaLog.logPath))
+      deltaLog.store.isPartialWriteVisible(deltaLog.logPath, deltaLog.newDeltaHadoopConf()))
   }
 
   private def lockCommitIfEnabled[T](body: => T): T = {
@@ -718,7 +718,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
 
     deltaLog.store.write(
       deltaFile(deltaLog.logPath, attemptVersion),
-      actions.map(_.json).toIterator)
+      actions.map(_.json).toIterator,
+      overwrite = false,
+      deltaLog.newDeltaHadoopConf())
 
     spark.sessionState.conf.setConf(
       DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,

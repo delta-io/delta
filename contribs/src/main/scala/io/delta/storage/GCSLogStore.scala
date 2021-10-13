@@ -54,13 +54,21 @@ import org.apache.spark.sql.delta.util.DeltaFileOperations
  *       See https://docs.delta.io/latest/delta-storage.html for details.
  */
 @Unstable
-class GCSLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
-  extends HadoopFileSystemLogStore(sparkConf, defaultHadoopConf) with Logging {
+class GCSLogStore(sparkConf: SparkConf, initHadoopConf: Configuration)
+  extends HadoopFileSystemLogStore(sparkConf, initHadoopConf) with Logging {
 
   val preconditionFailedExceptionMessage = "412 Precondition Failed"
 
-  def write(path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit = {
-    val fs = path.getFileSystem(getHadoopConfiguration)
+  override def write(path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit = {
+    write(path, actions, overwrite, getHadoopConfiguration)
+  }
+
+  override def write(
+      path: Path,
+      actions: Iterator[String],
+      overwrite: Boolean,
+      hadoopConf: Configuration): Unit = {
+    val fs = path.getFileSystem(hadoopConf)
 
     // This is needed for the tests to throw error with local file system.
     if (fs.isInstanceOf[LocalFileSystem] && !overwrite && fs.exists(path)) {
@@ -109,4 +117,6 @@ class GCSLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
   override def invalidateCache(): Unit = {}
 
   override def isPartialWriteVisible(path: Path): Boolean = false
+
+  override def isPartialWriteVisible(path: Path, hadoopConf: Configuration): Boolean = false
 }
