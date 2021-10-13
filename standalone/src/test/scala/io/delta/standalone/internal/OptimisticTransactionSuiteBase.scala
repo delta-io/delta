@@ -118,8 +118,7 @@ trait OptimisticTransactionSuiteBase extends FunSuite {
     val conflict = if (conflicts) "should conflict" else "should not conflict"
     test(s"$name - $conflict") {
       withTempDir { tempDir =>
-        val log =
-          DeltaLog.forTable(new Configuration(), new Path(tempDir.getCanonicalPath + "/_delta_log"))
+        val log = DeltaLog.forTable(new Configuration(), new Path(tempDir.getCanonicalPath))
 
         // Setup the log
         initialSetup(log)

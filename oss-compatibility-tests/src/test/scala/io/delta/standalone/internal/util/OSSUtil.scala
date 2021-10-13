@@ -20,6 +20,7 @@ import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.types.{IntegerType, StringType, StructField, StructType}
 import org.apache.spark.sql.SaveMode
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Literal}
 
 class OSSUtil(now: Long) {
 
@@ -42,6 +43,10 @@ class OSSUtil(now: Long) {
     schemaString = schema.json,
     createdTime = Some(now)
   )
+
+  val protocol12: Protocol = Protocol(1, 2)
+
+  val protocol13: Protocol = Protocol(1, 3)
 
   val addFiles: Seq[AddFile] = (0 until 50).map { i =>
     AddFile(
@@ -72,5 +77,33 @@ class OSSUtil(now: Long) {
       s"version $version, but none was found.")
 
     commitInfoOpt.get
+  }
+
+  val col1PartitionFilter =
+    EqualTo(AttributeReference("col1_part", IntegerType, nullable = true)(), Literal(1))
+
+  val conflict = new ConflictVals()
+
+  class ConflictVals {
+    val addA = AddFile("a", Map.empty, 1, 1, dataChange = true)
+    val addB = AddFile("b", Map.empty, 1, 1, dataChange = true)
+
+    val removeA = RemoveFile("a", Some(4))
+    val removeA_time5 = RemoveFile("a", Some(5))
+
+    val addA_partX1 = AddFile("a", Map("x" -> "1"), 1, 1, dataChange = true)
+    val addA_partX2 = AddFile("a", Map("x" -> "2"), 1, 1, dataChange = true)
+    val addB_partX1 = AddFile("b", Map("x" -> "1"), 1, 1, dataChange = true)
+    val addB_partX3 = AddFile("b", Map("x" -> "2"), 1, 1, dataChange = true)
+    val addC_partX4 = AddFile("c", Map("x" -> "4"), 1, 1, dataChange = true)
+
+    val metadata_colX = Metadata(schemaString = new StructType().add("x", IntegerType).json)
+
+    val metadata_partX = Metadata(
+      schemaString = new StructType().add("x", IntegerType).json,
+      partitionColumns = Seq("x")
+    )
+
+    val colXEq1Filter = EqualTo(AttributeReference("x", IntegerType, nullable = true)(), Literal(1))
   }
 }

@@ -717,7 +717,6 @@ class OptimisticTransactionLegacySuite extends FunSuite {
       tx1.txnVersion("t1")
 
       val winningTxn = log.startTransaction()
-      winningTxn.txnVersion("t1")
       winningTxn.commit(SetTransaction("t1", 1, Some(1234L)) :: Nil, manualUpdate, engineInfo)
 
       intercept[ConcurrentTransactionException] {

@@ -14,16 +14,17 @@
  * limitations under the License.
  */
 
-
 package io.delta.standalone.internal.util
 
 import java.util.Collections
 
 import scala.collection.JavaConverters._
 
-import io.delta.standalone.actions.{AddFile, Format, Metadata, RemoveFile, SetTransaction}
+import io.delta.standalone.actions.{AddFile, Format, Metadata, Protocol, RemoveFile, SetTransaction}
 import io.delta.standalone.types.{IntegerType, StringType, StructField, StructType}
 import io.delta.standalone.Operation
+import io.delta.standalone.expressions.{EqualTo, Literal}
+import io.delta.standalone.internal.OptimisticTransactionSuiteTestVals
 
 class StandaloneUtil(now: Long) {
 
@@ -53,6 +54,8 @@ class StandaloneUtil(now: Long) {
     .createdTime(now)
     .build()
 
+  val protocol12: Protocol = new Protocol(1, 2)
+
   val addFiles: Seq[AddFile] = (0 until 50).map { i =>
     new AddFile(
       i.toString, // path
@@ -78,4 +81,10 @@ class StandaloneUtil(now: Long) {
 
   val setTransaction: SetTransaction =
     new SetTransaction("appId", 123, java.util.Optional.of(now + 200))
+
+  val col1PartitionFilter = new EqualTo(schema.column("col1_part"), Literal.of(1))
+
+  val conflict = new ConflictVals()
+
+  class ConflictVals extends OptimisticTransactionSuiteTestVals
 }

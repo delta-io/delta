@@ -16,37 +16,21 @@
 
 package io.delta.standalone.internal
 
-import java.util.Collections
-
 import scala.collection.JavaConverters._
 
-import io.delta.standalone.actions.{CommitInfo, Protocol, AddFile => AddFileJ, Metadata => MetadataJ, RemoveFile => RemoveFileJ, SetTransaction => SetTransactionJ}
-import io.delta.standalone.expressions.{EqualTo, Literal}
-import io.delta.standalone.types.{IntegerType, StructField, StructType}
+import io.delta.standalone.actions.{CommitInfo, Protocol, Metadata => MetadataJ, RemoveFile => RemoveFileJ, SetTransaction => SetTransactionJ}
 import io.delta.standalone.internal.util.TestUtils._
 import io.delta.standalone.DeltaLog
 
 import org.apache.hadoop.conf.Configuration
 
-class OptimisticTransactionSuite extends OptimisticTransactionSuiteBase {
-  private val addA = new AddFileJ("a", Collections.emptyMap(), 1, 1, true, null, null)
-  private val addB = new AddFileJ("b", Collections.emptyMap(), 1, 1, true, null, null)
+class OptimisticTransactionSuite
+  extends OptimisticTransactionSuiteBase
+  with OptimisticTransactionSuiteTestVals {
 
-  private val removeA = RemoveFileJ.builder("a").deletionTimestamp(4L).build()
-  private val addA_partX1 = new AddFileJ("a", Map("x" -> "1").asJava, 1, 1, true, null, null)
-  private val addA_partX2 = new AddFileJ("a", Map("x" -> "2").asJava, 1, 1, true, null, null)
-  private val addB_partX1 = new AddFileJ("b", Map("x" -> "1").asJava, 1, 1, true, null, null)
-  private val addB_partX3 = new AddFileJ("b", Map("x" -> "3").asJava, 1, 1, true, null, null)
-  private val addC_partX4 = new AddFileJ("c", Map("x" -> "4").asJava, 1, 1, true, null, null)
-
-  private val schema = new StructType(Array(new StructField("x", new IntegerType())))
-  private val metadata_colX = MetadataJ.builder().schema(schema).build()
-  private val metadata_partX =
-    MetadataJ.builder().schema(schema).partitionColumns(Seq("x").asJava).build()
-
-  /* ************************** *
-   * Allowed concurrent actions *
-   * ************************** */
+  ///////////////////////////////////////////////////////////////////////////
+  // Allowed concurrent actions
+  ///////////////////////////////////////////////////////////////////////////
 
   check(
     "append / append",
@@ -58,9 +42,7 @@ class OptimisticTransactionSuite extends OptimisticTransactionSuiteBase {
   check(
     "disjoint txns",
     conflicts = false,
-    reads = Seq(
-      t => t.txnVersion("t1")
-    ),
+    reads = Seq(t => t.txnVersion("t1")),
     concurrentWrites = Seq(
       new SetTransactionJ("t2", 0, java.util.Optional.of(1234L))),
     actions = Nil)
@@ -69,9 +51,7 @@ class OptimisticTransactionSuite extends OptimisticTransactionSuiteBase {
     "disjoint delete / read",
     conflicts = false,
     setup = Seq(metadata_partX, addA_partX2),
-    reads = Seq(
-      t => t.markFilesAsRead(new EqualTo(schema.column("x"), Literal.of(1)))
-    ),
+    reads = Seq(t => t.markFilesAsRead(colXEq1Filter)),
     concurrentWrites = Seq(removeA),
     actions = Seq()
   )
@@ -80,9 +60,7 @@ class OptimisticTransactionSuite extends OptimisticTransactionSuiteBase {
     "disjoint add / read",
     conflicts = false,
     setup = Seq(metadata_partX),
-    reads = Seq(
-      t => t.markFilesAsRead(new EqualTo(schema.column("x"), Literal.of(1)))
-    ),
+    reads = Seq(t => t.markFilesAsRead(colXEq1Filter)),
     concurrentWrites = Seq(addA_partX2),
     actions = Seq()
   )
@@ -91,31 +69,27 @@ class OptimisticTransactionSuite extends OptimisticTransactionSuiteBase {
     "add / read + no write",  // no write = no real conflicting change even though data was added
     conflicts = false,        // so this should not conflict
     setup = Seq(metadata_partX),
-    reads = Seq(
-      t => t.markFilesAsRead(new EqualTo(schema.column("x"), Literal.of(1)))
-    ),
+    reads = Seq(t => t.markFilesAsRead(colXEq1Filter)),
     concurrentWrites = Seq(addA_partX1),
     actions = Seq())
 
-  /* ***************************** *
-   * Disallowed concurrent actions *
-   * ***************************** */
+  ///////////////////////////////////////////////////////////////////////////
+  // Disallowed concurrent actions
+  ///////////////////////////////////////////////////////////////////////////
 
   check(
     "delete / delete",
     conflicts = true,
     reads = Nil,
     concurrentWrites = Seq(removeA),
-    actions = Seq(RemoveFileJ.builder("a").deletionTimestamp(5L).build())
+    actions = Seq(removeA_time5)
   )
 
   check(
     "add / read + write",
     conflicts = true,
     setup = Seq(metadata_partX),
-    reads = Seq(
-      t => t.markFilesAsRead(new EqualTo(schema.column("x"), Literal.of(1)))
-    ),
+    reads = Seq(t => t.markFilesAsRead(colXEq1Filter)),
     concurrentWrites = Seq(addA_partX1),
     actions = Seq(addB_partX1),
     // commit info should show operation as "Manual Update", because that's the operation used by
@@ -126,9 +100,7 @@ class OptimisticTransactionSuite extends OptimisticTransactionSuiteBase {
     "delete / read",
     conflicts = true,
     setup = Seq(metadata_partX, addA_partX1),
-    reads = Seq(
-      t => t.markFilesAsRead(new EqualTo(schema.column("x"), Literal.of(1)))
-    ),
+    reads = Seq(t => t.markFilesAsRead(colXEq1Filter)),
     concurrentWrites = Seq(removeA),
     actions = Seq(),
     errorMessageHint = Some("a in partition [x=1]" :: "Manual Update" :: Nil))
@@ -136,18 +108,14 @@ class OptimisticTransactionSuite extends OptimisticTransactionSuiteBase {
   check(
     "schema change",
     conflicts = true,
-    reads = Seq(
-      t => t.metadata
-    ),
+    reads = Seq(t => t.metadata),
     concurrentWrites = Seq(MetadataJ.builder().build()),
     actions = Nil)
 
   check(
     "conflicting txns",
     conflicts = true,
-    reads = Seq(
-      t => t.txnVersion("t1")
-    ),
+    reads = Seq(t => t.txnVersion("t1")),
     concurrentWrites = Seq(
       new SetTransactionJ("t1", 0, java.util.Optional.of(1234L))
     ),
@@ -156,9 +124,7 @@ class OptimisticTransactionSuite extends OptimisticTransactionSuiteBase {
   check(
     "upgrade / upgrade",
     conflicts = true,
-    reads = Seq(
-      t => t.metadata
-    ),
+    reads = Seq(t => t.metadata),
     concurrentWrites = Seq(new Protocol()),
     actions = Seq(new Protocol()))
 
@@ -167,7 +133,7 @@ class OptimisticTransactionSuite extends OptimisticTransactionSuiteBase {
     conflicts = true,
     setup = Seq(metadata_partX, addA_partX2),
     reads = Seq(
-      t => t.markFilesAsRead(new EqualTo(schema.column("x"), Literal.of(1))),
+      t => t.markFilesAsRead(colXEq1Filter),
       // `readWholeTable` should disallow any concurrent change, even if the change
       // is disjoint with the earlier filter
       t => t.readWholeTable()

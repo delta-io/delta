@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 package io.delta.standalone.internal.util
 
 import scala.collection.JavaConverters._

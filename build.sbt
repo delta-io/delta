@@ -335,7 +335,8 @@ lazy val mimaSettings = Seq(
 )
 
 lazy val compatibility = (project in file("oss-compatibility-tests"))
-  .dependsOn(standalone)
+  // depend on standalone test codes as well
+  .dependsOn(standalone % "compile->compile;test->test")
   .settings(
     name := "compatibility",
     commonSettings,
