@@ -1,6 +1,7 @@
 # <img src="https://docs.delta.io/latest/_static/delta-lake-white.png" width="150" alt="Delta Lake Logo"></img> Connectors
 
-[![CircleCI](https://circleci.com/gh/delta-io/connectors/tree/master.svg?style=svg)](https://circleci.com/gh/delta-io/connectors/tree/master)
+[![Test](https://github.com/delta-io/connectors/actions/workflows/test.yaml/badge.svg)](https://github.com/delta-io/connectors/actions/workflows/test.yaml)
+[![License](https://img.shields.io/badge/license-Apache%202-brightgreen.svg)](https://github.com/delta-io/connectors/blob/master/LICENSE.txt)
 
 We are building connectors to bring [Delta Lake](https://delta.io) to popular big-data engines outside [Apache Spark](https://spark.apache.org) (e.g., [Apache Hive](https://hive.apache.org/), [Presto](https://prestodb.io/)) and also to common reporting tools like [Microsoft Power BI](https://powerbi.microsoft.com/).
 
