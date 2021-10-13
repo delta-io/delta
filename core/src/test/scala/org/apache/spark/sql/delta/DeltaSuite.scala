@@ -925,7 +925,7 @@ class DeltaSuite extends QueryTest
       spark.range(10).write.format("delta").save(tempDir.toString)
       val deltaLog = DeltaLog.forTable(spark, tempDir)
       val numParts = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS).get
-      assert(deltaLog.snapshot.state.rdd.getNumPartitions == numParts)
+      assert(deltaLog.snapshot.stateDS.rdd.getNumPartitions == numParts)
     }
   }
 
@@ -944,7 +944,7 @@ class DeltaSuite extends QueryTest
       withSQLConf(("spark.databricks.delta.snapshotPartitions", "410")) {
         spark.range(10).write.format("delta").save(tempDir.toString)
         val deltaLog = DeltaLog.forTable(spark, tempDir)
-        assert(deltaLog.snapshot.state.rdd.getNumPartitions == 410)
+        assert(deltaLog.snapshot.stateDS.rdd.getNumPartitions == 410)
       }
     }
   }
@@ -1218,7 +1218,7 @@ class DeltaSuite extends QueryTest
   test("SC-24982 - initial snapshot has zero partitions") {
     withTempDir { tempDir =>
       val deltaLog = DeltaLog.forTable(spark, tempDir)
-      assert(deltaLog.snapshot.state.rdd.getNumPartitions == 0)
+      assert(deltaLog.snapshot.stateDS.rdd.getNumPartitions == 0)
     }
   }
 
@@ -1236,7 +1236,7 @@ class DeltaSuite extends QueryTest
     sparkContext.addSparkListener(listener)
     try {
       withTempDir { tempDir =>
-        val files = DeltaLog.forTable(spark, tempDir).snapshot.state.collect()
+        val files = DeltaLog.forTable(spark, tempDir).snapshot.stateDS.collect()
         assert(files.isEmpty)
       }
       sparkContext.listenerBus.waitUntilEmpty(15000)

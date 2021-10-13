@@ -242,7 +242,7 @@ object Checkpoints extends DeltaLogging {
     val numOfFiles = spark.sparkContext.longAccumulator("numOfFiles")
     // Use the string in the closure as Path is not Serializable.
     val path = checkpointFileSingular(snapshot.path, snapshot.version).toString
-    val base = snapshot.state
+    val base = snapshot.stateDS
       .repartition(1)
       .map { action =>
         if (action.add != null) {

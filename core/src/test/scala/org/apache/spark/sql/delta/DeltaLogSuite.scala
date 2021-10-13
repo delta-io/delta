@@ -110,7 +110,7 @@ class DeltaLogSuite extends QueryTest
         }
       }
 
-      val numOfStateRDDs = collectReservoirStateRDD(log.snapshot.state.rdd).size
+      val numOfStateRDDs = collectReservoirStateRDD(log.snapshot.stateDS.rdd).size
       assert(numOfStateRDDs >= 1, "collectReservoirStateRDD may not work properly")
       assert(numOfStateRDDs < checkpointInterval)
     }
@@ -424,7 +424,7 @@ class DeltaLogSuite extends QueryTest
       spark.range(20, 30).write.format("delta").mode("append").save(path)
 
       // Store these for later usage
-      val actions = deltaLog.snapshot.state.collect()
+      val actions = deltaLog.snapshot.stateDS.collect()
       val commitTimestamp = deltaLog.snapshot.logSegment.lastCommitTimestamp
 
       checkAnswer(

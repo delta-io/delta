@@ -128,7 +128,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       val relativizeIgnoreError =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR)
 
-      val validFiles = snapshot.state
+      val validFiles = snapshot.stateDS
         .mapPartitions { actions =>
           val reservoirBase = new Path(basePath)
           val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
