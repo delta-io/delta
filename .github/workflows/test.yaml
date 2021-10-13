@@ -1,0 +1,33 @@
+name: "Delta Lake Connectors Tests"
+on: [push, pull_request]
+jobs:
+  build:
+    name: "Run tests "
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: install java
+        uses: actions/setup-java@v2
+        with:
+          distribution: 'zulu'
+          java-version: '8'
+      - name: Cache Scala, SBT
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2
+            ~/.cache/coursier
+          key: delta-sbt-cache
+      - name: Run Scala/Java and Python tests
+        shell: bash -l {0}
+        run: |
+          build/sbt "++ 2.12.8 standalone/test"
+          build/sbt "++ 2.12.8 hive/test"
+          build/sbt "++ 2.12.8 hiveMR/test"
+          build/sbt "++ 2.12.8 hiveTez/test"
+          build/sbt "++ 2.12.8 sqlDeltaImport/test"
+          build/sbt "++ 2.11.12 standalone/test"
+          build/sbt "++ 2.11.12 hive/test"
+          build/sbt "++ 2.11.12 hiveMR/test"
+          build/sbt "++ 2.11.12 hiveTez/test"
