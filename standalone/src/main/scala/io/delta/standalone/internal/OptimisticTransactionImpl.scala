@@ -396,32 +396,8 @@ private[internal] class OptimisticTransactionImpl(
 
   /** Creates new metadata with global Delta configuration defaults. */
   private def withGlobalConfigDefaults(metadata: Metadata): Metadata = {
-    // TODO DeltaConfigs.mergeGlobalConfigs
-
-    val defaultConfigs = Map(
-      "deletedFileRetentionDuration" -> "604800000", // 1 week
-      "checkpointInterval" -> "10",
-      "enableExpiredLogCleanup" -> "true",
-      "logRetentionDuration" -> "2592000000", // 30 days
-      "appendOnly" -> "false"
-    )
-
-    // Priority is:
-    // 1. user-provided configs (via metadata.configuration)
-    // 2. global hadoop configs
-    // 3. default configs
-    val newMetadataConfig = defaultConfigs.keySet.map { key =>
-      val value = if (metadata.configuration.contains(key)) {
-          metadata.configuration(key)
-        } else {
-          deltaLog.hadoopConf.get(key, defaultConfigs(key))
-        }
-
-      key -> value
-    }.toMap
-
-    // User provided configs take precedence.
-    metadata.copy(configuration = newMetadataConfig)
+    metadata.copy(configuration =
+      DeltaConfigs.mergeGlobalConfigs(deltaLog.hadoopConf, metadata.configuration))
   }
 }
 

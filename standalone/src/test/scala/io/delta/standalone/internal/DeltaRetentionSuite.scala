@@ -58,9 +58,10 @@ class DeltaRetentionSuite extends DeltaRetentionSuiteBase {
 
       assert(initialFiles === getLogFiles(logPath))
 
-      // TODO clock.advance(intervalStringToMillis(DeltaConfigs.LOG_RETENTION.defaultValue) +
-      //  intervalStringToMillis("interval 1 day"))
-      clock.advance(log.deltaRetentionMillis + 1000*60*60*24) // 1 day
+      clock.advance(
+        DeltaConfigs.getMilliSeconds(
+          DeltaConfigs.parseCalendarInterval(DeltaConfigs.LOG_RETENTION.defaultValue)
+        ) + util.DateTimeConstants.MILLIS_PER_DAY) // + 1 day
 
       // Shouldn't clean up, no checkpoint, although all files have expired
       log.cleanUpExpiredLogs()
@@ -135,12 +136,16 @@ class DeltaRetentionSuite extends DeltaRetentionSuiteBase {
     withTempDir { tempDir =>
       val log = DeltaLogImpl.forTable(hadoopConf, tempDir.getCanonicalPath)
       log.startTransaction().commit(
-          Metadata(configuration = Map("enableExpiredLogCleanup" -> "true")) :: Nil,
+          Metadata(configuration = Map(
+            DeltaConfigs.ENABLE_EXPIRED_LOG_CLEANUP.key ->"true"
+          )) :: Nil,
           manualUpdate, writerId)
       assert(log.enableExpiredLogCleanup)
 
       log.startTransaction().commit(
-        Metadata(configuration = Map("enableExpiredLogCleanup" -> "false")) :: Nil,
+        Metadata(configuration = Map(
+          DeltaConfigs.ENABLE_EXPIRED_LOG_CLEANUP.key -> "false"
+        )) :: Nil,
         manualUpdate, writerId)
       assert(!log.enableExpiredLogCleanup)
 
@@ -181,8 +186,10 @@ class DeltaRetentionSuite extends DeltaRetentionSuiteBase {
       val files2 = (1 to 4).map(f => RemoveFile(f.toString, Some(clock.getTimeMillis())))
       txn2.commit(files2, manualUpdate, writerId)
 
-      // TODO: intervalStringToMillis(DeltaConfigs.TOMBSTONE_RETENTION.defaultValue) + 1000000L)
-      clock.advance(log1.tombstoneRetentionMillis  + 1000000L)
+      clock.advance(
+        DeltaConfigs.getMilliSeconds(
+          DeltaConfigs.parseCalendarInterval(DeltaConfigs.LOG_RETENTION.defaultValue)
+        ) + 1000000L)
 
       log1.checkpoint()
 
