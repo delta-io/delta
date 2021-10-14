@@ -322,7 +322,6 @@ abstract class ConvertToDeltaCommandBase(
     // scalastyle:on deltahadoopconfiguration
     val fs = targetPath.getFileSystem(sessionHadoopConf)
     val manifest = targetTable.fileManifest
-
     try {
       val initialList = manifest.getFiles
       if (!initialList.hasNext) {
@@ -339,6 +338,10 @@ abstract class ConvertToDeltaCommandBase(
         partitionColumns = partitionFields.fieldNames,
         configuration = convertProperties.properties ++ targetTable.properties)
       txn.updateMetadataForNewTable(metadata)
+
+      // TODO: we have not decided on how to implement CONVERT TO DELTA under column mapping modes
+      //  for some convert targets so we block this feature for them here
+      checkColumnMapping(txn.metadata, targetTable)
 
       val numFiles = targetTable.numFiles
       val addFilesIter = createDeltaActions(manifest, partitionFields, txn, fs)
@@ -390,6 +393,16 @@ abstract class ConvertToDeltaCommandBase(
     catalogTable.provider.contains("hive") && catalogTable.storage.serde.contains(
       "org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe")
   }
+
+  private def checkColumnMapping(
+      txnMetadata: Metadata,
+      convertTargetTable: ConvertTargetTable): Unit = {
+    val columnMappingMode = DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(txnMetadata)
+    if (convertTargetTable.requiredColumnMappingMode != columnMappingMode) {
+      throw DeltaErrors.convertToDeltaWithColumnMappingNotSupported(columnMappingMode)
+    }
+  }
+
 }
 
 case class ConvertToDeltaCommand(
@@ -418,6 +431,9 @@ trait ConvertTargetTable {
 
   /** The number of files from the target table */
   def numFiles: Long
+
+  /** Whether this table requires column mapping to be converted */
+  def requiredColumnMappingMode: DeltaColumnMappingMode = NoMapping
 
 }
 
