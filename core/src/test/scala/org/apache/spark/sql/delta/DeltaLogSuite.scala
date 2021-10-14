@@ -17,19 +17,16 @@
 package org.apache.spark.sql.delta
 
 import java.io.{File, FileNotFoundException}
-
 import scala.language.postfixOps
-
-import org.apache.spark.sql.delta.DeltaOperations.Truncate
+import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Truncate}
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.{SQLTestUtils, SharedSparkSession}
 import org.apache.spark.util.Utils
 
 // scalastyle:off: removeFile
@@ -460,6 +457,31 @@ class DeltaLogSuite extends QueryTest
         spark.read.format("delta").load(path),
         spark.range(30).toDF()
       )
+    }
+  }
+
+  test("getFilesSince should generate the correct list of files") {
+    withTempDir { dir =>
+      val log = DeltaLog.forTable(spark, dir)
+      assert(new File(log.logPath.toUri).mkdirs())
+
+      val add1 = AddFile("foo", Map.empty, 1L, System.currentTimeMillis(), dataChange = true)
+      val version1 = log.startTransaction().commitManually(add1)
+
+      val add2 = AddFile("bar", Map.empty, 1L, System.currentTimeMillis(), dataChange = true)
+      val version2 = log.startTransaction().commit(add2 :: Nil, ManualUpdate)
+
+      val add3 = AddFile("bbq", Map.empty, 1L, System.currentTimeMillis(), dataChange = true)
+      val version3 = log.startTransaction().commit(add3 :: Nil, ManualUpdate)
+
+      val filesSince0 = log.getFilesSince(0)
+      assert(filesSince0.collect().map(_.add) === Array(add1, add2, add3))
+
+      val filesSince1 = log.getFilesSince(1)
+      assert(filesSince1.collect().map(_.add) === Array(add2, add3))
+
+      val filesSince2 = log.getFilesSince(2)
+      assert(filesSince2.collect().map(_.add) === Array(add3))
     }
   }
 }

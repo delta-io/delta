@@ -19,21 +19,19 @@ package org.apache.spark.sql.delta.sources
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.FileNotFoundException
 import java.sql.Timestamp
-
 import scala.util.matching.Regex
-
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTimeTravelSpec, GeneratedColumn, StartingVersion, StartingVersionLatest}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTableUtils, DeltaTimeTravelSpec, GeneratedColumn, StartingVersion, StartingVersionLatest}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.util.{DateTimeUtils, TimestampFormatter}
-
-import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.{Column, DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.connector.read.streaming
 import org.apache.spark.sql.connector.read.streaming.{ReadAllAvailable, ReadLimit, ReadMaxFiles, SupportsAdmissionControl}
 import org.apache.spark.sql.execution.streaming._
+import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -114,7 +112,11 @@ trait DeltaSourceBase extends Source
       startIndex: Long,
       isStartingVersion: Boolean,
       endOffset: DeltaSourceOffset): DataFrame = {
-    val changes = getFileChanges(startVersion, startIndex, isStartingVersion)
+    val changes = if (options.datasetForDeltaStreaming) {
+      getFileChangesDataset(startVersion, startIndex)
+    } else {
+      getFileChanges(startVersion, startIndex, isStartingVersion)
+    }
     val fileActionsIter = changes.takeWhile { case IndexedFile(version, index, _, _, _, _) =>
       version < endOffset.reservoirVersion ||
         (version == endOffset.reservoirVersion && index <= endOffset.index)
@@ -175,6 +177,102 @@ case class DeltaSource(
   // A metadata snapshot when starting the query.
   private var initialState: DeltaSourceSnapshot = null
   private var initialStateVersion: Long = -1L
+
+  /**
+   * Get file changes as a dataset
+   *
+   * The logic from verifyStreamHygieneAndFilterAddFiles to handle ignoreChanges and ignoreDeletes
+   * has been moved here
+   *
+   * This is no longer able to do the same schema/protocol compatibility checks
+   */
+  protected def getFileChangesDataset(
+     fromVersion: Long,
+     fromIndex: Long,
+     limits: Option[AdmissionLimits] = Some(new AdmissionLimits())): Iterator[IndexedFile] = {
+    val sparkSession = spark
+    import sparkSession.implicits._
+
+    val snapshot = deltaLog.snapshot
+
+    val changeDataset = deltaLog.getFilesSince(
+      fromVersion,
+      options.failOnDataLoss
+    )
+    val deletions = changeDataset.where(col("remove").getField("dataChange"))
+    val maybeDeletion = deletions.take(1).headOption.map(x => (x.version, x.remove.path))
+
+    val addFiles = changeDataset.where(col("add").isNotNull)
+    val seenFileAdd = !addFiles.isEmpty
+
+    if (maybeDeletion.nonEmpty) {
+      val (deletedVersion, deletedPath) = maybeDeletion.get
+      if (seenFileAdd && !ignoreChanges) {
+        throw DeltaErrors.deltaSourceIgnoreChangesError(deletedVersion, deletedPath)
+      } else if (!seenFileAdd && !ignoreDeletes) {
+        throw DeltaErrors.deltaSourceIgnoreDeleteError(deletedVersion, deletedPath)
+      }
+    }
+
+    // apply partition filtering
+    val (partitionFilters, _) = {
+      val partitionCols = deltaLog.snapshot.metadata.partitionColumns
+      filters.partition { e =>
+        DeltaTableUtils.isPredicatePartitionColumnsOnly(e, partitionCols, spark)
+      }
+    }
+
+    val filteredAddFiles = DeltaLog.filterFileList(
+      snapshot.metadata.partitionSchema,
+      addFiles.toDF(),
+      partitionFilters,
+      Seq("add")
+    ).as[IndexedFile]
+
+    val maxFiles = limits.flatMap(_.maxFiles).getOrElse(
+      DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION_DEFAULT
+    )
+    val maxBytes = limits.map(_.bytesToTake).getOrElse(
+      Long.MaxValue
+    )
+    var totalBytes: Long = 0
+    val limitedAddFiles = filteredAddFiles
+      .where(
+        // this works because fromVersion is inclusive
+        // it accepts everything with index > from index where version = fromVersion
+        col("version") > lit(fromVersion)
+         || col("index") > lit(fromIndex))
+      .take(maxFiles)
+      .takeWhile { indexedFile =>
+        // do the check first because we want to take at least 1 file
+        val shouldTake = totalBytes <= maxBytes
+        totalBytes += indexedFile.add.size
+        shouldTake
+      }
+
+    val lastIndexPerVersion = limitedAddFiles
+      .groupBy(_.version)
+      .mapValues(_.maxBy(_.index).index)
+
+    // build sentinel events
+    val sentinels = limitedAddFiles.map(_.version).distinct.map { version =>
+      IndexedFile(version, -1, null)
+    }
+
+    // add sentinels
+    val limitedAddFilesWithSentinels = limitedAddFiles ++ sentinels
+
+    // sort by version and index so files appear in the right order
+    // set the isLast marker for each version
+    limitedAddFilesWithSentinels
+      .sortBy(x => x.index * x.version)
+      .map { indexedFile =>
+        indexedFile.copy(
+          isLast = lastIndexPerVersion.get(indexedFile.version).contains(indexedFile.index)
+        )
+      }
+      .iterator
+  }
 
   /**
    * Get the changes starting from (startVersion, startIndex). The start point should not be
@@ -242,8 +340,14 @@ case class DeltaSource(
     if (version < 0) {
       return None
     }
-    val last = iteratorLast(
-      getFileChangesWithRateLimit(version, -1L, isStartingVersion = isStartingVersion, limits))
+
+    val changes = if (options.datasetForDeltaStreaming) {
+      getFileChangesDataset(version, -1L, limits)
+    } else {
+      getFileChangesWithRateLimit(version, -1L, isStartingVersion = isStartingVersion, limits)
+    }
+
+    val last = iteratorLast(changes)
 
     if (last.isEmpty) {
       return None
@@ -277,11 +381,18 @@ case class DeltaSource(
       getStartingOffset(AdmissionLimits(limit))
     } else {
 
-      val changes = getFileChangesWithRateLimit(
-        previousOffset.reservoirVersion,
-        previousOffset.index,
-        previousOffset.isStartingVersion,
-        AdmissionLimits(limit))
+      val changes = if (options.datasetForDeltaStreaming) {
+        getFileChangesDataset(
+          previousOffset.reservoirVersion,
+          previousOffset.index,
+          AdmissionLimits(limit))
+      } else {
+        getFileChangesWithRateLimit(
+          previousOffset.reservoirVersion,
+          previousOffset.index,
+          previousOffset.isStartingVersion,
+          AdmissionLimits(limit))
+      }
       val last = iteratorLast(changes)
       if (last.isEmpty) {
         Some(previousOffset)
@@ -307,6 +418,34 @@ case class DeltaSource(
   override def getOffset: Option[Offset] = {
     throw new UnsupportedOperationException(
       "latestOffset(Offset, ReadLimit) should be called instead of this method")
+  }
+
+  /**
+   * This contains the logic from verifyStreamHygieneAndFilterAddFiles which detects data deletion
+   */
+  protected def filterRemoveFile(indexedFile: IndexedFile): Boolean = {
+    Option(indexedFile.remove).exists(_.dataChange)
+  }
+
+  /**
+   * This contains the logic from verifyStreamHygieneAndFilterAddFiles which is used to filter
+   * down to the relevant AddFile set.  It also does the same schema/protocol compatibility checks
+   */
+  protected def filterAddFile(action: Action): Boolean = {
+    action match {
+      case a: AddFile if a.dataChange =>
+        true
+      case m: Metadata =>
+        if (!SchemaUtils.isReadCompatible(m.schema, schema)) {
+          throw DeltaErrors.schemaChangedException(schema, m.schema, false)
+        }
+        false
+      case protocol: Protocol =>
+        deltaLog.protocolRead(protocol)
+        false
+      case _ => // Ignore everything else
+        false
+    }
   }
 
   protected def verifyStreamHygieneAndFilterAddFiles(
@@ -428,7 +567,7 @@ case class DeltaSource(
    * Class that helps controlling how much data should be processed by a single micro-batch.
    */
   class AdmissionLimits(
-      maxFiles: Option[Int] = options.maxFilesPerTrigger,
+      val maxFiles: Option[Int] = options.maxFilesPerTrigger,
       var bytesToTake: Long = options.maxBytesPerTrigger.getOrElse(Long.MaxValue)
   ) extends DeltaSourceAdmissionBase {
 

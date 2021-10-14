@@ -17,36 +17,36 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.io.{File, IOException}
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.locks.ReentrantLock
-
-import scala.concurrent.Future
-import scala.util.Try
-import scala.util.control.NonFatal
-
 import com.databricks.spark.util.TagDefinitions._
-import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.commands.WriteIntoDelta
-import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
-import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.storage.LogStoreProvider
 import com.google.common.cache.{CacheBuilder, RemovalNotification}
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable}
 import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Cast, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
+import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.commands.WriteIntoDelta
+import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
+import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
+import org.apache.spark.sql.delta.sources.{DeltaSQLConf, IndexedFile}
+import org.apache.spark.sql.delta.storage.LogStoreProvider
 import org.apache.spark.sql.execution.datasources._
+import org.apache.spark.sql.execution.datasources.json.JsonFileFormat
+import org.apache.spark.sql.expressions.Window
+import org.apache.spark.sql.functions.{coalesce, col, expr, lit, row_number, struct}
 import org.apache.spark.sql.sources.{BaseRelation, InsertableRelation}
 import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import org.apache.spark.util.{Clock, SystemClock}
+
+import java.io.{File, IOException}
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
+import scala.util.Try
+import scala.util.control.NonFatal
 
 /**
  * Used to query the current state of the log as well as modify it by adding
@@ -233,6 +233,75 @@ class DeltaLog private(
       lastSeenVersion = version
       (version, store.read(p).map(Action.fromJson))
     }
+  }
+
+  /**
+   * Get all files starting from "startVersion" (inclusive). If `startVersion` doesn't exist,
+   * return an empty Iterator.  This version returns the actions as a dataset
+   */
+  def getFilesSince(
+      startVersion: Long,
+      failOnDataLoss: Boolean = false): Dataset[IndexedFile] = {
+    val sparkSession = spark
+    import sparkSession.implicits._
+
+    // read all of the json files individually as dataframes and union them
+    val deltas = store.listFrom(deltaFile(logPath, startVersion))
+      .filter(f => isDeltaFile(f.getPath))
+    val actionDatasets = deltas.map { f =>
+      val p = f.getPath
+      spark.read
+        .schema(Action.logSchema)
+        .json(p.toString)
+        .sort(
+          coalesce(
+            col("add").getField("modificationTime"),
+            col("remove").getField("deletionTimestamp")
+          ),
+          coalesce(
+            col("add").getField("path"),
+            col("remove").getField("path")
+          )
+        )
+        .as[SingleAction]
+        .rdd
+        .zipWithIndex()
+        .toDF("action", "index")
+        .select(
+          lit(deltaVersion(p)).as("version"),
+          col("index"),
+          col("action").getField("add").as("add"),
+          col("action").getField("remove").as("remove"),
+          col("action").getField("cdc").as("cdc"),
+          lit(false).as("isLast")
+        )
+        .where(
+          col("add").isNotNull
+          || col("remove").isNotNull
+          || col("cdc").isNotNull
+        )
+        .as[IndexedFile]
+    }
+    val actionDataset = actionDatasets.fold(spark.emptyDataset[IndexedFile]) { (a, b) =>
+      a.unionAll(b)
+    }
+    // check if the versions present are continuous
+    if (failOnDataLoss) {
+      val versionsPresent = actionDataset
+        .select(col("version"))
+        .distinct()
+        .orderBy(col("version").asc)
+        .collect()
+        .map(_.getLong(0))
+      var lastSeenVersion = startVersion - 1
+      versionsPresent.foreach { version =>
+        if (version > lastSeenVersion + 1) {
+          throw DeltaErrors.failOnDataLossException(lastSeenVersion + 1, version)
+        }
+        lastSeenVersion = version
+      }
+    }
+    actionDataset
   }
 
   /* --------------------- *

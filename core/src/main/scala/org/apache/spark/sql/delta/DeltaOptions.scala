@@ -97,6 +97,9 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
 trait DeltaReadOptions extends DeltaOptionParser {
   import DeltaOptions._
 
+  val datasetForDeltaStreaming = options.get(DATASET_FOR_DELTA_STREAMING_OPTION)
+    .exists(toBoolean(_, DATASET_FOR_DELTA_STREAMING_OPTION))
+
   val maxFilesPerTrigger = options.get(MAX_FILES_PER_TRIGGER_OPTION).map { str =>
     Try(str.toInt).toOption.filter(_ > 0).getOrElse {
       throw DeltaErrors.illegalDeltaOptionException(
@@ -175,6 +178,7 @@ object DeltaOptions extends DeltaLogging {
   /** An option to specify user-defined metadata in commitInfo */
   val USER_METADATA_OPTION = "userMetadata"
 
+  val DATASET_FOR_DELTA_STREAMING_OPTION = "datasetForDeltaStreaming"
   val MAX_FILES_PER_TRIGGER_OPTION = "maxFilesPerTrigger"
   val MAX_FILES_PER_TRIGGER_OPTION_DEFAULT = 1000
   val MAX_BYTES_PER_TRIGGER_OPTION = "maxBytesPerTrigger"

@@ -108,6 +108,33 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
     }
   }
 
+  test("basic using dataset") {
+    withTempDir { inputDir =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      withMetadata(deltaLog, StructType.fromDDL("value STRING"))
+
+      val df = spark.readStream
+        .format("delta")
+        .option("datasetForDeltaStreaming", "true")
+        .load(inputDir.getCanonicalPath)
+        .filter($"value" contains "keep")
+
+      testStream(df)(
+        AddToReservoir(inputDir, Seq("keep1", "keep2", "drop3").toDF),
+        AssertOnQuery { q => q.processAllAvailable(); true },
+        CheckAnswer("keep1", "keep2"),
+        StopStream,
+        AddToReservoir(inputDir, Seq("drop4", "keep5", "keep6").toDF),
+        StartStream(),
+        AssertOnQuery { q => q.processAllAvailable(); true },
+        CheckAnswer("keep1", "keep2", "keep5", "keep6"),
+        AddToReservoir(inputDir, Seq("keep7", "drop8", "keep9").toDF),
+        AssertOnQuery { q => q.processAllAvailable(); true },
+        CheckAnswer("keep1", "keep2", "keep5", "keep6", "keep7", "keep9")
+      )
+    }
+  }
+
   test("allow to change schema before staring a streaming query") {
     withTempDir { inputDir =>
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
