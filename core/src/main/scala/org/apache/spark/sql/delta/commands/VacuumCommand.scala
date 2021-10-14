@@ -314,6 +314,14 @@ trait VacuumCommandImpl extends DeltaCommand {
     DeltaFileOperations.getAllSubDirectories(base, file)._1
   }
 
+  private def withAdaptiveDisabled[T](spark: SparkSession)(f: => T): T = {
+    val adaptiveEnabled = spark.conf.get("spark.sql.adaptive.enabled")
+    spark.conf.set("spark.sql.adaptive.enabled", "false")
+    val eval = f
+    spark.conf.set("spark.sql.adaptive.enabled", adaptiveEnabled)
+    eval
+  }
+
   /**
    * Attempts to delete the list of candidate files. Returns the number of files deleted.
    */
@@ -324,13 +332,16 @@ trait VacuumCommandImpl extends DeltaCommand {
       hadoopConf: Broadcast[SerializableConfiguration],
       parallel: Boolean): Long = {
     import spark.implicits._
+
     if (parallel) {
-      diff.mapPartitions { files =>
-        val fs = new Path(basePath).getFileSystem(hadoopConf.value.value)
-        val filesDeletedPerPartition =
-          files.map(p => stringToPath(p)).count(f => tryDeleteNonRecursive(fs, f))
-        Iterator(filesDeletedPerPartition)
-      }.reduce(_ + _)
+      withAdaptiveDisabled(spark) {
+        diff.mapPartitions { files =>
+          val fs = new Path(basePath).getFileSystem(hadoopConf.value.value)
+          val filesDeletedPerPartition =
+            files.map(p => stringToPath(p)).count(f => tryDeleteNonRecursive(fs, f))
+          Iterator(filesDeletedPerPartition)
+        }.reduce(_ + _)
+      }
     } else {
       val fs = new Path(basePath).getFileSystem(hadoopConf.value.value)
       val fileResultSet = diff.toLocalIterator().asScala
