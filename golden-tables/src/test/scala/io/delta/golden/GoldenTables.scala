@@ -667,6 +667,22 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       Seq(row).toDF().write.format("delta").mode("append").partitionBy("_2").save(tablePath)
     }
   }
+
+  /** TEST: DeltaDataReaderSuite > #125: iterator bug */
+  generateGoldenTable("125-iterator-bug") { tablePath =>
+    val datas = Seq(
+      Seq(),
+      Seq(1),
+      Seq(2), Seq(),
+      Seq(3), Seq(), Seq(),
+      Seq(4), Seq(), Seq(), Seq(),
+      Seq(5)
+    )
+    datas.foreach { data =>
+      data.toDF("col1").write.format("delta").mode("append").save(tablePath)
+    }
+  }
+
   generateGoldenTable("deltatbl-not-allow-write", createHiveGoldenTableFile) { tablePath =>
     val data = (0 until 10).map(x => (x, s"foo${x % 2}"))
     data.toDF("a", "b").write.format("delta").save(tablePath)

@@ -157,12 +157,23 @@ lazy val hive = (project in file("hive")) dependsOn(standalone) settings (
   // default merge strategy
   assemblyShadeRules in assembly := Seq(
     /**
-     * Hive 2.3.7 uses an old paranamer version that doesn't support Scala 2.12
+     * Hive uses an old paranamer version that doesn't support Scala 2.12
      * (https://issues.apache.org/jira/browse/SPARK-22128), so we need to shade our own paranamer
      * version to avoid conflicts.
      */
-    ShadeRule.rename("com.thoughtworks.paranamer.**" -> "shadedelta.@0").inAll
-    )
+    ShadeRule.rename("com.thoughtworks.paranamer.**" -> "shadedelta.@0").inAll,
+    // Hive 3 now has jackson-module-scala on the classpath. We need to shade it otherwise we may
+    // pick up Hive's jackson-module-scala and use the above old paranamer jar on Hive's classpath.
+    ShadeRule.rename("com.fasterxml.jackson.module.scala.**" -> "shadedelta.@0").inAll
+  ),
+  assemblyMergeStrategy in assembly := {
+    // Discard `module-info.class` to fix the `different file contents found` error.
+    // TODO Upgrade SBT to 1.5 which will do this automatically
+    case "module-info.class" => MergeStrategy.discard
+    case x =>
+      val oldStrategy = (assemblyMergeStrategy in assembly).value
+      oldStrategy(x)
+  }
 )
 
 lazy val hiveMR = (project in file("hive-mr")) dependsOn(hive % "test->test") settings (

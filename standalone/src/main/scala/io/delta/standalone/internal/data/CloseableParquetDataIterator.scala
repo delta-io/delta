@@ -69,20 +69,27 @@ private[internal] case class CloseableParquetDataIterator(
       return false
     }
 
-    // More rows in current file
-    if (parquetRowsIter.hasNext) return true
+    // We need to search for the next non-empty file
+    while (true) {
+      // More rows in current file
+      if (parquetRowsIter.hasNext) return true
 
-    // No more rows in current file and no more files
-    if (!dataFilePathsIter.hasNext) {
-      close()
-      return false
+      // No more rows in current file and no more files
+      if (!dataFilePathsIter.hasNext) {
+        close()
+        return false
+      }
+
+      // No more rows in this file, but there is a next file
+      parquetRows.close()
+
+      // Repeat the search at the next file
+      parquetRows = readNextFile
+      parquetRowsIter = parquetRows.iterator
     }
 
-    // No more rows in this file, but there is a next file
-    parquetRows.close()
-    parquetRows = readNextFile
-    parquetRowsIter = parquetRows.iterator
-    parquetRowsIter.hasNext
+    // Impossible
+    throw new RuntimeException("Some bug in CloseableParquetDataIterator::hasNext")
   }
 
   /**
