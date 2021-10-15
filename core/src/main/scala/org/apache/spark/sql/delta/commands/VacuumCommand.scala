@@ -315,6 +315,10 @@ trait VacuumCommandImpl extends DeltaCommand {
     DeltaFileOperations.getAllSubDirectories(base, file)._1
   }
 
+  /**
+   * Execute a block with adaptive execution disabled. This must wrap the Spark call
+   * that builds the final plan and executes the query.
+   */
   private def withAdaptiveExecutionDisabled[T](spark: SparkSession)(f: => T): T = {
     val adaptiveEnabled = spark.conf.get(SQLConf.ADAPTIVE_EXECUTION_ENABLED.key)
     if (adaptiveEnabled.toBoolean) {
@@ -341,6 +345,8 @@ trait VacuumCommandImpl extends DeltaCommand {
     import spark.implicits._
 
     if (parallel) {
+      // We have to disable adaptive execution to ensure `spark.sql.shuffle.partitions`
+      // is still used as the parallelism control for deleting.
       withAdaptiveExecutionDisabled(spark) {
         diff.mapPartitions { files =>
           val fs = new Path(basePath).getFileSystem(hadoopConf.value.value)
