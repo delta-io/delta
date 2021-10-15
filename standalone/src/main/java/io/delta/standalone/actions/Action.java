@@ -18,4 +18,9 @@ package io.delta.standalone.actions;
  *   });
  * }</pre>
  */
-public interface Action { }
+public interface Action {
+
+    /** The maximum version of the protocol that this version of Delta Standalone understands. */
+    int readerVersion = 1;
+    int writerVersion = 2;
+}

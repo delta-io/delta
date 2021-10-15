@@ -1,5 +1,6 @@
 package io.delta.standalone.actions;
 
+import java.util.Collections;
 import java.util.Map;
 
 public class AddCDCFile implements FileAction {
@@ -8,7 +9,8 @@ public class AddCDCFile implements FileAction {
     private final long size;
     private final Map<String, String> tags;
 
-    public AddCDCFile(String path, Map<String, String> partitionValues, long size, Map<String, String> tags) {
+    public AddCDCFile(String path, Map<String, String> partitionValues, long size,
+                      Map<String, String> tags) {
         this.path = path;
         this.partitionValues = partitionValues;
         this.size = size;
@@ -21,7 +23,7 @@ public class AddCDCFile implements FileAction {
     }
 
     public Map<String, String> getPartitionValues() {
-        return partitionValues;
+        return partitionValues != null ? Collections.unmodifiableMap(partitionValues) : null;
     }
 
     public long getSize() {
@@ -29,7 +31,7 @@ public class AddCDCFile implements FileAction {
     }
 
     public Map<String, String> getTags() {
-        return tags;
+        return tags != null ? Collections.unmodifiableMap(tags) : null;
     }
 
     @Override

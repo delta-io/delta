@@ -18,14 +18,23 @@ package io.delta.standalone.actions;
 
 import java.util.Objects;
 
+/**
+ * Used to block older clients from reading or writing the log when backwards
+ * incompatible changes are made to the protocol. Readers and writers are
+ * responsible for checking that they meet the minimum versions before performing
+ * any other operations.
+ *
+ * Since this action allows us to explicitly block older clients in the case of a
+ * breaking change to the protocol, clients should be tolerant of messages and
+ * fields that they do not understand.
+ */
 public class Protocol implements Action {
     private final int minReaderVersion;
     private final int minWriterVersion;
 
     public Protocol() {
-        // TODO: have these statically and publicly defined
-        this.minReaderVersion = 1;
-        this.minWriterVersion = 2;
+        this.minReaderVersion = Action.readerVersion;
+        this.minWriterVersion = Action.writerVersion;
     }
 
     public Protocol(int minReaderVersion, int minWriterVersion) {

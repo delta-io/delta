@@ -19,16 +19,15 @@ package io.delta.standalone.internal
 import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
 
-import io.delta.standalone.{DeltaLog, Operation}
+import io.delta.standalone.{DeltaLog, Operation, NAME, VERSION}
 import io.delta.standalone.actions.{AddFile => AddFileJ, CommitInfo => CommitInfoJ, Metadata => MetadataJ, Protocol => ProtocolJ, RemoveFile => RemoveFileJ}
 import io.delta.standalone.exceptions.{ConcurrentAppendException, ConcurrentDeleteDeleteException, ConcurrentDeleteReadException, ConcurrentTransactionException, MetadataChangedException, ProtocolChangedException}
-import io.delta.standalone.expressions.{EqualTo, Expression, Literal}
+import io.delta.standalone.expressions.{EqualTo, Literal}
 import io.delta.standalone.internal.actions._
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.util.{ConversionUtils, SchemaUtils}
 import io.delta.standalone.types._
 import io.delta.standalone.internal.util.TestUtils._
-
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -57,7 +56,6 @@ class OptimisticTransactionLegacySuite extends FunSuite {
   private val addD_P2 = AddFile(D_P2, Map("part" -> "2"), 1, 1, dataChange = true)
   private val addE_P3 = AddFile(E_P3, Map("part" -> "3"), 1, 1, dataChange = true)
   private val addF_P3 = AddFile(F_P3, Map("part" -> "3"), 1, 1, dataChange = true)
-  private val addG_P4 = AddFile(G_P4, Map("part" -> "4"), 1, 1, dataChange = true)
 
   def withLog(
       actions: Seq[Action],
@@ -475,20 +473,19 @@ class OptimisticTransactionLegacySuite extends FunSuite {
   ///////////////////////////////////////////////////////////////////////////
 
   test("can't have duplicate column names") {
-    // TODO: just call myStruct.getJson()
-    // scalastyle:off
-    val schemaStr = """{"type":"struct","fields":[{"name":"col1","type":"integer","nullable":true,"metadata":{}},{"name":"col1","type":"integer","nullable":true,"metadata":{}}]}"""
-    // scalastyle:on
-    testMetadata[RuntimeException](Metadata(schemaString = schemaStr), "Found duplicate column(s)")
+    val schema = new StructType(Array(
+      new StructField("col1", new IntegerType(), true),
+      new StructField("col1", new StringType(), true)
+    ))
+    testMetadata[RuntimeException](Metadata(schemaString = schema.toJson),
+      "Found duplicate column(s)")
   }
 
   test("column names (both data and partition) must be acceptable by parquet") {
-    // TODO: just call myStruct.getJson()
+    val schema = new StructType(Array(new StructField("bad;column,name", new IntegerType(), true)))
+
     // test DATA columns
-    // scalastyle:off
-    val schemaStr1 = """{"type":"struct","fields":[{"name":"bad;column,name","type":"integer","nullable":true,"metadata":{}}]}"""
-    // scalastyle:on
-    testMetadata[RuntimeException](Metadata(schemaString = schemaStr1),
+    testMetadata[RuntimeException](Metadata(schemaString = schema.toJson),
       """Attribute name "bad;column,name" contains invalid character(s)""")
 
     // test PARTITION columns
@@ -508,7 +505,7 @@ class OptimisticTransactionLegacySuite extends FunSuite {
       val log2 = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
       val commitInfo = log2.getCommitInfoAt(0)
       assert(commitInfo.getEngineInfo.isPresent)
-      assert(commitInfo.getEngineInfo.get() == engineInfo)
+      assert(commitInfo.getEngineInfo.get() == s"$engineInfo $NAME/$VERSION")
       assert(commitInfo.getOperation == manualUpdate.getName.toString)
 
       // TODO: test commitInfo.operationParameters
@@ -727,13 +724,7 @@ class OptimisticTransactionLegacySuite extends FunSuite {
     }
   }
 
-  // TODO multiple concurrent commits, not just one (i.e. 1st doesn't conflict, 2nd does)
-
-  // TODO: readWholeTable tests
-
   // TODO: test Checkpoint > partialWriteVisible (==> useRename)
 
   // TODO: test Checkpoint > !partialWriteVisible (==> !useRename)
-
-  // TODO: test Checkpoint > correctly checkpoints all action types
 }

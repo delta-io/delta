@@ -264,7 +264,20 @@ lazy val standalone = (project in file("standalone"))
         ExclusionRule("com.fasterxml.jackson.module")
       ),
       "org.scalatest" %% "scalatest" % "3.0.5" % "test"
-    ))
+    ),
+    sourceGenerators in Compile += Def.task {
+      val file = (sourceManaged in Compile).value / "meta" / "package.scala"
+      IO.write(file,
+        s"""package io.delta
+          |
+          |package object standalone {
+          |  val VERSION = "${version.value}"
+          |  val NAME = "Delta Standalone"
+          |}
+          |""".stripMargin)
+      Seq(file)
+    }
+  )
 
   /**
    * Unidoc settings

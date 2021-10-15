@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.delta.standalone.actions;
 
 import java.util.Collections;
@@ -24,7 +25,7 @@ import java.util.Objects;
  *
  * @see  <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md">Delta Transaction Log Protocol</a>
  */
-public final class Format implements Action {
+public final class Format {
     private final String provider;
     private final Map<String, String> options;
 

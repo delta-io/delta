@@ -273,9 +273,15 @@ private[internal] object DeltaErrors {
       s"Parsed $nestType type:\n${nested.toPrettyJson}")
   }
 
-  def cannotModifyTableProperty(prop: String): Throwable =
+  def checkpointNonExistTable(path: Path): Throwable = {
+    new IllegalStateException(s"Cannot checkpoint a non-exist table $path. Did you manually " +
+      s"delete files in the _delta_log directory?")
+  }
+
+  def cannotModifyTableProperty(prop: String): Throwable = {
     throw new UnsupportedOperationException(
       s"The Delta table configuration $prop cannot be specified by the user")
+  }
 
   def unknownConfigurationKeyException(confKey: String): Throwable = {
     new IllegalArgumentException(s"Unknown configuration was specified: $confKey")

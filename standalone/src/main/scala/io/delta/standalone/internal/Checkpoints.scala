@@ -26,10 +26,10 @@ import io.delta.standalone.data.CloseableIterator
 import io.delta.standalone.internal.actions.SingleAction
 import io.delta.standalone.internal.util.JsonUtils
 import io.delta.standalone.internal.util.FileNames._
-
 import org.apache.hadoop.fs.Path
 import org.apache.parquet.hadoop.metadata.CompressionCodecName
 import com.github.mjakubowski84.parquet4s.ParquetWriter
+import io.delta.standalone.internal.exception.DeltaErrors
 
 /**
  * Records information about a checkpoint.
@@ -118,7 +118,7 @@ private[internal] trait Checkpoints {
    */
   def checkpoint(snapshotToCheckpoint: SnapshotImpl): Unit = {
     if (snapshotToCheckpoint.version < 0) {
-      // TODO throw DeltaErrors.checkpointNonExistTable(dataPath)
+      throw DeltaErrors.checkpointNonExistTable(dataPath)
     }
     val checkpointMetaData = Checkpoints.writeCheckpoint(this, snapshotToCheckpoint)
     val json = JsonUtils.toJson(checkpointMetaData)
@@ -228,11 +228,13 @@ private[internal] object Checkpoints {
     // Use the string in the closure as Path is not Serializable.
     val path = checkpointFileSingular(snapshot.path, snapshot.version).toString
 
-     val actions: Seq[SingleAction] = (
-       Seq(snapshot.metadataScala, snapshot.protocolScala) ++
-       snapshot.setTransactionsScala ++
-       snapshot.allFilesScala ++
-       snapshot.tombstonesScala).map(_.wrap)
+    // Exclude commitInfo, CDC
+    val actions: Seq[SingleAction] = (
+        Seq(snapshot.metadataScala, snapshot.protocolScala) ++
+        snapshot.setTransactionsScala ++
+        snapshot.allFilesScala ++
+        snapshot.tombstonesScala
+      ).map(_.wrap)
 
     val writtenPath =
       if (useRename) {

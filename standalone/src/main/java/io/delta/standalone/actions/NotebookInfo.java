@@ -13,12 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.delta.standalone.actions;
 
 import java.util.Objects;
 
 /** Represents the Databricks Notebook information that committed to the Delta table. */
-public class NotebookInfo implements Action {
+public class NotebookInfo {
     private final String notebookId;
 
     public NotebookInfo(String notebookId) {

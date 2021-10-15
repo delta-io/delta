@@ -21,13 +21,12 @@ import java.nio.file.FileAlreadyExistsException
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
-import io.delta.standalone.{CommitResult, DeltaScan, Operation, OptimisticTransaction}
-import io.delta.standalone.actions.{Action => ActionJ, AddFile => AddFileJ, Metadata => MetadataJ}
+import io.delta.standalone.{CommitResult, DeltaScan, Operation, OptimisticTransaction, NAME, VERSION}
+import io.delta.standalone.actions.{Action => ActionJ, Metadata => MetadataJ}
 import io.delta.standalone.expressions.{Expression, Literal}
 import io.delta.standalone.internal.actions.{Action, AddFile, CommitInfo, FileAction, Metadata, Protocol, RemoveFile}
 import io.delta.standalone.internal.exception.DeltaErrors
-import io.delta.standalone.internal.scan.FilteredDeltaScanImpl
-import io.delta.standalone.internal.util.{ConversionUtils, FileNames, JsonUtils, SchemaMergingUtils, SchemaUtils}
+import io.delta.standalone.internal.util.{ConversionUtils, FileNames, SchemaMergingUtils, SchemaUtils}
 
 private[internal] class OptimisticTransactionImpl(
     deltaLog: DeltaLogImpl,
@@ -115,14 +114,14 @@ private[internal] class OptimisticTransactionImpl(
     val commitInfo = CommitInfo(
       deltaLog.clock.getTimeMillis(),
       op.getName.toString,
-      null,
+      null, // TODO: use operation jsonEncodedValues
       Map.empty,
       Some(readVersion).filter(_ >= 0),
       Option(isolationLevelToUse.toString),
       Some(isBlindAppend),
       Some(op.getOperationMetrics.asScala.toMap),
       if (op.getUserMetadata.isPresent) Some(op.getUserMetadata.get()) else None,
-      Some(engineInfo) // TODO: engineInfo-standalone-standaloneVersion
+      Some(s"$engineInfo $NAME/$VERSION")
     )
 
     preparedActions = commitInfo +: preparedActions
@@ -404,7 +403,7 @@ private[internal] class OptimisticTransactionImpl(
 private[internal] object OptimisticTransactionImpl {
   val DELTA_MAX_RETRY_COMMIT_ATTEMPTS = 10000000
 
-  def getOperationJsonEncodedParameters(op: Operation): Map[String, String] = {
-    op.getParameters.asScala.mapValues(JsonUtils.toJson(_)).toMap
-  }
+//  def getOperationJsonEncodedParameters(op: Operation): Map[String, String] = {
+//    op.getParameters.asScala.mapValues(JsonUtils.toJson(_)).toMap
+//  }
 }

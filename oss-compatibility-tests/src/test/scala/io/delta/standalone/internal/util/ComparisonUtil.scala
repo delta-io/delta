@@ -70,8 +70,17 @@ trait ComparisonUtil {
     compareOptions(standalone.getUserName, oss.userName)
     assert(standalone.getOperation == oss.operation)
     compareNullableMaps(standalone.getOperationParameters, oss.operationParameters)
-    // TODO: job
-    // TODO: notebook
+
+    assert(standalone.getJobInfo.isPresent == oss.job.isDefined)
+    if (standalone.getJobInfo.isPresent) {
+      compareJobInfo(standalone.getJobInfo.get, oss.job.get)
+    }
+
+    assert(standalone.getNotebookInfo.isPresent == oss.notebook.isDefined)
+    if (standalone.getNotebookInfo.isPresent) {
+      assert(standalone.getNotebookInfo.get.getNotebookId == oss.notebook.get.notebookId)
+    }
+
     compareOptions(standalone.getClusterId, oss.clusterId)
     compareOptions(standalone.getReadVersion, oss.readVersion)
     compareOptions(standalone.getIsolationLevel, oss.isolationLevel)
@@ -148,5 +157,15 @@ trait ComparisonUtil {
     assert(standalone.getAppId == oss.appId)
     assert(standalone.getVerion == oss.version)
     compareOptions(standalone.getLastUpdated, oss.lastUpdated)
+  }
+
+  def compareJobInfo(
+      standalone: io.delta.standalone.actions.JobInfo,
+      oss: org.apache.spark.sql.delta.actions.JobInfo): Unit = {
+    assert(standalone.getJobId == oss.jobId)
+    assert(standalone.getJobName == oss.jobName)
+    assert(standalone.getRunId == oss.runId)
+    assert(standalone.getJobOwnerId == oss.jobOwnerId)
+    assert(standalone.getTriggerType == oss.triggerType)
   }
 }

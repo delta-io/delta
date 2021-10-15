@@ -45,7 +45,7 @@ public class RemoveFile implements FileAction {
     }
 
     public Map<String, String> getPartitionValues() {
-        return Collections.unmodifiableMap(partitionValues);
+        return partitionValues != null ? Collections.unmodifiableMap(partitionValues) : null;
     }
 
     public long getSize() {
@@ -53,7 +53,7 @@ public class RemoveFile implements FileAction {
     }
 
     public Map<String, String> getTags() {
-        return Collections.unmodifiableMap(tags);
+        return tags != null ? Collections.unmodifiableMap(tags) : null;
     }
 
     @Override

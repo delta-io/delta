@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.delta.standalone.actions;
 
 import java.util.Collections;
@@ -146,7 +147,8 @@ public final class AddFile implements FileAction {
         private final long size;
         private final long modificationTime;
         private final boolean dataChange;
-        //  optional AddFile fields
+
+        // optional AddFile fields
         private String stats;
         private Map<String, String> tags;
 

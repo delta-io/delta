@@ -189,10 +189,7 @@ private[internal] object ConversionUtils {
     case x: AddCDCFile => convertAddCDCFile(x)
     case x: RemoveFile => convertRemoveFile(x)
     case x: CommitInfo => convertCommitInfo(x)
-    case x: Format => convertFormat(x)
-    case x: JobInfo => convertJobInfo(x)
     case x: Metadata => convertMetadata(x)
-    case x: NotebookInfo => convertNotebookInfo(x)
     case x: SetTransaction => convertSetTransaction(x)
     case x: Protocol => convertProtocol(x)
   }
@@ -201,31 +198,24 @@ private[internal] object ConversionUtils {
   // Java to Scala conversions
   ///////////////////////////////////////////////////////////////////////////
 
-//  private implicit def toScalaLongOption(opt: OptionalJ[java.lang.Long]): Option[Long] =
-//    if (opt.isPresent) Some(opt.get()) else None
-//
-//  private implicit def toScalaStringOption(opt: OptionalJ[StringJ]): Option[String] =
-//    if (opt.isPresent) Some(opt.get()) else None
-
-  // TODO verify this actually works
   private implicit def toScalaOption[J, S](opt: OptionalJ[J]): Option[S] =
     if (opt.isPresent) Some(opt.get().asInstanceOf[S]) else None
 
   def convertActionJ(external: ActionJ): Action = external match {
     case x: AddFileJ => convertAddFileJ(x)
+    case x: AddCDCFileJ => convertAddCDCFileJ(x)
     case x: RemoveFileJ => convertRemoveFileJ(x)
     case x: CommitInfoJ => convertCommitInfoJ(x)
     case x: MetadataJ => convertMetadataJ(x)
-    case x: ProtocolJ => convertProtocolJ(x)
     case x: SetTransactionJ => convertSetTransactionJ(x)
-    // TODO others
+    case x: ProtocolJ => convertProtocolJ(x)
     case _ => throw new UnsupportedOperationException("cannot convert this Java Action")
   }
 
   def convertAddFileJ(external: AddFileJ): AddFile = {
     AddFile(
       external.getPath,
-      external.getPartitionValues.asScala.toMap,
+      if (external.getPartitionValues == null) null else external.getPartitionValues.asScala.toMap,
       external.getSize,
       external.getModificationTime,
       external.isDataChange,
@@ -234,10 +224,19 @@ private[internal] object ConversionUtils {
     )
   }
 
+  def convertAddCDCFileJ(external: AddCDCFileJ): AddCDCFile = {
+    AddCDCFile(
+      external.getPath,
+      if (external.getPartitionValues == null) null else external.getPartitionValues.asScala.toMap,
+      external.getSize,
+      if (external.getTags == null) null else external.getTags.asScala.toMap
+    )
+  }
+
   def convertRemoveFileJ(external: RemoveFileJ): RemoveFile = {
     RemoveFile(
       external.getPath,
-      external.getDeletionTimestamp, // implicit check this!
+      external.getDeletionTimestamp,
       external.isDataChange,
       external.isExtendedFileMetadata,
       if (external.isExtendedFileMetadata && external.getPartitionValues != null) {
@@ -252,23 +251,29 @@ private[internal] object ConversionUtils {
 
   def convertCommitInfoJ(external: CommitInfoJ): CommitInfo = {
     CommitInfo(
-      external.getVersion, // implicit check this!
+      external.getVersion,
       external.getTimestamp,
-      external.getUserId, // implicit check this!
-      external.getUserName, // implicit check this!
+      external.getUserId,
+      external.getUserName,
       external.getOperation,
       if (external.getOperationParameters != null) {
         external.getOperationParameters.asScala.toMap
       } else null,
-      None, // TODO: Option[JobInfo]
-      None, // TODO: Option[NotebookInfo]
-      external.getClusterId, // implicit check this!
-      external.getReadVersion, // implicit check this!
-      external.getIsolationLevel, // implicit check this!
-      external.getIsBlindAppend, // implicit check this!
-      external.getOperationMetrics, // implicit check this!
-      external.getUserMetadata, // implicit check this!
-      external.getEngineInfo // implicit check this!
+      if (external.getJobInfo.isDefined) {
+        Some(convertJobInfoJ(external.getJobInfo.get()))
+      } else None,
+      if (external.getNotebookInfo.isDefined) {
+        Some(convertNotebookInfoJ(external.getNotebookInfo.get()))
+      } else None,
+      external.getClusterId,
+      external.getReadVersion,
+      external.getIsolationLevel,
+      external.getIsBlindAppend,
+      if (external.getOperationMetrics.isDefined) {
+        Some(external.getOperationMetrics.get.asScala.toMap)
+      } else None,
+      external.getUserMetadata,
+      external.getEngineInfo
     )
   }
 
@@ -280,8 +285,8 @@ private[internal] object ConversionUtils {
       convertFormatJ(external.getFormat),
       if (external.getSchema == null) null else external.getSchema.toJson,
       external.getPartitionColumns.asScala,
-      external.getConfiguration.asScala.toMap,
-      external.getCreatedTime // implicit check this!
+      if (external.getConfiguration == null) null else external.getConfiguration.asScala.toMap,
+      external.getCreatedTime
     )
   }
 
@@ -303,8 +308,22 @@ private[internal] object ConversionUtils {
     SetTransaction(
       external.getAppId,
       external.getVerion,
-      external.getLastUpdated // implicit check this!
+      external.getLastUpdated
     )
+  }
+
+  def convertJobInfoJ(external: JobInfoJ): JobInfo = {
+    JobInfo(
+      external.getJobId,
+      external.getJobName,
+      external.getRunId,
+      external.getJobOwnerId,
+      external.getTriggerType
+    )
+  }
+
+  def convertNotebookInfoJ(external: NotebookInfoJ): NotebookInfo = {
+    NotebookInfo(external.getNotebookId)
   }
 
 }
