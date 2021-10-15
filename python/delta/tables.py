@@ -14,7 +14,7 @@
 # limitations under the License.
 #
 
-from typing import TYPE_CHECKING, overload, Optional, Union
+from typing import TYPE_CHECKING, overload, Any, Iterable, Optional, Union, NoReturn, List, Tuple
 
 import delta.exceptions  # noqa: F401; pylint: disable=unused-variable
 from delta._typing import (
@@ -825,18 +825,18 @@ class DeltaTableBuilder(object):
 
     .. note:: Evolving
     """
-    def __init__(self, spark, jbuilder):
+    def __init__(self, spark: SparkSession, jbuilder: JavaObject):
         self._spark = spark
         self._jbuilder = jbuilder
 
-    def _raise_type_error(self, msg, objs):
+    def _raise_type_error(self, msg: str, objs: Iterable[Any]) -> NoReturn:
         errorMsg = msg
         for obj in objs:
             errorMsg += " Found %s with type %s" % ((str(obj)), str(type(obj)))
         raise TypeError(errorMsg)
 
     @since(1.0)
-    def tableName(self, identifier):
+    def tableName(self, identifier: str) -> "DeltaTableBuilder":
         """
         Specify the table name.
         Optionally qualified with a database name [database_name.] table_name.
@@ -853,7 +853,7 @@ class DeltaTableBuilder(object):
         return self
 
     @since(1.0)
-    def location(self, location):
+    def location(self, location: str) -> "DeltaTableBuilder":
         """
         Specify the path to the directory where table data is stored,
         which could be a path on distributed storage.
@@ -870,7 +870,7 @@ class DeltaTableBuilder(object):
         return self
 
     @since(1.0)
-    def comment(self, comment):
+    def comment(self, comment: str) -> "DeltaTableBuilder":
         """
         Comment to describe the table.
 
@@ -886,8 +886,14 @@ class DeltaTableBuilder(object):
         return self
 
     @since(1.0)
-    def addColumn(self, colName, dataType,
-                  nullable=True, generatedAlwaysAs=None, comment=None):
+    def addColumn(
+        self,
+        colName: str,
+        dataType: Union[str, DataType],
+        nullable: Optional[bool] = None,
+        generatedAlwaysAs: Optional[str] = None,
+        comment: Optional[str] = None,
+    ) -> "DeltaTableBuilder":
         """
         Specify a column in the table
 
@@ -934,7 +940,9 @@ class DeltaTableBuilder(object):
         return self
 
     @since(1.0)
-    def addColumns(self, cols):
+    def addColumns(
+        self, cols: Union[StructType, List[StructField]]
+    ) -> "DeltaTableBuilder":
         """
         Specify columns in the table using an existing schema
 
@@ -961,7 +969,9 @@ class DeltaTableBuilder(object):
         return self
 
     @since(1.0)
-    def partitionedBy(self, *cols):
+    def partitionedBy(
+        self, *cols: Union[str, List[str], Tuple[str, ...]]
+    ) -> "DeltaTableBuilder":
         """
         Specify columns for partitioning
 
@@ -981,7 +991,7 @@ class DeltaTableBuilder(object):
         return self
 
     @since(1.0)
-    def property(self, key, value):
+    def property(self, key: str, value: str) -> "DeltaTableBuilder":
         """
         Specify a table property
 
@@ -999,7 +1009,7 @@ class DeltaTableBuilder(object):
         return self
 
     @since(1.0)
-    def execute(self):
+    def execute(self) -> DeltaTable:
         """
         Execute Table Creation.
 
