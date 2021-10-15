@@ -37,7 +37,7 @@ object DeltaColumnMapping
   val COLUMN_MAPPING_PHYSICAL_NAME_KEY = COLUMN_MAPPING_METADATA_PREFIX + "physicalName"
 
   def requiresNewProtocol(metadata: Metadata): Boolean =
-    DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(metadata) match {
+    metadata.columnMappingMode match {
       case IdMapping => true
       case NameMapping => true
       case NoMapping => false
@@ -59,8 +59,8 @@ object DeltaColumnMapping
       newMetadata: Metadata,
       isCreatingNewTable: Boolean): Metadata = {
     // field in new metadata should have been dropped
-    val oldMappingMode = DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(oldMetadata)
-    val newMappingMode = DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(newMetadata)
+    val oldMappingMode = oldMetadata.columnMappingMode
+    val newMappingMode = newMetadata.columnMappingMode
     if (satisfyColumnMappingProtocol(oldProtocol)) {
       if (oldMappingMode != newMappingMode && !isCreatingNewTable) {
         // block changing modes on new protocol

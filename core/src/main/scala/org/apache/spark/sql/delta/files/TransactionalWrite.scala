@@ -117,7 +117,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       data.queryExecution
     }
     val nullableOutput = makeOutputNullable(cleanedData.queryExecution.analyzed.output)
-    val columnMapping = DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(metadata)
+    val columnMapping = metadata.columnMappingMode
     // Rewrite column physical names if using a mapping mode
     val mappedOutput = if (columnMapping == NoMapping) nullableOutput else {
       mapColumnAttributes(nullableOutput, columnMapping)

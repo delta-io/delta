@@ -1157,7 +1157,7 @@ object DeltaErrors
   }
 
   def cannotModifyTableProperty(prop: String): Throwable =
-    throw new UnsupportedOperationException(
+    throw new ColumnMappingUnsupportedException(
       s"The Delta table configuration $prop cannot be specified by the user")
 
   /**
@@ -1165,7 +1165,7 @@ object DeltaErrors
    * so we error for now to be forward compatible with tables created in the future.
    */
   def unknownColumnMappingMode(mode: String): Throwable =
-    throw new UnsupportedOperationException(s"The column mapping mode `$mode` is not" +
+    throw new ColumnMappingUnsupportedException(s"The column mapping mode `$mode` is not" +
       s" supported. Supported modes in this version are: `none` and `id`." +
       s" Please upgrade Delta to access this table.")
 
@@ -1198,13 +1198,19 @@ object DeltaErrors
     )
 
   def changeColumnMappingModeNotSupported: Throwable = {
-    throw new UnsupportedOperationException("Changing column mapping mode using" +
+    throw new ColumnMappingUnsupportedException("Changing column mapping mode using" +
       s" config ${DeltaConfigs.COLUMN_MAPPING_MODE.key} is not supported.")
   }
 
   def writesWithColumnMappingNotSupported: Throwable = {
-    new UnsupportedOperationException("Writing data with column mapping mode is not " +
+    new ColumnMappingUnsupportedException("Writing data with column mapping mode is not " +
       "supported.")
+  }
+
+  def generateManifestWithColumnMappingNotSupported: Throwable = {
+    new ColumnMappingUnsupportedException("Manifest generation is not supported for tables that " +
+      "leverage column mapping, as external readers cannot read these Delta tables. " +
+      "See Databricks documentation for more details.")
   }
 
   def convertToDeltaWithColumnMappingNotSupported(mode: DeltaColumnMappingMode): Throwable = {
@@ -1215,7 +1221,7 @@ object DeltaErrors
 
   def setColumnMappingModeOnOldProtocol(oldProtocol: Protocol): Throwable = {
     // scalastyle:off line.size.limit
-    throw new UnsupportedOperationException(
+    throw new ColumnMappingUnsupportedException(
       s"""
          |Your current table protocol version does not support the setting of column mapping mode
          |using ${DeltaConfigs.COLUMN_MAPPING_MODE.key}.
@@ -1237,7 +1243,7 @@ object DeltaErrors
       newSchema: StructType,
       mappingMode: DeltaColumnMappingMode): Throwable = {
     // scalastyle:off line.size.limit
-    throw new UnsupportedOperationException(
+    throw new ColumnMappingUnsupportedException(
       s"""
          |Schema change is detected:
          |
@@ -1530,5 +1536,7 @@ class MetadataMismatchErrorBuilder {
 }
 
 /** Errors thrown around column mapping. */
+class ColumnMappingUnsupportedException(msg: String)
+  extends UnsupportedOperationException(msg)
 case class ColumnMappingException(msg: String, mode: DeltaColumnMappingMode)
   extends AnalysisException(msg)
