@@ -634,12 +634,25 @@ class DeltaMergeBuilder(object):
 
     .. versionadded:: 0.4
     """
-    def __init__(self, spark, jbuilder):
+    def __init__(self, spark: SparkSession, jbuilder: "JavaObject"):
         self._spark = spark
         self._jbuilder = jbuilder
 
-    @since(0.4)
-    def whenMatchedUpdate(self, condition=None, set=None):
+    @overload
+    def whenMatchedUpdate(
+        self, condition: OptionalStringOrColumn, set: ColumnMapping
+    ) -> "DeltaMergeBuilder": ...
+
+    @overload
+    def whenMatchedUpdate(
+        self, *, set: ColumnMapping
+    ) -> "DeltaMergeBuilder": ...
+
+    def whenMatchedUpdate(
+            self,
+            condition: OptionalStringOrColumn = None,
+            set: OptionalColumnMapping = None
+    ):
         """
         Update a matched table row based on the rules defined by ``set``.
         If a ``condition`` is specified, then it must evaluate to true for the row to be updated.
@@ -653,13 +666,17 @@ class DeltaMergeBuilder(object):
                     positional args in same order across languages.
         :type set: dict with str as keys and str or pyspark.sql.Column as values
         :return: this builder
+
+        .. versionadded:: 0.4
         """
         jset = DeltaTable._dict_to_jmap(self._spark, set, "'set' in whenMatchedUpdate")
         new_jbuilder = self.__getMatchedBuilder(condition).update(jset)
         return DeltaMergeBuilder(self._spark, new_jbuilder)
 
     @since(0.4)
-    def whenMatchedUpdateAll(self, condition=None):
+    def whenMatchedUpdateAll(
+        self, condition: OptionalStringOrColumn = None
+    ) -> "DeltaMergeBuilder":
         """
         Update all the columns of the matched table row with the values of the  corresponding
         columns in the source row. If a ``condition`` is specified, then it must be
@@ -675,7 +692,9 @@ class DeltaMergeBuilder(object):
         return DeltaMergeBuilder(self._spark, new_jbuilder)
 
     @since(0.4)
-    def whenMatchedDelete(self, condition=None):
+    def whenMatchedUpdateAll(
+        self, condition: OptionalStringOrColumn = None
+    ) -> "DeltaMergeBuilder":
         """
         Delete a matched row from the table only if the given ``condition`` (if specified) is
         true for the matched row.
@@ -689,8 +708,21 @@ class DeltaMergeBuilder(object):
         new_jbuilder = self.__getMatchedBuilder(condition).delete()
         return DeltaMergeBuilder(self._spark, new_jbuilder)
 
-    @since(0.4)
-    def whenNotMatchedInsert(self, condition=None, values=None):
+    @overload
+    def whenNotMatchedInsert(
+        self, condition: StringOrColumn, values: ColumnMapping
+    ) -> "DeltaMergeBuilder": ...
+
+    @overload
+    def whenNotMatchedInsert(
+        self, *, values: ColumnMapping = ...
+    ) -> "DeltaMergeBuilder": ...
+
+    def whenNotMatchedInsert(
+            self,
+            condition: OptionalStringOrColumn = None,
+            values: OptionalColumnMapping = None
+    ) -> "DeltaMergeBuilder":
         """
         Insert a new row to the target table based on the rules defined by ``values``. If a
         ``condition`` is specified, then it must evaluate to true for the new row to be inserted.
@@ -704,13 +736,17 @@ class DeltaMergeBuilder(object):
                        positional args in same order across languages.
         :type values: dict with str as keys and str or pyspark.sql.Column as values
         :return: this builder
+
+        .. versionadded:: 0.4
         """
         jvalues = DeltaTable._dict_to_jmap(self._spark, values, "'values' in whenNotMatchedInsert")
         new_jbuilder = self.__getNotMatchedBuilder(condition).insert(jvalues)
         return DeltaMergeBuilder(self._spark, new_jbuilder)
 
     @since(0.4)
-    def whenNotMatchedInsertAll(self, condition=None):
+    def whenNotMatchedInsertAll(
+        self, condition: OptionalStringOrColumn = None
+    ) -> "DeltaMergeBuilder":
         """
         Insert a new target Delta table row by assigning the target columns to the values of the
         corresponding columns in the source row. If a ``condition`` is specified, then it must
@@ -726,7 +762,7 @@ class DeltaMergeBuilder(object):
         return DeltaMergeBuilder(self._spark, new_jbuilder)
 
     @since(0.4)
-    def execute(self):
+    def execute(self) -> None:
         """
         Execute the merge operation based on the built matched and not matched actions.
 
@@ -734,13 +770,17 @@ class DeltaMergeBuilder(object):
         """
         self._jbuilder.execute()
 
-    def __getMatchedBuilder(self, condition=None):
+    def __getMatchedBuilder(
+        self, condition: OptionalStringOrColumn = None
+    ) -> "JavaObject":
         if condition is None:
             return self._jbuilder.whenMatched()
         else:
             return self._jbuilder.whenMatched(DeltaTable._condition_to_jcolumn(condition))
 
-    def __getNotMatchedBuilder(self, condition=None):
+    def __getNotMatchedBuilder(
+        self, condition: OptionalStringOrColumn = None
+    ) -> "JavaObject":
         if condition is None:
             return self._jbuilder.whenNotMatched()
         else:
