@@ -35,6 +35,7 @@ import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.util.{Clock, SerializableConfiguration, SystemClock}
 
 /**
@@ -314,12 +315,18 @@ trait VacuumCommandImpl extends DeltaCommand {
     DeltaFileOperations.getAllSubDirectories(base, file)._1
   }
 
-  private def withAdaptiveDisabled[T](spark: SparkSession)(f: => T): T = {
-    val adaptiveEnabled = spark.conf.get("spark.sql.adaptive.enabled")
-    spark.conf.set("spark.sql.adaptive.enabled", "false")
-    val eval = f
-    spark.conf.set("spark.sql.adaptive.enabled", adaptiveEnabled)
-    eval
+  private def withAdaptiveExecutionDisabled[T](spark: SparkSession)(f: => T): T = {
+    val adaptiveEnabled = spark.conf.get(SQLConf.ADAPTIVE_EXECUTION_ENABLED.key)
+    if (adaptiveEnabled.toBoolean) {
+      spark.conf.set(SQLConf.ADAPTIVE_EXECUTION_ENABLED.key, "false")
+    }
+    try {
+      f
+    } finally {
+      if (adaptiveEnabled.toBoolean) {
+        spark.conf.set(SQLConf.ADAPTIVE_EXECUTION_ENABLED.key, adaptiveEnabled)
+      }
+    }
   }
 
   /**
@@ -334,7 +341,7 @@ trait VacuumCommandImpl extends DeltaCommand {
     import spark.implicits._
 
     if (parallel) {
-      withAdaptiveDisabled(spark) {
+      withAdaptiveExecutionDisabled(spark) {
         diff.mapPartitions { files =>
           val fs = new Path(basePath).getFileSystem(hadoopConf.value.value)
           val filesDeletedPerPartition =
