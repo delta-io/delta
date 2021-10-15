@@ -568,6 +568,10 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case _ => throw new AnalysisException(s"Table implementation does not support writes: $name")
     }
   }
+
+  def isTempView(ident: Identifier): Boolean = {
+    catalog.isTempView(ident.namespace() :+ ident.name())
+  }
 }
 
 /**
