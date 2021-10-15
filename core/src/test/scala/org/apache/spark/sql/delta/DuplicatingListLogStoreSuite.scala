@@ -32,8 +32,8 @@ import org.apache.spark.sql.test.SharedSparkSession
 class DuplicatingListLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
   extends HDFSLogStore(sparkConf, defaultHadoopConf) {
 
-  override def listFrom(path: Path): Iterator[FileStatus] = {
-    val list = super.listFrom(path).toSeq
+  override def listFrom(path: Path, hadoopConf: Configuration): Iterator[FileStatus] = {
+    val list = super.listFrom(path, hadoopConf).toSeq
     // The first listing if directory will be listed twice to mimic the WASBS Log Store
     if (!list.isEmpty && list.head.isDirectory) {
       (Seq(list.head) ++ list).toIterator
@@ -51,7 +51,8 @@ class DuplicatingListLogStoreSuite extends SharedSparkSession {
   }
 
   def pathExists(deltaLog: DeltaLog, filePath: String): Boolean = {
-    deltaLog.fs.exists(DeltaFileOperations.absolutePath(deltaLog.dataPath.toString, filePath))
+    val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
+    fs.exists(DeltaFileOperations.absolutePath(deltaLog.dataPath.toString, filePath))
   }
 
   test("vacuum should handle duplicate listing") {

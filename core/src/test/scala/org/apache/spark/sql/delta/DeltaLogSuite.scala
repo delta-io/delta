@@ -70,11 +70,26 @@ class DeltaLogSuite extends QueryTest
       txn.commitManually(files: _*)
       log.checkpoint()
 
-      val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
+      val fs = path.getFileSystem(log.newDeltaHadoopConf())
       fs.delete(path, true)
 
       val snapshot = log.update()
       assert(snapshot.version === -1)
+    }
+  }
+
+  test("checkpoint write should use the correct Hadoop configuration") {
+    withTempDir { dir =>
+      withSQLConf(
+          "fs.AbstractFileSystem.fake.impl" -> classOf[FakeAbstractFileSystem].getName,
+          "fs.fake.impl" -> classOf[FakeFileSystem].getName,
+          "fs.fake.impl.disable.cache" -> "true") {
+        val path = s"fake://${dir.getCanonicalPath}"
+        val log = DeltaLog.forTable(spark, path)
+        val txn = log.startTransaction()
+        txn.commitManually(AddFile("foo", Map.empty, 1, 1, true))
+        log.checkpoint()
+      }
     }
   }
 
@@ -95,7 +110,7 @@ class DeltaLogSuite extends QueryTest
         }
       }
 
-      val numOfStateRDDs = collectReservoirStateRDD(log.snapshot.state.rdd).size
+      val numOfStateRDDs = collectReservoirStateRDD(log.snapshot.stateDS.rdd).size
       assert(numOfStateRDDs >= 1, "collectReservoirStateRDD may not work properly")
       assert(numOfStateRDDs < checkpointInterval)
     }
@@ -145,7 +160,9 @@ class DeltaLogSuite extends QueryTest
     withTempDir { tempDir =>
       val dir = tempDir.getAbsolutePath.stripSuffix("/")
       assert(dir.startsWith("/"))
+      // scalastyle:off deltahadoopconfiguration
       val fs = new Path("/").getFileSystem(spark.sessionState.newHadoopConf())
+      // scalastyle:on deltahadoopconfiguration
       val samePaths = Seq(
         new Path(dir + "/foo"),
         new Path(dir + "/foo/"),
@@ -173,7 +190,7 @@ class DeltaLogSuite extends QueryTest
       val lastCheckpoint = log.lastCheckpoint.get
 
       // Create an empty "_last_checkpoint" (corrupted)
-      val fs = log.LAST_CHECKPOINT.getFileSystem(spark.sessionState.newHadoopConf)
+      val fs = log.LAST_CHECKPOINT.getFileSystem(log.newDeltaHadoopConf())
       fs.create(log.LAST_CHECKPOINT, true /* overwrite */).close()
 
       // Create a new DeltaLog
@@ -200,10 +217,14 @@ class DeltaLogSuite extends QueryTest
 
         log.store.write(
           FileNames.deltaFile(log.logPath, 0L),
-          Iterator(Protocol(), Metadata(), add).map(a => JsonUtils.toJson(a.wrap)))
+          Iterator(Protocol(), Metadata(), add).map(a => JsonUtils.toJson(a.wrap)),
+          overwrite = false,
+          log.newDeltaHadoopConf())
         log.store.write(
           FileNames.deltaFile(log.logPath, 1L),
-          Iterator(JsonUtils.toJson(rm.wrap)))
+          Iterator(JsonUtils.toJson(rm.wrap)),
+          overwrite = false,
+          log.newDeltaHadoopConf())
 
         assert(log.update().version === 1)
         assert(log.snapshot.numOfFiles === 0)
@@ -224,10 +245,14 @@ class DeltaLogSuite extends QueryTest
 
         log.store.write(
           FileNames.deltaFile(log.logPath, 0L),
-          Iterator(Protocol(), Metadata(), add).map(a => JsonUtils.toJson(a.wrap)))
+          Iterator(Protocol(), Metadata(), add).map(a => JsonUtils.toJson(a.wrap)),
+          overwrite = false,
+          log.newDeltaHadoopConf())
         log.store.write(
           FileNames.deltaFile(log.logPath, 1L),
-          Iterator(JsonUtils.toJson(rm.wrap)))
+          Iterator(JsonUtils.toJson(rm.wrap)),
+          overwrite = false,
+          log.newDeltaHadoopConf())
 
         assert(log.update().version === 1)
         assert(log.snapshot.numOfFiles === 0)
@@ -316,7 +341,9 @@ class DeltaLogSuite extends QueryTest
         val file = AddFile("abc", Map.empty, 1, 1, true)
         log.store.write(
           FileNames.deltaFile(log.logPath, 0L),
-          Iterator(selectedAction, file).map(a => JsonUtils.toJson(a.wrap)))
+          Iterator(selectedAction, file).map(a => JsonUtils.toJson(a.wrap)),
+          overwrite = false,
+          log.newDeltaHadoopConf())
         withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "true") {
           val e = intercept[IllegalStateException] {
             log.update()
@@ -409,7 +436,7 @@ class DeltaLogSuite extends QueryTest
       spark.range(20, 30).write.format("delta").mode("append").save(path)
 
       // Store these for later usage
-      val actions = deltaLog.snapshot.state.collect()
+      val actions = deltaLog.snapshot.stateDS.collect()
       val commitTimestamp = deltaLog.snapshot.logSegment.lastCommitTimestamp
 
       checkAnswer(
@@ -417,10 +444,14 @@ class DeltaLogSuite extends QueryTest
         spark.range(30).toDF()
       )
 
+      val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
+
       // Now let's delete the last version
       deltaLog.store
-        .listFrom(FileNames.checksumFile(deltaLog.logPath, deltaLog.snapshot.version))
-        .foreach(f => deltaLog.fs.delete(f.getPath, false))
+        .listFrom(
+          FileNames.checksumFile(deltaLog.logPath, deltaLog.snapshot.version),
+          deltaLog.newDeltaHadoopConf())
+        .foreach(f => fs.delete(f.getPath, false))
 
       // Should show up to 20
       checkAnswer(
@@ -431,8 +462,10 @@ class DeltaLogSuite extends QueryTest
       // Now let's delete the checkpoint and json file for version 1. We will try to list from
       // version 1, but since we can't find anything, we should start listing from version 0
       deltaLog.store
-        .listFrom(FileNames.checkpointFileSingular(deltaLog.logPath, 1))
-        .foreach(f => deltaLog.fs.delete(f.getPath, false))
+        .listFrom(
+          FileNames.checkpointFileSingular(deltaLog.logPath, 1),
+          deltaLog.newDeltaHadoopConf())
+        .foreach(f => fs.delete(f.getPath, false))
 
       checkAnswer(
         spark.read.format("delta").load(path),
@@ -441,15 +474,16 @@ class DeltaLogSuite extends QueryTest
 
       // Now let's delete that commit as well, and write a new first version
       deltaLog.store
-        .listFrom(FileNames.deltaFile(deltaLog.logPath, 0))
-        .foreach(f => deltaLog.fs.delete(f.getPath, false))
+        .listFrom(FileNames.deltaFile(deltaLog.logPath, 0), deltaLog.newDeltaHadoopConf())
+        .foreach(f => fs.delete(f.getPath, false))
 
       assert(deltaLog.snapshot.version === 0)
 
       deltaLog.store.write(
         FileNames.deltaFile(deltaLog.logPath, 0),
         actions.map(_.unwrap.json).iterator,
-        overwrite = false)
+        overwrite = false,
+        deltaLog.newDeltaHadoopConf())
 
       // To avoid flakiness, we manually set the modification timestamp of the file to a later
       // second

@@ -144,7 +144,9 @@ class DeltaSuite extends QueryTest
     Seq(1).toDF().write.format("delta").save(tempDir.toString)
 
     val df = spark.read.format("delta").load(tempDir.toString)
+    // scalastyle:off deltahadoopconfiguration
     val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
+    // scalastyle:on deltahadoopconfiguration
     fs.delete(path, true)
 
     val e = intercept[AnalysisException] {
@@ -167,7 +169,9 @@ class DeltaSuite extends QueryTest
     val path = new Path(tempDir.getCanonicalPath)
     Seq(1).toDF().write.format("delta").save(tempDir.toString)
 
+    // scalastyle:off deltahadoopconfiguration
     val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
+    // scalastyle:on deltahadoopconfiguration
     fs.delete(path, true)
 
     val e = intercept[AnalysisException] {
@@ -925,7 +929,7 @@ class DeltaSuite extends QueryTest
       spark.range(10).write.format("delta").save(tempDir.toString)
       val deltaLog = DeltaLog.forTable(spark, tempDir)
       val numParts = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS).get
-      assert(deltaLog.snapshot.state.rdd.getNumPartitions == numParts)
+      assert(deltaLog.snapshot.stateDS.rdd.getNumPartitions == numParts)
     }
   }
 
@@ -944,7 +948,7 @@ class DeltaSuite extends QueryTest
       withSQLConf(("spark.databricks.delta.snapshotPartitions", "410")) {
         spark.range(10).write.format("delta").save(tempDir.toString)
         val deltaLog = DeltaLog.forTable(spark, tempDir)
-        assert(deltaLog.snapshot.state.rdd.getNumPartitions == 410)
+        assert(deltaLog.snapshot.stateDS.rdd.getNumPartitions == 410)
       }
     }
   }
@@ -980,7 +984,7 @@ class DeltaSuite extends QueryTest
         assert(filesToDelete.size == 1)
         filesToDelete.foreach { f =>
           val deleted = tryDeleteNonRecursive(
-            tempDirPath.getFileSystem(spark.sessionState.newHadoopConf()),
+            tempDirPath.getFileSystem(deltaLog.newDeltaHadoopConf()),
             new Path(tempDirPath, f))
           assert(deleted)
         }
@@ -1010,7 +1014,7 @@ class DeltaSuite extends QueryTest
 
         val filesToCorrupt = inputFiles.filter(_.split("/").last.startsWith("part-00001"))
         assert(filesToCorrupt.size == 1)
-        val fs = tempDirPath.getFileSystem(spark.sessionState.newHadoopConf())
+        val fs = tempDirPath.getFileSystem(deltaLog.newDeltaHadoopConf())
         filesToCorrupt.foreach { f =>
           val filePath = new Path(tempDirPath, f)
           fs.create(filePath, true).close()
@@ -1039,7 +1043,7 @@ class DeltaSuite extends QueryTest
         val filesToDelete = inputFiles.take(4)
         filesToDelete.foreach { f =>
           val deleted = tryDeleteNonRecursive(
-            tempDirPath.getFileSystem(spark.sessionState.newHadoopConf()),
+            tempDirPath.getFileSystem(deltaLog.newDeltaHadoopConf()),
             new Path(tempDirPath, f))
           assert(deleted)
         }
@@ -1066,7 +1070,7 @@ class DeltaSuite extends QueryTest
       val filesToDelete = inputFiles.take(4)
       filesToDelete.foreach { f =>
         val deleted = tryDeleteNonRecursive(
-          tempDirPath.getFileSystem(spark.sessionState.newHadoopConf()),
+          tempDirPath.getFileSystem(deltaLog.newDeltaHadoopConf()),
           new Path(tempDirPath, f))
         assert(deleted)
       }
@@ -1218,7 +1222,7 @@ class DeltaSuite extends QueryTest
   test("SC-24982 - initial snapshot has zero partitions") {
     withTempDir { tempDir =>
       val deltaLog = DeltaLog.forTable(spark, tempDir)
-      assert(deltaLog.snapshot.state.rdd.getNumPartitions == 0)
+      assert(deltaLog.snapshot.stateDS.rdd.getNumPartitions == 0)
     }
   }
 
@@ -1236,7 +1240,7 @@ class DeltaSuite extends QueryTest
     sparkContext.addSparkListener(listener)
     try {
       withTempDir { tempDir =>
-        val files = DeltaLog.forTable(spark, tempDir).snapshot.state.collect()
+        val files = DeltaLog.forTable(spark, tempDir).snapshot.stateDS.collect()
         assert(files.isEmpty)
       }
       sparkContext.listenerBus.waitUntilEmpty(15000)
@@ -1458,7 +1462,9 @@ class DeltaSuite extends QueryTest
       log.store.write(
         deltaFile(log.logPath, 1),
         Iterator(log.snapshot.metadata.copy(
-          configuration = Map(DeltaConfigs.CHANGE_DATA_FEED.key -> "true")).json))
+          configuration = Map(DeltaConfigs.CHANGE_DATA_FEED.key -> "true")).json),
+        overwrite = false,
+        log.newDeltaHadoopConf())
       log.update()
 
       val ex = intercept[AnalysisException] {
@@ -1475,6 +1481,7 @@ class DeltaSuite extends QueryTest
     spark.range(10, 20).coalesce(1).write.format("delta").mode("append").save(tempDir)
 
     val deltaLog = DeltaLog.forTable(spark, tempDir)
+    val hadoopConf = deltaLog.newDeltaHadoopConf()
     val snapshot = deltaLog.snapshot
     val files = snapshot.allFiles.collect()
 
@@ -1486,11 +1493,15 @@ class DeltaSuite extends QueryTest
     ) ++ files.map(_.remove)
     deltaLog.store.write(
       FileNames.deltaFile(deltaLog.logPath, snapshot.version + 1),
-      actions.map(_.json).iterator)
+      actions.map(_.json).iterator,
+      overwrite = false,
+      hadoopConf)
 
     deltaLog.store.write(
       FileNames.deltaFile(deltaLog.logPath, snapshot.version + 2),
-      files.take(1).map(_.json).iterator)
+      files.take(1).map(_.json).iterator,
+      overwrite = false,
+      hadoopConf)
 
     // Since the column `data` doesn't exist in our old files, we read it as null.
     checkAnswer(

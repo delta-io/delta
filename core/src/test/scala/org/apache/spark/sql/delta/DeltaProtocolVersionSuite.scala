@@ -48,7 +48,9 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     log.ensureLogDirectoryExist()
     log.store.write(
       deltaFile(log.logPath, 0),
-      Iterator(Metadata(schemaString = schema.json).json, protocol.json))
+      Iterator(Metadata(schemaString = schema.json).json, protocol.json),
+      overwrite = false,
+      log.newDeltaHadoopConf())
     log.update()
     log
   }
@@ -105,7 +107,9 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       log.ensureLogDirectoryExist()
       log.store.write(
         deltaFile(log.logPath, 0),
-        Iterator(Metadata().json, Protocol(Integer.MAX_VALUE, Integer.MAX_VALUE).json))
+        Iterator(Metadata().json, Protocol(Integer.MAX_VALUE, Integer.MAX_VALUE).json),
+        overwrite = false,
+        log.newDeltaHadoopConf())
       intercept[InvalidProtocolVersionException] {
         spark.range(1).write.format("delta").save(path.getCanonicalPath)
       }
@@ -156,11 +160,14 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       withTempDir { path =>
         spark.range(0).write.format("delta").save(path.getCanonicalPath)
         val deltaLog = DeltaLog.forTable(spark, path)
+        val hadoopConf = deltaLog.newDeltaHadoopConf()
         val txn = deltaLog.startTransaction()
         val currentVersion = txn.snapshot.version
         deltaLog.store.write(
           deltaFile(deltaLog.logPath, currentVersion + 1),
-          Iterator(incompatibleProtocol.json))
+          Iterator(incompatibleProtocol.json),
+          overwrite = false,
+          hadoopConf)
 
         // Should detect the above incompatible protocol change and fail
         intercept[InvalidProtocolVersionException] {
@@ -169,7 +176,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         // Make sure we didn't commit anything
         val p = deltaFile(deltaLog.logPath, currentVersion + 2)
         assert(
-          !p.getFileSystem(spark.sessionState.newHadoopConf).exists(p),
+          !p.getFileSystem(hadoopConf).exists(p),
           s"$p should not be committed")
       }
     }

@@ -22,7 +22,7 @@ import java.{util => ju}
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, DeltaTimeTravelSpec, Snapshot}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, DeltaTimeTravelSpec, Snapshot}
 import org.apache.spark.sql.delta.GeneratedColumn
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -101,7 +101,8 @@ case class DeltaTableV2(
   }
 
   private lazy val tableSchema: StructType =
-    GeneratedColumn.removeGenerationExpressions(snapshot.schema)
+    DeltaColumnMapping.dropColumnMappingMetadata(
+      GeneratedColumn.removeGenerationExpressions(snapshot.schema))
 
   override def schema(): StructType = tableSchema
 

@@ -62,7 +62,7 @@ trait RecordChecksum extends DeltaLogging {
   protected def spark: SparkSession
 
   private lazy val writer =
-    CheckpointFileManager.create(deltaLog.logPath, spark.sessionState.newHadoopConf())
+    CheckpointFileManager.create(deltaLog.logPath, deltaLog.newDeltaHadoopConf())
 
   protected def writeChecksumFile(snapshot: Snapshot): Unit = {
     if (!spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED)) {
@@ -112,7 +112,7 @@ trait ReadChecksum extends DeltaLogging { self: DeltaLog =>
     val checksumFile = FileNames.checksumFile(logPath, version)
 
     var exception: Option[String] = None
-    val content = try Some(store.read(checksumFile)) catch {
+    val content = try Some(store.read(checksumFile, newDeltaHadoopConf())) catch {
       case NonFatal(e) =>
         // We expect FileNotFoundException; if it's another kind of exception, we still catch them
         // here but we log them in the checksum error event below.

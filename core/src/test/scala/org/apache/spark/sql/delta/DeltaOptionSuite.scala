@@ -49,7 +49,8 @@ class DeltaOptionSuite extends QueryTest
 
     val deltaLog = DeltaLog.forTable(spark, tempDir)
     val version = deltaLog.snapshot.version
-    val commitActions = deltaLog.store.read(FileNames.deltaFile(deltaLog.logPath, version))
+    val commitActions = deltaLog.store
+      .read(FileNames.deltaFile(deltaLog.logPath, version), deltaLog.newDeltaHadoopConf())
       .map(Action.fromJson)
     val fileActions = commitActions.collect { case a: FileAction => a }
 
@@ -74,7 +75,8 @@ class DeltaOptionSuite extends QueryTest
 
     val deltaLog = DeltaLog.forTable(spark, tempDir)
     val version = deltaLog.snapshot.version
-    val commitActions = deltaLog.store.read(FileNames.deltaFile(deltaLog.logPath, version))
+    val commitActions = deltaLog.store
+      .read(FileNames.deltaFile(deltaLog.logPath, version), deltaLog.newDeltaHadoopConf())
       .map(Action.fromJson)
     val fileActions = commitActions.collect { case a: FileAction => a }
 

@@ -40,11 +40,17 @@ abstract class HadoopFileSystemLogStore(
   def this(sc: SparkContext) = this(sc.getConf, sc.hadoopConfiguration)
 
   protected def getHadoopConfiguration: Configuration = {
+    // scalastyle:off deltahadoopconfiguration
     SparkSession.getActiveSession.map(_.sessionState.newHadoopConf()).getOrElse(hadoopConf)
+    // scalastyle:on deltahadoopconfiguration
   }
 
   override def read(path: Path): Seq[String] = {
-    val fs = path.getFileSystem(getHadoopConfiguration)
+    read(path, getHadoopConfiguration)
+  }
+
+  override def read(path: Path, hadoopConf: Configuration): Seq[String] = {
+    val fs = path.getFileSystem(hadoopConf)
     val stream = fs.open(path)
     try {
       val reader = new BufferedReader(new InputStreamReader(stream, UTF_8))
@@ -55,14 +61,22 @@ abstract class HadoopFileSystemLogStore(
   }
 
   override def readAsIterator(path: Path): ClosableIterator[String] = {
-    val fs = path.getFileSystem(getHadoopConfiguration)
+    readAsIterator(path, getHadoopConfiguration)
+  }
+
+  override def readAsIterator(path: Path, hadoopConf: Configuration): ClosableIterator[String] = {
+    val fs = path.getFileSystem(hadoopConf)
     val stream = fs.open(path)
     val reader = new BufferedReader(new InputStreamReader(stream, UTF_8))
     new LineClosableIterator(reader)
   }
 
   override def listFrom(path: Path): Iterator[FileStatus] = {
-    val fs = path.getFileSystem(getHadoopConfiguration)
+    listFrom(path, getHadoopConfiguration)
+  }
+
+  override def listFrom(path: Path, hadoopConf: Configuration): Iterator[FileStatus] = {
+    val fs = path.getFileSystem(hadoopConf)
     if (!fs.exists(path.getParent)) {
       throw new FileNotFoundException(s"No such file or directory: ${path.getParent}")
     }
@@ -71,7 +85,23 @@ abstract class HadoopFileSystemLogStore(
   }
 
   override def resolvePathOnPhysicalStorage(path: Path): Path = {
-    path.getFileSystem(getHadoopConfiguration).makeQualified(path)
+    resolvePathOnPhysicalStorage(path, getHadoopConfiguration)
+  }
+
+  override def resolvePathOnPhysicalStorage(path: Path, hadoopConf: Configuration): Path = {
+    path.getFileSystem(hadoopConf).makeQualified(path)
+  }
+
+  /**
+   * An internal write implementation that uses FileSystem.rename().
+   *
+   * This implementation should only be used for the underlying file systems that support atomic
+   * renames, e.g., Azure is OK but HDFS is not.
+   */
+  @deprecated("call the method that asks for a Hadoop Configuration object instead")
+  protected def writeWithRename(
+      path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit = {
+    writeWithRename(path, actions, overwrite, getHadoopConfiguration)
   }
 
   /**
@@ -81,8 +111,11 @@ abstract class HadoopFileSystemLogStore(
    * renames, e.g., Azure is OK but HDFS is not.
    */
   protected def writeWithRename(
-      path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit = {
-    val fs = path.getFileSystem(getHadoopConfiguration)
+      path: Path,
+      actions: Iterator[String],
+      overwrite: Boolean,
+      hadoopConf: Configuration): Unit = {
+    val fs = path.getFileSystem(hadoopConf)
 
     if (!fs.exists(path.getParent)) {
       throw new FileNotFoundException(s"No such file or directory: ${path.getParent}")

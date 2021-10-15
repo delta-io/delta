@@ -198,7 +198,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
       if (spark.conf.get(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED)) {
         val basicWriteJobStatsTracker = new BasicWriteJobStatsTracker(
-          new SerializableConfiguration(spark.sessionState.newHadoopConf()),
+          new SerializableConfiguration(deltaLog.newDeltaHadoopConf()),
           BasicWriteJobStatsTracker.metrics)
         registerSQLMetrics(spark, basicWriteJobStatsTracker.metrics)
         statsTrackers.append(basicWriteJobStatsTracker)
@@ -211,7 +211,10 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
           fileFormat = snapshot.fileFormat, // TODO doesn't support changing formats.
           committer = committer,
           outputSpec = outputSpec,
+          // scalastyle:off deltahadoopconfiguration
+          // TODO(SC-85267) Merge this with DataFrame options
           hadoopConf = spark.sessionState.newHadoopConfWithOptions(metadata.configuration),
+          // scalastyle:on deltahadoopconfiguration
           partitionColumns = partitioningColumns,
           bucketSpec = None,
           statsTrackers = statsTrackers,

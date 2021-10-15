@@ -41,7 +41,11 @@ class GCSLogStoreSuite extends LogStoreSuiteBase {
           "fs.gs.impl" -> classOf[FakeGSCFileSystem].getName,
           "fs.gs.impl.disable.cache" -> "true") {
         val store = createLogStore(spark)
-        store.write(new Path(s"gs://${tempDir.getCanonicalPath}", "1.json"), Iterator("foo"))
+        store.write(
+          new Path(s"gs://${tempDir.getCanonicalPath}", "1.json"),
+          Iterator("foo"),
+          overwrite = false,
+          sessionHadoopConf)
       }
     }
   }
