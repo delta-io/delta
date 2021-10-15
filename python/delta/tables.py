@@ -14,12 +14,21 @@
 # limitations under the License.
 #
 
+from typing import TYPE_CHECKING, overload, Optional, Union
+
 import delta.exceptions  # noqa: F401; pylint: disable=unused-variable
+from delta._typing import (
+    ColumnMapping, OptionalColumnMapping, StringOrColumn, OptionalStringOrColumn
+)
 
 from pyspark import since
 from pyspark.sql import Column, DataFrame, functions, SparkSession
-from pyspark.sql.column import _to_seq
+from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
 from pyspark.sql.types import DataType, StructType, StructField
+
+
+if TYPE_CHECKING:
+    from py4j.java_gateway import JavaObject  # type: ignore[import]
 
 
 class DeltaTable(object):
@@ -35,19 +44,19 @@ class DeltaTable(object):
 
         .. versionadded:: 0.4
     """
-    def __init__(self, spark, jdt):
+    def __init__(self, spark: SparkSession, jdt: JavaObject):
         self._spark = spark
         self._jdt = jdt
 
     @since(0.4)
-    def toDF(self):
+    def toDF(self) -> DataFrame:
         """
         Get a DataFrame representation of this Delta table.
         """
         return DataFrame(self._jdt.toDF(), self._spark._wrapped)
 
     @since(0.4)
-    def alias(self, aliasName):
+    def alias(self, aliasName: str) -> "DeltaTable":
         """
         Apply an alias to the Delta table.
         """
@@ -55,7 +64,7 @@ class DeltaTable(object):
         return DeltaTable(self._spark, jdt)
 
     @since(0.5)
-    def generate(self, mode):
+    def generate(self, mode: str) -> None:
         """
         Generate manifest files for the given delta table.
 
@@ -70,7 +79,7 @@ class DeltaTable(object):
         self._jdt.generate(mode)
 
     @since(0.4)
-    def delete(self, condition=None):
+    def delete(self, condition: OptionalStringOrColumn = None) -> None:
         """
         Delete data from the table that match the given ``condition``.
 
@@ -88,8 +97,19 @@ class DeltaTable(object):
         else:
             self._jdt.delete(self._condition_to_jcolumn(condition))
 
-    @since(0.4)
-    def update(self, condition=None, set=None):
+    @overload
+    def update(
+        self, condition: StringOrColumn, set: ColumnMapping
+    ) -> None: ...
+
+    @overload
+    def update(self, *, set: ColumnMapping) -> None: ...
+
+    def update(
+            self,
+            condition: OptionalStringOrColumn = None,
+            set: OptionalColumnMapping = None
+    ) -> None:
         """
         Update data from the table on the rows that match the given ``condition``,
         which performs the rules defined by ``set``.
@@ -112,6 +132,8 @@ class DeltaTable(object):
                     *Note: This param is required.* Default value None is present to allow
                     positional args in same order across languages.
         :type set: dict with str as keys and str or pyspark.sql.Column as values
+
+        .. versionadded:: 0.4
         """
         jmap = self._dict_to_jmap(self._spark, set, "'set'")
         jcolumn = self._condition_to_jcolumn(condition)
@@ -121,7 +143,9 @@ class DeltaTable(object):
             self._jdt.update(jcolumn, jmap)
 
     @since(0.4)
-    def merge(self, source, condition):
+    def merge(
+        self, source: DataFrame, condition: StringOrColumn
+    ) -> "DeltaMergeBuilder":
         """
         Merge data from the `source` DataFrame based on the given merge `condition`. This returns
         a :class:`DeltaMergeBuilder` object that can be used to specify the update, delete, or
@@ -189,7 +213,7 @@ class DeltaTable(object):
         return DeltaMergeBuilder(self._spark, jbuilder)
 
     @since(0.4)
-    def vacuum(self, retentionHours=None):
+    def vacuum(self, retentionHours: Optional[float] = None) -> DataFrame:
         """
         Recursively delete files and directories in the table that are not needed by the table for
         maintaining older versions up to the given retention threshold. This method will return an
@@ -211,7 +235,7 @@ class DeltaTable(object):
             return DataFrame(jdt.vacuum(float(retentionHours)), self._spark._wrapped)
 
     @since(0.4)
-    def history(self, limit=None):
+    def history(self, limit: Optional[int] = None) -> DataFrame:
         """
         Get the information of the latest `limit` commits on this table as a Spark DataFrame.
         The information is in reverse chronological order.
@@ -234,7 +258,12 @@ class DeltaTable(object):
 
     @classmethod
     @since(0.4)
-    def convertToDelta(cls, sparkSession, identifier, partitionSchema=None):
+    def convertToDelta(
+        cls,
+        sparkSession: SparkSession,
+        identifier: str,
+        partitionSchema: Optional[Union[str, StructType]] = None,
+    ) -> "DeltaTable":
         """
         Create a DeltaTable from the given parquet table. Takes an existing parquet table and
         constructs a delta transaction log in the base path of the table.
@@ -275,7 +304,7 @@ class DeltaTable(object):
 
     @classmethod
     @since(0.4)
-    def forPath(cls, sparkSession, path):
+    def forPath(cls, sparkSession: SparkSession, path: str) -> "DeltaTable":
         """
         Create a DeltaTable for the data at the given `path` using the given SparkSession.
 
@@ -295,7 +324,9 @@ class DeltaTable(object):
 
     @classmethod
     @since(0.7)
-    def forName(cls, sparkSession, tableOrViewName):
+    def forName(
+        cls, sparkSession: SparkSession, tableOrViewName: str
+    ) -> "DeltaTable":
         """
         Create a DeltaTable using the given table or view name using the given SparkSession.
 
@@ -315,7 +346,9 @@ class DeltaTable(object):
 
     @classmethod
     @since(1.0)
-    def create(cls, sparkSession=None):
+    def create(
+        cls, sparkSession: Optional[SparkSession] = None
+    ) -> "DeltaTableBuilder":
         """
         Return :class:`DeltaTableBuilder` object that can be used to specify
         the table name, location, columns, partitioning columns, table comment,
@@ -340,7 +373,9 @@ class DeltaTable(object):
 
     @classmethod
     @since(1.0)
-    def createIfNotExists(cls, sparkSession=None):
+    def createIfNotExists(
+        cls, sparkSession: Optional[SparkSession] = None
+    ) -> "DeltaTableBuilder":
         """
         Return :class:`DeltaTableBuilder` object that can be used to specify
         the table name, location, columns, partitioning columns, table comment,
@@ -365,7 +400,9 @@ class DeltaTable(object):
 
     @classmethod
     @since(1.0)
-    def replace(cls, sparkSession=None):
+    def replace(
+        cls, sparkSession: Optional[SparkSession] = None
+    ) -> "DeltaTableBuilder":
         """
         Return :class:`DeltaTableBuilder` object that can be used to specify
         the table name, location, columns, partitioning columns, table comment,
@@ -390,7 +427,9 @@ class DeltaTable(object):
 
     @classmethod
     @since(1.0)
-    def createOrReplace(cls, sparkSession=None):
+    def createOrReplace(
+        cls, sparkSession: Optional[SparkSession] = None
+    ) -> "DeltaTableBuilder":
         """
         Return :class:`DeltaTableBuilder` object that can be used to specify
         the table name, location, columns, partitioning columns, table comment,
@@ -415,7 +454,7 @@ class DeltaTable(object):
 
     @classmethod
     @since(0.4)
-    def isDeltaTable(cls, sparkSession, identifier):
+    def isDeltaTable(cls, sparkSession: SparkSession, identifier: str) -> bool:
         """
         Check if the provided `identifier` string, in this case a file path,
         is the root of a Delta table using the given SparkSession.
@@ -434,7 +473,7 @@ class DeltaTable(object):
             sparkSession._jsparkSession, identifier)
 
     @since(0.8)
-    def upgradeTableProtocol(self, readerVersion, writerVersion):
+    def upgradeTableProtocol(self, readerVersion: int, writerVersion: int) -> None:
         """
         Updates the protocol version of the table to leverage new features. Upgrading the reader
         version will prevent all clients that have an older version of Delta Lake from accessing
@@ -453,7 +492,12 @@ class DeltaTable(object):
         jdt.upgradeTableProtocol(readerVersion, writerVersion)
 
     @classmethod
-    def _dict_to_jmap(cls, sparkSession, pydict, argname):
+    def _dict_to_jmap(
+        cls,
+        sparkSession: SparkSession,
+        pydict: ColumnMapping,
+        argname: str,
+    ) -> "JavaObject":
         """
         convert dict<str, pColumn/str> to Map<str, jColumn>
         """
@@ -482,7 +526,9 @@ class DeltaTable(object):
         return jmap
 
     @classmethod
-    def _condition_to_jcolumn(cls, condition, argname="'condition'"):
+    def _condition_to_jcolumn(
+        cls, condition: OptionalStringOrColumn, argname: str = "'condition'"
+    ) -> "JavaObject":
         if condition is None:
             jcondition = None
         elif type(condition) is Column:
