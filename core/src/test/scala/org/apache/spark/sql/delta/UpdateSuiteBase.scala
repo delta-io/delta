@@ -355,7 +355,6 @@ abstract class UpdateSuiteBase
       var ae = intercept[AnalysisException] {
         executeUpdate("table", set = "column_doesnt_exist = 'San Francisco'", where = "t = 'a'")
       }
-      assert(ae.message.contains("cannot resolve"))
 
       withSQLConf(SQLConf.CASE_SENSITIVE.key -> "false") {
         executeUpdate(target = "table", set = "S = 1, T = 'b'", where = "T = 'a'")
@@ -369,18 +368,15 @@ abstract class UpdateSuiteBase
         ae = intercept[AnalysisException] {
           executeUpdate(target = "table", set = "S = 1", where = "t = 'a'")
         }
-        assert(ae.message.contains("cannot resolve"))
 
         ae = intercept[AnalysisException] {
           executeUpdate(target = "table", set = "S = 1, s = 'b'", where = "s = 1")
         }
-        assert(ae.message.contains("cannot resolve"))
 
         // unresolved column in condition
         ae = intercept[AnalysisException] {
           executeUpdate(target = "table", set = "s = 1", where = "T = 'a'")
         }
-        assert(ae.message.contains("cannot resolve"))
       }
     }
   }
@@ -802,15 +798,14 @@ abstract class UpdateSuiteBase
 
   protected def testInvalidTempViews(name: String)(
       text: String,
-      expectedErrorForSQLTempView: String,
-      expectedErrorForDataSetTempView: String): Unit = {
+      expectedErrorMsgForSQLTempView: String = null,
+      expectedErrorMsgForDataSetTempView: String = null,
+      expectedErrorClassForSQLTempView: String = null,
+      expectedErrorClassForDataSetTempView: String = null): Unit = {
     testWithTempView(s"test update on temp view - $name") { isSQLTempView =>
       withTable("tab") {
         Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
         createTempViewFromSelect(text, isSQLTempView)
-        val expectedError = if (isSQLTempView) {
-          expectedErrorForSQLTempView
-        } else expectedErrorForDataSetTempView
         val ex = intercept[AnalysisException] {
           executeUpdate(
             "v",
@@ -818,22 +813,28 @@ abstract class UpdateSuiteBase
             set = "value = key + value, key = key + 1"
           )
         }
-        assert(ex.getMessage.contains(expectedError))
+        testErrorMessageAndClass(
+          isSQLTempView,
+          ex,
+          expectedErrorMsgForSQLTempView,
+          expectedErrorMsgForDataSetTempView,
+          expectedErrorClassForSQLTempView,
+          expectedErrorClassForDataSetTempView)
       }
     }
   }
 
   testInvalidTempViews("subset cols")(
     text = "SELECT key FROM tab",
-    expectedErrorForSQLTempView = "cannot resolve",
-    expectedErrorForDataSetTempView = "cannot resolve"
+    expectedErrorClassForSQLTempView = "MISSING_COLUMN",
+    expectedErrorClassForDataSetTempView = "MISSING_COLUMN"
   )
 
   testInvalidTempViews("superset cols")(
     text = "SELECT key, value, 1 FROM tab",
     // The analyzer can't tell whether the table originally had the extra column or not.
-    expectedErrorForSQLTempView = "Can't resolve column 1 in root",
-    expectedErrorForDataSetTempView = "Can't resolve column 1 in root"
+    expectedErrorMsgForSQLTempView = "Can't resolve column 1 in root",
+    expectedErrorMsgForDataSetTempView = "Can't resolve column 1 in root"
   )
 
   protected def testComplexTempViews(name: String)(text: String, expectedResult: Seq[Row]) = {

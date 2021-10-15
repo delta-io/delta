@@ -228,10 +228,14 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
       df.select(selectExprs: _*)
     } catch {
       case e: AnalysisException if e.getMessage != null =>
-        // Improve the column resolution error
-        "cannot resolve.*?given input columns:.*?".r.findFirstMatchIn(e.getMessage) match {
-          case Some(_) => throw DeltaErrors.generatedColumnsReferToWrongColumns(e)
-          case None => throw e
+        val regexCandidates = Seq(
+          "Column.*?does not exist. Did you mean one of the following?.*?".r,
+          "cannot resolve.*?given input columns:.*?".r
+        )
+        if (regexCandidates.exists(_.findFirstMatchIn(e.getMessage).isDefined)) {
+          throw DeltaErrors.generatedColumnsReferToWrongColumns(e)
+        } else {
+          throw e
         }
     }
     // Check whether the generation expressions are valid

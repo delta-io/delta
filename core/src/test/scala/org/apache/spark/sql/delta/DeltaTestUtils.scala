@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkContext
 import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.QueryExecution
 import org.apache.spark.sql.test.SharedSparkSession
@@ -155,5 +155,26 @@ trait DeltaTestUtilsForTempViews
       sql(text).createOrReplaceTempView("v")
     }
   }
-}
 
+  def testErrorMessageAndClass(
+      isSQLTempView: Boolean,
+      ex: AnalysisException,
+      expectedErrorMsgForSQLTempView: String = null,
+      expectedErrorMsgForDataSetTempView: String = null,
+      expectedErrorClassForSQLTempView: String = null,
+      expectedErrorClassForDataSetTempView: String = null): Unit = {
+    if (isSQLTempView) {
+      if (expectedErrorMsgForSQLTempView != null) {
+        assert(ex.getMessage.contains(expectedErrorMsgForSQLTempView))
+      }
+      if (expectedErrorClassForSQLTempView != null) {
+      }
+    } else {
+      if (expectedErrorMsgForDataSetTempView != null) {
+        assert(ex.getMessage.contains(expectedErrorMsgForDataSetTempView))
+      }
+      if (expectedErrorClassForDataSetTempView != null) {
+      }
+    }
+  }
+}
