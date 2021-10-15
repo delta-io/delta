@@ -29,24 +29,24 @@ from delta.testing.utils import DeltaTestCase
 
 class DeltaTableTests(DeltaTestCase):
 
-    def test_forPath(self):
+    def test_forPath(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
         dt = DeltaTable.forPath(self.spark, self.tempFile).toDF()
         self.__checkAnswer(dt, [('a', 1), ('b', 2), ('c', 3)])
 
-    def test_forName(self):
+    def test_forName(self) -> None:
         self.__writeAsTable([('a', 1), ('b', 2), ('c', 3)], "test")
         df = DeltaTable.forName(self.spark, "test").toDF()
         self.__checkAnswer(df, [('a', 1), ('b', 2), ('c', 3)])
 
-    def test_alias_and_toDF(self):
+    def test_alias_and_toDF(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
         dt = DeltaTable.forPath(self.spark, self.tempFile).toDF()
         self.__checkAnswer(
             dt.alias("myTable").select('myTable.key', 'myTable.value'),
             [('a', 1), ('b', 2), ('c', 3)])
 
-    def test_delete(self):
+    def test_delete(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
         dt = DeltaTable.forPath(self.spark, self.tempFile)
 
@@ -64,9 +64,9 @@ class DeltaTableTests(DeltaTestCase):
 
         # bad args
         with self.assertRaises(TypeError):
-            dt.delete(condition=1)
+            dt.delete(condition=1)  # type: ignore[arg-type]
 
-    def test_generate(self):
+    def test_generate(self) -> None:
         # create a delta table
         numFiles = 10
         self.spark.range(100).repartition(numFiles).write.format("delta").save(self.tempFile)
@@ -86,7 +86,7 @@ class DeltaTableTests(DeltaTestCase):
         # the number of files we write should equal the number of lines in the manifest
         assert(len(files) == numFiles)
 
-    def test_update(self):
+    def test_update(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
         dt = DeltaTable.forPath(self.spark, self.tempFile)
 
@@ -104,27 +104,27 @@ class DeltaTableTests(DeltaTestCase):
 
         # bad args
         with self.assertRaisesRegex(ValueError, "cannot be None"):
-            dt.update({"value": "200"})
+            dt.update({"value": "200"})  # type: ignore[call-overload]
 
         with self.assertRaisesRegex(ValueError, "cannot be None"):
-            dt.update(condition='a')
+            dt.update(condition='a')  # type: ignore[call-overload]
 
         with self.assertRaisesRegex(TypeError, "must be a dict"):
-            dt.update(set=1)
+            dt.update(set=1)  # type: ignore[call-overload]
 
         with self.assertRaisesRegex(TypeError, "must be a Spark SQL Column or a string"):
-            dt.update(1, {})
+            dt.update(1, {})  # type: ignore[call-overload]
 
         with self.assertRaisesRegex(TypeError, "Values of dict in .* must contain only"):
-            dt.update(set={"value": 1})
+            dt.update(set={"value": 1})  # type: ignore[dict-item]
 
         with self.assertRaisesRegex(TypeError, "Keys of dict in .* must contain only"):
-            dt.update(set={1: ""})
+            dt.update(set={1: ""})  # type: ignore[dict-item]
 
         with self.assertRaises(TypeError):
-            dt.update(set=1)
+            dt.update(set=1)  # type: ignore[call-overload]
 
-    def test_merge(self):
+    def test_merge(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
         source = self.spark.createDataFrame([('a', -1), ('b', 0), ('e', -5), ('f', -6)], ["k", "v"])
 
@@ -219,67 +219,96 @@ class DeltaTableTests(DeltaTestCase):
         # ============== Test bad args ==============
         # ---- bad args in merge()
         with self.assertRaisesRegex(TypeError, "must be DataFrame"):
-            dt.merge(1, "key = k")
+            dt.merge(1, "key = k")  # type: ignore[arg-type]
 
         with self.assertRaisesRegex(TypeError, "must be a Spark SQL Column or a string"):
-            dt.merge(source, 1)
+            dt.merge(source, 1)  # type: ignore[arg-type]
 
         # ---- bad args in whenMatchedUpdate()
         with self.assertRaisesRegex(ValueError, "cannot be None"):
-            dt.merge(source, "key = k").whenMatchedUpdate({"value": "v"})
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenMatchedUpdate({"value": "v"}))
 
         with self.assertRaisesRegex(ValueError, "cannot be None"):
-            dt.merge(source, "key = k").whenMatchedUpdate(1)
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenMatchedUpdate(1))
 
         with self.assertRaisesRegex(ValueError, "cannot be None"):
-            dt.merge(source, "key = k").whenMatchedUpdate(condition="key = 'a'")
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenMatchedUpdate(condition="key = 'a'"))
 
         with self.assertRaisesRegex(TypeError, "must be a Spark SQL Column or a string"):
-            dt.merge(source, "key = k").whenMatchedUpdate(1, {"value": "v"})
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenMatchedUpdate(1, {"value": "v"}))
 
         with self.assertRaisesRegex(TypeError, "must be a dict"):
-            dt.merge(source, "key = k").whenMatchedUpdate("k = 'a'", 1)
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenMatchedUpdate("k = 'a'", 1))
 
         with self.assertRaisesRegex(TypeError, "Values of dict in .* must contain only"):
-            dt.merge(source, "key = k").whenMatchedUpdate(set={"value": 1})
+            (dt
+                .merge(source, "key = k")
+                .whenMatchedUpdate(set={"value": 1}))  # type: ignore[dict-item]
 
         with self.assertRaisesRegex(TypeError, "Keys of dict in .* must contain only"):
-            dt.merge(source, "key = k").whenMatchedUpdate(set={1: ""})
+            (dt
+                .merge(source, "key = k")
+                .whenMatchedUpdate(set={1: ""}))  # type: ignore[dict-item]
 
         with self.assertRaises(TypeError):
-            dt.merge(source, "key = k").whenMatchedUpdate(set="k = 'a'", condition={"value": 1})
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenMatchedUpdate(set="k = 'a'", condition={"value": 1}))
 
         # bad args in whenMatchedDelete()
         with self.assertRaisesRegex(TypeError, "must be a Spark SQL Column or a string"):
-            dt.merge(source, "key = k").whenMatchedDelete(1)
+            dt.merge(source, "key = k").whenMatchedDelete(1)  # type: ignore[arg-type]
 
         # ---- bad args in whenNotMatchedInsert()
         with self.assertRaisesRegex(ValueError, "cannot be None"):
-            dt.merge(source, "key = k").whenNotMatchedInsert({"value": "v"})
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenNotMatchedInsert({"value": "v"}))
 
         with self.assertRaisesRegex(ValueError, "cannot be None"):
-            dt.merge(source, "key = k").whenNotMatchedInsert(1)
+            dt.merge(source, "key = k").whenNotMatchedInsert(1)  # type: ignore[call-overload]
 
         with self.assertRaisesRegex(ValueError, "cannot be None"):
-            dt.merge(source, "key = k").whenNotMatchedInsert(condition="key = 'a'")
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenNotMatchedInsert(condition="key = 'a'"))
 
         with self.assertRaisesRegex(TypeError, "must be a Spark SQL Column or a string"):
-            dt.merge(source, "key = k").whenNotMatchedInsert(1, {"value": "v"})
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenNotMatchedInsert(1, {"value": "v"}))
 
         with self.assertRaisesRegex(TypeError, "must be a dict"):
-            dt.merge(source, "key = k").whenNotMatchedInsert("k = 'a'", 1)
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenNotMatchedInsert("k = 'a'", 1))
 
         with self.assertRaisesRegex(TypeError, "Values of dict in .* must contain only"):
-            dt.merge(source, "key = k").whenNotMatchedInsert(values={"value": 1})
+            (dt
+                .merge(source, "key = k")
+                .whenNotMatchedInsert(values={"value": 1}))  # type: ignore[dict-item]
 
         with self.assertRaisesRegex(TypeError, "Keys of dict in .* must contain only"):
-            dt.merge(source, "key = k").whenNotMatchedInsert(values={1: "value"})
+            (dt
+                .merge(source, "key = k")
+                .whenNotMatchedInsert(values={1: "value"}))  # type: ignore[dict-item]
 
         with self.assertRaises(TypeError):
-            dt.merge(source, "key = k").whenNotMatchedInsert(
-                values="k = 'a'", condition={"value": 1})
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenNotMatchedInsert(values="k = 'a'", condition={"value": 1}))
 
-    def test_history(self):
+    def test_history(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
         self.__overwriteDeltaTable([('a', 3), ('b', 2), ('c', 1)])
         dt = DeltaTable.forPath(self.spark, self.tempFile)
@@ -295,7 +324,7 @@ class DeltaTableTests(DeltaTestCase):
             [Row("Overwrite")],
             StructType([StructField("operationParameters.mode", StringType(), True)]))
 
-    def test_vacuum(self):
+    def test_vacuum(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
         dt = DeltaTable.forPath(self.spark, self.tempFile)
         self.__createFile('abc.txt', 'abcde')
@@ -312,7 +341,7 @@ class DeltaTableTests(DeltaTestCase):
         self.assertEqual(False, self.__checkFileExists('bac.txt'))
         self.assertEqual(False, self.__checkFileExists('abc.txt'))
 
-    def test_convertToDelta(self):
+    def test_convertToDelta(self) -> None:
         df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
         df.write.format("parquet").save(self.tempFile)
         dt = DeltaTable.convertToDelta(self.spark, "parquet.`%s`" % self.tempFile)
@@ -346,7 +375,7 @@ class DeltaTableTests(DeltaTestCase):
             [('a', 1), ('b', 2), ('c', 3)])
         self.assertEqual(type(dt), DeltaTable)
 
-    def test_isDeltaTable(self):
+    def test_isDeltaTable(self) -> None:
         df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
         df.write.format("parquet").save(self.tempFile)
         tempFile2 = self.tempFile + '_2'
@@ -412,7 +441,7 @@ class DeltaTableTests(DeltaTestCase):
             builder = builder.location(location)
         return self.__build_delta_table(builder)
 
-    def test_create_table_with_existing_schema(self):
+    def test_create_table_with_existing_schema(self) -> None:
         df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
         deltaTable = DeltaTable.create(self.spark).tableName("test") \
             .addColumns(df.schema) \
@@ -439,7 +468,7 @@ class DeltaTableTests(DeltaTestCase):
                                    nullables={"key", "value", "value2"},
                                    partitioningColumns=["value", "value2"])
 
-    def test_create_replace_table_with_no_spark_session_passed(self):
+    def test_create_replace_table_with_no_spark_session_passed(self) -> None:
         # create table.
         deltaTable = DeltaTable.create().tableName("test")\
             .addColumn("value", dataType="int").execute()
@@ -477,7 +506,7 @@ class DeltaTableTests(DeltaTestCase):
                                    [IntegerType()],
                                    nullables={"col1"})
 
-    def test_create_table_with_name_only(self):
+    def test_create_table_with_name_only(self) -> None:
         for ifNotExists in (False, True):
             tableName = "testTable{}".format(ifNotExists)
             deltaTable = self.__create_table(ifNotExists, tableName=tableName)
@@ -495,7 +524,7 @@ class DeltaTableTests(DeltaTestCase):
             self.__verify_generated_column(tableName, deltaTable)
             self.spark.sql("DROP TABLE IF EXISTS {}".format(tableName))
 
-    def test_create_table_with_location_only(self):
+    def test_create_table_with_location_only(self) -> None:
         for ifNotExists in (False, True):
             path = self.tempFile + str(ifNotExists)
             deltaTable = self.__create_table(ifNotExists, location=path)
@@ -511,7 +540,7 @@ class DeltaTableTests(DeltaTestCase):
             # verify generated columns.
             self.__verify_generated_column("delta.`{}`".format(path), deltaTable)
 
-    def test_create_table_with_name_and_location(self):
+    def test_create_table_with_name_and_location(self) -> None:
         for ifNotExists in (False, True):
             path = self.tempFile + str(ifNotExists)
             tableName = "testTable{}".format(ifNotExists)
@@ -531,7 +560,7 @@ class DeltaTableTests(DeltaTestCase):
             self.__verify_generated_column(tableName, deltaTable)
             self.spark.sql("DROP TABLE IF EXISTS {}".format(tableName))
 
-    def test_create_table_behavior(self):
+    def test_create_table_behavior(self) -> None:
         self.spark.sql("CREATE TABLE testTable (c1 int) USING DELTA")
 
         # Errors out if doesn't ignore.
@@ -550,7 +579,7 @@ class DeltaTableTests(DeltaTestCase):
                                    [IntegerType()],
                                    nullables={"c1"})
 
-    def test_replace_table_with_name_only(self):
+    def test_replace_table_with_name_only(self) -> None:
         for orCreate in (False, True):
             tableName = "testTable{}".format(orCreate)
             self.spark.sql("CREATE TABLE {} (c1 int) USING DELTA".format(tableName))
@@ -569,7 +598,7 @@ class DeltaTableTests(DeltaTestCase):
             self.__verify_generated_column(tableName, deltaTable)
             self.spark.sql("DROP TABLE IF EXISTS {}".format(tableName))
 
-    def test_replace_table_with_location_only(self):
+    def test_replace_table_with_location_only(self) -> None:
         for orCreate in (False, True):
             path = self.tempFile + str(orCreate)
             self.__create_table(False, location=path)
@@ -587,7 +616,7 @@ class DeltaTableTests(DeltaTestCase):
             # verify generated columns.
             self.__verify_generated_column("delta.`{}`".format(path), deltaTable)
 
-    def test_replace_table_with_name_and_location(self):
+    def test_replace_table_with_name_and_location(self) -> None:
         for orCreate in (False, True):
             path = self.tempFile + str(orCreate)
             tableName = "testTable{}".format(orCreate)
@@ -609,12 +638,13 @@ class DeltaTableTests(DeltaTestCase):
             self.__verify_generated_column(tableName, deltaTable)
             self.spark.sql("DROP TABLE IF EXISTS {}".format(tableName))
 
-    def test_replace_table_behavior(self):
+    def test_replace_table_behavior(self) -> None:
         msg = None
         try:
             self.__replace_table(False, tableName="testTable")
         except AnalysisException as e:
             msg = e.desc
+        assert msg is not None
         assert (msg.startswith(
             "Table default.testTable cannot be replaced as it did not exist."))
         deltaTable = self.__replace_table(True, tableName="testTable")
@@ -628,14 +658,15 @@ class DeltaTableTests(DeltaTestCase):
                                    partitioningColumns=["col1"],
                                    tblComment="comment")
 
-    def test_verify_paritionedBy_compatibility(self):
+    def test_verify_paritionedBy_compatibility(self) -> None:
         tableBuilder = DeltaTable.create(self.spark).tableName("testTable") \
             .addColumn("col1", "int", comment="foo", nullable=False) \
             .addColumn("col2", IntegerType(), generatedAlwaysAs="col1 + 10") \
             .property("foo", "bar") \
             .comment("comment")
-        tableBuilder._jbuilder = tableBuilder._jbuilder \
-            .partitionedBy(_to_seq(self.spark._sc, ["col1"]))
+        tableBuilder._jbuilder = tableBuilder._jbuilder.partitionedBy(
+            _to_seq(self.spark._sc, ["col1"])  # type: ignore[attr-defined]
+        )
         deltaTable = tableBuilder.execute()
         self.__verify_table_schema("testTable",
                                    deltaTable.toDF().schema,
@@ -647,28 +678,28 @@ class DeltaTableTests(DeltaTestCase):
                                    partitioningColumns=["col1"],
                                    tblComment="comment")
 
-    def test_delta_table_builder_with_bad_args(self):
+    def test_delta_table_builder_with_bad_args(self) -> None:
         builder = DeltaTable.create(self.spark)
 
         # bad table name
         with self.assertRaises(TypeError):
-            builder.tableName(1)
+            builder.tableName(1)  # type: ignore[arg-type]
 
         # bad location
         with self.assertRaises(TypeError):
-            builder.location(1)
+            builder.location(1)  # type: ignore[arg-type]
 
         # bad comment
         with self.assertRaises(TypeError):
-            builder.comment(1)
+            builder.comment(1)  # type: ignore[arg-type]
 
         # bad column name
         with self.assertRaises(TypeError):
-            builder.addColumn(1, "int")
+            builder.addColumn(1, "int")  # type: ignore[arg-type]
 
         # bad datatype.
         with self.assertRaises(TypeError):
-            builder.addColumn("a", 1)
+            builder.addColumn("a", 1)  # type: ignore[arg-type]
 
         # bad column datatype - can't be pared
         with self.assertRaises(ParseException):
@@ -676,43 +707,43 @@ class DeltaTableTests(DeltaTestCase):
 
         # bad comment
         with self.assertRaises(TypeError):
-            builder.addColumn("a", "int", comment=1)
+            builder.addColumn("a", "int", comment=1)  # type: ignore[arg-type]
 
         # bad generatedAlwaysAs
         with self.assertRaises(TypeError):
-            builder.addColumn("a", "int", generatedAlwaysAs=1)
+            builder.addColumn("a", "int", generatedAlwaysAs=1)  # type: ignore[arg-type]
 
         # bad nullable
         with self.assertRaises(TypeError):
-            builder.addColumn("a", "int", nullable=1)
+            builder.addColumn("a", "int", nullable=1)  # type: ignore[arg-type]
 
         # bad existing schema
         with self.assertRaises(TypeError):
-            builder.addColumns(1)
+            builder.addColumns(1)  # type: ignore[arg-type]
 
         # bad existing schema.
         with self.assertRaises(TypeError):
-            builder.addColumns([StructField("1", IntegerType()), 1])
+            builder.addColumns([StructField("1", IntegerType()), 1])  # type: ignore[list-item]
 
         # bad partitionedBy col name
         with self.assertRaises(TypeError):
-            builder.partitionedBy(1)
+            builder.partitionedBy(1)  # type: ignore[arg-type]
 
         with self.assertRaises(TypeError):
-            builder.partitionedBy(1, "1")
+            builder.partitionedBy(1, "1")   # type: ignore[arg-type]
 
         with self.assertRaises(TypeError):
-            builder.partitionedBy([1])
+            builder.partitionedBy([1])  # type: ignore[list-item]
 
         # bad property key
         with self.assertRaises(TypeError):
-            builder.property(1, "1")
+            builder.property(1, "1")  # type: ignore[arg-type]
 
         # bad property value
         with self.assertRaises(TypeError):
-            builder.property("1", 1)
+            builder.property("1", 1)  # type: ignore[arg-type]
 
-    def test_protocolUpgrade(self):
+    def test_protocolUpgrade(self) -> None:
         try:
             self.spark.conf.set('spark.databricks.delta.minWriterVersion', '2')
             self.spark.conf.set('spark.databricks.delta.minReaderVersion', '1')
@@ -733,21 +764,21 @@ class DeltaTableTests(DeltaTestCase):
 
         # bad args
         with self.assertRaisesRegex(ValueError, "readerVersion"):
-            dt.upgradeTableProtocol("abc", 3)
+            dt.upgradeTableProtocol("abc", 3)  # type: ignore[arg-type]
         with self.assertRaisesRegex(ValueError, "readerVersion"):
-            dt.upgradeTableProtocol([1], 3)
+            dt.upgradeTableProtocol([1], 3)  # type: ignore[arg-type]
         with self.assertRaisesRegex(ValueError, "readerVersion"):
-            dt.upgradeTableProtocol([], 3)
+            dt.upgradeTableProtocol([], 3)  # type: ignore[arg-type]
         with self.assertRaisesRegex(ValueError, "readerVersion"):
-            dt.upgradeTableProtocol({}, 3)
+            dt.upgradeTableProtocol({}, 3)  # type: ignore[arg-type]
         with self.assertRaisesRegex(ValueError, "writerVersion"):
-            dt.upgradeTableProtocol(1, "abc")
+            dt.upgradeTableProtocol(1, "abc")  # type: ignore[arg-type]
         with self.assertRaisesRegex(ValueError, "writerVersion"):
-            dt.upgradeTableProtocol(1, [3])
+            dt.upgradeTableProtocol(1, [3])  # type: ignore[arg-type]
         with self.assertRaisesRegex(ValueError, "writerVersion"):
-            dt.upgradeTableProtocol(1, [])
+            dt.upgradeTableProtocol(1, [])  # type: ignore[arg-type]
         with self.assertRaisesRegex(ValueError, "writerVersion"):
-            dt.upgradeTableProtocol(1, {})
+            dt.upgradeTableProtocol(1, {})  # type: ignore[arg-type]
 
     def __checkAnswer(self, df, expectedAnswer, schema=["key", "value"]):
         if not expectedAnswer:
