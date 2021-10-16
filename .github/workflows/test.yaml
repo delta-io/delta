@@ -38,4 +38,4 @@ jobs:
           pipenv run pip install importlib_metadata==3.10.0
       - name: Run Scala/Java and Python tests
         run: |
-          pipenv run python run-tests.py 
+          pipenv run python run-tests.py
