@@ -1207,6 +1207,12 @@ object DeltaErrors
       "supported.")
   }
 
+  def convertToDeltaWithColumnMappingNotSupported(mode: DeltaColumnMappingMode): Throwable = {
+    new UnsupportedOperationException(
+      s"The configuration '${DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey}' " +
+        s"cannot be set to `${mode.name}` when using CONVERT TO DELTA.")
+  }
+
   def setColumnMappingModeOnOldProtocol(oldProtocol: Protocol): Throwable = {
     // scalastyle:off line.size.limit
     throw new UnsupportedOperationException(

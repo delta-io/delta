@@ -43,31 +43,48 @@ import org.apache.spark.internal.Logging
 class HDFSLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
   extends HadoopFileSystemLogStore(sparkConf, defaultHadoopConf) with Logging{
 
+  @deprecated("call the method that asks for a Hadoop Configuration object instead")
   protected def getFileContext(path: Path): FileContext = {
     FileContext.getFileContext(path.toUri, getHadoopConfiguration)
   }
 
+  protected def getFileContext(path: Path, hadoopConf: Configuration): FileContext = {
+    FileContext.getFileContext(path.toUri, hadoopConf)
+  }
+
   val noAbstractFileSystemExceptionMessage = "No AbstractFileSystem"
 
-  def write(path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit = {
-    val isLocalFs = path.getFileSystem(getHadoopConfiguration).isInstanceOf[RawLocalFileSystem]
+  override def write(path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit = {
+    write(path, actions, overwrite, getHadoopConfiguration)
+  }
+
+  override def write(
+      path: Path,
+      actions: Iterator[String],
+      overwrite: Boolean,
+      hadoopConf: Configuration): Unit = {
+    val isLocalFs = path.getFileSystem(hadoopConf).isInstanceOf[RawLocalFileSystem]
     if (isLocalFs) {
       // We need to add `synchronized` for RawLocalFileSystem as its rename will not throw an
       // exception when the target file exists. Hence we must make sure `exists + rename` in
       // `writeInternal` for RawLocalFileSystem is atomic in our tests.
       synchronized {
-        writeInternal(path, actions, overwrite)
+        writeInternal(path, actions, overwrite, hadoopConf)
       }
     } else {
       // rename is atomic and also will fail when the target file exists. Not need to add the extra
       // `synchronized`.
-      writeInternal(path, actions, overwrite)
+      writeInternal(path, actions, overwrite, hadoopConf)
     }
   }
 
-  private def writeInternal(path: Path, actions: Iterator[String], overwrite: Boolean): Unit = {
+  private def writeInternal(
+      path: Path,
+      actions: Iterator[String],
+      overwrite: Boolean,
+      hadoopConf: Configuration): Unit = {
     val fc: FileContext = try {
-      getFileContext(path)
+      getFileContext(path, hadoopConf)
     } catch {
       case e: IOException if e.getMessage.contains(noAbstractFileSystemExceptionMessage) =>
         val newException = DeltaErrors.incorrectLogStoreImplementationException(sparkConf, e)
@@ -122,4 +139,6 @@ class HDFSLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
   }
 
   override def isPartialWriteVisible(path: Path): Boolean = true
+
+  override def isPartialWriteVisible(path: Path, hadoopConf: Configuration): Boolean = true
 }

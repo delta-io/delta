@@ -378,7 +378,7 @@ trait DeltaConfigsBase extends DeltaLogging {
     Some(Protocol(0, 2)))
 
   /**
-   * Whether this table will automagically optimize the layout of files during writes.
+   * Whether this table will automatically optimize the layout of files during writes.
    */
   val AUTO_OPTIMIZE = buildConfig[Option[Boolean]](
     "autoOptimize",

@@ -88,7 +88,7 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
 
     val partitionCols = currentSnapshot.metadata.partitionColumns
     val manifestRootDirPath = new Path(deltaLog.dataPath, MANIFEST_LOCATION)
-    val hadoopConf = new SerializableConfiguration(spark.sessionState.newHadoopConf())
+    val hadoopConf = new SerializableConfiguration(deltaLog.newDeltaHadoopConf())
     val fs = deltaLog.dataPath.getFileSystem(hadoopConf.value)
     if (!fs.exists(manifestRootDirPath)) {
       generateFullManifest(spark, deltaLog)
@@ -169,7 +169,7 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
     val snapshot = deltaLog.update(stalenessAcceptable = false)
     val partitionCols = snapshot.metadata.partitionColumns
     val manifestRootDirPath = new Path(deltaLog.dataPath, MANIFEST_LOCATION).toString
-    val hadoopConf = new SerializableConfiguration(spark.sessionState.newHadoopConf())
+    val hadoopConf = new SerializableConfiguration(deltaLog.newDeltaHadoopConf())
 
     // Update manifest files of the current partitions
     val newManifestPartitionRelativePaths = writeManifestFiles(
@@ -235,8 +235,8 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
     val spark = fileNamesForManifest.sparkSession
     import spark.implicits._
 
-    val tableAbsPathForManifest =
-      LogStore(spark.sparkContext).resolvePathOnPhysicalStorage(deltaLogDataPath).toString
+    val tableAbsPathForManifest = LogStore(spark.sparkContext)
+      .resolvePathOnPhysicalStorage(deltaLogDataPath, hadoopConf.value).toString
 
     /** Write the data file relative paths to manifestDirAbsPath/manifest as absolute paths */
     def writeSingleManifestFile(
@@ -251,7 +251,7 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
         DeltaFileOperations.absolutePath(tableAbsPathForManifest, relativePath).toString
       }
       val logStore = LogStore(SparkEnv.get.conf, hadoopConf.value)
-      logStore.write(manifestFilePath, manifestContent, overwrite = true)
+      logStore.write(manifestFilePath, manifestContent, overwrite = true, hadoopConf.value)
     }
 
     val newManifestPartitionRelativePaths =

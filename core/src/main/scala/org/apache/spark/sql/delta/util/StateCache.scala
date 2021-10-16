@@ -21,7 +21,7 @@ import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.sql.delta.Snapshot
 
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.{Dataset, SparkSession}
+import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.execution.LogicalRDD
 import org.apache.spark.storage.StorageLevel
 
@@ -59,7 +59,7 @@ trait StateCache {
             LogicalRDD(
               ds.queryExecution.analyzed.output,
               rdd)(
-              spark)).as[A](ds.exprEnc)
+              spark))
         })
         Some(dsCache)
       } else {
@@ -68,29 +68,34 @@ trait StateCache {
     }
 
     /**
-     * Get the DS from the cache.
+     * Retrieves the cached RDD in Dataframe form.
      *
      * If a RDD cache is available,
-     * - return the cached DS if called from the same session in which the cached DS is created, or
-     * - reconstruct the DS using the RDD cache if called from a different session.
+     * - return the cached DF if called from the same session in which the cached DF is created, or
+     * - reconstruct the DF using the RDD cache if called from a different session.
      *
      * If no RDD cache is available,
-     * - return a copy of the original DS with updated spark session.
+     * - return a copy of the original DF with updated spark session.
      *
      * Since a cached DeltaLog can be accessed from multiple Spark sessions, this interface makes
-     * sure that the original Spark session in the cached DS does not leak into the current active
+     * sure that the original Spark session in the cached DF does not leak into the current active
      * sessions.
      */
-    def getDS: Dataset[A] = {
+    def getDF: DataFrame = {
       if (cached.synchronized(isCached) && cachedDs.isDefined) {
         cachedDs.get.get
       } else {
         Dataset.ofRows(
           spark,
           ds.queryExecution.logical
-        ).as[A](ds.exprEnc)
+        )
       }
     }
+
+    /**
+     * Retrieves the cached RDD as a strongly-typed Dataset.
+     */
+    def getDS: Dataset[A] = getDF.as[A](ds.exprEnc)
   }
 
   /**

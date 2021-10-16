@@ -76,7 +76,9 @@ trait DeltaDDLUsingPathTests extends QueryTest
 
   protected def toQualifiedPath(path: String): String = {
     val hadoopPath = new Path(path)
+    // scalastyle:off deltahadoopconfiguration
     val fs = hadoopPath.getFileSystem(spark.sessionState.newHadoopConf())
+    // scalastyle:on deltahadoopconfiguration
     fs.makeQualified(hadoopPath).toString
   }
 

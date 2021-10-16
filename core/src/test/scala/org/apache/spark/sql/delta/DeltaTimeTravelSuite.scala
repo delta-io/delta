@@ -123,7 +123,12 @@ class DeltaTimeTravelSuite extends QueryTest
       start - 2.seconds, // adjusts to start + 4 ms
       start + 10.seconds)
 
-    val commits = DeltaHistoryManager.getCommits(deltaLog.store, deltaLog.logPath, 0, None)
+    val commits = DeltaHistoryManager.getCommits(
+      deltaLog.store,
+      deltaLog.logPath,
+      0,
+      None,
+      deltaLog.newDeltaHadoopConf())
     assert(commits.map(_.timestamp) === Seq(start,
       start + 1.millis, start + 2.millis, start + 3.millis, start + 4.millis, start + 10.seconds))
   }
