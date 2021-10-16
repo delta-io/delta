@@ -100,10 +100,12 @@ class DeltaTable(object):
     @overload
     def update(
         self, condition: StringOrColumn, set: ColumnMapping
-    ) -> None: ...
+    ) -> None:
+        ...
 
     @overload
-    def update(self, *, set: ColumnMapping) -> None: ...
+    def update(self, *, set: ColumnMapping) -> None:
+        ...
 
     def update(
             self,
@@ -641,12 +643,14 @@ class DeltaMergeBuilder(object):
     @overload
     def whenMatchedUpdate(
         self, condition: OptionalStringOrColumn, set: ColumnMapping
-    ) -> "DeltaMergeBuilder": ...
+    ) -> "DeltaMergeBuilder":
+        ...
 
     @overload
     def whenMatchedUpdate(
         self, *, set: ColumnMapping
-    ) -> "DeltaMergeBuilder": ...
+    ) -> "DeltaMergeBuilder":
+        ...
 
     def whenMatchedUpdate(
             self,
@@ -711,12 +715,14 @@ class DeltaMergeBuilder(object):
     @overload
     def whenNotMatchedInsert(
         self, condition: StringOrColumn, values: ColumnMapping
-    ) -> "DeltaMergeBuilder": ...
+    ) -> "DeltaMergeBuilder":
+        ...
 
     @overload
     def whenNotMatchedInsert(
         self, *, values: ColumnMapping = ...
-    ) -> "DeltaMergeBuilder": ...
+    ) -> "DeltaMergeBuilder":
+        ...
 
     def whenNotMatchedInsert(
             self,
