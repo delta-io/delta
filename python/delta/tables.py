@@ -896,7 +896,7 @@ class DeltaTableBuilder(object):
         self,
         colName: str,
         dataType: Union[str, DataType],
-        nullable: Optional[bool] = None,
+        nullable: bool = True,
         generatedAlwaysAs: Optional[str] = None,
         comment: Optional[str] = None,
     ) -> "DeltaTableBuilder":
