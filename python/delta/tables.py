@@ -44,7 +44,7 @@ class DeltaTable(object):
 
         .. versionadded:: 0.4
     """
-    def __init__(self, spark: SparkSession, jdt: JavaObject):
+    def __init__(self, spark: SparkSession, jdt: "JavaObject"):
         self._spark = spark
         self._jdt = jdt
 
@@ -825,7 +825,7 @@ class DeltaTableBuilder(object):
 
     .. note:: Evolving
     """
-    def __init__(self, spark: SparkSession, jbuilder: JavaObject):
+    def __init__(self, spark: SparkSession, jbuilder: "JavaObject"):
         self._spark = spark
         self._jbuilder = jbuilder
 
