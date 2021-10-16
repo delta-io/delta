@@ -696,7 +696,7 @@ class DeltaMergeBuilder(object):
         return DeltaMergeBuilder(self._spark, new_jbuilder)
 
     @since(0.4)
-    def whenMatchedUpdateAll(
+    def whenMatchedDelete(
         self, condition: OptionalStringOrColumn = None
     ) -> "DeltaMergeBuilder":
         """
