@@ -103,7 +103,7 @@ For example:
 ```
 ./_delta_log/00000000000000000000.json
 ```
-
+Delta files use new-line delimited JSON format, where every action is stored as a single line JSON document.
 A delta file, `n.json`, contains an atomic set of [_actions_](#Actions) that should be applied to the previous table state, `n-1.json`, in order to the construct `n`th snapshot of the table.
 An action changes one aspect of the table's state, for example, adding or removing a file.
 
