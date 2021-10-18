@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ object MimaExcludes {
       ProblemFilters.exclude[Problem]("io.delta.tables.execution.*"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.apply"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.executeHistory"),
+      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.executeVacuum"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.this"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.deltaLog"),
 

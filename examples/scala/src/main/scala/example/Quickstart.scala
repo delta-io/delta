@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,8 @@
 
 package example
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.{SparkConf, SparkContext}
+import org.apache.spark.sql.{SparkSession, SQLContext}
 import io.delta.tables._
 
 import org.apache.spark.sql.functions._
@@ -25,16 +26,20 @@ import java.io.File
 
 object Quickstart {
   def main(args: Array[String]): Unit = {
-    // Create a Spark Session
+
     val spark = SparkSession
       .builder()
       .appName("Quickstart")
       .master("local[*]")
+      .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+      .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
       .getOrCreate()
 
+    val file = new File("/tmp/delta-table")
+    if (file.exists()) FileUtils.deleteDirectory(file)
+    
     // Create a table
     println("Creating a table")
-    val file = new File("/tmp/delta-table")
     val path = file.getCanonicalPath
     var data = spark.range(0, 5)
     data.write.format("delta").save(path)

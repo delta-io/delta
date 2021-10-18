@@ -1,5 +1,5 @@
 #
-# Copyright (2020) The Delta Lake Project Authors.
+# Copyright (2021) The Delta Lake Project Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ import sys
 import tempfile
 import unittest
 
-from pyspark import SparkContext, SparkConf
 from pyspark.sql import SparkSession
 
 
@@ -31,9 +30,7 @@ class DeltaTestCase(unittest.TestCase):
     def setUp(self):
         self._old_sys_path = list(sys.path)
         class_name = self.__class__.__name__
-        self.warehouse_dir = "./spark-warehouse/"
-        if os.path.exists(self.warehouse_dir) and os.path.isdir(self.warehouse_dir):
-            shutil.rmtree(self.warehouse_dir)
+        self.warehouse_dir = tempfile.mkdtemp()
         # Configurations to speed up tests and reduce memory footprint
         self.spark = SparkSession.builder \
             .appName(class_name) \
@@ -46,6 +43,7 @@ class DeltaTestCase(unittest.TestCase):
             .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
             .config("spark.sql.catalog.spark_catalog",
                     "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
+            .config("spark.sql.warehouse.dir", self.warehouse_dir) \
             .getOrCreate()
         self.sc = self.spark.sparkContext
         self.tempPath = tempfile.mkdtemp()
