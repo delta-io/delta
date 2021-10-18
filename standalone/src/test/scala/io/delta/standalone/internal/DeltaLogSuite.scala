@@ -25,6 +25,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.standalone.{DeltaLog, Operation, Snapshot}
 import io.delta.standalone.actions.{JobInfo => JobInfoJ, Metadata => MetadataJ, NotebookInfo => NotebookInfoJ, RemoveFile => RemoveFileJ}
+import io.delta.standalone.exceptions.DeltaStandaloneException
 import io.delta.standalone.internal.actions.{Action, AddFile, Metadata, Protocol, RemoveFile}
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.util.{ConversionUtils, FileNames}
@@ -343,7 +344,7 @@ class DeltaLogSuite extends FunSuite {
       }
 
       // test illegal version
-      assertThrows[IllegalArgumentException] {
+      assertThrows[DeltaStandaloneException] {
         log.getCommitInfoAt(99)
       }
     }

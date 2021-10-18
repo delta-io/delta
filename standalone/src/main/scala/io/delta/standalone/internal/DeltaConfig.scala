@@ -36,7 +36,6 @@ private[internal] case class DeltaConfig[T](
    * If undefined, return defaultValue.
    */
   def fromMetadata(metadata: Metadata): T = {
-    // todo: how to fail gracefully for an invalid value (see validate() below)
     fromString(metadata.configuration.getOrElse(key, defaultValue))
   }
 

@@ -16,6 +16,7 @@
 
 package io.delta.standalone.internal.storage
 
+import io.delta.standalone.exceptions.DeltaStandaloneException
 import io.delta.standalone.storage.LogStore
 import io.delta.standalone.internal.sources.StandaloneHadoopConf
 
@@ -42,8 +43,7 @@ private[internal] trait LogStoreProvider {
         .newInstance(hadoopConf)
         .asInstanceOf[LogStore]
     } else {
-      // TODO proper error?
-      throw new IllegalArgumentException(s"Can't instantiate a LogStore with classname " +
+      throw new DeltaStandaloneException(s"Can't instantiate a LogStore with classname " +
         s"$logStoreClassName.")
     }
   }

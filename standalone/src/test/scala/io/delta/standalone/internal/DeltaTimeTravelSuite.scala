@@ -26,13 +26,13 @@ import scala.concurrent.duration._
 import scala.language.implicitConversions
 
 import io.delta.standalone.{DeltaLog, Snapshot}
+import io.delta.standalone.exceptions.DeltaStandaloneException
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.util.FileNames
 import io.delta.standalone.internal.util.GoldenTableUtils._
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-
 import org.scalatest.FunSuite
 
 /**
@@ -108,13 +108,13 @@ class DeltaTimeTravelSuite extends FunSuite {
         verifySnapshot(log.getSnapshotForVersionAsOf(2), data_files_version_2, 2)
 
         // Error case - version after latest commit
-        val e1 = intercept[IllegalArgumentException] {
+        val e1 = intercept[DeltaStandaloneException] {
           log.getSnapshotForVersionAsOf(3)
         }
         assert(e1.getMessage == DeltaErrors.versionNotExistException(3, 0, 2).getMessage)
 
         // Error case - version before earliest commit
-        val e2 = intercept[IllegalArgumentException] {
+        val e2 = intercept[DeltaStandaloneException] {
           log.getSnapshotForVersionAsOf(-1)
         }
         assert(e2.getMessage == DeltaErrors.versionNotExistException(-1, 0, 2).getMessage)
@@ -155,7 +155,7 @@ class DeltaTimeTravelSuite extends FunSuite {
       new File(logDir, "00000000000000000002.json").setLastModified(start + 40.minutes)
       val log = DeltaLog.forTable(new Configuration(), tablePath)
 
-      val e = intercept[IllegalArgumentException] {
+      val e = intercept[DeltaStandaloneException] {
         log.getSnapshotForTimestampAsOf(start + 50.minutes) // later by 10 mins
       }
 

@@ -16,8 +16,9 @@
 
 package io.delta.standalone.internal.util
 
-import io.delta.standalone.internal.exception.DeltaErrors
+import io.delta.standalone.exceptions.DeltaStandaloneException
 import io.delta.standalone.types.{ArrayType, DataType, MapType, StructField, StructType}
+import io.delta.standalone.internal.exception.DeltaErrors
 
 private[internal] object SchemaUtils {
 
@@ -109,6 +110,10 @@ private[internal] object SchemaUtils {
     columnPath.map(n => if (n.contains(".")) s"`$n`" else n).mkString(".")
 
   private object ParquetSchemaConverter {
+    def checkFieldNames(names: Seq[String]): Unit = {
+      names.foreach(checkFieldName)
+    }
+
     def checkFieldName(name: String): Unit = {
       // ,;{}()\n\t= and space are special characters in Parquet schema
       checkConversionRequirement(
@@ -118,14 +123,9 @@ private[internal] object SchemaUtils {
        """.stripMargin.split("\n").mkString(" ").trim)
     }
 
-    def checkFieldNames(names: Seq[String]): Unit = {
-      names.foreach(checkFieldName)
-    }
-
     def checkConversionRequirement(f: => Boolean, message: String): Unit = {
       if (!f) {
-        // TODO: AnalysisException ?
-        throw new RuntimeException(message)
+        throw new DeltaStandaloneException(message)
       }
     }
   }

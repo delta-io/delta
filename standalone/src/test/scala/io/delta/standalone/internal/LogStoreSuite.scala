@@ -20,17 +20,18 @@ import java.io.File
 
 import scala.collection.JavaConverters._
 
+import io.delta.standalone.actions.{AddFile => AddFileJ, Metadata => MetadataJ}
 import io.delta.standalone.data.{CloseableIterator => CloseableIteratorJ}
 import io.delta.standalone.storage.LogStore
 import io.delta.standalone.internal.sources.StandaloneHadoopConf
 import io.delta.standalone.internal.storage.{HDFSLogStore, LogStoreProvider}
 import io.delta.standalone.internal.util.GoldenTableUtils._
 import io.delta.standalone.internal.util.TestUtils._
+import io.delta.standalone.Operation
 
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileStatus, Path}
+import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
 
-// scalastyle:off funsuite
 import org.scalatest.FunSuite
 
 /**
@@ -43,7 +44,6 @@ import org.scalatest.FunSuite
  * been generated.
  */
 abstract class LogStoreSuiteBase extends FunSuite with LogStoreProvider {
-  // scalastyle:on funsuite
 
   def logStoreClassName: Option[String]
 
@@ -54,6 +54,12 @@ abstract class LogStoreSuiteBase extends FunSuite with LogStoreProvider {
     }
     conf
   }
+
+  /**
+   * Whether the log store being tested should use rename to write checkpoint or not. The following
+   * test is using this method to verify the behavior of `checkpoint`.
+   */
+  protected def shouldUseRenameToWriteCheckpoint: Boolean
 
   test("instantiation through HadoopConf") {
     val expectedClassName = logStoreClassName.getOrElse(LogStoreProvider.defaultLogStoreClassName)
@@ -130,6 +136,44 @@ abstract class LogStoreSuiteBase extends FunSuite with LogStoreProvider {
         .filterNot(_ == "_delta_log").toArray === Nil)
     }
   }
+
+  test("use isPartialWriteVisible to decide whether use rename") {
+    withTempDir { tempDir =>
+      val conf = hadoopConf
+      conf.set("fs.file.impl", classOf[TrackingRenameFileSystem].getName)
+      conf.set("fs.file.impl.disable.cache", "true")
+
+      val log = DeltaLogImpl.forTable(conf, tempDir.getCanonicalPath)
+      val addFile = AddFileJ.builder("/path", Map.empty[String, String].asJava, 100L,
+        System.currentTimeMillis(), true).build()
+      val metadata = MetadataJ.builder().build()
+
+      log.startTransaction().commit((metadata :: addFile :: Nil).asJava,
+        new Operation(Operation.Name.MANUAL_UPDATE), "engineInfo")
+
+      TrackingRenameFileSystem.numOfRename = 0
+
+      log.checkpoint()
+
+      val expectedNumOfRename = if (shouldUseRenameToWriteCheckpoint) 1 else 0
+      assert(TrackingRenameFileSystem.numOfRename === expectedNumOfRename)
+    }
+  }
+}
+
+/**
+ * A file system allowing to track how many times `rename` is called.
+ * `TrackingRenameFileSystem.numOfRename` should be reset to 0 before starting to trace.
+ */
+class TrackingRenameFileSystem extends RawLocalFileSystem {
+  override def rename(src: Path, dst: Path): Boolean = {
+    TrackingRenameFileSystem.numOfRename += 1
+    super.rename(src, dst)
+  }
+}
+
+object TrackingRenameFileSystem {
+  @volatile var numOfRename = 0
 }
 
 /**
@@ -137,6 +181,7 @@ abstract class LogStoreSuiteBase extends FunSuite with LogStoreProvider {
  */
 class HDFSLogStoreSuite extends LogStoreSuiteBase {
   override def logStoreClassName: Option[String] = Some(classOf[HDFSLogStore].getName)
+  override protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 
 /**
@@ -145,6 +190,7 @@ class HDFSLogStoreSuite extends LogStoreSuiteBase {
  */
 class DefaultLogStoreSuite extends LogStoreSuiteBase {
   override def logStoreClassName: Option[String] = None
+  override protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 
 /**
@@ -153,11 +199,9 @@ class DefaultLogStoreSuite extends LogStoreSuiteBase {
 class UserDefinedLogStoreSuite extends LogStoreSuiteBase {
   override def logStoreClassName: Option[String] = Some(classOf[UserDefinedLogStore].getName)
 
-  override def hadoopConf: Configuration = {
-    val conf = new Configuration()
-    conf.set(StandaloneHadoopConf.LOG_STORE_CLASS_KEY, classOf[UserDefinedLogStore].getName)
-    conf
-  }
+  // In [[UserDefinedLogStore]], we purposefully set isPartialWriteVisible to false, so this
+  // should be false as well
+  override protected def shouldUseRenameToWriteCheckpoint: Boolean = false
 }
 
 /**
@@ -194,6 +238,8 @@ class UserDefinedLogStore(override val initHadoopConf: Configuration)
   }
 
   override def isPartialWriteVisible(path: Path, hadoopConf: Configuration): java.lang.Boolean = {
-    mockImpl.isPartialWriteVisible(path, hadoopConf)
+    // mockImpl.isPartialWriteVisible is true, but let's add some test diversity for better branch
+    // coverage and return false instead
+    false
   }
 }

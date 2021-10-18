@@ -724,7 +724,4 @@ class OptimisticTransactionLegacySuite extends FunSuite {
     }
   }
 
-  // TODO: test Checkpoint > partialWriteVisible (==> useRename)
-
-  // TODO: test Checkpoint > !partialWriteVisible (==> !useRename)
 }

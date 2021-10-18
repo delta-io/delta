@@ -65,7 +65,7 @@ private[internal] class HDFSLogStore(override val initHadoopConf: Configuration)
   }
 
   override def isPartialWriteVisible(
-      path: Path, hadoopConf: Configuration): java.lang.Boolean = false
+      path: Path, hadoopConf: Configuration): java.lang.Boolean = true
 
   private def writeInternal(
       path: Path,

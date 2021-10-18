@@ -32,7 +32,38 @@ public final class Operation {
         /** Recorded when converting a table into a Delta table. */
         CONVERT("CONVERT"),
 
-        // TODO: the rest
+        /** Recorded when a merge operation is committed to the table. */
+        MERGE("MERGE"),
+
+        /** Recorded when an update operation is committed to the table. */
+        UPDATE("UPDATE"),
+
+        /** Recorded when the table is created. */
+        CREATE_TABLE("CREATE TABLE"),
+
+        /** Recorded when the table is replaced. */
+        REPLACE_TABLE("REPLACE TABLE"),
+
+        /** Recorded when the table properties are set. */
+        SET_TABLE_PROPERTIES("SET TBLPROPERTIES"),
+
+        /** Recorded when the table properties are unset. */
+        UNSET_TABLE_PROPERTIES("UNSET TBLPROPERTIES"),
+
+        /** Recorded when columns are added. */
+        ADD_COLUMNS("ADD COLUMNS"),
+
+        /** Recorded when columns are changed. */
+        CHANGE_COLUMN("CHANGE COLUMN"),
+
+        /** Recorded when columns are replaced. */
+        REPLACE_COLUMNS("REPLACE COLUMNS"),
+
+        /** Recorded when the table protocol is upgraded. */
+        UPGRADE_PROTOCOL("UPGRADE PROTOCOL"),
+
+        /** Recorded when the table schema is upgraded. */
+        UPGRADE_SCHEMA("UPDATE SCHEMA"),
 
         MANUAL_UPDATE("Manual Update");
 
@@ -85,15 +116,14 @@ public final class Operation {
      * @return operation parameters
      */
     public Map<String, Object> getParameters() {
-        // TODO: be consistent with AddFile getter ternary
-        return null == parameters ? null : Collections.unmodifiableMap(parameters);
+        return parameters != null ? Collections.unmodifiableMap(parameters) : null;
     }
 
     /**
      * @return operation metrics
      */
     public Map<String, String> getOperationMetrics() {
-        return null == operationMetrics ? null : Collections.unmodifiableMap(operationMetrics);
+        return operationMetrics != null ? Collections.unmodifiableMap(operationMetrics) : null;
     }
 
     /**
