@@ -28,7 +28,8 @@ import org.apache.spark.sql.catalyst.plans.logical.Join
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
 
-class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
+class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
+  with DeltaTestUtilsForTempViews {
 
   import testImplicits._
 
@@ -697,7 +698,12 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
 
           if (result != null) {
             execMerge()
-            checkAnswer(readDeltaTable(pathOrName), spark.read.json(strToJsonSeq(result).toDS))
+            val expectedDf = if (targetSchema != null) {
+              spark.read.schema(targetSchema).json(strToJsonSeq(result).toDS)
+            } else {
+              spark.read.json(strToJsonSeq(result).toDS)
+            }
+            checkAnswer(readDeltaTable(pathOrName), expectedDf)
           } else {
             val e = intercept[AnalysisException] {
               execMerge()
@@ -747,5 +753,28 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
     if (nameOrPath.startsWith("delta.`")) {
       nameOrPath.stripPrefix("delta.`").stripSuffix("`")
     } else nameOrPath
+  }
+
+  // Scala API won't hit the resolution exception.
+  testWithTempView("Update specific column works fine in temp views") { isSQLTempView =>
+    withJsonData(
+      """{ "key": "A", "value": { "a": { "x": 1, "y": 2 } } }""",
+      """{ "key": "A", "value": { "a": { "x": 2, "y": 1 } } }"""
+    ) { (sourceName, targetName) =>
+      createTempViewFromTable(targetName, isSQLTempView)
+      val fieldNames = spark.table(targetName).schema.fieldNames
+      val fieldNamesStr = fieldNames.mkString("`", "`, `", "`")
+      executeMerge(
+        target = "v t",
+        source = s"$sourceName s",
+        condition = "s.key = t.key",
+        update = "value.a.x = s.value.a.x",
+        insert = s"($fieldNamesStr) VALUES ($fieldNamesStr)")
+      checkAnswer(
+        spark.read.format("delta").table("v"),
+        spark.read.json(
+          strToJsonSeq("""{ "key": "A", "value": { "a": { "x": 1, "y": 1 } } }""").toDS)
+      )
+    }
   }
 }

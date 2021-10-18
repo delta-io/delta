@@ -162,7 +162,7 @@ trait DeltaCommand extends DeltaLogging {
       basePath: Path,
       filePath: String,
       nameToAddFileMap: Map[String, AddFile]): AddFile = {
-    val absolutePath = DeltaFileOperations.absolutePath(basePath.toUri.toString, filePath).toString
+    val absolutePath = DeltaFileOperations.absolutePath(basePath.toString, filePath).toString
     nameToAddFileMap.getOrElse(absolutePath, {
       throw new IllegalStateException(s"File ($absolutePath) to be rewritten not found " +
         s"among candidate files:\n${nameToAddFileMap.keys.mkString("\n")}")
@@ -271,7 +271,8 @@ trait DeltaCommand extends DeltaLogging {
         isolationLevel = Some(Serializable.toString),
         isBlindAppend = Some(false),
         Some(metrics),
-        userMetadata = txn.getUserMetadata(op))
+        userMetadata = txn.getUserMetadata(op),
+        tags = None)
 
       val extraActions = Seq(commitInfo, metadata)
       // We don't expect commits to have more than 2 billion actions
@@ -298,9 +299,13 @@ trait DeltaCommand extends DeltaLogging {
         action
       }
       if (txn.readVersion < 0) {
-        deltaLog.fs.mkdirs(deltaLog.logPath)
+        deltaLog.createLogDirectory()
       }
-      deltaLog.store.write(deltaFile(deltaLog.logPath, attemptVersion), allActions.map(_.json))
+      deltaLog.store.write(
+        deltaFile(deltaLog.logPath, attemptVersion),
+        allActions.map(_.json),
+        overwrite = false,
+        deltaLog.newDeltaHadoopConf())
 
       spark.sessionState.conf.setConf(
         DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,
@@ -340,7 +345,9 @@ trait DeltaCommand extends DeltaLogging {
           data = Map("exception" -> Utils.exceptionString(e), "operation" -> op.name))
         // Actions of a commit which went in before ours
         val deltaLog = txn.deltaLog
-        val logs = deltaLog.store.readAsIterator(deltaFile(deltaLog.logPath, attemptVersion))
+        val logs = deltaLog.store.readAsIterator(
+          deltaFile(deltaLog.logPath, attemptVersion),
+          deltaLog.newDeltaHadoopConf())
         try {
           val winningCommitActions = logs.map(Action.fromJson)
           val commitInfo = winningCommitActions.collectFirst { case a: CommitInfo => a }

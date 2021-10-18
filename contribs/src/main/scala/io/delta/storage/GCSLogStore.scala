@@ -28,6 +28,7 @@ import org.apache.hadoop.fs._
 import org.apache.spark.SparkConf
 import org.apache.spark.annotation.Unstable
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.delta.util.DeltaFileOperations
 
 /**
  * :: Unstable ::
@@ -53,13 +54,21 @@ import org.apache.spark.internal.Logging
  *       See https://docs.delta.io/latest/delta-storage.html for details.
  */
 @Unstable
-class GCSLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
-  extends HadoopFileSystemLogStore(sparkConf, defaultHadoopConf) with Logging {
+class GCSLogStore(sparkConf: SparkConf, initHadoopConf: Configuration)
+  extends HadoopFileSystemLogStore(sparkConf, initHadoopConf) with Logging {
 
   val preconditionFailedExceptionMessage = "412 Precondition Failed"
 
-  def write(path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit = {
-    val fs = path.getFileSystem(getHadoopConfiguration)
+  override def write(path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit = {
+    write(path, actions, overwrite, getHadoopConfiguration)
+  }
+
+  override def write(
+      path: Path,
+      actions: Iterator[String],
+      overwrite: Boolean,
+      hadoopConf: Configuration): Unit = {
+    val fs = path.getFileSystem(hadoopConf)
 
     // This is needed for the tests to throw error with local file system.
     if (fs.isInstanceOf[LocalFileSystem] && !overwrite && fs.exists(path)) {
@@ -67,14 +76,19 @@ class GCSLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
     }
 
     try {
-      // If overwrite=false and path already exists, gcs-connector will throw
-      // org.apache.hadoop.fs.FileAlreadyExistsException after fs.create is invoked.
-      // This should be mapped to java.nio.file.FileAlreadyExistsException.
-      val stream = fs.create(path, overwrite)
-      try {
-        actions.map(_ + "\n").map(_.getBytes(UTF_8)).foreach(stream.write)
-      } finally {
-        stream.close()
+      // GCS may upload an incomplete file when the current thread is interrupted, hence we move
+      // the write to a new thread so that the write cannot be interrupted.
+      // TODO Remove this hack when the GCS Hadoop connector fixes the issue.
+      DeltaFileOperations.runInNewThread("delta-gcs-logstore-write") {
+        // If overwrite=false and path already exists, gcs-connector will throw
+        // org.apache.hadoop.fs.FileAlreadyExistsException after fs.create is invoked.
+        // This should be mapped to java.nio.file.FileAlreadyExistsException.
+        val stream = fs.create(path, overwrite)
+        try {
+          actions.map(_ + "\n").map(_.getBytes(UTF_8)).foreach(stream.write)
+        } finally {
+          stream.close()
+        }
       }
     } catch {
       case e: org.apache.hadoop.fs.FileAlreadyExistsException =>
@@ -103,4 +117,6 @@ class GCSLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
   override def invalidateCache(): Unit = {}
 
   override def isPartialWriteVisible(path: Path): Boolean = false
+
+  override def isPartialWriteVisible(path: Path, hadoopConf: Configuration): Boolean = false
 }

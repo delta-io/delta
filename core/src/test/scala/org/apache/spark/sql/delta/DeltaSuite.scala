@@ -144,7 +144,9 @@ class DeltaSuite extends QueryTest
     Seq(1).toDF().write.format("delta").save(tempDir.toString)
 
     val df = spark.read.format("delta").load(tempDir.toString)
+    // scalastyle:off deltahadoopconfiguration
     val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
+    // scalastyle:on deltahadoopconfiguration
     fs.delete(path, true)
 
     val e = intercept[AnalysisException] {
@@ -167,7 +169,9 @@ class DeltaSuite extends QueryTest
     val path = new Path(tempDir.getCanonicalPath)
     Seq(1).toDF().write.format("delta").save(tempDir.toString)
 
+    // scalastyle:off deltahadoopconfiguration
     val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
+    // scalastyle:on deltahadoopconfiguration
     fs.delete(path, true)
 
     val e = intercept[AnalysisException] {
@@ -397,6 +401,38 @@ class DeltaSuite extends QueryTest
                   Seq(5, 6, 7, 8).toDF()
                     .withColumn("is_odd", $"value" % 2 =!= 0)
                     .withColumn("is_even", $"value" % 2 === 0))
+
+                // nothing to be replaced because the condition is false.
+                Seq(10, 12).toDF()
+                  .withColumn("is_odd", $"value" % 2 =!= 0)
+                  .withColumn("is_even", $"value" % 2 === 0)
+                  .write
+                  .format("delta")
+                  .mode("overwrite")
+                  .option(DeltaOptions.REPLACE_WHERE_OPTION, "1 = 2")
+                  .save(dir.toString)
+                checkAnswer(
+                  data,
+                  Seq(5, 6, 7, 8, 10, 12).toDF()
+                    .withColumn("is_odd", $"value" % 2 =!= 0)
+                    .withColumn("is_even", $"value" % 2 === 0)
+                )
+
+                // replace the whole thing because the condition is true.
+                Seq(10, 12).toDF()
+                  .withColumn("is_odd", $"value" % 2 =!= 0)
+                  .withColumn("is_even", $"value" % 2 === 0)
+                  .write
+                  .format("delta")
+                  .mode("overwrite")
+                  .option(DeltaOptions.REPLACE_WHERE_OPTION, "1 = 1")
+                  .save(dir.toString)
+                checkAnswer(
+                  data,
+                  Seq(10, 12).toDF()
+                    .withColumn("is_odd", $"value" % 2 =!= 0)
+                    .withColumn("is_even", $"value" % 2 === 0)
+                )
               }
             }
           }
@@ -425,6 +461,31 @@ class DeltaSuite extends QueryTest
       checkAnswer(
         data,
         Seq((1, 5, 9), (2, 4, 6)).toDF("a", "b", "c"))
+    }
+  }
+
+  test("replaceWhere with constraint check disabled") {
+    withSQLConf(DeltaSQLConf.REPLACEWHERE_CONSTRAINT_CHECK_ENABLED.key -> "false") {
+      withTempDir { dir =>
+        Seq(1, 2, 3, 4).toDF()
+          .withColumn("is_odd", $"value" % 2 =!= 0)
+          .write
+          .format("delta")
+          .partitionBy("is_odd")
+          .save(dir.toString)
+
+        def data: DataFrame = spark.read.format("delta").load(dir.toString)
+
+        Seq(6).toDF()
+          .withColumn("is_odd", $"value" % 2 =!= 0)
+          .write
+          .format("delta")
+          .mode("overwrite")
+          .option(DeltaOptions.REPLACE_WHERE_OPTION, "is_odd = true")
+          .save(dir.toString)
+
+        checkAnswer(data, Seq(2, 4, 6).toDF().withColumn("is_odd", $"value" % 2 =!= 0))
+      }
     }
   }
 
@@ -959,7 +1020,7 @@ class DeltaSuite extends QueryTest
       spark.range(10).write.format("delta").save(tempDir.toString)
       val deltaLog = DeltaLog.forTable(spark, tempDir)
       val numParts = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS).get
-      assert(deltaLog.snapshot.state.rdd.getNumPartitions == numParts)
+      assert(deltaLog.snapshot.stateDS.rdd.getNumPartitions == numParts)
     }
   }
 
@@ -978,7 +1039,7 @@ class DeltaSuite extends QueryTest
       withSQLConf(("spark.databricks.delta.snapshotPartitions", "410")) {
         spark.range(10).write.format("delta").save(tempDir.toString)
         val deltaLog = DeltaLog.forTable(spark, tempDir)
-        assert(deltaLog.snapshot.state.rdd.getNumPartitions == 410)
+        assert(deltaLog.snapshot.stateDS.rdd.getNumPartitions == 410)
       }
     }
   }
@@ -1014,7 +1075,7 @@ class DeltaSuite extends QueryTest
         assert(filesToDelete.size == 1)
         filesToDelete.foreach { f =>
           val deleted = tryDeleteNonRecursive(
-            tempDirPath.getFileSystem(spark.sessionState.newHadoopConf()),
+            tempDirPath.getFileSystem(deltaLog.newDeltaHadoopConf()),
             new Path(tempDirPath, f))
           assert(deleted)
         }
@@ -1044,7 +1105,7 @@ class DeltaSuite extends QueryTest
 
         val filesToCorrupt = inputFiles.filter(_.split("/").last.startsWith("part-00001"))
         assert(filesToCorrupt.size == 1)
-        val fs = tempDirPath.getFileSystem(spark.sessionState.newHadoopConf())
+        val fs = tempDirPath.getFileSystem(deltaLog.newDeltaHadoopConf())
         filesToCorrupt.foreach { f =>
           val filePath = new Path(tempDirPath, f)
           fs.create(filePath, true).close()
@@ -1073,7 +1134,7 @@ class DeltaSuite extends QueryTest
         val filesToDelete = inputFiles.take(4)
         filesToDelete.foreach { f =>
           val deleted = tryDeleteNonRecursive(
-            tempDirPath.getFileSystem(spark.sessionState.newHadoopConf()),
+            tempDirPath.getFileSystem(deltaLog.newDeltaHadoopConf()),
             new Path(tempDirPath, f))
           assert(deleted)
         }
@@ -1100,7 +1161,7 @@ class DeltaSuite extends QueryTest
       val filesToDelete = inputFiles.take(4)
       filesToDelete.foreach { f =>
         val deleted = tryDeleteNonRecursive(
-          tempDirPath.getFileSystem(spark.sessionState.newHadoopConf()),
+          tempDirPath.getFileSystem(deltaLog.newDeltaHadoopConf()),
           new Path(tempDirPath, f))
         assert(deleted)
       }
@@ -1146,6 +1207,29 @@ class DeltaSuite extends QueryTest
       checkAnswer(
         spark.read.format("delta").load(basePath.getCanonicalPath),
         spark.range(10).toDF()
+      )
+    }
+  }
+
+  test("get touched files for update, delete and merge") {
+    withTempDir { dir =>
+      val directory = new File(dir, "test with space")
+      val df = Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value")
+      val writer = df.write.format("delta").mode("append")
+      writer.save(directory.getCanonicalPath)
+      spark.sql(s"UPDATE delta.`${directory.getCanonicalPath}` SET value = value + 10")
+      spark.sql(s"DELETE FROM delta.`${directory.getCanonicalPath}` WHERE key = 4")
+      Seq((3, 30)).toDF("key", "value").createOrReplaceTempView("inbound")
+      spark.sql(s"""|MERGE INTO delta.`${directory.getCanonicalPath}` AS base
+                       |USING inbound
+                       |ON base.key = inbound.key
+                       |WHEN MATCHED THEN UPDATE SET base.value =
+                       |base.value+inbound.value""".stripMargin)
+      spark.sql(s"UPDATE delta.`${directory.getCanonicalPath}` SET value = 40 WHERE key = 1")
+      spark.sql(s"DELETE FROM delta.`${directory.getCanonicalPath}` WHERE key = 2")
+      checkAnswer(
+        spark.read.format("delta").load(directory.getCanonicalPath),
+        Seq((1, 40), (3, 70)).toDF("key", "value")
       )
     }
   }
@@ -1229,7 +1313,7 @@ class DeltaSuite extends QueryTest
   test("SC-24982 - initial snapshot has zero partitions") {
     withTempDir { tempDir =>
       val deltaLog = DeltaLog.forTable(spark, tempDir)
-      assert(deltaLog.snapshot.state.rdd.getNumPartitions == 0)
+      assert(deltaLog.snapshot.stateDS.rdd.getNumPartitions == 0)
     }
   }
 
@@ -1247,7 +1331,7 @@ class DeltaSuite extends QueryTest
     sparkContext.addSparkListener(listener)
     try {
       withTempDir { tempDir =>
-        val files = DeltaLog.forTable(spark, tempDir).snapshot.state.collect()
+        val files = DeltaLog.forTable(spark, tempDir).snapshot.stateDS.collect()
         assert(files.isEmpty)
       }
       sparkContext.listenerBus.waitUntilEmpty(15000)
@@ -1257,8 +1341,8 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  def lastCommitInfo(dir: String): CommitInfo =
-    io.delta.tables.DeltaTable.forPath(spark, dir).history(1).as[CommitInfo].head
+  def lastDeltaHistory(dir: String): DeltaHistory =
+    io.delta.tables.DeltaTable.forPath(spark, dir).history(1).as[DeltaHistory].head
 
   test("history includes user-defined metadata for DataFrame.Write API") {
     val tempDir = Utils.createTempDir().toString
@@ -1267,12 +1351,12 @@ class DeltaSuite extends QueryTest
     df.option("userMetadata", "meta1")
       .save(tempDir)
 
-    assert(lastCommitInfo(tempDir).userMetadata === Some("meta1"))
+    assert(lastDeltaHistory(tempDir).userMetadata === Some("meta1"))
 
     df.option("userMetadata", "meta2")
       .save(tempDir)
 
-    assert(lastCommitInfo(tempDir).userMetadata === Some("meta2"))
+    assert(lastDeltaHistory(tempDir).userMetadata === Some("meta2"))
   }
 
   test("history includes user-defined metadata for SQL API") {
@@ -1283,17 +1367,17 @@ class DeltaSuite extends QueryTest
       withSQLConf(DeltaSQLConf.DELTA_USER_METADATA.key -> "meta1") {
         spark.sql(s"CREATE TABLE $tblName (data STRING) USING delta LOCATION '$tempDir';")
       }
-      assert(lastCommitInfo(tempDir).userMetadata === Some("meta1"))
+      assert(lastDeltaHistory(tempDir).userMetadata === Some("meta1"))
 
       withSQLConf(DeltaSQLConf.DELTA_USER_METADATA.key -> "meta2") {
         spark.sql(s"INSERT INTO $tblName VALUES ('test');")
       }
-      assert(lastCommitInfo(tempDir).userMetadata === Some("meta2"))
+      assert(lastDeltaHistory(tempDir).userMetadata === Some("meta2"))
 
       withSQLConf(DeltaSQLConf.DELTA_USER_METADATA.key -> "meta3") {
         spark.sql(s"INSERT INTO $tblName VALUES ('test2');")
       }
-      assert(lastCommitInfo(tempDir).userMetadata === Some("meta3"))
+      assert(lastDeltaHistory(tempDir).userMetadata === Some("meta3"))
     }
   }
 
@@ -1304,13 +1388,13 @@ class DeltaSuite extends QueryTest
     withSQLConf(DeltaSQLConf.DELTA_USER_METADATA.key -> "meta1") {
       df.save(tempDir)
     }
-    assert(lastCommitInfo(tempDir).userMetadata === Some("meta1"))
+    assert(lastDeltaHistory(tempDir).userMetadata === Some("meta1"))
 
     withSQLConf(DeltaSQLConf.DELTA_USER_METADATA.key -> "meta2") {
       df.option("userMetadata", "optionMeta2")
         .save(tempDir)
     }
-    assert(lastCommitInfo(tempDir).userMetadata === Some("optionMeta2"))
+    assert(lastDeltaHistory(tempDir).userMetadata === Some("optionMeta2"))
   }
 
   test("history includes user-defined metadata for SQL + DF.Write API") {
@@ -1322,20 +1406,20 @@ class DeltaSuite extends QueryTest
       df.option("userMetadata", "optionMeta1")
         .save(tempDir)
     }
-    assert(lastCommitInfo(tempDir).userMetadata === Some("optionMeta1"))
+    assert(lastDeltaHistory(tempDir).userMetadata === Some("optionMeta1"))
 
     withSQLConf(DeltaSQLConf.DELTA_USER_METADATA.key -> "meta2") {
       df.option("userMetadata", "optionMeta2")
         .save(tempDir)
     }
-    assert(lastCommitInfo(tempDir).userMetadata === Some("optionMeta2"))
+    assert(lastDeltaHistory(tempDir).userMetadata === Some("optionMeta2"))
   }
 
   test("SC-77958 - history includes user-defined metadata for createOrReplace") {
     withTable("tbl") {
       spark.range(10).writeTo("tbl").using("delta").option("userMetadata", "meta").createOrReplace()
 
-      val history = sql("DESCRIBE HISTORY tbl LIMIT 1").as[CommitInfo].head()
+      val history = sql("DESCRIBE HISTORY tbl LIMIT 1").as[DeltaHistory].head()
       assert(history.userMetadata === Some("meta"))
     }
   }
@@ -1345,7 +1429,7 @@ class DeltaSuite extends QueryTest
       spark.range(10).write.format("delta").option("userMetadata", "meta1")
         .mode("overwrite").saveAsTable("tbl")
 
-      val history = sql("DESCRIBE HISTORY tbl LIMIT 1").as[CommitInfo].head()
+      val history = sql("DESCRIBE HISTORY tbl LIMIT 1").as[DeltaHistory].head()
       assert(history.userMetadata === Some("meta1"))
     }
   }
@@ -1452,7 +1536,7 @@ class DeltaSuite extends QueryTest
     withTable("tbl") {
       sql("CREATE TABLE tbl(id INT) USING DELTA")
       val ex = intercept[AnalysisException] {
-        sql(s"ALTER TABLE tbl SET TBLPROPERTIES (${DeltaConfigs.CHANGE_DATA_CAPTURE.key} = true)")
+        sql(s"ALTER TABLE tbl SET TBLPROPERTIES (${DeltaConfigs.CHANGE_DATA_FEED.key} = true)")
       }
 
       assert(ex.getMessage.contains("Configuration delta.enableChangeDataFeed cannot be set"))
@@ -1469,7 +1553,9 @@ class DeltaSuite extends QueryTest
       log.store.write(
         deltaFile(log.logPath, 1),
         Iterator(log.snapshot.metadata.copy(
-          configuration = Map(DeltaConfigs.CHANGE_DATA_CAPTURE.key -> "true")).json))
+          configuration = Map(DeltaConfigs.CHANGE_DATA_FEED.key -> "true")).json),
+        overwrite = false,
+        log.newDeltaHadoopConf())
       log.update()
 
       val ex = intercept[AnalysisException] {
@@ -1486,6 +1572,7 @@ class DeltaSuite extends QueryTest
     spark.range(10, 20).coalesce(1).write.format("delta").mode("append").save(tempDir)
 
     val deltaLog = DeltaLog.forTable(spark, tempDir)
+    val hadoopConf = deltaLog.newDeltaHadoopConf()
     val snapshot = deltaLog.snapshot
     val files = snapshot.allFiles.collect()
 
@@ -1497,11 +1584,15 @@ class DeltaSuite extends QueryTest
     ) ++ files.map(_.remove)
     deltaLog.store.write(
       FileNames.deltaFile(deltaLog.logPath, snapshot.version + 1),
-      actions.map(_.json).iterator)
+      actions.map(_.json).iterator,
+      overwrite = false,
+      hadoopConf)
 
     deltaLog.store.write(
       FileNames.deltaFile(deltaLog.logPath, snapshot.version + 2),
-      files.take(1).map(_.json).iterator)
+      files.take(1).map(_.json).iterator,
+      overwrite = false,
+      hadoopConf)
 
     // Since the column `data` doesn't exist in our old files, we read it as null.
     checkAnswer(

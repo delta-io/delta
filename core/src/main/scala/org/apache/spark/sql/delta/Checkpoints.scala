@@ -136,7 +136,11 @@ trait Checkpoints extends DeltaLogging {
       }
       val checkpointMetaData = writeCheckpointFiles(snapshotToCheckpoint)
       val json = JsonUtils.toJson(checkpointMetaData)
-      store.write(LAST_CHECKPOINT, Iterator(json), overwrite = true)
+      store.write(
+        LAST_CHECKPOINT,
+        Iterator(json),
+        overwrite = true,
+        newDeltaHadoopConf())
 
       doLogCleanup()
     }
@@ -153,7 +157,7 @@ trait Checkpoints extends DeltaLogging {
   /** Loads the checkpoint metadata from the _last_checkpoint file. */
   private def loadMetadataFromFile(tries: Int): Option[CheckpointMetaData] = {
     try {
-      val checkpointMetadataJson = store.read(LAST_CHECKPOINT)
+      val checkpointMetadataJson = store.read(LAST_CHECKPOINT, newDeltaHadoopConf())
       val checkpointMetadata =
         JsonUtils.mapper.readValue[CheckpointMetaData](checkpointMetadataJson.head)
       Some(checkpointMetadata)
@@ -187,8 +191,11 @@ trait Checkpoints extends DeltaLogging {
    */
   protected def findLastCompleteCheckpoint(cv: CheckpointInstance): Option[CheckpointInstance] = {
     var cur = math.max(cv.version, 0L)
+    val hadoopConf = newDeltaHadoopConf()
     while (cur >= 0) {
-      val checkpoints = store.listFrom(checkpointPrefix(logPath, math.max(0, cur - 1000)))
+      val checkpoints = store.listFrom(
+            checkpointPrefix(logPath, math.max(0, cur - 1000)),
+            hadoopConf)
           .map(_.getPath)
           .filter(isCheckpointFile)
           .map(CheckpointInstance(_))
@@ -233,15 +240,17 @@ object Checkpoints extends DeltaLogging {
       snapshot: Snapshot): CheckpointMetaData = {
     import SingleAction._
 
+    val hadoopConf = deltaLog.newDeltaHadoopConf()
+
     // The writing of checkpoints doesn't go through log store, so we need to check with the
     // log store and decide whether to use rename.
-    val useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath)
+    val useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath, hadoopConf)
 
     val checkpointSize = spark.sparkContext.longAccumulator("checkpointSize")
     val numOfFiles = spark.sparkContext.longAccumulator("numOfFiles")
     // Use the string in the closure as Path is not Serializable.
     val path = checkpointFileSingular(snapshot.path, snapshot.version).toString
-    val base = snapshot.state
+    val base = snapshot.stateDS
       .repartition(1)
       .map { action =>
         if (action.add != null) {
@@ -255,7 +264,7 @@ object Checkpoints extends DeltaLogging {
 
     val (factory, serConf) = {
       val format = new ParquetFileFormat()
-      val job = Job.getInstance()
+      val job = Job.getInstance(hadoopConf)
       (format.prepareWrite(spark, job, Map.empty, schema),
         new SerializableConfiguration(job.getConfiguration))
     }
@@ -306,7 +315,7 @@ object Checkpoints extends DeltaLogging {
     if (useRename) {
       val src = new Path(writtenPath)
       val dest = new Path(path)
-      val fs = dest.getFileSystem(spark.sessionState.newHadoopConf)
+      val fs = dest.getFileSystem(hadoopConf)
       var renameDone = false
       try {
         if (fs.rename(src, dest)) {
@@ -384,10 +393,10 @@ object CheckpointV2 {
    */
   def extractPartitionValues(partitionSchema: StructType): Option[Column] = {
     val partitionValues = partitionSchema.map { field =>
-      val colName = field.name
-      new Column(UnresolvedAttribute("add" :: "partitionValues" :: colName :: Nil).name)
+      val physicalName = DeltaColumnMapping.getPhysicalName(field)
+      new Column(UnresolvedAttribute("add" :: "partitionValues" :: physicalName :: Nil))
         .cast(field.dataType)
-        .as(colName)
+        .as(physicalName)
     }
     if (partitionValues.isEmpty) None else Some(struct(partitionValues: _*).as(PARTITIONS_COL_NAME))
   }

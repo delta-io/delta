@@ -34,6 +34,7 @@ import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStoreProvider
 import com.google.common.cache.{CacheBuilder, RemovalNotification}
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql._
@@ -73,10 +74,19 @@ class DeltaLog private(
 
   protected def spark = SparkSession.active
 
+  /**
+   * Returns the Hadoop [[Configuration]] object which can be used to access the file system. All
+   * Delta code should use this method to create the Hadoop [[Configuration]] object, so that the
+   * hadoop file system configurations specified in DataFrame options will come into effect.
+   *
+   * TODO(SC-85267) Add the DataFrame options to the Hadoop [[Configuration]] object.
+   */
+  // scalastyle:off deltahadoopconfiguration
+  final def newDeltaHadoopConf(): Configuration = spark.sessionState.newHadoopConf
+  // scalastyle:on deltahadoopconfiguration
+
   /** Used to read and write physical log files and checkpoints. */
   lazy val store = createLogStore(spark)
-  /** Direct access to the underlying storage system. */
-  private[delta] lazy val fs = logPath.getFileSystem(spark.sessionState.newHadoopConf)
 
   /** Use ReentrantLock to allow us to call `lockInterruptibly` */
   protected val deltaLogLock = new ReentrantLock()
@@ -220,7 +230,8 @@ class DeltaLog private(
   def getChanges(
       startVersion: Long,
       failOnDataLoss: Boolean = false): Iterator[(Long, Seq[Action])] = {
-    val deltas = store.listFrom(deltaFile(logPath, startVersion))
+    val hadoopConf = newDeltaHadoopConf()
+    val deltas = store.listFrom(deltaFile(logPath, startVersion), hadoopConf)
       .filter(f => isDeltaFile(f.getPath))
     // Subtract 1 to ensure that we have the same check for the inclusive startVersion
     var lastSeenVersion = startVersion - 1
@@ -231,7 +242,7 @@ class DeltaLog private(
         throw DeltaErrors.failOnDataLossException(lastSeenVersion + 1, version)
       }
       lastSeenVersion = version
-      (version, store.read(p).map(Action.fromJson))
+      (version, store.read(p, hadoopConf).map(Action.fromJson))
     }
   }
 
@@ -283,11 +294,20 @@ class DeltaLog private(
 
   /** Creates the log directory if it does not exist. */
   def ensureLogDirectoryExist(): Unit = {
+    val fs = logPath.getFileSystem(newDeltaHadoopConf())
     if (!fs.exists(logPath)) {
       if (!fs.mkdirs(logPath)) {
         throw new IOException(s"Cannot create $logPath")
       }
     }
+  }
+
+  /**
+   * Create the log directory. Unlike `ensureLogDirectoryExist`, this method doesn't check whether
+   * the log directory exists and it will ignore the return value of `mkdirs`.
+   */
+  def createLogDirectory(): Unit = {
+    logPath.getFileSystem(newDeltaHadoopConf()).mkdirs(logPath)
   }
 
   /* ------------  *
@@ -308,8 +328,11 @@ class DeltaLog private(
 
     val relation = HadoopFsRelation(
       fileIndex,
-      partitionSchema = snapshot.metadata.partitionSchema,
-      dataSchema = GeneratedColumn.removeGenerationExpressions(snapshot.metadata.schema),
+      partitionSchema =
+        DeltaColumnMapping.dropColumnMappingMetadata(snapshot.metadata.partitionSchema),
+      dataSchema =
+        DeltaColumnMapping.dropColumnMappingMetadata(
+          GeneratedColumn.removeGenerationExpressions(snapshot.metadata.schema)),
       bucketSpec = None,
       snapshot.fileFormat,
       snapshot.metadata.format.options)(spark)
@@ -341,10 +364,11 @@ class DeltaLog private(
     var bucketSpec: Option[BucketSpec] = None
     new HadoopFsRelation(
       fileIndex,
-      partitionSchema = snapshotToUse.metadata.partitionSchema,
-      dataSchema = GeneratedColumn.removeGenerationExpressions(
-        SchemaUtils.dropNullTypeColumns(snapshotToUse.metadata.schema)
-      ),
+      partitionSchema = DeltaColumnMapping.dropColumnMappingMetadata(
+        snapshotToUse.metadata.partitionSchema),
+      dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
+        GeneratedColumn.removeGenerationExpressions(
+          SchemaUtils.dropNullTypeColumns(snapshotToUse.metadata.schema))),
       bucketSpec = bucketSpec,
       snapshotToUse.fileFormat,
       snapshotToUse.metadata.format.options)(spark) with InsertableRelation {
@@ -450,22 +474,26 @@ object DeltaLog extends DeltaLogging {
 
   // TODO: Don't assume the data path here.
   def apply(spark: SparkSession, rawPath: Path, clock: Clock = new SystemClock): DeltaLog = {
+    // scalastyle:off deltahadoopconfiguration
     val hadoopConf = spark.sessionState.newHadoopConf()
+    // scalastyle:on deltahadoopconfiguration
     val fs = rawPath.getFileSystem(hadoopConf)
     val path = fs.makeQualified(rawPath)
+    def createDeltaLog(): DeltaLog = recordDeltaOperation(
+      null,
+      "delta.log.create",
+      Map(TAG_TAHOE_PATH -> path.getParent.toString)) {
+        AnalysisHelper.allowInvokingTransformsInAnalyzer {
+          new DeltaLog(path, path.getParent, clock)
+        }
+    }
     // The following cases will still create a new ActionLog even if there is a cached
     // ActionLog using a different format path:
     // - Different `scheme`
     // - Different `authority` (e.g., different user tokens in the path)
     // - Different mount point.
     try {
-      deltaLogCache.get(path, () => { recordDeltaOperation(
-            null, "delta.log.create", Map(TAG_TAHOE_PATH -> path.getParent.toString)) {
-          AnalysisHelper.allowInvokingTransformsInAnalyzer {
-            new DeltaLog(path, path.getParent, clock)
-          }
-        }
-      })
+      deltaLogCache.get(path, () => createDeltaLog())
     } catch {
       case e: com.google.common.util.concurrent.UncheckedExecutionException =>
         throw e.getCause
@@ -476,7 +504,9 @@ object DeltaLog extends DeltaLogging {
   def invalidateCache(spark: SparkSession, dataPath: Path): Unit = {
     try {
       val rawPath = new Path(dataPath, "_delta_log")
+      // scalastyle:off deltahadoopconfiguration
       val fs = rawPath.getFileSystem(spark.sessionState.newHadoopConf())
+      // scalastyle:on deltahadoopconfiguration
       val path = fs.makeQualified(rawPath)
       deltaLogCache.invalidate(path)
     } catch {
@@ -531,10 +561,11 @@ object DeltaLog extends DeltaLogging {
         val unquoted = a.name.stripPrefix("`").stripSuffix("`")
         val partitionCol = partitionSchema.find { field => resolver(field.name, unquoted) }
         partitionCol match {
-          case Some(StructField(name, dataType, _, _)) =>
+          case Some(f: StructField) =>
+            val name = DeltaColumnMapping.getPhysicalName(f)
             Cast(
               UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", name)),
-              dataType)
+              f.dataType)
           case None =>
             // This should not be able to happen, but the case was present in the original code so
             // we kept it to be safe.

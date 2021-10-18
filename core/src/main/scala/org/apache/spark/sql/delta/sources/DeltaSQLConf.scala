@@ -176,7 +176,7 @@ trait DeltaSQLConfBase {
       .doc("The default writer protocol version to create new tables with, unless a feature " +
         "that requires a higher version for correctness is enabled.")
       .intConf
-      .checkValues(Set(1, 2, 3, 4))
+      .checkValues(Set(1, 2, 3, 4, 5))
       .createWithDefault(2)
 
   val DELTA_PROTOCOL_DEFAULT_READER_VERSION =
@@ -184,7 +184,7 @@ trait DeltaSQLConfBase {
       .doc("The default reader protocol version to create new tables with, unless a feature " +
         "that requires a higher version for correctness is enabled.")
       .intConf
-      .checkValues(Set(1))
+      .checkValues(Set(1, 2))
       .createWithDefault(1)
 
   val DELTA_MAX_SNAPSHOT_LINEAGE_LENGTH =
@@ -425,14 +425,25 @@ trait DeltaSQLConfBase {
 
   val REPLACEWHERE_DATACOLUMNS_ENABLED =
     buildConf("replaceWhere.dataColumns.enabled")
-    .internal()
-    .doc(
-      """
-        |When enabled, replaceWhere on arbitrary expression and arbitrary columns is enabled.
-        |If disabled, it falls back to the old behavior
-        |to replace on partition columns only.""".stripMargin)
-    .booleanConf
-    .createWithDefault(true)
+      .doc(
+        """
+          |When enabled, replaceWhere on arbitrary expression and arbitrary columns is enabled.
+          |If disabled, it falls back to the old behavior
+          |to replace on partition columns only.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val REPLACEWHERE_CONSTRAINT_CHECK_ENABLED =
+    buildConf("replaceWhere.constraintCheck.enabled")
+      .doc(
+        """
+          |When enabled, replaceWhere on arbitrary expression and arbitrary columns will
+          |enforce the constraint check to replace the target table only when all the
+          |rows in the source dataframe match that constraint.
+          |If disabled, it will skip the constraint check and replace with all the rows
+          |from the new dataframe.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

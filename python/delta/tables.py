@@ -271,7 +271,7 @@ class DeltaTable(object):
             jdt = sparkSession._sc._jvm.io.delta.tables.DeltaTable.convertToDelta(
                 sparkSession._jsparkSession, identifier,
                 partitionSchema)
-        return jdt
+        return DeltaTable(sparkSession, jdt)
 
     @classmethod
     @since(0.4)

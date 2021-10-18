@@ -153,7 +153,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
         AssertOnQuery { q => q.processAllAvailable(); true },
         CheckAnswer((0 until 5).map(_.toString): _*),
         AssertOnQuery { _ =>
-          withMetadata(deltaLog, StructType.fromDDL("id LONG, value STRING"))
+          withMetadata(deltaLog, StructType.fromDDL("id int, value int"))
           true
         },
         ExpectFailure[IllegalStateException](t =>
@@ -904,7 +904,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
           stream.processAllAvailable()
         }
 
-        val fs = deltaLog.dataPath.getFileSystem(spark.sessionState.newHadoopConf())
+        val fs = deltaLog.dataPath.getFileSystem(deltaLog.newDeltaHadoopConf())
         for (version <- 0 to 3) {
           val possibleFiles = Seq(
             f"/$version%020d.checkpoint.parquet",
@@ -950,7 +950,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
           deltaLog.startTransaction().commit(Seq(), DeltaOperations.ManualUpdate)
         }
 
-        val fs = deltaLog.dataPath.getFileSystem(spark.sessionState.newHadoopConf())
+        val fs = deltaLog.dataPath.getFileSystem(deltaLog.newDeltaHadoopConf())
         for (version <- 0 to 3) {
           val possibleFiles = Seq(
             f"/$version%020d.checkpoint.parquet",
@@ -995,7 +995,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
         deltaLog.store.write(
           FileNames.deltaFile(deltaLog.logPath, deltaLog.snapshot.version + 1),
           // Write a large reader version to fail the streaming query
-          Iterator(Protocol(minReaderVersion = Int.MaxValue).json))
+          Iterator(Protocol(minReaderVersion = Int.MaxValue).json),
+          overwrite = false,
+          deltaLog.newDeltaHadoopConf())
 
         // The streaming query should fail because its version is too old
         val e = intercept[StreamingQueryException] {

@@ -132,7 +132,7 @@ case class WriteIntoDelta(
 
     if (txn.readVersion < 0) {
       // Initialize the log path
-      deltaLog.fs.mkdirs(deltaLog.logPath)
+      deltaLog.createLogDirectory()
     }
 
     val (newFiles, addFiles, deletedFiles) = (mode, replaceWhere) match {
@@ -153,7 +153,7 @@ case class WriteIntoDelta(
         }
         (newFiles, addFiles, txn.filterFiles(predicates).map(_.remove))
       case (SaveMode.Overwrite, Some(condition)) if txn.snapshot.version >= 0 =>
-        val constraints = extractConstraints(condition)
+        val constraints = extractConstraints(sparkSession, condition)
         val newFiles = try txn.writeFiles(data, Some(options), constraints) catch {
           case e: InvariantViolationException =>
             throw DeltaErrors.replaceWhereMismatchException(
@@ -194,11 +194,22 @@ case class WriteIntoDelta(
   }
 
 
-  private def extractConstraints(expr: Seq[Expression]): Seq[Constraint] = {
-    expr.flatMap { e =>
-      e.collectFirst { case _: UnresolvedAttribute =>
-        val arbitraryExpression = ArbitraryExpression(e)
-        Check(arbitraryExpression.name, arbitraryExpression.expression)
+  private def extractConstraints(
+      sparkSession: SparkSession,
+      expr: Seq[Expression]): Seq[Constraint] = {
+    if (!sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_CONSTRAINT_CHECK_ENABLED)) {
+      Seq.empty
+    } else {
+      expr.flatMap { e =>
+        // While writing out the new data, we only want to enforce constraint on expressions
+        // with UnresolvedAttribute, that is, containing column name. Because we parse a
+        // predicate string without analyzing it, if there's a column name, it has to be
+        // unresolved.
+        e.collectFirst {
+          case _: UnresolvedAttribute =>
+            val arbitraryExpression = ArbitraryExpression(e)
+            Check(arbitraryExpression.name, arbitraryExpression.expression)
+        }
       }
     }
   }

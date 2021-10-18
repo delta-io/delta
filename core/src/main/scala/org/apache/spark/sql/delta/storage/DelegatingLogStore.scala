@@ -84,16 +84,39 @@ class DelegatingLogStore(hadoopConf: Configuration)
     getDelegate(path).read(path)
   }
 
+  override def read(path: Path, hadoopConf: Configuration): Seq[String] = {
+    getDelegate(path).read(path, hadoopConf)
+  }
+
   override def readAsIterator(path: Path): ClosableIterator[String] = {
     getDelegate(path).readAsIterator(path)
   }
 
-  override def write(path: Path, actions: Iterator[String], overwrite: Boolean): Unit = {
+  override def readAsIterator(path: Path, hadoopConf: Configuration): ClosableIterator[String] = {
+    getDelegate(path).readAsIterator(path, hadoopConf)
+  }
+
+  override def write(
+      path: Path,
+      actions: Iterator[String],
+      overwrite: Boolean): Unit = {
     getDelegate(path).write(path, actions, overwrite)
+  }
+
+  override def write(
+      path: Path,
+      actions: Iterator[String],
+      overwrite: Boolean,
+      hadoopConf: Configuration): Unit = {
+    getDelegate(path).write(path, actions, overwrite, hadoopConf)
   }
 
   override def listFrom(path: Path): Iterator[FileStatus] = {
     getDelegate(path).listFrom(path)
+  }
+
+  override def listFrom(path: Path, hadoopConf: Configuration): Iterator[FileStatus] = {
+    getDelegate(path).listFrom(path, hadoopConf)
   }
 
   override def invalidateCache(): Unit = {
@@ -109,8 +132,16 @@ class DelegatingLogStore(hadoopConf: Configuration)
     getDelegate(path).resolvePathOnPhysicalStorage(path)
   }
 
+  override def resolvePathOnPhysicalStorage(path: Path, hadoopConf: Configuration): Path = {
+    getDelegate(path).resolvePathOnPhysicalStorage(path, hadoopConf)
+  }
+
   override def isPartialWriteVisible(path: Path): Boolean = {
     getDelegate(path).isPartialWriteVisible(path)
+  }
+
+  override def isPartialWriteVisible(path: Path, hadoopConf: Configuration): Boolean = {
+    getDelegate(path).isPartialWriteVisible(path, hadoopConf)
   }
 }
 

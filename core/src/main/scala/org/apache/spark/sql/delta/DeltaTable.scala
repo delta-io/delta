@@ -161,7 +161,9 @@ object DeltaTableUtils extends PredicateHelper
       spark: SparkSession,
       path: Path,
       options: Map[String, String] = Map.empty): Option[Path] = {
+    // scalastyle:off deltahadoopconfiguration
     val fs = path.getFileSystem(spark.sessionState.newHadoopConfWithOptions(options))
+    // scalastyle:on deltahadoopconfiguration
     var currentPath = path
     while (currentPath != null && currentPath.getName != "_delta_log" &&
         currentPath.getName != "_samples") {
@@ -326,7 +328,11 @@ object DeltaTableUtils extends PredicateHelper
     if (!DeltaTimeTravelSpec.isApplicable(conf, path)) return path -> None
 
     val maybePath = new Path(path)
+
+    // scalastyle:off deltahadoopconfiguration
+    // TODO(SC-85267) Use DataFrame options to create Hadoop Configuration
     val fs = maybePath.getFileSystem(session.sessionState.newHadoopConf())
+    // scalastyle:on deltahadoopconfiguration
 
     // If the folder really exists, quit
     if (fs.exists(maybePath)) return path -> None

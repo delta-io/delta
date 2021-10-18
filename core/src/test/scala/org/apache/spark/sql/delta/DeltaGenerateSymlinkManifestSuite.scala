@@ -38,7 +38,8 @@ class DeltaGenerateSymlinkManifestSuite
   with DeltaSQLCommandTest
 
 trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
-  with SharedSparkSession {
+  with SharedSparkSession
+  with DeltaTestUtilsForTempViews {
 
   import testImplicits._
 
@@ -105,6 +106,17 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
 
       e = intercept[AnalysisException] {
         spark.sql(s"GENERATE symlink_format_manifest FOR TABLE parquet.`$dir`")
+      }
+      assert(e.getMessage.contains("not found"))
+    }
+  }
+
+  testWithTempView("basic case: SQL command - throw error on temp views") { isSQLTempView =>
+    withTable("t1") {
+      spark.range(2).write.format("delta").saveAsTable("t1")
+      createTempViewFromTable("t1", isSQLTempView)
+      val e = intercept[AnalysisException] {
+        spark.sql(s"GENERATE symlink_format_manifest FOR TABLE v")
       }
       assert(e.getMessage.contains("not found"))
     }
@@ -505,7 +517,8 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
       // Validate that each file in the manifest is actually present in table. This mainly checks
       // whether the file names in manifest are not escaped and therefore are readable directly
       // by Hadoop APIs.
-      val fs = new Path(manifestPath.toString).getFileSystem(spark.sessionState.newHadoopConf())
+      val fs = new Path(manifestPath.toString)
+        .getFileSystem(deltaSnapshot.deltaLog.newDeltaHadoopConf())
       spark.read.text(manifestPath.toString).select("value").as[String].collect().foreach { p =>
         assert(fs.exists(new Path(p)), s"path $p in manifest not found in file system")
       }

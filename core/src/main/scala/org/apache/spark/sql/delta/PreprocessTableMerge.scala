@@ -18,6 +18,9 @@ package org.apache.spark.sql.delta
 
 import java.util.Locale
 
+import scala.collection.mutable
+import scala.reflect.ClassTag
+
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
@@ -84,14 +87,28 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         // update clause.
         val existingColumns = m.resolvedActions.map(_.targetColNameParts.head) ++
           target.output.map(_.name)
-        val newColsFromInsert = notMatched.toSeq.flatMap {
+        val newColumns = notMatched.toSeq.flatMap {
           _.resolvedActions.filterNot { insertAct =>
             existingColumns.exists { colName =>
               conf.resolver(insertAct.targetColNameParts.head, colName)
             }
           }
-        }.map { updateAction =>
-          AttributeReference(updateAction.targetColNameParts.head, updateAction.dataType)()
+        }
+
+        // TODO: Remove this once Scala 2.13 is available in Spark.
+        def distinctBy[A : ClassTag, B](a: Seq[A])(f: A => B): Seq[A] = {
+          val builder = mutable.ArrayBuilder.make[A]
+          val seen = mutable.HashSet.empty[B]
+          a.foreach { x =>
+            if (seen.add(f(x))) {
+              builder += x
+            }
+          }
+          builder.result()
+        }
+
+        val newColsFromInsert = distinctBy(newColumns)(_.targetColNameParts).map { action =>
+          AttributeReference(action.targetColNameParts.head, action.dataType)()
         }
 
         // Get the operations for columns that already exist...

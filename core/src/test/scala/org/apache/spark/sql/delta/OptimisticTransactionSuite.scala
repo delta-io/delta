@@ -254,7 +254,9 @@ class OptimisticTransactionSuite
   test("AddFile with different partition schema compared to metadata should fail") {
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getAbsolutePath))
-      log.startTransaction().commit(Seq(Metadata(partitionColumns = Seq("col2"))), ManualUpdate)
+      log.startTransaction().commit(Seq(Metadata(
+        schemaString = StructType.fromDDL("col2 string, a int").json,
+        partitionColumns = Seq("col2"))), ManualUpdate)
       withSQLConf(DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "true") {
         val e = intercept[IllegalStateException] {
           log.startTransaction().commit(Seq(AddFile(

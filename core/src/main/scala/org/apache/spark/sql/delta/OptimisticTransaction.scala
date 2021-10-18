@@ -245,37 +245,43 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
     assert(newMetadata.isEmpty,
       "Cannot change the metadata more than once in a transaction.")
 
-    val metadata = if (_metadata.schemaString != null) {
-      val schema = CharVarcharUtils.replaceCharVarcharWithStringInSchema(_metadata.schema)
-      _metadata.copy(schemaString = schema.json)
-    } else {
-      _metadata
+    var latestMetadata = _metadata
+    if (readVersion == -1 || isCreatingNewTable) {
+      latestMetadata = withGlobalConfigDefaults(latestMetadata)
+      isCreatingNewTable = true
+    }
+    val protocolBeforeUpdate = protocol
+    // The `.schema` cannot be generated correctly unless the column mapping metadata is correctly
+    // filled for all the fields. Therefore, the column mapping changes need to happen first.
+    latestMetadata = DeltaColumnMapping.verifyAndUpdateMetadataChange(
+      protocolBeforeUpdate,
+      snapshot.metadata,
+      latestMetadata,
+      isCreatingNewTable)
+    // Replace CHAR and VARCHAR with StringType
+    if (latestMetadata.schemaString != null) {
+      val schema = CharVarcharUtils.replaceCharVarcharWithStringInSchema(latestMetadata.schema)
+      latestMetadata = latestMetadata.copy(schemaString = schema.json)
     }
 
-    val protocolBeforeUpdate = protocol
-
-    val metadataWithFixedSchema =
-      if (snapshot.metadata.schemaString == metadata.schemaString) {
-        // Shortcut when the schema hasn't changed to avoid generating spurious schema change logs.
-        // It's fine if two different but semantically equivalent schema strings skip this special
-        // case - that indicates that something upstream attempted to do a no-op schema change, and
-        // we'll just end up doing a bit of redundant work in the else block.
-        metadata
-      } else {
-        val fixedSchema = SchemaUtils.removeUnenforceableNotNullConstraints(
-          metadata.schema, spark.sessionState.conf).json
-        metadata.copy(schemaString = fixedSchema)
-      }
-    val updatedMetadata = if (readVersion == -1) {
-      val m = withGlobalConfigDefaults(metadataWithFixedSchema)
-      isCreatingNewTable = true
-      newProtocol = Some(Protocol.forNewTable(spark, m))
-      m
+    latestMetadata = if (snapshot.metadata.schemaString == latestMetadata.schemaString) {
+      // Shortcut when the schema hasn't changed to avoid generating spurious schema change logs.
+      // It's fine if two different but semantically equivalent schema strings skip this special
+      // case - that indicates that something upstream attempted to do a no-op schema change, and
+      // we'll just end up doing a bit of redundant work in the else block.
+      latestMetadata
     } else {
-      metadataWithFixedSchema
+      val fixedSchema = SchemaUtils.removeUnenforceableNotNullConstraints(
+        latestMetadata.schema, spark.sessionState.conf).json
+      latestMetadata.copy(schemaString = fixedSchema)
+    }
+    if (isCreatingNewTable) {
+      // Check for the new protocol version after the removal of the unenforceable not null
+      // constraints
+      newProtocol = Some(Protocol.forNewTable(spark, latestMetadata))
     }
     // Remove the protocol version properties
-    val configs = updatedMetadata.configuration.filter {
+    val configs = latestMetadata.configuration.filter {
       case (Protocol.MIN_READER_VERSION_PROP, value) =>
         if (!isCreatingNewTable) {
           newProtocol = Some(protocol.copy(
@@ -290,33 +296,32 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
         false
       case _ => true
     }
-    val generationExpressionsFixed =
-      if (isCreatingNewTable) {
-        // Creating a new table will drop all existing data, so we don't need to fix the old
-        // metadata.
-        updatedMetadata
+    latestMetadata = if (isCreatingNewTable) {
+      // Creating a new table will drop all existing data, so we don't need to fix the old
+      // metadata.
+      latestMetadata
+    } else {
+      // This is not a new table. The new schema may be merged from the existing schema.
+      if (GeneratedColumn.satisfyGeneratedColumnProtocol(protocolBeforeUpdate)) {
+        // The protocol matches so this is a valid generated column table. Do nothing.
+        latestMetadata
       } else {
-        // This is not a new table. The new schema may be merged from the existing schema.
-        if (GeneratedColumn.satisfyGeneratedColumnProtocol(protocolBeforeUpdate)) {
-          // The protocol matches so this is a valid generated column table. Do nothing.
-          updatedMetadata
+        // As the protocol doesn't match, this table is created by an old version that doesn't
+        // support generated columns. We should remove the generation expressions to fix the
+        // schema to avoid bumping the writer version incorrectly.
+        val newSchema = GeneratedColumn.removeGenerationExpressions(latestMetadata.schema)
+        if (newSchema ne latestMetadata.schema) {
+          latestMetadata.copy(schemaString = newSchema.json)
         } else {
-          // As the protocol doesn't match, this table is created by an old version that doesn't
-          // support generated columns. We should remove the generation expressions to fix the
-          // schema to avoid bumping the writer version incorrectly.
-          val newSchema = GeneratedColumn.removeGenerationExpressions(updatedMetadata.schema)
-          if (newSchema ne updatedMetadata.schema) {
-            updatedMetadata.copy(schemaString = newSchema.json)
-          } else {
-            updatedMetadata
-          }
+          latestMetadata
         }
       }
-    val noProtocolVersions = generationExpressionsFixed.copy(configuration = configs)
-    verifyNewMetadata(noProtocolVersions)
-    logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $noProtocolVersions")
+    }
+    latestMetadata = latestMetadata.copy(configuration = configs)
+    verifyNewMetadata(latestMetadata)
+    logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $latestMetadata")
 
-    newMetadata = Some(noProtocolVersions)
+    newMetadata = Some(latestMetadata)
   }
 
   /**
@@ -329,32 +334,34 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
    * present in the table are still valid under the new metadata.
    */
   def updateMetadataForNewTable(metadata: Metadata): Unit = {
-    val m = withGlobalConfigDefaults(metadata)
-    newProtocol = Some(Protocol.forNewTable(spark, m))
     isCreatingNewTable = true
-    updateMetadata(m)
+    updateMetadata(metadata)
   }
 
   protected def verifyNewMetadata(metadata: Metadata): Unit = {
     assert(!CharVarcharUtils.hasCharVarchar(metadata.schema),
       "The schema in Delta log should not contain char/varchar type.")
     SchemaMergingUtils.checkColumnNameDuplication(metadata.schema, "in the metadata update")
-    SchemaUtils.checkFieldNames(SchemaMergingUtils.explodeNestedFieldNames(metadata.dataSchema))
-    val partitionColCheckIsFatal =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_PARTITION_COLUMN_CHECK_ENABLED)
-    try {
-      SchemaUtils.checkFieldNames(metadata.partitionColumns)
-    } catch {
-      case e: AnalysisException =>
-        recordDeltaEvent(
-          deltaLog,
-          "delta.schema.invalidPartitionColumn",
-          data = Map(
-            "checkEnabled" -> partitionColCheckIsFatal,
-            "columns" -> metadata.partitionColumns
+    if (DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(metadata) == NoMapping) {
+      SchemaUtils.checkFieldNames(SchemaMergingUtils.explodeNestedFieldNames(metadata.dataSchema))
+      val partitionColCheckIsFatal =
+        spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_PARTITION_COLUMN_CHECK_ENABLED)
+      try {
+        SchemaUtils.checkFieldNames(metadata.partitionColumns)
+      } catch {
+        case e: AnalysisException =>
+          recordDeltaEvent(
+            deltaLog,
+            "delta.schema.invalidPartitionColumn",
+            data = Map(
+              "checkEnabled" -> partitionColCheckIsFatal,
+              "columns" -> metadata.partitionColumns
+            )
           )
-        )
-        if (partitionColCheckIsFatal) throw DeltaErrors.invalidPartitionColumn(e)
+          if (partitionColCheckIsFatal) throw DeltaErrors.invalidPartitionColumn(e)
+      }
+    } else if (DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(metadata) == IdMapping) {
+      DeltaColumnMapping.checkColumnIdAndPhysicalNameAssignments(metadata.schema, IdMapping)
     }
 
     if (GeneratedColumn.hasGeneratedColumns(metadata.schema)) {
@@ -478,7 +485,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
           Option(isolationLevelToUse.toString),
           Some(isBlindAppend),
           getOperationMetrics(op),
-          getUserMetadata(op))
+          getUserMetadata(op),
+          tags = None)
       }
 
       val currentTransactionInfo = CurrentTransactionInfo(
@@ -488,7 +496,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
         readAppIds = readTxn.toSet,
         metadata = metadata,
         actions = preparedActions,
-        deltaLog = deltaLog,
+        readSnapshot = snapshot,
         commitInfo = Option(commitInfo))
 
       // Register post-commit hooks if any
@@ -566,7 +574,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       }
     }
 
-    val partitionColumns = metadata.partitionColumns.toSet
+    val partitionColumns = metadata.physicalPartitionSchema.fieldNames.toSet
     finalActions = finalActions.map {
       case newVersion: Protocol =>
         require(newVersion.minReaderVersion > 0, "The reader version needs to be greater than 0")
@@ -636,7 +644,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
 
   private[delta] def isCommitLockEnabled: Boolean = {
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_LOCK_ENABLED).getOrElse(
-      deltaLog.store.isPartialWriteVisible(deltaLog.logPath))
+      deltaLog.store.isPartialWriteVisible(deltaLog.logPath, deltaLog.newDeltaHadoopConf()))
   }
 
   private def lockCommitIfEnabled[T](body: => T): T = {
@@ -722,7 +730,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
 
     deltaLog.store.write(
       deltaFile(deltaLog.logPath, attemptVersion),
-      actions.map(_.json).toIterator)
+      actions.map(_.json).toIterator,
+      overwrite = false,
+      deltaLog.newDeltaHadoopConf())
 
     spark.sessionState.conf.setConf(
       DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,

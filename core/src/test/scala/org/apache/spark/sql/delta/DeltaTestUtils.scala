@@ -22,12 +22,14 @@ import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.{Action, Metadata}
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkContext
 import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.QueryExecution
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.util.QueryExecutionListener
 
 trait DeltaTestUtilsBase {
@@ -99,3 +101,80 @@ trait DeltaTestUtilsBase {
 }
 
 object DeltaTestUtils extends DeltaTestUtilsBase
+trait DeltaTestUtilsForTempViews
+  extends SharedSparkSession
+{
+  def testWithTempView(testName: String)(testFun: Boolean => Any): Unit = {
+    Seq(true, false).foreach { isSQLTempView =>
+      val tempViewUsed = if (isSQLTempView) "SQL TempView" else "Dataset TempView"
+      test(s"$testName - $tempViewUsed") {
+        withTempView("v") {
+          testFun(isSQLTempView)
+        }
+      }
+    }
+  }
+
+  def testOssOnlyWithTempView(testName: String)(testFun: Boolean => Any): Unit = {
+    Seq(true, false).foreach { isSQLTempView =>
+      val tempViewUsed = if (isSQLTempView) "SQL TempView" else "Dataset TempView"
+      test(s"$testName - $tempViewUsed") {
+        withTempView("v") {
+          testFun(isSQLTempView)
+        }
+      }
+    }
+  }
+
+  def testQuietlyWithTempView(testName: String)(testFun: Boolean => Any): Unit = {
+    Seq(true, false).foreach { isSQLTempView =>
+      val tempViewUsed = if (isSQLTempView) "SQL TempView" else "Dataset TempView"
+      testQuietly(s"$testName - $tempViewUsed") {
+        withTempView("v") {
+          testFun(isSQLTempView)
+        }
+      }
+    }
+  }
+
+  def createTempViewFromTable(
+      tableName: String,
+      isSQLTempView: Boolean,
+      format: Option[String] = None): Unit = {
+    if (isSQLTempView) {
+      sql(s"CREATE OR REPLACE TEMP VIEW v AS SELECT * from $tableName")
+    } else {
+      spark.read.format(format.getOrElse("delta")).table(tableName).createOrReplaceTempView("v")
+    }
+  }
+
+  def createTempViewFromSelect(text: String, isSQLTempView: Boolean): Unit = {
+    if (isSQLTempView) {
+      sql(s"CREATE OR REPLACE TEMP VIEW v AS $text")
+    } else {
+      sql(text).createOrReplaceTempView("v")
+    }
+  }
+
+  def testErrorMessageAndClass(
+      isSQLTempView: Boolean,
+      ex: AnalysisException,
+      expectedErrorMsgForSQLTempView: String = null,
+      expectedErrorMsgForDataSetTempView: String = null,
+      expectedErrorClassForSQLTempView: String = null,
+      expectedErrorClassForDataSetTempView: String = null): Unit = {
+    if (isSQLTempView) {
+      if (expectedErrorMsgForSQLTempView != null) {
+        assert(ex.getMessage.contains(expectedErrorMsgForSQLTempView))
+      }
+      if (expectedErrorClassForSQLTempView != null) {
+      }
+    } else {
+      if (expectedErrorMsgForDataSetTempView != null) {
+        assert(ex.getMessage.contains(expectedErrorMsgForDataSetTempView))
+      }
+      if (expectedErrorClassForDataSetTempView != null) {
+      }
+    }
+  }
+}

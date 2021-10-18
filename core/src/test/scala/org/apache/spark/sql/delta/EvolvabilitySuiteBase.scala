@@ -230,12 +230,18 @@ object EvolvabilitySuiteBase {
     // against both checkpoint with unknown column and delta log with unkown column.
 
     // manually remove AddFile in the previous commit and append a new column.
-    val records = deltaLog.store.read(FileNames.deltaFile(deltaLog.logPath, version))
+    val records = deltaLog.store.read(
+      FileNames.deltaFile(deltaLog.logPath, version),
+      deltaLog.newDeltaHadoopConf())
     val actions = records.map(Action.fromJson).filter(action => action.isInstanceOf[AddFile])
       .map { action => action.asInstanceOf[AddFile].remove}
       .toIterator
     val recordsWithNewAction = actions.map(_.json) ++ Iterator("""{"some_new_action":{"a":1}}""")
-    deltaLog.store.write(FileNames.deltaFile(deltaLog.logPath, version + 1), recordsWithNewAction)
+    deltaLog.store.write(
+      FileNames.deltaFile(deltaLog.logPath, version + 1),
+      recordsWithNewAction,
+      overwrite = false,
+      deltaLog.newDeltaHadoopConf())
 
     // manually add those files back and add a unknown field to it.
     val newRecords = records.map{ record =>
@@ -249,7 +255,11 @@ object EvolvabilitySuiteBase {
       // add a unknown column outside action fields.
       JsonUtils.toJson(newRecordMap + ("some_new_action_alongside_add_action" -> ("a" -> "1")))
     }.toIterator
-    deltaLog.store.write(FileNames.deltaFile(deltaLog.logPath, version + 2), newRecords)
+    deltaLog.store.write(
+      FileNames.deltaFile(deltaLog.logPath, version + 2),
+      newRecords,
+      overwrite = false,
+      deltaLog.newDeltaHadoopConf())
 
     // Shouldn't fail here
     deltaLog.update()
