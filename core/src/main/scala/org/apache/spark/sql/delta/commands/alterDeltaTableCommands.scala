@@ -506,8 +506,11 @@ case class AlterTableSetLocationDeltaCommand(
 
   private def schemasEqual(
       oldMetadata: actions.Metadata, newMetadata: actions.Metadata): Boolean = {
-    oldMetadata.schema == newMetadata.schema &&
-      oldMetadata.partitionSchema == newMetadata.partitionSchema
+    import DeltaColumnMapping._
+    dropColumnMappingMetadata(oldMetadata.schema) ==
+      dropColumnMappingMetadata(newMetadata.schema) &&
+      dropColumnMappingMetadata(oldMetadata.partitionSchema) ==
+        dropColumnMappingMetadata(newMetadata.partitionSchema)
   }
 
   // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
