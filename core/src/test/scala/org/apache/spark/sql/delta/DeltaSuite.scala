@@ -649,19 +649,17 @@ class DeltaSuite extends QueryTest
         .mode("append")
         .save(tempDir.getCanonicalPath)
 
-      var e = intercept[AnalysisException] {
-        Seq((3, "x"), (5, "x")).toDF("value", "sub")
-          .withColumn("part", $"value" % 2)
-          .write
-          .format("delta")
-          .partitionBy("part", "sub")
-          .mode("overwrite")
-          .option(DeltaOptions.REPLACE_WHERE_OPTION, "part = 1")
-          .option("partitionOverwriteMode", "dynamic")
-          .save(tempDir.getCanonicalPath)
-      }
-      assert(e.getMessage.contains(
-        "`partitionOverwriteMode=dynamic` cannot be used with replaceWhere"))
+      Seq((3, "x"), (5, "x")).toDF("value", "sub")
+        .withColumn("part", $"value" % 2)
+        .write
+        .format("delta")
+        .partitionBy("part", "sub")
+        .mode("overwrite")
+        .option(DeltaOptions.REPLACE_WHERE_OPTION, "part = 1")
+        .option("partitionOverwriteMode", "dynamic")
+        .save(tempDir.getCanonicalPath)
+      checkDatasetUnorderly(data.toDF.select($"value".as[Int], $"sub".as[String]),
+        (2, "y"), (3, "x"), (5, "x"))
     }
   }
 
