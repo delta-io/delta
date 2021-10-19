@@ -16,10 +16,8 @@
 
 package org.apache.spark.sql.delta
 
-import java.net.URI
 import java.nio.file.FileAlreadyExistsException
 import java.util.{ConcurrentModificationException, Locale, UUID}
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeUnit.NANOSECONDS
 
 import scala.collection.mutable
@@ -35,12 +33,9 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
-import org.apache.hadoop.fs.Path
 
-import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
 import org.apache.spark.util.{Clock, Utils}
 
 /** Record metrics about a successful commit. */
@@ -194,8 +189,15 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   /** Stores the updated protocol (if any) that will result from this txn. */
   protected var newProtocol: Option[Protocol] = None
 
+  /** The transaction start time. */
   protected val txnStartNano = System.nanoTime()
+
+  /** The transaction commit start time. */
   protected var commitStartNano = -1L
+
+  /** The transaction commit end time. */
+  protected var commitEndNano = -1L;
+
   protected var commitInfo: CommitInfo = _
 
   // Whether this transaction is creating a new table.
@@ -224,6 +226,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
 
   /** Start time of txn in nanoseconds */
   def txnStartTimeNs: Long = txnStartNano
+
+  /** The end to end execution time of this transaction. */
+  def txnExecutionTimeMs: Option[Long] = if (commitEndNano == -1) {
+    None
+  } else {
+    Some(NANOSECONDS.toMillis((commitEndNano - txnStartNano)))
+  }
 
   /**
    * Returns the metadata for this transaction. The metadata refers to the metadata of the snapshot
@@ -726,7 +735,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,
       Some(attemptVersion))
 
-    val commitTime = System.nanoTime()
+    commitEndNano = System.nanoTime()
     val postCommitSnapshot = deltaLog.update()
 
     if (postCommitSnapshot.version < attemptVersion) {
@@ -752,8 +761,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       startVersion = snapshot.version,
       commitVersion = attemptVersion,
       readVersion = postCommitSnapshot.version,
-      txnDurationMs = NANOSECONDS.toMillis(commitTime - txnStartNano),
-      commitDurationMs = NANOSECONDS.toMillis(commitTime - commitStartNano),
+      txnDurationMs = NANOSECONDS.toMillis(commitEndNano - txnStartNano),
+      commitDurationMs = NANOSECONDS.toMillis(commitEndNano - commitStartNano),
       numAdd = adds.size,
       numRemove = actions.collect { case r: RemoveFile => r }.size,
       bytesNew = adds.filter(_.dataChange).map(_.size).sum,
