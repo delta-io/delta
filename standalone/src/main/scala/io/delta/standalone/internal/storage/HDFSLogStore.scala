@@ -25,6 +25,7 @@ import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 import io.delta.standalone.internal.exception.DeltaErrors
+import io.delta.standalone.internal.logging.Logging
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileContext, Options, Path, RawLocalFileSystem}
@@ -40,7 +41,7 @@ import org.apache.hadoop.fs.Options.{ChecksumOpt, CreateOpts}
  * 2. Consistent file listing: HDFS file listing is consistent.
  */
 private[internal] class HDFSLogStore(override val initHadoopConf: Configuration)
-  extends HadoopFileSystemLogStore(initHadoopConf) {
+  extends HadoopFileSystemLogStore(initHadoopConf) with Logging {
 
   val noAbstractFileSystemExceptionMessage = "No AbstractFileSystem"
 
@@ -77,6 +78,7 @@ private[internal] class HDFSLogStore(override val initHadoopConf: Configuration)
     } catch {
       case e: IOException if e.getMessage.contains(noAbstractFileSystemExceptionMessage) =>
         val newException = DeltaErrors.incorrectLogStoreImplementationException(e)
+        logError(newException.getMessage, newException.getCause)
         throw newException
     }
     if (!overwrite && fc.util.exists(path)) {

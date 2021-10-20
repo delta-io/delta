@@ -20,7 +20,9 @@ import java.util.{HashMap, Locale}
 
 import io.delta.standalone.internal.actions.{Action, Metadata, Protocol}
 import io.delta.standalone.internal.exception.DeltaErrors
+import io.delta.standalone.internal.logging.Logging
 import io.delta.standalone.internal.util.{CalendarInterval, IntervalUtils}
+
 import org.apache.hadoop.conf.Configuration
 
 private[internal] case class DeltaConfig[T](
@@ -65,7 +67,7 @@ private[internal] case class DeltaConfig[T](
 /**
  * Contains list of reservoir configs and validation checks.
  */
-private[internal] object DeltaConfigs {
+private[internal] object DeltaConfigs extends Logging {
 
   /**
    * Convert a string to [[CalendarInterval]]. This method is case-insensitive and will throw
@@ -128,7 +130,7 @@ private[internal] object DeltaConfigs {
   def validateConfigurations(configurations: Map[String, String]): Map[String, String] = {
     configurations.map {
       case kv @ (key, value) if key.toLowerCase(Locale.ROOT).startsWith("delta.constraints.") =>
-        throw new IllegalArgumentException(s"Unsupported CHECK constraint configuration ${key} set")
+        throw new IllegalArgumentException(s"Unsupported CHECK constraint configuration $key set")
       case (key, value) if key.toLowerCase(Locale.ROOT).startsWith("delta.") =>
         Option(entries.get(key.toLowerCase(Locale.ROOT).stripPrefix("delta.")))
           .map(_(value))
@@ -137,12 +139,11 @@ private[internal] object DeltaConfigs {
           }
       case keyvalue @ (key, _) =>
         if (entries.containsKey(key.toLowerCase(Locale.ROOT))) {
-          // TODO: add log
-//        logConsole(
-//          s"""
-//             |You are trying to set a property the key of which is the same as Delta config: $key.
-//             |If you are trying to set a Delta config, prefix it with "delta.", e.g. 'delta.$key'.
-//          """.stripMargin)
+          logWarning(
+            s"""
+             |You are trying to set a property the key of which is the same as Delta config: $key.
+             |If you are trying to set a Delta config, prefix it with "delta.", e.g. 'delta.$key'.
+             |""".stripMargin)
         }
         keyvalue
     }

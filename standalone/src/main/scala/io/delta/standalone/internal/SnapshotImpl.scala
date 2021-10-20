@@ -21,12 +21,13 @@ import java.net.URI
 import scala.collection.JavaConverters._
 
 import io.delta.standalone.{DeltaScan, Snapshot}
-import io.delta.standalone.actions.{AddFile => AddFileJ, Metadata => MetadataJ, RemoveFile => RemoveFileJ, SetTransaction => SetTransactionJ, Protocol => ProtocolJ}
+import io.delta.standalone.actions.{AddFile => AddFileJ, Metadata => MetadataJ, Protocol => ProtocolJ, RemoveFile => RemoveFileJ, SetTransaction => SetTransactionJ}
 import io.delta.standalone.data.{CloseableIterator, RowRecord => RowParquetRecordJ}
 import io.delta.standalone.expressions.Expression
 import io.delta.standalone.internal.actions.{AddFile, InMemoryLogReplay, Metadata, Parquet4sSingleActionWrapper, Protocol, RemoveFile, SetTransaction, SingleAction}
 import io.delta.standalone.internal.data.CloseableParquetDataIterator
 import io.delta.standalone.internal.exception.DeltaErrors
+import io.delta.standalone.internal.logging.Logging
 import io.delta.standalone.internal.scan.{DeltaScanImpl, FilteredDeltaScanImpl}
 import io.delta.standalone.internal.util.{ConversionUtils, FileNames, JsonUtils}
 
@@ -48,7 +49,7 @@ private[internal] class SnapshotImpl(
     val logSegment: LogSegment,
     val minFileRetentionTimestamp: Long,
     val deltaLog: DeltaLogImpl,
-    val timestamp: Long) extends Snapshot {
+    val timestamp: Long) extends Snapshot with Logging {
 
   import SnapshotImpl._
 
@@ -179,6 +180,8 @@ private[internal] class SnapshotImpl(
   /** A map to look up transaction version by appId. */
   lazy val transactions: Map[String, Long] =
     setTransactionsScala.map(t => t.appId -> t.version).toMap
+
+  logInfo(s"[tableId=${deltaLog.tableId}] Created snapshot $this")
 
   /** Complete initialization by checking protocol version. */
   deltaLog.assertProtocolRead(protocolScala)

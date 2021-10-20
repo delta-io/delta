@@ -17,6 +17,7 @@
 package io.delta.standalone.internal
 
 import java.nio.file.FileAlreadyExistsException
+import java.util.UUID
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
@@ -27,12 +28,16 @@ import io.delta.standalone.exceptions.DeltaStandaloneException
 import io.delta.standalone.expressions.{Expression, Literal}
 import io.delta.standalone.internal.actions.{Action, AddFile, CommitInfo, FileAction, Metadata, Protocol, RemoveFile}
 import io.delta.standalone.internal.exception.DeltaErrors
+import io.delta.standalone.internal.logging.Logging
 import io.delta.standalone.internal.util.{ConversionUtils, FileNames, SchemaMergingUtils, SchemaUtils}
 
 private[internal] class OptimisticTransactionImpl(
     deltaLog: DeltaLogImpl,
-    snapshot: SnapshotImpl) extends OptimisticTransaction {
+    snapshot: SnapshotImpl) extends OptimisticTransaction with Logging {
   import OptimisticTransactionImpl._
+
+  /** Used for logging */
+  private val txnId = UUID.randomUUID().toString
 
   /** Tracks the appIds that have been seen by this transaction. */
   private val readTxn = new ArrayBuffer[String]
@@ -83,7 +88,7 @@ private[internal] class OptimisticTransactionImpl(
   // Public Java API Methods
   ///////////////////////////////////////////////////////////////////////////
 
-  override def metadata(): MetadataJ = ConversionUtils.convertMetadata(metadataScala)
+  override def metadata: MetadataJ = ConversionUtils.convertMetadata(metadataScala)
 
   override def commit[T <: ActionJ](
       actionsJ: java.lang.Iterable[T],
@@ -136,6 +141,8 @@ private[internal] class OptimisticTransactionImpl(
 
     postCommit(commitVersion)
 
+    logInfo(s"Committed delta #$commitVersion to ${deltaLog.logPath}")
+
     new CommitResult(commitVersion)
   }
 
@@ -177,6 +184,9 @@ private[internal] class OptimisticTransactionImpl(
 
     latestMetadata = latestMetadata.copy(configuration = noProtocolVersionConfig)
     verifyNewMetadata(latestMetadata)
+
+    logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $latestMetadata")
+
     newMetadata = Some(latestMetadata)
   }
 
@@ -269,7 +279,7 @@ private[internal] class OptimisticTransactionImpl(
     while (tryCommit) {
       try {
         if (attemptNumber == 0) {
-          doCommit(commitVersion, actions)
+          doCommit(commitVersion, actions, isolationLevel)
         } else if (attemptNumber > DELTA_MAX_RETRY_COMMIT_ATTEMPTS) {
           val totalCommitAttemptTime = deltaLog.clock.getTimeMillis() - commitAttemptStartTime
           throw DeltaErrors.maxCommitRetriesExceededException(
@@ -279,8 +289,8 @@ private[internal] class OptimisticTransactionImpl(
             actions.length,
             totalCommitAttemptTime)
         } else {
-          commitVersion = checkForConflicts(commitVersion, actions, isolationLevel)
-          doCommit(commitVersion, actions)
+          commitVersion = checkForConflicts(commitVersion, actions, attemptNumber, isolationLevel)
+          doCommit(commitVersion, actions, isolationLevel)
         }
         tryCommit = false
       } catch {
@@ -299,24 +309,36 @@ private[internal] class OptimisticTransactionImpl(
    * @throws IllegalStateException if the attempted commit version is ahead of the current delta log
    *                               version
    */
-  private def doCommit(attemptVersion: Long, actions: Seq[Action]): Long =
-    deltaLog.lockInterruptibly {
-      deltaLog.store.write(
-        FileNames.deltaFile(deltaLog.logPath, attemptVersion),
-        actions.map(_.json).toIterator.asJava,
-        false, // overwrite = false
-        deltaLog.hadoopConf
-      )
+  private def doCommit(
+      attemptVersion: Long,
+      actions: Seq[Action],
+      isolationLevel: IsolationLevel): Long = {
+    logInfo(
+      s"Attempting to commit version $attemptVersion with ${actions.size} actions with " +
+        s"$isolationLevel isolation level")
 
-      val postCommitSnapshot = deltaLog.update()
-      if (postCommitSnapshot.version < attemptVersion) {
-        throw new IllegalStateException(
-          s"The committed version is $attemptVersion " +
-            s"but the current version is ${postCommitSnapshot.version}.")
-      }
-
-      attemptVersion
+    if (readVersion > -1 && metadata.getId != snapshot.getMetadata.getId) {
+      logError(s"Change in the table id detected in txn. Table id for txn on table at " +
+        s"${deltaLog.dataPath} was ${snapshot.getMetadata.getId} when the txn was created and " +
+        s"is now changed to ${metadata.getId}.")
     }
+
+    deltaLog.store.write(
+      FileNames.deltaFile(deltaLog.logPath, attemptVersion),
+      actions.map(_.json).toIterator.asJava,
+      false, // overwrite = false
+      deltaLog.hadoopConf
+    )
+
+    val postCommitSnapshot = deltaLog.update()
+    if (postCommitSnapshot.version < attemptVersion) {
+      throw new IllegalStateException(
+        s"The committed version is $attemptVersion " +
+          s"but the current version is ${postCommitSnapshot.version}.")
+    }
+
+    attemptVersion
+  }
 
   /**
    * Perform post-commit operations
@@ -325,9 +347,13 @@ private[internal] class OptimisticTransactionImpl(
     committed = true
 
     if (shouldCheckpoint(commitVersion)) {
-      // We checkpoint the version to be committed to so that no two transactions will checkpoint
-      // the same version.
-      deltaLog.checkpoint(deltaLog.getSnapshotForVersionAsOf(commitVersion))
+      try {
+        // We checkpoint the version to be committed to so that no two transactions will checkpoint
+        // the same version.
+        deltaLog.checkpoint(deltaLog.getSnapshotForVersionAsOf(commitVersion))
+      } catch {
+        case e: IllegalStateException => logWarning("Failed to checkpoint table state.", e)
+      }
     }
   }
 
@@ -339,6 +365,7 @@ private[internal] class OptimisticTransactionImpl(
   private def checkForConflicts(
       checkVersion: Long,
       actions: Seq[Action],
+      attemptNumber: Int,
       commitIsolationLevel: IsolationLevel): Long = {
     val nextAttemptVersion = getNextAttemptVersion
 
@@ -351,14 +378,38 @@ private[internal] class OptimisticTransactionImpl(
       actions = actions,
       deltaLog = deltaLog)
 
+    val logPrefixStr = s"[attempt $attemptNumber]"
+    val txnDetailsLogStr = {
+      var adds = 0L
+      var removes = 0L
+      currentTransactionInfo.actions.foreach {
+        case _: AddFile => adds += 1
+        case _: RemoveFile => removes += 1
+        case _ =>
+      }
+      s"$adds adds, $removes removes, ${readPredicates.size} read predicates, " +
+        s"${readFiles.size} read files"
+    }
+
+    logInfo(s"$logPrefixStr Checking for conflicts with versions " +
+      s"[$checkVersion, $nextAttemptVersion) with current txn having $txnDetailsLogStr")
+
     (checkVersion until nextAttemptVersion).foreach { otherCommitVersion =>
       val conflictChecker = new ConflictChecker(
         currentTransactionInfo,
         otherCommitVersion,
-        commitIsolationLevel)
+        commitIsolationLevel,
+        logPrefixStr)
 
       conflictChecker.checkConflicts()
+
+      logInfo(s"$logPrefixStr No conflicts in version $otherCommitVersion, " +
+        s"${deltaLog.clock.getTimeMillis() - commitAttemptStartTime} ms since start")
     }
+
+    logInfo(s"$logPrefixStr No conflicts with versions [$checkVersion, $nextAttemptVersion) " +
+      s"with current txn having $txnDetailsLogStr, " +
+      s"${deltaLog.clock.getTimeMillis() - commitAttemptStartTime} ms since start")
 
     nextAttemptVersion
   }
@@ -398,10 +449,40 @@ private[internal] class OptimisticTransactionImpl(
     metadata.copy(configuration =
       DeltaConfigs.mergeGlobalConfigs(deltaLog.hadoopConf, metadata.configuration))
   }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // Logging Override Methods
+  ///////////////////////////////////////////////////////////////////////////
+
+  protected lazy val logPrefix: String = {
+    def truncate(uuid: String): String = uuid.split("-").head
+    s"[tableId=${truncate(snapshot.metadataScala.id)},txnId=${truncate(txnId)}] "
+  }
+
+  override def logInfo(msg: => String): Unit = {
+    super.logInfo(logPrefix + msg)
+  }
+
+  override def logWarning(msg: => String): Unit = {
+    super.logWarning(logPrefix + msg)
+  }
+
+  override def logWarning(msg: => String, throwable: Throwable): Unit = {
+    super.logWarning(logPrefix + msg, throwable)
+  }
+
+  override def logError(msg: => String): Unit = {
+    super.logError(logPrefix + msg)
+  }
+
+  override def logError(msg: => String, throwable: Throwable): Unit = {
+    super.logError(logPrefix + msg, throwable)
+  }
+
 }
 
 private[internal] object OptimisticTransactionImpl {
-  val DELTA_MAX_RETRY_COMMIT_ATTEMPTS = 10000000
+  val DELTA_MAX_RETRY_COMMIT_ATTEMPTS = 10000000 // TODO: DeltaConfig this
 
 //  def getOperationJsonEncodedParameters(op: Operation): Map[String, String] = {
 //    op.getParameters.asScala.mapValues(JsonUtils.toJson(_)).toMap

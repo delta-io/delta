@@ -20,10 +20,11 @@ import java.sql.Timestamp
 
 import scala.collection.JavaConverters._
 
+import io.delta.standalone.storage.LogStore
 import io.delta.standalone.internal.actions.{Action, CommitInfo, CommitMarker}
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.util.FileNames
-import io.delta.standalone.storage.LogStore
+import io.delta.standalone.internal.logging.Logging
 
 import org.apache.hadoop.fs.Path
 
@@ -33,7 +34,7 @@ import org.apache.hadoop.fs.Path
  *
  * @param deltaLog the transaction log of this table
  */
-private[internal] case class DeltaHistoryManager(deltaLog: DeltaLogImpl) {
+private[internal] case class DeltaHistoryManager(deltaLog: DeltaLogImpl) extends Logging {
 
   /** Get the persisted commit info for the given delta file. */
   def getCommitInfo(version: Long): CommitInfo = {
@@ -188,6 +189,8 @@ private[internal] case class DeltaHistoryManager(deltaLog: DeltaLogImpl) {
       val prevTimestamp = commits(i).getTimestamp
       assert(commits(i).getVersion < commits(i + 1).getVersion, "Unordered commits provided.")
       if (prevTimestamp >= commits(i + 1).getTimestamp) {
+        logWarning(s"Found Delta commit ${commits(i).getVersion} with a timestamp $prevTimestamp " +
+          s"which is greater than the next commit timestamp ${commits(i + 1).getTimestamp}.")
         commits(i + 1) = commits(i + 1).withTimestamp(prevTimestamp + 1).asInstanceOf[T]
       }
       i += 1

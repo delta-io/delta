@@ -49,10 +49,17 @@ private[internal] trait MetadataCleanup {
   /** Clean up expired delta and checkpoint logs. Exposed for testing. */
   def cleanUpExpiredLogs(): Unit = {
     val fileCutOffTime = truncateDay(clock.getTimeMillis() - deltaRetentionMillis).getTime
+
+    lazy val formattedDate = fileCutOffTime.toGMTString
+    logInfo(s"Starting the deletion of log files older than $formattedDate")
+
+    var numDeleted = 0
     listExpiredDeltaLogs(fileCutOffTime.getTime).map(_.getPath).foreach { path =>
       // recursive = false
-      fs.delete(path, false)
+      if (fs.delete(path, false)) numDeleted += 1
     }
+
+    logInfo(s"Deleted $numDeleted log files older than $formattedDate")
   }
 
   /**

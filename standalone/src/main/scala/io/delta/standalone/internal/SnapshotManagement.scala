@@ -66,7 +66,19 @@ private[internal] trait SnapshotManagement { self: DeltaLogImpl =>
     try {
       val segment = getLogSegmentForVersion(currentSnapshot.logSegment.checkpointVersion)
       if (segment != currentSnapshot.logSegment) {
+        val startingFrom = segment.checkpointVersion
+          .map(v => s" starting from checkpoint version $v.").getOrElse(".")
+        logInfo(s"Loading version ${segment.version}$startingFrom")
+
         val newSnapshot = createSnapshot(segment, segment.lastCommitTimestamp)
+
+        if (currentSnapshot.version > -1 &&
+          currentSnapshot.metadataScala.id != newSnapshot.metadataScala.id) {
+          logError(s"Change in the table id detected while updating snapshot. " +
+            s"\nPrevious snapshot = $currentSnapshot\nNew snapshot = $newSnapshot.")
+        }
+
+        logInfo(s"Updated snapshot to $newSnapshot")
         currentSnapshot = newSnapshot
       }
     } catch {
@@ -75,6 +87,7 @@ private[internal] trait SnapshotManagement { self: DeltaLogImpl =>
         if (Option(e.getMessage).exists(_.contains("reconstruct state at version"))) {
           throw e
         }
+        logInfo(s"No delta log found for the Delta table at $logPath")
         currentSnapshot = new InitialSnapshotImpl(hadoopConf, logPath, this)
     }
     currentSnapshot
@@ -203,10 +216,19 @@ private[internal] trait SnapshotManagement { self: DeltaLogImpl =>
   private def getSnapshotAtInit: SnapshotImpl = {
     try {
       val logSegment = getLogSegmentForVersion(lastCheckpoint.map(_.version))
+
+      val startCheckpoint = logSegment.checkpointVersion
+        .map(v => s" starting from checkpoint $v.").getOrElse(".")
+      logInfo(s"Loading version ${logSegment.version}$startCheckpoint")
+
       val snapshot = createSnapshot(logSegment, logSegment.lastCommitTimestamp)
+
+      logInfo(s"Returning initial snapshot $snapshot")
+
       snapshot
     } catch {
       case _: FileNotFoundException =>
+        logInfo(s"Creating initial snapshot without metadata, because the directory is empty")
         new InitialSnapshotImpl(hadoopConf, logPath, this)
     }
   }

@@ -40,6 +40,13 @@ private[internal] object DeltaErrors {
        |Standalone Reader/Writer ${clientProtocol.simpleString}. Please upgrade to a newer release.
        |""".stripMargin)
 
+  val EmptyCheckpointErrorMessage =
+    s"""
+       |Attempted to write an empty checkpoint without any actions. This checkpoint will not be
+       |useful in recomputing the state of the table. However this might cause other checkpoints to
+       |get deleted based on retention settings.
+     """.stripMargin
+
   def deltaVersionsNotContiguousException(deltaVersions: Seq[Long]): Throwable = {
     new IllegalStateException(s"Versions ($deltaVersions) are not contiguous.")
   }

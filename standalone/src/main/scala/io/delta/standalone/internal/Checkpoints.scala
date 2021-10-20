@@ -26,10 +26,12 @@ import io.delta.standalone.data.CloseableIterator
 import io.delta.standalone.internal.actions.SingleAction
 import io.delta.standalone.internal.util.JsonUtils
 import io.delta.standalone.internal.util.FileNames._
+import io.delta.standalone.internal.exception.DeltaErrors
+import io.delta.standalone.internal.logging.Logging
+
 import org.apache.hadoop.fs.Path
 import org.apache.parquet.hadoop.metadata.CompressionCodecName
 import com.github.mjakubowski84.parquet4s.ParquetWriter
-import io.delta.standalone.internal.exception.DeltaErrors
 
 /**
  * Records information about a checkpoint.
@@ -139,17 +141,12 @@ private[internal] trait Checkpoints {
       case _: FileNotFoundException =>
         None
       case NonFatal(e) if tries < 3 =>
-        // scalastyle:off println
-        println(s"Failed to parse $LAST_CHECKPOINT. This may happen if there was an error " +
+        logWarning(s"Failed to parse $LAST_CHECKPOINT. This may happen if there was an error " +
           "during read operation, or a file appears to be partial. Sleeping and trying again.", e)
-        // scalastyle:on println
-
         Thread.sleep(1000)
         loadMetadataFromFile(tries + 1)
       case NonFatal(e) =>
-        // scalastyle:off println
-        println(s"$LAST_CHECKPOINT is corrupted. Will search the checkpoint files directly", e)
-        // scalastyle:on println
+        logWarning(s"$LAST_CHECKPOINT is corrupted. Will search the checkpoint files directly", e)
         // Hit a partial file. This could happen on Azure as overwriting _last_checkpoint file is
         // not atomic. We will try to list all files to find the latest checkpoint and restore
         // CheckpointMetaData from it.
@@ -208,7 +205,7 @@ private[internal] trait Checkpoints {
   }
 }
 
-private[internal] object Checkpoints {
+private[internal] object Checkpoints extends Logging {
   /**
    * Writes out the contents of a [[Snapshot]] into a checkpoint file that
    * can be used to short-circuit future replays of the log.
@@ -298,6 +295,11 @@ private[internal] object Checkpoints {
     if (numOfFiles != snapshot.numOfFiles) {
       throw new IllegalStateException(
         "State of the checkpoint doesn't match that of the snapshot.")
+    }
+
+    // Attempting to write empty checkpoint
+    if (checkpointSize == 0) {
+      logWarning(DeltaErrors.EmptyCheckpointErrorMessage)
     }
 
     CheckpointMetaData(snapshot.version, checkpointSize, None)

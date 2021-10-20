@@ -16,11 +16,15 @@
 
 package io.delta.standalone.internal
 
+import java.util.concurrent.TimeUnit
+
 import scala.collection.JavaConverters._
+import scala.collection.mutable
 
 import io.delta.standalone.expressions.Expression
 import io.delta.standalone.internal.actions._
 import io.delta.standalone.internal.exception.DeltaErrors
+import io.delta.standalone.internal.logging.Logging
 import io.delta.standalone.internal.util.{FileNames, PartitionUtils}
 
 /**
@@ -74,8 +78,10 @@ private[internal] case class WinningCommitSummary(actions: Seq[Action], commitVe
 private[internal] class ConflictChecker(
     currentTransactionInfo: CurrentTransactionInfo,
     winningCommitVersion: Long,
-    isolationLevel: IsolationLevel) {
+    isolationLevel: IsolationLevel,
+    logPrefixStr: String) extends Logging {
 
+  private val timingStats = mutable.HashMap[String, Long]()
   private val deltaLog = currentTransactionInfo.deltaLog
   private val winningCommitSummary: WinningCommitSummary = createWinningCommitSummary()
 
@@ -86,6 +92,7 @@ private[internal] class ConflictChecker(
     checkForDeletedFilesAgainstCurrentTxnReadFiles()
     checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
     checkForUpdatedApplicationTransactionIdsThatCurrentTxnDependsOn()
+    reportMetrics()
   }
 
   /**
@@ -93,15 +100,17 @@ private[internal] class ConflictChecker(
    * transaction (winning transaction).
    */
   private def createWinningCommitSummary(): WinningCommitSummary = {
-    import io.delta.standalone.internal.util.Implicits._
+    recordTime("initialize-old-commit") {
+      import io.delta.standalone.internal.util.Implicits._
 
-    val deltaLog = currentTransactionInfo.deltaLog
-    val winningCommitActions = deltaLog.store
-      .read(FileNames.deltaFile(deltaLog.logPath, winningCommitVersion), deltaLog.hadoopConf)
-      .toArray
-      .map(Action.fromJson)
+      val deltaLog = currentTransactionInfo.deltaLog
+      val winningCommitActions = deltaLog.store
+        .read(FileNames.deltaFile(deltaLog.logPath, winningCommitVersion), deltaLog.hadoopConf)
+        .toArray
+        .map(Action.fromJson)
 
-    WinningCommitSummary(winningCommitActions, winningCommitVersion)
+      WinningCommitSummary(winningCommitActions, winningCommitVersion)
+    }
   }
 
   /**
@@ -137,27 +146,29 @@ private[internal] class ConflictChecker(
    * the current transaction.
    */
   private def checkForAddedFilesThatShouldHaveBeenReadByCurrentTxn(): Unit = {
-    // Fail if new files have been added that the txn should have read.
-    val addedFilesToCheckForConflicts = isolationLevel match {
-      case Serializable =>
-        winningCommitSummary.changedDataAddedFiles ++ winningCommitSummary.blindAppendAddedFiles
-      case SnapshotIsolation =>
-        Seq.empty
-    }
+    recordTime("checked-appends") {
+      // Fail if new files have been added that the txn should have read.
+      val addedFilesToCheckForConflicts = isolationLevel match {
+        case Serializable =>
+          winningCommitSummary.changedDataAddedFiles ++ winningCommitSummary.blindAppendAddedFiles
+        case SnapshotIsolation =>
+          Seq.empty
+      }
 
-    val predicatesMatchingAddedFiles = currentTransactionInfo.readPredicates.flatMap { p =>
-      val conflictingFile = PartitionUtils.filterFileList(
-        currentTransactionInfo.metadata.partitionSchema,
-        addedFilesToCheckForConflicts,
-        p
-      ).headOption
+      val predicatesMatchingAddedFiles = currentTransactionInfo.readPredicates.flatMap { p =>
+        val conflictingFile = PartitionUtils.filterFileList(
+          currentTransactionInfo.metadata.partitionSchema,
+          addedFilesToCheckForConflicts,
+          p
+        ).headOption
 
-      conflictingFile.map(f => getPrettyPartitionMessage(f.partitionValues))
-    }.headOption
+        conflictingFile.map(f => getPrettyPartitionMessage(f.partitionValues))
+      }.headOption
 
-    if (predicatesMatchingAddedFiles.isDefined) {
-      throw DeltaErrors.concurrentAppendException(
+      if (predicatesMatchingAddedFiles.isDefined) {
+        throw DeltaErrors.concurrentAppendException(
           winningCommitSummary.commitInfo, predicatesMatchingAddedFiles.get)
+      }
     }
   }
 
@@ -166,21 +177,23 @@ private[internal] class ConflictChecker(
    * read by the current transaction.
    */
   private def checkForDeletedFilesAgainstCurrentTxnReadFiles(): Unit = {
-    // Fail if files have been deleted that the txn read.
-    val readFilePaths = currentTransactionInfo.readFiles.map(
-      f => f.path -> f.partitionValues).toMap
-    val deleteReadOverlap = winningCommitSummary.removedFiles
-      .find(r => readFilePaths.contains(r.path))
-    if (deleteReadOverlap.nonEmpty) {
-      val filePath = deleteReadOverlap.get.path
-      val partition = getPrettyPartitionMessage(readFilePaths(filePath))
-      throw DeltaErrors.concurrentDeleteReadException(
-        winningCommitSummary.commitInfo, s"$filePath in $partition")
-    }
-    if (winningCommitSummary.removedFiles.nonEmpty && currentTransactionInfo.readWholeTable) {
-      val filePath = winningCommitSummary.removedFiles.head.path
-      throw DeltaErrors.concurrentDeleteReadException(
-        winningCommitSummary.commitInfo, s"$filePath")
+    recordTime("checked-deletes") {
+      // Fail if files have been deleted that the txn read.
+      val readFilePaths = currentTransactionInfo.readFiles.map(
+        f => f.path -> f.partitionValues).toMap
+      val deleteReadOverlap = winningCommitSummary.removedFiles
+        .find(r => readFilePaths.contains(r.path))
+      if (deleteReadOverlap.nonEmpty) {
+        val filePath = deleteReadOverlap.get.path
+        val partition = getPrettyPartitionMessage(readFilePaths(filePath))
+        throw DeltaErrors.concurrentDeleteReadException(
+          winningCommitSummary.commitInfo, s"$filePath in $partition")
+      }
+      if (winningCommitSummary.removedFiles.nonEmpty && currentTransactionInfo.readWholeTable) {
+        val filePath = winningCommitSummary.removedFiles.head.path
+        throw DeltaErrors.concurrentDeleteReadException(
+          winningCommitSummary.commitInfo, s"$filePath")
+      }
     }
   }
 
@@ -189,14 +202,16 @@ private[internal] class ConflictChecker(
    * [[RemoveFile]] actions this transaction is trying to add.
    */
   private def checkForDeletedFilesAgainstCurrentTxnDeletedFiles(): Unit = {
-    // Fail if a file is deleted twice.
-    val txnDeletes = currentTransactionInfo.actions
-      .collect { case r: RemoveFile => r }
-      .map(_.path).toSet
-    val deleteOverlap = winningCommitSummary.removedFiles.map(_.path).toSet intersect txnDeletes
-    if (deleteOverlap.nonEmpty) {
-      throw DeltaErrors.concurrentDeleteDeleteException(
-        winningCommitSummary.commitInfo, deleteOverlap.head)
+    recordTime("checked-2x-deletes") {
+      // Fail if a file is deleted twice.
+      val txnDeletes = currentTransactionInfo.actions
+        .collect { case r: RemoveFile => r }
+        .map(_.path).toSet
+      val deleteOverlap = winningCommitSummary.removedFiles.map(_.path).toSet intersect txnDeletes
+      if (deleteOverlap.nonEmpty) {
+        throw DeltaErrors.concurrentDeleteDeleteException(
+          winningCommitSummary.commitInfo, deleteOverlap.head)
+      }
     }
   }
 
@@ -231,5 +246,23 @@ private[internal] class ConflictChecker(
       }.mkString("[", ", ", "]")
       s"partition $partition"
     }
+  }
+
+  private def recordTime[T](phase: String)(f: => T): T = {
+    val startTimeNs = System.nanoTime()
+    val ret = f
+    val timeTakenMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs)
+    timingStats += phase -> timeTakenMs
+    ret
+  }
+
+  private def reportMetrics(): Unit = {
+    lazy val timingStr = timingStats.keys
+      .toSeq
+      .sorted
+      .map(k => s"$k=${timingStats(k)}")
+      .mkString(",")
+
+    logInfo(s"[$logPrefixStr] Timing stats against $winningCommitVersion [$timingStr]")
   }
 }

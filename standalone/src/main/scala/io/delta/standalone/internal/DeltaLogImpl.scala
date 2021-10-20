@@ -22,15 +22,17 @@ import java.util.TimeZone
 
 import scala.collection.JavaConverters._
 
-import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.Path
 import io.delta.standalone.{DeltaLog, OptimisticTransaction, VersionLog}
 import io.delta.standalone.actions.{CommitInfo => CommitInfoJ}
 import io.delta.standalone.internal.actions.{Action, Metadata, Protocol}
 import io.delta.standalone.internal.exception.DeltaErrors
+import io.delta.standalone.internal.logging.Logging
 import io.delta.standalone.internal.sources.StandaloneHadoopConf
 import io.delta.standalone.internal.storage.LogStoreProvider
 import io.delta.standalone.internal.util.{Clock, ConversionUtils, FileNames, SystemClock}
+
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.Path
 
 /**
  * Scala implementation of Java interface [[DeltaLog]].
@@ -44,7 +46,8 @@ private[internal] class DeltaLogImpl private(
   with Checkpoints
   with MetadataCleanup
   with LogStoreProvider
-  with SnapshotManagement {
+  with SnapshotManagement
+  with Logging {
 
   /** Used to read and write physical log files and checkpoints. */
   lazy val store = createLogStore(hadoopConf)
@@ -65,6 +68,9 @@ private[internal] class DeltaLogImpl private(
    * garbage collected.
    */
   def minFileRetentionTimestamp: Long = clock.getTimeMillis() - tombstoneRetentionMillis
+
+  /** The unique identifier for this table. */
+  def tableId: String = metadata.id
 
   /** Use ReentrantLock to allow us to call `lockInterruptibly`. */
   private val deltaLogLock = new ReentrantLock()
