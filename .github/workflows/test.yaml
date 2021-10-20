@@ -1,8 +1,7 @@
 name: "Delta Lake Tests"
 on: [push, pull_request]
 jobs:
-  build:
-    name: "Prepare Env"
+  test:
     runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v2
@@ -39,4 +38,4 @@ jobs:
           pipenv run pip install importlib_metadata==3.10.0
       - name: Run Scala/Java and Python tests
         run: |
-          pipenv run python run-tests.py 
+          pipenv run python run-tests.py
