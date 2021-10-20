@@ -40,7 +40,7 @@ private[internal] object SchemaMergingUtils {
       def recurseIntoComplexTypes(complexType: DataType): Seq[Seq[String]] = {
         complexType match {
           case s: StructType => explode(s)
-          case a: ArrayType => recurseIntoComplexTypes(a.getElementType)
+          case a: ArrayType => recurseIntoComplexTypes(a.getElementType).map(Seq("element") ++ _)
           case m: MapType =>
             recurseIntoComplexTypes(m.getKeyType).map(Seq("key") ++ _) ++
               recurseIntoComplexTypes(m.getValueType).map(Seq("value") ++ _)

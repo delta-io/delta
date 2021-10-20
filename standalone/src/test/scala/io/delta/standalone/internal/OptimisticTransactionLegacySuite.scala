@@ -481,6 +481,15 @@ class OptimisticTransactionLegacySuite extends FunSuite {
       "Found duplicate column(s)")
   }
 
+  test("can't have duplicate column names - case insensitive") {
+    val schema = new StructType(Array(
+      new StructField("col1", new IntegerType(), true),
+      new StructField("COL1", new StringType(), true)
+    ))
+    testMetadata[RuntimeException](Metadata(schemaString = schema.toJson),
+      "Found duplicate column(s)")
+  }
+
   test("column names (both data and partition) must be acceptable by parquet") {
     val schema = new StructType(Array(new StructField("bad;column,name", new IntegerType(), true)))
 

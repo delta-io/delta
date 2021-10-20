@@ -53,10 +53,49 @@ public final class StructType extends DataType {
     private final StructField[] fields;
     private final HashMap<String, StructField> nameToField;
 
+    public StructType() {
+        this(new StructField[0]);
+    }
+
     public StructType(StructField[] fields) {
         this.fields = fields;
         this.nameToField = new HashMap<>();
         Arrays.stream(fields).forEach(field -> nameToField.put(field.getName(), field));
+    }
+
+    /**
+     * Creates a new {@link StructType} by adding a new field.
+     *
+     * <pre>{@code
+     * StructType schema = new StructType()
+     *     .add(new StructField("a", new IntegerType(), true))
+     *     .add(new StructField("b", new LongType(), false))
+     *     .add(new StructField("c", new StringType(), true))
+     * }</pre>
+     * @param field  The new field to add.
+     * @return The new {@link StructType}.
+     */
+    public StructType add(StructField field) {
+        StructField[] newFields = Arrays.copyOf(fields, fields.length + 1);
+        newFields[newFields.length - 1] = field;
+        return new StructType(newFields);
+    }
+
+    /**
+     * Creates a new {@link StructType} by adding a new nullable field with no metadata.
+     *
+     * <pre>{@code
+     * StructType schema = new StructType()
+     *     .add("a", new IntegerType())
+     *     .add("b", new LongType())
+     *     .add("c", new StringType())
+     * }</pre>
+     * @param fieldName  The name of the new field to add.
+     * @return The new {@link StructType}.
+     */
+    public StructType add(String fieldName, DataType dataType) {
+        StructField newField = new StructField(fieldName, dataType);
+        return add(newField);
     }
 
     /**
