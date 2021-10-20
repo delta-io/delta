@@ -183,7 +183,7 @@ object DeltaColumnMapping
       metadata: Metadata,
       mappingMode: DeltaColumnMappingMode): Metadata = {
     mappingMode match {
-      case IdMapping =>
+      case IdMapping | NameMapping =>
         assignColumnIdAndPhysicalName(metadata)
       case NoMapping =>
         metadata
@@ -215,19 +215,21 @@ object DeltaColumnMapping
       if (!hasColumnId(field)) {
         throw DeltaErrors.missingColumnId(IdMapping, field.name)
       }
-      if (!hasPhysicalName(field)) {
-        throw DeltaErrors.missingPhysicalName(IdMapping, field.name)
-      }
       val columnId = getColumnId(field)
       if (columnIds.contains(columnId)) {
         throw DeltaErrors.duplicatedColumnId(mode, curFullPath, columnIds(columnId))
       }
       columnIds.update(columnId, curFullPath)
+
+      if (!hasPhysicalName(field)) {
+        throw DeltaErrors.missingPhysicalName(IdMapping, field.name)
+      }
       val physicalName = getPhysicalName(field)
       if (physicalNames.contains(physicalName)) {
         throw DeltaErrors.duplicatedPhysicalName(mode, curFullPath, physicalNames(physicalName))
       }
       physicalNames.update(physicalName, curFullPath)
+
       field
     })
 
@@ -240,13 +242,9 @@ object DeltaColumnMapping
    * @return updated metadata
    */
   private def assignColumnIdAndPhysicalName(metadata: Metadata): Metadata = {
-    // Cannot use metadata.schema here, as it will likely fail our column mapping checks
-    val rawSchema = Option(metadata.schemaString)
-      .map(s => DataType.fromJson(s).asInstanceOf[StructType])
-      .getOrElse(new StructType())
+    val rawSchema = metadata.schema
     var maxId = DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(metadata) max
                 findMaxColumnId(rawSchema)
-
     val newSchema =
       SchemaMergingUtils.transformColumns(rawSchema)((_, field, _) => {
         val builder = new MetadataBuilder()
@@ -264,8 +262,7 @@ object DeltaColumnMapping
     metadata.copy(
       schemaString = newSchema.json,
       configuration =
-        metadata.configuration ++
-          Map(DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> maxId.toString)
+        metadata.configuration ++ Map(DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> maxId.toString)
     )
   }
 

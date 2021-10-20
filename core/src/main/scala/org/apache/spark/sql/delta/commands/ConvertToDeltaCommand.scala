@@ -397,9 +397,8 @@ abstract class ConvertToDeltaCommandBase(
   private def checkColumnMapping(
       txnMetadata: Metadata,
       convertTargetTable: ConvertTargetTable): Unit = {
-    val columnMappingMode = DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(txnMetadata)
-    if (convertTargetTable.requiredColumnMappingMode != columnMappingMode) {
-      throw DeltaErrors.convertToDeltaWithColumnMappingNotSupported(columnMappingMode)
+    if (convertTargetTable.requiredColumnMappingMode != txnMetadata.columnMappingMode) {
+      throw DeltaErrors.convertToDeltaWithColumnMappingNotSupported(txnMetadata.columnMappingMode)
     }
   }
 

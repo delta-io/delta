@@ -396,13 +396,9 @@ case class Metadata(
 
   /** Returns the schema as a [[StructType]] */
   @JsonIgnore
-  lazy val schema: StructType =
-    Option(schemaString).map { s =>
-      DeltaColumnMapping.setColumnMetadata(
-        DataType.fromJson(s).asInstanceOf[StructType],
-        columnMappingMode
-      )
-    }.getOrElse(StructType.apply(Nil))
+  lazy val schema: StructType = Option(schemaString)
+    .map(DataType.fromJson(_).asInstanceOf[StructType])
+    .getOrElse(StructType.apply(Nil))
 
   /** Returns the partitionSchema as a [[StructType]] */
   @JsonIgnore

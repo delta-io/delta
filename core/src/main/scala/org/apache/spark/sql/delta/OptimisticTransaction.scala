@@ -369,8 +369,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
           )
           if (partitionColCheckIsFatal) throw DeltaErrors.invalidPartitionColumn(e)
       }
-    } else if (metadata.columnMappingMode == IdMapping) {
-      DeltaColumnMapping.checkColumnIdAndPhysicalNameAssignments(metadata.schema, IdMapping)
+    } else {
+      DeltaColumnMapping.checkColumnIdAndPhysicalNameAssignments(
+        metadata.schema, metadata.columnMappingMode)
     }
 
     if (GeneratedColumn.hasGeneratedColumns(metadata.schema)) {
