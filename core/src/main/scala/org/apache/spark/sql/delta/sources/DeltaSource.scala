@@ -84,6 +84,8 @@ trait DeltaSourceBase extends Source
   override val schema: StructType =
     GeneratedColumn.removeGenerationExpressions(deltaLog.snapshot.metadata.schema)
 
+  protected var lastOffsetForTriggerAvailableNow: DeltaSourceOffset = _
+
   protected def getFileChangesWithRateLimit(
       fromVersion: Long,
       fromIndex: Long,
@@ -129,6 +131,7 @@ trait DeltaSourceBase extends Source
 
     deltaLog.createDataFrame(deltaLog.snapshot, addFiles, isStreaming = true)
   }
+
 }
 
 /**
@@ -197,15 +200,24 @@ case class DeltaSource(
       }
     }
 
-    val iter = if (isStartingVersion) {
+    var iter = if (isStartingVersion) {
       getSnapshotAt(fromVersion) ++ filterAndIndexDeltaLogs(fromVersion + 1)
     } else {
       filterAndIndexDeltaLogs(fromVersion)
     }
 
-    iter.filter { case IndexedFile(version, index, _, _, _, _) =>
+    iter = iter.filter { case IndexedFile(version, index, _, _, _, _) =>
       version > fromVersion || (index == -1 || index > fromIndex)
     }
+
+    if (lastOffsetForTriggerAvailableNow != null) {
+      iter = iter.filter { case IndexedFile(version, index, _, _, _, _) =>
+        version < lastOffsetForTriggerAvailableNow.reservoirVersion ||
+          (version == lastOffsetForTriggerAvailableNow.reservoirVersion &&
+            index <= lastOffsetForTriggerAvailableNow.index)
+      }
+    }
+    iter
   }
 
   protected def getSnapshotAt(version: Long): Iterator[IndexedFile] = {
