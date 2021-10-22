@@ -290,6 +290,16 @@ private[internal] object DeltaErrors {
     new DeltaStandaloneException(s"Unknown configuration was specified: $confKey")
   }
 
+  def schemaChangedException(oldSchema: StructType, newSchema: StructType): Throwable = {
+    val msg =
+      s"""Detected incompatible schema change:
+        |old schema: ${oldSchema.getTreeString}
+        |
+        |new schema: ${newSchema.getTreeString}
+      """.stripMargin
+    new IllegalStateException(msg)
+  }
+
   ///////////////////////////////////////////////////////////////////////////
   // Helper Methods
   ///////////////////////////////////////////////////////////////////////////

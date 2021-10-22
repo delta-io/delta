@@ -22,10 +22,11 @@ import java.util.UUID
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
-import io.delta.standalone.{CommitResult, DeltaScan, Operation, OptimisticTransaction, NAME, VERSION}
+import io.delta.standalone.{CommitResult, DeltaScan, NAME, Operation, OptimisticTransaction, VERSION}
 import io.delta.standalone.actions.{Action => ActionJ, Metadata => MetadataJ}
 import io.delta.standalone.exceptions.DeltaStandaloneException
 import io.delta.standalone.expressions.{Expression, Literal}
+import io.delta.standalone.types.StructType
 import io.delta.standalone.internal.actions.{Action, AddFile, CommitInfo, FileAction, Metadata, Protocol, RemoveFile}
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.logging.Logging
@@ -221,7 +222,10 @@ private[internal] class OptimisticTransactionImpl(
     assert(metadataChanges.length <= 1,
       "Cannot change the metadata more than once in a transaction.")
 
-    metadataChanges.foreach(m => verifyNewMetadata(m))
+    metadataChanges.foreach { m =>
+      verifyNewMetadata(m)
+      verifySchemaCompatibility(snapshot.metadataScala.schema, m.schema, actions)
+    }
 
     finalActions = newProtocol.toSeq ++ finalActions
 
@@ -429,6 +433,30 @@ private[internal] class OptimisticTransactionImpl(
     }
 
     Protocol.checkMetadataProtocolProperties(metadata, protocol)
+  }
+
+  /**
+   * We want to check that the [[newSchema]] is compatible with the [[existingSchema]].
+   *
+   * If the table is empty, or if the current commit is removing all the files in the table,
+   * then we do not need to perform this compatibility check.
+   */
+  private def verifySchemaCompatibility(
+      existingSchema: StructType,
+      newSchema: StructType,
+      actions: Seq[Action]): Unit = {
+    val tableEmpty = snapshot.numOfFiles == 0
+
+    lazy val allCurrentFilesRemoved = {
+      val removeFiles = actions.collect { case r: RemoveFile => r }
+      removeFiles.map(_.path).toSet == snapshot.allFilesScala.map(_.path).toSet
+    }
+
+    if (tableEmpty || allCurrentFilesRemoved) return
+
+    if (!SchemaUtils.isWriteCompatible(existingSchema, newSchema)) {
+      throw DeltaErrors.schemaChangedException(existingSchema, newSchema)
+    }
   }
 
   /**

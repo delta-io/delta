@@ -36,35 +36,6 @@ private[internal] object SchemaUtils {
   }
 
   /**
-   * This is a simpler version of Delta OSS SchemaUtils::typeAsNullable. Instead of returning the
-   * nullable DataType, returns true if the input `dt` matches the nullable DataType.
-   */
-  private def matchesNullableType(dt: DataType): Boolean = dt match {
-    case s: StructType => s.getFields.forall { field =>
-      field.isNullable && matchesNullableType(field.getDataType)
-    }
-
-    case a: ArrayType => a.getElementType match {
-      case s: StructType =>
-        a.containsNull() && matchesNullableType(s)
-      case _ =>
-        a.containsNull()
-    }
-
-    case m: MapType => (m.getKeyType, m.getValueType) match {
-      case (s1: StructType, s2: StructType) =>
-        m.valueContainsNull() && matchesNullableType(s1) && matchesNullableType(s2)
-      case (s1: StructType, _) =>
-        m.valueContainsNull() && matchesNullableType(s1)
-      case (_, s2: StructType) =>
-        m.valueContainsNull() && matchesNullableType(s2)
-      case _ => true
-    }
-
-    case _ => true
-  }
-
-  /**
    * Go through the schema to look for unenforceable NOT NULL constraints and throw when they're
    * encountered.
    */
@@ -104,6 +75,101 @@ private[internal] object SchemaUtils {
     }
 
     traverseColumns(Seq.empty, schema)
+  }
+
+  /**
+   * As the Delta table updates, the schema may change as well. This method defines whether a new
+   * schema can replace a pre-existing schema of a Delta table. Our rules are to return false if
+   * the new schema:
+   *   - Drops any column that is present in the current schema
+   *   - Converts nullable=true to nullable=false for any column
+   *   - Changes any datatype
+   */
+  def isWriteCompatible(existingSchema: StructType, newSchema: StructType): Boolean = {
+
+    def isDatatypeWriteCompatible(_existingType: DataType, _newType: DataType): Boolean = {
+      (_existingType, _newType) match {
+        case (e: StructType, n: StructType) =>
+          isWriteCompatible(e, n)
+        case (e: ArrayType, n: ArrayType) =>
+          // if existing elements are nullable, so should be the new element
+          (!e.containsNull() || n.containsNull()) &&
+            isDatatypeWriteCompatible(e.getElementType, n.getElementType)
+        case (e: MapType, n: MapType) =>
+          // if existing value is nullable, so should be the new value
+          (!e.valueContainsNull || n.valueContainsNull) &&
+            isDatatypeWriteCompatible(e.getKeyType, n.getKeyType) &&
+            isDatatypeWriteCompatible(e.getValueType, n.getValueType)
+        case (a, b) => a == b
+      }
+    }
+
+    def isStructWriteCompatible(_existingSchema: StructType, _newSchema: StructType): Boolean = {
+      val existing = toFieldMap(_existingSchema.getFields)
+      // scalastyle:off caselocale
+      val existingFieldNames = _existingSchema.getFieldNames.map(_.toLowerCase).toSet
+      assert(existingFieldNames.size == _existingSchema.length,
+        "Delta tables don't allow field names that only differ by case")
+      val newFields = _newSchema.getFieldNames.map(_.toLowerCase).toSet
+      assert(newFields.size == _newSchema.length,
+        "Delta tables don't allow field names that only differ by case")
+      // scalastyle:on caselocale
+
+      if (!existingFieldNames.subsetOf(newFields)) {
+        // Dropped a column that was present in the DataFrame schema
+        return false
+      }
+      _newSchema.getFields.forall { newField =>
+        // new fields are fine, they just won't be returned
+        existing.get(newField.getName).forall { existingField =>
+          // we know the name matches modulo case - now verify exact match
+          (existingField.getName == newField.getName
+            // if existing value is nullable, so should be the new value
+            && (!existingField.isNullable || newField.isNullable)
+            // and the type of the field must be compatible, too
+            && isDatatypeWriteCompatible(existingField.getDataType, newField.getDataType))
+        }
+      }
+    }
+
+    isStructWriteCompatible(existingSchema, newSchema)
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // Helper Methods
+  ///////////////////////////////////////////////////////////////////////////
+
+  private def toFieldMap(fields: Seq[StructField]): Map[String, StructField] = {
+    CaseInsensitiveMap(fields.map(field => field.getName -> field).toMap)
+  }
+
+  /**
+   * This is a simpler version of Delta OSS SchemaUtils::typeAsNullable. Instead of returning the
+   * nullable DataType, returns true if the input `dt` matches the nullable DataType.
+   */
+  private def matchesNullableType(dt: DataType): Boolean = dt match {
+    case s: StructType => s.getFields.forall { field =>
+      field.isNullable && matchesNullableType(field.getDataType)
+    }
+
+    case a: ArrayType => a.getElementType match {
+      case s: StructType =>
+        a.containsNull() && matchesNullableType(s)
+      case _ =>
+        a.containsNull()
+    }
+
+    case m: MapType => (m.getKeyType, m.getValueType) match {
+      case (s1: StructType, s2: StructType) =>
+        m.valueContainsNull() && matchesNullableType(s1) && matchesNullableType(s2)
+      case (s1: StructType, _) =>
+        m.valueContainsNull() && matchesNullableType(s1)
+      case (_, s2: StructType) =>
+        m.valueContainsNull() && matchesNullableType(s2)
+      case _ => true
+    }
+
+    case _ => true
   }
 
   private def prettyFieldName(columnPath: Seq[String]): String =

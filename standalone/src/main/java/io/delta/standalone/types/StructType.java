@@ -94,7 +94,7 @@ public final class StructType extends DataType {
      * @return The new {@link StructType}.
      */
     public StructType add(String fieldName, DataType dataType) {
-        StructField newField = new StructField(fieldName, dataType);
+        StructField newField = new StructField(fieldName, dataType, true);
         return add(newField);
     }
 
@@ -110,6 +110,13 @@ public final class StructType extends DataType {
      */
     public String[] getFieldNames() {
         return Arrays.stream(fields).map(StructField::getName).toArray(String[]::new);
+    }
+
+    /**
+     * @return the number of fields
+     */
+    public int length() {
+        return fields.length;
     }
 
     /**

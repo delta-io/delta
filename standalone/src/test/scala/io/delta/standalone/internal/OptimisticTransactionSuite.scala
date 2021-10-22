@@ -16,11 +16,14 @@
 
 package io.delta.standalone.internal
 
+import java.util.Collections
+
 import scala.collection.JavaConverters._
 
-import io.delta.standalone.actions.{CommitInfo, Protocol, Metadata => MetadataJ, RemoveFile => RemoveFileJ, SetTransaction => SetTransactionJ}
+import io.delta.standalone.actions.{CommitInfo, Protocol, Action => ActionJ, AddFile => AddFileJ, Metadata => MetadataJ, RemoveFile => RemoveFileJ, SetTransaction => SetTransactionJ}
 import io.delta.standalone.internal.util.TestUtils._
 import io.delta.standalone.DeltaLog
+import io.delta.standalone.types.{IntegerType, StringType, StructField, StructType}
 
 import org.apache.hadoop.conf.Configuration
 
@@ -182,5 +185,81 @@ class OptimisticTransactionSuite
       assert(getIsolationLevel(0) == "SnapshotIsolation")
       assert(getIsolationLevel(1) == "Serializable")
     }
+  }
+
+  private def testSchemaChange(
+      schema1: StructType,
+      schema2: StructType,
+      shouldThrow: Boolean,
+      initialActions: Seq[ActionJ] = addA :: Nil,
+      commitActions: Seq[ActionJ] = Nil): Unit = {
+    withTempDir { dir =>
+      val metadata1 = MetadataJ.builder().schema(schema1).build()
+      val metadata2 = MetadataJ.builder().schema(schema2).build()
+
+      val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
+
+      log.startTransaction().commit((initialActions :+ metadata1).asJava, op, engineInfo)
+
+      if (shouldThrow) {
+        intercept[IllegalStateException] {
+          log.startTransaction().commit((commitActions :+ metadata2).asJava, op, engineInfo)
+        }
+      } else {
+        log.startTransaction().commit((commitActions :+ metadata2).asJava, op, engineInfo)
+      }
+    }
+  }
+
+  // Note: See SchemaUtilsSuite for thorough isWriteCompatible(existingSchema, newSchema) unit tests
+  test("can change schema to valid schema") {
+    // col a is non-nullable
+    val schema1 = new StructType(Array(new StructField("a", new IntegerType(), false)))
+
+    // add nullable field
+    val schema2 = schema1.add(new StructField("b", new IntegerType(), true))
+    testSchemaChange(schema1, schema2, shouldThrow = false)
+
+    // add non-nullable field
+    val schema3 = schema1.add(new StructField("b", new IntegerType(), false))
+    testSchemaChange(schema1, schema3, shouldThrow = false)
+
+    // relaxed nullability (from non-nullable to nullable)
+    val schema4 = new StructType(Array(new StructField("a", new IntegerType(), true)))
+    testSchemaChange(schema1, schema4, shouldThrow = false)
+  }
+
+  // Note: See SchemaUtilsSuite for thorough isWriteCompatible(existingSchema, newSchema) unit tests
+  test("can't change schema to invalid schema - table non empty, files not removed") {
+    // col a is nullable
+    val schema1 = new StructType(Array(new StructField("a", new IntegerType(), true)))
+
+    // drop a field
+    val schema2 = new StructType(Array())
+    testSchemaChange(schema1, schema2, shouldThrow = true)
+
+    // restricted nullability (from nullable to non-nullable)
+    val schema3 = new StructType(Array(new StructField("a", new IntegerType(), false)))
+    testSchemaChange(schema1, schema3, shouldThrow = true)
+
+    // change of datatype
+    val schema4 = new StructType(Array(new StructField("a", new StringType(), true)))
+    testSchemaChange(schema1, schema4, shouldThrow = true)
+  }
+
+  test("can change schema to 'invalid' schema - table empty or all files removed") {
+    val schema1 = new StructType(Array(new StructField("a", new IntegerType())))
+    val schema2 = new StructType(Array(new StructField("a", new StringType())))
+    val addC = new AddFileJ("c", Collections.emptyMap(), 1, 1, true, null, null)
+
+    // change of datatype - table is empty
+    testSchemaChange(schema1, schema2, shouldThrow = false, initialActions = Nil)
+
+    // change of datatype - all files are removed and new file added
+    testSchemaChange(schema1, schema2, shouldThrow = false, commitActions = removeA :: addC :: Nil)
+
+    // change of datatype - not all files are removed (should throw)
+    testSchemaChange(schema1, schema2, shouldThrow = true, initialActions = addA :: addB :: Nil,
+      commitActions = removeA :: Nil)
   }
 }
