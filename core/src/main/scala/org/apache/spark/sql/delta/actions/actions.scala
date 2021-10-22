@@ -394,6 +394,13 @@ case class Metadata(
   lazy val columnMappingMode: DeltaColumnMappingMode =
     DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(this)
 
+  /**
+   * Column mapping max id for this table
+   */
+  @JsonIgnore
+  lazy val columnMappingMaxId: Long =
+    DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(this)
+
   /** Returns the schema as a [[StructType]] */
   @JsonIgnore
   lazy val schema: StructType = Option(schemaString)

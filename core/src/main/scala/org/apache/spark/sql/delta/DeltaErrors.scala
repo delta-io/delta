@@ -1157,7 +1157,7 @@ object DeltaErrors
   }
 
   def cannotModifyTableProperty(prop: String): Throwable =
-    throw new ColumnMappingUnsupportedException(
+    new UnsupportedOperationException(
       s"The Delta table configuration $prop cannot be specified by the user")
 
   /**
@@ -1165,7 +1165,7 @@ object DeltaErrors
    * so we error for now to be forward compatible with tables created in the future.
    */
   def unknownColumnMappingMode(mode: String): Throwable =
-    throw new ColumnMappingUnsupportedException(s"The column mapping mode `$mode` is not" +
+    new ColumnMappingUnsupportedException(s"The column mapping mode `$mode` is not" +
       s" supported. Supported modes in this version are: `none` and `id`." +
       s" Please upgrade Delta to access this table.")
 
@@ -1198,7 +1198,7 @@ object DeltaErrors
     )
 
   def changeColumnMappingModeNotSupported: Throwable = {
-    throw new ColumnMappingUnsupportedException("Changing column mapping mode using" +
+    new ColumnMappingUnsupportedException("Changing column mapping mode using" +
       s" config ${DeltaConfigs.COLUMN_MAPPING_MODE.key} is not supported.")
   }
 
@@ -1214,14 +1214,14 @@ object DeltaErrors
   }
 
   def convertToDeltaWithColumnMappingNotSupported(mode: DeltaColumnMappingMode): Throwable = {
-    new UnsupportedOperationException(
+    new ColumnMappingUnsupportedException(
       s"The configuration '${DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey}' " +
         s"cannot be set to `${mode.name}` when using CONVERT TO DELTA.")
   }
 
   def setColumnMappingModeOnOldProtocol(oldProtocol: Protocol): Throwable = {
     // scalastyle:off line.size.limit
-    throw new ColumnMappingUnsupportedException(
+    new ColumnMappingUnsupportedException(
       s"""
          |Your current table protocol version does not support the setting of column mapping mode
          |using ${DeltaConfigs.COLUMN_MAPPING_MODE.key}.
@@ -1243,7 +1243,7 @@ object DeltaErrors
       newSchema: StructType,
       mappingMode: DeltaColumnMappingMode): Throwable = {
     // scalastyle:off line.size.limit
-    throw new ColumnMappingUnsupportedException(
+    new ColumnMappingUnsupportedException(
       s"""
          |Schema change is detected:
          |
