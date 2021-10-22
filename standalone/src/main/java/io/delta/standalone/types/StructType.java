@@ -99,6 +99,23 @@ public final class StructType extends DataType {
     }
 
     /**
+     * Creates a new {@link StructType} by adding a new field with no metadata.
+     *
+     * <pre>{@code
+     * StructType schema = new StructType()
+     *     .add("a", new IntegerType(), true)
+     *     .add("b", new LongType(), false)
+     *     .add("c", new StringType(), true)
+     * }</pre>
+     * @param fieldName  The name of the new field to add.
+     * @return The new {@link StructType}.
+     */
+    public StructType add(String fieldName, DataType dataType, boolean nullable) {
+        StructField newField = new StructField(fieldName, dataType, nullable);
+        return add(newField);
+    }
+
+    /**
      * @return array of fields
      */
     public StructField[] getFields() {

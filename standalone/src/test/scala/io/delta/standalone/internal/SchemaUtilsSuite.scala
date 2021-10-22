@@ -19,8 +19,8 @@ package io.delta.standalone.internal
 import java.util.Locale
 
 import io.delta.standalone.exceptions.DeltaStandaloneException
-import io.delta.standalone.types.{ArrayType, IntegerType, MapType, StringType, StructType}
-import io.delta.standalone.internal.util.SchemaUtils
+import io.delta.standalone.types._
+import io.delta.standalone.internal.util.SchemaUtils._
 import io.delta.standalone.internal.util.SchemaMergingUtils.checkColumnNameDuplication
 
 import org.scalatest.FunSuite
@@ -215,7 +215,7 @@ class SchemaUtilsSuite extends FunSuite {
     badCharacters.foreach { char =>
       Seq(s"a${char}b", s"${char}ab", s"ab${char}", char.toString).foreach { name =>
         val e = intercept[DeltaStandaloneException] {
-          SchemaUtils.checkFieldNames(Seq(name))
+          checkFieldNames(Seq(name))
         }
         assert(e.getMessage.contains("invalid character"))
       }
@@ -223,7 +223,7 @@ class SchemaUtilsSuite extends FunSuite {
 
     goodCharacters.foreach { char =>
       // no issues here
-      SchemaUtils.checkFieldNames(Seq(s"a${char}b", s"${char}ab", s"ab${char}", char.toString))
+      checkFieldNames(Seq(s"a${char}b", s"${char}ab", s"ab${char}", char.toString))
     }
   }
 
@@ -231,6 +231,168 @@ class SchemaUtilsSuite extends FunSuite {
   // Write Compatibility Checks
   ///////////////////////////////////////////////////////////////////////////
 
-  // TODO copy from Delta OSS
+  /**
+   * Tests change of datatype within a schema.
+   *  - the make() function is a "factory" function to create schemas that vary only by the
+   *    given datatype in a specific position in the schema.
+   *  - other tests will call this method with different make() functions to test datatype
+   *    incompatibility in all the different places within a schema (in a top-level struct,
+   *    in a nested struct, as the element type of an array, etc.)
+   */
+  def testDatatypeChange(scenario: String)(make: DataType => StructType): Unit = {
+    val schemas = Map(
+      ("int", make(new IntegerType())),
+      ("string", make(new StringType())),
+      ("struct", make(new StructType().add("a", new StringType()))),
+      ("array", make(new ArrayType(new IntegerType(), true))), // containsNull
+      ("map", make(new MapType(new StringType(), new FloatType(), true))) // valueContainsNull
+    )
+    test(s"change of datatype should fail write compatibility - $scenario") {
+      for (a <- schemas.keys; b <- schemas.keys if a != b) {
+        assert(!isWriteCompatible(schemas(a), schemas(b)),
+          s"isWriteCompatible should have failed for: ${schemas(a)}, ${schemas(b)}")
+      }
+    }
+  }
 
+  /**
+   * Tests change of nullability within a schema.
+   * - ALLOWED: making a non-nullable field nullable
+   * - NOT ALLOWED: making a nullable field non-nullable
+   *
+   * Implementation details:
+   *  - the make() function is a "factory" function to create schemas that vary only by the
+   *    nullability (of a field, array element, or map values) in a specific position in the schema.
+   *  - other tests will call this method with different make() functions to test nullability
+   *    incompatibility in all the different places within a schema (in a top-level struct,
+   *    in a nested struct, for the element type of an array, etc.)
+   */
+  def testNullability (scenario: String)(make: Boolean => StructType): Unit = {
+    val nullable = make(true)
+    val nonNullable = make(false)
+
+    // restricted: nullable=true ==> nullable=false
+    test(s"restricted nullability should fail write compatibility - $scenario") {
+      assert(!isWriteCompatible(nullable, nonNullable))
+    }
+
+    // relaxed: nullable=false ==> nullable=true
+    test(s"relaxed nullability should not fail write compatibility - $scenario") {
+      assert(isWriteCompatible(nonNullable, nullable))
+    }
+  }
+
+  /**
+   * Tests for fields of a struct: adding/dropping fields, changing nullability, case variation
+   *  - The make() function is a "factory" method to produce schemas. It takes a function that
+   *    mutates a struct (for example, but adding a column, or it could just not make any change).
+   *  - Following tests will call this method with different factory methods, to mutate the
+   *    various places where a struct can appear (at the top-level, nested in another struct,
+   *    within an array, etc.)
+   *  - This allows us to have one shared code to test compatibility of a struct field in all the
+   *    different places where it may occur.
+   */
+  def testColumnVariations(scenario: String)
+    (make: (StructType => StructType) => StructType): Unit = {
+
+    // generate one schema without extra column, one with, one nullable, and one with mixed case
+    val withoutExtra = make(struct => struct) // produce struct WITHOUT extra field
+    val withExtraNullable = make(struct => struct.add("extra", new StringType()))
+    val withExtraMixedCase = make(struct => struct.add("eXtRa", new StringType()))
+    val withExtraNonNullable =
+      make(struct => struct.add("extra", new StringType(), false)) // nullable = false
+
+    test(s"dropping a field should fail write compatibility - $scenario") {
+      assert(!isWriteCompatible(withExtraNullable, withoutExtra))
+    }
+    test(s"adding a nullable field should not fail write compatibility - $scenario") {
+      assert(isWriteCompatible(withoutExtra, withExtraNullable))
+    }
+    test(s"adding a non-nullable field should not fail write compatibility - $scenario") {
+      assert(isWriteCompatible(withoutExtra, withExtraNonNullable))
+    }
+    test(s"case variation of field name should fail write compatibility - $scenario") {
+      assert(!isWriteCompatible(withExtraNullable, withExtraMixedCase))
+    }
+
+    testNullability(scenario) { nullable =>
+      make(struct => struct.add("extra", new StringType(), nullable))
+    }
+    testDatatypeChange(scenario) { datatype =>
+      make(struct => struct.add("extra", datatype))
+    }
+  }
+
+  // --------------------------------------------------------------------
+  // tests for all kinds of places where a field can appear in a struct
+  // --------------------------------------------------------------------
+
+  testColumnVariations("top level")(
+    f => f(new StructType().add("a", new IntegerType())))
+
+  testColumnVariations("nested struct")(
+    f => new StructType()
+      .add("a", f(new StructType().add("b", new IntegerType()))))
+
+  testColumnVariations("nested in array")(
+    f => new StructType()
+      .add("array", new ArrayType(
+        f(new StructType().add("b", new IntegerType())), true) // containsNull
+      )
+  )
+
+  testColumnVariations("nested in map key")(
+    f => new StructType()
+      .add("map", new MapType(
+        f(new StructType().add("b", new IntegerType())),
+        new StringType(), true) // valueContainsNull
+      )
+  )
+
+  testColumnVariations("nested in map value")(
+    f => new StructType()
+      .add("map", new MapType(
+        new StringType(),
+        f(new StructType().add("b", new IntegerType())), true) // valueContainsNull
+      )
+  )
+
+  // --------------------------------------------------------------------
+  // tests for data type change in places other than struct
+  // --------------------------------------------------------------------
+
+  testDatatypeChange("array element")(
+    datatype => new StructType()
+      .add("array", new ArrayType(datatype, true))) // containsNull
+
+  testDatatypeChange("map key")(
+    datatype => new StructType()
+      .add("map", new MapType(datatype, new StringType(), true))) // valueContainsNull
+
+  testDatatypeChange("map value")(
+    datatype => new StructType()
+      .add("map", new MapType(new StringType(), datatype, true))) // valueContainsNull
+
+  // --------------------------------------------------------------------
+  // tests for nullability change in places other than struct
+  // --------------------------------------------------------------------
+
+  testNullability("array contains null")(
+    containsNull => new StructType()
+      .add("array", new ArrayType(new StringType(), containsNull)))
+
+  testNullability("map contains null values")(
+    valueContainsNull => new StructType()
+      .add("map", new MapType(new IntegerType(), new StringType(), valueContainsNull)))
+
+  testNullability("map nested in array")(
+    valueContainsNull => new StructType()
+      .add("map", new ArrayType(
+        new MapType(new IntegerType(), new StringType(), valueContainsNull), true))) // containsNull
+
+  testNullability("array nested in map")(
+    containsNull => new StructType()
+      .add("map", new MapType(
+        new IntegerType(),
+        new ArrayType(new StringType(), containsNull), true))) // valueContainsNull
 }
