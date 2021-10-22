@@ -126,6 +126,9 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       var isBloomFiltered = false
       val parallelDeleteEnabled =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_PARALLEL_DELETE_ENABLED)
+      val parallelDeletePartitions =
+        spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_PARALLEL_DELETE_PARALLELISM)
+        .getOrElse(spark.sessionState.conf.getConf(SQLConf.SHUFFLE_PARTITIONS))
       val relativizeIgnoreError =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR)
 
@@ -248,7 +251,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           deltaLog.tombstoneRetentionMillis)
 
         val filesDeleted = try {
-          delete(diff, spark, basePath, hadoopConf, parallelDeleteEnabled)
+          delete(diff, spark, basePath, hadoopConf, parallelDeleteEnabled,
+            parallelDeletePartitions)
         } catch { case t: Throwable =>
           logVacuumEnd(deltaLog, spark, path)
           throw t
@@ -316,24 +320,6 @@ trait VacuumCommandImpl extends DeltaCommand {
   }
 
   /**
-   * Execute a block with adaptive execution disabled. This must wrap the Spark call
-   * that builds the final plan and executes the query.
-   */
-  private def withAdaptiveExecutionDisabled[T](spark: SparkSession)(f: => T): T = {
-    val adaptiveEnabled = spark.conf.get(SQLConf.ADAPTIVE_EXECUTION_ENABLED.key)
-    if (adaptiveEnabled.toBoolean) {
-      spark.conf.set(SQLConf.ADAPTIVE_EXECUTION_ENABLED.key, "false")
-    }
-    try {
-      f
-    } finally {
-      if (adaptiveEnabled.toBoolean) {
-        spark.conf.set(SQLConf.ADAPTIVE_EXECUTION_ENABLED.key, adaptiveEnabled)
-      }
-    }
-  }
-
-  /**
    * Attempts to delete the list of candidate files. Returns the number of files deleted.
    */
   protected def delete(
@@ -341,20 +327,17 @@ trait VacuumCommandImpl extends DeltaCommand {
       spark: SparkSession,
       basePath: String,
       hadoopConf: Broadcast[SerializableConfiguration],
-      parallel: Boolean): Long = {
+      parallel: Boolean,
+      parallelPartitions: Int): Long = {
     import spark.implicits._
 
     if (parallel) {
-      // We have to disable adaptive execution to ensure `spark.sql.shuffle.partitions`
-      // is still used as the parallelism control for deleting.
-      withAdaptiveExecutionDisabled(spark) {
-        diff.mapPartitions { files =>
-          val fs = new Path(basePath).getFileSystem(hadoopConf.value.value)
-          val filesDeletedPerPartition =
-            files.map(p => stringToPath(p)).count(f => tryDeleteNonRecursive(fs, f))
-          Iterator(filesDeletedPerPartition)
-        }.reduce(_ + _)
-      }
+      diff.repartition(parallelPartitions).mapPartitions { files =>
+        val fs = new Path(basePath).getFileSystem(hadoopConf.value.value)
+        val filesDeletedPerPartition =
+          files.map(p => stringToPath(p)).count(f => tryDeleteNonRecursive(fs, f))
+        Iterator(filesDeletedPerPartition)
+      }.reduce(_ + _)
     } else {
       val fs = new Path(basePath).getFileSystem(hadoopConf.value.value)
       val fileResultSet = diff.toLocalIterator().asScala
