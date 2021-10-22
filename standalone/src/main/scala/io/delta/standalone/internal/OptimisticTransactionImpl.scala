@@ -35,7 +35,7 @@ import io.delta.standalone.internal.util.{ConversionUtils, FileNames, SchemaMerg
 private[internal] class OptimisticTransactionImpl(
     deltaLog: DeltaLogImpl,
     snapshot: SnapshotImpl) extends OptimisticTransaction with Logging {
-  import OptimisticTransactionImpl._
+  val DELTA_MAX_RETRY_COMMIT_ATTEMPTS = 10000000
 
   /** Used for logging */
   private val txnId = UUID.randomUUID().toString
@@ -121,12 +121,12 @@ private[internal] class OptimisticTransactionImpl(
     val commitInfo = CommitInfo(
       deltaLog.clock.getTimeMillis(),
       op.getName.toString,
-      null, // TODO: use operation jsonEncodedValues
+      if (op.getParameters == null) null else op.getParameters.asScala.toMap,
       Map.empty,
       Some(readVersion).filter(_ >= 0),
       Option(isolationLevelToUse.toString),
       Some(isBlindAppend),
-      Some(op.getOperationMetrics.asScala.toMap),
+      Some(op.getMetrics.asScala.toMap),
       if (op.getUserMetadata.isPresent) Some(op.getUserMetadata.get()) else None,
       Some(s"$engineInfo $NAME/$VERSION")
     )
@@ -507,12 +507,4 @@ private[internal] class OptimisticTransactionImpl(
     super.logError(logPrefix + msg, throwable)
   }
 
-}
-
-private[internal] object OptimisticTransactionImpl {
-  val DELTA_MAX_RETRY_COMMIT_ATTEMPTS = 10000000 // TODO: DeltaConfig this
-
-//  def getOperationJsonEncodedParameters(op: Operation): Map[String, String] = {
-//    op.getParameters.asScala.mapValues(JsonUtils.toJson(_)).toMap
-//  }
 }
