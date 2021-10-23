@@ -444,6 +444,16 @@ trait DeltaSQLConfBase {
           |from the new dataframe.""".stripMargin)
       .booleanConf
       .createWithDefault(true)
+
+  val LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS =
+    buildConf("loadFileSystemConfigsFromDataFrameOptions")
+      .internal()
+      .doc(
+        """Whether to load file systems configs provided in DataFrameReader/Writer options when
+          |calling `DataFrameReader.load/DataFrameWriter.save` using a Delta table path.
+          |`DataFrameReader.table/DataFrameWriter.saveAsTable` doesn't support this.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

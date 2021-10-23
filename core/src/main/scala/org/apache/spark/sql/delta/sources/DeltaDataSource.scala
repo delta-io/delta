@@ -81,7 +81,7 @@ class DeltaDataSource
     })
 
     val (_, maybeTimeTravel) = DeltaTableUtils.extractIfPathContainsTimeTravel(
-      sqlContext.sparkSession, path)
+      sqlContext.sparkSession, path, Map.empty)
     if (maybeTimeTravel.isDefined) throw DeltaErrors.timeTravelNotSupportedException
     if (DeltaDataSource.getTimeTravelVersion(parameters).isDefined) {
       throw DeltaErrors.timeTravelNotSupportedException
@@ -144,7 +144,7 @@ class DeltaDataSource
       .map(DeltaDataSource.decodePartitioningColumns)
       .getOrElse(Nil)
 
-    val deltaLog = DeltaLog.forTable(sqlContext.sparkSession, path)
+    val deltaLog = DeltaLog.forTable(sqlContext.sparkSession, path, parameters)
     WriteIntoDelta(
       deltaLog = deltaLog,
       mode = mode,
@@ -169,12 +169,19 @@ class DeltaDataSource
     val timeTravelByParams = DeltaDataSource.getTimeTravelVersion(parameters)
     var cdcOptions: mutable.Map[String, String] = mutable.Map.empty
 
-
+    val dfOptions: Map[String, String] =
+      if (sqlContext.sparkSession.sessionState.conf.getConf(
+          DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
+        parameters
+      } else {
+        Map.empty
+      }
     DeltaTableV2(
       sqlContext.sparkSession,
       new Path(maybePath),
       timeTravelOpt = timeTravelByParams,
-      options = new CaseInsensitiveStringMap(cdcOptions.asJava)
+      options = dfOptions,
+      cdcOptions = new CaseInsensitiveStringMap(cdcOptions.asJava)
     ).toBaseRelation
   }
 
@@ -259,12 +266,15 @@ object DeltaDataSource extends DatabricksLogging {
    */
   def parsePathIdentifier(
       spark: SparkSession,
-      userPath: String): (Path, Seq[(String, String)], Option[DeltaTimeTravelSpec]) = {
+      userPath: String,
+      options: Map[String, String]): (Path, Seq[(String, String)], Option[DeltaTimeTravelSpec]) = {
     // Handle time travel
-    val (path, timeTravelByPath) = DeltaTableUtils.extractIfPathContainsTimeTravel(spark, userPath)
+    val (path, timeTravelByPath) =
+      DeltaTableUtils.extractIfPathContainsTimeTravel(spark, userPath, options)
 
     val hadoopPath = new Path(path)
-    val rootPath = DeltaTableUtils.findDeltaTableRoot(spark, hadoopPath).getOrElse(hadoopPath)
+    val rootPath =
+      DeltaTableUtils.findDeltaTableRoot(spark, hadoopPath, options).getOrElse(hadoopPath)
 
     val partitionFilters = if (rootPath != hadoopPath) {
       logConsole(

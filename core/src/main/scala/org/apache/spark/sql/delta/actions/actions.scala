@@ -365,6 +365,8 @@ case class AddCDCFile(
 
 case class Format(
     provider: String = "parquet",
+    // If we support `options` in future, we should not store any file system options since they may
+    // contain credentials.
     options: Map[String, String] = Map.empty)
 
 /**

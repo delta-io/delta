@@ -276,7 +276,7 @@ class Snapshot(
       schema,
       None,
       index.format,
-      Map.empty[String, String])(spark)
+      deltaLog.options)(spark)
     LogicalRelation(fsRelation)
   }
 

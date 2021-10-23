@@ -224,8 +224,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
           committer = committer,
           outputSpec = outputSpec,
           // scalastyle:off deltahadoopconfiguration
-          // TODO(SC-85267) Merge this with DataFrame options
-          hadoopConf = spark.sessionState.newHadoopConfWithOptions(metadata.configuration),
+          hadoopConf =
+            spark.sessionState.newHadoopConfWithOptions(metadata.configuration ++ deltaLog.options),
           // scalastyle:on deltahadoopconfiguration
           partitionColumns = partitioningColumns,
           bucketSpec = None,
