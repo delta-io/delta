@@ -1718,6 +1718,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
 
 }
 
+
 /**
  * A FileSystem implementation that returns monotonically increasing timestamps for file creation.
  * Note that we may return a different timestamp for the same file. This is okay for the tests

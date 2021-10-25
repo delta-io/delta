@@ -241,7 +241,7 @@ object DeltaColumnMapping
    * @param metadata Metadata whose schema to modify
    * @return updated metadata
    */
-  private def assignColumnIdAndPhysicalName(metadata: Metadata): Metadata = {
+  def assignColumnIdAndPhysicalName(metadata: Metadata): Metadata = {
     val rawSchema = metadata.schema
     var maxId = DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(metadata) max
                 findMaxColumnId(rawSchema)
