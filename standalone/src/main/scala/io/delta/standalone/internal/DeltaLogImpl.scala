@@ -24,10 +24,13 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import io.delta.standalone.{DeltaLog, VersionLog}
 import io.delta.standalone.actions.{CommitInfo => CommitInfoJ}
-import io.delta.standalone.internal.actions.Action
+import io.delta.standalone.expressions.{And, Expression, Literal}
+import io.delta.standalone.internal.actions.{Action, AddFile}
+import io.delta.standalone.internal.data.PartitionRowRecord
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.storage.HDFSReadOnlyLogStore
 import io.delta.standalone.internal.util.{ConversionUtils, FileNames}
+import io.delta.standalone.types.StructType
 
 /**
  * Scala implementation of Java interface [[DeltaLog]].
@@ -107,5 +110,24 @@ private[standalone] object DeltaLogImpl {
     val path = fs.makeQualified(rawPath)
 
     new DeltaLogImpl(hadoopConf, path, path.getParent)
+  }
+
+  /**
+   * Filters the given [[AddFile]]s by the given `partitionFilters`, returning those that match.
+   * @param files The active files in the DeltaLog state, which contains the partition value
+   *              information
+   * @param partitionFilters Filters on the partition columns
+   */
+  def filterFileList(
+      partitionSchema: StructType,
+      files: Seq[AddFile],
+      partitionFilters: Seq[Expression]): Seq[AddFile] = {
+    val expr = partitionFilters.reduceLeftOption(new And(_, _)).getOrElse(Literal.True)
+
+    files.filter { addFile =>
+      val partitionRowRecord = new PartitionRowRecord(partitionSchema, addFile.partitionValues)
+      val result = expr.eval(partitionRowRecord)
+      result == true
+    }
   }
 }
