@@ -128,7 +128,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_PARALLEL_DELETE_ENABLED)
       val parallelDeletePartitions =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_PARALLEL_DELETE_PARALLELISM)
-        .getOrElse(spark.sessionState.conf.getConf(SQLConf.SHUFFLE_PARTITIONS))
+        .getOrElse(spark.sessionState.conf.numShufflePartitions)
       val relativizeIgnoreError =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR)
 
