@@ -16,6 +16,9 @@
 
 package io.delta.standalone.exceptions;
 
+/**
+ * Thrown when files are added that would have been read by the current transaction.
+ */
 public class ConcurrentAppendException extends DeltaConcurrentModificationException {
     public ConcurrentAppendException(String message) {
         super(message);

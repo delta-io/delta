@@ -16,6 +16,9 @@
 
 package io.delta.standalone.exceptions;
 
+/**
+ * Thrown when the current transaction reads data that was deleted by a concurrent transaction.
+ */
 public class ConcurrentDeleteReadException extends DeltaConcurrentModificationException {
     public ConcurrentDeleteReadException(String message) {
         super(message);

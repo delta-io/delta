@@ -16,6 +16,10 @@
 
 package io.delta.standalone.exceptions;
 
+/**
+ * Thrown when the metadata of the Delta table has changed between the time of read
+ * and the time of commit.
+ */
 public class MetadataChangedException extends DeltaConcurrentModificationException {
     public MetadataChangedException(String message) {
         super(message);

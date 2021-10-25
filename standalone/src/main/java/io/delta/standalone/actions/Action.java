@@ -1,3 +1,5 @@
+// TODO: copyright
+
 package io.delta.standalone.actions;
 
 /**

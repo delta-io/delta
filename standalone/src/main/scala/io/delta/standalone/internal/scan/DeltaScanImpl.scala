@@ -83,6 +83,8 @@ private[internal] class DeltaScanImpl(files: Seq[AddFile]) extends DeltaScan {
     override def close(): Unit = { }
   }
 
+  override def getInputPredicate: Optional[Expression] = Optional.empty()
+
   override def getPushedPredicate: Optional[Expression] = Optional.empty()
 
   override def getResidualPredicate: Optional[Expression] = Optional.empty()

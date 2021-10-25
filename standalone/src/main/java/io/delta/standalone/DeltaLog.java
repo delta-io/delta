@@ -13,15 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.delta.standalone;
 
-import io.delta.standalone.actions.CommitInfo;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.Path;
+import java.util.Iterator;
 
+import io.delta.standalone.actions.CommitInfo;
 import io.delta.standalone.internal.DeltaLogImpl;
 
-import java.util.Iterator;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
 
 /**
  * {@link DeltaLog} is the representation of the transaction logs of a Delta table. It provides APIs
@@ -76,7 +77,7 @@ public interface DeltaLog {
      * Note that all reads in a transaction must go through the returned transaction object, and not
      * directly to the {@link DeltaLog} otherwise they will not be checked for conflicts.
      *
-     * @return a new OptimisticTransaction
+     * @return a new {@link OptimisticTransaction}.
      */
     OptimisticTransaction startTransaction();
 

@@ -16,13 +16,13 @@
 
 package io.delta.standalone;
 
+import java.util.List;
+
 import io.delta.standalone.actions.AddFile;
 import io.delta.standalone.actions.Metadata;
 import io.delta.standalone.data.CloseableIterator;
 import io.delta.standalone.data.RowRecord;
 import io.delta.standalone.expressions.Expression;
-
-import java.util.List;
 
 /**
  * {@link Snapshot} provides APIs to access the Delta table state (such as table metadata, active

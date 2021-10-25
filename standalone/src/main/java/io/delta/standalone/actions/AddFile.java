@@ -16,6 +16,8 @@
 
 package io.delta.standalone.actions;
 
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
@@ -30,17 +32,27 @@ import java.util.Objects;
  * @see  <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md">Delta Transaction Log Protocol</a>
  */
 public final class AddFile implements FileAction {
+    @Nonnull
     private final String path;
+
+    @Nonnull
     private final Map<String, String> partitionValues;
+
     private final long size;
+
     private final long modificationTime;
+
     private final boolean dataChange;
+
+    @Nullable
     private final String stats;
+
+    @Nullable
     private final Map<String, String> tags;
 
-    public AddFile(String path, Map<String, String> partitionValues, long size,
-                   long modificationTime, boolean dataChange, String stats,
-                   Map<String, String> tags) {
+    public AddFile(@Nonnull String path, @Nonnull Map<String, String> partitionValues, long size,
+                   long modificationTime, boolean dataChange, @Nullable String stats,
+                   @Nullable Map<String, String> tags) {
         this.path = path;
         this.partitionValues = partitionValues;
         this.size = size;
@@ -56,6 +68,7 @@ public final class AddFile implements FileAction {
      *         should be decoded by {@code new java.net.URI(path)} when using it.
      */
     @Override
+    @Nonnull
     public String getPath() {
         return path;
     }
@@ -66,8 +79,9 @@ public final class AddFile implements FileAction {
      *         An empty string for any type translates to a null partition value.
      * @see <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#Partition-Value-Serialization" target="_blank">Delta Protocol Partition Value Serialization</a>
      */
+    @Nonnull
     public Map<String, String> getPartitionValues() {
-        return partitionValues != null ? Collections.unmodifiableMap(partitionValues) : null;
+        return Collections.unmodifiableMap(partitionValues);
     }
 
     /**
@@ -99,6 +113,7 @@ public final class AddFile implements FileAction {
      * @return statistics (for example: count, min/max values for columns)
      *         about the data in this file as serialized JSON
      */
+    @Nullable
     public String getStats() {
         return stats;
     }
@@ -106,6 +121,7 @@ public final class AddFile implements FileAction {
     /**
      * @return an unmodifiable {@code Map} containing metadata about this file
      */
+    @Nullable
     public Map<String, String> getTags() {
         return tags != null ? Collections.unmodifiableMap(tags) : null;
     }

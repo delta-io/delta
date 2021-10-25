@@ -307,7 +307,7 @@ private[internal] object ConversionUtils {
   def convertSetTransactionJ(external: SetTransactionJ): SetTransaction = {
     SetTransaction(
       external.getAppId,
-      external.getVerion,
+      external.getVersion,
       external.getLastUpdated
     )
   }

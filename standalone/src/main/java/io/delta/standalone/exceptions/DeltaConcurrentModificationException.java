@@ -18,6 +18,9 @@ package io.delta.standalone.exceptions;
 
 import java.util.ConcurrentModificationException;
 
+/**
+ * The basic class for all Delta Standalone commit conflict exceptions.
+ */
 public class DeltaConcurrentModificationException extends ConcurrentModificationException {
     public DeltaConcurrentModificationException(String message) {
         super(message);

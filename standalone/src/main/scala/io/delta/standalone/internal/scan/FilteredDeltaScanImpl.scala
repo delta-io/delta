@@ -48,6 +48,8 @@ final private[internal] class FilteredDeltaScanImpl(
     result.asInstanceOf[Boolean]
   }
 
+  override def getInputPredicate: Optional[Expression] = Optional.of(expr)
+
   override def getPushedPredicate: Optional[Expression] =
     Optional.ofNullable(metadataConjunction.orNull)
 

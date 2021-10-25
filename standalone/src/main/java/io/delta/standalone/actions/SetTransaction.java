@@ -1,26 +1,48 @@
+// TODO: copyright
+
 package io.delta.standalone.actions;
 
+import javax.annotation.Nonnull;
 import java.util.Optional;
 
-public class SetTransaction implements Action {
+/**
+ * Sets the committed version for a given application. Used to make operations like streaming append
+ * idempotent.
+ */
+public final class SetTransaction implements Action {
+    @Nonnull
     private final String appId;
-    private final long verion;
+
+    private final long version;
+
+    @Nonnull
     private final Optional<Long> lastUpdated;
 
-    public SetTransaction(String appId, long verion, Optional<Long> lastUpdated) {
+    public SetTransaction(@Nonnull String appId, long version, @Nonnull Optional<Long> lastUpdated) {
         this.appId = appId;
-        this.verion = verion;
+        this.version = version;
         this.lastUpdated = lastUpdated;
     }
 
+    /**
+     * @return the application ID
+     */
+    @Nonnull
     public String getAppId() {
         return appId;
     }
 
-    public long getVerion() {
-        return verion;
+    /**
+     * @return the committed version for the application ID
+     */
+    public long getVersion() {
+        return version;
     }
 
+    /**
+     * @return the last updated timestamp of this transaction (milliseconds since the epoch)
+     */
+    @Nonnull
     public Optional<Long> getLastUpdated() {
         return lastUpdated;
     }

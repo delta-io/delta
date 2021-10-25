@@ -16,6 +16,9 @@
 
 package io.delta.standalone.exceptions;
 
+/**
+ * Thrown when a query fails, usually because the query itself is invalid.
+ */
 public class DeltaStandaloneException extends RuntimeException {
     public DeltaStandaloneException() {
         super();

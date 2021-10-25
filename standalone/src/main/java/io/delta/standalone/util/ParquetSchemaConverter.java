@@ -16,10 +16,10 @@
 
 package io.delta.standalone.util;
 
-import org.apache.parquet.schema.MessageType;
-
 import io.delta.standalone.internal.util.SparkToParquetSchemaConverter;
 import io.delta.standalone.types.StructType;
+
+import org.apache.parquet.schema.MessageType;
 
 /**
  * Converter class to convert {@link StructType} to Parquet {@link MessageType}.
@@ -99,7 +99,8 @@ public class ParquetSchemaConverter {
      * @param outputTimestampType  which parquet timestamp type to use when writing
      * @return {@code schema} as a Parquet {@link MessageType}
      * @throws IllegalArgumentException if a {@code StructField} name contains invalid character(s)
-     */    public static MessageType sparkToParquet(
+     */
+    public static MessageType sparkToParquet(
             StructType schema,
             Boolean writeLegacyParquetFormat,
             ParquetOutputTimestampType outputTimestampType) {

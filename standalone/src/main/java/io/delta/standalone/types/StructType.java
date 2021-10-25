@@ -91,6 +91,7 @@ public final class StructType extends DataType {
      *     .add("c", new StringType())
      * }</pre>
      * @param fieldName  The name of the new field to add.
+     * @param dataType  The datatype for the new field.
      * @return The new {@link StructType}.
      */
     public StructType add(String fieldName, DataType dataType) {

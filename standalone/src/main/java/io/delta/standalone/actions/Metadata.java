@@ -16,7 +16,11 @@
 
 package io.delta.standalone.actions;
 
-import java.util.*;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 
 import io.delta.standalone.types.StructType;
 

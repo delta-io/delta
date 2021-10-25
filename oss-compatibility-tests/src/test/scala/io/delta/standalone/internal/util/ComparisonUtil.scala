@@ -155,7 +155,7 @@ trait ComparisonUtil {
       standalone: io.delta.standalone.actions.SetTransaction,
       oss: org.apache.spark.sql.delta.actions.SetTransaction): Unit = {
     assert(standalone.getAppId == oss.appId)
-    assert(standalone.getVerion == oss.version)
+    assert(standalone.getVersion == oss.version)
     compareOptions(standalone.getLastUpdated, oss.lastUpdated)
   }
 

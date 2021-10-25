@@ -1,12 +1,19 @@
+// TODO: copyright
+
 package io.delta.standalone;
 
 import io.delta.standalone.actions.Action;
-import io.delta.standalone.actions.AddFile;
 import io.delta.standalone.actions.Metadata;
 import io.delta.standalone.expressions.Expression;
 
-import java.util.List;
-
+/**
+ * Used to perform a set of reads in a transaction and then commit a set of updates to the
+ * state of the log.  All reads from the {@link DeltaLog}, MUST go through this instance rather
+ * than directly to the {@link DeltaLog} otherwise they will not be checked for logical conflicts
+ * with concurrent updates.
+ *
+ * This class is not thread-safe.
+ */
 public interface OptimisticTransaction {
 
     /**
@@ -14,6 +21,8 @@ public interface OptimisticTransaction {
      * the given `lastVersion`. In the case of a conflict with a concurrent writer this
      * method will throw an exception.
      *
+     * @param <T>  A derived class of {@link Action}. This allows, for example, both a
+     *             {@code List<Action>} and a {@code List<AddFile>} to be accepted.
      * @param actions  Set of actions to commit.
      * @param op  Details of operation that is performing this transactional commit.
      * @param engineInfo  String used to identify the writer engine. It should resemble
@@ -35,11 +44,11 @@ public interface OptimisticTransaction {
      * - After TXN1 starts, another transaction TXN2 reads partition 'date=2021-09-07' and commits
      *   first at table version N (with no other metadata changes).
      * - TXN1 sees that another commit won, and needs to know whether to commit at version N+1 or
-     *   fail. Using the `readPredicates` and resultant `readFiles`, TXN1 can see that none of its
-     *   readFiles were changed by TXN2. Thus there are no logical conflicts and TXN1 can commit at
+     *   fail. Using the `readPredicate` and resultant `readFiles`, TXN1 can see that none of its
+     *   read files were changed by TXN2. Thus there are no logical conflicts and TXN1 can commit at
      *   table version N+1.
      *
-     * @param readPredicate  Predicates used to determine which files were read.
+     * @param readPredicate  Predicate used to determine which files were read.
      * @return a {@link DeltaScan} containing the list of files matching the push portion of the
      *         readPredicate.
      */

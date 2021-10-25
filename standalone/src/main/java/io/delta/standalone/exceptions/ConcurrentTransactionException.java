@@ -16,6 +16,9 @@
 
 package io.delta.standalone.exceptions;
 
+/**
+ * Thrown when concurrent transaction both attempt to update the same idempotent transaction.
+ */
 public class ConcurrentTransactionException extends DeltaConcurrentModificationException {
     public ConcurrentTransactionException(String message) {
         super(message);

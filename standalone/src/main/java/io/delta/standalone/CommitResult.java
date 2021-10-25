@@ -1,7 +1,9 @@
+// TODO: copyright
+
 package io.delta.standalone;
 
 /**
- * Wrapper around the result of {@link OptimisticTransaction#commit(Iterable, Operation, String)}..
+ * Wrapper around the result of {@link OptimisticTransaction#commit}.
  */
 public class CommitResult {
     private final long version;

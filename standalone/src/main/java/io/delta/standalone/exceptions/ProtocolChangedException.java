@@ -16,6 +16,9 @@
 
 package io.delta.standalone.exceptions;
 
+/**
+ * Thrown when the protocol version has changed between the time of read and the time of commit.
+ */
 public class ProtocolChangedException extends DeltaConcurrentModificationException {
     public ProtocolChangedException(String message) {
         super(message);
