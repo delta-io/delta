@@ -1,9 +1,9 @@
 package io.delta.standalone.expressions;
 
 /**
- * Usage: new LessThan(expr1, expr2) - Returns true if `expr1` is less than `expr2`, else false.
+ * Usage: {@code new LessThan(expr1, expr2)} - Returns true if `expr1` is less than `expr2`, else false.
  */
-public final class LessThan extends BinaryComparison {
+public final class LessThan extends BinaryComparison implements Predicate {
     public LessThan(Expression left, Expression right) {
         super(left, right, "<");
     }

@@ -18,6 +18,8 @@ package io.delta.standalone.internal.exception
 
 import java.io.{FileNotFoundException, IOException}
 
+import scala.annotation.varargs
+
 
 import io.delta.standalone.types.{DataType, StructType}
 import io.delta.standalone.exceptions._
@@ -107,12 +109,21 @@ private[internal] object DeltaErrors {
   }
 
   def nullValueFoundForPrimitiveTypes(fieldName: String): Throwable = {
-    new NullPointerException(s"Read a null value for field $fieldName which is a primitive type")
+    new NullPointerException(s"Read a null value for field $fieldName which is a primitive type.")
   }
 
   def nullValueFoundForNonNullSchemaField(fieldName: String, schema: StructType): Throwable = {
     new NullPointerException(s"Read a null value for field $fieldName, yet schema indicates " +
       s"that this field can't be null. Schema: ${schema.getTreeString}")
+  }
+
+  def fieldTypeMismatch(
+      fieldName: String,
+      expectedType: DataType,
+      actualType: String): Throwable = {
+    new ClassCastException(
+      s"The data type of field $fieldName is ${expectedType.getTypeName}. " +
+        s"Cannot cast it to $actualType")
   }
 
   def failOnDataLossException(expectedVersion: Long, seenVersion: Long): Throwable = {
@@ -298,6 +309,14 @@ private[internal] object DeltaErrors {
         |new schema: ${newSchema.getTreeString}
       """.stripMargin
     new IllegalStateException(msg)
+  }
+
+  @varargs def illegalExpressionValueType(
+      exprName: String,
+      expectedType: String,
+      realTypes: String*): RuntimeException = {
+    new IllegalArgumentException(
+      s"$exprName expression requires $expectedType type. But found ${realTypes.mkString(", ")}");
   }
 
   ///////////////////////////////////////////////////////////////////////////

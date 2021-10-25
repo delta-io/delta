@@ -1,7 +1,9 @@
 package io.delta.standalone.expressions;
 
+import io.delta.standalone.internal.exception.DeltaErrors;
+
 /**
- * Usage: new Not(expr) - Logical not.
+ * Usage: {@code new Not(expr)} - Logical not.
  */
 public class Not extends UnaryExpression implements Predicate {
     public Not(Expression child) {
@@ -11,7 +13,10 @@ public class Not extends UnaryExpression implements Predicate {
     @Override
     public Object nullSafeEval(Object childResult) {
         if (!(childResult instanceof Boolean)) {
-            throw new RuntimeException("'Not' expression child.eval result must be a Boolean");
+            throw DeltaErrors.illegalExpressionValueType(
+                    "NOT",
+                    "Boolean",
+                    childResult.getClass().getName());
         }
 
         return !((boolean) childResult);

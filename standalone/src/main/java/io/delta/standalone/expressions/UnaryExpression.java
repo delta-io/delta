@@ -31,7 +31,7 @@ public abstract class UnaryExpression implements Expression {
     }
 
     protected Object nullSafeEval(Object childResult) {
-        throw new RuntimeException("UnaryExpressions must override either eval or nullSafeEval");
+        throw new IllegalArgumentException("UnaryExpressions must override either eval or nullSafeEval");
     }
 
     @Override
