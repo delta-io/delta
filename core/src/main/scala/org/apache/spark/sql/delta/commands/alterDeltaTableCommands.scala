@@ -24,7 +24,7 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import org.apache.spark.sql.delta.constraints.Constraints
+import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraints}
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.schema.SchemaUtils.transformColumnsStructs
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -533,6 +533,9 @@ case class AlterTableAddConstraintDeltaCommand(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
+    if (name == CharVarcharConstraint.INVARIANT_NAME) {
+      throw DeltaErrors.invalidConstraintName(name)
+    }
     recordDeltaOperation(deltaLog, "delta.ddl.alter.addConstraint") {
       val txn = startTransaction()
 

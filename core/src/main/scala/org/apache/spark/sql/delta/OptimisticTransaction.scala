@@ -36,6 +36,7 @@ import org.apache.spark.sql.delta.stats.FileSizeHistogram
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.util.{Clock, Utils}
 
 /** Record metrics about a successful commit. */

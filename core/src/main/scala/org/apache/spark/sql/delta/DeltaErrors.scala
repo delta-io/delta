@@ -193,6 +193,10 @@ object DeltaErrors
         s"constraint first.\nOld constraint:\n${oldExpr}")
   }
 
+  def invalidConstraintName(name: String): AnalysisException = {
+    new AnalysisException(s"Cannot use '$name' as the name of a CHECK constraint.")
+  }
+
   def checkConstraintNotBoolean(name: String, expr: String): AnalysisException = {
     new AnalysisException(s"CHECK constraint '$name' ($expr) should be a boolean expression.'")
   }
