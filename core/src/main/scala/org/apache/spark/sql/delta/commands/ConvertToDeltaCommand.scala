@@ -227,9 +227,8 @@ abstract class ConvertToDeltaCommandBase(
 
       if (mergedConfig != deltaLogConfig) {
         if (deltaLogConfig.nonEmpty &&
-          spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_METADATA_CHECK_ENABLED)) {
-          throw DeltaErrors
-            .convertMetastoreMetadataMismatchException(tableProps, deltaLogConfig)
+            conf.getConf(DeltaSQLConf.DELTA_CONVERT_METADATA_CHECK_ENABLED)) {
+          throw DeltaErrors.convertMetastoreMetadataMismatchException(tableProps, deltaLogConfig)
         }
         val newMetadata = txn.metadata.copy(
           configuration = mergedConfig
@@ -685,11 +684,13 @@ object ConvertToDeltaCommand {
 
       val tz = Option(conf.sessionLocalTimeZone)
       // Check if the partition value can be casted to the provided type
-      partValues.literals.zip(partitionFields).foreach { case (literal, field) =>
-        if (literal.eval() != null && Cast(literal, field.dataType, tz).eval() == null) {
-          val partitionValue = Cast(literal, StringType, tz).eval()
-          val partitionValueStr = Option(partitionValue).map(_.toString).orNull
-          throw DeltaErrors.castPartitionValueException(partitionValueStr, field.dataType)
+      if (!conf.getConf(DeltaSQLConf.DELTA_CONVERT_PARTITION_VALUES_IGNORE_CAST_FAILURE)) {
+        partValues.literals.zip(partitionFields).foreach { case (literal, field) =>
+          if (literal.eval() != null && Cast(literal, field.dataType, tz).eval() == null) {
+            val partitionValue = Cast(literal, StringType, tz).eval()
+            val partitionValueStr = Option(partitionValue).map(_.toString).orNull
+            throw DeltaErrors.castPartitionValueException(partitionValueStr, field.dataType)
+          }
         }
       }
 

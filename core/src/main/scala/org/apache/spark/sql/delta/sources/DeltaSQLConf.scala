@@ -67,6 +67,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_CONVERT_PARTITION_VALUES_IGNORE_CAST_FAILURE =
+    buildConf("convert.partitionValues.ignoreCastFailure")
+      .doc(
+        """ When converting to Delta, ignore the failure when casting a partition value to
+        | the specified data type, in which case the partition column will be filled with null.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_SNAPSHOT_PARTITIONS =
     buildConf("snapshotPartitions")
       .internal()
