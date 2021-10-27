@@ -232,9 +232,17 @@ trait DeltaSQLConfBase {
     buildConf("vacuum.parallelDelete.enabled")
       .doc("Enables parallelizing the deletion of files during a vacuum command. Enabling " +
         "may result hitting rate limits on some storage backends. When enabled, parallelization " +
-        "is controlled by the default number of shuffle partitions.")
+        "is controlled 'spark.databricks.delta.vacuum.parallelDelete.parallelism'.")
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_VACUUM_PARALLEL_DELETE_PARALLELISM =
+    buildConf("vacuum.parallelDelete.parallelism")
+      .doc("Sets the number of partitions to use for parallel deletes. If not set, defaults to " +
+        "spark.sql.shuffle.partitions.")
+      .intConf
+      .checkValue(_ > 0, "parallelDelete.parallelism must be positive")
+      .createOptional
 
   val DELTA_SCHEMA_AUTO_MIGRATE =
     buildConf("schema.autoMerge.enabled")
