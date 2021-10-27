@@ -38,7 +38,6 @@ import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, LogicalPla
 import org.apache.spark.sql.connector.catalog.TableCatalog
 import org.apache.spark.sql.connector.catalog.TableChange.{After, ColumnPosition, First}
 import org.apache.spark.sql.execution.command.RunnableCommand
-import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
 import org.apache.spark.sql.types._
 
 /**
@@ -208,7 +207,7 @@ case class AlterTableAddColumnsDeltaCommand(
       }
 
       SchemaMergingUtils.checkColumnNameDuplication(newSchema, "in adding columns")
-      ParquetSchemaConverter.checkFieldNames(SchemaMergingUtils.explodeNestedFieldNames(newSchema))
+      SchemaUtils.checkSchemaFieldNames(newSchema, metadata.columnMappingMode)
 
       val newMetadata = metadata.copy(schemaString = newSchema.json)
       txn.updateMetadata(newMetadata)
@@ -444,7 +443,7 @@ case class AlterTableReplaceColumnsDeltaCommand(
         .asInstanceOf[StructType]
 
       SchemaMergingUtils.checkColumnNameDuplication(newSchema, "in replacing columns")
-      ParquetSchemaConverter.checkFieldNames(SchemaMergingUtils.explodeNestedFieldNames(newSchema))
+      SchemaUtils.checkSchemaFieldNames(newSchema, metadata.columnMappingMode)
 
       val newMetadata = metadata.copy(schemaString = newSchema.json)
       txn.updateMetadata(newMetadata)

@@ -377,13 +377,13 @@ trait DeltaTableCreationTests
           .mode(SaveMode.Overwrite)
           .saveAsTable(tableName)
       }
-      assert(ex.getMessage.contains("contains invalid character(s)"))
+      assert(ex.getMessage.contains("invalid character(s)"))
       assert(!tableLoc.exists())
 
       val ex2 = intercept[AnalysisException] {
         sql(s"CREATE TABLE $tableName(`a column name with spaces` LONG, b String) USING delta")
       }
-      assert(ex2.getMessage.contains("contains invalid character(s)"))
+      assert(ex2.getMessage.contains("invalid character(s)"))
       assert(!tableLoc.exists())
     }
   }

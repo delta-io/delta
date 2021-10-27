@@ -23,7 +23,8 @@ import scala.collection.Set._
 import scala.collection.mutable
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaErrors, GeneratedColumn}
+import org.apache.spark.sql.delta.{DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, GeneratedColumn, NoMapping}
+import org.apache.spark.sql.delta.actions
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -858,6 +859,20 @@ object SchemaUtils {
       }
     }
     // scalastyle:on caselocale
+  }
+
+  /**
+   * Check if the schema contains invalid char in the column names depending on the mode.
+   * TODO: We can suggest the mapping mode flag when this feature is in public preview.
+   */
+  def checkSchemaFieldNames(schema: StructType, columnMappingMode: DeltaColumnMappingMode): Unit = {
+    if (columnMappingMode != NoMapping) return
+    try {
+      checkFieldNames(SchemaMergingUtils.explodeNestedFieldNames(schema))
+    } catch {
+      case NonFatal(e) =>
+        throw DeltaErrors.foundInvalidCharsInColumnNames(e)
+    }
   }
 
   /**

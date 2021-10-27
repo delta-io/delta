@@ -585,7 +585,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       val ex = intercept[AnalysisException] {
         sql(s"ALTER TABLE $tableName ADD COLUMNS (`a column name with spaces` long)")
       }
-      assert(ex.getMessage.contains("contains invalid character(s)"))
+      assert(ex.getMessage.contains("invalid character(s)"))
     }
   }
 
@@ -597,7 +597,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       val ex = intercept[AnalysisException] {
         sql(s"ALTER TABLE $tableName ADD COLUMNS (struct.`a column name with spaces` long)")
       }
-      assert(ex.getMessage.contains("contains invalid character(s)"))
+      assert(ex.getMessage.contains("invalid character(s)"))
     }
   }
 

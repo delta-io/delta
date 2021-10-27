@@ -1263,6 +1263,16 @@ object DeltaErrors
     // scalastyle:on line.size.limit
   }
 
+  def foundInvalidCharsInColumnNames(cause: Throwable): Throwable = {
+    var adviceMsg = "Please use alias to rename it."
+
+    new AnalysisException(
+      s"""
+        |Found invalid character(s) among " ,;{}()\\n\\t=" in the column names of your
+        |schema. $adviceMsg
+        |""".stripMargin, cause = Some(cause))
+  }
+
 
   def missingColumnsInInsertInto(column: String): Throwable = {
     new AnalysisException(s"Column $column is not specified in INSERT")
