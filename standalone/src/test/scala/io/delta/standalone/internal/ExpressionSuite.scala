@@ -119,8 +119,8 @@ class ExpressionSuite extends FunSuite {
       (Literal.of(1.0), Literal.of(2.0), Literal.of(1.0), Literal.ofNull(new DoubleType())),
       (Literal.of(1.toByte), Literal.of(2.toByte), Literal.of(1.toByte),
         Literal.ofNull(new ByteType())),
-      (Literal.of(new BigDecimalJ("0.1")), Literal.of(new BigDecimalJ("0.2")),
-        Literal.of(new BigDecimalJ("0.1")), Literal.ofNull(DecimalType.USER_DEFAULT)),
+      (Literal.of(new BigDecimalJ("123.45")), Literal.of(new BigDecimalJ("887.62")),
+        Literal.of(new BigDecimalJ("123.45")), Literal.ofNull(new DecimalType(5, 2))),
       (Literal.False, Literal.True, Literal.False, Literal.ofNull(new BooleanType())),
       (Literal.of(new TimestampJ(0)), Literal.of(new TimestampJ(1000000)),
       Literal.of(new TimestampJ(0)), Literal.ofNull(new TimestampType())),
@@ -289,13 +289,15 @@ class ExpressionSuite extends FunSuite {
     )
   }
 
-  private def testColumn(fieldName: String, dataType: DataType, record: RowRecord,
-      expectedResult: Any) = {
-    assert(Objects.equals(new Column(fieldName, dataType).eval(record),
-      expectedResult))
-  }
-
   test("Column tests") {
+    def testColumn(
+        fieldName: String,
+        dataType: DataType,
+        record: RowRecord,
+        expectedResult: Any): Unit = {
+      assert(Objects.equals(new Column(fieldName, dataType).eval(record), expectedResult))
+    }
+
     val schema = new StructType(Array(
       new StructField("testInt", new IntegerType(), true),
       new StructField("testLong", new LongType(), true),
@@ -309,11 +311,12 @@ class ExpressionSuite extends FunSuite {
       new StructField("testDecimal", DecimalType.USER_DEFAULT, true),
       new StructField("testTimestamp", new TimestampType(), true),
       new StructField("testDate", new DateType(), true)))
+
     val partRowRecord = new PartitionRowRecord(schema,
       Map("testInt"->"1",
         "testLong"->"10",
         "testByte" ->"8",
-      "testShort" -> "100",
+        "testShort" -> "100",
         "testBoolean" -> "true",
         "testFloat" -> "20.0",
         "testDouble" -> "22.0",
@@ -333,7 +336,7 @@ class ExpressionSuite extends FunSuite {
     testColumn("testString", new StringType(), partRowRecord, "onetwothree")
     assert(Array(1.toByte, 5.toByte, 8.toByte) sameElements
       (new Column("testBinary", new BinaryType())).eval(partRowRecord).asInstanceOf[Array[Byte]])
-    testColumn("testDecimal", DecimalType.USER_DEFAULT, partRowRecord, new BigDecimalJ("0.123"))
+    testColumn("testDecimal", new DecimalType(4, 3), partRowRecord, new BigDecimalJ("0.123"))
     testColumn("testTimestamp", new TimestampType(), partRowRecord, new TimestampJ(12345678))
     testColumn("testDate", new DateType(), partRowRecord, new DateJ(70, 0, 1))
 
@@ -348,16 +351,17 @@ class ExpressionSuite extends FunSuite {
       "The data type of column testStruct is struct. This is not supported yet")
   }
 
-  private def buildPartitionRowRecord(
-      dataType: DataType,
-      nullable: Boolean,
-      value: String,
-      name: String = "test") = {
-    new PartitionRowRecord(new StructType(Array(new StructField(name, dataType, nullable))),
-      Map(name -> value))
-  }
-
   test("PartitionRowRecord tests") {
+    def buildPartitionRowRecord(
+        dataType: DataType,
+        nullable: Boolean,
+        value: String,
+        name: String = "test"): PartitionRowRecord = {
+      new PartitionRowRecord(
+        new StructType(Array(new StructField(name, dataType, nullable))),
+        Map(name -> value))
+    }
+
     val testPartitionRowRecord = buildPartitionRowRecord(new IntegerType(), nullable = true, "5")
     assert(buildPartitionRowRecord(new IntegerType(), nullable = true, null).isNullAt("test"))
     assert(!buildPartitionRowRecord(new IntegerType(), nullable = true, "5").isNullAt("test"))
@@ -408,7 +412,7 @@ class ExpressionSuite extends FunSuite {
         DateJ.valueOf("1970-01-01"))
     )
     nonPrimTypes.foreach {
-      case (dataType: DataType, f: (PartitionRowRecord => Any), s: String, v) =>
+      case (dataType: DataType, f: (PartitionRowRecord => Any), s: String, v: Any) =>
         assert(Objects.equals(f(buildPartitionRowRecord(dataType, nullable = true, s)), v))
         assert(f(buildPartitionRowRecord(dataType, nullable = true, null)) == null)
         testException[NullPointerException](
@@ -551,5 +555,11 @@ class ExpressionSuite extends FunSuite {
     val col2 = partitionSchema.column("col2")
     assert(col1 == col1Copy)
     assert(col1 != col2)
+  }
+
+  test("decimal literal creation") {
+    val dec52 = new BigDecimalJ("123.45")
+    val lit52 = Literal.of(dec52)
+    assert(lit52.dataType().equals(new DecimalType(5, 2)))
   }
 }

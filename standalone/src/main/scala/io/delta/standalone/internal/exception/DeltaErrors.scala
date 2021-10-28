@@ -20,7 +20,6 @@ import java.io.{FileNotFoundException, IOException}
 
 import scala.annotation.varargs
 
-
 import io.delta.standalone.types.{DataType, StructType}
 import io.delta.standalone.exceptions._
 import io.delta.standalone.internal.actions.{CommitInfo, Protocol}
@@ -117,13 +116,18 @@ private[internal] object DeltaErrors {
       s"that this field can't be null. Schema: ${schema.getTreeString}")
   }
 
+  /**
+   * Thrown when a user tries to get a value of type `desiredType` from a
+   * [[io.delta.standalone.expressions.Column]] with name `fieldName` and dataType `actualType`,
+   * but `actualType` and `desiredType` are not the same.
+   */
   def fieldTypeMismatch(
       fieldName: String,
-      expectedType: DataType,
-      actualType: String): Throwable = {
+      actualType: DataType,
+      desiredType: String): Throwable = {
     new ClassCastException(
-      s"The data type of field $fieldName is ${expectedType.getTypeName}. " +
-        s"Cannot cast it to $actualType")
+      s"The data type of field $fieldName is ${actualType.getTypeName}. " +
+        s"Cannot cast it to $desiredType")
   }
 
   def failOnDataLossException(expectedVersion: Long, seenVersion: Long): Throwable = {
