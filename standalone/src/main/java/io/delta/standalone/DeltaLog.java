@@ -37,7 +37,7 @@ public interface DeltaLog {
 
     /**
      * @return the current {@link Snapshot} of the Delta table. You may need to call
-     * {@link #update()} to access the latest snapshot if the current snapshot is stale.
+     *         {@link #update()} to access the latest snapshot if the current snapshot is stale.
      */
     Snapshot snapshot();
 

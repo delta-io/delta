@@ -14,7 +14,11 @@
  * limitations under the License.
  */
 
+// scalastyle:off line.size.limit
+
 import ReleaseTransformations._
+import scala.xml.{Node => XmlNode, NodeSeq => XmlNodeSeq, _}
+import scala.xml.transform._
 
 parallelExecution in ThisBuild := false
 scalastyleConfig in ThisBuild := baseDirectory.value / "scalastyle-config.xml"
@@ -28,6 +32,9 @@ val hadoopVersion = "3.1.0"
 val hiveVersion = "3.1.2"
 val tezVersion = "0.9.2"
 val hiveDeltaVersion = "0.5.0"
+val parquet4sVersion = "1.2.1"
+val parquetHadoopVersion = "1.10.1"
+val scalaTestVersion = "3.0.5"
 
 lazy val commonSettings = Seq(
   organization := "io.delta",
@@ -257,17 +264,109 @@ lazy val hiveTez = (project in file("hive-tez")) dependsOn(hive % "test->test") 
   )
 )
 
-lazy val standalone = (project in file("standalone"))
+/**
+ * We want to publish the `standalone` project's shaded JAR (created from the
+ * build/sbt standalone/assembly command).
+ *
+ * However, build/sbt standalone/publish and build/sbt standalone/publishLocal will use the
+ * non-shaded JAR from the build/sbt standalone/package command.
+ *
+ * So, we create an impostor, cosmetic project used only for publishing.
+ *
+ * build/sbt standaloneCosmetic/package
+ * - creates connectors/standalone/target/scala-2.12/delta-standalone-original-shaded_2.12-0.2.1-SNAPSHOT.jar
+ *   (this is the shaded JAR we want)
+ *
+ * build/sbt standaloneCosmetic/publishLocal
+ * - packages the shaded JAR (above) and then produces:
+ * -- .ivy2/local/io.delta/delta-standalone_2.12/0.2.1-SNAPSHOT/poms/delta-standalone_2.12.pom
+ * -- .ivy2/local/io.delta/delta-standalone_2.12/0.2.1-SNAPSHOT/jars/delta-standalone_2.12.jar
+ * -- .ivy2/local/io.delta/delta-standalone_2.12/0.2.1-SNAPSHOT/srcs/delta-standalone_2.12-sources.jar
+ * -- .ivy2/local/io.delta/delta-standalone_2.12/0.2.1-SNAPSHOT/docs/delta-standalone_2.12-javadoc.jar
+ */
+lazy val standaloneCosmetic = project
   .settings(
     name := "delta-standalone",
     commonSettings,
     releaseSettings,
+    pomPostProcess := { (node: XmlNode) =>
+      val hardcodeDeps = new RewriteRule {
+        override def transform(n: XmlNode): XmlNodeSeq = n match {
+          case e: Elem if e != null && e.label == "dependencies" =>
+            <dependencies>
+              <dependency>
+                <groupId>org.scala-lang</groupId>
+                <artifactId>scala-library</artifactId>
+                <version>{scalaVersion.value}</version>
+              </dependency>
+              <dependency>
+                <groupId>org.apache.hadoop</groupId>
+                <artifactId>hadoop-client</artifactId>
+                <version>{hadoopVersion}</version>
+                <scope>provided</scope>
+              </dependency>
+              <dependency>
+                <groupId>org.apache.parquet</groupId>
+                <artifactId>parquet-hadoop</artifactId>
+                <version>{parquetHadoopVersion}</version>
+                <scope>provided</scope>
+              </dependency>
+              <dependency>
+                <groupId>com.github.mjakubowski84</groupId>
+                <artifactId>parquet4s-core_{scalaBinaryVersion.value}</artifactId>
+                <version>{parquet4sVersion}</version>
+                <exclusions>
+                  <exclusion>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>slf4j-api</artifactId>
+                  </exclusion>
+                  <exclusion>
+                    <groupId>org.apache.parquet</groupId>
+                    <artifactId>parquet-hadoop</artifactId>
+                  </exclusion>
+                </exclusions>
+              </dependency>
+              <dependency>
+                <groupId>org.scalatest</groupId>
+                <artifactId>scalatest_{scalaBinaryVersion.value}</artifactId>
+                <version>{scalaTestVersion}</version>
+                <scope>test</scope>
+              </dependency>
+            </dependencies>
+          case _ => n
+        }
+      }
+      new RuleTransformer(hardcodeDeps).transform(node).head
+    },
+    exportJars := true,
+    packageBin in Compile := (assembly in standalone).value
+  )
+
+lazy val testStandaloneCosmetic = project.dependsOn(standaloneCosmetic)
+  .settings(
+    name := "test-standalone-cosmetic",
+    commonSettings,
+    skipReleaseSettings,
+    libraryDependencies ++= Seq(
+      "org.scalatest" %% "scalatest" % "3.0.5" % "test"
+    )
+  )
+
+lazy val standalone = (project in file("standalone"))
+  .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin)
+  .settings(
+    name := "delta-standalone-original",
+    skip in publish := true,
+    commonSettings,
+    skipReleaseSettings,
     mimaSettings,
     unmanagedResourceDirectories in Test += file("golden-tables/src/test/resources"),
+    // When updating any dependency here, we should also review `pomPostProcess` in project
+    // `standaloneCosmetic` and update it accordingly.
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided",
-      "org.apache.parquet" % "parquet-hadoop" % "1.10.1" % "provided",
-      "com.github.mjakubowski84" %% "parquet4s-core" % "1.2.1" excludeAll (
+      "org.apache.parquet" % "parquet-hadoop" % parquetHadoopVersion % "provided",
+      "com.github.mjakubowski84" %% "parquet4s-core" % parquet4sVersion excludeAll (
         ExclusionRule("org.slf4j", "slf4j-api"),
         ExclusionRule("org.apache.parquet", "parquet-hadoop")
       ),
@@ -276,15 +375,58 @@ lazy val standalone = (project in file("standalone"))
         ExclusionRule("com.fasterxml.jackson.core"),
         ExclusionRule("com.fasterxml.jackson.module")
       ),
-      "org.scalatest" %% "scalatest" % "3.0.5" % "test"
-    ))
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test"
+    ),
 
-  /**
-   * Unidoc settings
-   * Generate javadoc with `unidoc` command, outputs to `standalone/target/javaunidoc`
-   */
-  .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin)
-  .settings(
+    /**
+     * Standalone packaged (unshaded) jar.
+     *
+     * Build with `build/sbt standalone/package` command.
+     * e.g. connectors/standalone/target/scala-2.12/delta-standalone-original-unshaded_2.12-0.2.1-SNAPSHOT.jar
+     */
+    artifactName := { (sv: ScalaVersion, module: ModuleID, artifact: Artifact) =>
+      artifact.name + "-unshaded" + "_" + sv.binary + "-" + module.revision  + "." + artifact.extension
+    },
+
+    /**
+     * Standalone assembly (shaded) jar. This is what we want to release.
+     *
+     * Build with `build/sbt standalone/assembly` command.
+     * e.g. connectors/standalone/target/scala-2.12/delta-standalone-original-shaded_2.12-0.2.1-SNAPSHOT.jar
+     */
+    logLevel in assembly := Level.Info,
+    test in assembly := {},
+    assemblyJarName in assembly := s"${name.value}-shaded_${scalaBinaryVersion.value}-${version.value}.jar",
+    // we exclude jars first, and then we shade what is remaining
+    assemblyExcludedJars in assembly := {
+      val cp = (fullClasspath in assembly).value
+      val allowedPrefixes = Set("META_INF", "io", "json4s", "jackson", "paranamer")
+      cp.filter { f =>
+        !allowedPrefixes.exists(prefix => f.data.getName.startsWith(prefix))
+      }
+    },
+    assemblyShadeRules in assembly := Seq(
+      ShadeRule.rename("com.fasterxml.jackson.**" -> "shadedelta.@0").inAll,
+      ShadeRule.rename("com.thoughtworks.paranamer.**" -> "shadedelta.@0").inAll,
+      ShadeRule.rename("org.json4s.**" -> "shadedelta.@0").inAll
+    ),
+    assemblyMergeStrategy in assembly := {
+      // Discard `module-info.class` to fix the `different file contents found` error.
+      // TODO Upgrade SBT to 1.5 which will do this automatically
+      case "module-info.class" => MergeStrategy.discard
+      case x =>
+        val oldStrategy = (assemblyMergeStrategy in assembly).value
+        oldStrategy(x)
+    },
+    artifact in assembly := {
+      val art = (artifact in assembly).value
+      art.withClassifier(Some("assembly"))
+    },
+    addArtifact(artifact in assembly, assembly),
+    /**
+     * Unidoc settings
+     * Generate javadoc with `unidoc` command, outputs to `standalone/target/javaunidoc`
+     */
     javacOptions in (JavaUnidoc, unidoc) := Seq(
       "-public",
       "-windowtitle", "Delta Standalone Reader " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
