@@ -462,6 +462,17 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val LOG_SIZE_IN_MEMORY_THRESHOLD =
+    buildConf("streaming.logSizeInMemoryThreshold")
+      .internal()
+      .doc(
+        """
+          |The threshold of transaction log file size to read into the memory. When a file is larger
+          |than this, we will read the log file in multiple passes rather than loading it into
+          |the memory entirely.""".stripMargin)
+      .longConf
+      .createWithDefault(128L * 1024 * 1024) // 128MB
+
   val LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS =
     buildConf("loadFileSystemConfigsFromDataFrameOptions")
       .internal()
