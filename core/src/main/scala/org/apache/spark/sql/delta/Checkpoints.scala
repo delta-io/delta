@@ -196,9 +196,8 @@ trait Checkpoints extends DeltaLogging {
       val checkpoints = store.listFrom(
             checkpointPrefix(logPath, math.max(0, cur - 1000)),
             hadoopConf)
-          .map(_.getPath)
-          .filter(isCheckpointFile)
-          .map(CheckpointInstance(_))
+          .filter { file => isCheckpointFile(file.getPath) }
+          .map{ file => CheckpointInstance(file.getPath) }
           .takeWhile(tv => (cur == 0 || tv.version <= cur) && tv.isEarlierThan(cv))
           .toArray
       val lastCheckpoint = getLatestCompleteCheckpointFromList(checkpoints, cv)
@@ -222,7 +221,7 @@ trait Checkpoints extends DeltaLogging {
       case (CheckpointInstance(_, None), inst) => inst.length == 1
       case (CheckpointInstance(_, Some(parts)), inst) => inst.length == parts
     }
-    complete.keys.toArray.sorted.lastOption
+    if (complete.isEmpty) None else Some(complete.keys.max)
   }
 }
 
