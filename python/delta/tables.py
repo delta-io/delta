@@ -111,9 +111,9 @@ class DeltaTable(object):
         ...
 
     def update(
-            self,
-            condition: OptionalStringOrColumn = None,
-            set: OptionalColumnMapping = None
+        self,
+        condition: OptionalStringOrColumn = None,
+        set: OptionalColumnMapping = None
     ) -> None:
         """
         Update data from the table on the rows that match the given ``condition``,
@@ -695,9 +695,9 @@ class DeltaMergeBuilder(object):
         ...
 
     def whenMatchedUpdate(
-            self,
-            condition: OptionalStringOrColumn = None,
-            set: OptionalColumnMapping = None
+        self,
+        condition: OptionalStringOrColumn = None,
+        set: OptionalColumnMapping = None
     ) -> "DeltaMergeBuilder":
         """
         Update a matched table row based on the rules defined by ``set``.
@@ -767,9 +767,9 @@ class DeltaMergeBuilder(object):
         ...
 
     def whenNotMatchedInsert(
-            self,
-            condition: OptionalStringOrColumn = None,
-            values: OptionalColumnMapping = None
+        self,
+        condition: OptionalStringOrColumn = None,
+        values: OptionalColumnMapping = None
     ) -> "DeltaMergeBuilder":
         """
         Insert a new row to the target table based on the rules defined by ``values``. If a
