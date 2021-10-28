@@ -8,7 +8,8 @@ package io.delta.standalone.actions;
  *
  * You can use the following code to extract the concrete type of an {@link Action}.
  * <pre>{@code
- *   List<Action> actions = ... // {@link io.delta.standalone.DeltaLog.getChanges} is one way to get such actions
+ *   // {@link io.delta.standalone.DeltaLog.getChanges} is one way to get such actions
+ *   List<Action> actions = ...
  *   actions.forEach(x -> {
  *       if (x instanceof AddFile) {
  *          AddFile addFile = (AddFile) x;

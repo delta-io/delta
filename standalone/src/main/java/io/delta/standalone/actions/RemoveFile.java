@@ -2,12 +2,12 @@
 
 package io.delta.standalone.actions;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 
 /**
  * Logical removal of a given file from the reservoir. Acts as a tombstone before a file is

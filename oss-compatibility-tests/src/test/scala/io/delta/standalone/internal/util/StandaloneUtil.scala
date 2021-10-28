@@ -38,10 +38,10 @@ class StandaloneUtil(now: Long) {
   val partitionColumns: Seq[String] =
     schema.getFieldNames.filter(_.contains("part")).toSeq
 
-  val op = new Operation(Operation.Name.MANUAL_UPDATE, Map[String, Object](
-    "mode" -> "Append",
-    "partitionBy" -> JsonUtils.toJson(partitionColumns),
-    "predicate" -> "predicate_str"
+  val op = new Operation(Operation.Name.MANUAL_UPDATE, Map[String, String](
+    "mode" -> "\"Append\"",
+    "partitionBy" -> "\"[\\\"col1_part\\\",\\\"col2_part\\\"]\"",
+    "predicate" -> "\"predicate_str\""
   ).asJava)
 
   val metadata: Metadata = Metadata.builder()

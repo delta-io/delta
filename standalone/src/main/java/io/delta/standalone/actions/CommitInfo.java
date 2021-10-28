@@ -136,7 +136,8 @@ public class CommitInfo implements Action {
      * @return any relevant operation parameters. e.g. "mode", "partitionBy"
      */
     public Map<String, String> getOperationParameters() {
-        return operationParameters != null ? Collections.unmodifiableMap(operationParameters) : null;
+        if (operationParameters != null) return Collections.unmodifiableMap(operationParameters);
+        return null;
     }
 
     /**

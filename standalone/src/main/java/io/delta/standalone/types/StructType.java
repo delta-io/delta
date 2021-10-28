@@ -38,10 +38,10 @@
 
 package io.delta.standalone.types;
 
-import io.delta.standalone.expressions.Column;
-
 import java.util.Arrays;
 import java.util.HashMap;
+
+import io.delta.standalone.expressions.Column;
 
 /**
  * The data type representing a table's schema, consisting of a collection of

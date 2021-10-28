@@ -38,10 +38,7 @@
 
 package io.delta.standalone.types;
 
-import java.util.Collections;
-import java.util.Map;
 import java.util.Objects;
-import java.util.stream.Collectors;
 
 /**
  * A field inside a {@link StructType}.

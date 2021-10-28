@@ -1,11 +1,13 @@
-package io.delta.standalone.expressions;
+// todo: copyright
 
-import io.delta.standalone.data.RowRecord;
-import io.delta.standalone.types.DataType;
+package io.delta.standalone.expressions;
 
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+
+import io.delta.standalone.data.RowRecord;
+import io.delta.standalone.types.DataType;
 
 /**
  * An expression in Delta Standalone.

@@ -2,9 +2,9 @@
 
 package io.delta.standalone;
 
-import javax.annotation.Nonnull;
 import java.util.Collections;
 import java.util.List;
+import javax.annotation.Nonnull;
 
 import io.delta.standalone.actions.Action;
 

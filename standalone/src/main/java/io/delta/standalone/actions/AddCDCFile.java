@@ -2,10 +2,10 @@
 
 package io.delta.standalone.actions;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
 import java.util.Collections;
 import java.util.Map;
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 
 /**
  * A change file containing CDC data for the Delta version it's within. Non-CDC readers should

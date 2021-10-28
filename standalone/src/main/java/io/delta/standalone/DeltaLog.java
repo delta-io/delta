@@ -18,11 +18,11 @@ package io.delta.standalone;
 
 import java.util.Iterator;
 
-import io.delta.standalone.actions.CommitInfo;
-import io.delta.standalone.internal.DeltaLogImpl;
-
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
+
+import io.delta.standalone.actions.CommitInfo;
+import io.delta.standalone.internal.DeltaLogImpl;
 
 /**
  * {@link DeltaLog} is the representation of the transaction logs of a Delta table. It provides APIs
@@ -55,17 +55,20 @@ public interface DeltaLog {
      *
      * @param version  the snapshot version to generate
      * @return the snapshot at the provided {@code version}
-     * @throws IllegalArgumentException if the {@code version} is outside the range of available versions
+     * @throws IllegalArgumentException if the {@code version} is outside the range of available
+     *                                  versions
      */
     Snapshot getSnapshotForVersionAsOf(long version);
 
     /**
-     * Travel back in time to the latest {@link Snapshot} that was generated at or before {@code timestamp}.
+     * Travel back in time to the latest {@link Snapshot} that was generated at or before
+     * {@code timestamp}.
      *
      * @param timestamp  the number of milliseconds since midnight, January 1, 1970 UTC
      * @return the snapshot nearest to, but not after, the provided {@code timestamp}
      * @throws RuntimeException if the snapshot is unable to be recreated
-     * @throws IllegalArgumentException if the {@code timestamp} is before the earliest possible snapshot or after the latest possible snapshot
+     * @throws IllegalArgumentException if the {@code timestamp} is before the earliest possible
+     *                                  snapshot or after the latest possible snapshot
      */
     Snapshot getSnapshotForTimestampAsOf(long timestamp);
 
@@ -103,7 +106,8 @@ public interface DeltaLog {
     Iterator<VersionLog> getChanges(long startVersion, boolean failOnDataLoss);
 
     /**
-     * Create a {@link DeltaLog} instance representing the table located at the provided {@code path}.
+     * Create a {@link DeltaLog} instance representing the table located at the provided
+     * {@code path}.
      *
      * @param hadoopConf  Hadoop {@code Configuration} to use when accessing the Delta table
      * @param path  the path to the Delta table
@@ -114,7 +118,8 @@ public interface DeltaLog {
     }
 
     /**
-     * Create a {@link DeltaLog} instance representing the table located at the provide {@code path}.
+     * Create a {@link DeltaLog} instance representing the table located at the provide
+     * {@code path}.
      *
      * @param hadoopConf  Hadoop {@code Configuration} to use when accessing the Delta table
      * @param path  the path to the Delta table

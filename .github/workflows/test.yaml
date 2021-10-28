@@ -23,12 +23,14 @@ jobs:
         shell: bash -l {0}
         run: |
           build/sbt "++ 2.12.8 standalone/test"
+          build/sbt "++ 2.12.8 compatibility/test"
           build/sbt "++ 2.12.8 hive/test"
           build/sbt "++ 2.12.8 hiveMR/test"
           build/sbt "++ 2.12.8 hiveTez/test"
           build/sbt "++ 2.12.8 sqlDeltaImport/test"
           build/sbt "++ 2.12.8 testStandaloneCosmetic/test"
           build/sbt "++ 2.11.12 standalone/test"
+          build/sbt "++ 2.11.12 compatibility/test"
           build/sbt "++ 2.11.12 hive/test"
           build/sbt "++ 2.11.12 hiveMR/test"
           build/sbt "++ 2.11.12 hiveTez/test"

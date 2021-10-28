@@ -19,6 +19,7 @@ package io.delta.hive;
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
+
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.mapred.FileSplit;
 
@@ -37,12 +38,14 @@ public class DeltaInputSplit extends FileSplit {
         partitionColumns = new PartitionColumnInfo[0];
     }
 
-    public DeltaInputSplit(Path file, long start, long length, String[] hosts, PartitionColumnInfo[] partitionColumns) {
+    public DeltaInputSplit(Path file, long start, long length, String[] hosts,
+                           PartitionColumnInfo[] partitionColumns) {
         super(file, start, length, hosts);
         this.partitionColumns = partitionColumns;
     }
 
-    public DeltaInputSplit(Path file, long start, long length, String[] hosts, String[] inMemoryHosts, PartitionColumnInfo[] partitionColumns) {
+    public DeltaInputSplit(Path file, long start, long length, String[] hosts,
+                           String[] inMemoryHosts, PartitionColumnInfo[] partitionColumns) {
         super(file, start, length, hosts, inMemoryHosts);
         this.partitionColumns = partitionColumns;
     }

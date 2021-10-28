@@ -388,7 +388,7 @@ private[internal] class JsonMapSerializer extends JsonSerializer[Map[String, Str
  *
  * With the inclusion of RemoveFile as an exposed Java API, and since it was upgraded to match the
  * latest Delta OSS release, we now had a case class inside of [[SingleAction]] that had "primitive"
- * default paramaters. They are primitive in the sense that Parquet4s would try to decode them using
+ * default parameters. They are primitive in the sense that Parquet4s would try to decode them using
  * the [[PrimitiveValueCodecs]] trait. But since these parameters have default values, there is no
  * guarantee that they will exist in the underlying parquet checkpoint files. Thus (without these
  * classes), parquet4s would throw errors like this:

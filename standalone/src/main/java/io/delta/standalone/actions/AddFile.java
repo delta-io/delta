@@ -16,11 +16,11 @@
 
 package io.delta.standalone.actions;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 
 /**
  * Represents an action that adds a new file to the table. The path of a file acts as the primary

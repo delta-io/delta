@@ -93,9 +93,15 @@ public abstract class DataType {
             DataType dataType,
             String prefix,
             StringBuilder builder) {
-        if (dataType instanceof ArrayType) ((ArrayType) dataType).buildFormattedString(prefix, builder);
-        if (dataType instanceof StructType) ((StructType) dataType).buildFormattedString(prefix, builder);
-        if (dataType instanceof MapType) ((MapType) dataType).buildFormattedString(prefix, builder);
+        if (dataType instanceof ArrayType) {
+            ((ArrayType) dataType).buildFormattedString(prefix, builder);
+        }
+        if (dataType instanceof StructType) {
+            ((StructType) dataType).buildFormattedString(prefix, builder);
+        }
+        if (dataType instanceof MapType) {
+            ((MapType) dataType).buildFormattedString(prefix, builder);
+        }
     }
 
     @Override

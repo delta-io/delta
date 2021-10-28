@@ -54,7 +54,15 @@ lazy val commonSettings = Seq(
   compileScalastyle := scalastyle.in(Compile).toTask("").value,
   (compile in Compile) := ((compile in Compile) dependsOn compileScalastyle).value,
   testScalastyle := scalastyle.in(Test).toTask("").value,
-  (test in Test) := ((test in Test) dependsOn testScalastyle).value
+  (test in Test) := ((test in Test) dependsOn testScalastyle).value,
+
+  // Can be run explicitly via: build/sbt $module/checkstyle
+  // Will automatically be run during compilation (e.g. build/sbt compile)
+  // and during tests (e.g. build/sbt test)
+  checkstyleConfigLocation := CheckstyleConfigLocation.File("dev/checkstyle.xml"),
+  checkstyleSeverityLevel := Some(CheckstyleSeverityLevel.Error),
+  (checkstyle in Compile) := (checkstyle in Compile).triggeredBy(compile in Compile).value,
+  (checkstyle in Test) := (checkstyle in Test).triggeredBy(compile in Test).value
 )
 
 lazy val releaseSettings = Seq(

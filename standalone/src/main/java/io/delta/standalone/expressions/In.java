@@ -1,15 +1,18 @@
-package io.delta.standalone.expressions;
+// todo: copyright
 
-import io.delta.standalone.data.RowRecord;
-import io.delta.standalone.internal.expressions.Util;
+package io.delta.standalone.expressions;
 
 import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import io.delta.standalone.data.RowRecord;
+import io.delta.standalone.internal.expressions.Util;
+
 /**
- * Usage: {@code new In(expr, exprList)} - Returns true if `expr` is equal to any in `exprList`, else false.
+ * Usage: {@code new In(expr, exprList)} - Returns true if `expr` is equal to any in `exprList`,
+ * else false.
  */
 public final class In implements Predicate {
     private final Expression value;
@@ -27,10 +30,13 @@ public final class In implements Predicate {
             throw new IllegalArgumentException("'In' expression 'elems' cannot be empty");
         }
 
-        boolean allSameDataType = elems.stream().allMatch(x -> x.dataType().equals(value.dataType()));
+        boolean allSameDataType = elems
+            .stream()
+            .allMatch(x -> x.dataType().equals(value.dataType()));
 
         if (!allSameDataType) {
-            throw new IllegalArgumentException("In expression 'elems' and 'value' must all be of the same DataType");
+            throw new IllegalArgumentException(
+                "In expression 'elems' and 'value' must all be of the same DataType");
         }
 
         this.value = value;
@@ -58,19 +64,24 @@ public final class In implements Predicate {
         Boolean falseOrNullresult = false;
         for (Expression setElem : elems) {
             Object setElemValue = setElem.eval(record);
-            if (setElemValue == null)
+            if (setElemValue == null) {
                 // null value found but element may still be in list
                 falseOrNullresult = null;
-            else if (comparator.compare(origValue, setElemValue) == 0)
+            } else if (comparator.compare(origValue, setElemValue) == 0) {
                 // short circuit and return true; we have found the element in the list
                 return true;
+            }
+
         }
         return falseOrNullresult;
     }
 
     @Override
     public String toString() {
-        String elemsStr = elems.stream().map(Expression::toString).collect(Collectors.joining(", "));
+        String elemsStr = elems
+            .stream()
+            .map(Expression::toString)
+            .collect(Collectors.joining(", "));
         return value + " IN (" + elemsStr + ")";
     }
 

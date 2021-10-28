@@ -16,14 +16,15 @@
 
 package io.delta.standalone.storage;
 
-import io.delta.standalone.data.CloseableIterator;
+import java.io.FileNotFoundException;
+import java.nio.file.FileAlreadyExistsException;
+import java.util.Iterator;
+
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
 
-import java.io.FileNotFoundException;
-import java.nio.file.FileAlreadyExistsException;
-import java.util.Iterator;
+import io.delta.standalone.data.CloseableIterator;
 
 /**
  * :: DeveloperApi ::
@@ -48,7 +49,7 @@ import java.util.Iterator;
  * LogStore and its implementations are not meant for direct access but for configuration based
  * on storage system. See [[https://docs.delta.io/latest/delta-storage.html]] for details.
  *
- * @since 0.3.0 // TODO: double check this will be the new DSW version
+ * @since 0.3.0
  */
 public abstract class LogStore {
 
@@ -72,10 +73,11 @@ public abstract class LogStore {
     /**
      * :: DeveloperApi ::
      *
-     * Load the given file and return an `Iterator` of lines, with line breaks removed from each line.
-     * Callers of this function are responsible to close the iterator if they are done with it.
+     * Load the given file and return an `Iterator` of lines, with line breaks removed from each
+     * line. Callers of this function are responsible to close the iterator if they are done with
+     * it.
      *
-     * @since 0.3.0 // TODO: double check this will be the new DSW version
+     * @since 0.3.0
      *
      * @param path  the path to load
      * @param hadoopConf  the latest hadoopConf
@@ -92,7 +94,7 @@ public abstract class LogStore {
      * implementation must ensure that the entire file is made visible atomically, that is,
      * it should not generate partial files.
      *
-     * @since 0.3.0 // TODO: double check this will be the new DSW version
+     * @since 0.3.0
      *
      * @param path  the path to write to
      * @param actions  actions to be written
@@ -111,7 +113,7 @@ public abstract class LogStore {
      * List the paths in the same directory that are lexicographically greater or equal to
      * (UTF-8 sorting) the given `path`. The result should also be sorted by the file name.
      *
-     * @since 0.3.0 // TODO: double check this will be the new DSW version
+     * @since 0.3.0
      *
      * @param path  the path to load
      * @param hadoopConf  the latest hadoopConf
@@ -140,7 +142,7 @@ public abstract class LogStore {
      *
      * Whether a partial write is visible for the underlying file system of `path`.
      *
-     * @since 0.3.0 // TODO: double check this will be the new DSW version
+     * @since 0.3.0
      *
      * @param path  the path in question
      * @param hadoopConf  the latest hadoopConf

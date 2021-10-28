@@ -1,10 +1,12 @@
-package io.delta.standalone.expressions;
+// todo: copyright
 
-import io.delta.standalone.data.RowRecord;
+package io.delta.standalone.expressions;
 
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+
+import io.delta.standalone.data.RowRecord;
 
 /**
  * An expression with one input and one output. The output is by default evaluated to null
@@ -31,7 +33,8 @@ public abstract class UnaryExpression implements Expression {
     }
 
     protected Object nullSafeEval(Object childResult) {
-        throw new IllegalArgumentException("UnaryExpressions must override either eval or nullSafeEval");
+        throw new IllegalArgumentException(
+            "UnaryExpressions must override either eval or nullSafeEval");
     }
 
     @Override

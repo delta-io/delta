@@ -20,6 +20,7 @@ public final class Util {
             return new CastingComparator<String>();
         }
 
-        throw new RuntimeException("Couldn't find matching comparator for DataType: " + dataType.toString());
+        throw new RuntimeException(
+            "Couldn't find matching comparator for DataType: " + dataType.toString());
     }
 }

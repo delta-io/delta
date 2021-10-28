@@ -16,10 +16,10 @@
 
 package io.delta.standalone.util;
 
-import io.delta.standalone.internal.util.SparkToParquetSchemaConverter;
-import io.delta.standalone.types.StructType;
-
 import org.apache.parquet.schema.MessageType;
+
+import io.delta.standalone.types.StructType;
+import io.delta.standalone.internal.util.SparkToParquetSchemaConverter;
 
 /**
  * Converter class to convert {@link StructType} to Parquet {@link MessageType}.
@@ -29,10 +29,10 @@ public class ParquetSchemaConverter {
     /**
      * Represents Parquet timestamp types.
      * - INT96 is a non-standard but commonly used timestamp type in Parquet.
-     * - TIMESTAMP_MICROS is a standard timestamp type in Parquet, which stores number of microseconds
-     *   from the Unix epoch.
-     * - TIMESTAMP_MILLIS is also standard, but with millisecond precision, which means the microsecond
-     *   portion of the timestamp value is truncated.
+     * - TIMESTAMP_MICROS is a standard timestamp type in Parquet, which stores number of
+     *   microseconds from the Unix epoch.
+     * - TIMESTAMP_MILLIS is also standard, but with millisecond precision, which means the
+     *   microsecond portion of the timestamp value is truncated.
      */
     public enum ParquetOutputTimestampType {
         INT96,
@@ -82,7 +82,9 @@ public class ParquetSchemaConverter {
      * @return {@code schema} as a Parquet {@link MessageType}
      * @throws IllegalArgumentException if a {@code StructField} name contains invalid character(s)
      */
-    public static MessageType sparkToParquet(StructType schema, ParquetOutputTimestampType outputTimestampType) {
+    public static MessageType sparkToParquet(
+            StructType schema,
+            ParquetOutputTimestampType outputTimestampType) {
         return new SparkToParquetSchemaConverter(
                 writeLegacyParquetFormatDefault,
                 outputTimestampType).convert(schema);

@@ -40,8 +40,8 @@ package io.delta.standalone.types;
 
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.Map;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -113,7 +113,7 @@ public final class FieldMetadata {
                                 Arrays.hashCode((Object[]) entry.getValue()) :
                         entry.hashCode())
                 ).sum();
-        }
+    }
 
     /**
      * @return a new {@code FieldMetadata.Builder}
