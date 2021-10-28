@@ -233,10 +233,10 @@ class DeltaAnalysis(session: SparkSession)
         throw new IllegalStateException(s"The table schema $tableSchema is not consistent with " +
           s"the target attributes: $targetAttrs")
       }
-      deltaTable.snapshot.metadata.schema.foreach { tableColumn =>
-        if (!userSpecifiedNames.contains(tableColumn.name) &&
-          !GeneratedColumn.isGeneratedColumn(deltaTable.snapshot.protocol, tableColumn)) {
-          throw DeltaErrors.missingColumnsInInsertInto(tableColumn.name)
+      deltaTable.snapshot.metadata.schema.foreach { col =>
+        if (!userSpecifiedNames.contains(col.name) &&
+          !ColumnWithDefaultExprUtils.columnHasDefaultExpr(deltaTable.snapshot.protocol, col)) {
+          throw DeltaErrors.missingColumnsInInsertInto(col.name)
         }
       }
     }

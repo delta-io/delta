@@ -19,30 +19,24 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
 
-import scala.collection.mutable
-
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
-import org.apache.spark.sql.delta.constraints.{Constraint, Constraints}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.schema.SchemaUtils.quoteIdentifier
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{AnalysisException, Column, DataFrame, Dataset, Encoder, SparkSession}
+import org.apache.spark.sql.{AnalysisException, Column, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.BucketSpec
-import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, LogicalPlan, Project}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.expressions.{BucketTransform, Transform}
-import org.apache.spark.sql.execution.{QueryExecution, SQLExecution}
+import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
-import org.apache.spark.sql.execution.streaming.IncrementalExecution
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, DateType, DoubleType, FloatType, IntegerType, Metadata => FieldMetadata, MetadataBuilder, StringType, StructField, StructType, TimestampType}
 
@@ -264,74 +258,6 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
         throw DeltaErrors.generatedColumnsTypeMismatch(column.name, column.dataType, expr.dataType)
       }
     }
-  }
-
-  /**
-   * If there are generated columns in `schema`, add a new project to generate the generated columns
-   * missing in the schema, and return constraints for generated columns existing in the schema.
-   */
-  def addGeneratedColumnsOrReturnConstraints(
-      deltaLog: DeltaLog,
-      queryExecution: QueryExecution,
-      schema: StructType,
-      df: DataFrame): (DataFrame, Seq[Constraint]) = {
-    val topLevelOutputNames = CaseInsensitiveMap(df.schema.map(f => f.name -> f).toMap)
-    lazy val metadataOutputNames = CaseInsensitiveMap(schema.map(f => f.name -> f).toMap)
-    val constraints = mutable.ArrayBuffer[Constraint]()
-    var selectExprs = schema.map { f =>
-      getGenerationExpressionStr(f) match {
-        case Some(exprString) =>
-          val expr = parseGenerationExpression(df.sparkSession, exprString)
-          if (topLevelOutputNames.contains(f.name)) {
-            val column = SchemaUtils.fieldToColumn(f)
-            // Add a constraint to make sure the value provided by the user is the same as the value
-            // calculated by the generation expression.
-            constraints += Constraints.Check(s"Generated Column", EqualNullSafe(column.expr, expr))
-            column.alias(f.name)
-          } else {
-            new Column(expr).alias(f.name)
-          }
-        case None =>
-          SchemaUtils.fieldToColumn(f).alias(f.name)
-      }
-    }
-    val newData = queryExecution match {
-      case incrementalExecution: IncrementalExecution =>
-        selectFromStreamingDataFrame(incrementalExecution, df, selectExprs: _*)
-      case _ => df.select(selectExprs: _*)
-    }
-    recordDeltaEvent(deltaLog, "delta.generatedColumns.write")
-    (newData, constraints)
-  }
-
-  /**
-   * Select `cols` from a micro batch DataFrame. Directly calling `select` won't work because it
-   * will create a `QueryExecution` rather than inheriting `IncrementalExecution` from
-   * the micro batch DataFrame. A streaming micro batch DataFrame to execute should use
-   * `IncrementalExecution`.
-   */
-  private def selectFromStreamingDataFrame(
-      incrementalExecution: IncrementalExecution,
-      df: DataFrame,
-      cols: Column*): DataFrame = {
-    val newMicroBatch = df.select(cols: _*)
-    val newIncrementalExecution = new IncrementalExecution(
-      newMicroBatch.sparkSession,
-      newMicroBatch.queryExecution.logical,
-      incrementalExecution.outputMode,
-      incrementalExecution.checkpointLocation,
-      incrementalExecution.queryId,
-      incrementalExecution.runId,
-      incrementalExecution.currentBatchId,
-      incrementalExecution.offsetSeqMetadata
-    )
-    newIncrementalExecution.executedPlan // Force the lazy generation of execution plan
-    // Use reflection to call the private constructor.
-    val constructor =
-      classOf[Dataset[_]].getConstructor(classOf[QueryExecution], classOf[Encoder[_]])
-    constructor.newInstance(
-      newIncrementalExecution,
-      RowEncoder(newIncrementalExecution.analyzed.schema)).asInstanceOf[DataFrame]
   }
 
   def getGeneratedColumnsAndColumnsUsedByGeneratedColumns(schema: StructType): Set[String] = {

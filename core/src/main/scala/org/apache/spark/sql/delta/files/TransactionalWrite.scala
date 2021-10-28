@@ -90,7 +90,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     val enforcesGeneratedColumns = GeneratedColumn.enforcesGeneratedColumns(protocol, metadata)
     val (dataWithGeneratedColumns, generatedColumnConstraints) =
       if (enforcesGeneratedColumns) {
-        GeneratedColumn.addGeneratedColumnsOrReturnConstraints(
+        ColumnWithDefaultExprUtils.addDefaultExprsOrReturnConstraints(
           deltaLog,
           // We need the original query execution if this is a streaming query, because
           // `normalizedData` may add a new projection and change its type.
