@@ -29,6 +29,7 @@ from pyspark.sql.types import DataType, StructType, StructField
 
 if TYPE_CHECKING:
     from py4j.java_gateway import JavaObject, JVMView  # type: ignore[import]
+    from py4j.java_collections import JavaMap  # type: ignore[import]
 
 
 class DeltaTable(object):
@@ -552,7 +553,7 @@ class DeltaTable(object):
 
         jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
 
-        jmap = jvm.java.util.HashMap()
+        jmap: "JavaMap" = jvm.java.util.HashMap()
         for col, expr in pydict.items():
             if type(col) is not str:
                 e = ("Keys of dict in %s must contain only strings with column names" % argname) + \
