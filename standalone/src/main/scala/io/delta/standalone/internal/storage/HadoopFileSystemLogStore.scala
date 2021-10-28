@@ -23,14 +23,15 @@ import java.util.UUID
 
 import scala.collection.JavaConverters._
 
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{FileStatus, Path}
+
 import io.delta.standalone.data.CloseableIterator
 import io.delta.standalone.storage.LogStore
 
-import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
-
 /**
- * Default implementation of [[LogStore]] for Hadoop [[FileSystem]] implementations.
+ * Default implementation of [[LogStore]] for Hadoop [[org.apache.hadoop.fs.FileSystem]]
+ * implementations.
  */
 abstract class HadoopFileSystemLogStore(override val initHadoopConf: Configuration)
   extends LogStore(initHadoopConf) {

@@ -20,10 +20,10 @@ import java.util.{Calendar, TimeZone}
 
 import scala.collection.JavaConverters._
 
-import io.delta.standalone.internal.util.FileNames.{checkpointPrefix, isCheckpointFile, isDeltaFile, checkpointVersion, deltaVersion}
-
 import org.apache.commons.lang.time.DateUtils
 import org.apache.hadoop.fs.{FileStatus, Path}
+
+import io.delta.standalone.internal.util.FileNames.{checkpointPrefix, checkpointVersion, deltaVersion, isCheckpointFile, isDeltaFile}
 
 private[internal] trait MetadataCleanup {
   self: DeltaLogImpl =>

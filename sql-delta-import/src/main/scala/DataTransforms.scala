@@ -16,7 +16,7 @@
 
 package io.delta.connectors.spark.jdbc
 
-import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.DataFrame
 
 /**
  * Class that applies transformation functions one by one on input DataFrame

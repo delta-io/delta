@@ -20,8 +20,9 @@ import java.math.{BigDecimal => BigDecimalJ}
 import java.sql.{Date, Timestamp}
 
 import io.delta.standalone.data.{RowRecord => RowRecordJ}
-import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.types._
+
+import io.delta.standalone.internal.exception.DeltaErrors
 
 /**
  * A RowRecord representing a Delta Lake partition of Map(partitionKey -> partitionValue)

@@ -23,7 +23,9 @@ import com.fasterxml.jackson.annotation.{JsonIgnore, JsonInclude, JsonRawValue}
 import com.fasterxml.jackson.core.JsonGenerator
 import com.fasterxml.jackson.databind.{JsonSerializer, SerializerProvider}
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
+
 import io.delta.standalone.types.StructType
+
 import io.delta.standalone.internal.util.{DataTypeParser, JsonUtils}
 
 private[internal] object Action {

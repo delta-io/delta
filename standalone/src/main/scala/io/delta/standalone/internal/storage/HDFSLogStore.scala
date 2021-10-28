@@ -24,13 +24,13 @@ import java.util.EnumSet
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
-import io.delta.standalone.internal.exception.DeltaErrors
-import io.delta.standalone.internal.logging.Logging
-
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileContext, Options, Path, RawLocalFileSystem}
 import org.apache.hadoop.fs.CreateFlag.CREATE
 import org.apache.hadoop.fs.Options.{ChecksumOpt, CreateOpts}
+
+import io.delta.standalone.internal.exception.DeltaErrors
+import io.delta.standalone.internal.logging.Logging
 
 /**
  * The [[LogStore]] implementation for HDFS, which uses Hadoop [[FileContext]] APIs to

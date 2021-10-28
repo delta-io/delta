@@ -21,7 +21,8 @@ import java.util.{Optional => OptionalJ}
 
 import scala.collection.JavaConverters._
 
-import io.delta.standalone.actions.{Action => ActionJ, AddFile => AddFileJ, AddCDCFile => AddCDCFileJ, CommitInfo => CommitInfoJ, Format => FormatJ, JobInfo => JobInfoJ, Metadata => MetadataJ, NotebookInfo => NotebookInfoJ, Protocol => ProtocolJ, RemoveFile => RemoveFileJ, SetTransaction => SetTransactionJ}
+import io.delta.standalone.actions.{Action => ActionJ, AddCDCFile => AddCDCFileJ, AddFile => AddFileJ, CommitInfo => CommitInfoJ, Format => FormatJ, JobInfo => JobInfoJ, Metadata => MetadataJ, NotebookInfo => NotebookInfoJ, Protocol => ProtocolJ, RemoveFile => RemoveFileJ, SetTransaction => SetTransactionJ}
+
 import io.delta.standalone.internal.actions.{Action, AddCDCFile, AddFile, CommitInfo, Format, JobInfo, Metadata, NotebookInfo, Protocol, RemoveFile, SetTransaction}
 
 /**

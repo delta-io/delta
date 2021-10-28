@@ -22,6 +22,7 @@ import io.delta.standalone.DeltaScan
 import io.delta.standalone.actions.{AddFile => AddFileJ}
 import io.delta.standalone.data.CloseableIterator
 import io.delta.standalone.expressions.Expression
+
 import io.delta.standalone.internal.actions.AddFile
 import io.delta.standalone.internal.util.ConversionUtils
 

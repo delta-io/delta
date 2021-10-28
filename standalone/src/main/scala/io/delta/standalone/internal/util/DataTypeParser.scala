@@ -38,12 +38,14 @@
 
 package io.delta.standalone.internal.util
 
-import io.delta.standalone.types._
-import org.json4s._
-import org.json4s.jackson.JsonMethods._
-import org.json4s.JsonDSL._
-import org.json4s.JsonAST.JValue
 import scala.collection.JavaConverters._
+
+import org.json4s._
+import org.json4s.JsonAST.JValue
+import org.json4s.JsonDSL._
+import org.json4s.jackson.JsonMethods._
+
+import io.delta.standalone.types._
 
 private[standalone] object DataTypeParser {
 

@@ -55,8 +55,9 @@ import scala.reflect.ClassTag
 import com.github.mjakubowski84.parquet4s._
 
 import io.delta.standalone.data.{RowRecord => RowParquetRecordJ}
-import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.types._
+
+import io.delta.standalone.internal.exception.DeltaErrors
 
 /**
  * Scala implementation of Java interface [[RowParquetRecordJ]].

@@ -18,10 +18,10 @@ package io.delta.standalone.internal
 
 import java.util.concurrent.TimeUnit
 
-import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 import io.delta.standalone.expressions.Expression
+
 import io.delta.standalone.internal.actions._
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.logging.Logging

@@ -20,20 +20,21 @@ import java.net.URI
 
 import scala.collection.JavaConverters._
 
+import com.github.mjakubowski84.parquet4s.ParquetReader
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{FileSystem, Path}
+
 import io.delta.standalone.{DeltaScan, Snapshot}
 import io.delta.standalone.actions.{AddFile => AddFileJ, Metadata => MetadataJ, Protocol => ProtocolJ, RemoveFile => RemoveFileJ, SetTransaction => SetTransactionJ}
 import io.delta.standalone.data.{CloseableIterator, RowRecord => RowParquetRecordJ}
 import io.delta.standalone.expressions.Expression
+
 import io.delta.standalone.internal.actions.{AddFile, InMemoryLogReplay, Metadata, Parquet4sSingleActionWrapper, Protocol, RemoveFile, SetTransaction, SingleAction}
 import io.delta.standalone.internal.data.CloseableParquetDataIterator
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.logging.Logging
 import io.delta.standalone.internal.scan.{DeltaScanImpl, FilteredDeltaScanImpl}
 import io.delta.standalone.internal.util.{ConversionUtils, FileNames, JsonUtils}
-
-import com.github.mjakubowski84.parquet4s.ParquetReader
-import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileSystem, Path}
 
 /**
  * Scala implementation of Java interface [[Snapshot]].

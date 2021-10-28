@@ -18,6 +18,7 @@ package io.delta.standalone.internal.util
 
 import io.delta.standalone.exceptions.DeltaStandaloneException
 import io.delta.standalone.types.{ArrayType, DataType, MapType, StructField, StructType}
+
 import io.delta.standalone.internal.exception.DeltaErrors
 
 private[internal] object SchemaUtils {

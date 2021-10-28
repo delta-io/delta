@@ -21,10 +21,10 @@ import java.sql.Timestamp
 
 import scala.collection.JavaConverters._
 
+import org.apache.hadoop.fs.{FileStatus, Path}
+
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.util.FileNames._
-
-import org.apache.hadoop.fs.{FileStatus, Path}
 
 /**
  * Manages the creation, computation, and access of Snapshot's for Delta tables. Responsibilities

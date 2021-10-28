@@ -16,11 +16,12 @@
 
 package io.delta.standalone.internal.storage
 
+import org.apache.hadoop.conf.Configuration
+
 import io.delta.standalone.exceptions.DeltaStandaloneException
 import io.delta.standalone.storage.LogStore
-import io.delta.standalone.internal.sources.StandaloneHadoopConf
 
-import org.apache.hadoop.conf.Configuration
+import io.delta.standalone.internal.sources.StandaloneHadoopConf
 
 private[internal] object LogStoreProvider extends LogStoreProvider
 

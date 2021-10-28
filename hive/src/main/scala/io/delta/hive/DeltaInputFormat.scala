@@ -23,9 +23,8 @@ import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.hive.conf.HiveConf
 import org.apache.hadoop.hive.metastore.api.MetaException
-import org.apache.hadoop.hive.ql.exec.Utilities
 import org.apache.hadoop.hive.ql.io.parquet.read.DataWritableReadSupport
-import org.apache.hadoop.io.{ArrayWritable, NullWritable, Writable}
+import org.apache.hadoop.io.{ArrayWritable, NullWritable}
 import org.apache.hadoop.mapred._
 import org.apache.hadoop.mapreduce.security.TokenCache
 import org.apache.parquet.hadoop.ParquetInputFormat
@@ -50,8 +49,8 @@ import org.slf4j.LoggerFactory
  *
  * For each reader created from a [[DeltaInputSplit]], we can get all partition column types, the
  * locations of a partition column in the schema, and their string values. The reader can build
- * [[Writable]] for all partition values, and insert them to the raw row returned by
- * [[org.apache.parquet.hadoop.ParquetRecordReader]].
+ * [[org.apache.hadoop.io.Writable]] for all partition values, and insert them to the raw row
+ * returned by [[org.apache.parquet.hadoop.ParquetRecordReader]].
  */
 class DeltaInputFormat(realInput: ParquetInputFormat[ArrayWritable])
   extends FileInputFormat[NullWritable, ArrayWritable] {

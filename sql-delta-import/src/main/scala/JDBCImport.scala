@@ -19,10 +19,8 @@ package io.delta.connectors.spark.jdbc
 import java.util.Properties
 
 import io.delta.tables.DeltaTable
-import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.{DataFrame, SaveMode, SparkSession}
-
-import scala.collection.JavaConverters._
+import org.apache.spark.sql.functions.col
 
 /**
  * Class that contains JDBC source, read parallelism params and target table name

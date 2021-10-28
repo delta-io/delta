@@ -306,6 +306,17 @@ This file is divided into 3 sections:
     is slower.  </customMessage>
   </check>
 
+  <check level="error" class="org.scalastyle.scalariform.ImportOrderChecker" enabled="true">
+    <parameters>
+      <parameter name="groups">java,scala,3rdParty,standalone,standaloneInternal</parameter>
+      <parameter name="group.java">javax?\..*</parameter>
+      <parameter name="group.scala">scala\..*</parameter>
+      <parameter name="group.3rdParty">(?!io\.delta\.standalone\.).*</parameter>
+      <parameter name="group.standalone">io\.delta\.standalone\.(?!internal).*</parameter>
+      <parameter name="group.standaloneInternal">io\.delta\.standalone\.internal\..*</parameter>
+    </parameters>
+  </check>
+
   <check level="error" class="org.scalastyle.scalariform.DisallowSpaceBeforeTokenChecker" enabled="true">
     <parameters>
       <parameter name="tokens">COMMA</parameter>

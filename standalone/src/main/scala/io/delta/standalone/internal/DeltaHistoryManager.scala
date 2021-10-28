@@ -20,13 +20,14 @@ import java.sql.Timestamp
 
 import scala.collection.JavaConverters._
 
+import org.apache.hadoop.fs.Path
+
 import io.delta.standalone.storage.LogStore
+
 import io.delta.standalone.internal.actions.{Action, CommitInfo, CommitMarker}
 import io.delta.standalone.internal.exception.DeltaErrors
-import io.delta.standalone.internal.util.FileNames
 import io.delta.standalone.internal.logging.Logging
-
-import org.apache.hadoop.fs.Path
+import io.delta.standalone.internal.util.FileNames
 
 /**
  * This class keeps tracks of the version of commits and their timestamps for a Delta table to

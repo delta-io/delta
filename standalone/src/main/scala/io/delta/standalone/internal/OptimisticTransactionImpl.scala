@@ -27,6 +27,7 @@ import io.delta.standalone.actions.{Action => ActionJ, Metadata => MetadataJ}
 import io.delta.standalone.exceptions.DeltaStandaloneException
 import io.delta.standalone.expressions.{Expression, Literal}
 import io.delta.standalone.types.StructType
+
 import io.delta.standalone.internal.actions.{Action, AddFile, CommitInfo, FileAction, Metadata, Protocol, RemoveFile}
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.logging.Logging

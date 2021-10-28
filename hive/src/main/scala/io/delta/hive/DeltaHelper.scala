@@ -25,19 +25,20 @@ import scala.collection.mutable
 import scala.util.control.NonFatal
 
 import com.google.common.cache.{Cache, CacheBuilder}
-import io.delta.standalone.actions.AddFile
-import io.delta.standalone.types._
-import io.delta.standalone.{DeltaLog, Snapshot}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{BlockLocation, FileStatus, FileSystem, LocatedFileStatus, Path}
 import org.apache.hadoop.hive.metastore.api.MetaException
 import org.apache.hadoop.hive.ql.exec.{ExprNodeEvaluatorFactory, SerializationUtilities}
 import org.apache.hadoop.hive.ql.plan.{ExprNodeGenericFuncDesc, TableScanDesc}
-import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory
 import org.apache.hadoop.hive.serde2.objectinspector.{ObjectInspector, ObjectInspectorConverters, ObjectInspectorFactory, PrimitiveObjectInspector}
+import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory
 import org.apache.hadoop.hive.serde2.typeinfo._
 import org.apache.hadoop.mapred.JobConf
 import org.slf4j.LoggerFactory
+
+import io.delta.standalone.{DeltaLog, Snapshot}
+import io.delta.standalone.actions.AddFile
+import io.delta.standalone.types._
 
 object DeltaHelper {
 

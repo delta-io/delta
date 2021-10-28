@@ -20,6 +20,7 @@ import java.util.Optional
 
 import io.delta.standalone.expressions.Expression
 import io.delta.standalone.types.StructType
+
 import io.delta.standalone.internal.actions.AddFile
 import io.delta.standalone.internal.data.PartitionRowRecord
 import io.delta.standalone.internal.util.PartitionUtils

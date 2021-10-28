@@ -18,12 +18,12 @@ package io.delta.standalone.internal
 
 import java.util.{HashMap, Locale}
 
-import io.delta.standalone.internal.actions.{Action, Metadata, Protocol}
+import org.apache.hadoop.conf.Configuration
+
+import io.delta.standalone.internal.actions.{Metadata, Protocol}
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.logging.Logging
 import io.delta.standalone.internal.util.{CalendarInterval, IntervalUtils}
-
-import org.apache.hadoop.conf.Configuration
 
 private[internal] case class DeltaConfig[T](
     key: String,

@@ -21,9 +21,11 @@ import java.util.Locale
 import scala.collection.JavaConverters._
 
 import io.delta.standalone.expressions.{And, Expression, Literal}
+import io.delta.standalone.types.StructType
+
 import io.delta.standalone.internal.actions.AddFile
 import io.delta.standalone.internal.data.PartitionRowRecord
-import io.delta.standalone.types.StructType
+
 
 private[internal] object PartitionUtils {
 
