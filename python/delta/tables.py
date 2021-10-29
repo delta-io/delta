@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, overload, Any, Iterable, Optional, Union, NoRe
 
 import delta.exceptions  # noqa: F401; pylint: disable=unused-variable
 from delta._typing import (
-    ColumnMapping, OptionalColumnMapping, StringOrColumn, OptionalStringOrColumn
+    ColumnMapping, OptionalColumnMapping, ExpressionOrColumn, OptionalExpressionOrColumn
 )
 
 from pyspark import since
@@ -83,7 +83,7 @@ class DeltaTable(object):
         self._jdt.generate(mode)
 
     @since(0.4)  # type: ignore[arg-type]
-    def delete(self, condition: OptionalStringOrColumn = None) -> None:
+    def delete(self, condition: OptionalExpressionOrColumn = None) -> None:
         """
         Delete data from the table that match the given ``condition``.
 
@@ -103,7 +103,7 @@ class DeltaTable(object):
 
     @overload
     def update(
-        self, condition: StringOrColumn, set: ColumnMapping
+        self, condition: ExpressionOrColumn, set: ColumnMapping
     ) -> None:
         ...
 
@@ -113,7 +113,7 @@ class DeltaTable(object):
 
     def update(
         self,
-        condition: OptionalStringOrColumn = None,
+        condition: OptionalExpressionOrColumn = None,
         set: OptionalColumnMapping = None
     ) -> None:
         """
@@ -150,7 +150,7 @@ class DeltaTable(object):
 
     @since(0.4)  # type: ignore[arg-type]
     def merge(
-        self, source: DataFrame, condition: StringOrColumn
+        self, source: DataFrame, condition: ExpressionOrColumn
     ) -> "DeltaMergeBuilder":
         """
         Merge data from the `source` DataFrame based on the given merge `condition`. This returns
@@ -572,7 +572,7 @@ class DeltaTable(object):
 
     @staticmethod
     def _condition_to_jcolumn(
-        condition: OptionalStringOrColumn, argname: str = "'condition'"
+        condition: OptionalExpressionOrColumn, argname: str = "'condition'"
     ) -> "JavaObject":
         if condition is None:
             jcondition = None
@@ -685,7 +685,7 @@ class DeltaMergeBuilder(object):
 
     @overload
     def whenMatchedUpdate(
-        self, condition: OptionalStringOrColumn, set: ColumnMapping
+        self, condition: OptionalExpressionOrColumn, set: ColumnMapping
     ) -> "DeltaMergeBuilder":
         ...
 
@@ -697,7 +697,7 @@ class DeltaMergeBuilder(object):
 
     def whenMatchedUpdate(
         self,
-        condition: OptionalStringOrColumn = None,
+        condition: OptionalExpressionOrColumn = None,
         set: OptionalColumnMapping = None
     ) -> "DeltaMergeBuilder":
         """
@@ -722,7 +722,7 @@ class DeltaMergeBuilder(object):
 
     @since(0.4)  # type: ignore[arg-type]
     def whenMatchedUpdateAll(
-        self, condition: OptionalStringOrColumn = None
+        self, condition: OptionalExpressionOrColumn = None
     ) -> "DeltaMergeBuilder":
         """
         Update all the columns of the matched table row with the values of the  corresponding
@@ -740,7 +740,7 @@ class DeltaMergeBuilder(object):
 
     @since(0.4)  # type: ignore[arg-type]
     def whenMatchedDelete(
-        self, condition: OptionalStringOrColumn = None
+        self, condition: OptionalExpressionOrColumn = None
     ) -> "DeltaMergeBuilder":
         """
         Delete a matched row from the table only if the given ``condition`` (if specified) is
@@ -757,7 +757,7 @@ class DeltaMergeBuilder(object):
 
     @overload
     def whenNotMatchedInsert(
-        self, condition: StringOrColumn, values: ColumnMapping
+        self, condition: ExpressionOrColumn, values: ColumnMapping
     ) -> "DeltaMergeBuilder":
         ...
 
@@ -769,7 +769,7 @@ class DeltaMergeBuilder(object):
 
     def whenNotMatchedInsert(
         self,
-        condition: OptionalStringOrColumn = None,
+        condition: OptionalExpressionOrColumn = None,
         values: OptionalColumnMapping = None
     ) -> "DeltaMergeBuilder":
         """
@@ -794,7 +794,7 @@ class DeltaMergeBuilder(object):
 
     @since(0.4)  # type: ignore[arg-type]
     def whenNotMatchedInsertAll(
-        self, condition: OptionalStringOrColumn = None
+        self, condition: OptionalExpressionOrColumn = None
     ) -> "DeltaMergeBuilder":
         """
         Insert a new target Delta table row by assigning the target columns to the values of the
@@ -820,7 +820,7 @@ class DeltaMergeBuilder(object):
         self._jbuilder.execute()
 
     def __getMatchedBuilder(
-        self, condition: OptionalStringOrColumn = None
+        self, condition: OptionalExpressionOrColumn = None
     ) -> "JavaObject":
         if condition is None:
             return self._jbuilder.whenMatched()
@@ -828,7 +828,7 @@ class DeltaMergeBuilder(object):
             return self._jbuilder.whenMatched(DeltaTable._condition_to_jcolumn(condition))
 
     def __getNotMatchedBuilder(
-        self, condition: OptionalStringOrColumn = None
+        self, condition: OptionalExpressionOrColumn = None
     ) -> "JavaObject":
         if condition is None:
             return self._jbuilder.whenNotMatched()

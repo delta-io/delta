@@ -17,7 +17,7 @@
 from typing import Dict, Optional, Union
 from pyspark.sql.column import Column
 
-StringOrColumn = Union[str, Column]
-OptionalStringOrColumn = Optional[StringOrColumn]
-ColumnMapping = Dict[str, StringOrColumn]
+ExpressionOrColumn = Union[str, Column]
+OptionalExpressionOrColumn = Optional[ExpressionOrColumn]
+ColumnMapping = Dict[str, ExpressionOrColumn]
 OptionalColumnMapping = Optional[ColumnMapping]
