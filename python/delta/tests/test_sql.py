@@ -18,6 +18,9 @@ import unittest
 import tempfile
 import shutil
 import os
+from typing import List, Any
+
+from pyspark.sql import DataFrame
 
 from delta.testing.utils import DeltaTestCase
 
@@ -93,7 +96,7 @@ class DeltaSqlTests(DeltaTestCase):
         table = "deltaTable"
         table2 = "deltaTable2"
         try:
-            def read_table():
+            def read_table() -> DataFrame:
                 return self.spark.sql(f"SELECT * FROM {table}")
 
             self.spark.sql(f"DROP TABLE IF EXISTS {table}")
@@ -143,7 +146,9 @@ class DeltaSqlTests(DeltaTestCase):
             self.spark.sql(f"DROP TABLE IF EXISTS {table}")
             self.spark.sql(f"DROP TABLE IF EXISTS {table2}")
 
-    def __checkAnswer(self, df, expectedAnswer, schema=["key", "value"]):
+    def __checkAnswer(self, df: DataFrame,
+                      expectedAnswer: List[Any],
+                      schema: List[str] = ["key", "value"]) -> None:
         if not expectedAnswer:
             self.assertEqual(df.count(), 0)
             return

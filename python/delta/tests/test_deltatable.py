@@ -16,14 +16,15 @@
 
 import unittest
 import os
+from typing import List, Set, Dict, Optional, Any, Union, Tuple
 
-from pyspark.sql import Row
+from pyspark.sql import DataFrame, Row
 from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
 from pyspark.sql.functions import col, lit, expr
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, DataType
 from pyspark.sql.utils import AnalysisException, ParseException
 
-from delta.tables import DeltaTable
+from delta.tables import DeltaTable, DeltaTableBuilder
 from delta.testing.utils import DeltaTestCase
 
 
@@ -128,7 +129,7 @@ class DeltaTableTests(DeltaTestCase):
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
         source = self.spark.createDataFrame([('a', -1), ('b', 0), ('e', -5), ('f', -6)], ["k", "v"])
 
-        def reset_table():
+        def reset_table() -> None:
             self.__overwriteDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
 
         dt = DeltaTable.forPath(self.spark, self.tempFile)
@@ -383,10 +384,12 @@ class DeltaTableTests(DeltaTestCase):
         self.assertEqual(DeltaTable.isDeltaTable(self.spark, self.tempFile), False)
         self.assertEqual(DeltaTable.isDeltaTable(self.spark, tempFile2), True)
 
-    def __verify_table_schema(self, tableName, schema, cols,
-                              types, nullables={}, comments={},
-                              properties={}, partitioningColumns=[],
-                              tblComment=None):
+    def __verify_table_schema(self, tableName: str, schema: StructType, cols: List[str],
+                              types: List[DataType], nullables: Set[str] = set(),
+                              comments: Dict[str, str] = {},
+                              properties: Dict[str, str] = {},
+                              partitioningColumns: List[str] = [],
+                              tblComment: Optional[str] = None) -> None:
         fields = []
         for i in range(len(cols)):
             col = cols[i]
@@ -397,8 +400,9 @@ class DeltaTableTests(DeltaTestCase):
             fields.append(StructField(col, dataType, col in nullables, metadata))
         assert (StructType(fields) == schema)
         if len(properties) > 0:
-            tablePropertyMap = self.spark.sql("SHOW TBLPROPERTIES {}".format(tableName)) \
-                .rdd.collectAsMap()
+            tablePropertyMap: Dict[str, str] = (
+                self.spark.sql("SHOW TBLPROPERTIES {}".format(tableName))  # type: ignore
+                    .rdd.collectAsMap())
             for key in properties:
                 assert (key in tablePropertyMap)
                 assert (tablePropertyMap[key] == properties[key])
@@ -410,20 +414,22 @@ class DeltaTableTests(DeltaTestCase):
         partitionCols = tableDetails.partitionColumns
         assert(sorted(partitionCols) == sorted((partitioningColumns)))
 
-    def __verify_generated_column(self, tableName, deltaTable):
+    def __verify_generated_column(self, tableName: str, deltaTable: DeltaTable) -> None:
         cmd = "INSERT INTO {table} (col1, col2) VALUES (1, 11)".format(table=tableName)
         self.spark.sql(cmd)
         deltaTable.update(expr("col2 = 11"), {"col1": expr("2")})
         self.__checkAnswer(deltaTable.toDF(), [(2, 12)], schema=["col1", "col2"])
 
-    def __build_delta_table(self, builder):
+    def __build_delta_table(self, builder: DeltaTableBuilder) -> DeltaTable:
         return builder.addColumn("col1", "int", comment="foo", nullable=False) \
             .addColumn("col2", IntegerType(), generatedAlwaysAs="col1 + 10") \
             .property("foo", "bar") \
             .comment("comment") \
             .partitionedBy("col1").execute()
 
-    def __create_table(self, ifNotExists, tableName=None, location=None):
+    def __create_table(self, ifNotExists: bool,
+                       tableName: Optional[str] = None,
+                       location: Optional[str] = None) -> DeltaTable:
         builder = DeltaTable.createIfNotExists(self.spark) if ifNotExists \
             else DeltaTable.create(self.spark)
         if tableName:
@@ -432,7 +438,10 @@ class DeltaTableTests(DeltaTestCase):
             builder = builder.location(location)
         return self.__build_delta_table(builder)
 
-    def __replace_table(self, orCreate, tableName=None, location=None):
+    def __replace_table(self,
+                        orCreate: bool,
+                        tableName: Optional[str] = None,
+                        location: Optional[str] = None) -> DeltaTable:
         builder = DeltaTable.createOrReplace(self.spark) if orCreate \
             else DeltaTable.replace(self.spark)
         if tableName:
@@ -780,7 +789,9 @@ class DeltaTableTests(DeltaTestCase):
         with self.assertRaisesRegex(ValueError, "writerVersion"):
             dt.upgradeTableProtocol(1, {})  # type: ignore[arg-type]
 
-    def __checkAnswer(self, df, expectedAnswer, schema=["key", "value"]):
+    def __checkAnswer(self, df: DataFrame,
+                      expectedAnswer: List[Any],
+                      schema: Union[StructType, List[str]] = ["key", "value"]) -> None:
         if not expectedAnswer:
             self.assertEqual(df.count(), 0)
             return
@@ -797,23 +808,23 @@ class DeltaTableTests(DeltaTestCase):
             df.show()
             raise
 
-    def __writeDeltaTable(self, datalist):
+    def __writeDeltaTable(self, datalist: List[Tuple[Any, Any]]) -> None:
         df = self.spark.createDataFrame(datalist, ["key", "value"])
         df.write.format("delta").save(self.tempFile)
 
-    def __writeAsTable(self, datalist, tblName):
+    def __writeAsTable(self, datalist: List[Tuple[Any, Any]], tblName: str) -> None:
         df = self.spark.createDataFrame(datalist, ["key", "value"])
         df.write.format("delta").saveAsTable(tblName)
 
-    def __overwriteDeltaTable(self, datalist):
+    def __overwriteDeltaTable(self, datalist: List[Tuple[Any, Any]]) -> None:
         df = self.spark.createDataFrame(datalist, ["key", "value"])
         df.write.format("delta").mode("overwrite").save(self.tempFile)
 
-    def __createFile(self, fileName, content):
+    def __createFile(self, fileName: str, content: Any) -> None:
         with open(os.path.join(self.tempFile, fileName), 'w') as f:
             f.write(content)
 
-    def __checkFileExists(self, fileName):
+    def __checkFileExists(self, fileName: str) -> bool:
         return os.path.exists(os.path.join(self.tempFile, fileName))
 
 
