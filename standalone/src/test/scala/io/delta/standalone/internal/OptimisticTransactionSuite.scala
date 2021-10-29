@@ -20,12 +20,13 @@ import java.util.Collections
 
 import scala.collection.JavaConverters._
 
-import io.delta.standalone.actions.{CommitInfo, Protocol, Action => ActionJ, AddFile => AddFileJ, Metadata => MetadataJ, RemoveFile => RemoveFileJ, SetTransaction => SetTransactionJ}
-import io.delta.standalone.internal.util.TestUtils._
+import org.apache.hadoop.conf.Configuration
+
 import io.delta.standalone.DeltaLog
+import io.delta.standalone.actions.{Action => ActionJ, AddFile => AddFileJ, CommitInfo, Metadata => MetadataJ, Protocol, SetTransaction => SetTransactionJ}
 import io.delta.standalone.types.{IntegerType, StringType, StructField, StructType}
 
-import org.apache.hadoop.conf.Configuration
+import io.delta.standalone.internal.util.TestUtils._
 
 class OptimisticTransactionSuite
   extends OptimisticTransactionSuiteBase

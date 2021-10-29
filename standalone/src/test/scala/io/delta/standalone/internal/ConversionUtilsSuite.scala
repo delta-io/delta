@@ -18,11 +18,12 @@ package io.delta.standalone.internal
 
 import java.sql.Timestamp
 
-import io.delta.standalone.internal.actions._
-import io.delta.standalone.internal.util.ConversionUtils.{convertAction, convertActionJ}
+import org.scalatest.FunSuite
+
 import io.delta.standalone.types.{IntegerType, StructField, StructType}
 
-import org.scalatest.FunSuite
+import io.delta.standalone.internal.actions._
+import io.delta.standalone.internal.util.ConversionUtils.{convertAction, convertActionJ}
 
 class ConversionUtilsSuite extends FunSuite {
   private val schema = new StructType(Array(

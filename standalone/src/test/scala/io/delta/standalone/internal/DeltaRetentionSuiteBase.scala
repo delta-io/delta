@@ -18,18 +18,17 @@ package io.delta.standalone.internal
 
 import java.io.File
 
-import io.delta.standalone.{DeltaLog, Operation, OptimisticTransaction}
-import io.delta.standalone.internal.actions.Metadata
-import io.delta.standalone.internal.util.TestUtils._
-import io.delta.standalone.internal.util.{ConversionUtils, FileNames}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-
-// scalastyle:off funsuite
 import org.scalatest.FunSuite
 
+import io.delta.standalone.{DeltaLog, Operation, OptimisticTransaction}
+
+import io.delta.standalone.internal.actions.Metadata
+import io.delta.standalone.internal.util.{ConversionUtils, FileNames}
+import io.delta.standalone.internal.util.TestUtils._
+
 trait DeltaRetentionSuiteBase extends FunSuite {
-  // scalastyle:on removeFile
 
   protected def hadoopConf: Configuration = {
     val conf = new Configuration()

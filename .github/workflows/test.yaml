@@ -22,6 +22,7 @@ jobs:
       - name: Run Scala/Java and Python tests
         shell: bash -l {0}
         run: |
+          build/sbt "++ 2.12.8 testScalastyle"
           build/sbt "++ 2.12.8 standalone/test"
           build/sbt "++ 2.12.8 compatibility/test"
           build/sbt "++ 2.12.8 hive/test"

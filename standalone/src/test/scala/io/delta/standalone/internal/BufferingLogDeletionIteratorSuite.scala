@@ -17,12 +17,9 @@
 package io.delta.standalone.internal
 
 import org.apache.hadoop.fs.{FileStatus, Path}
-
-// scalastyle:off funsuite
 import org.scalatest.FunSuite
 
 class BufferingLogDeletionIteratorSuite extends FunSuite {
-  // scalastyle:on funsuite
   /**
    * Creates FileStatus objects, where the name is the version of a commit, and the modification
    * timestamps come from the input.

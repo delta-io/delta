@@ -18,17 +18,14 @@ package io.delta.standalone.internal
 
 import java.io.File
 
+import io.delta.standalone.Operation
+
 import io.delta.standalone.internal.actions.{Action, AddFile, Metadata, RemoveFile}
 import io.delta.standalone.internal.util.ManualClock
 import io.delta.standalone.internal.util.TestUtils._
-import io.delta.standalone.Operation
-
-// scalastyle:off funsuite
-import org.scalatest.FunSuite
 
 // scalastyle:off removeFile
 class DeltaRetentionSuite extends DeltaRetentionSuiteBase {
-  // scalastyle:on funsuite
 
   val writerId = "test-writer-id"
   val manualUpdate = new Operation(Operation.Name.MANUAL_UPDATE)

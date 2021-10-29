@@ -18,20 +18,22 @@ package io.delta.standalone.internal
 
 import java.math.{BigDecimal => JBigDecimal}
 import java.sql.Timestamp
-import java.util.{TimeZone, List => JList, Map => JMap}
+import java.util.{List => JList, Map => JMap, TimeZone}
 import java.util.Arrays.{asList => asJList}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ListBuffer
 
-import io.delta.standalone.data.{CloseableIterator, RowRecord => JRowRecord}
+import org.apache.hadoop.conf.Configuration
+import org.scalatest.FunSuite
+
 import io.delta.standalone.DeltaLog
+import io.delta.standalone.data.{CloseableIterator, RowRecord => JRowRecord}
+import io.delta.standalone.types._
+
 import io.delta.standalone.internal.sources.StandaloneHadoopConf
 import io.delta.standalone.internal.util.DataTypeParser
 import io.delta.standalone.internal.util.GoldenTableUtils._
-import io.delta.standalone.types._
-import org.apache.hadoop.conf.Configuration
-import org.scalatest.FunSuite
 
 /**
  * Instead of using Spark in this project to WRITE data and log files for tests, we have

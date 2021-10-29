@@ -21,24 +21,22 @@ import java.util.Collections
 import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
 
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.Path
+import org.scalatest.FunSuite
+
 import io.delta.standalone.{DeltaLog, NAME, Operation, VERSION}
 import io.delta.standalone.actions.{AddFile => AddFileJ, CommitInfo => CommitInfoJ, Metadata => MetadataJ, Protocol => ProtocolJ, RemoveFile => RemoveFileJ}
 import io.delta.standalone.exceptions.{ConcurrentAppendException, ConcurrentDeleteDeleteException, ConcurrentDeleteReadException, ConcurrentTransactionException, MetadataChangedException, ProtocolChangedException}
 import io.delta.standalone.expressions.{EqualTo, Literal}
+import io.delta.standalone.types._
+
 import io.delta.standalone.internal.actions._
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.util.{ConversionUtils, SchemaUtils}
-import io.delta.standalone.types._
 import io.delta.standalone.internal.util.TestUtils._
 
-import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.Path
-
-// scalastyle:off funsuite
-import org.scalatest.FunSuite
-
 class OptimisticTransactionLegacySuite extends FunSuite {
-  // scalastyle:on funsuite
 
   val engineInfo = "test-engine-info"
   val manualUpdate = new Operation(Operation.Name.MANUAL_UPDATE)

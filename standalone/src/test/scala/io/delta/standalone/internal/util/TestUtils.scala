@@ -22,10 +22,11 @@ import java.util.UUID
 
 import scala.collection.JavaConverters._
 
-import io.delta.standalone.actions.{Action => ActionJ, AddFile => AddFileJ}
-import io.delta.standalone.internal.actions.{Action, AddFile}
-
 import org.apache.commons.io.FileUtils
+
+import io.delta.standalone.actions.{Action => ActionJ, AddFile => AddFileJ}
+
+import io.delta.standalone.internal.actions.{Action, AddFile}
 
 object TestUtils {
 

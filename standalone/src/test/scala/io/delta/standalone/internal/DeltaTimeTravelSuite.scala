@@ -25,15 +25,17 @@ import scala.collection.JavaConverters._
 import scala.concurrent.duration._
 import scala.language.implicitConversions
 
-import io.delta.standalone.{DeltaLog, Snapshot}
-import io.delta.standalone.exceptions.DeltaStandaloneException
-import io.delta.standalone.internal.exception.DeltaErrors
-import io.delta.standalone.internal.util.FileNames
-import io.delta.standalone.internal.util.GoldenTableUtils._
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.scalatest.FunSuite
+
+import io.delta.standalone.{DeltaLog, Snapshot}
+import io.delta.standalone.exceptions.DeltaStandaloneException
+
+import io.delta.standalone.internal.exception.DeltaErrors
+import io.delta.standalone.internal.util.FileNames
+import io.delta.standalone.internal.util.GoldenTableUtils._
 
 /**
  * Instead of using Spark in this project to WRITE data and log files for tests, we have

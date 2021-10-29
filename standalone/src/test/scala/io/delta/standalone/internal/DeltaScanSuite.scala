@@ -18,12 +18,14 @@ package io.delta.standalone.internal
 
 import scala.collection.JavaConverters._
 
+import org.scalatest.FunSuite
+
 import io.delta.standalone.expressions.{And, EqualTo, LessThan, Literal}
+import io.delta.standalone.types.{IntegerType, StructField, StructType}
+
 import io.delta.standalone.internal.actions.AddFile
 import io.delta.standalone.internal.scan.FilteredDeltaScanImpl
 import io.delta.standalone.internal.util.ConversionUtils
-import io.delta.standalone.types.{IntegerType, StructField, StructType}
-import org.scalatest.FunSuite
 
 class DeltaScanSuite extends FunSuite {
 

@@ -20,13 +20,14 @@ import java.util.ConcurrentModificationException
 
 import scala.collection.JavaConverters._
 
-import io.delta.standalone.{DeltaLog, Operation, OptimisticTransaction}
-import io.delta.standalone.actions.{Action => ActionJ, Metadata => MetadataJ, Protocol => ProtocolJ}
-import io.delta.standalone.internal.util.TestUtils._
-
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.scalatest.FunSuite
+
+import io.delta.standalone.{DeltaLog, Operation, OptimisticTransaction}
+import io.delta.standalone.actions.{Action => ActionJ, Metadata => MetadataJ, Protocol => ProtocolJ}
+
+import io.delta.standalone.internal.util.TestUtils._
 
 trait OptimisticTransactionSuiteBase extends FunSuite {
 

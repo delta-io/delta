@@ -20,10 +20,11 @@ import java.util.Collections
 
 import scala.collection.JavaConverters._
 
-import io.delta.standalone.actions.{AddFile, Format, Metadata, Protocol, RemoveFile, SetTransaction}
-import io.delta.standalone.types.{IntegerType, StringType, StructField, StructType}
 import io.delta.standalone.Operation
+import io.delta.standalone.actions.{AddFile, Format, Metadata, Protocol, RemoveFile, SetTransaction}
 import io.delta.standalone.expressions.{EqualTo, Literal}
+import io.delta.standalone.types.{IntegerType, StringType, StructField, StructType}
+
 import io.delta.standalone.internal.OptimisticTransactionSuiteTestVals
 
 class StandaloneUtil(now: Long) {

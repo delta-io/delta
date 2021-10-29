@@ -27,17 +27,16 @@ import scala.language.implicitConversions
 import io.delta.tables.DeltaTable
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
-
+import org.apache.spark.SparkConf
 import org.apache.spark.network.util.JavaUtils
-import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction}
 import org.apache.spark.sql.{QueryTest, Row}
+import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, JobInfo, Metadata, NotebookInfo, Protocol, RemoveFile, SetTransaction, SingleAction}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
-import org.apache.spark.SparkConf
 
 /**
  * This is a special class to generate golden tables for other projects. Run the following commands

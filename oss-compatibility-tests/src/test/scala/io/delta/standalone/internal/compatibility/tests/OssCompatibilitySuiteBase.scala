@@ -20,14 +20,15 @@ import java.util.ConcurrentModificationException
 
 import scala.collection.JavaConverters._
 
-import io.delta.standalone.{Operation => StandaloneOperation, actions => StandaloneActions, DeltaLog => StandaloneDeltaLog, OptimisticTransaction => StandaloneOptTxn}
-import io.delta.standalone.internal.util.{OSSUtil, StandaloneUtil}
-
-import org.apache.spark.sql.delta.{DeltaOperations, actions => OSSActions, DeltaLog => OSSDeltaLog, OptimisticTransaction => OSSOptTxn}
-import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.delta.{actions => OSSActions, DeltaLog => OSSDeltaLog, DeltaOperations, OptimisticTransaction => OSSOptTxn}
+import org.apache.spark.sql.test.SharedSparkSession
+
+import io.delta.standalone.{actions => StandaloneActions, DeltaLog => StandaloneDeltaLog, Operation => StandaloneOperation, OptimisticTransaction => StandaloneOptTxn}
+
+import io.delta.standalone.internal.util.{OSSUtil, StandaloneUtil}
 
 trait OssCompatibilitySuiteBase extends QueryTest with SharedSparkSession {
 

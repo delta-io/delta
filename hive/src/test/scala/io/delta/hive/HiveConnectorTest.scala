@@ -20,7 +20,6 @@ import java.io.File
 
 import io.delta.hive.test.HiveTest
 import io.delta.hive.util.JavaUtils
-
 import org.scalatest.BeforeAndAfterEach
 
 abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {

@@ -20,19 +20,19 @@ import java.io.File
 
 import scala.collection.JavaConverters._
 
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
+import org.scalatest.FunSuite
+
+import io.delta.standalone.Operation
 import io.delta.standalone.actions.{AddFile => AddFileJ, Metadata => MetadataJ}
 import io.delta.standalone.data.{CloseableIterator => CloseableIteratorJ}
 import io.delta.standalone.storage.LogStore
+
 import io.delta.standalone.internal.sources.StandaloneHadoopConf
 import io.delta.standalone.internal.storage.{HDFSLogStore, LogStoreProvider}
 import io.delta.standalone.internal.util.GoldenTableUtils._
 import io.delta.standalone.internal.util.TestUtils._
-import io.delta.standalone.Operation
-
-import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
-
-import org.scalatest.FunSuite
 
 /**
  * Instead of using Spark in this project to WRITE data and log files for tests, we have

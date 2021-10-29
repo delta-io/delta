@@ -22,13 +22,14 @@ import java.util.UUID
 
 import scala.collection.JavaConverters._
 
-import io.delta.standalone.{DeltaLog => StandaloneDeltaLog}
-import io.delta.standalone.internal.{DeltaLogImpl => InternalStandaloneDeltaLog}
-import io.delta.standalone.internal.util.ComparisonUtil
-
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.spark.sql.delta.{DeltaLog => OSSDeltaLog}
+
+import io.delta.standalone.{DeltaLog => StandaloneDeltaLog}
+
+import io.delta.standalone.internal.{DeltaLogImpl => InternalStandaloneDeltaLog}
+import io.delta.standalone.internal.util.ComparisonUtil
 
 class OSSCompatibilitySuite extends OssCompatibilitySuiteBase with ComparisonUtil {
 

@@ -18,12 +18,13 @@ package io.delta.standalone.internal
 
 import java.util.Locale
 
+import org.scalatest.FunSuite
+
 import io.delta.standalone.exceptions.DeltaStandaloneException
 import io.delta.standalone.types._
-import io.delta.standalone.internal.util.SchemaUtils._
-import io.delta.standalone.internal.util.SchemaMergingUtils.checkColumnNameDuplication
 
-import org.scalatest.FunSuite
+import io.delta.standalone.internal.util.SchemaMergingUtils.checkColumnNameDuplication
+import io.delta.standalone.internal.util.SchemaUtils._
 
 class SchemaUtilsSuite extends FunSuite {
 

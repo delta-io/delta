@@ -21,8 +21,8 @@ import java.sql.{Connection, DriverManager}
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.DataTypes
+import org.scalatest.BeforeAndAfterAll
 import org.scalatest.funsuite.AnyFunSuite
-import org.scalatest.{BeforeAndAfter, BeforeAndAfterAll, BeforeAndAfterEach}
 
 class ImportTest extends AnyFunSuite with BeforeAndAfterAll {
 

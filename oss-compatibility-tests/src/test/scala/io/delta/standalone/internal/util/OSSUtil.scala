@@ -16,11 +16,11 @@
 
 package io.delta.standalone.internal.util
 
+import org.apache.spark.sql.SaveMode
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Literal}
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.types.{IntegerType, StringType, StructField, StructType}
-import org.apache.spark.sql.SaveMode
-import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Literal}
 
 class OSSUtil(now: Long) {
 

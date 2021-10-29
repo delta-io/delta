@@ -18,9 +18,11 @@ package io.delta.standalone.internal.util
 
 import java.io.File
 
-import io.delta.standalone.DeltaLog
-import io.delta.standalone.internal.DeltaLogImpl
 import org.apache.hadoop.conf.Configuration
+
+import io.delta.standalone.DeltaLog
+
+import io.delta.standalone.internal.DeltaLogImpl
 
 object GoldenTableUtils {
 

@@ -19,12 +19,11 @@ package io.delta.standalone.internal
 import java.util.concurrent.TimeUnit
 
 import org.apache.hadoop.conf.Configuration
-import io.delta.standalone.internal.actions.Metadata
-import io.delta.standalone.internal.DeltaConfigs.{isValidIntervalConfigValue, parseCalendarInterval}
-import io.delta.standalone.internal.util.{CalendarInterval, DateTimeConstants}
-
-// scalastyle:off funsuite
 import org.scalatest.FunSuite
+
+import io.delta.standalone.internal.DeltaConfigs.{isValidIntervalConfigValue, parseCalendarInterval}
+import io.delta.standalone.internal.actions.Metadata
+import io.delta.standalone.internal.util.{CalendarInterval, DateTimeConstants}
 
 class DeltaConfigSuite extends FunSuite {
 
