@@ -322,7 +322,7 @@ trait DeltaSQLConfBase {
           |writing the files.
         """.stripMargin)
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val MERGE_MATCHED_ONLY_ENABLED =
     buildConf("merge.optimizeMatchedOnlyMerge.enabled")
