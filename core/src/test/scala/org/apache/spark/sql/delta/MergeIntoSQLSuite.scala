@@ -278,3 +278,4 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
     }
   }
 }
+

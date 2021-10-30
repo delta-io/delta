@@ -38,7 +38,6 @@ import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.BucketSpec
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
@@ -192,6 +191,10 @@ object DeltaErrors
     new AnalysisException(
       s"Constraint '$name' already exists as a CHECK constraint. Please delete the old " +
         s"constraint first.\nOld constraint:\n${oldExpr}")
+  }
+
+  def invalidConstraintName(name: String): AnalysisException = {
+    new AnalysisException(s"Cannot use '$name' as the name of a CHECK constraint.")
   }
 
   def checkConstraintNotBoolean(name: String, expr: String): AnalysisException = {
@@ -579,8 +582,11 @@ object DeltaErrors
        """.stripMargin)
   }
 
-  def schemaChangedException(oldSchema: StructType, newSchema: StructType): Throwable = {
-    new IllegalStateException(
+  def schemaChangedException(
+      oldSchema: StructType,
+      newSchema: StructType,
+      retryable: Boolean): Throwable = {
+    val msg =
       s"""Detected schema change:
         |old schema: ${formatSchema(oldSchema)}
         |
@@ -589,7 +595,8 @@ object DeltaErrors
         |Please try restarting the query. If this issue repeats across query restarts without making
         |progress, you have made an incompatible schema change and need to start your query from
         |scratch using a new checkpoint directory.
-      """.stripMargin)
+      """.stripMargin
+    new IllegalStateException(msg)
   }
 
   def streamWriteNullTypeException: Throwable = {
@@ -1154,7 +1161,7 @@ object DeltaErrors
   }
 
   def cannotModifyTableProperty(prop: String): Throwable =
-    throw new UnsupportedOperationException(
+    new UnsupportedOperationException(
       s"The Delta table configuration $prop cannot be specified by the user")
 
   /**
@@ -1162,7 +1169,7 @@ object DeltaErrors
    * so we error for now to be forward compatible with tables created in the future.
    */
   def unknownColumnMappingMode(mode: String): Throwable =
-    throw new UnsupportedOperationException(s"The column mapping mode `$mode` is not" +
+    new ColumnMappingUnsupportedException(s"The column mapping mode `$mode` is not" +
       s" supported. Supported modes in this version are: `none` and `id`." +
       s" Please upgrade Delta to access this table.")
 
@@ -1195,18 +1202,30 @@ object DeltaErrors
     )
 
   def changeColumnMappingModeNotSupported: Throwable = {
-    throw new UnsupportedOperationException("Changing column mapping mode using" +
+    new ColumnMappingUnsupportedException("Changing column mapping mode using" +
       s" config ${DeltaConfigs.COLUMN_MAPPING_MODE.key} is not supported.")
   }
 
   def writesWithColumnMappingNotSupported: Throwable = {
-    new UnsupportedOperationException("Writing data with column mapping mode is not " +
+    new ColumnMappingUnsupportedException("Writing data with column mapping mode is not " +
       "supported.")
+  }
+
+  def generateManifestWithColumnMappingNotSupported: Throwable = {
+    new ColumnMappingUnsupportedException("Manifest generation is not supported for tables that " +
+      "leverage column mapping, as external readers cannot read these Delta tables. " +
+      "See Databricks documentation for more details.")
+  }
+
+  def convertToDeltaWithColumnMappingNotSupported(mode: DeltaColumnMappingMode): Throwable = {
+    new ColumnMappingUnsupportedException(
+      s"The configuration '${DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey}' " +
+        s"cannot be set to `${mode.name}` when using CONVERT TO DELTA.")
   }
 
   def setColumnMappingModeOnOldProtocol(oldProtocol: Protocol): Throwable = {
     // scalastyle:off line.size.limit
-    throw new UnsupportedOperationException(
+    new ColumnMappingUnsupportedException(
       s"""
          |Your current table protocol version does not support the setting of column mapping mode
          |using ${DeltaConfigs.COLUMN_MAPPING_MODE.key}.
@@ -1228,7 +1247,7 @@ object DeltaErrors
       newSchema: StructType,
       mappingMode: DeltaColumnMappingMode): Throwable = {
     // scalastyle:off line.size.limit
-    throw new UnsupportedOperationException(
+    new ColumnMappingUnsupportedException(
       s"""
          |Schema change is detected:
          |
@@ -1242,6 +1261,16 @@ object DeltaErrors
          |
          |""".stripMargin)
     // scalastyle:on line.size.limit
+  }
+
+  def foundInvalidCharsInColumnNames(cause: Throwable): Throwable = {
+    var adviceMsg = "Please use alias to rename it."
+
+    new AnalysisException(
+      s"""
+        |Found invalid character(s) among " ,;{}()\\n\\t=" in the column names of your
+        |schema. $adviceMsg
+        |""".stripMargin, cause = Some(cause))
   }
 
 
@@ -1521,5 +1550,7 @@ class MetadataMismatchErrorBuilder {
 }
 
 /** Errors thrown around column mapping. */
+class ColumnMappingUnsupportedException(msg: String)
+  extends UnsupportedOperationException(msg)
 case class ColumnMappingException(msg: String, mode: DeltaColumnMappingMode)
   extends AnalysisException(msg)

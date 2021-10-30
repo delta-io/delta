@@ -29,8 +29,10 @@ import org.apache.spark.sql.catalyst.analysis.{Analyzer, TypeCoercion, Unresolve
 import org.apache.spark.sql.catalyst.analysis.TypeCoercion.ImplicitTypeCasts
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, BindReferences, Expression, ExtractValue, GetStructField, Literal, SortOrder}
 import org.apache.spark.sql.catalyst.expressions.codegen.GenerateUnsafeProjection
+import org.apache.spark.sql.catalyst.optimizer.ReplaceExpressions
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
+import org.apache.spark.sql.catalyst.rules.RuleExecutor
 import org.apache.spark.sql.execution.{SparkPlan, SparkStrategy, UnaryExecNode}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
@@ -101,6 +103,14 @@ case class DeltaInvariantCheckerExec(
 }
 
 object DeltaInvariantCheckerExec {
+
+  // Specialized optimizer to run necessary rules so that the check expressions can be evaluated.
+  object DeltaInvariantCheckerOptimizer extends RuleExecutor[LogicalPlan] {
+    final override protected def batches = Seq(
+      Batch("Finish Analysis", Once, ReplaceExpressions)
+    )
+  }
+
   /** Build the extractor for a particular column. */
   private def buildExtractor(output: Seq[Attribute], column: Seq[String]): Option[Expression] = {
     assert(column.nonEmpty)
@@ -163,7 +173,9 @@ object DeltaInvariantCheckerExec {
           }
 
           val wrappedPlan: LogicalPlan = ExpressionLogicalPlanWrapper(attributesExtracted)
-          spark.sessionState.analyzer.execute(wrappedPlan) match {
+          val analyzedLogicalPlan = spark.sessionState.analyzer.execute(wrappedPlan)
+          val optimizedLogicalPlan = DeltaInvariantCheckerOptimizer.execute(analyzedLogicalPlan)
+          optimizedLogicalPlan match {
             case ExpressionLogicalPlanWrapper(e) => e
             // This should never happen.
             case plan => throw new IllegalStateException(

@@ -22,7 +22,7 @@ import java.sql.Timestamp
 
 import scala.util.matching.Regex
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTableUtils, DeltaTimeTravelSpec, GeneratedColumn, StartingVersion, StartingVersionLatest}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTimeTravelSpec, GeneratedColumn, StartingVersion, StartingVersionLatest}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -84,6 +84,8 @@ trait DeltaSourceBase extends Source
   override val schema: StructType =
     GeneratedColumn.removeGenerationExpressions(deltaLog.snapshot.metadata.schema)
 
+  protected var lastOffsetForTriggerAvailableNow: DeltaSourceOffset = _
+
   protected def getFileChangesWithRateLimit(
       fromVersion: Long,
       fromIndex: Long,
@@ -129,6 +131,7 @@ trait DeltaSourceBase extends Source
 
     deltaLog.createDataFrame(deltaLog.snapshot, addFiles, isStreaming = true)
   }
+
 }
 
 /**
@@ -197,15 +200,24 @@ case class DeltaSource(
       }
     }
 
-    val iter = if (isStartingVersion) {
+    var iter = if (isStartingVersion) {
       getSnapshotAt(fromVersion) ++ filterAndIndexDeltaLogs(fromVersion + 1)
     } else {
       filterAndIndexDeltaLogs(fromVersion)
     }
 
-    iter.filter { case IndexedFile(version, index, _, _, _, _) =>
+    iter = iter.filter { case IndexedFile(version, index, _, _, _, _) =>
       version > fromVersion || (index == -1 || index > fromIndex)
     }
+
+    if (lastOffsetForTriggerAvailableNow != null) {
+      iter = iter.filter { case IndexedFile(version, index, _, _, _, _) =>
+        version < lastOffsetForTriggerAvailableNow.reservoirVersion ||
+          (version == lastOffsetForTriggerAvailableNow.reservoirVersion &&
+            index <= lastOffsetForTriggerAvailableNow.index)
+      }
+    }
+    iter
   }
 
   protected def getSnapshotAt(version: Long): Iterator[IndexedFile] = {
@@ -332,7 +344,7 @@ case class DeltaSource(
         false
       case m: Metadata =>
         if (!SchemaUtils.isReadCompatible(m.schema, schema)) {
-          throw DeltaErrors.schemaChangedException(schema, m.schema)
+          throw DeltaErrors.schemaChangedException(schema, m.schema, false)
         }
         false
       case protocol: Protocol =>
@@ -382,7 +394,9 @@ case class DeltaSource(
       (startOffset.reservoirVersion, startOffset.index, startOffset.isStartingVersion)
     }
     logDebug(s"start: $startOffsetOption end: $end")
-    getFileChangesAndCreateDataFrame(startVersion, startIndex, isStartingVersion, endOffset)
+    val createdDf =
+      getFileChangesAndCreateDataFrame(startVersion, startIndex, isStartingVersion, endOffset)
+    createdDf
   }
 
   override def stop(): Unit = {

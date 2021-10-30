@@ -48,6 +48,9 @@ trait ConvertToDeltaTestUtils extends QueryTest { self: SQLTestUtils =>
 
   protected val blockNonDeltaMsg = "A transaction log for Delta Lake was found at"
   protected val parquetOnlyMsg = "CONVERT TO DELTA only supports parquet tables"
+  // scalastyle:off deltahadoopconfiguration
+  protected def sessionHadoopConf = spark.sessionState.newHadoopConf
+  // scalastyle:on deltahadoopconfiguration
 
   protected def deltaRead(df: => DataFrame): Boolean = {
     val analyzed = df.queryExecution.analyzed
@@ -407,7 +410,6 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaTestUtils
   test("can ignore empty sub-directories") {
     withTempDir { dir =>
       val tempDir = dir.getCanonicalPath
-      val sessionHadoopConf = spark.sessionState.newHadoopConf
       val fs = new Path(tempDir).getFileSystem(sessionHadoopConf)
 
       writeFiles(tempDir + "/key1=1/", Seq(1).toDF)
@@ -423,7 +425,6 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaTestUtils
       val tempDir = dir.getCanonicalPath
       writeFiles(tempDir + "/part=1/", Seq(1).toDF("id"))
 
-      val sessionHadoopConf = spark.sessionState.newHadoopConf
       val fs = new Path(tempDir).getFileSystem(sessionHadoopConf)
       def listFileNames: Array[String] =
         fs.listStatus(new Path(tempDir + "/part=1/"))
@@ -449,7 +450,6 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaTestUtils
       writeFiles(tempDir + "/part=1/", Seq(1).toDF("id"))
       writeFiles(tempDir + "/part=2/", Seq(2).toDF("id"))
 
-      val sessionHadoopConf = spark.sessionState.newHadoopConf
       val fs = new Path(tempDir).getFileSystem(sessionHadoopConf)
       def listFileNames: Array[String] =
         fs.listStatus(new Path(tempDir + "/part=1/"))

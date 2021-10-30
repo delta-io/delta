@@ -22,6 +22,7 @@ import java.nio.charset.StandardCharsets.UTF_8
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
@@ -49,7 +50,9 @@ case class VersionChecksum(
     numFiles: Long,
     numMetadata: Long,
     numProtocol: Long,
-    numTransactions: Long)
+    numTransactions: Long,
+    protocol: Protocol,
+    metadata: Metadata)
 
 /**
  * Record the state of the table as a checksum file along with a commit.
@@ -59,19 +62,22 @@ trait RecordChecksum extends DeltaLogging {
   protected def spark: SparkSession
 
   private lazy val writer =
-    CheckpointFileManager.create(deltaLog.logPath, spark.sessionState.newHadoopConf())
+    CheckpointFileManager.create(deltaLog.logPath, deltaLog.newDeltaHadoopConf())
 
   protected def writeChecksumFile(snapshot: Snapshot): Unit = {
     if (!spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED)) {
       return
     }
+
     val version = snapshot.version
     val checksum = VersionChecksum(
       tableSizeBytes = snapshot.sizeInBytes,
       numFiles = snapshot.numOfFiles,
       numMetadata = snapshot.numOfMetadata,
       numProtocol = snapshot.numOfProtocol,
-      numTransactions = snapshot.numOfSetTransactions)
+      numTransactions = snapshot.numOfSetTransactions,
+      protocol = snapshot.protocol,
+      metadata = snapshot.metadata)
     try {
       recordDeltaOperation(deltaLog, "delta.checksum.write") {
         val stream = writer.createAtomic(
@@ -106,7 +112,7 @@ trait ReadChecksum extends DeltaLogging { self: DeltaLog =>
     val checksumFile = FileNames.checksumFile(logPath, version)
 
     var exception: Option[String] = None
-    val content = try Some(store.read(checksumFile)) catch {
+    val content = try Some(store.read(checksumFile, newDeltaHadoopConf())) catch {
       case NonFatal(e) =>
         // We expect FileNotFoundException; if it's another kind of exception, we still catch them
         // here but we log them in the checksum error event below.

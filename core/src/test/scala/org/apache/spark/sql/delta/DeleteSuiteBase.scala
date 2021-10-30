@@ -451,8 +451,10 @@ abstract class DeleteSuiteBase extends QueryTest
 
   protected def testInvalidTempViews(name: String)(
       text: String,
-      expectedErrorForSQLTempView: String,
-      expectedErrorForDataSetTempView: String): Unit = {
+      expectedErrorMsgForSQLTempView: String = null,
+      expectedErrorMsgForDataSetTempView: String = null,
+      expectedErrorClassForSQLTempView: String = null,
+      expectedErrorClassForDataSetTempView: String = null): Unit = {
     testWithTempView(s"test delete on temp view - $name") { isSQLTempView =>
       withTable("tab") {
         Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
@@ -461,31 +463,34 @@ abstract class DeleteSuiteBase extends QueryTest
         } else {
           sql(text).createOrReplaceTempView("v")
         }
-        val expectedError = if (isSQLTempView) {
-          expectedErrorForSQLTempView
-        } else expectedErrorForDataSetTempView
         val ex = intercept[AnalysisException] {
           executeDelete(
             "v",
             "key >= 1 and value < 3"
           )
         }
-        assert(ex.getMessage.contains(expectedError))
+        testErrorMessageAndClass(
+          isSQLTempView,
+          ex,
+          expectedErrorMsgForSQLTempView,
+          expectedErrorMsgForDataSetTempView,
+          expectedErrorClassForSQLTempView,
+          expectedErrorClassForDataSetTempView)
       }
     }
   }
 
   testInvalidTempViews("subset cols")(
     text = "SELECT key FROM tab",
-    expectedErrorForSQLTempView = "cannot resolve",
-    expectedErrorForDataSetTempView = "cannot resolve"
+    expectedErrorClassForSQLTempView = "MISSING_COLUMN",
+    expectedErrorClassForDataSetTempView = "MISSING_COLUMN"
   )
 
   testInvalidTempViews("superset cols")(
     text = "SELECT key, value, 1 FROM tab",
     // The analyzer can't tell whether the table originally had the extra column or not.
-    expectedErrorForSQLTempView = "Can't resolve column 1 in root",
-    expectedErrorForDataSetTempView = "Can't resolve column 1 in root"
+    expectedErrorMsgForSQLTempView = "Can't resolve column 1 in root",
+    expectedErrorMsgForDataSetTempView = "Can't resolve column 1 in root"
   )
 
   protected def testComplexTempViews(name: String)(

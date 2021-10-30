@@ -27,19 +27,31 @@ import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionSet}
 
-
 /**
- * A class representing different attributes of current transaction needed for conflict detection.
- *
- * @param readPredicates - partition predicates by which files have been queried by the transaction
- * @param readFiles - specific files that have been seen by the transaction
- * @param readWholeTable - whether the whole table was read during the transaction
- * @param readAppIds - appIds that have been seen by the transaction
- * @param metadata - table metadata for the transaction
- * @param actions - delta log actions that the transaction wants to commit
- * @param readSnapshot - read [[Snapshot]] used for the transaction
- * @param commitInfo - [[CommitInfo]] for the commit
+ * A trait representing different attributes of current transaction needed for conflict detection.
  */
+private[delta] trait CurrentTransactionInfoBase {
+  /** partition predicates by which files have been queried by the transaction */
+  val readPredicates: Seq[Expression]
+  /** files that have been seen by the transaction */
+  val readFiles: Set[AddFile]
+  /** whether the whole table was read during the transaction */
+  val readWholeTable: Boolean
+  /** appIds that have been seen by the transaction */
+  val readAppIds: Set[String]
+  /** table metadata for the transaction */
+  val metadata: Metadata
+  /** delta log actions that the transaction wants to commit */
+  val actions: Seq[Action]
+  /** read [[Snapshot]] used for the transaction */
+  val readSnapshot: Snapshot
+  /** [[CommitInfo]] for the commit */
+  val commitInfo: Option[CommitInfo]
+
+  /** Final actions to commit - including the [[CommitInfo]] */
+  lazy val finalActionsToCommit: Seq[Action] = actions ++ commitInfo
+}
+
 private[delta] case class CurrentTransactionInfo(
     readPredicates: Seq[Expression],
     readFiles: Set[AddFile],
@@ -48,19 +60,15 @@ private[delta] case class CurrentTransactionInfo(
     metadata: Metadata,
     actions: Seq[Action],
     readSnapshot: Snapshot,
-    commitInfo: Option[CommitInfo]) {
-
-  /** Final actions to commit - including the [[CommitInfo]] */
-  lazy val finalActionsToCommit: Seq[Action] = actions ++ commitInfo
-
-}
+    commitInfo: Option[CommitInfo])
+  extends CurrentTransactionInfoBase
 
 /**
  * Summary of the Winning commit against which we want to check the conflict
  * @param actions - delta log actions committed by the winning commit
  * @param commitVersion - winning commit version
  */
-private[delta] case class WinningCommitSummary(actions: Seq[Action], commitVersion: Long) {
+private[delta] class WinningCommitSummary(val actions: Seq[Action], val commitVersion: Long) {
 
   val metadataUpdates: Seq[Metadata] = actions.collect { case a: Metadata => a }
   val appLevelTransactions: Seq[SetTransaction] = actions.collect { case a: SetTransaction => a }
@@ -120,8 +128,10 @@ private[delta] class ConflictChecker(
   protected def createWinningCommitSummary(): WinningCommitSummary = {
     recordTime("initialize-old-commit") {
       val winningCommitActions = deltaLog.store.read(
-        FileNames.deltaFile(deltaLog.logPath, winningCommitVersion)).map(Action.fromJson)
-      WinningCommitSummary(winningCommitActions, winningCommitVersion)
+        FileNames.deltaFile(deltaLog.logPath, winningCommitVersion),
+        deltaLog.newDeltaHadoopConf()
+      ).map(Action.fromJson)
+      new WinningCommitSummary(winningCommitActions, winningCommitVersion)
     }
   }
 
@@ -260,12 +270,12 @@ private[delta] class ConflictChecker(
 
   /** A helper function for pretty printing a specific partition directory. */
   protected def getPrettyPartitionMessage(partitionValues: Map[String, String]): String = {
-    val partitionColumns = currentTransactionInfo.metadata.partitionColumns
+    val partitionColumns = currentTransactionInfo.metadata.partitionSchema
     if (partitionColumns.isEmpty) {
       "the root of the table"
     } else {
-      val partition = partitionColumns.map { name =>
-        s"$name=${partitionValues(name)}"
+      val partition = partitionColumns.map { field =>
+        s"${field.name}=${partitionValues(DeltaColumnMapping.getPhysicalName(field))}"
       }.mkString("[", ", ", "]")
       s"partition ${partition}"
     }

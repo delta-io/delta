@@ -22,7 +22,7 @@ import java.{util => ju}
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, DeltaTimeTravelSpec, Snapshot}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, DeltaTimeTravelSpec, Snapshot}
 import org.apache.spark.sql.delta.GeneratedColumn
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -53,7 +53,8 @@ case class DeltaTableV2(
     catalogTable: Option[CatalogTable] = None,
     tableIdentifier: Option[String] = None,
     timeTravelOpt: Option[DeltaTimeTravelSpec] = None,
-    options: CaseInsensitiveStringMap = CaseInsensitiveStringMap.empty())
+    options: Map[String, String] = Map.empty,
+    cdcOptions: CaseInsensitiveStringMap = CaseInsensitiveStringMap.empty())
   extends Table
   with SupportsWrite
   with V2TableWithV1Fallback
@@ -64,13 +65,13 @@ case class DeltaTableV2(
       // Fast path for reducing path munging overhead
       (new Path(catalogTable.get.location), Nil, None)
     } else {
-      DeltaDataSource.parsePathIdentifier(spark, path.toString)
+      DeltaDataSource.parsePathIdentifier(spark, path.toString, options)
     }
   }
 
   // The loading of the DeltaLog is lazy in order to reduce the amount of FileSystem calls,
   // in cases where we will fallback to the V1 behavior.
-  lazy val deltaLog: DeltaLog = DeltaLog.forTable(spark, rootPath)
+  lazy val deltaLog: DeltaLog = DeltaLog.forTable(spark, rootPath, options)
 
   def getTableIdentifierIfExists: Option[TableIdentifier] = tableIdentifier.map(
     spark.sessionState.sqlParser.parseTableIdentifier)
@@ -101,7 +102,8 @@ case class DeltaTableV2(
   }
 
   private lazy val tableSchema: StructType =
-    GeneratedColumn.removeGenerationExpressions(snapshot.schema)
+    DeltaColumnMapping.dropColumnMappingMetadata(
+      GeneratedColumn.removeGenerationExpressions(snapshot.schema))
 
   override def schema(): StructType = tableSchema
 
@@ -153,7 +155,7 @@ case class DeltaTableV2(
       path.toString, snapshot, partitionFilters)
 
     deltaLog.createRelation(
-      partitionPredicates, Some(snapshot), timeTravelSpec.isDefined, options)
+      partitionPredicates, Some(snapshot), timeTravelSpec.isDefined, cdcOptions)
   }
 
   /**

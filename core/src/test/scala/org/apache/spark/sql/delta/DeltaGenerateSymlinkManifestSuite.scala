@@ -492,7 +492,10 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
    *                        as the latest version of the table
    * @param expectedNumFiles Expected number of manifest files
    */
-  def assertManifest(tablePath: File, expectSameFiles: Boolean, expectedNumFiles: Int): Unit = {
+  def assertManifest(
+      tablePath: File,
+      expectSameFiles: Boolean,
+      expectedNumFiles: Int): Unit = {
     val deltaSnapshot = DeltaLog.forTable(spark, tablePath.toString).update()
     val manifestPath = new File(tablePath, GenerateSymlinkManifest.MANIFEST_LOCATION)
 
@@ -517,7 +520,8 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
       // Validate that each file in the manifest is actually present in table. This mainly checks
       // whether the file names in manifest are not escaped and therefore are readable directly
       // by Hadoop APIs.
-      val fs = new Path(manifestPath.toString).getFileSystem(spark.sessionState.newHadoopConf())
+      val fs = new Path(manifestPath.toString)
+        .getFileSystem(deltaSnapshot.deltaLog.newDeltaHadoopConf())
       spark.read.text(manifestPath.toString).select("value").as[String].collect().foreach { p =>
         assert(fs.exists(new Path(p)), s"path $p in manifest not found in file system")
       }

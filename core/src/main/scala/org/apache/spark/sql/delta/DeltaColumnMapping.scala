@@ -23,10 +23,10 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 
-import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.types.{DataType, Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
 
-object DeltaColumnMapping {
+object DeltaColumnMapping
+{
   val MIN_WRITER_VERSION = 5
   val MIN_READER_VERSION = 2
   val MIN_PROTOCOL_VERSION = Protocol(MIN_READER_VERSION, MIN_WRITER_VERSION)
@@ -37,7 +37,7 @@ object DeltaColumnMapping {
   val COLUMN_MAPPING_PHYSICAL_NAME_KEY = COLUMN_MAPPING_METADATA_PREFIX + "physicalName"
 
   def requiresNewProtocol(metadata: Metadata): Boolean =
-    DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(metadata) match {
+    metadata.columnMappingMode match {
       case IdMapping => true
       case NameMapping => true
       case NoMapping => false
@@ -59,9 +59,8 @@ object DeltaColumnMapping {
       newMetadata: Metadata,
       isCreatingNewTable: Boolean): Metadata = {
     // field in new metadata should have been dropped
-    val oldMappingMode = DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(oldMetadata)
-    val newMappingMode = DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(newMetadata)
-    var updatedMetadata = newMetadata
+    val oldMappingMode = oldMetadata.columnMappingMode
+    val newMappingMode = newMetadata.columnMappingMode
     if (satisfyColumnMappingProtocol(oldProtocol)) {
       if (oldMappingMode != newMappingMode && !isCreatingNewTable) {
         // block changing modes on new protocol
@@ -73,7 +72,7 @@ object DeltaColumnMapping {
         throw DeltaErrors.setColumnMappingModeOnOldProtocol(oldProtocol)
       }
     }
-    updatedMetadata = tryFixMetadata(newMetadata, newMappingMode)
+    val updatedMetadata = tryFixMetadata(newMetadata, newMappingMode)
     // Force the generation of the physical schema, which throws an exception if it fails,
     // e.g., some columns don't have IDs in ID mode
     updatedMetadata.schema
@@ -180,19 +179,11 @@ object DeltaColumnMapping {
     }
   }
 
-  def getPhysicalName(field: Attribute): String = {
-    if (field.metadata.contains(COLUMN_MAPPING_PHYSICAL_NAME_KEY)) {
-      field.metadata.getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY)
-    } else {
-      field.name
-    }
-  }
-
   def tryFixMetadata(
       metadata: Metadata,
       mappingMode: DeltaColumnMappingMode): Metadata = {
     mappingMode match {
-      case IdMapping =>
+      case IdMapping | NameMapping =>
         assignColumnIdAndPhysicalName(metadata)
       case NoMapping =>
         metadata
@@ -224,19 +215,21 @@ object DeltaColumnMapping {
       if (!hasColumnId(field)) {
         throw DeltaErrors.missingColumnId(IdMapping, field.name)
       }
-      if (!hasPhysicalName(field)) {
-        throw DeltaErrors.missingPhysicalName(IdMapping, field.name)
-      }
       val columnId = getColumnId(field)
       if (columnIds.contains(columnId)) {
         throw DeltaErrors.duplicatedColumnId(mode, curFullPath, columnIds(columnId))
       }
       columnIds.update(columnId, curFullPath)
+
+      if (!hasPhysicalName(field)) {
+        throw DeltaErrors.missingPhysicalName(IdMapping, field.name)
+      }
       val physicalName = getPhysicalName(field)
       if (physicalNames.contains(physicalName)) {
         throw DeltaErrors.duplicatedPhysicalName(mode, curFullPath, physicalNames(physicalName))
       }
       physicalNames.update(physicalName, curFullPath)
+
       field
     })
 
@@ -248,14 +241,10 @@ object DeltaColumnMapping {
    * @param metadata Metadata whose schema to modify
    * @return updated metadata
    */
-  private def assignColumnIdAndPhysicalName(metadata: Metadata): Metadata = {
-    // Cannot use metadata.schema here, as it will likely fail our column mapping checks
-    val rawSchema = Option(metadata.schemaString)
-      .map(s => DataType.fromJson(s).asInstanceOf[StructType])
-      .getOrElse(new StructType())
+  def assignColumnIdAndPhysicalName(metadata: Metadata): Metadata = {
+    val rawSchema = metadata.schema
     var maxId = DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(metadata) max
                 findMaxColumnId(rawSchema)
-
     val newSchema =
       SchemaMergingUtils.transformColumns(rawSchema)((_, field, _) => {
         val builder = new MetadataBuilder()
@@ -273,9 +262,21 @@ object DeltaColumnMapping {
     metadata.copy(
       schemaString = newSchema.json,
       configuration =
-        metadata.configuration ++
-          Map(DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> maxId.toString)
+        metadata.configuration ++ Map(DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> maxId.toString)
     )
+  }
+
+  def dropColumnMappingMetadata(schema: StructType): StructType = {
+    SchemaMergingUtils.transformColumns(schema) { (_, field, _) =>
+      field.copy(
+        metadata = new MetadataBuilder()
+          .withMetadata(field.metadata)
+          .remove(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY)
+          .remove(DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
+          .remove(DeltaColumnMapping.PARQUET_FIELD_ID_METADATA_KEY)
+          .build()
+      )
+    }
   }
 }
 

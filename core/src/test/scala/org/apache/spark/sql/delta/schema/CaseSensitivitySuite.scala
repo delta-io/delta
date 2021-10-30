@@ -195,7 +195,6 @@ class CaseSensitivitySuite extends QueryTest
             .option("replaceWhere", "key = 2") // note the different case
             .save(path)
         }
-        assert(e.getMessage.contains("cannot resolve"))
       }
 
       checkAnswer(

@@ -58,17 +58,7 @@ trait ImplicitMetadataOperation extends DeltaLogging {
     // To support the new column mapping mode, we drop existing metadata on data schema
     // so that all the column mapping related properties can be reinitialized in
     // OptimisticTransaction.updateMetadata
-    val dataSchema =
-      SchemaMergingUtils.transformColumns(schema.asNullable) { (_, field, _) =>
-        field.copy(
-          metadata = new MetadataBuilder()
-            .withMetadata(field.metadata)
-            .remove(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY)
-            .remove(DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
-            .remove(DeltaColumnMapping.PARQUET_FIELD_ID_METADATA_KEY)
-            .build()
-        )
-      }
+    val dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(schema.asNullable)
     val mergedSchema = if (isOverwriteMode && canOverwriteSchema) {
       dataSchema
     } else {

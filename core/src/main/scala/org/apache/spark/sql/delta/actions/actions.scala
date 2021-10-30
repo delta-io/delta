@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaConfigs, DeltaErrors, GeneratedColumn}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, GeneratedColumn}
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -150,8 +150,7 @@ object Protocol {
       featuresUsed.append("Using Generated Columns")
     }
 
-    if (DeltaConfigs.CHANGE_DATA_CAPTURE.fromMetaData(metadata) ||
-        DeltaConfigs.CHANGE_DATA_CAPTURE_LEGACY.fromMetaData(metadata)) {
+    if (DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(metadata)) {
       minimumRequired = Protocol(0, minWriterVersion = 4)
       featuresUsed.append("Change data feed")
       throw DeltaErrors.cdcNotAllowedInThisVersion()
@@ -366,6 +365,8 @@ case class AddCDCFile(
 
 case class Format(
     provider: String = "parquet",
+    // If we support `options` in future, we should not store any file system options since they may
+    // contain credentials.
     options: Map[String, String] = Map.empty)
 
 /**
@@ -388,15 +389,25 @@ case class Metadata(
   // defs, because parsing StructTypes from JSON is extremely expensive and has
   // caused perf. problems here in the past:
 
+  /**
+   * Column mapping mode for this table
+   */
+  @JsonIgnore
+  lazy val columnMappingMode: DeltaColumnMappingMode =
+    DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(this)
+
+  /**
+   * Column mapping max id for this table
+   */
+  @JsonIgnore
+  lazy val columnMappingMaxId: Long =
+    DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(this)
+
   /** Returns the schema as a [[StructType]] */
   @JsonIgnore
-  lazy val schema: StructType =
-    Option(schemaString).map { s =>
-      DeltaColumnMapping.setColumnMetadata(
-        DataType.fromJson(s).asInstanceOf[StructType],
-        DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(this)
-      )
-    }.getOrElse(StructType.apply(Nil))
+  lazy val schema: StructType = Option(schemaString)
+    .map(DataType.fromJson(_).asInstanceOf[StructType])
+    .getOrElse(StructType.apply(Nil))
 
   /** Returns the partitionSchema as a [[StructType]] */
   @JsonIgnore
@@ -413,6 +424,10 @@ case class Metadata(
     val partitions = partitionColumns.toSet
     StructType(schema.filterNot(f => partitions.contains(f.name)))
   }
+
+  /** Partition value written out to files */
+  @JsonIgnore
+  lazy val physicalPartitionColumns: Seq[String] = physicalPartitionSchema.fieldNames.toSeq
 
   /**
    * Columns whose type should never be changed. For example, if a column is used by a generated

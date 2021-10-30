@@ -332,6 +332,7 @@ class DeltaTableTests(DeltaTestCase):
         self.__checkAnswer(
             self.spark.read.format("delta").load(tempFile2),
             [('a', 1), ('b', 2), ('c', 3)])
+        self.assertEqual(type(dt), DeltaTable)
 
         # convert to delta with partition column provided as a string
         tempFile3 = self.tempFile + "_3"
@@ -343,6 +344,7 @@ class DeltaTableTests(DeltaTestCase):
         self.__checkAnswer(
             self.spark.read.format("delta").load(tempFile3),
             [('a', 1), ('b', 2), ('c', 3)])
+        self.assertEqual(type(dt), DeltaTable)
 
     def test_isDeltaTable(self):
         df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])

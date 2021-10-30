@@ -17,6 +17,7 @@
     - [Protocol Evolution](#protocol-evolution)
     - [Commit Provenance Information](#commit-provenance-information)
 - [Action Reconciliation](#action-reconciliation)
+- [Column Mapping](#column-mapping)
 - [Requirements for Writers](#requirements-for-writers)
   - [Creation of New Log Entries](#creation-of-new-log-entries)
   - [Consistency Between Table Metadata and Data Files](#consistency-between-table-metadata-and-data-files)
@@ -102,7 +103,7 @@ For example:
 ```
 ./_delta_log/00000000000000000000.json
 ```
-
+Delta files use new-line delimited JSON format, where every action is stored as a single line JSON document.
 A delta file, `n.json`, contains an atomic set of [_actions_](#Actions) that should be applied to the previous table state, `n-1.json`, in order to the construct `n`th snapshot of the table.
 An action changes one aspect of the table's state, for example, adding or removing a file.
 
@@ -367,7 +368,51 @@ To achieve the requirements above, related actions from different delta files ne
  - All `add` actions for different paths need to be accumulated as a list. The latest `add` action (from a more recent delta file) observed for a given path wins.
  - All `remove` actions for different paths need to be accumulated as a list. If a `remove` action is received **later** (from a more recent delta file) for the same path as an `add` operation, the corresponding `add` action should be removed from the `add` collection and the file needs to be tracked as part of the `remove` collection.
  - If an `add` action is received **later** (from a more recent delta file) for the same path as a `remove` operation, the corresponding `remove` action should be removed from the `remove` collection and the file needs to be tracked as part of the `add` collection.
-    
+
+# Column Mapping
+Delta can use column mapping to avoid any column naming restrictions, and to support the renaming and dropping of columns without having to rewrite all the data. There are two modes of column mapping, by `name` and by `id`. In both modes, every column - nested or leaf - is assigned a unique _physical_ name, and a unique 32 bit integer as an id. The physical name is stored as part of the column metadata with the key `delta.columnMapping.physicalName`. The column id is stored within the metadata with the key `delta.columnMapping.id`. The column mapping is governed by the table property `delta.columnMapping.mode` and can be one of `none`, `id`, and `name`.
+
+The following is an example for the column definition of a table that leverages column mapping. See the [appendix](#schema-serialization-format) for a more complete schema definition.
+```
+{
+    "name" : "e",
+    "type" : {
+      "type" : "array",
+      "elementType" : {
+        "type" : "struct",
+        "fields" : [ {
+          "name" : "d",
+          "type" : "integer",
+          "nullable" : false,
+          "metadata" : { 
+            "delta.columnMapping.id": 5,
+            "delta.columnMapping.physicalName": "col-a7f4159c-53be-4cb0-b81a-f7e5240cfc49"
+          }
+        } ]
+      },
+      "containsNull" : true
+    },
+    "nullable" : true,
+    "metadata" : { 
+      "delta.columnMapping.id": 4,
+      "delta.columnMapping.physicalName": "col-5f422f40-de70-45b2-88ab-1d5c90e94db1"
+    }
+  }
+```
+
+## Writer Requirements for Column Mapping
+In order to support column mapping, writers must:
+ - Write data files by using the _physical name_ that is chosen for each column. The physical name of the column is static and can be different than the _display name_ of the column, which is changeable.
+ - Write the 32 bit integer column identifier as part of the `field_id` field of the `SchemaElement` struct in the [Parquet Thrift specification](https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift).
+ - Track partition values and column level statistics with the physical name of the column in the transaction log.
+ - Assign a globally unique identifier as the physical name for each new column that is added to the schema. This is especially important for supporting cheap column deletions in `name` mode. In addition, column identifiers need to be assigned to each column. The maximum id that is assigned to a column is tracked as the table property `delta.columnMapping.maxColumnId`. This is an internal table property that cannot be configured by users. This value must increase monotonically as new columns are introduced and committed to the table alongside the introduction of the new columns to the schema.
+
+## Reader Requirements for Column Mapping
+In `none` mode, readers must read the parquet files by using the display names (the `name` field of the column definition) of the columns in the schema.
+
+In `id ` mode, readers must resolve columns by using the `field_id` in the parquet metadata for each file. Partition values and column level statistics must be resolved by their *physical names* for each `add` entry in the transaction log. If a data file does not contain field ids, readers must refuse to read that file or return nulls for each column. For ids that cannot be found in a file, readers must return `null` values for those columns.
+
+In `name` mode, readers must resolve columns in the data files by their physical names. Partition values and column level statistics will also be resolved by their physical names. For columns that are not found in the files, `null`s need to be returned. Column ids are not used in this mode for resolution purposes.  
 
 # Requirements for Writers
 This section documents additional requirements that writers must follow in order to preserve some of the higher level guarantees that Delta provides.
@@ -440,11 +485,20 @@ When the table property `delta.appendOnly` is set to `true`:
 
 The requirements of the writers according to the protocol versions are summarized in the table below. Each row inherits the requirements from the preceding row.
 
-<br> | Reader Version 1
+<br> | Requirements
 -|-
 Writer Version 2 | - Support [`delta.appendOnly`](#append-only-tables)<br>- Support [Column Invariants](#column-invariants)
 Writer Version 3 | Enforce:<br>- `delta.checkpoint.writeStatsAsJson`<br>- `delta.checkpoint.writeStatsAsStruct`<br>- `CHECK` constraints
 Writer Version 4 | - Support Change Data Feed<br>- Support [Generated Columns](#generated-columns)
+Writer Version 5 | Respect [Column Mapping](#column-mapping)
+
+# Requirements for Readers
+
+The requirements of the readers according to the protocol versions are summarized in the table below. Each row inherits the requirements from the preceding row.
+
+<br> | Requirements
+-|-
+Reader Version 2 | Respect [Column Mapping](#column-mapping)
 
 # Appendix
 
@@ -690,4 +744,72 @@ For a table with partition columns: "date", "region" of types date and string re
 |    |-- path: string
 |    |-- deletionTimestamp: long
 |    |-- dataChange: boolean
+```
+
+For a table that uses column mapping, whether in `id` or `name` mode, the schema of the `add` column will look as follows.
+
+Schema definition:
+```
+{
+  "type" : "struct",
+  "fields" : [ {
+    "name" : "asset",
+    "type" : "string",
+    "nullable" : true,
+    "metadata" : {
+      "delta.columnMapping.id": 1,
+      "delta.columnMapping.physicalName": "col-b96921f0-2329-4cb3-8d79-184b2bdab23b"
+    }
+  }, {
+    "name" : "quantity",
+    "type" : "double",
+    "nullable" : true,
+    "metadata" : {
+      "delta.columnMapping.id": 2,
+      "delta.columnMapping.physicalName": "col-04ee4877-ee53-4cb9-b1fb-1a4eb74b508c"
+    }
+  }, {
+    "name" : "date",
+    "type" : "date",
+    "nullable" : true,
+    "metadata" : {
+      "delta.columnMapping.id": 3,
+      "delta.columnMapping.physicalName": "col-798f4abc-c63f-444c-9a04-e2cf1ecba115"
+    }
+  }, {
+    "name" : "region",
+    "type" : "string",
+    "nullable" : true,
+    "metadata" : {
+      "delta.columnMapping.id": 4,
+      "delta.columnMapping.physicalName": "col-19034dc3-8e3d-4156-82fc-8e05533c088e"
+    }
+  } ]
+}
+```
+
+Checkpoint schema (just the `add` column):
+```
+|-- add: struct
+|    |-- path: string
+|    |-- partitionValues: map<string,string>
+|    |-- size: long
+|    |-- modificationTime: long
+|    |-- dataChange: boolean
+|    |-- stats: string
+|    |-- tags: map<string,string>
+|    |-- partitionValues_parsed: struct
+|    |    |-- col-798f4abc-c63f-444c-9a04-e2cf1ecba115: date
+|    |    |-- col-19034dc3-8e3d-4156-82fc-8e05533c088e: string
+|    |-- stats_parsed: struct
+|    |    |-- numRecords: long
+|    |    |-- minValues: struct
+|    |    |    |-- col-b96921f0-2329-4cb3-8d79-184b2bdab23b: string
+|    |    |    |-- col-04ee4877-ee53-4cb9-b1fb-1a4eb74b508c: double
+|    |    |-- maxValues: struct
+|    |    |    |-- col-b96921f0-2329-4cb3-8d79-184b2bdab23b: string
+|    |    |    |-- col-04ee4877-ee53-4cb9-b1fb-1a4eb74b508c: double
+|    |    |-- nullCounts: struct
+|    |    |    |-- col-b96921f0-2329-4cb3-8d79-184b2bdab23b: long
+|    |    |    |-- col-04ee4877-ee53-4cb9-b1fb-1a4eb74b508c: long
 ```

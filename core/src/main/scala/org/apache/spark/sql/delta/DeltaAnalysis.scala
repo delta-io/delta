@@ -66,8 +66,7 @@ class DeltaAnalysis(session: SparkSession)
         needsSchemaAdjustment(d.name(), a.query, r.schema) =>
       val projection = resolveQueryColumnsByOrdinal(a.query, r.output, d.name())
       if (projection != a.query) {
-        val cleanedTable = r.copy(output = r.output.map(CharVarcharUtils.cleanAttrMetadata))
-        a.copy(query = projection, table = cleanedTable)
+        a.copy(query = projection)
       } else {
         a
       }
@@ -84,8 +83,7 @@ class DeltaAnalysis(session: SparkSession)
         val newDeleteExpr = o.deleteExpr.transformUp {
           case a: AttributeReference => aliases.getOrElse(a, a)
         }
-        val cleanedTable = r.copy(output = r.output.map(CharVarcharUtils.cleanAttrMetadata))
-        o.copy(deleteExpr = newDeleteExpr, query = projection, table = cleanedTable)
+        o.copy(deleteExpr = newDeleteExpr, query = projection)
       } else {
         o
       }
@@ -224,10 +222,10 @@ class DeltaAnalysis(session: SparkSession)
         throw new IllegalStateException(s"The table schema $tableSchema is not consistent with " +
           s"the target attributes: $targetAttrs")
       }
-      deltaTable.snapshot.metadata.schema.foreach { tableColumn =>
-        if (!userSpecifiedNames.contains(tableColumn.name) &&
-          !GeneratedColumn.isGeneratedColumn(deltaTable.snapshot.protocol, tableColumn)) {
-          throw DeltaErrors.missingColumnsInInsertInto(tableColumn.name)
+      deltaTable.snapshot.metadata.schema.foreach { col =>
+        if (!userSpecifiedNames.contains(col.name) &&
+          !ColumnWithDefaultExprUtils.columnHasDefaultExpr(deltaTable.snapshot.protocol, col)) {
+          throw DeltaErrors.missingColumnsInInsertInto(col.name)
         }
       }
     }
@@ -262,8 +260,7 @@ class DeltaAnalysis(session: SparkSession)
       case _ =>
         getCastFunction(attr, targetAttr.dataType)
     }
-    val strLenChecked = CharVarcharUtils.stringLengthCheck(expr, targetAttr)
-    Alias(strLenChecked, targetAttr.name)(explicitMetadata = Option(targetAttr.metadata))
+    Alias(expr, targetAttr.name)(explicitMetadata = Option(targetAttr.metadata))
   }
 
   /**
@@ -282,17 +279,8 @@ class DeltaAnalysis(session: SparkSession)
     // Now we should try our best to match everything that already exists, and leave the rest
     // for schema evolution to WriteIntoDelta
     val existingSchemaOutput = output.take(schema.length)
-    val rawSchema = getRawSchema(schema)
     existingSchemaOutput.map(_.name) != schema.map(_.name) ||
-      !SchemaUtils.isReadCompatible(rawSchema.asNullable, existingSchemaOutput.toStructType)
-  }
-
-  private def getRawSchema(schema: StructType): StructType = {
-    StructType(schema.map { field =>
-      CharVarcharUtils.getRawType(field.metadata).map {
-        rawType => field.copy(dataType = rawType)
-      }.getOrElse(field)
-    })
+      !SchemaUtils.isReadCompatible(schema.asNullable, existingSchemaOutput.toStructType)
   }
 
   // Get cast operation for the level of strictness in the schema a user asked for

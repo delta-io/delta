@@ -17,14 +17,12 @@
 import java.nio.file.Files
 
 val sparkVersion = "3.2.0"
-scalaVersion := "2.12.10"
+scalaVersion := "2.12.14"
 
 lazy val commonSettings = Seq(
   organization := "io.delta",
-  scalaVersion := "2.12.10",
-  fork := true,
-resolvers += "Apache Spark RC1" at
-  "https://repository.apache.org/content/repositories/orgapachespark-1388"
+  scalaVersion := "2.12.14",
+  fork := true
 )
 
 lazy val core = (project in file("core"))

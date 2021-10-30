@@ -50,7 +50,24 @@ class LocalLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
     }
   }
 
+  /**
+   * This write implementation needs to wraps `writeWithRename` with `synchronized` as the rename()
+   * for [[org.apache.hadoop.fs.RawLocalFileSystem]] doesn't throw an exception when the target file
+   * exists. Hence we must make sure `exists + rename` in `writeWithRename` is atomic in our tests.
+   */
+  override def write(
+      path: Path,
+      actions: Iterator[String],
+      overwrite: Boolean,
+      hadoopConf: Configuration): Unit = {
+    synchronized {
+      writeWithRename(path, actions, overwrite, hadoopConf)
+    }
+  }
+
   override def invalidateCache(): Unit = {}
 
   override def isPartialWriteVisible(path: Path): Boolean = true
+
+  override def isPartialWriteVisible(path: Path, hadoopConf: Configuration): Boolean = true
 }
