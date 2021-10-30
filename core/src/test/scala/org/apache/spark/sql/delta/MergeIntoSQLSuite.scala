@@ -212,10 +212,6 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
     }
   }
 
-
-  // This test is to capture the incorrect behavior caused by
-  // https://github.com/delta-io/delta/issues/618 .
-  // If this test fails then the issue has been fixed. Replace this test with a correct test
   test("merge into a dataset temp views with star gives incorrect results") {
     withTempView("v") {
       withTempView("src") {
@@ -230,7 +226,6 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
              |  INSERT *
              |""".stripMargin)
         val result = readDeltaTable(tempPath).as[(Long, Long)].collect().toSet
-        // This is expected to fail until the issue mentioned above is resolved.
         assert(result == Set((0, 0), (1, 10)))
       }
     }
