@@ -27,7 +27,7 @@ import io.delta.standalone.expressions.Expression;
 /**
  * {@link Snapshot} provides APIs to access the Delta table state (such as table metadata, active
  * files) at some version.
- *
+ * <p>
  * See <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md">Delta Transaction Log Protocol</a>
  * for more details about the transaction logs.
  */

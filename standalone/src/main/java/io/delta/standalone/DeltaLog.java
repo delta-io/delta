@@ -27,7 +27,7 @@ import io.delta.standalone.internal.DeltaLogImpl;
 /**
  * {@link DeltaLog} is the representation of the transaction logs of a Delta table. It provides APIs
  * to access the states of a Delta table.
- *
+ * <p>
  * You can use the following codes to create a {@link DeltaLog} instance.
  * <pre>{@code
  *   Configuration conf = ... // Create your own Hadoop Configuration instance
@@ -76,7 +76,7 @@ public interface DeltaLog {
      * Returns a new {@link OptimisticTransaction} that can be used to read the current state of the
      * log and then commit updates. The reads and updates will be checked for logical conflicts
      * with any concurrent writes to the log.
-     *
+     * <p>
      * Note that all reads in a transaction must go through the returned transaction object, and not
      * directly to the {@link DeltaLog} otherwise they will not be checked for conflicts.
      *
@@ -94,8 +94,8 @@ public interface DeltaLog {
     Path getPath();
 
     /**
-     * Get all actions starting from "startVersion" (inclusive).
-     * If `startVersion` doesn't exist, return an empty {@code Iterator}.
+     * Get all actions starting from {@code startVersion} (inclusive).
+     * If {@code startVersion} doesn't exist, return an empty {@code Iterator}.
      *
      * @param startVersion the table version to begin retrieving actions from (inclusive)
      * @param failOnDataLoss whether to throw when data loss detected

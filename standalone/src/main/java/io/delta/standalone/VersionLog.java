@@ -38,7 +38,7 @@ public class VersionLog {
     }
 
     /**
-     * @return the table version at which these actions occured
+     * @return the table version at which these actions occurred
      */
     public long getVersion() {
         return version;

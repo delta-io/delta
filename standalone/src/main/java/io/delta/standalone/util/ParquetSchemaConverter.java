@@ -28,11 +28,13 @@ public class ParquetSchemaConverter {
 
     /**
      * Represents Parquet timestamp types.
-     * - INT96 is a non-standard but commonly used timestamp type in Parquet.
-     * - TIMESTAMP_MICROS is a standard timestamp type in Parquet, which stores number of
-     *   microseconds from the Unix epoch.
-     * - TIMESTAMP_MILLIS is also standard, but with millisecond precision, which means the
-     *   microsecond portion of the timestamp value is truncated.
+     * <ul>
+     *   <li>INT96 is a non-standard but commonly used timestamp type in Parquet.</li>
+     *   <li>TIMESTAMP_MICROS is a standard timestamp type in Parquet, which stores number of
+     *   microseconds from the Unix epoch.</li>
+     *   <li>TIMESTAMP_MILLIS is also standard, but with millisecond precision, which means the
+     *   microsecond portion of the timestamp value is truncated.</li>
+     * </ul>
      */
     public enum ParquetOutputTimestampType {
         INT96,

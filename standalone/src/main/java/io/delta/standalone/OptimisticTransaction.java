@@ -25,7 +25,7 @@ import io.delta.standalone.expressions.Expression;
  * state of the log.  All reads from the {@link DeltaLog}, MUST go through this instance rather
  * than directly to the {@link DeltaLog} otherwise they will not be checked for logical conflicts
  * with concurrent updates.
- *
+ * <p>
  * This class is not thread-safe.
  */
 public interface OptimisticTransaction {
@@ -46,21 +46,23 @@ public interface OptimisticTransaction {
     <T extends Action> CommitResult commit(Iterable<T> actions, Operation op, String engineInfo);
 
     /**
-     * Mark files matched by the `readPredicates` as read by this transaction.
-     *
-     * Internally, the `readPredicates` parameter and the resultant `readFiles` will be used to
-     * determine if logical conflicts between this transaction and previously-committed transactions
-     * can be resolved (i.e. no error thrown).
-     *
+     * Mark files matched by the {@code readPredicates} as read by this transaction.
+     * <p>
+     * Internally, the {@code readPredicates} parameter and the resultant {@code readFiles} will be
+     * used to determine if logical conflicts between this transaction and previously-committed
+     * transactions can be resolved (i.e. no error thrown).
+     * <p>
      * For example:
-     * - This transaction TXN1 reads partition 'date=2021-09-08' to perform an UPDATE and tries to
-     *   commit at the next table version N.
-     * - After TXN1 starts, another transaction TXN2 reads partition 'date=2021-09-07' and commits
-     *   first at table version N (with no other metadata changes).
-     * - TXN1 sees that another commit won, and needs to know whether to commit at version N+1 or
-     *   fail. Using the `readPredicate` and resultant `readFiles`, TXN1 can see that none of its
-     *   read files were changed by TXN2. Thus there are no logical conflicts and TXN1 can commit at
-     *   table version N+1.
+     * <ul>
+     *   <li>This transaction TXN1 reads partition 'date=2021-09-08' to perform an UPDATE and tries
+     *   to commit at the next table version N.</li>
+     *   <li>After TXN1 starts, another transaction TXN2 reads partition 'date=2021-09-07' and
+     *   commits first at table version N (with no other metadata changes).</li>
+     *   <li>TXN1 sees that another commit won, and needs to know whether to commit at version N+1
+     *   or fail. Using the {@code readPredicates} and resultant {@code readFiles}, TXN1 can see
+     *   that none of its read files were changed by TXN2. Thus there are no logical conflicts and
+     *   TXN1 can commit at table version N+1.</li>
+     * </ul>
      *
      * @param readPredicate  Predicate used to determine which files were read.
      * @return a {@link DeltaScan} containing the list of files matching the push portion of the
@@ -72,7 +74,7 @@ public interface OptimisticTransaction {
      * Records an update to the metadata that should be committed with this transaction.
      * Note that this must be done before writing out any files so that file writing
      * and checks happen with the final metadata for the table.
-     *
+     * <p>
      * IMPORTANT: It is the responsibility of the caller to ensure that files currently
      * present in the table are still valid under the new metadata.
      *
@@ -87,7 +89,8 @@ public interface OptimisticTransaction {
 
     /**
      * @param id  transaction id
-     * @return the latest version that has committed for the idempotent transaction with given `id`.
+     * @return the latest version that has committed for the idempotent transaction with given
+     *         {@code id}.
      */
     long txnVersion(String id);
 

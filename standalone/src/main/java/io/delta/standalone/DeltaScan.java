@@ -24,16 +24,16 @@ import io.delta.standalone.expressions.Expression;
 
 /**
  * Provides access to an iterator over the files in this snapshot.
- *
+ * <p>
  * Typically created with a read predicate {@link Expression} to let users filter files.
  */
 public interface DeltaScan {
 
     /**
      * Creates a {@link CloseableIterator} which can iterate over files belonging to this snapshot.
-     *
+     * <p>
      * It provides no iteration ordering guarantee among files.
-     *
+     * <p>
      * Files returned are guaranteed to satisfy the predicate, if any, returned by
      * {@link #getPushedPredicate()}.
      *

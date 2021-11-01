@@ -25,8 +25,8 @@ import io.delta.standalone.data.RowRecord;
 import io.delta.standalone.internal.expressions.Util;
 
 /**
- * Usage: {@code new In(expr, exprList)} - Returns true if `expr` is equal to any in `exprList`,
- * else false.
+ * Usage: {@code new In(expr, exprList)} - Returns true if {@code expr} is equal to any in
+ * {@code exprList}, else false.
  */
 public final class In implements Predicate {
     private final Expression value;
@@ -61,11 +61,13 @@ public final class In implements Predicate {
     /**
      * This implements the {@code IN} expression functionality outlined by the Databricks SQL Null
      * semantics reference guide. The logic is as follows:
-     * - TRUE if the non-NULL value is found in the list
-     * - FALSE if the non-NULL value is not found in the list and the list does not contain NULL
-     *   values
-     * - NULL if the value is NULL, or the non-NULL value is not found in the list and the list
-     *   contains at least one NULL value
+     * <ul>
+     *     <li>TRUE if the non-NULL value is found in the list</li>
+     *     <li>FALSE if the non-NULL value is not found in the list and the list does not contain
+     *     NULL values</li>
+     *     <li>NULL if the value is NULL, or the non-NULL value is not found in the list and the
+     *     list contains at least one NULL value</li>
+     * </ul>
      *
      * @see <a href="https://docs.databricks.com/spark/latest/spark-sql/language-manual/sql-ref-null-semantics.html#in-and-not-in-subqueries">NULL Semantics</a>
      */

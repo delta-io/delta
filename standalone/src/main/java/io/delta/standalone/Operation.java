@@ -24,10 +24,10 @@ import javax.annotation.Nullable;
 
 /**
  * An operation that can be performed on a Delta table.
- *
- * An operation is tracked as the first line in delta logs, and powers `DESCRIBE HISTORY` for Delta
- * tables.
- *
+ * <p>
+ * An operation is tracked as the first line in delta logs, and powers {@code DESCRIBE HISTORY} for
+ * Delta tables.
+ * <p>
  * Operations must be constructed using one of the {@link Operation.Name} types below.
  * As well, optional {@link Metrics} values are given below.
  */
@@ -264,19 +264,37 @@ public final class Operation {
     @Nonnull
     private final Optional<String> userMetadata;
 
+    /**
+     * @param name  The {@link Name} of the operation.
+     */
     public Operation(@Nonnull Name name) {
         this(name, Collections.emptyMap(), Collections.emptyMap(), Optional.empty());
     }
 
+    /**
+     * @param name  The {@link Name} of the operation.
+     * @param parameters  Any relevant operation parameters, where values are JSON-encoded.
+     */
     public Operation(@Nonnull Name name, @Nullable Map<String, String> parameters) {
         this(name, parameters, Collections.emptyMap(), Optional.empty());
     }
 
+    /**
+     * @param name  The {@link Name} of the operation.
+     * @param parameters  Any relevant operation parameters, where values are JSON-encoded.
+     * @param metrics  Any relevant operation metrics. See {@link Metrics} for suggested keys.
+     */
     public Operation(@Nonnull Name name, @Nullable Map<String, String> parameters,
                      @Nullable Map<String, String> metrics) {
         this(name, parameters, metrics, Optional.empty());
     }
 
+    /**
+     * @param name  The {@link Name} of the operation.
+     * @param parameters  Any relevant operation parameters, where values are JSON-encoded.
+     * @param metrics  Any relevant operation metrics. See {@link Metrics} for suggested keys.
+     * @param userMetadata  Optional additional user metadata.
+     */
     public Operation(@Nonnull Name name, @Nullable Map<String, String> parameters,
                      @Nullable Map<String, String> metrics,
                      @Nonnull Optional<String> userMetadata) {

@@ -1,8 +1,8 @@
 package io.delta.standalone.expressions;
 
 /**
- * Usage: {@code new LessThanOrEqual(expr1, expr2)} - Returns true if `expr1` is less than or
- * equal to `expr2`, else false.
+ * Usage: {@code new LessThanOrEqual(expr1, expr2)} - Returns true if {@code expr1} is less than or
+ * equal to {@code expr2}, else false.
  */
 public final class LessThanOrEqual extends BinaryComparison implements Predicate {
     public LessThanOrEqual(Expression left, Expression right) {
