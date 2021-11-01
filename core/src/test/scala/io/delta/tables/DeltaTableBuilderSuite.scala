@@ -365,4 +365,47 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
       assert(e.getMessage.equals("Database 'parquet' not found"))
     }
   }
+
+  test("create table - different PROPERTIES") {
+    withTempDir {
+      tempDir =>
+        val path = tempDir.getCanonicalPath
+        val options = Map(
+          "header"->"true",
+          "foo"->"bar"
+        )
+        spark.range(10)
+          .write
+          .format("delta")
+          .options(options)
+          .save(path)
+
+        val e = intercept[AnalysisException] {
+          sql(s"""CREATE TABLE test (id LONG)
+                       | USING delta LOCATION '$path'
+                       | TBLPROPERTIES ('foo'='bar')""".stripMargin)
+        }
+        assert(e.getMessage.startsWith(
+          "The specified properties do not match the existing properties"))
+    }
+  }
+
+  test("create table - same existing properties") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      spark.range(10)
+        .write
+        .format("delta")
+        .option("header", "true")
+        .save(path)
+      sql(
+        s"""CREATE TABLE testTable (id LONG)
+           | USING delta LOCATION '$path'
+           | TBLPROPERTIES ('header'='true')""".stripMargin)
+
+      val deltaLog = DeltaLog.forTable(spark, path)
+      val expected = Map("header" -> "true")
+      assert(deltaLog.snapshot.metadata.configuration === expected)
+    }
+  }
 }

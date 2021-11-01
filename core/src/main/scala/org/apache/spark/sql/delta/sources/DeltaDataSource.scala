@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.sources
 
+import org.apache.spark.sql.delta.catalog.DeltaTableProperties
+
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.util.{Failure, Success, Try}
@@ -145,12 +147,13 @@ class DeltaDataSource
       .getOrElse(Nil)
 
     val deltaLog = DeltaLog.forTable(sqlContext.sparkSession, path, parameters)
+    val catalogProp = DeltaTableProperties(parameters.asJava)
     WriteIntoDelta(
       deltaLog = deltaLog,
       mode = mode,
       new DeltaOptions(parameters, sqlContext.sparkSession.sessionState.conf),
       partitionColumns = partitionColumns,
-      configuration = Map.empty,
+      configuration = catalogProp.properties,
       data = data).run(sqlContext.sparkSession)
 
     deltaLog.createRelation()

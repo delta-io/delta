@@ -1663,4 +1663,36 @@ class DeltaSuite extends QueryTest
     dir2.renameTo(dir1)
     checkAnswer(spark.read.format("delta").load(dir1.getCanonicalPath), spark.range(10).toDF)
   }
+
+  test("set metadata upon write") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      val options = Map(
+        "header"-> "true",
+        "foo" -> "bar"
+      )
+      spark.range(10).write
+        .format("delta")
+        .options(options)
+        .save(path)
+
+      val deltaLog = DeltaLog.forTable(spark, path)
+      assert(deltaLog.snapshot.metadata.configuration === options)
+    }
+  }
+
+  test("set metadata upon write using v2") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      spark.range(10)
+        .writeTo(s"delta.`$path`")
+        .using("delta")
+        .tableProperty("header", "true")
+        .createOrReplace()
+
+      val deltaLog = DeltaLog.forTable(spark, path)
+      val expected = Map("header" -> "true")
+      assert(deltaLog.snapshot.metadata.configuration === expected)
+    }
+  }
 }
