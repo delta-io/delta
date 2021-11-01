@@ -39,7 +39,7 @@ lazy val root = (project in file("."))
   .settings(
     name := "hello-world",
     libraryDependencies += "io.delta" %% "delta-core" % getDeltaVersion(),
-    libraryDependencies += "org.apache.spark" %% "spark-sql" % "3.1.0",
+    libraryDependencies += "org.apache.spark" %% "spark-sql" % "3.2.0",
     extraMavenRepo
   )
   
