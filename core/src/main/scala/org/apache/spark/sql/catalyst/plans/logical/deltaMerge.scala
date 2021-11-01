@@ -167,7 +167,7 @@ case class DeltaMergeIntoUpdateClause(condition: Option[Expression], actions: Se
     this(cond, DeltaMergeIntoClause.toActions(cols, exprs))
 
   override protected def withNewChildrenInternal(
-    newChildren: IndexedSeq[Expression]): DeltaMergeIntoUpdateClause = {
+      newChildren: IndexedSeq[Expression]): DeltaMergeIntoUpdateClause = {
     if (condition.isDefined) {
       copy(condition = Some(newChildren.head), actions = newChildren.tail)
     } else {
@@ -184,7 +184,7 @@ case class DeltaMergeIntoDeleteClause(condition: Option[Expression])
   override def actions: Seq[Expression] = Seq.empty
 
   override protected def withNewChildrenInternal(
-    newChildren: IndexedSeq[Expression]): DeltaMergeIntoDeleteClause =
+      newChildren: IndexedSeq[Expression]): DeltaMergeIntoDeleteClause =
     copy(condition = if (condition.isDefined) Some(newChildren.head) else None)
 }
 
@@ -196,7 +196,7 @@ case class DeltaMergeIntoInsertClause(condition: Option[Expression], actions: Se
     this(cond, DeltaMergeIntoClause.toActions(cols, exprs))
 
   override protected def withNewChildrenInternal(
-    newChildren: IndexedSeq[Expression]): DeltaMergeIntoInsertClause =
+      newChildren: IndexedSeq[Expression]): DeltaMergeIntoInsertClause =
     if (condition.isDefined) {
       copy(condition = Some(newChildren.head), actions = newChildren.tail)
     } else {
@@ -254,7 +254,7 @@ case class DeltaMergeInto(
   override def children: Seq[LogicalPlan] = Seq(target, source)
   override def output: Seq[Attribute] = Seq.empty
   override protected def withNewChildrenInternal(
-    newChildren: IndexedSeq[LogicalPlan]): DeltaMergeInto =
+      newChildren: IndexedSeq[LogicalPlan]): DeltaMergeInto =
     copy(target = newChildren(0), source = newChildren(1))
 }
 

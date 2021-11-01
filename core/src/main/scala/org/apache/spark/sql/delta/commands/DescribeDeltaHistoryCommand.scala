@@ -93,6 +93,4 @@ case class DescribeDeltaHistoryCommand(
       deltaLog.history.getHistory(limit).toDF().collect().toSeq
     }
   }
-
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
