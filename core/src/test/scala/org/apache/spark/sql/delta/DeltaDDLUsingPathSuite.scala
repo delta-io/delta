@@ -30,7 +30,7 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 
 trait DeltaDDLUsingPathTests extends QueryTest
-  with SharedSparkSession {
+  with SharedSparkSession with DeltaColumnMappingTestUtils {
 
   import testImplicits._
 
@@ -146,4 +146,5 @@ trait DeltaDDLUsingPathTests extends QueryTest
 
 class DeltaDDLUsingPathSuite extends DeltaDDLUsingPathTests with DeltaSQLCommandTest {
 }
+
 

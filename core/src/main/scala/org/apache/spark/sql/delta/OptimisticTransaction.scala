@@ -16,10 +16,8 @@
 
 package org.apache.spark.sql.delta
 
-import java.net.URI
 import java.nio.file.FileAlreadyExistsException
 import java.util.{ConcurrentModificationException, Locale, UUID}
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeUnit.NANOSECONDS
 
 import scala.collection.mutable
@@ -35,12 +33,10 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
-import org.apache.hadoop.fs.Path
 
-import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
+import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.util.{Clock, Utils}
 
 /** Record metrics about a successful commit. */
@@ -194,8 +190,15 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   /** Stores the updated protocol (if any) that will result from this txn. */
   protected var newProtocol: Option[Protocol] = None
 
+  /** The transaction start time. */
   protected val txnStartNano = System.nanoTime()
+
+  /** The transaction commit start time. */
   protected var commitStartNano = -1L
+
+  /** The transaction commit end time. */
+  protected var commitEndNano = -1L;
+
   protected var commitInfo: CommitInfo = _
 
   // Whether this transaction is creating a new table.
@@ -224,6 +227,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
 
   /** Start time of txn in nanoseconds */
   def txnStartTimeNs: Long = txnStartNano
+
+  /** The end to end execution time of this transaction. */
+  def txnExecutionTimeMs: Option[Long] = if (commitEndNano == -1) {
+    None
+  } else {
+    Some(NANOSECONDS.toMillis((commitEndNano - txnStartNano)))
+  }
 
   /**
    * Returns the metadata for this transaction. The metadata refers to the metadata of the snapshot
@@ -342,8 +352,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
     assert(!CharVarcharUtils.hasCharVarchar(metadata.schema),
       "The schema in Delta log should not contain char/varchar type.")
     SchemaMergingUtils.checkColumnNameDuplication(metadata.schema, "in the metadata update")
-    if (DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(metadata) == NoMapping) {
-      SchemaUtils.checkFieldNames(SchemaMergingUtils.explodeNestedFieldNames(metadata.dataSchema))
+    if (metadata.columnMappingMode == NoMapping) {
+      SchemaUtils.checkSchemaFieldNames(metadata.dataSchema, metadata.columnMappingMode)
       val partitionColCheckIsFatal =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_PARTITION_COLUMN_CHECK_ENABLED)
       try {
@@ -360,8 +370,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
           )
           if (partitionColCheckIsFatal) throw DeltaErrors.invalidPartitionColumn(e)
       }
-    } else if (DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(metadata) == IdMapping) {
-      DeltaColumnMapping.checkColumnIdAndPhysicalNameAssignments(metadata.schema, IdMapping)
+    } else {
+      DeltaColumnMapping.checkColumnIdAndPhysicalNameAssignments(
+        metadata.schema, metadata.columnMappingMode)
     }
 
     if (GeneratedColumn.hasGeneratedColumns(metadata.schema)) {
@@ -631,14 +642,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   protected def postCommit(commitVersion: Long): Unit = {
     committed = true
     if (shouldCheckpoint(commitVersion)) {
-      try {
-        // We checkpoint the version to be committed to so that no two transactions will checkpoint
-        // the same version.
-        deltaLog.checkpoint(deltaLog.getSnapshotAt(commitVersion))
-      } catch {
-        case e: IllegalStateException =>
-          logWarning("Failed to checkpoint table state.", e)
-      }
+      // We checkpoint the version to be committed to so that no two transactions will checkpoint
+      // the same version.
+      deltaLog.checkpoint(deltaLog.getSnapshotAt(commitVersion))
     }
   }
 
@@ -738,7 +744,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,
       Some(attemptVersion))
 
-    val commitTime = System.nanoTime()
+    commitEndNano = System.nanoTime()
     val postCommitSnapshot = deltaLog.update()
 
     if (postCommitSnapshot.version < attemptVersion) {
@@ -764,8 +770,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       startVersion = snapshot.version,
       commitVersion = attemptVersion,
       readVersion = postCommitSnapshot.version,
-      txnDurationMs = NANOSECONDS.toMillis(commitTime - txnStartNano),
-      commitDurationMs = NANOSECONDS.toMillis(commitTime - commitStartNano),
+      txnDurationMs = NANOSECONDS.toMillis(commitEndNano - txnStartNano),
+      commitDurationMs = NANOSECONDS.toMillis(commitEndNano - commitStartNano),
       numAdd = adds.size,
       numRemove = actions.collect { case r: RemoveFile => r }.size,
       bytesNew = adds.filter(_.dataChange).map(_.size).sum,

@@ -139,7 +139,6 @@ class DeltaCatalog extends DelegatingCatalogExtension
       comment = commentOpt)
 
     val withDb = verifyTableAndSolidify(tableDesc, None)
-    ParquetSchemaConverter.checkFieldNames(tableDesc.schema.fieldNames)
 
     val writer = sourceQuery.map { df =>
       WriteIntoDelta(
@@ -605,7 +604,6 @@ trait SupportsPathIdentifier extends TableCatalog { self: DeltaCatalog =>
     if (isPathIdentifier(ident)) {
       val path = new Path(ident.name())
       // scalastyle:off deltahadoopconfiguration
-      // TODO(SC-85267) Figure out how to pass the DataFrame options into this method.
       val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
       // scalastyle:on deltahadoopconfiguration
       fs.exists(path) && fs.listStatus(path).nonEmpty

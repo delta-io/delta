@@ -492,7 +492,10 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
    *                        as the latest version of the table
    * @param expectedNumFiles Expected number of manifest files
    */
-  def assertManifest(tablePath: File, expectSameFiles: Boolean, expectedNumFiles: Int): Unit = {
+  def assertManifest(
+      tablePath: File,
+      expectSameFiles: Boolean,
+      expectedNumFiles: Int): Unit = {
     val deltaSnapshot = DeltaLog.forTable(spark, tablePath.toString).update()
     val manifestPath = new File(tablePath, GenerateSymlinkManifest.MANIFEST_LOCATION)
 

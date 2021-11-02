@@ -82,6 +82,7 @@ class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession
 }
 
 
+
 abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
   import testImplicits._
 

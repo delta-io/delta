@@ -682,3 +682,4 @@ class DeltaDataFrameWriterV2Suite
     }
   }
 }
+

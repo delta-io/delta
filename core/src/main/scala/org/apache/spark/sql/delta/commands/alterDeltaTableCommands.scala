@@ -24,7 +24,7 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import org.apache.spark.sql.delta.constraints.Constraints
+import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraints}
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.schema.SchemaUtils.transformColumnsStructs
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -38,7 +38,6 @@ import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, LogicalPla
 import org.apache.spark.sql.connector.catalog.TableCatalog
 import org.apache.spark.sql.connector.catalog.TableChange.{After, ColumnPosition, First}
 import org.apache.spark.sql.execution.command.RunnableCommand
-import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
 import org.apache.spark.sql.types._
 
 /**
@@ -208,7 +207,7 @@ case class AlterTableAddColumnsDeltaCommand(
       }
 
       SchemaMergingUtils.checkColumnNameDuplication(newSchema, "in adding columns")
-      ParquetSchemaConverter.checkFieldNames(SchemaMergingUtils.explodeNestedFieldNames(newSchema))
+      SchemaUtils.checkSchemaFieldNames(newSchema, metadata.columnMappingMode)
 
       val newMetadata = metadata.copy(schemaString = newSchema.json)
       txn.updateMetadata(newMetadata)
@@ -444,7 +443,7 @@ case class AlterTableReplaceColumnsDeltaCommand(
         .asInstanceOf[StructType]
 
       SchemaMergingUtils.checkColumnNameDuplication(newSchema, "in replacing columns")
-      ParquetSchemaConverter.checkFieldNames(SchemaMergingUtils.explodeNestedFieldNames(newSchema))
+      SchemaUtils.checkSchemaFieldNames(newSchema, metadata.columnMappingMode)
 
       val newMetadata = metadata.copy(schemaString = newSchema.json)
       txn.updateMetadata(newMetadata)
@@ -506,8 +505,11 @@ case class AlterTableSetLocationDeltaCommand(
 
   private def schemasEqual(
       oldMetadata: actions.Metadata, newMetadata: actions.Metadata): Boolean = {
-    oldMetadata.schema == newMetadata.schema &&
-      oldMetadata.partitionSchema == newMetadata.partitionSchema
+    import DeltaColumnMapping._
+    dropColumnMappingMetadata(oldMetadata.schema) ==
+      dropColumnMappingMetadata(newMetadata.schema) &&
+      dropColumnMappingMetadata(oldMetadata.partitionSchema) ==
+        dropColumnMappingMetadata(newMetadata.partitionSchema)
   }
 
   // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
@@ -530,6 +532,9 @@ case class AlterTableAddConstraintDeltaCommand(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
+    if (name == CharVarcharConstraint.INVARIANT_NAME) {
+      throw DeltaErrors.invalidConstraintName(name)
+    }
     recordDeltaOperation(deltaLog, "delta.ddl.alter.addConstraint") {
       val txn = startTransaction()
 

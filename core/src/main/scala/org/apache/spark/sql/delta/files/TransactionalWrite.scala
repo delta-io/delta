@@ -90,7 +90,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     val enforcesGeneratedColumns = GeneratedColumn.enforcesGeneratedColumns(protocol, metadata)
     val (dataWithGeneratedColumns, generatedColumnConstraints) =
       if (enforcesGeneratedColumns) {
-        GeneratedColumn.addGeneratedColumnsOrReturnConstraints(
+        ColumnWithDefaultExprUtils.addDefaultExprsOrReturnConstraints(
           deltaLog,
           // We need the original query execution if this is a streaming query, because
           // `normalizedData` may add a new projection and change its type.
@@ -117,7 +117,11 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       data.queryExecution
     }
     val nullableOutput = makeOutputNullable(cleanedData.queryExecution.analyzed.output)
-    val columnMapping = DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(metadata)
+    val columnMapping = metadata.columnMappingMode
+    // Check partition column errors
+    checkPartitionColumns(
+      metadata.partitionSchema, nullableOutput, nullableOutput.length < data.schema.size
+    )
     // Rewrite column physical names if using a mapping mode
     val mappedOutput = if (columnMapping == NoMapping) nullableOutput else {
       mapColumnAttributes(nullableOutput, columnMapping)
@@ -125,19 +129,28 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     (queryExecution, mappedOutput, generatedColumnConstraints)
   }
 
-  protected def getPartitioningColumns(
+  protected def checkPartitionColumns(
       partitionSchema: StructType,
       output: Seq[Attribute],
-      colsDropped: Boolean): Seq[Attribute] = {
+      colsDropped: Boolean): Unit = {
     val partitionColumns: Seq[Attribute] = partitionSchema.map { col =>
       // schema is already normalized, therefore we can do an equality check
-      output.find(f => f.name == col.name)
-        .getOrElse {
-          throw DeltaErrors.partitionColumnNotFoundException(col.name, output)
-        }
+      output.find(f => f.name == col.name).getOrElse(
+        throw DeltaErrors.partitionColumnNotFoundException(col.name, output)
+      )
     }
     if (partitionColumns.nonEmpty && partitionColumns.length == output.length) {
       throw DeltaErrors.nonPartitionColumnAbsentException(colsDropped)
+    }
+  }
+
+  protected def getPartitioningColumns(
+      partitionSchema: StructType,
+      output: Seq[Attribute]): Seq[Attribute] = {
+    val partitionColumns: Seq[Attribute] = partitionSchema.map { col =>
+      // schema is already normalized, therefore we can do an equality check
+      // we have already checked for missing columns, so the fields must exist
+      output.find(f => f.name == col.name).get
     }
     partitionColumns
   }
@@ -177,8 +190,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     val outputPath = deltaLog.dataPath
 
     val (queryExecution, output, generatedColumnConstraints) = normalizeData(deltaLog, data)
-    val partitioningColumns =
-      getPartitioningColumns(partitionSchema, output, output.length < data.schema.size)
+    val partitioningColumns = getPartitioningColumns(partitionSchema, output)
 
     val committer = getCommitter(outputPath)
 
@@ -212,8 +224,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
           committer = committer,
           outputSpec = outputSpec,
           // scalastyle:off deltahadoopconfiguration
-          // TODO(SC-85267) Merge this with DataFrame options
-          hadoopConf = spark.sessionState.newHadoopConfWithOptions(metadata.configuration),
+          hadoopConf =
+            spark.sessionState.newHadoopConfWithOptions(metadata.configuration ++ deltaLog.options),
           // scalastyle:on deltahadoopconfiguration
           partitionColumns = partitioningColumns,
           bucketSpec = None,

@@ -35,6 +35,7 @@ import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.util.{Clock, SerializableConfiguration, SystemClock}
 
 /**
@@ -125,6 +126,9 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       var isBloomFiltered = false
       val parallelDeleteEnabled =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_PARALLEL_DELETE_ENABLED)
+      val parallelDeletePartitions =
+        spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_PARALLEL_DELETE_PARALLELISM)
+        .getOrElse(spark.sessionState.conf.numShufflePartitions)
       val relativizeIgnoreError =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR)
 
@@ -247,7 +251,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           deltaLog.tombstoneRetentionMillis)
 
         val filesDeleted = try {
-          delete(diff, spark, basePath, hadoopConf, parallelDeleteEnabled)
+          delete(diff, spark, basePath, hadoopConf, parallelDeleteEnabled,
+            parallelDeletePartitions)
         } catch { case t: Throwable =>
           logVacuumEnd(deltaLog, spark, path)
           throw t
@@ -322,10 +327,12 @@ trait VacuumCommandImpl extends DeltaCommand {
       spark: SparkSession,
       basePath: String,
       hadoopConf: Broadcast[SerializableConfiguration],
-      parallel: Boolean): Long = {
+      parallel: Boolean,
+      parallelPartitions: Int): Long = {
     import spark.implicits._
+
     if (parallel) {
-      diff.mapPartitions { files =>
+      diff.repartition(parallelPartitions).mapPartitions { files =>
         val fs = new Path(basePath).getFileSystem(hadoopConf.value.value)
         val filesDeletedPerPartition =
           files.map(p => stringToPath(p)).count(f => tryDeleteNonRecursive(fs, f))

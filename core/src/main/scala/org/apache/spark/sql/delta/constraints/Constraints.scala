@@ -66,8 +66,13 @@ object Constraints {
   def getAll(metadata: Metadata, spark: SparkSession): Seq[Constraint] = {
     val checkConstraints = getCheckConstraints(metadata, spark)
     val constraintsFromSchema = Invariants.getFromSchema(metadata.schema, spark)
+    val charVarcharLengthChecks = if (spark.sessionState.conf.charVarcharAsString) {
+      Nil
+    } else {
+      CharVarcharConstraint.stringConstraints(metadata.schema)
+    }
 
-    (checkConstraints ++ constraintsFromSchema).toSeq
+    (checkConstraints ++ constraintsFromSchema ++ charVarcharLengthChecks).toSeq
   }
 
   /** Get the expression text for a constraint with the given name, if present. */
