@@ -30,7 +30,7 @@ spark = SparkSession.builder \
     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
     .getOrCreate()
 
-shutil.rmtree("/tmp/delta-streaming/", ignore_errors=Trues)
+shutil.rmtree("/tmp/delta-streaming/", ignore_errors=True)
 
 # Create a table(key, value) of some data
 data = spark.range(8)
