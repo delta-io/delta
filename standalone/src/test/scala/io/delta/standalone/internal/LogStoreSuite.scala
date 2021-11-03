@@ -30,19 +30,9 @@ import io.delta.standalone.data.{CloseableIterator => CloseableIteratorJ}
 import io.delta.standalone.storage.LogStore
 
 import io.delta.standalone.internal.sources.StandaloneHadoopConf
-import io.delta.standalone.internal.storage.{HDFSLogStore, LogStoreProvider}
-import io.delta.standalone.internal.util.GoldenTableUtils._
+import io.delta.standalone.internal.storage.{AzureLogStore, HDFSLogStore, LocalLogStore, LogStoreProvider, S3SingleDriverLogStore}
 import io.delta.standalone.internal.util.TestUtils._
 
-/**
- * Instead of using Spark in this project to WRITE data and log files for tests, we have
- * io.delta.golden.GoldenTables do it instead. During tests, we then refer by name to specific
- * golden tables that that class is responsible for generating ahead of time. This allows us to
- * focus on READING only so that we may fully decouple from Spark and not have it as a dependency.
- *
- * See io.delta.golden.GoldenTables for documentation on how to ensure that the needed files have
- * been generated.
- */
 abstract class LogStoreSuiteBase extends FunSuite with LogStoreProvider {
 
   def logStoreClassName: Option[String]
@@ -116,13 +106,13 @@ abstract class LogStoreSuiteBase extends FunSuite with LogStoreProvider {
   }
 
   test("listFrom") {
-    withGoldenTable("log-store-listFrom") { tablePath =>
+    withTempDir { tempDir =>
       val logStore = createLogStore(hadoopConf)
-
-      val deltas = Seq(0, 1, 2, 3, 4)
-        .map(i => new File(tablePath, i.toString))
-        .map(_.toURI)
-        .map(new Path(_))
+      val deltas =
+        Seq(0, 1, 2, 3, 4).map(i => new File(tempDir, i.toString)).map(_.toURI).map(new Path(_))
+      logStore.write(deltas(1), Iterator("zero").asJava, false, hadoopConf)
+      logStore.write(deltas(2), Iterator("one").asJava, false, hadoopConf)
+      logStore.write(deltas(3), Iterator("two").asJava, false, hadoopConf)
 
       assert(logStore.listFrom(deltas.head, hadoopConf).asScala.map(_.getPath.getName)
         .filterNot(_ == "_delta_log").toArray === Seq(1, 2, 3).map(_.toString))
@@ -176,11 +166,23 @@ object TrackingRenameFileSystem {
   @volatile var numOfRename = 0
 }
 
-/**
- * Test providing a system-defined (standalone.internal.storage) LogStore.
- */
 class HDFSLogStoreSuite extends LogStoreSuiteBase {
   override def logStoreClassName: Option[String] = Some(classOf[HDFSLogStore].getName)
+  override protected def shouldUseRenameToWriteCheckpoint: Boolean = true
+}
+
+class AzureLogStoreSuite extends LogStoreSuiteBase {
+  override def logStoreClassName: Option[String] = Some(classOf[AzureLogStore].getName)
+  override protected def shouldUseRenameToWriteCheckpoint: Boolean = true
+}
+
+class S3SingleDriverLogStoreSuite extends LogStoreSuiteBase {
+  override def logStoreClassName: Option[String] = Some(classOf[S3SingleDriverLogStore].getName)
+  override protected def shouldUseRenameToWriteCheckpoint: Boolean = false
+}
+
+class LocalLogStoreSuite extends LogStoreSuiteBase {
+  override def logStoreClassName: Option[String] = Some(classOf[LocalLogStore].getName)
   override protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 

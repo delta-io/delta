@@ -17,7 +17,7 @@
 package io.delta.standalone.internal.sources
 
 /**
- * [[org.apache.hadoop.conf.Configuration]] entries for Delta Standalone Reader features.
+ * [[org.apache.hadoop.conf.Configuration]] entries for Delta Standalone features.
  */
 private[internal] object StandaloneHadoopConf {
 
