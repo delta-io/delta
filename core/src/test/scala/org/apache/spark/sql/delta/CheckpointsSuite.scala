@@ -107,3 +107,4 @@ class FakeGCSFileSystem extends RawLocalFileSystem {
     super.create(f, overwrite, bufferSize, replication, blockSize, progress)
   }
 }
+

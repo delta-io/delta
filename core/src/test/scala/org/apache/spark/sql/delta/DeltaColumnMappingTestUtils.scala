@@ -19,9 +19,10 @@ package org.apache.spark.sql.delta
 import java.io.File
 
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{Column, Dataset}
+import org.apache.spark.sql.{Column, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.ExternalCatalogUtils
@@ -31,14 +32,26 @@ import org.apache.spark.sql.types.{AtomicType, StructField, StructType}
 
 trait DeltaColumnMappingTestUtilsBase extends SharedSparkSession {
 
+  import testImplicits._
+
   private val PHYSICAL_NAME_REGEX =
     "col-[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}".r
 
-  def columnMappingEnabled: Boolean = {
-     val columnMappingMode = spark.conf.getOption(
-      DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey
-    ).getOrElse("none")
-    columnMappingMode != "none"
+  implicit class PhysicalNameString(s: String) {
+    def phy(deltaLog: DeltaLog): String = {
+      PHYSICAL_NAME_REGEX
+        .findFirstIn(s)
+        .getOrElse(getPhysicalName(s, deltaLog))
+    }
+  }
+
+  protected def columnMappingEnabled: Boolean = {
+    columnMappingModeString != "none"
+  }
+
+  protected def columnMappingModeString: String = {
+    spark.conf.getOption(DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey)
+      .getOrElse("none")
   }
 
   /**
@@ -79,17 +92,33 @@ trait DeltaColumnMappingTestUtilsBase extends SharedSparkSession {
    * @param partValue Partition value
    * @param deltaLog DeltaLog
    */
-  protected def assertPartitionExists(
+  protected def assertPartitionWithValueExists(
       partCol: String,
       partValue: String,
       deltaLog: DeltaLog): Unit = {
-    if (columnMappingEnabled) {
-      // column mapping always use random file prefixes so we can't compare path
-      assert(getPartitionedFilePathsWithDeltaLog(partCol, partValue, deltaLog).nonEmpty)
-    } else {
-      val partEscaped = s"${ExternalCatalogUtils.escapePathName(partCol)}=$partValue"
-      val partFile = new File(new File(deltaLog.dataPath.toUri.getPath), partEscaped)
-      assert(partFile.listFiles().nonEmpty)
+    assert(getPartitionFilePathsWithValue(partCol, partValue, deltaLog).nonEmpty)
+  }
+
+  /**
+   * Assert partition exists in an array of set of partition names/paths
+   * @param partCol Partition column name
+   * @param deltaLog Delta log
+   * @param inputFiles Input files to scan for DF
+   */
+  protected def assertPartitionExists(
+      partCol: String,
+      deltaLog: DeltaLog,
+      inputFiles: Array[String]): Unit = {
+    val physicalName = partCol.phy(deltaLog)
+    val allFiles = deltaLog.snapshot.allFiles.collect()
+    val filesWithPartitions = inputFiles.map { f =>
+      allFiles.filter(af => f.contains(af.path)).flatMap(_.partitionValues.keys).toSet
+    }
+    assert(filesWithPartitions.forall(p => p.count(_ == physicalName) > 0))
+    // for non-column mapped mode, we can check the file paths as well
+    if (!columnMappingEnabled) {
+      assert(inputFiles.forall(path => path.contains(s"$physicalName=")),
+          s"${inputFiles.toSeq.mkString("\n")}\ndidn't contain partition columns $physicalName")
     }
   }
 
@@ -108,22 +137,82 @@ trait DeltaColumnMappingTestUtilsBase extends SharedSparkSession {
   }
 
   /**
-   * Get partition file paths
+   * Convert a (nested) column string to sequence of name parts
+   * @param col Column string
+   * @return Sequence of parts
+   */
+  protected def columnNameToParts(col: String): Seq[String] = {
+    UnresolvedAttribute.parseAttributeName(col)
+  }
+
+  /**
+   * Get partition file paths for a specific partition value
    * @param partCol Logical or physical partition name
    * @param partValue Partition value
    * @param deltaLog DeltaLog
    * @return List of paths
    */
-  protected def getPartitionedFilePathsWithDeltaLog(
+  protected def getPartitionFilePathsWithValue(
       partCol: String,
       partValue: String,
       deltaLog: DeltaLog): Array[String] = {
-    val colName = PHYSICAL_NAME_REGEX
-      .findFirstIn(partCol)
-      .getOrElse(getPhysicalName(partCol, deltaLog))
+    getPartitionFilePaths(partCol, deltaLog).getOrElse(partValue, Array.empty)
+  }
 
-    deltaLog.update().allFiles.collect()
-      .filter(_.partitionValues(colName) == partValue).map(_.path)
+  /**
+   * Get the partition value for null
+   */
+  protected def nullPartitionValue: String = {
+    if (columnMappingEnabled) {
+      null
+    } else {
+      ExternalCatalogUtils.DEFAULT_PARTITION_NAME
+    }
+  }
+
+  /**
+   * Get partition file paths grouped by partition value
+   * @param partCol Logical or physical partition name
+   * @param deltaLog DeltaLog
+   * @return Partition value to paths
+   */
+  protected def getPartitionFilePaths(
+      partCol: String,
+      deltaLog: DeltaLog): Map[String, Array[String]] = {
+    if (columnMappingEnabled) {
+      val colName = partCol.phy(deltaLog)
+      deltaLog.update().allFiles.collect()
+        .groupBy(_.partitionValues(colName))
+        .mapValues(_.map(deltaLog.dataPath.toUri.getPath + "/" + _.path))
+    } else {
+      val partColEscaped = s"${ExternalCatalogUtils.escapePathName(partCol)}"
+      val dataPath = new File(deltaLog.dataPath.toUri.getPath)
+      dataPath.listFiles().filter(_.getName.startsWith(s"$partColEscaped="))
+        .groupBy(_.getName.split("=").last).mapValues(_.map(_.getPath))
+    }
+  }
+
+  /**
+   * Group a list of input file paths by partition key-value pair w.r.t. delta log
+   * @param inputFiles Input file paths
+   * @param deltaLog Delta log
+   * @return A mapped array each with the corresponding partition keys
+   */
+  protected def groupInputFilesByPartition(
+      inputFiles: Array[String],
+      deltaLog: DeltaLog): Map[(String, String), Array[String]] = {
+    if (columnMappingEnabled) {
+      val allFiles = deltaLog.update().allFiles.collect()
+      val grouped = inputFiles.flatMap { f =>
+        allFiles.find(af => f.contains(af.path)).head.partitionValues.map(entry => (f, entry))
+      }.groupBy(_._2)
+      grouped.mapValues(_.map(_._1))
+    } else {
+      inputFiles.groupBy(p => {
+        val nameParts = new Path(p).getParent.getName.split("=")
+        (nameParts(0), nameParts(1))
+      })
+    }
   }
 
   /**
@@ -143,16 +232,17 @@ trait DeltaColumnMappingTestUtilsBase extends SharedSparkSession {
    */
   protected def dropColumnMappingConfigurations(
       configs: Dataset[(String, String)]): Dataset[(String, String)] = {
-    configs.filter(p =>
+    spark.createDataset(configs.collect().filter(p =>
       !Seq(
         DeltaConfigs.COLUMN_MAPPING_MAX_ID.key,
         DeltaConfigs.COLUMN_MAPPING_MODE.key
       ).contains(p._1)
-    )
+    ))
   }
 
   /**
    * Convert (nested) column name string into physical name with reference from DeltaLog
+   * If target field does not have physical name, display name is returned
    * @param col Logical column name
    * @param deltaLog Reference DeltaLog
    * @return Physical column name
@@ -186,6 +276,71 @@ trait DeltaColumnMappingTestUtilsBase extends SharedSparkSession {
     }
   }
 
+  /**
+   * Gets the physical names of a path. This is used for converting column paths in stats schema,
+   * so it's ok to not support MapType and ArrayType.
+   */
+  def getPhysicalPathForStats(path: Seq[String], schema: StructType): Option[Seq[String]] = {
+    if (path.isEmpty) return Some(Seq.empty)
+    val field = schema.fields.find(_.name.equalsIgnoreCase(path.head))
+    field match {
+      case Some(f @ StructField(_, _: AtomicType, _, _ )) =>
+        if (path.size == 1) Some(Seq(DeltaColumnMapping.getPhysicalName(f))) else None
+      case Some(f @ StructField(_, st: StructType, _, _)) =>
+        val tail = getPhysicalPathForStats(path.tail, st)
+        tail.map(DeltaColumnMapping.getPhysicalName(f) +: _)
+      case _ =>
+        None
+    }
+  }
+
+   /**
+   * Convert (nested) column name string into physical name.
+   * Ignore parts of special paths starting with:
+   *  1. stats columns: minValues, maxValues, numRecords
+   *  2. stats df: stats_parsed
+   *  3. partition values: partitionValues_parsed, partitionValues
+   * @param col Logical column name (e.g. a.b.c)
+   * @param schema Reference schema with metadata
+   * @return Unresolved attribute with physical name paths
+   */
+  protected def convertColumnNameToAttributeWithPhysicalName(
+      col: String,
+      schema: StructType): UnresolvedAttribute = {
+    val parts = UnresolvedAttribute.parseAttributeName(col)
+    val shouldIgnoreFirstPart = Set(
+      "minValues", "maxValues", "numRecords", CheckpointV2.PARTITIONS_COL_NAME, "partitionValues")
+    val shouldIgnoreSecondPart = Set(CheckpointV2.STATS_COL_NAME, "stats")
+    val physical = if (shouldIgnoreFirstPart.contains(parts.head)) {
+      parts.head +: getPhysicalPathForStats(parts.tail, schema).getOrElse(parts.tail)
+    } else if (shouldIgnoreSecondPart.contains(parts.head)) {
+      parts.take(2) ++ getPhysicalPathForStats(parts.slice(2, parts.length), schema)
+          .getOrElse(parts.slice(2, parts.length))
+    } else {
+      getPhysicalPathForStats(parts, schema).getOrElse(parts)
+    }
+    UnresolvedAttribute(physical)
+  }
+
+  /**
+   * Convert a list of (nested) stats columns into physical name with reference from DeltaLog
+   * @param columns Logical columns
+   * @param deltaLog Reference DeltaLog
+   * @return Physical columns
+   */
+  protected def convertToPhysicalColumns(
+      columns: Seq[Column],
+      deltaLog: DeltaLog): Seq[Column] = {
+    val schema = deltaLog.update().schema
+    columns.map { col =>
+      val newExpr = col.expr.transform {
+        case a: Attribute =>
+          convertColumnNameToAttributeWithPhysicalName(a.name, schema)
+      }
+      new Column(newExpr)
+    }
+  }
+
 }
 
 trait DeltaColumnMappingTestUtils extends DeltaColumnMappingTestUtilsBase
@@ -195,7 +350,7 @@ trait DeltaColumnMappingTestUtils extends DeltaColumnMappingTestUtilsBase
  * Include this trait to enable Id column mapping mode for a suite
  */
 trait DeltaColumnMappingEnableIdMode extends SharedSparkSession {
-  override def sparkConf: SparkConf =
+  protected override def sparkConf: SparkConf =
     super.sparkConf.set(DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey, "id")
 }
 
@@ -203,6 +358,6 @@ trait DeltaColumnMappingEnableIdMode extends SharedSparkSession {
  * Include this trait to enable Name column mapping mode for a suite
  */
 trait DeltaColumnMappingEnableNameMode extends SharedSparkSession {
-  override def sparkConf: SparkConf =
+  protected override def sparkConf: SparkConf =
     super.sparkConf.set(DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey, "name")
 }

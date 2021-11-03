@@ -166,6 +166,7 @@ class DeltaInsertIntoDataFrameByPathSuite
   }
 }
 
+
 abstract class DeltaInsertIntoTestsWithTempViews(
     supportsDynamicOverwrite: Boolean,
     includeSQLOnlyTests: Boolean)
