@@ -31,7 +31,7 @@ import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.connector.catalog.Identifier
-import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableCommand}
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -54,7 +54,7 @@ case class CreateDeltaTableCommand(
     operation: TableCreationModes.CreationMode = TableCreationModes.Create,
     tableByPath: Boolean = false,
     override val output: Seq[Attribute] = Nil)
-  extends RunnableCommand
+  extends LeafRunnableCommand
   with DeltaLogging {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -442,8 +442,6 @@ case class CreateDeltaTableCommand(
     Thread.currentThread().getStackTrace.exists(_.toString.contains(
       classOf[DataFrameWriter[_]].getCanonicalName + "."))
   }
-
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 object TableCreationModes {

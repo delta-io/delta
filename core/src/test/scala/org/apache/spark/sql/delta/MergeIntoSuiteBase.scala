@@ -585,9 +585,7 @@ abstract class MergeIntoSuiteBase
   }
 
   protected def errorContains(errMsg: String, str: String): Unit = {
-    val actual = errMsg.replaceAll("`", "").toLowerCase(Locale.ROOT)
-    val expected = str.replaceAll("`", "").toLowerCase(Locale.ROOT)
-    assert(actual.contains(expected))
+    assert(errMsg.toLowerCase(Locale.ROOT).contains(str.toLowerCase(Locale.ROOT)))
   }
 
   def errorNotContains(errMsg: String, str: String): Unit = {

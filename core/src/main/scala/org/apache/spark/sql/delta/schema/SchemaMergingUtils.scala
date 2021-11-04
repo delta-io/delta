@@ -245,8 +245,7 @@ object SchemaMergingUtils {
    * there's no valid cast.
    */
   private def typeForImplicitCast(sourceType: DataType, targetType: DataType): Option[DataType] = {
-    TypeCoercion.ImplicitTypeCasts.implicitCast(Literal.default(sourceType), targetType)
-      .map(_.dataType)
+    TypeCoercion.implicitCast(Literal.default(sourceType), targetType).map(_.dataType)
   }
 
   def toFieldMap(fields: Seq[StructField]): Map[String, StructField] = {

@@ -16,7 +16,7 @@
 
 import java.nio.file.Files
 
-val sparkVersion = "3.1.1"
+val sparkVersion = "3.2.0"
 scalaVersion := "2.12.14"
 
 lazy val commonSettings = Seq(

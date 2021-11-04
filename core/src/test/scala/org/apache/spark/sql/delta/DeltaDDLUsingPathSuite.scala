@@ -96,9 +96,7 @@ trait DeltaDDLUsingPathTests extends QueryTest
   }
 
   private def errorContains(errMsg: String, str: String): Unit = {
-    val actual = errMsg.replaceAll("`", "")
-    val expected = str.replaceAll("`", "")
-    assert(actual.contains(expected))
+    assert(errMsg.contains(str))
   }
 
   testUsingPath("SELECT") { (table, path) =>

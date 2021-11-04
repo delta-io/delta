@@ -30,7 +30,7 @@ import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{And, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.{DeleteFromTable, LogicalPlan}
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
-import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.types.StructType
 
@@ -63,7 +63,7 @@ case class WriteIntoDelta(
     configuration: Map[String, String],
     data: DataFrame,
     schemaInCatalog: Option[StructType] = None)
-  extends RunnableCommand
+  extends LeafRunnableCommand
   with ImplicitMetadataOperation
   with DeltaCommand {
 
