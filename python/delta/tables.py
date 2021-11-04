@@ -14,7 +14,7 @@
 # limitations under the License.
 #
 
-from typing import TYPE_CHECKING, overload, Any, Iterable, Optional, Union, NoReturn, List, Tuple
+from typing import TYPE_CHECKING, cast, overload, Any, Iterable, Optional, Union, NoReturn, List, Tuple
 
 import delta.exceptions  # noqa: F401; pylint: disable=unused-variable
 from delta._typing import (
@@ -1023,6 +1023,18 @@ class DeltaTableBuilder(object):
         self._jbuilder = self._jbuilder.addColumns(scalaSchema)
         return self
 
+    @overload
+    def partitionedBy(
+        self, *cols: str
+    ) -> "DeltaTableBuilder":
+        ...
+
+    @overload
+    def partitionedBy(
+        self, __cols: Union[List[str], Tuple[str, ...]]
+    ) -> "DeltaTableBuilder":
+        ...
+
     @since(1.0)  # type: ignore[arg-type]
     def partitionedBy(
         self, *cols: Union[str, List[str], Tuple[str, ...]]
@@ -1044,7 +1056,7 @@ class DeltaTableBuilder(object):
                 self._raise_type_error("Partitioning column must be str.", [c])
         self._jbuilder = self._jbuilder.partitionedBy(_to_seq(
             self._spark._sc,  # type: ignore[attr-defined]
-            cols
+            cast(Iterable[Union[Column, str]], cols)
         ))
         return self
 

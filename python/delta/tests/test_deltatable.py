@@ -738,10 +738,10 @@ class DeltaTableTests(DeltaTestCase):
 
         # bad partitionedBy col name
         with self.assertRaises(TypeError):
-            builder.partitionedBy(1)  # type: ignore[arg-type]
+            builder.partitionedBy(1)  # type: ignore[call-overload]
 
         with self.assertRaises(TypeError):
-            builder.partitionedBy(1, "1")   # type: ignore[arg-type]
+            builder.partitionedBy(1, "1")   # type: ignore[call-overload]
 
         with self.assertRaises(TypeError):
             builder.partitionedBy([1])  # type: ignore[list-item]
