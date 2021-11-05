@@ -322,7 +322,7 @@ trait DeltaSQLConfBase {
           |writing the files.
         """.stripMargin)
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val MERGE_MATCHED_ONLY_ENABLED =
     buildConf("merge.optimizeMatchedOnlyMerge.enabled")
@@ -461,6 +461,17 @@ trait DeltaSQLConfBase {
           |from the new dataframe.""".stripMargin)
       .booleanConf
       .createWithDefault(true)
+
+  val LOG_SIZE_IN_MEMORY_THRESHOLD =
+    buildConf("streaming.logSizeInMemoryThreshold")
+      .internal()
+      .doc(
+        """
+          |The threshold of transaction log file size to read into the memory. When a file is larger
+          |than this, we will read the log file in multiple passes rather than loading it into
+          |the memory entirely.""".stripMargin)
+      .longConf
+      .createWithDefault(128L * 1024 * 1024) // 128MB
 
   val LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS =
     buildConf("loadFileSystemConfigsFromDataFrameOptions")

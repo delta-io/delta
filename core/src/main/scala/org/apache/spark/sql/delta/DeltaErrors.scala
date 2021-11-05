@@ -1377,6 +1377,7 @@ object DeltaErrors
       conflictingCommit)
     new io.delta.exceptions.ConcurrentTransactionException(message)
   }
+
 }
 
 /** The basic class for all Tahoe commit conflict exceptions. */

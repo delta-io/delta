@@ -27,7 +27,7 @@ import org.apache.spark.sql.catalyst.expressions.{Alias, Expression, If, Literal
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.SQLExecution
-import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.functions.{input_file_name, udf}
@@ -47,7 +47,7 @@ case class UpdateCommand(
     target: LogicalPlan,
     updateExpressions: Seq[Expression],
     condition: Option[Expression])
-  extends RunnableCommand with DeltaCommand {
+  extends LeafRunnableCommand with DeltaCommand {
 
   override def innerChildren: Seq[QueryPlan[_]] = Seq(target)
 
@@ -235,9 +235,6 @@ case class UpdateCommand(
       new Column(Alias(updated, original.name)())
     }
   }
-
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
-
 }
 
 object UpdateCommand {

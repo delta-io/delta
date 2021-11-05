@@ -39,7 +39,7 @@ import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, Se
 import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog, V1Table}
-import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.PartitioningUtils
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, ParquetToSparkSchemaConverter}
 import org.apache.spark.sql.execution.streaming.{FileStreamSink, MetadataLogFileIndex}
@@ -71,7 +71,7 @@ import org.apache.spark.util.SerializableConfiguration
 abstract class ConvertToDeltaCommandBase(
     tableIdentifier: TableIdentifier,
     partitionSchema: Option[StructType],
-    deltaPath: Option[String]) extends RunnableCommand with DeltaCommand {
+    deltaPath: Option[String]) extends LeafRunnableCommand with DeltaCommand {
 
   protected def isSupportedProvider(lowerCaseProvider: String): Boolean = {
     lowerCaseProvider == "parquet"
@@ -407,9 +407,7 @@ case class ConvertToDeltaCommand(
     tableIdentifier: TableIdentifier,
     partitionSchema: Option[StructType],
     deltaPath: Option[String])
-  extends ConvertToDeltaCommandBase(tableIdentifier, partitionSchema, deltaPath) {
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
-}
+  extends ConvertToDeltaCommandBase(tableIdentifier, partitionSchema, deltaPath)
 
 /**
  * An interface for the table to be converted to Delta.

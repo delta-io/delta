@@ -585,9 +585,7 @@ abstract class MergeIntoSuiteBase
   }
 
   protected def errorContains(errMsg: String, str: String): Unit = {
-    val actual = errMsg.replaceAll("`", "").toLowerCase(Locale.ROOT)
-    val expected = str.replaceAll("`", "").toLowerCase(Locale.ROOT)
-    assert(actual.contains(expected))
+    assert(errMsg.toLowerCase(Locale.ROOT).contains(str.toLowerCase(Locale.ROOT)))
   }
 
   def errorNotContains(errMsg: String, str: String): Unit = {
@@ -2281,20 +2279,19 @@ abstract class MergeIntoSuiteBase
             .withColumn("part2", 'id % 3)
             .createOrReplaceTempView("source")
           // execute merge without repartition
-          executeMerge(
-            tgt = s"delta.`$tgt1` as t",
-            src = "source src",
-            cond = cond,
-            clauses = clauses: _*)
-
-          // execute merge with repartition
-          withSQLConf(DeltaSQLConf.MERGE_REPARTITION_BEFORE_WRITE.key -> "true") {
+          withSQLConf(DeltaSQLConf.MERGE_REPARTITION_BEFORE_WRITE.key -> "false") {
             executeMerge(
-              tgt = s"delta.`$tgt2` as t",
+              tgt = s"delta.`$tgt1` as t",
               src = "source src",
               cond = cond,
               clauses = clauses: _*)
           }
+          // execute merge with repartition - default behavior
+          executeMerge(
+            tgt = s"delta.`$tgt2` as t",
+            src = "source src",
+            cond = cond,
+            clauses = clauses: _*)
           checkAnswer(
             io.delta.tables.DeltaTable.forPath(tgt2).toDF,
             io.delta.tables.DeltaTable.forPath(tgt1).toDF

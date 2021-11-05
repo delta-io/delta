@@ -774,7 +774,7 @@ trait DeltaTableCreationTests
 
       assertEqual(deltaLog.snapshot.schema, getSchema("delta_test"))
       assert(getPartitioningColumns("delta_test").isEmpty)
-      assert(getSchema("delta_test") == new StructType().add("a", "long").add("b", "string"))
+      assertEqual(getSchema("delta_test"), new StructType().add("a", "long").add("b", "string"))
 
       // External catalog does not contain the schema and partition column names.
       verifyTableInCatalog(catalog, "delta_test")
@@ -810,14 +810,14 @@ trait DeltaTableCreationTests
 
       assertEqual(deltaLog.snapshot.schema, getSchema("delta_test"))
       assert(getPartitioningColumns("delta_test") == Seq("a"))
-      assert(getSchema("delta_test") == new StructType().add("a", "long").add("b", "string"))
+      assertEqual(getSchema("delta_test"), new StructType().add("a", "long").add("b", "string"))
 
       // External catalog does not contain the schema and partition column names.
       verifyTableInCatalog(catalog, "delta_test")
 
       sql("INSERT INTO delta_test SELECT 1, 'a'")
 
-      assertPartitionExists("a", "1", deltaLog)
+      assertPartitionWithValueExists("a", "1", deltaLog)
 
       checkDatasetUnorderly(
         sql("SELECT * FROM delta_test").as[(Long, String)],
@@ -1125,10 +1125,12 @@ trait DeltaTableCreationTests
         // Query the data and the metadata directly via the DeltaLog
         val deltaLog2 = getDeltaLog(table)
 
-        assertEqual(
-          deltaLog2.snapshot.schema, new StructType().add("a", "long").add("b", "string"))
-        assertEqual(
-          deltaLog2.snapshot.metadata.partitionSchema, new StructType().add("b", "string"))
+        // Since we manually committed Metadata without schema, we won't have column metadata in
+        // the latest deltaLog snapshot
+        assert(
+          deltaLog2.snapshot.schema == new StructType().add("a", "long").add("b", "string"))
+        assert(
+          deltaLog2.snapshot.metadata.partitionSchema == new StructType().add("b", "string"))
 
         assert(getSchema("delta_test") === deltaLog2.snapshot.schema)
         assert(getPartitioningColumns("delta_test") === Seq("b"))
@@ -1171,7 +1173,7 @@ trait DeltaTableCreationTests
         checkAnswer(read, Seq(Row(1, 2)))
 
         val deltaLog = loadDeltaLog(table.location.toString)
-        assertPartitionExists("a", "1", deltaLog)
+        assertPartitionWithValueExists("a", "1", deltaLog)
       }
     }
   }
@@ -1416,7 +1418,7 @@ trait DeltaTableCreationTests
           spark.sql(s"INSERT INTO TABLE t SELECT 1, 2")
 
           val deltaLog = loadDeltaLog(dir.toString)
-          assertPartitionExists(specialChars, "2", deltaLog)
+          assertPartitionWithValueExists(specialChars, "2", deltaLog)
 
           checkAnswer(spark.table("t"), Row("1", "2") :: Nil)
         }
@@ -1480,25 +1482,19 @@ trait DeltaTableCreationTests
           if (columnMappingEnabled) {
            // column mapping always use random file prefixes so we can't compare path
             val deltaLog = loadDeltaLog(loc.getCanonicalPath)
-            val partPaths = getPartitionedFilePathsWithDeltaLog("b", "2", deltaLog)
+            val partPaths = getPartitionFilePathsWithValue("b", "2", deltaLog)
             assert(partPaths.nonEmpty)
             assert(partPaths.forall { p =>
-              val parentPath = new File(loc, p.split("/").head)
+              val parentPath = new File(p).getParentFile
               !parentPath.listFiles().forall(_.toString.contains("_delta_log"))
             })
 
+            // In column mapping mode, as we are using random file prefixes,
+            // this partition value is valid
             spark.sql("INSERT INTO TABLE t1 SELECT 1, '2017-03-03 12:13%3A14'")
-            assert(
-              getPartitionedFilePathsWithDeltaLog("b", "b=2017-03-03 12:13%3A14", deltaLog).isEmpty
-            )
-
-            if (!Utils.isWindows) {
-              // Actual path becomes "b=2017-03-03%2012%3A13%253A14" on Windows.
-              assert(getPartitionedFilePathsWithDeltaLog(
-                "b", "2017-03-03 12%3A13%253A14", deltaLog).isEmpty)
-              checkAnswer(
+            assertPartitionWithValueExists("b", "2017-03-03 12:13%3A14", deltaLog)
+            checkAnswer(
                 spark.table("t1"), Row("1", "2") :: Row("1", "2017-03-03 12:13%3A14") :: Nil)
-            }
           } else {
             val partFile = new File(loc, "b=2")
             assert(!partFile.listFiles().forall(_.toString.contains("_delta_log")))

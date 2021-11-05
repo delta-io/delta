@@ -461,6 +461,18 @@ trait DescribeDeltaHistorySuiteBase
       Seq($"operation", $"operationParameters.mode", $"operationParameters.predicate"))
   }
 
+  testWithFlag("operations - delete with predicate") {
+    val tempDir = Utils.createTempDir().toString
+    Seq((1, "a"), (2, "3")).toDF("id", "data").write.format("delta").partitionBy("id").save(tempDir)
+    val deltaLog = DeltaLog.forTable(spark, tempDir)
+    val deltaTable = io.delta.tables.DeltaTable.forPath(spark, deltaLog.dataPath.toString)
+    deltaTable.delete("id = 1")
+
+    checkLastOperation(
+      tempDir,
+      Seq("DELETE", """["(id = 1)"]"""),
+      Seq($"operation", $"operationParameters.predicate"))
+  }
 
   testWithFlag("old and new writers") {
     val tempDir = Utils.createTempDir().toString

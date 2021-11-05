@@ -47,7 +47,8 @@ case class DeltaInvariantChecker(
   extends UnaryNode {
   override def output: Seq[Attribute] = child.output
 
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+  override protected def withNewChildInternal(newChild: LogicalPlan): DeltaInvariantChecker =
+    copy(child = newChild)
 }
 
 object DeltaInvariantCheckerStrategy extends SparkStrategy {
@@ -72,16 +73,12 @@ case class DeltaInvariantCheckerExec(
     child: SparkPlan,
     constraints: Seq[Constraint]) extends UnaryExecNode {
 
-  // TODO: we can replace `SparkSession.active` with `session` once OSS Delta
-  //       upgrades to Spark 3.2
-  private def spark: SparkSession = SparkSession.active
-
   override def output: Seq[Attribute] = child.output
 
   override protected def doExecute(): RDD[InternalRow] = {
     if (constraints.isEmpty) return child.execute()
     val invariantChecks =
-      DeltaInvariantCheckerExec.buildInvariantChecks(child.output, constraints, spark)
+      DeltaInvariantCheckerExec.buildInvariantChecks(child.output, constraints, session)
     val boundRefs = invariantChecks.map(_.withBoundReferences(child.output))
 
     child.execute().mapPartitionsInternal { rows =>
@@ -97,7 +94,8 @@ case class DeltaInvariantCheckerExec(
 
   override def outputPartitioning: Partitioning = child.outputPartitioning
 
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+  override protected def withNewChildInternal(newChild: SparkPlan): DeltaInvariantCheckerExec =
+    copy(child = newChild)
 }
 
 object DeltaInvariantCheckerExec {

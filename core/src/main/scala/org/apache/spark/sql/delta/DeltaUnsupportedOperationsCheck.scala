@@ -83,7 +83,7 @@ case class DeltaUnsupportedOperationsCheck(spark: SparkSession)
       recordDeltaEvent(null, "delta.unsupported.dropPartition")
       fail(operation = "ALTER TABLE DROP PARTITION", a.tableName)
 
-    case a: AlterTableRecoverPartitionsCommand =>
+    case a: RepairTableCommand =>
       recordDeltaEvent(null, "delta.unsupported.recoverPartitions")
       fail(operation = "ALTER TABLE RECOVER PARTITIONS", a.tableName)
 

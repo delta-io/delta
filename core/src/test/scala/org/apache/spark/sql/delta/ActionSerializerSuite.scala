@@ -94,8 +94,11 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
     assert(action2.json === json2.replaceAll("\\s", ""))
   }
 
-
-  test("removefile") {
+  // This is the same test as "removefile" in OSS, but due to a Jackson library upgrade the behavior
+  // has diverged between Spark 3.1 and Spark 3.2.
+  // We don't believe this is a practical issue because all extant versions of Delta explicitly
+  // write the dataChange field.
+  test("remove file deserialization") {
     val removeJson = RemoveFile("a", Some(2L)).json
     assert(removeJson.contains(""""deletionTimestamp":2"""))
     assert(!removeJson.contains("""delTimestamp"""))
@@ -104,7 +107,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
     val json4 = """{"remove":{"path":"a","deletionTimestamp":5}}"""
     assert(Action.fromJson(json1) === RemoveFile("a", Some(2L), dataChange = true))
     assert(Action.fromJson(json2) === RemoveFile("a", None, dataChange = false))
-    assert(Action.fromJson(json4) === RemoveFile("a", Some(5L), dataChange = false))
+    assert(Action.fromJson(json4) === RemoveFile("a", Some(5L), dataChange = true))
   }
 
   roundTripCompare("SetTransaction",

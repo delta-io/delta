@@ -80,8 +80,7 @@ class InvariantEnforcementSuite extends QueryTest
     val error = e.getMessage
     val allExpected = expectedErrors
     allExpected.foreach { expected =>
-      assert(error.replaceAll("`", "").contains(expected.replaceAll("`", "")),
-        s"$error didn't contain $expected")
+      assert(error.contains(expected), s"$error didn't contain $expected")
     }
   }
 

@@ -68,7 +68,8 @@ case class DeltaMergeAction(
   override def toString: String = s"$targetColString = $expr"
   private lazy val targetColString: String = targetColNameParts.mkString("`", "`.`", "`")
 
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+  override protected def withNewChildInternal(newChild: Expression): DeltaMergeAction =
+    copy(expr = newChild)
 }
 
 
@@ -165,7 +166,14 @@ case class DeltaMergeIntoUpdateClause(condition: Option[Expression], actions: Se
   def this(cond: Option[Expression], cols: Seq[UnresolvedAttribute], exprs: Seq[Expression]) =
     this(cond, DeltaMergeIntoClause.toActions(cols, exprs))
 
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+  override protected def withNewChildrenInternal(
+      newChildren: IndexedSeq[Expression]): DeltaMergeIntoUpdateClause = {
+    if (condition.isDefined) {
+      copy(condition = Some(newChildren.head), actions = newChildren.tail)
+    } else {
+      copy(condition = None, actions = newChildren)
+    }
+  }
 }
 
 /** Represents the clause WHEN MATCHED THEN DELETE in MERGE. See [[DeltaMergeInto]]. */
@@ -175,7 +183,9 @@ case class DeltaMergeIntoDeleteClause(condition: Option[Expression])
   children
   override def actions: Seq[Expression] = Seq.empty
 
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+  override protected def withNewChildrenInternal(
+      newChildren: IndexedSeq[Expression]): DeltaMergeIntoDeleteClause =
+    copy(condition = if (condition.isDefined) Some(newChildren.head) else None)
 }
 
 /** Represents the clause WHEN NOT MATCHED THEN INSERT in MERGE. See [[DeltaMergeInto]]. */
@@ -185,7 +195,13 @@ case class DeltaMergeIntoInsertClause(condition: Option[Expression], actions: Se
   def this(cond: Option[Expression], cols: Seq[UnresolvedAttribute], exprs: Seq[Expression]) =
     this(cond, DeltaMergeIntoClause.toActions(cols, exprs))
 
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+  override protected def withNewChildrenInternal(
+      newChildren: IndexedSeq[Expression]): DeltaMergeIntoInsertClause =
+    if (condition.isDefined) {
+      copy(condition = Some(newChildren.head), actions = newChildren.tail)
+    } else {
+      copy(condition = None, actions = newChildren)
+    }
 }
 
 /**
@@ -237,7 +253,9 @@ case class DeltaMergeInto(
   // TODO: extend BinaryCommand once the new Spark version is released
   override def children: Seq[LogicalPlan] = Seq(target, source)
   override def output: Seq[Attribute] = Seq.empty
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+  override protected def withNewChildrenInternal(
+      newChildren: IndexedSeq[LogicalPlan]): DeltaMergeInto =
+    copy(target = newChildren(0), source = newChildren(1))
 }
 
 object DeltaMergeInto {

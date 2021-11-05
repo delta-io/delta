@@ -85,7 +85,7 @@ object DeltaTableUtils extends PredicateHelper
    */
   def isDeltaTable(spark: SparkSession, tableName: TableIdentifier): Boolean = {
     val catalog = spark.sessionState.catalog
-    val tableIsNotTemporaryTable = !catalog.isTemporaryTable(tableName)
+    val tableIsNotTemporaryTable = !catalog.isTempView(tableName)
     val tableExists =
       (tableName.database.isEmpty || catalog.databaseExists(tableName.database.get)) &&
       catalog.tableExists(tableName)
