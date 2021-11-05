@@ -23,31 +23,41 @@ import com.github.mjakubowski84.parquet4s.ParquetReader.Options
 import org.apache.hadoop.conf.Configuration
 
 import io.delta.standalone.data.{CloseableIterator, RowRecord => RowParquetRecordJ}
-import io.delta.standalone.types.StructType
+import io.delta.standalone.types._
 
 /**
  * A [[CloseableIterator]] over [[RowParquetRecordJ]]s.
+ *
  * Iterates file by file, row by row.
  *
- * @param dataFilePaths paths of files to iterate over, not null
- * @param schema data schema, not null. Used to read and verify the parquet data
- * @param timeZoneId time zone ID for data, can be null. Used to ensure proper Date and Timestamp
- *                   decoding
+ * @param dataFilePathsAndPartitions Seq of (file path, file partitions) tuples to iterate over,
+ *                                   not null
+ * @param schema for file data and partition values, not null. Used to read and verify the parquet
+ *               data in file and partition data
+ * @param readTimeZone time zone ID for data, not null. Used to ensure proper Date and Timestamp
+ *                     decoding
  */
 private[internal] case class CloseableParquetDataIterator(
-    dataFilePaths: Seq[String],
+    dataFilePathsAndPartitions: Seq[(String, Map[String, String])],
     schema: StructType,
     readTimeZone: TimeZone,
     hadoopConf: Configuration) extends CloseableIterator[RowParquetRecordJ] {
 
-  /** Iterator over the `dataFilePaths`. */
-  private val dataFilePathsIter = dataFilePaths.iterator
+  private val dataFilePathsAndPartitionsIter = dataFilePathsAndPartitions.iterator
 
   /**
-   * Iterable resource that allows for iteration over the parquet rows for a single file.
+   * Iterable resource that allows for iteration over the parquet rows of a single file.
    * Must be closed.
    */
-  private var parquetRows = if (dataFilePathsIter.hasNext) readNextFile else null
+  private var parquetRows = if (dataFilePathsAndPartitionsIter.hasNext) readNextFile else null
+
+  /**
+   * Deserialized partition values. This variable gets updated every time `readNextFile` is called
+   *
+   * It makes more sense to deserialize partition values once per file than N times for each N row
+   * in a file.
+   */
+  private var partitionValues: Map[String, Any] = _
 
   /**
    * Actual iterator over the parquet rows.
@@ -59,8 +69,8 @@ private[internal] case class CloseableParquetDataIterator(
   private var parquetRowsIter = if (null != parquetRows) parquetRows.iterator else null
 
   /**
-   * @return true if there is next row of data in the current `dataFilePaths` file OR a row of
-   *         data in the next `dataFilePathsIter` file, else false
+   * @return true if there is next row of data in the current `dataFilePathsAndPartitions` file
+   *         OR a row of data in the next `dataFilePathsAndPartitionsIter` file, else false
    */
   override def hasNext: Boolean = {
     // Base case when initialized to null
@@ -75,7 +85,7 @@ private[internal] case class CloseableParquetDataIterator(
       if (parquetRowsIter.hasNext) return true
 
       // No more rows in current file and no more files
-      if (!dataFilePathsIter.hasNext) {
+      if (!dataFilePathsAndPartitionsIter.hasNext) {
         close()
         return false
       }
@@ -93,14 +103,14 @@ private[internal] case class CloseableParquetDataIterator(
   }
 
   /**
-   * @return the next row of data the current `dataFilePathsIter` file OR the first row of data in
-   *         the next `dataFilePathsIter` file
+   * @return the next row of data the current `dataFilePathsAndPartitionsIter` file
+   *         OR the first row of data in the next `dataFilePathsAndPartitionsIter` file
    * @throws NoSuchElementException if there is no next row of data
    */
   override def next(): RowParquetRecordJ = {
-    if (!hasNext) throw new NoSuchElementException
+    if (!hasNext()) throw new NoSuchElementException
     val row = parquetRowsIter.next()
-    RowParquetRecordImpl(row, schema, readTimeZone)
+    RowParquetRecordImpl(row, schema, readTimeZone, partitionValues)
   }
 
   /**
@@ -116,12 +126,55 @@ private[internal] case class CloseableParquetDataIterator(
   }
 
   /**
-   * Requires that `dataFilePathsIter.hasNext` is true.
+   * Requires that `dataFilePathsAndPartitionsIter.hasNext` is true.
    *
-   * @return the iterable for the next data file in `dataFilePathsIter`, not null
+   * @return the iterable for the next data file in `dataFilePathsAndPartitionsIter`, not null
    */
   private def readNextFile: ParquetIterable[RowParquetRecord] = {
+    val (nextDataFilePath, nextPartitionVals) = dataFilePathsAndPartitionsIter.next()
+
+    partitionValues = Map()
+
+    if (null != nextPartitionVals) {
+      nextPartitionVals.foreach { case (fieldName, value) =>
+        if (value == null) {
+          partitionValues += (fieldName -> null)
+        } else {
+          val schemaField = schema.get(fieldName)
+          if (schemaField != null) {
+            val decodedFieldValue = decodePartition(schemaField.getDataType, value)
+            partitionValues += (fieldName -> decodedFieldValue)
+          } else {
+            throw new IllegalStateException(s"StructField with name $schemaField was null.")
+          }
+        }
+      }
+    }
+
     ParquetReader.read[RowParquetRecord](
-      dataFilePathsIter.next(), Options(timeZone = readTimeZone, hadoopConf = hadoopConf))
+      nextDataFilePath, Options(timeZone = readTimeZone, hadoopConf = hadoopConf))
+  }
+
+  /**
+   * Follows deserialization as specified here
+   * https://github.com/delta-io/delta/blob/master/PROTOCOL.md#Partition-Value-Serialization
+   */
+  private def decodePartition(elemType: DataType, partitionVal: String): Any = {
+    elemType match {
+      case _: StringType => partitionVal
+      case _: TimestampType => java.sql.Timestamp.valueOf(partitionVal)
+      case _: DateType => java.sql.Date.valueOf(partitionVal)
+      case _: IntegerType => partitionVal.toInt
+      case _: LongType => partitionVal.toLong
+      case _: ByteType => partitionVal.toByte
+      case _: ShortType => partitionVal.toShort
+      case _: BooleanType => partitionVal.toBoolean
+      case _: FloatType => partitionVal.toFloat
+      case _: DoubleType => partitionVal.toDouble
+      case _: DecimalType => new java.math.BigDecimal(partitionVal)
+      case _: BinaryType => partitionVal.getBytes("UTF-8")
+      case _ =>
+        throw new RuntimeException(s"Unknown decode type ${elemType.getTypeName}, $partitionVal")
+    }
   }
 }

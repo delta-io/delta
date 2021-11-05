@@ -531,6 +531,63 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     writeDataWithSchema(tablePath, data, schema)
   }
 
+  /** TEST: DeltaDataReaderSuite > data reader can read partition values */
+  generateGoldenTable("data-reader-partition-values") { tablePath =>
+    def createRow(i: Int): Row = {
+      Row(i, i.longValue, i.toByte, i.shortValue, i % 2 == 0, i.floatValue, i.doubleValue,
+        i.toString, "null", java.sql.Date.valueOf("2021-09-08"),
+        java.sql.Timestamp.valueOf("2021-09-08 11:11:11"), new JBigDecimal(i),
+        Array(Row(i), Row(i), Row(i)),
+        Row(i.toString, i.toString, Row(i, i.toLong)),
+        i.toString)
+    }
+
+    def createRowWithNullPartitionValues(): Row = {
+      Row(
+        // partition values
+        null, null, null, null, null, null, null, null, null, null, null, null,
+        // data values
+        Array(Row(2), Row(2), Row(2)),
+        Row("2", "2", Row(2, 2L)),
+        "2")
+    }
+
+    val schema = new StructType()
+      // partition fields
+      .add("as_int", IntegerType)
+      .add("as_long", LongType)
+      .add("as_byte", ByteType)
+      .add("as_short", ShortType)
+      .add("as_boolean", BooleanType)
+      .add("as_float", FloatType)
+      .add("as_double", DoubleType)
+      .add("as_string", StringType)
+      .add("as_string_lit_null", StringType)
+      .add("as_date", DateType)
+      .add("as_timestamp", TimestampType)
+      .add("as_big_decimal", DecimalType(1, 0))
+      // data fields
+      .add("as_list_of_records", ArrayType(new StructType().add("val", IntegerType)))
+      .add("as_nested_struct", new StructType()
+        .add("aa", StringType)
+        .add("ab", StringType)
+        .add("ac", new StructType()
+          .add("aca", IntegerType)
+          .add("acb", LongType)
+        )
+      )
+      .add("value", StringType)
+
+    val data = (0 until 2).map(createRow) :+ createRowWithNullPartitionValues()
+
+    val df = spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
+    df.write
+      .format("delta")
+      .partitionBy("as_int", "as_long", "as_byte", "as_short", "as_boolean", "as_float",
+        "as_double", "as_string", "as_string_lit_null", "as_date", "as_timestamp", "as_big_decimal")
+      .save(tablePath)
+  }
+
   /** TEST: DeltaDataReaderSuite > read - date types */
   Seq("UTC", "Iceland", "PST", "America/Los_Angeles", "Etc/GMT+9", "Asia/Beirut",
     "JST").foreach { timeZoneId =>
