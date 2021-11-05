@@ -30,10 +30,7 @@ spark = SparkSession.builder \
     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
     .getOrCreate()
 
-try:
-    shutil.rmtree("/tmp/delta-streaming/")
-except:
-    pass
+shutil.rmtree("/tmp/delta-streaming/", ignore_errors=True)
 
 # Create a table(key, value) of some data
 data = spark.range(8)
@@ -118,8 +115,6 @@ stream4.awaitTermination(10)
 stream4.stop()
 print("######### After streaming write #########")
 spark.read.format("delta").load(tbl1).show()
+
 # cleanup
-try:
-    shutil.rmtree("/tmp/delta-streaming/")
-except:
-    pass
+shutil.rmtree("/tmp/delta-streaming/", ignore_errors=True)
