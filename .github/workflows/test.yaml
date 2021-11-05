@@ -40,7 +40,8 @@ jobs:
           echo "=====> 2"
           pipenv --python 3.7 install
           echo "=====> 3"
-          pipenv run pip install urllib3==1.24.3 pyspark==3.1.0 flake8==3.5.0 pypandoc==1.3.3 importlib_metadata==3.10.0
+          pipenv run pip install requests --upgrade
+          pipenv run pip install urllib3==1.24.3 pyspark==3.2.0 flake8==3.5.0 pypandoc==1.3.3 importlib_metadata==3.10.0
       - name: Run Scala/Java and Python tests
         run: |
           pipenv run python run-tests.py
