@@ -401,9 +401,9 @@ class DeltaTableTests(DeltaTestCase):
         assert (StructType(fields) == schema)
         if len(properties) > 0:
             tablePropertyMap: Dict[str, str] = (
-                self.spark.sql(
+                self.spark.sql(  # type: ignore[assignment, misc]
                     "SHOW TBLPROPERTIES {}".format(tableName)
-                )  # type: ignore[assignment, misc]
+                )
                 .rdd.collectAsMap())
             for key in properties:
                 assert (key in tablePropertyMap)
