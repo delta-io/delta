@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.File
 
-import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
@@ -32,11 +32,12 @@ import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.{BooleanType, LongType, MapType, StringType, StructField, StructType, TimestampType}
 import org.apache.spark.util.Utils
 
 trait DescribeDeltaHistorySuiteBase
   extends QueryTest
-  with SharedSparkSession  with DeltaSQLCommandTest {
+  with SharedSparkSession  with DeltaSQLCommandTest  with DeltaTestUtilsForTempViews {
 
   import testImplicits._
 
@@ -206,6 +207,21 @@ trait DescribeDeltaHistorySuiteBase
     }
   }
 
+  testWithTempView("describe history fails on temp views") { isSQLTempView =>
+    withSQLConf(DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "true") {
+      withTable("t1") {
+        Seq(1, 2, 3).toDF().write.format("delta").saveAsTable("t1")
+        val viewName = "v"
+        createTempViewFromTable("t1", isSQLTempView)
+
+        val e = intercept[AnalysisException] {
+          sql(s"DESCRIBE HISTORY $viewName").collect()
+        }
+        assert(e.getMessage.contains("not found in database"))
+      }
+    }
+  }
+
   testWithFlag("operations - create table") {
     withTable("delta_test") {
       sql(
@@ -343,7 +359,9 @@ trait DescribeDeltaHistorySuiteBase
       log.ensureLogDirectoryExist()
       log.store.write(
         FileNames.deltaFile(log.logPath, 0),
-        Iterator(Metadata(schemaString = spark.range(1).schema.json).json, Protocol(1, 1).json))
+        Iterator(Metadata(schemaString = spark.range(1).schema.json).json, Protocol(1, 1).json),
+        overwrite = false,
+        log.newDeltaHadoopConf())
       log.update()
       log.upgradeProtocol()
       checkLastOperation(
@@ -443,6 +461,18 @@ trait DescribeDeltaHistorySuiteBase
       Seq($"operation", $"operationParameters.mode", $"operationParameters.predicate"))
   }
 
+  testWithFlag("operations - delete with predicate") {
+    val tempDir = Utils.createTempDir().toString
+    Seq((1, "a"), (2, "3")).toDF("id", "data").write.format("delta").partitionBy("id").save(tempDir)
+    val deltaLog = DeltaLog.forTable(spark, tempDir)
+    val deltaTable = io.delta.tables.DeltaTable.forPath(spark, deltaLog.dataPath.toString)
+    deltaTable.delete("id = 1")
+
+    checkLastOperation(
+      tempDir,
+      Seq("DELETE", """["(id = 1)"]"""),
+      Seq($"operation", $"operationParameters.predicate"))
+  }
 
   testWithFlag("old and new writers") {
     val tempDir = Utils.createTempDir().toString
@@ -474,10 +504,11 @@ trait DescribeDeltaHistorySuiteBase
       Seq(4).toDF().write.format("delta").mode("overwrite").save(tempDir)
     }
 
-    val ans = io.delta.tables.DeltaTable.forPath(spark, tempDir).history().as[CommitInfo].collect()
+    val ans = io.delta.tables.DeltaTable.forPath(spark, tempDir)
+      .history().as[DeltaHistory].collect()
     assert(ans.map(_.version) === Seq(Some(4), Some(3), Some(2), Some(1), Some(0)))
 
-    val ans2 = sql(s"DESCRIBE HISTORY delta.`$tempDir`").as[CommitInfo].collect()
+    val ans2 = sql(s"DESCRIBE HISTORY delta.`$tempDir`").as[DeltaHistory].collect()
     assert(ans2.map(_.version) === Seq(Some(4), Some(3), Some(2), Some(1), Some(0)))
   }
 
@@ -502,7 +533,7 @@ trait DescribeDeltaHistorySuiteBase
     withSQLConf(DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED.key -> "false") {
       Seq(5).toDF().write.format("delta").mode("append").save(tempDir)   // readVersion = None
     }
-    val ans = sql(s"DESCRIBE HISTORY delta.`$tempDir`").as[CommitInfo].collect()
+    val ans = sql(s"DESCRIBE HISTORY delta.`$tempDir`").as[DeltaHistory].collect()
     assert(ans.map(x => x.version.get -> x.readVersion) ===
       Seq(5 -> None, 4 -> Some(1), 3 -> Some(2), 2 -> Some(1), 1 -> Some(0), 0 -> None))
   }
@@ -587,9 +618,12 @@ trait DescribeDeltaHistorySuiteBase
         val expectedMetrics = Map(
           "numTargetRowsInserted" -> "50",
           "numTargetRowsUpdated" -> "50",
+          "numTargetRowsDeleted" -> "0",
           "numOutputRows" -> "100",
           "numSourceRows" -> "100"
         )
+        val copiedRows = operationMetrics("numTargetRowsCopied").toInt
+        assert(0 <= copiedRows && copiedRows <= 50)
         checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.MERGE)
         val expectedTimeMetrics = Set("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
         checkOperationTimeMetricsInvariant(expectedTimeMetrics, operationMetrics)
@@ -904,6 +938,47 @@ trait DescribeDeltaHistorySuiteBase
     }
   }
 
+
+  test("test output schema of describe delta history command") {
+    val tblName = "tbl"
+    withTable(tblName) {
+      sql(s"CREATE TABLE $tblName(id bigint) USING DELTA")
+      val deltaTable = io.delta.tables.DeltaTable.forName(tblName)
+      val expectedSchema = StructType(Seq(
+        StructField("version", LongType, nullable = true),
+        StructField("timestamp", TimestampType, nullable = true),
+        StructField("userId", StringType, nullable = true),
+        StructField("userName", StringType, nullable = true),
+        StructField("operation", StringType, nullable = true),
+        StructField("operationParameters",
+          MapType(StringType, StringType, valueContainsNull = true), nullable = true),
+        StructField("job",
+          StructType(Seq(
+            StructField("jobId", StringType, nullable = true),
+            StructField("jobName", StringType, nullable = true),
+            StructField("runId", StringType, nullable = true),
+            StructField("jobOwnerId", StringType, nullable = true),
+            StructField("triggerType", StringType, nullable = true))),
+          nullable = true),
+        StructField("notebook",
+          StructType(Seq(StructField("notebookId", StringType, nullable = true))), nullable = true),
+        StructField("clusterId", StringType, nullable = true),
+        StructField("readVersion", LongType, nullable = true),
+        StructField("isolationLevel", StringType, nullable = true),
+        StructField("isBlindAppend", BooleanType, nullable = true),
+        StructField("operationMetrics",
+          MapType(StringType, StringType, valueContainsNull = true), nullable = true),
+        StructField("userMetadata", StringType, nullable = true)))
+
+      // Test schema from [[io.delta.tables.DeltaTable.history]] api
+      val df1 = deltaTable.history(1)
+      assert(df1.schema == expectedSchema)
+
+      // Test schema from SQL api
+      val df2 = spark.sql(s"DESCRIBE HISTORY $tblName LIMIT 1")
+      assert(df2.schema == expectedSchema)
+    }
+  }
 }
 
 class DescribeDeltaHistorySuite

@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.actions.{Action, Metadata}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.sql._
@@ -30,7 +31,7 @@ import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.connector.catalog.Identifier
-import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableCommand}
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -53,7 +54,7 @@ case class CreateDeltaTableCommand(
     operation: TableCreationModes.CreationMode = TableCreationModes.Create,
     tableByPath: Boolean = false,
     override val output: Seq[Attribute] = Nil)
-  extends RunnableCommand
+  extends LeafRunnableCommand
   with DeltaLogging {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -99,8 +100,9 @@ case class CreateDeltaTableCommand(
 
     val isManagedTable = tableWithLocation.tableType == CatalogTableType.MANAGED
     val tableLocation = new Path(tableWithLocation.location)
-    val fs = tableLocation.getFileSystem(sparkSession.sessionState.newHadoopConf())
     val deltaLog = DeltaLog.forTable(sparkSession, tableLocation)
+    val hadoopConf = deltaLog.newDeltaHadoopConf()
+    val fs = tableLocation.getFileSystem(hadoopConf)
     val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
     var result: Seq[Row] = Nil
 
@@ -115,7 +117,7 @@ case class CreateDeltaTableCommand(
           // We may have failed a previous write. The retry should still succeed even if we have
           // garbage data
           if (txn.readVersion > -1 || !fs.exists(deltaLog.logPath)) {
-            assertPathEmpty(sparkSession, tableWithLocation)
+            assertPathEmpty(hadoopConf, tableWithLocation)
           }
         }
         // We are either appending/overwriting with saveAsTable or creating a new table with CTAS or
@@ -162,7 +164,7 @@ case class CreateDeltaTableCommand(
             // When creating a managed table, the table path should not exist or is empty, or
             // users would be surprised to see the data, or see the data directory being dropped
             // after the table is dropped.
-            assertPathEmpty(sparkSession, tableWithLocation)
+            assertPathEmpty(hadoopConf, tableWithLocation)
           }
 
           // This is either a new table, or, we never defined the schema of the table. While it is
@@ -171,7 +173,7 @@ case class CreateDeltaTableCommand(
           val noExistingMetadata = txn.readVersion == -1 || txn.metadata.schema.isEmpty
           if (noExistingMetadata) {
             assertTableSchemaDefined(fs, tableLocation, tableWithLocation, sparkSession)
-            assertPathEmpty(sparkSession, tableWithLocation)
+            assertPathEmpty(hadoopConf, tableWithLocation)
             // This is a user provided schema.
             // Doesn't come from a query, Follow nullability invariants.
             val newMetadata = getProvidedMetadata(table, table.schema.json)
@@ -232,10 +234,10 @@ case class CreateDeltaTableCommand(
   }
 
   private def assertPathEmpty(
-      sparkSession: SparkSession,
+      hadoopConf: Configuration,
       tableWithLocation: CatalogTable): Unit = {
     val path = new Path(tableWithLocation.location)
-    val fs = path.getFileSystem(sparkSession.sessionState.newHadoopConf())
+    val fs = path.getFileSystem(hadoopConf)
     // Verify that the table location associated with CREATE TABLE doesn't have any data. Note that
     // we intentionally diverge from this behavior w.r.t regular datasource tables (that silently
     // overwrite any previous data)
@@ -285,7 +287,11 @@ case class CreateDeltaTableCommand(
     if (txn.readVersion > -1) {
       if (tableDesc.schema.nonEmpty) {
         // We check exact alignment on create table if everything is provided
-        val differences = SchemaUtils.reportDifferences(existingMetadata.schema, tableDesc.schema)
+        // However, if in column mapping mode, we can safely ignore the related metadata fields in
+        // existing metadata because new table desc will not have related metadata assigned yet
+        val differences = SchemaUtils.reportDifferences(
+          DeltaColumnMapping.dropColumnMappingMetadata(existingMetadata.schema),
+          tableDesc.schema)
         if (differences.nonEmpty) {
           throw DeltaErrors.createTableWithDifferentSchemaException(
             path, tableDesc.schema, existingMetadata.schema, differences)
@@ -436,8 +442,6 @@ case class CreateDeltaTableCommand(
     Thread.currentThread().getStackTrace.exists(_.toString.contains(
       classOf[DataFrameWriter[_]].getCanonicalName + "."))
   }
-
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 object TableCreationModes {

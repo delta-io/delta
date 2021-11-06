@@ -35,7 +35,7 @@ import org.apache.spark.sql.internal.SQLConf.{PARTITION_OVERWRITE_MODE, Partitio
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 
-class DeltaInsertIntoSQLSuite extends DeltaInsertIntoTests(false, true)
+class DeltaInsertIntoSQLSuite extends DeltaInsertIntoTestsWithTempViews(false, true)
   with DeltaSQLCommandTest {
 
   import testImplicits._
@@ -110,7 +110,7 @@ class DeltaInsertIntoSQLByPathSuite extends DeltaInsertIntoTests(false, true)
   }
 }
 
-class DeltaInsertIntoDataFrameSuite extends DeltaInsertIntoTests(false, false)
+class DeltaInsertIntoDataFrameSuite extends DeltaInsertIntoTestsWithTempViews(false, false)
   with DeltaSQLCommandTest {
   override protected def doInsert(tableName: String, insert: DataFrame, mode: SaveMode): Unit = {
     val dfw = insert.write.format(v2Format)
@@ -121,7 +121,8 @@ class DeltaInsertIntoDataFrameSuite extends DeltaInsertIntoTests(false, false)
   }
 }
 
-class DeltaInsertIntoDataFrameByPathSuite extends DeltaInsertIntoTests(false, false)
+class DeltaInsertIntoDataFrameByPathSuite
+  extends DeltaInsertIntoTests(false, false)
   with DeltaSQLCommandTest {
   override protected def doInsert(tableName: String, insert: DataFrame, mode: SaveMode): Unit = {
     val dfw = insert.write.format(v2Format)
@@ -163,6 +164,60 @@ class DeltaInsertIntoDataFrameByPathSuite extends DeltaInsertIntoTests(false, fa
       }
     }
   }
+}
+
+
+abstract class DeltaInsertIntoTestsWithTempViews(
+    supportsDynamicOverwrite: Boolean,
+    includeSQLOnlyTests: Boolean)
+  extends DeltaInsertIntoTests(supportsDynamicOverwrite, includeSQLOnlyTests)
+  with DeltaTestUtilsForTempViews {
+  protected def testComplexTempViews(name: String)(text: String, expectedResult: Seq[Row]): Unit = {
+    testWithTempView(s"insertInto a temp view created on top of a table - $name") { isSQLTempView =>
+      import testImplicits._
+      val t1 = "tbl"
+      sql(s"CREATE TABLE $t1 (key int, value int) USING $v2Format")
+      Seq(SaveMode.Append, SaveMode.Overwrite).foreach { mode =>
+        createTempViewFromSelect(text, isSQLTempView)
+        val df = Seq((0, 3), (1, 2)).toDF("key", "value")
+        try {
+          doInsert("v", df, mode)
+          checkAnswer(spark.table("v"), expectedResult)
+        } catch {
+          case e: AnalysisException =>
+            assert(e.getMessage.contains("Inserting into a view is not allowed") ||
+              e.getMessage.contains("Inserting into an RDD-based table is not allowed") ||
+              e.getMessage.contains("Table default.v not found"))
+        }
+      }
+    }
+  }
+
+  testComplexTempViews("basic") (
+    "SELECT * FROM tbl",
+    Seq(Row(0, 3), Row(1, 2))
+  )
+
+  testComplexTempViews("subset cols")(
+    "SELECT key FROM tbl",
+    Seq(Row(0), Row(1))
+  )
+
+  testComplexTempViews("superset cols")(
+    "SELECT key, value, 1 FROM tbl",
+    Seq(Row(0, 3, 1), Row(1, 2, 1))
+  )
+
+  testComplexTempViews("nontrivial projection")(
+    "SELECT value as key, key as value FROM tbl",
+    Seq(Row(3, 0), Row(2, 1))
+  )
+
+  testComplexTempViews("view with too many internal aliases")(
+    "SELECT * FROM (SELECT * FROM tbl AS t1) AS t2",
+    Seq(Row(0, 3), Row(1, 2))
+  )
+
 }
 
 /** These tests come from Apache Spark with some modifications to match Delta behavior. */
@@ -822,6 +877,15 @@ trait InsertIntoSQLOnlyTests
       }
     }
 
+    test("InsertInto: overwrite - dot in column names - static mode") {
+      import testImplicits._
+      val t1 = "tbl"
+      withTable(t1) {
+        sql(s"CREATE TABLE $t1 (`a.b` string, `c.d` string) USING $v2Format PARTITIONED BY (`a.b`)")
+        sql(s"INSERT OVERWRITE $t1 PARTITION (`a.b` = 'a') VALUES('b')")
+        verifyTable(t1, Seq("a" -> "b").toDF("id", "data"))
+      }
+    }
   }
 
   // END Apache Spark tests

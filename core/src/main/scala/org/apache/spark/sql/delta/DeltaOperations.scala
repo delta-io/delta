@@ -160,6 +160,8 @@ object DeltaOperations {
         ("notMatchedPredicates" -> JsonUtils.toJson(notMatchedPredicates))
     }
     override val operationMetrics: Set[String] = DeltaOperationMetrics.MERGE
+
+
     override def changesData: Boolean = true
   }
 
@@ -186,7 +188,7 @@ object DeltaOperations {
       val numOutputRows = metrics("numOutputRows").value
       val numUpdatedRows = metrics("numUpdatedRows").value
       var strMetrics = super.transformMetrics(metrics)
-      val numCopiedRows = numOutputRows - strMetrics("numUpdatedRows").toLong
+      val numCopiedRows = numOutputRows - numUpdatedRows
       strMetrics += "numCopiedRows" -> numCopiedRows.toString
       strMetrics
     }

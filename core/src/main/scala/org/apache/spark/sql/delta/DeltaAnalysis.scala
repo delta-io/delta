@@ -25,13 +25,12 @@ import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
-import org.apache.spark.sql.delta.sources.DeltaDataSource
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, EliminateSubqueryAliases, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, EliminateSubqueryAliases, ResolvedTable, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedTableValuedFunction
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions._
@@ -65,8 +64,7 @@ class DeltaAnalysis(session: SparkSession)
         needsSchemaAdjustment(d.name(), a.query, r.schema) =>
       val projection = resolveQueryColumnsByOrdinal(a.query, r.output, d.name())
       if (projection != a.query) {
-        val cleanedTable = r.copy(output = r.output.map(CharVarcharUtils.cleanAttrMetadata))
-        a.copy(query = projection, table = cleanedTable)
+        a.copy(query = projection)
       } else {
         a
       }
@@ -83,8 +81,7 @@ class DeltaAnalysis(session: SparkSession)
         val newDeleteExpr = o.deleteExpr.transformUp {
           case a: AttributeReference => aliases.getOrElse(a, a)
         }
-        val cleanedTable = r.copy(output = r.output.map(CharVarcharUtils.cleanAttrMetadata))
-        o.copy(deleteExpr = newDeleteExpr, query = projection, table = cleanedTable)
+        o.copy(deleteExpr = newDeleteExpr, query = projection)
       } else {
         o
       }
@@ -138,17 +135,21 @@ class DeltaAnalysis(session: SparkSession)
           DeltaMergeIntoUpdateClause(
             update.condition,
             DeltaMergeIntoClause.toActions(update.assignments))
+        case update: UpdateStarAction =>
+          DeltaMergeIntoUpdateClause(update.condition, DeltaMergeIntoClause.toActions(Nil))
         case delete: DeleteAction =>
           DeltaMergeIntoDeleteClause(delete.condition)
-        case insert =>
+        case other =>
           throw new AnalysisException(
-            "Insert clauses cannot be part of the WHEN MATCHED clause in MERGE INTO.")
+            s"${other.prettyName} clauses cannot be part of the WHEN MATCHED clause in MERGE INTO.")
       }
       val notMatchedActions = notMatched.map {
         case insert: InsertAction =>
           DeltaMergeIntoInsertClause(
             insert.condition,
             DeltaMergeIntoClause.toActions(insert.assignments))
+        case insert: InsertStarAction =>
+          DeltaMergeIntoInsertClause(insert.condition, DeltaMergeIntoClause.toActions(Nil))
         case other =>
           throw new AnalysisException(s"${other.prettyName} clauses cannot be part of the " +
             s"WHEN NOT MATCHED clause in MERGE INTO.")
@@ -161,29 +162,13 @@ class DeltaAnalysis(session: SparkSession)
       val deltaMerge =
         DeltaMergeInto(newTarget, source, condition, matchedActions ++ notMatchedActions)
 
-      DeltaMergeInto.resolveReferences(deltaMerge, conf)(tryResolveReferences(session))
+      DeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(tryResolveReferences(session))
 
     case deltaMerge: DeltaMergeInto =>
       val d = if (deltaMerge.childrenResolved && !deltaMerge.resolved) {
-        DeltaMergeInto.resolveReferences(deltaMerge, conf)(tryResolveReferences(session))
+        DeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(tryResolveReferences(session))
       } else deltaMerge
       d.copy(target = stripTempViewForMergeWrapper(d.target))
-
-    case AlterTableAddConstraintStatement(
-          original @ SessionCatalogAndIdentifier(catalog, ident), constraintName, expr) =>
-      CatalogV2Util.createAlterTable(
-        original,
-        catalog,
-        ident.namespace() :+ ident.name(),
-        Seq(AddConstraint(constraintName, expr)))
-
-    case AlterTableDropConstraintStatement(
-        original @ SessionCatalogAndIdentifier(catalog, ident), constraintName) =>
-      CatalogV2Util.createAlterTable(
-        original,
-        catalog,
-        ident.namespace() :+ ident.name(),
-        Seq(DropConstraint(constraintName)))
 
   }
 
@@ -235,10 +220,10 @@ class DeltaAnalysis(session: SparkSession)
         throw new IllegalStateException(s"The table schema $tableSchema is not consistent with " +
           s"the target attributes: $targetAttrs")
       }
-      deltaTable.snapshot.metadata.schema.foreach { tableColumn =>
-        if (!userSpecifiedNames.contains(tableColumn.name) &&
-          !GeneratedColumn.isGeneratedColumn(deltaTable.snapshot.protocol, tableColumn)) {
-          throw DeltaErrors.missingColumnsInInsertInto(tableColumn.name)
+      deltaTable.snapshot.metadata.schema.foreach { col =>
+        if (!userSpecifiedNames.contains(col.name) &&
+          !ColumnWithDefaultExprUtils.columnHasDefaultExpr(deltaTable.snapshot.protocol, col)) {
+          throw DeltaErrors.missingColumnsInInsertInto(col.name)
         }
       }
     }
@@ -273,8 +258,7 @@ class DeltaAnalysis(session: SparkSession)
       case _ =>
         getCastFunction(attr, targetAttr.dataType)
     }
-    val strLenChecked = CharVarcharUtils.stringLengthCheck(expr, targetAttr)
-    Alias(strLenChecked, targetAttr.name)(explicitMetadata = Option(targetAttr.metadata))
+    Alias(expr, targetAttr.name)(explicitMetadata = Option(targetAttr.metadata))
   }
 
   /**
@@ -293,17 +277,8 @@ class DeltaAnalysis(session: SparkSession)
     // Now we should try our best to match everything that already exists, and leave the rest
     // for schema evolution to WriteIntoDelta
     val existingSchemaOutput = output.take(schema.length)
-    val rawSchema = getRawSchema(schema)
     existingSchemaOutput.map(_.name) != schema.map(_.name) ||
-      !SchemaUtils.isReadCompatible(rawSchema.asNullable, existingSchemaOutput.toStructType)
-  }
-
-  private def getRawSchema(schema: StructType): StructType = {
-    StructType(schema.map { field =>
-      CharVarcharUtils.getRawType(field.metadata).map {
-        rawType => field.copy(dataType = rawType)
-      }.getOrElse(field)
-    })
+      !SchemaUtils.isReadCompatible(schema.asNullable, existingSchemaOutput.toStructType)
   }
 
   // Get cast operation for the level of strictness in the schema a user asked for

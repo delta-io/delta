@@ -48,6 +48,9 @@ trait ConvertToDeltaTestUtils extends QueryTest { self: SQLTestUtils =>
 
   protected val blockNonDeltaMsg = "A transaction log for Delta Lake was found at"
   protected val parquetOnlyMsg = "CONVERT TO DELTA only supports parquet tables"
+  // scalastyle:off deltahadoopconfiguration
+  protected def sessionHadoopConf = spark.sessionState.newHadoopConf
+  // scalastyle:on deltahadoopconfiguration
 
   protected def deltaRead(df: => DataFrame): Boolean = {
     val analyzed = df.queryExecution.analyzed
@@ -76,7 +79,7 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaTestUtils
   with SharedSparkSession
   with SQLTestUtils
   with ConvertToDeltaHiveTableTests
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest  with DeltaTestUtilsForTempViews {
 
   import org.apache.spark.sql.functions._
   import testImplicits._
@@ -116,6 +119,23 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaTestUtils
         }
         assert(ae.getMessage.contains(parquetOnlyMsg))
       }
+    }
+  }
+
+  testQuietlyWithTempView("negative case: convert temp views to delta") { isSQLTempView =>
+    val tableName = "pqtbl"
+    withTable(tableName) {
+      // Create view
+      simpleDF.write.format("parquet").saveAsTable(tableName)
+      createTempViewFromTable(tableName, isSQLTempView, format = Some("parquet"))
+
+      // Attempt to convert to delta
+      val ae = intercept[AnalysisException] {
+        convertToDelta("v")
+      }
+
+      assert(ae.getMessage.contains("Converting a view to a Delta table") ||
+        ae.getMessage.contains("Table default.v not found"))
     }
   }
 
@@ -196,7 +216,7 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaTestUtils
       val ae = intercept[FileNotFoundException] {
         convertToDelta(s"parquet.`$tempDir`")
       }
-      assert(ae.getMessage.contains("No file found in the directory"))
+      assert(ae.getMessage.contains("doesn't exist"))
     }
   }
 
@@ -390,7 +410,6 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaTestUtils
   test("can ignore empty sub-directories") {
     withTempDir { dir =>
       val tempDir = dir.getCanonicalPath
-      val sessionHadoopConf = spark.sessionState.newHadoopConf
       val fs = new Path(tempDir).getFileSystem(sessionHadoopConf)
 
       writeFiles(tempDir + "/key1=1/", Seq(1).toDF)
@@ -406,7 +425,6 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaTestUtils
       val tempDir = dir.getCanonicalPath
       writeFiles(tempDir + "/part=1/", Seq(1).toDF("id"))
 
-      val sessionHadoopConf = spark.sessionState.newHadoopConf
       val fs = new Path(tempDir).getFileSystem(sessionHadoopConf)
       def listFileNames: Array[String] =
         fs.listStatus(new Path(tempDir + "/part=1/"))
@@ -432,7 +450,6 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaTestUtils
       writeFiles(tempDir + "/part=1/", Seq(1).toDF("id"))
       writeFiles(tempDir + "/part=2/", Seq(2).toDF("id"))
 
-      val sessionHadoopConf = spark.sessionState.newHadoopConf
       val fs = new Path(tempDir).getFileSystem(sessionHadoopConf)
       def listFileNames: Array[String] =
         fs.listStatus(new Path(tempDir + "/part=1/"))
@@ -672,6 +689,7 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaTestUtils
  * mixed in with the Hive test utilities.
  */
 trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestUtils {
+
   protected def getPathForTableName(tableName: String): String = {
     spark
       .sessionState
@@ -1031,7 +1049,7 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestU
           }
 
           // If the path incorrectly used the default scheme, this would be file: at the end.
-          assert(ex.getMessage.contains(s"No file found in the directory: s3:$dir"))
+          assert(ex.getMessage.contains(s"s3:$dir doesn't exist"))
         }
       }
     }

@@ -32,7 +32,8 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.streaming._
 import org.apache.spark.sql.types._
 
-class DeltaSinkSuite extends StreamTest {
+class DeltaSinkSuite extends StreamTest
+  with DeltaColumnMappingTestUtils {
 
   override val streamingTimeout = 60.seconds
   import testImplicits._
@@ -243,15 +244,16 @@ class DeltaSinkSuite extends StreamTest {
 
         // Read with pruning, should read only files in partition dir id=1
         checkFileScanPartitions(outputDf.filter("id = 1")) { partitions =>
+          // use physical name
           val filesToBeRead = partitions.flatMap(_.files)
-          assert(filesToBeRead.map(_.filePath).forall(_.contains("/id=1/")))
+          assert(filesToBeRead.forall(_.partitionValues.getInt(0) == 1))
           assert(filesToBeRead.map(_.partitionValues).distinct.size === 1)
         }
 
         // Read with pruning, should read only files in partition dir id=1 and id=2
         checkFileScanPartitions(outputDf.filter("id in (1,2)")) { partitions =>
           val filesToBeRead = partitions.flatMap(_.files)
-          assert(!filesToBeRead.map(_.filePath).exists(_.contains("/id=3/")))
+          assert(filesToBeRead.forall(_.partitionValues.getInt(0) != 3))
           assert(filesToBeRead.map(_.partitionValues).distinct.size === 2)
         }
       } finally {
@@ -524,7 +526,7 @@ class DeltaSinkSuite extends StreamTest {
         query.processAllAvailable()
 
         val lastCommitInfo = io.delta.tables.DeltaTable.forPath(spark, outputDir.getCanonicalPath)
-            .history(1).as[CommitInfo].head
+            .history(1).as[DeltaHistory].head
 
         assert(lastCommitInfo.userMetadata === Some("testMeta!"))
         query.stop()
@@ -532,3 +534,4 @@ class DeltaSinkSuite extends StreamTest {
     }
   }
 }
+

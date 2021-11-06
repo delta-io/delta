@@ -77,7 +77,7 @@ object DeltaTableIdentifier extends Logging {
    */
   def isDeltaPath(spark: SparkSession, identifier: TableIdentifier): Boolean = {
     val catalog = spark.sessionState.catalog
-    def tableIsTemporaryTable = catalog.isTemporaryTable(identifier)
+    def tableIsTemporaryTable = catalog.isTempView(identifier)
     def tableExists: Boolean = {
       try {
         catalog.databaseExists(identifier.database.get) && catalog.tableExists(identifier)

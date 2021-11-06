@@ -205,6 +205,19 @@ This file is divided into 3 sections:
     ]]></customMessage>
   </check>
 
+  <check customId="deltahadoopconfiguration" level="error" class="org.scalastyle.file.RegexChecker" enabled="true">
+    <parameters><parameter name="regex">sessionState.newHadoopConf</parameter></parameters>
+    <customMessage><![CDATA[
+      Are you sure that you want to use sessionState.newHadoopConf? In most cases, you should use
+      deltaLog.newDeltaHadoopConf() instead, so that the hadoop file system configurations specified
+      in DataFrame options will come into effect.
+      If you must use sessionState.newHadoopConf, wrap the code block with
+      // scalastyle:off deltahadoopconfiguration
+      spark.sessionState.newHadoopConf...
+      // scalastyle:on deltahadoopconfiguration
+    ]]></customMessage>
+  </check>
+
   <check customId="visiblefortesting" level="error" class="org.scalastyle.file.RegexChecker" enabled="true">
     <parameters><parameter name="regex">@VisibleForTesting</parameter></parameters>
     <customMessage><![CDATA[

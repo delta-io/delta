@@ -16,7 +16,9 @@
 
 package org.apache.spark.sql.delta.util
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaErrors
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.AnalysisErrorAt
@@ -39,6 +41,22 @@ trait AnalysisHelper {
         // This is unexpected
         throw DeltaErrors.analysisException(
           s"Could not resolve expression $expr", plan = Option(planContainingExpr))
+    }
+  }
+
+  protected def tryResolveReferencesForExpressions(
+      sparkSession: SparkSession,
+      exprs: Seq[Expression],
+      planContainingExpr: LogicalPlan): Seq[Expression] = {
+    val newPlan = FakeLogicalPlan(exprs, planContainingExpr.children)
+    sparkSession.sessionState.analyzer.execute(newPlan) match {
+      case FakeLogicalPlan(resolvedExprs, _) =>
+        // Return even if it did not successfully resolve
+        resolvedExprs
+      case _ =>
+        // This is unexpected
+        throw DeltaErrors.analysisException(
+          s"Could not resolve expression $exprs", plan = Option(planContainingExpr))
     }
   }
 
@@ -89,6 +107,7 @@ trait AnalysisHelper {
         throw DeltaErrors.configureSparkSessionWithExtensionAndCatalog(e)
     }
   }
+
 }
 
 object AnalysisHelper {
@@ -97,6 +116,7 @@ object AnalysisHelper {
     extends LogicalPlan {
     override def output: Seq[Attribute] = Nil
 
-    // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+    override protected def withNewChildrenInternal(
+      newChildren: IndexedSeq[LogicalPlan]): FakeLogicalPlan = copy(children = newChildren)
   }
 }

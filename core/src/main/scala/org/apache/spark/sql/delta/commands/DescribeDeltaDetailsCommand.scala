@@ -29,10 +29,10 @@ import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, ScalaReflection, TableIdentifier}
 import org.apache.spark.sql.catalyst.ScalaReflection.Schema
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
-import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.types.StructType
 
 /** The result returned by the `describe detail` command. */
@@ -68,7 +68,7 @@ object TableDetail {
  */
 case class DescribeDeltaDetailCommand(
     path: Option[String],
-    tableIdentifier: Option[TableIdentifier]) extends RunnableCommand with DeltaLogging {
+    tableIdentifier: Option[TableIdentifier]) extends LeafRunnableCommand with DeltaLogging {
 
   override val output: Seq[Attribute] = TableDetail.schema.toAttributes
 
@@ -80,7 +80,7 @@ case class DescribeDeltaDetailCommand(
       val snapshot = deltaLog.snapshot
       if (snapshot.version == -1) {
         if (path.nonEmpty) {
-          val fs = new Path(path.get).getFileSystem(sparkSession.sessionState.newHadoopConf())
+          val fs = new Path(path.get).getFileSystem(deltaLog.newDeltaHadoopConf())
           // Throw FileNotFoundException when the path doesn't exist since there may be a typo
           if (!fs.exists(new Path(path.get))) {
             throw new FileNotFoundException(path.get)
@@ -137,13 +137,14 @@ case class DescribeDeltaDetailCommand(
   private def toRows(detail: TableDetail): Seq[Row] = TableDetail.toRow(detail) :: Nil
 
   private def describeNonDeltaTable(table: CatalogTable): Seq[Row] = {
+    var location = table.storage.locationUri.map(uri => CatalogUtils.URIToString(uri))
     toRows(
       TableDetail(
         table.provider.orNull,
         null,
         table.qualifiedName,
         table.comment.getOrElse(""),
-        table.storage.locationUri.map(new Path(_).toString).orNull,
+        location.orNull,
         new Timestamp(table.createTime),
         null,
         table.partitionColumnNames,
@@ -179,15 +180,16 @@ case class DescribeDeltaDetailCommand(
       snapshot: Snapshot,
       tableMetadata: Option[CatalogTable]): Seq[Row] = {
     val currentVersionPath = FileNames.deltaFile(deltaLog.logPath, snapshot.version)
-    val fs = currentVersionPath.getFileSystem(sparkSession.sessionState.newHadoopConf)
+    val fs = currentVersionPath.getFileSystem(deltaLog.newDeltaHadoopConf())
     val tableName = tableMetadata.map(_.qualifiedName).getOrElse(snapshot.metadata.name)
+    var location = deltaLog.dataPath.toString
     toRows(
       TableDetail(
         "delta",
         snapshot.metadata.id,
         tableName,
         snapshot.metadata.description,
-        deltaLog.dataPath.toString,
+        location,
         snapshot.metadata.createdTime.map(new Timestamp(_)).orNull,
         new Timestamp(fs.getFileStatus(currentVersionPath).getModificationTime),
         snapshot.metadata.partitionColumns,
@@ -197,6 +199,4 @@ case class DescribeDeltaDetailCommand(
         snapshot.protocol.minReaderVersion,
         snapshot.protocol.minWriterVersion))
   }
-
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }

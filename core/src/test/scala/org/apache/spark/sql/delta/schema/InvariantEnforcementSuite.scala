@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.schema
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.File
+import java.sql.Date
 
 import scala.collection.JavaConverters._
 
@@ -79,8 +80,7 @@ class InvariantEnforcementSuite extends QueryTest
     val error = e.getMessage
     val allExpected = expectedErrors
     allExpected.foreach { expected =>
-      assert(error.replaceAll("`", "").contains(expected.replaceAll("`", "")),
-        s"$error didn't contain $expected")
+      assert(error.contains(expected), s"$error didn't contain $expected")
     }
   }
 
@@ -506,5 +506,94 @@ class InvariantEnforcementSuite extends QueryTest
       "s struct<n:int NOT NULL, arr:array<struct<name:string,mailbox:string NOT NULL>> NOT NULL>",
     expectedError = "The element type of the field s.arr contains a NOT NULL constraint.",
     data = Row(Row(1, Seq(Row("myName", null)))))
+
+
+  // Helper function to construct the full test name as "RuntimeRepalceable: func"
+  private def testReplaceableExpr(targetFunc: String, testTags: org.scalatest.Tag*)
+    (testFun: => Any)
+    (implicit pos: org.scalactic.source.Position): Unit = {
+    val fulLTestName = s"RuntimeReplaceable: ${targetFunc}"
+    // Suppress exceptions output for invariant violations
+    super.testQuietly(fulLTestName) {
+      testFun
+    }
+  }
+
+  private def testReplaceable[T: Encoder](
+    exprStr: String,
+    colType: DataType,
+    badValue: T) = {
+    val rule = Constraints.Check("", spark.sessionState.sqlParser.parseExpression(exprStr))
+    val metadata = new MetadataBuilder()
+      .putString(Invariants.INVARIANTS_FIELD, PersistedExpression(exprStr).json)
+      .build()
+    val schema = new StructType()
+      .add("value", colType, nullable = true, metadata)
+    val rows = Seq(Row(badValue))
+    testBatchWriteRejection(
+      rule,
+      schema,
+      spark.createDataFrame(rows.toList.asJava, schema),
+      "violated by row with values"
+    )
+    testStreamingWriteRejection[T](
+      rule,
+      schema,
+      _.toDF().toDF("value"),
+      Seq[T](badValue),
+      "violated by row with values"
+    )
+  }
+
+  testReplaceableExpr("assert_true") {
+    testReplaceable("assert_true(value < 2) is not null", IntegerType, 1)
+  }
+
+  testReplaceableExpr("date_part") {
+    testReplaceable("date_part('YEAR', value) < 2000", DateType, Date.valueOf("2001-01-01"))
+  }
+
+  testReplaceableExpr("decode") {
+    testReplaceable("decode(encode(value, 'utf-8'), 'utf-8') = 'abc'", StringType, "a")
+  }
+
+  testReplaceableExpr("extract") {
+    testReplaceable("extract(YEAR FROM value) < 2000", DateType, Date.valueOf("2001-01-01"))
+  }
+
+  testReplaceableExpr("ifnull") {
+    testReplaceable("ifnull(value, 1) = 1", IntegerType, 2)
+  }
+
+  testReplaceableExpr("left") {
+    testReplaceable("left(value, 1) = 'a'", StringType, "b")
+  }
+
+  testReplaceableExpr("right") {
+    testReplaceable("right(value, 1) = 'a'", StringType, "b")
+  }
+
+  testReplaceableExpr("nullif") {
+    testReplaceable("nullif(value, 1) = 2", IntegerType, 1)
+  }
+
+  testReplaceableExpr("nvl") {
+    testReplaceable("nvl(value, 1) = 1", IntegerType, 2)
+  }
+
+  testReplaceableExpr("nvl2") {
+    testReplaceable("nvl2(value, 1, 2) = 3", IntegerType, 2)
+  }
+
+  testReplaceableExpr("to_date") {
+    testReplaceable("to_date(value) = '2001-01-01'", StringType, "2002-01-01")
+  }
+
+  testReplaceableExpr("to_timestamp") {
+    testReplaceable(
+      "to_timestamp(value) = '2001-01-01'",
+      StringType,
+      "2002-01-01 00:12:00")
+  }
 
 }

@@ -21,6 +21,7 @@ import java.util.{Calendar, TimeZone}
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.commons.lang3.time.DateUtils
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 /** Cleans up expired Delta table metadata. */
@@ -53,6 +54,7 @@ trait MetadataCleanup extends DeltaLogging {
       val formattedDate = fileCutOffTime.toGMTString
       logInfo(s"Starting the deletion of log files older than $formattedDate")
 
+      val fs = logPath.getFileSystem(newDeltaHadoopConf())
       var numDeleted = 0
       listExpiredDeltaLogs(fileCutOffTime.getTime).map(_.getPath).foreach { path =>
         // recursive = false
@@ -74,7 +76,7 @@ trait MetadataCleanup extends DeltaLogging {
     val latestCheckpoint = lastCheckpoint
     if (latestCheckpoint.isEmpty) return Iterator.empty
     val threshold = latestCheckpoint.get.version - 1L
-    val files = store.listFrom(checkpointPrefix(logPath, 0))
+    val files = store.listFrom(checkpointPrefix(logPath, 0), newDeltaHadoopConf())
       .filter(f => isCheckpointFile(f.getPath) || isDeltaFile(f.getPath))
     def getVersion(filePath: Path): Long = {
       if (isCheckpointFile(filePath)) {

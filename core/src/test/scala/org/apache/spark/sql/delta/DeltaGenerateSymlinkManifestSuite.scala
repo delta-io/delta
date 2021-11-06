@@ -38,7 +38,8 @@ class DeltaGenerateSymlinkManifestSuite
   with DeltaSQLCommandTest
 
 trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
-  with SharedSparkSession {
+  with SharedSparkSession
+  with DeltaTestUtilsForTempViews {
 
   import testImplicits._
 
@@ -105,6 +106,17 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
 
       e = intercept[AnalysisException] {
         spark.sql(s"GENERATE symlink_format_manifest FOR TABLE parquet.`$dir`")
+      }
+      assert(e.getMessage.contains("not found"))
+    }
+  }
+
+  testWithTempView("basic case: SQL command - throw error on temp views") { isSQLTempView =>
+    withTable("t1") {
+      spark.range(2).write.format("delta").saveAsTable("t1")
+      createTempViewFromTable("t1", isSQLTempView)
+      val e = intercept[AnalysisException] {
+        spark.sql(s"GENERATE symlink_format_manifest FOR TABLE v")
       }
       assert(e.getMessage.contains("not found"))
     }
@@ -179,12 +191,14 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
       spark.emptyDataset[Int].write.format("delta").mode("overwrite").save(tablePath.toString)
       assertManifest(tablePath, expectSameFiles = false, expectedNumFiles = 5)
       generateSymlinkManifest(tablePath.toString)
-      assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 1)
+      assertManifest(
+        tablePath, expectSameFiles = true, expectedNumFiles = expectedNumberOfFilesInEmptyTable)
       assert(spark.read.format("delta").load(tablePath.toString).count() == 0)
 
       // delete all data
       write(5)
-      assertManifest(tablePath, expectSameFiles = false, expectedNumFiles = 1)
+      assertManifest(
+        tablePath, expectSameFiles = false, expectedNumFiles = expectedNumberOfFilesInEmptyTable)
       val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tablePath.toString)
       deltaTable.delete()
       generateSymlinkManifest(tablePath.toString)
@@ -299,9 +313,12 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
       // Remove all data
       spark.emptyDataset[Int].write.format("delta").mode("overwrite").save(tablePath.toString)
       assert(spark.read.format("delta").load(tablePath.toString).count() == 0)
-      assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 1)
+      assertManifest(
+        tablePath, expectSameFiles = true, expectedNumFiles = expectedNumberOfFilesInEmptyTable)
     }
   }
+
+
 
   test("incremental manifest: partitioned table") {
     withTempDir { tablePath =>
@@ -475,7 +492,10 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
    *                        as the latest version of the table
    * @param expectedNumFiles Expected number of manifest files
    */
-  def assertManifest(tablePath: File, expectSameFiles: Boolean, expectedNumFiles: Int): Unit = {
+  def assertManifest(
+      tablePath: File,
+      expectSameFiles: Boolean,
+      expectedNumFiles: Int): Unit = {
     val deltaSnapshot = DeltaLog.forTable(spark, tablePath.toString).update()
     val manifestPath = new File(tablePath, GenerateSymlinkManifest.MANIFEST_LOCATION)
 
@@ -500,7 +520,8 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
       // Validate that each file in the manifest is actually present in table. This mainly checks
       // whether the file names in manifest are not escaped and therefore are readable directly
       // by Hadoop APIs.
-      val fs = new Path(manifestPath.toString).getFileSystem(spark.sessionState.newHadoopConf())
+      val fs = new Path(manifestPath.toString)
+        .getFileSystem(deltaSnapshot.deltaLog.newDeltaHadoopConf())
       spark.read.text(manifestPath.toString).select("value").as[String].collect().foreach { p =>
         assert(fs.exists(new Path(p)), s"path $p in manifest not found in file system")
       }
@@ -535,6 +556,9 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
     val deltaLog = DeltaLog.forTable(spark, tablePath)
     GenerateSymlinkManifest.generateFullManifest(spark, deltaLog)
   }
+
+  // Open Source Spark writes at least one file, even if its empty, to preserve metadata.
+  protected val expectedNumberOfFilesInEmptyTable = 1
 }
 
 class SymlinkManifestFailureTestAbstractFileSystem(

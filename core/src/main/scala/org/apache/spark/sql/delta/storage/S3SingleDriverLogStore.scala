@@ -50,8 +50,8 @@ class S3SingleDriverLogStore(
     hadoopConf: Configuration) extends HadoopFileSystemLogStore(sparkConf, hadoopConf) {
   import S3SingleDriverLogStore._
 
-  private def resolved(path: Path): (FileSystem, Path) = {
-    val fs = path.getFileSystem(getHadoopConfiguration)
+  private def resolved(path: Path, hadoopConf: Configuration): (FileSystem, Path) = {
+    val fs = path.getFileSystem(hadoopConf)
     val resolvedPath = stripUserInfo(fs.makeQualified(path))
     (fs, resolvedPath)
   }
@@ -128,11 +128,15 @@ class S3SingleDriverLogStore(
     mergeFileIterators(listedFromCache, listedFromFs)
   }
 
+  override def listFrom(path: Path): Iterator[FileStatus] = {
+    listFrom(path, getHadoopConfiguration)
+  }
+
   /**
    * List files starting from `resolvedPath` (inclusive) in the same directory.
    */
-  override def listFrom(path: Path): Iterator[FileStatus] = {
-    val (fs, resolvedPath) = resolved(path)
+  override def listFrom(path: Path, hadoopConf: Configuration): Iterator[FileStatus] = {
+    val (fs, resolvedPath) = resolved(path, hadoopConf)
     listFromInternal(fs, resolvedPath)
   }
 
@@ -155,7 +159,15 @@ class S3SingleDriverLogStore(
   }
 
   override def write(path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit = {
-    val (fs, resolvedPath) = resolved(path)
+    write(path, actions, overwrite, getHadoopConfiguration)
+  }
+
+  override def write(
+      path: Path,
+      actions: Iterator[String],
+      overwrite: Boolean,
+      hadoopConf: Configuration): Unit = {
+    val (fs, resolvedPath) = resolved(path, hadoopConf)
     val lockedPath = getPathKey(resolvedPath)
     acquirePathLock(lockedPath)
     try {
@@ -192,6 +204,8 @@ class S3SingleDriverLogStore(
   }
 
   override def isPartialWriteVisible(path: Path): Boolean = false
+
+  override def isPartialWriteVisible(path: Path, hadoopConf: Configuration): Boolean = false
 
   override def invalidateCache(): Unit = {
     writtenPathCache.invalidateAll()

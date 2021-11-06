@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
 import org.apache.hadoop.mapreduce.{Job, TaskType}
@@ -136,7 +137,11 @@ trait Checkpoints extends DeltaLogging {
       }
       val checkpointMetaData = writeCheckpointFiles(snapshotToCheckpoint)
       val json = JsonUtils.toJson(checkpointMetaData)
-      store.write(LAST_CHECKPOINT, Iterator(json), overwrite = true)
+      store.write(
+        LAST_CHECKPOINT,
+        Iterator(json),
+        overwrite = true,
+        newDeltaHadoopConf())
 
       doLogCleanup()
     }
@@ -153,7 +158,7 @@ trait Checkpoints extends DeltaLogging {
   /** Loads the checkpoint metadata from the _last_checkpoint file. */
   private def loadMetadataFromFile(tries: Int): Option[CheckpointMetaData] = {
     try {
-      val checkpointMetadataJson = store.read(LAST_CHECKPOINT)
+      val checkpointMetadataJson = store.read(LAST_CHECKPOINT, newDeltaHadoopConf())
       val checkpointMetadata =
         JsonUtils.mapper.readValue[CheckpointMetaData](checkpointMetadataJson.head)
       Some(checkpointMetadata)
@@ -187,11 +192,13 @@ trait Checkpoints extends DeltaLogging {
    */
   protected def findLastCompleteCheckpoint(cv: CheckpointInstance): Option[CheckpointInstance] = {
     var cur = math.max(cv.version, 0L)
+    val hadoopConf = newDeltaHadoopConf()
     while (cur >= 0) {
-      val checkpoints = store.listFrom(checkpointPrefix(logPath, math.max(0, cur - 1000)))
-          .map(_.getPath)
-          .filter(isCheckpointFile)
-          .map(CheckpointInstance(_))
+      val checkpoints = store.listFrom(
+            checkpointPrefix(logPath, math.max(0, cur - 1000)),
+            hadoopConf)
+          .filter { file => isCheckpointFile(file.getPath) }
+          .map{ file => CheckpointInstance(file.getPath) }
           .takeWhile(tv => (cur == 0 || tv.version <= cur) && tv.isEarlierThan(cv))
           .toArray
       val lastCheckpoint = getLatestCompleteCheckpointFromList(checkpoints, cv)
@@ -215,7 +222,7 @@ trait Checkpoints extends DeltaLogging {
       case (CheckpointInstance(_, None), inst) => inst.length == 1
       case (CheckpointInstance(_, Some(parts)), inst) => inst.length == parts
     }
-    complete.keys.toArray.sorted.lastOption
+    if (complete.isEmpty) None else Some(complete.keys.max)
   }
 }
 
@@ -233,15 +240,17 @@ object Checkpoints extends DeltaLogging {
       snapshot: Snapshot): CheckpointMetaData = {
     import SingleAction._
 
+    val hadoopConf = deltaLog.newDeltaHadoopConf()
+
     // The writing of checkpoints doesn't go through log store, so we need to check with the
     // log store and decide whether to use rename.
-    val useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath)
+    val useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath, hadoopConf)
 
     val checkpointSize = spark.sparkContext.longAccumulator("checkpointSize")
     val numOfFiles = spark.sparkContext.longAccumulator("numOfFiles")
     // Use the string in the closure as Path is not Serializable.
     val path = checkpointFileSingular(snapshot.path, snapshot.version).toString
-    val base = snapshot.state
+    val base = snapshot.stateDS
       .repartition(1)
       .map { action =>
         if (action.add != null) {
@@ -255,7 +264,7 @@ object Checkpoints extends DeltaLogging {
 
     val (factory, serConf) = {
       val format = new ParquetFileFormat()
-      val job = Job.getInstance()
+      val job = Job.getInstance(hadoopConf)
       (format.prepareWrite(spark, job, Map.empty, schema),
         new SerializableConfiguration(job.getConfiguration))
     }
@@ -277,28 +286,44 @@ object Checkpoints extends DeltaLogging {
           } else {
             path
           }
-        try {
-          val writer = factory.newInstance(
-            writtenPath,
-            schema,
-            new TaskAttemptContextImpl(
-              new JobConf(serConf.value),
-              new TaskAttemptID("", 0, TaskType.REDUCE, 0, 0)))
+        val writeAction = () => {
+          try {
+            val writer = factory.newInstance(
+              writtenPath,
+              schema,
+              new TaskAttemptContextImpl(
+                new JobConf(serConf.value),
+                new TaskAttemptID("", 0, TaskType.REDUCE, 0, 0)))
 
-          iter.foreach { row =>
-            checkpointSize.add(1)
-            writer.write(row)
-          }
-          writer.close()
-        } catch {
-          case e: org.apache.hadoop.fs.FileAlreadyExistsException if !useRename =>
-            val p = new Path(writtenPath)
-            if (p.getFileSystem(serConf.value).exists(p)) {
-              // The file has been written by a zombie task. We can just use this checkpoint file
-              // rather than failing a Delta commit.
-            } else {
-              throw e
+            iter.foreach { row =>
+              checkpointSize.add(1)
+              writer.write(row)
             }
+            // Note: `writer.close()` is not put in a `finally` clause because we don't want to
+            // close it when an exception happens. Closing the file would flush the content to the
+            // storage and create an incomplete file. A concurrent reader might see it and fail.
+            // This would leak resources but we don't have a way to abort the storage request here.
+            writer.close()
+          } catch {
+            case e: org.apache.hadoop.fs.FileAlreadyExistsException if !useRename =>
+              val p = new Path(writtenPath)
+              if (p.getFileSystem(serConf.value).exists(p)) {
+                // The file has been written by a zombie task. We can just use this checkpoint file
+                // rather than failing a Delta commit.
+              } else {
+                throw e
+              }
+          }
+        }
+        if (isGCSPath(serConf.value, new Path(writtenPath))) {
+          // GCS may upload an incomplete file when the current thread is interrupted, hence we move
+          // the write to a new thread so that the write cannot be interrupted.
+          // TODO Remove this hack when the GCS Hadoop connector fixes the issue.
+          DeltaFileOperations.runInNewThread("delta-gcs-checkpoint-write") {
+            writeAction()
+          }
+        } else {
+          writeAction()
         }
         Iterator(writtenPath)
       }.collect().head
@@ -306,7 +331,7 @@ object Checkpoints extends DeltaLogging {
     if (useRename) {
       val src = new Path(writtenPath)
       val dest = new Path(path)
-      val fs = dest.getFileSystem(spark.sessionState.newHadoopConf)
+      val fs = dest.getFileSystem(hadoopConf)
       var renameDone = false
       try {
         if (fs.rename(src, dest)) {
@@ -333,6 +358,25 @@ object Checkpoints extends DeltaLogging {
       logWarning(DeltaErrors.EmptyCheckpointErrorMessage)
     }
     CheckpointMetaData(snapshot.version, checkpointSize.value, None)
+  }
+
+  // scalastyle:off line.size.limit
+  /**
+   * All GCS paths can only have the scheme of "gs". Note: the scheme checking is case insensitive.
+   * See:
+   * - https://github.com/databricks/hadoop-connectors/blob/master/gcs/src/main/java/com/google/cloud/hadoop/fs/gcs/GoogleHadoopFileSystemBase.java#L493
+   * - https://github.com/GoogleCloudDataproc/hadoop-connectors/blob/v2.2.3/gcsio/src/main/java/com/google/cloud/hadoop/gcsio/GoogleCloudStorageFileSystem.java#L88
+   */
+  // scalastyle:on line.size.limit
+  private[delta] def isGCSPath(hadoopConf: Configuration, path: Path): Boolean = {
+    val scheme = path.toUri.getScheme
+    if (scheme != null) {
+      scheme.equalsIgnoreCase("gs")
+    } else {
+      // When the schema is not available in the path, we check the file system scheme resolved from
+      // the path.
+      path.getFileSystem(hadoopConf).getScheme.equalsIgnoreCase("gs")
+    }
   }
 
   /**
@@ -384,10 +428,10 @@ object CheckpointV2 {
    */
   def extractPartitionValues(partitionSchema: StructType): Option[Column] = {
     val partitionValues = partitionSchema.map { field =>
-      val colName = field.name
-      new Column(UnresolvedAttribute("add" :: "partitionValues" :: colName :: Nil).name)
+      val physicalName = DeltaColumnMapping.getPhysicalName(field)
+      new Column(UnresolvedAttribute("add" :: "partitionValues" :: physicalName :: Nil))
         .cast(field.dataType)
-        .as(colName)
+        .as(physicalName)
     }
     if (partitionValues.isEmpty) None else Some(struct(partitionValues: _*).as(PARTITIONS_COL_NAME))
   }

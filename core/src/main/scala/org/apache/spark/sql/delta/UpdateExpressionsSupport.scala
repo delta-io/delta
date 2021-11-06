@@ -23,7 +23,7 @@ import org.apache.spark.sql.delta.util.AnalysisHelper
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.SQLConfHelper
 import org.apache.spark.sql.catalyst.analysis.{CastSupport, Resolver}
-import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, CreateNamedStruct, Expression, ExtractValue, GetStructField, Literal, NamedExpression}
+import org.apache.spark.sql.catalyst.expressions.{Alias, ArrayTransform, Attribute, AttributeReference, CreateNamedStruct, Expression, ExtractValue, GetArrayItem, GetStructField, LambdaFunction, Literal, NamedExpression, NamedLambdaVariable}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
 import org.apache.spark.sql.types._
 
@@ -54,6 +54,7 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
       fromExpression: Expression,
       dataType: DataType,
       allowStructEvolution: Boolean = false): Expression = {
+
     fromExpression match {
       // Need to deal with NullType here, as some types cannot be casted from NullType, e.g.,
       // StructType.
@@ -63,6 +64,16 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
           conf.getConf(DeltaSQLConf.DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME)
 
         (fromExpression.dataType, dataType) match {
+          case (ArrayType(_: StructType, _), ArrayType(toEt: StructType, toContainsNull)) =>
+            // generate a lambda function to cast each array item into to element struct type.
+            val structConverter: (Expression, Expression) => Expression = (_, i) =>
+              castIfNeeded(GetArrayItem(fromExpression, i), toEt, allowStructEvolution)
+            val transformLambdaFunc = {
+              val elementVar = NamedLambdaVariable("elementVar", toEt, toContainsNull)
+              val indexVar = NamedLambdaVariable("indexVar", IntegerType, false)
+              LambdaFunction(structConverter(elementVar, indexVar), Seq(elementVar, indexVar))
+            }
+            cast(ArrayTransform(fromExpression, transformLambdaFunc), dataType)
           case (from: StructType, to: StructType)
               if !DataType.equalsIgnoreCaseAndNullability(from, to) && resolveStructsByName =>
             // All from fields must be present in the final schema, or we'll silently lose data.

@@ -48,6 +48,7 @@ trait LogStore {
    * line. This method will load the entire file into the memory. Call `readAsIterator` if possible
    * as its implementation may be more efficient.
    */
+  @deprecated("call the method that asks for a Hadoop Configuration object instead")
   final def read(path: String): Seq[String] = read(new Path(path))
 
   /**
@@ -55,7 +56,19 @@ trait LogStore {
    * line. This method will load the entire file into the memory. Call `readAsIterator` if possible
    * as its implementation may be more efficient.
    */
+  @deprecated("call the method that asks for a Hadoop Configuration object instead")
   def read(path: Path): Seq[String]
+
+  /**
+   * Load the given file and return a `Seq` of lines. The line break will be removed from each
+   * line. This method will load the entire file into the memory. Call `readAsIterator` if possible
+   * as its implementation may be more efficient.
+   *
+   * Note: The default implementation ignores the `hadoopConf` parameter to provide the backward
+   * compatibility. Subclasses should override this method and use `hadoopConf` properly to support
+   * passing Hadoop file system configurations through DataFrame options.
+   */
+  def read(path: Path, hadoopConf: Configuration): Seq[String] = read(path)
 
   /**
    * Load the given file and return an iterator of lines. The line break will be removed from each
@@ -63,6 +76,7 @@ trait LogStore {
    * An implementation should provide a more efficient approach if possible. For example, the file
    * content can be loaded on demand.
    */
+  @deprecated("call the method that asks for a Hadoop Configuration object instead")
   final def readAsIterator(path: String): ClosableIterator[String] = {
     readAsIterator(new Path(path))
   }
@@ -76,6 +90,7 @@ trait LogStore {
    * Note: the returned [[ClosableIterator]] should be closed when it's no longer used to avoid
    * resource leak.
    */
+  @deprecated("call the method that asks for a Hadoop Configuration object instead")
   def readAsIterator(path: Path): ClosableIterator[String] = {
     val iter = read(path).iterator
     new ClosableIterator[String] {
@@ -89,11 +104,29 @@ trait LogStore {
   }
 
   /**
+   * Load the given file and return an iterator of lines. The line break will be removed from each
+   * line. The default implementation calls `read` to load the entire file into the memory.
+   * An implementation should provide a more efficient approach if possible. For example, the file
+   * content can be loaded on demand.
+   *
+   * Note: the returned [[ClosableIterator]] should be closed when it's no longer used to avoid
+   * resource leak.
+   *
+   * Note: The default implementation ignores the `hadoopConf` parameter to provide the backward
+   * compatibility. Subclasses should override this method and use `hadoopConf` properly to support
+   * passing Hadoop file system configurations through DataFrame options.
+   */
+  def readAsIterator(path: Path, hadoopConf: Configuration): ClosableIterator[String] = {
+    readAsIterator(path)
+  }
+
+  /**
    * Write the given `actions` to the given `path` without overwriting any existing file.
    * Implementation must throw [[java.nio.file.FileAlreadyExistsException]] exception if the file
    * already exists. Furthermore, implementation must ensure that the entire file is made
    * visible atomically, that is, it should not generate partial files.
    */
+  @deprecated("call the method that asks for a Hadoop Configuration object instead")
   final def write(path: String, actions: Iterator[String]): Unit = write(new Path(path), actions)
 
   /**
@@ -102,26 +135,70 @@ trait LogStore {
    * already exists and overwrite = false. Furthermore, implementation must ensure that the
    * entire file is made visible atomically, that is, it should not generate partial files.
    */
+  @deprecated("call the method that asks for a Hadoop Configuration object instead")
   def write(path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit
 
   /**
-   * List the paths in the same directory that are lexicographically greater or equal to
-   * (UTF-8 sorting) the given `path`. The result should also be sorted by the file name.
+   * Write the given `actions` to the given `path` with or without overwrite as indicated.
+   * Implementation must throw [[java.nio.file.FileAlreadyExistsException]] exception if the file
+   * already exists and overwrite = false. Furthermore, implementation must ensure that the
+   * entire file is made visible atomically, that is, it should not generate partial files.
+   *
+   * Note: The default implementation ignores the `hadoopConf` parameter to provide the backward
+   * compatibility. Subclasses should override this method and use `hadoopConf` properly to support
+   * passing Hadoop file system configurations through DataFrame options.
    */
-  final def listFrom(path: String): Iterator[FileStatus] = listFrom(new Path(path))
+  def write(
+      path: Path,
+      actions: Iterator[String],
+      overwrite: Boolean,
+      hadoopConf: Configuration): Unit = {
+    write(path, actions, overwrite)
+  }
 
   /**
    * List the paths in the same directory that are lexicographically greater or equal to
    * (UTF-8 sorting) the given `path`. The result should also be sorted by the file name.
    */
+  @deprecated("call the method that asks for a Hadoop Configuration object instead")
+  final def listFrom(path: String): Iterator[FileStatus] =
+    listFrom(new Path(path))
+
+  /**
+   * List the paths in the same directory that are lexicographically greater or equal to
+   * (UTF-8 sorting) the given `path`. The result should also be sorted by the file name.
+   */
+  @deprecated("call the method that asks for a Hadoop Configuration object instead")
   def listFrom(path: Path): Iterator[FileStatus]
+
+  /**
+   * List the paths in the same directory that are lexicographically greater or equal to
+   * (UTF-8 sorting) the given `path`. The result should also be sorted by the file name.
+   *
+   * Note: The default implementation ignores the `hadoopConf` parameter to provide the backward
+   * compatibility. Subclasses should override this method and use `hadoopConf` properly to support
+   * passing Hadoop file system configurations through DataFrame options.
+   */
+  def listFrom(path: Path, hadoopConf: Configuration): Iterator[FileStatus] = listFrom(path)
 
   /** Invalidate any caching that the implementation may be using */
   def invalidateCache(): Unit
 
   /** Resolve the fully qualified path for the given `path`. */
+  @deprecated("call the method that asks for a Hadoop Configuration object instead")
   def resolvePathOnPhysicalStorage(path: Path): Path = {
     throw new UnsupportedOperationException()
+  }
+
+  /**
+   * Resolve the fully qualified path for the given `path`.
+   *
+   * Note: The default implementation ignores the `hadoopConf` parameter to provide the backward
+   * compatibility. Subclasses should override this method and use `hadoopConf` properly to support
+   * passing Hadoop file system configurations through DataFrame options.
+   */
+  def resolvePathOnPhysicalStorage(path: Path, hadoopConf: Configuration): Path = {
+    resolvePathOnPhysicalStorage(path)
   }
 
   /**
@@ -134,7 +211,26 @@ trait LogStore {
    * The default value is only provided here for legacy reasons, which will be removed.
    * Any LogStore implementation should override this instead of relying on the default.
    */
+  @deprecated("call the method that asks for a Hadoop Configuration object instead")
   def isPartialWriteVisible(path: Path): Boolean = true
+
+  /**
+   * Whether a partial write is visible when writing to `path`.
+   *
+   * As this depends on the underlying file system implementations, we require the input of `path`
+   * here in order to identify the underlying file system, even though in most cases a log store
+   * only deals with one file system.
+   *
+   * The default value is only provided here for legacy reasons, which will be removed.
+   * Any LogStore implementation should override this instead of relying on the default.
+   *
+   * Note: The default implementation ignores the `hadoopConf` parameter to provide the backward
+   * compatibility. Subclasses should override this method and use `hadoopConf` properly to support
+   * passing Hadoop file system configurations through DataFrame options.
+   */
+  def isPartialWriteVisible(path: Path, hadoopConf: Configuration): Boolean = {
+    isPartialWriteVisible(path)
+  }
 }
 
 object LogStore extends LogStoreProvider
@@ -207,14 +303,20 @@ trait LogStoreProvider {
 class LogStoreAdaptor(val logStoreImpl: io.delta.storage.LogStore) extends LogStore {
 
   private def getHadoopConfiguration(): Configuration = {
+    // scalastyle:off deltahadoopconfiguration
     SparkSession.getActiveSession.map(_.sessionState.newHadoopConf())
       .getOrElse(logStoreImpl.initHadoopConf())
+    // scalastyle:on deltahadoopconfiguration
   }
 
   override def read(path: Path): Seq[String] = {
+    read(path, getHadoopConfiguration)
+  }
+
+  override def read(path: Path, hadoopConf: Configuration): Seq[String] = {
     var iter: io.delta.storage.CloseableIterator[String] = null
     try {
-      iter = logStoreImpl.read(path, getHadoopConfiguration)
+      iter = logStoreImpl.read(path, hadoopConf)
       val contents = iter.asScala.toArray
       contents
     } finally {
@@ -225,7 +327,11 @@ class LogStoreAdaptor(val logStoreImpl: io.delta.storage.LogStore) extends LogSt
   }
 
   override def readAsIterator(path: Path): ClosableIterator[String] = {
-    val iter = logStoreImpl.read(path, getHadoopConfiguration)
+    readAsIterator(path, getHadoopConfiguration)
+  }
+
+  override def readAsIterator(path: Path, hadoopConf: Configuration): ClosableIterator[String] = {
+    val iter = logStoreImpl.read(path, hadoopConf)
     new ClosableIterator[String] {
       override def close(): Unit = iter.close
       override def hasNext: Boolean = iter.hasNext
@@ -234,20 +340,40 @@ class LogStoreAdaptor(val logStoreImpl: io.delta.storage.LogStore) extends LogSt
   }
 
   override def write(path: Path, actions: Iterator[String], overwrite: Boolean): Unit = {
-    logStoreImpl.write(path, actions.asJava, overwrite, getHadoopConfiguration)
+    write(path, actions, overwrite, getHadoopConfiguration)
+  }
+
+  override def write(
+      path: Path,
+      actions: Iterator[String],
+      overwrite: Boolean,
+      hadoopConf: Configuration): Unit = {
+    logStoreImpl.write(path, actions.asJava, overwrite, hadoopConf)
   }
 
   override def listFrom(path: Path): Iterator[FileStatus] = {
-    logStoreImpl.listFrom(path, getHadoopConfiguration).asScala
+    listFrom(path, getHadoopConfiguration)
+  }
+
+  override def listFrom(path: Path, hadoopConf: Configuration): Iterator[FileStatus] = {
+    logStoreImpl.listFrom(path, hadoopConf).asScala
   }
 
   override def invalidateCache(): Unit = {}
 
   override def resolvePathOnPhysicalStorage(path: Path): Path = {
-    logStoreImpl.resolvePathOnPhysicalStorage(path, getHadoopConfiguration)
+    resolvePathOnPhysicalStorage(path, getHadoopConfiguration)
+  }
+
+  override def resolvePathOnPhysicalStorage(path: Path, hadoopConf: Configuration): Path = {
+    logStoreImpl.resolvePathOnPhysicalStorage(path, hadoopConf)
   }
 
   override def isPartialWriteVisible(path: Path): Boolean = {
-    logStoreImpl.isPartialWriteVisible(path, getHadoopConfiguration)
+    isPartialWriteVisible(path, getHadoopConfiguration)
+  }
+
+  override def isPartialWriteVisible(path: Path, hadoopConf: Configuration): Boolean = {
+    logStoreImpl.isPartialWriteVisible(path, hadoopConf)
   }
 }

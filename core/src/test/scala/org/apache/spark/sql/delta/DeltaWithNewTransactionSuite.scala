@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
@@ -275,3 +274,4 @@ trait DeltaWithNewTransactionSuiteBase extends QueryTest
 }
 
 class DeltaWithNewTransactionSuite extends DeltaWithNewTransactionSuiteBase
+

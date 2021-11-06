@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.hooks
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -70,7 +71,11 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
   }
 
   override def handleError(error: Throwable, version: Long): Unit = {
-    throw DeltaErrors.postCommitHookFailedException(this, version, name, error)
+    error match {
+      case e: ColumnMappingUnsupportedException => throw e
+      case _ =>
+        throw DeltaErrors.postCommitHookFailedException(this, version, name, error)
+    }
   }
 
   /**
@@ -86,9 +91,11 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
     import spark.implicits._
     val currentSnapshot = deltaLog.snapshot
 
+    checkColumnMappingMode(currentSnapshot.metadata)
+
     val partitionCols = currentSnapshot.metadata.partitionColumns
     val manifestRootDirPath = new Path(deltaLog.dataPath, MANIFEST_LOCATION)
-    val hadoopConf = new SerializableConfiguration(spark.sessionState.newHadoopConf())
+    val hadoopConf = new SerializableConfiguration(deltaLog.newDeltaHadoopConf())
     val fs = deltaLog.dataPath.getFileSystem(hadoopConf.value)
     if (!fs.exists(manifestRootDirPath)) {
       generateFullManifest(spark, deltaLog)
@@ -169,7 +176,9 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
     val snapshot = deltaLog.update(stalenessAcceptable = false)
     val partitionCols = snapshot.metadata.partitionColumns
     val manifestRootDirPath = new Path(deltaLog.dataPath, MANIFEST_LOCATION).toString
-    val hadoopConf = new SerializableConfiguration(spark.sessionState.newHadoopConf())
+    val hadoopConf = new SerializableConfiguration(deltaLog.newDeltaHadoopConf())
+
+    checkColumnMappingMode(snapshot.metadata)
 
     // Update manifest files of the current partitions
     val newManifestPartitionRelativePaths = writeManifestFiles(
@@ -235,8 +244,8 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
     val spark = fileNamesForManifest.sparkSession
     import spark.implicits._
 
-    val tableAbsPathForManifest =
-      LogStore(spark.sparkContext).resolvePathOnPhysicalStorage(deltaLogDataPath).toString
+    val tableAbsPathForManifest = LogStore(spark.sparkContext)
+      .resolvePathOnPhysicalStorage(deltaLogDataPath, hadoopConf.value).toString
 
     /** Write the data file relative paths to manifestDirAbsPath/manifest as absolute paths */
     def writeSingleManifestFile(
@@ -251,7 +260,7 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
         DeltaFileOperations.absolutePath(tableAbsPathForManifest, relativePath).toString
       }
       val logStore = LogStore(SparkEnv.get.conf, hadoopConf.value)
-      logStore.write(manifestFilePath, manifestContent, overwrite = true)
+      logStore.write(manifestFilePath, manifestContent, overwrite = true, hadoopConf.value)
     }
 
     val newManifestPartitionRelativePaths =
@@ -364,6 +373,17 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
       withStatusCode("DELTA", s"Updating $manifestType Hive manifest for the Delta table") {
         thunk
       }
+    }
+  }
+
+  /**
+   * Generating manifests, when column mapping used is not supported,
+   * because external systems will not be able to read Delta tables that leverage
+   * column mapping correctly.
+   */
+  private def checkColumnMappingMode(metadata: Metadata): Unit = {
+    if (metadata.columnMappingMode != NoMapping) {
+      throw DeltaErrors.generateManifestWithColumnMappingNotSupported
     }
   }
 

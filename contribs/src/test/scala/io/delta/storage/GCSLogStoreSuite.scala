@@ -16,7 +16,12 @@
 
 package io.delta.storage
 
-import org.apache.spark.sql.delta.{FakeFileSystem, LogStoreSuiteBase}
+import java.net.URI
+
+import org.apache.hadoop.fs.{FSDataOutputStream, Path, RawLocalFileSystem}
+import org.apache.hadoop.fs.permission.FsPermission
+import org.apache.hadoop.util.Progressable
+import org.apache.spark.sql.delta.{FakeFileSystem, FakeGCSFileSystem, LogStoreSuiteBase}
 
 class GCSLogStoreSuite extends LogStoreSuiteBase {
 
@@ -28,4 +33,20 @@ class GCSLogStoreSuite extends LogStoreSuiteBase {
     "fs.fake.impl.disable.cache" -> "true")
 
   protected def shouldUseRenameToWriteCheckpoint: Boolean = false
+
+  test("gcs write should happen in a new thread") {
+    withTempDir { tempDir =>
+      // Use `FakeGCSFileSystem` to verify we write in the correct thread.
+      withSQLConf(
+          "fs.gs.impl" -> classOf[FakeGCSFileSystem].getName,
+          "fs.gs.impl.disable.cache" -> "true") {
+        val store = createLogStore(spark)
+        store.write(
+          new Path(s"gs://${tempDir.getCanonicalPath}", "1.json"),
+          Iterator("foo"),
+          overwrite = false,
+          sessionHadoopConf)
+      }
+    }
+  }
 }

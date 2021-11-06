@@ -29,7 +29,8 @@ import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 
-class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
+class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
+  with DeltaTestUtilsForTempViews {
 
   import testImplicits._
 
@@ -191,12 +192,8 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
       Seq((1, 1), (0, 3)).toDF("srcKey", "srcValue").write.saveAsTable("source")
       append(Seq((2, 2), (1, 4)).toDF("trgKey", "trgValue"))
 
-      // TODO: In DBR we throw AnalysisException, but in OSS Delta we throw ParseException.
-      //       The error message is also slightly different. Here we just catch general Exception.
-      //       We should update this test when OSS delta upgrades to Spark 3.1.
-
       // only the last NOT MATCHED clause can omit the condition
-      val e = intercept[Exception](
+      val e = intercept[AnalysisException](
         sql(s"""
           |MERGE INTO delta.`$tempPath`
           |USING source
@@ -206,112 +203,85 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest {
           |WHEN NOT MATCHED THEN
           |  INSERT (trgValue, trgKey) VALUES (srcValue, srcKey)
         """.stripMargin))
-      assert(e.getMessage.contains("only the last NOT MATCHED clause can omit the condition") ||
-        e.getMessage.contains("There should be at most 1 'WHEN NOT MATCHED' clause"))
+      assert(e.getMessage.contains("only the last NOT MATCHED clause can omit the condition"))
     }
   }
 
-  test("merge into a dataset temp view") {
-    withTable("tab") {
-      withTempView("v") {
-        withTempView("src") {
-          Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
-          spark.table("tab").as("name").createTempView("v")
-          sql("CREATE TEMP VIEW src AS SELECT * FROM VALUES (1, 2), (3, 4) AS t(a, b)")
-          sql(
-            s"""
-               |MERGE INTO v
-               |USING src
-               |ON src.a = v.key AND src.b = v.value
-               |WHEN MATCHED THEN
-               |  UPDATE SET v.value = src.b + 1
-               |WHEN NOT MATCHED THEN
-               |  INSERT (v.key, v.value) VALUES (src.a, src.b)
-               |""".stripMargin)
-          checkAnswer(spark.table("tab"), Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
-        }
-      }
-    }
-  }
-
-  test("merge into a SQL temp view") {
-    withTable("tab") {
-      withTempView("v") {
-        withTempView("src") {
-          Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
-          sql("CREATE TEMP VIEW v AS SELECT * FROM tab")
-          sql("CREATE TEMP VIEW src AS SELECT * FROM VALUES (1, 2), (3, 4) AS t(a, b)")
-          sql(
-            s"""
-               |MERGE INTO v
-               |USING src
-               |ON src.a = v.key AND src.b = v.value
-               |WHEN MATCHED THEN
-               |  UPDATE SET v.value = src.b + 1
-               |WHEN NOT MATCHED THEN
-               |  INSERT (v.key, v.value) VALUES (src.a, src.b)
-               |""".stripMargin)
-          checkAnswer(spark.table("tab"), Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
-        }
-      }
-    }
-  }
-
-  protected def testInvalidSqlTempView(name: String)(text: String, expectedError: String): Unit = {
-    test(s"can't merge into invalid SQL temp view - $name") {
-      withTable("tab") {
-        withTempView("v") {
+  test("merge into a dataset temp views with star") {
+    withTempView("v") {
+      def testMergeWithView(testClue: String): Unit = {
+        withClue(testClue) {
           withTempView("src") {
-            Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
-            sql(text)
-            sql("CREATE TEMP VIEW src AS SELECT * FROM VALUES (1, 2), (3, 4) AS t(a, b)")
-            val ex = intercept[AnalysisException] {
-              sql(
-                s"""
-                   |MERGE INTO v
-                   |USING src
-                   |ON src.a = v.key AND src.b = v.value
-                   |WHEN MATCHED THEN
-                   |  UPDATE SET v.value = src.b + 1
-                   |WHEN NOT MATCHED THEN
-                   |  INSERT (v.key, v.value) VALUES (src.a, src.b)
-                   |""".stripMargin)
-            }
-            assert(ex.getMessage.contains(expectedError))
+            sql("CREATE TEMP VIEW src AS SELECT * FROM VALUES (10, 1), (20, 2) AS t(value, key)")
+            sql(
+              s"""
+                 |MERGE INTO v
+                 |USING src
+                 |ON src.key = v.key
+                 |WHEN MATCHED THEN
+                 |  UPDATE SET *
+                 |WHEN NOT MATCHED THEN
+                 |  INSERT *
+                 |""".stripMargin)
+            checkAnswer(spark.sql(s"select * from v"), Seq(Row(0, 0), Row(1, 10), Row(2, 20)))
           }
         }
       }
-    }
-  }
 
-  testInvalidSqlTempView("subset cols")(
-    text = "CREATE TEMP VIEW v AS SELECT key FROM tab",
-    expectedError = "cannot resolve"
-  )
+      // View on path-based table
+      append(Seq((0, 0), (1, 1)).toDF("key", "value"))
+      readDeltaTable(tempPath).createOrReplaceTempView("v")
+      testMergeWithView("with path-based table")
 
-
-
-  // This test is to capture the incorrect behavior caused by
-  // https://github.com/delta-io/delta/issues/618 .
-  // If this test fails then the issue has been fixed. Replace this test with a correct test
-  test("merge into a dataset temp views with star gives incorrect results") {
-    withTempView("v") {
-      withTempView("src") {
-        append(Seq((0, 0), (1, 1)).toDF("key", "value"))
-        readDeltaTable(tempPath).createOrReplaceTempView("v")
-        sql("CREATE TEMP VIEW src AS SELECT * FROM VALUES (10, 1) AS t(value, key)")
-        sql(s"""MERGE INTO v USING src
-             |ON src.key = v.key
-             |WHEN MATCHED THEN
-             |  UPDATE SET *
-             |WHEN NOT MATCHED THEN
-             |  INSERT *
-             |""".stripMargin)
-        val result = readDeltaTable(tempPath).as[(Long, Long)].collect().toSet
-        // This is expected to fail until the issue mentioned above is resolved.
-        assert(result != Set((0, 0), (1, 10)))
+      // View on catalog table
+      withTable("tab") {
+        Seq((0, 0), (1, 1)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+        spark.table("tab").as("name").createOrReplaceTempView("v")
+        testMergeWithView(s"delta.`$tempPath`")
       }
     }
   }
 
+
+  testWithTempView("Update specific column does not work in temp views") { isSQLTempView =>
+    withJsonData(
+      """{ "key": "A", "value": { "a": { "x": 1 } } }""",
+      """{ "key": "A", "value": { "a": { "x": 2 } } }"""
+    ) { (sourceName, targetName) =>
+      createTempViewFromTable(targetName, isSQLTempView)
+      val fieldNames = spark.table(targetName).schema.fieldNames
+      val fieldNamesStr = fieldNames.mkString("`", "`, `", "`")
+      val e = intercept[AnalysisException] {
+        executeMerge(
+          target = "v t",
+          source = s"$sourceName s",
+          condition = "s.key = t.key",
+          update = "value.a.x = s.value.a.x",
+          insert = s"($fieldNamesStr) VALUES ($fieldNamesStr)")
+      }
+      assert(e.getMessage.contains("Unexpected assignment key"))
+    }
+  }
+
+  test("Complex Data Type - Array of Struct") {
+    withTable("source") {
+      withTable("target") {
+        // scalastyle:off line.size.limit
+        sql("CREATE TABLE source(`smtUidNr` STRING,`evt` ARRAY<STRUCT<`busLinCd`: STRING, `cmyHdrOidNr`: STRING, `cmyLinNr`: STRING, `coeOidNr`: STRING, `dclOidNr`: STRING, `evtCd`: STRING, `evtDclUidNr`: STRING, `evtDscTe`: STRING, `evtDt`: STRING, `evtLclTmZnNa`: STRING, `evtLclTs`: STRING, `evtOidNr`: STRING, `evtRef`: ARRAY<STRUCT<`refDt`: STRING, `refNr`: STRING, `refTypCd`: STRING, `refTypDscTe`: STRING>>, `evtShu`: ARRAY<STRUCT<`ledPkgIr`: STRING, `shuNr`: STRING, `shuRef`: ARRAY<STRUCT<`shuRefDscTe`: STRING, `shuRefDt`: STRING, `shuRefEffDt`: STRING, `shuRefNr`: STRING, `shuRefTe`: STRING, `shuRefTypCd`: STRING>>>>, `evtTypCd`: STRING, `evtUsrNr`: STRING, `evtUtcTcfQy`: STRING, `evtUtcTs`: STRING, `evtWstNa`: STRING, `loc`: ARRAY<STRUCT<`adCnySdvCd`: STRING, `adMunNa`: STRING, `adPslCd`: STRING, `al1Te`: STRING, `al2Te`: STRING, `al3Te`: STRING, `locAdCnyCd`: STRING, `locOgzNr`: STRING, `locXcpDclPorCd`: STRING, `upsDisNr`: STRING, `upsRegNr`: STRING>>, `mltDelOdrNr`: STRING, `mltPrfOfDelNa`: STRING, `mltSmtConNr`: STRING, `mnfOidNr`: STRING, `rpnEntLinNr`: STRING, `rpnEntLvlStsCd`: STRING, `rpnGovAcoTe`: STRING, `rpnInfSrcCrtLclTmZnNa`: STRING, `rpnInfSrcCrtLclTs`: STRING, `rpnInfSrcCrtUtcTcfQy`: STRING, `rpnInfSrcCrtUtcTs`: STRING, `rpnLinLvlStsCd`: STRING, `rpnPgaLinNr`: STRING, `smtDcvDt`: STRING, `smtNr`: STRING, `smtUidNr`: STRING, `xcpCtmDspCd`: STRING, `xcpGovAcoTe`: STRING, `xcpPgmCd`: STRING, `xcpRlvCd`: STRING, `xcpRlvDscTe`: STRING, `xcpRlvLclTmZnNa`: STRING, `xcpRlvLclTs`: STRING, `xcpRlvUtcTcfQy`: STRING, `xcpRlvUtcTs`: STRING, `xcpRsnCd`: STRING, `xcpRsnDscTe`: STRING, `xcpStsCd`: STRING, `xcpStsDscTe`: STRING>>,`msgTs` TIMESTAMP) using delta")
+        sql("CREATE TABLE target(`smtUidNr` STRING,`evt` ARRAY<STRUCT<`busLinCd`: STRING, `dclOidNr`: STRING, `evtCd`: STRING, `evtDclUidNr`: STRING, `evtDscTe`: STRING, `evtDt`: STRING, `evtLclTmZnNa`: STRING, `evtLclTs`: STRING, `evtOidNr`: STRING, `evtRef`: ARRAY<STRUCT<`refDt`: STRING, `refNr`: STRING, `refTypCd`: STRING, `refTypDscTe`: STRING>>, `evtShu`: ARRAY<STRUCT<`ledPkgIr`: STRING, `shuNr`: STRING, `shuRef`: ARRAY<STRUCT<`shuRefDscTe`: STRING, `shuRefDt`: STRING, `shuRefEffDt`: STRING, `shuRefNr`: STRING, `shuRefTe`: STRING, `shuRefTypCd`: STRING>>>>, `evtTypCd`: STRING, `evtUsrNr`: STRING, `evtUtcTcfQy`: STRING, `evtUtcTs`: STRING, `evtWstNa`: STRING, `loc`: ARRAY<STRUCT<`adCnySdvCd`: STRING, `adMunNa`: STRING, `adPslCd`: STRING, `al1Te`: STRING, `al2Te`: STRING, `al3Te`: STRING, `locAdCnyCd`: STRING, `locOgzNr`: STRING, `locXcpDclPorCd`: STRING, `upsDisNr`: STRING, `upsRegNr`: STRING>>, `mltDelOdrNr`: STRING, `mltPrfOfDelNa`: STRING, `mltSmtConNr`: STRING, `mnfOidNr`: STRING, `rpnEntLinNr`: STRING, `rpnEntLvlStsCd`: STRING, `rpnGovAcoTe`: STRING, `rpnInfSrcCrtLclTmZnNa`: STRING, `rpnInfSrcCrtLclTs`: STRING, `rpnInfSrcCrtUtcTcfQy`: STRING, `rpnInfSrcCrtUtcTs`: STRING, `rpnLinLvlStsCd`: STRING, `smtDcvDt`: STRING, `smtNr`: STRING, `smtUidNr`: STRING, `xcpCtmDspCd`: STRING, `xcpRlvCd`: STRING, `xcpRlvDscTe`: STRING, `xcpRlvLclTmZnNa`: STRING, `xcpRlvLclTs`: STRING, `xcpRlvUtcTcfQy`: STRING, `xcpRlvUtcTs`: STRING, `xcpRsnCd`: STRING, `xcpRsnDscTe`: STRING, `xcpStsCd`: STRING, `xcpStsDscTe`: STRING, `cmyHdrOidNr`: STRING, `cmyLinNr`: STRING, `coeOidNr`: STRING, `rpnPgaLinNr`: STRING, `xcpGovAcoTe`: STRING, `xcpPgmCd`: STRING>>,`msgTs` TIMESTAMP) using delta")
+        // scalastyle:on line.size.limit
+        sql(
+          s"""
+             |MERGE INTO target as r
+             |USING source as u
+             |ON u.smtUidNr = r.smtUidNr
+             |WHEN MATCHED and u.msgTs > r.msgTs THEN
+             |  UPDATE SET *
+             |WHEN NOT MATCHED THEN
+             |  INSERT *
+             """.stripMargin)
+      }
+    }
+  }
 }
+

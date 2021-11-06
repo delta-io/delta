@@ -17,13 +17,11 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.net.URI
 import java.util.concurrent.TimeUnit.NANOSECONDS
 
-import scala.collection.mutable
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{CommitStats, DeltaErrors, DeltaLog, DeltaOperations, OptimisticTransaction, Serializable, Snapshot}
+import org.apache.spark.sql.delta.{CommitStats, DeltaErrors, DeltaLog, DeltaOperations, OptimisticTransaction, Serializable}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -51,7 +49,7 @@ trait DeltaCommand extends DeltaLogging {
    *
    * @throws AnalysisException if a non-partition column is referenced.
    */
-  protected def parsePartitionPredicates(
+  protected def parsePredicates(
       spark: SparkSession,
       predicate: String): Seq[Expression] = {
     try {
@@ -77,9 +75,7 @@ trait DeltaCommand extends DeltaLogging {
           case u: UnresolvedAttribute =>
             // Note: `UnresolvedAttribute(Seq("a.b"))` and `UnresolvedAttribute(Seq("a", "b"))` will
             // return the same name. We accidentally treated the latter as the same as the former.
-            // Because some users may already rely on it, we keep supporting both. This is not
-            // ambiguous since "replaceWhere" only supports partition columns and it doesn't support
-            // struct type or map type.
+            // Because some users may already rely on it, we keep supporting both.
             u.nameParts.mkString(".")
           case _ => col.name
         }
@@ -166,7 +162,7 @@ trait DeltaCommand extends DeltaLogging {
       basePath: Path,
       filePath: String,
       nameToAddFileMap: Map[String, AddFile]): AddFile = {
-    val absolutePath = DeltaFileOperations.absolutePath(basePath.toUri.toString, filePath).toString
+    val absolutePath = DeltaFileOperations.absolutePath(basePath.toString, filePath).toString
     nameToAddFileMap.getOrElse(absolutePath, {
       throw new IllegalStateException(s"File ($absolutePath) to be rewritten not found " +
         s"among candidate files:\n${nameToAddFileMap.keys.mkString("\n")}")
@@ -236,12 +232,7 @@ trait DeltaCommand extends DeltaLogging {
 
     logInfo(s"Committed delta #$attemptVersion to ${deltaLog.logPath}. Wrote $commitSize actions.")
 
-    try {
-      deltaLog.checkpoint(currentSnapshot)
-    } catch {
-      case e: IllegalStateException =>
-        logWarning("Failed to checkpoint table state.", e)
-    }
+    deltaLog.checkpoint(currentSnapshot)
   }
 
   /**
@@ -275,7 +266,8 @@ trait DeltaCommand extends DeltaLogging {
         isolationLevel = Some(Serializable.toString),
         isBlindAppend = Some(false),
         Some(metrics),
-        userMetadata = txn.getUserMetadata(op))
+        userMetadata = txn.getUserMetadata(op),
+        tags = None)
 
       val extraActions = Seq(commitInfo, metadata)
       // We don't expect commits to have more than 2 billion actions
@@ -302,9 +294,13 @@ trait DeltaCommand extends DeltaLogging {
         action
       }
       if (txn.readVersion < 0) {
-        deltaLog.fs.mkdirs(deltaLog.logPath)
+        deltaLog.createLogDirectory()
       }
-      deltaLog.store.write(deltaFile(deltaLog.logPath, attemptVersion), allActions.map(_.json))
+      deltaLog.store.write(
+        deltaFile(deltaLog.logPath, attemptVersion),
+        allActions.map(_.json),
+        overwrite = false,
+        deltaLog.newDeltaHadoopConf())
 
       spark.sessionState.conf.setConf(
         DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,
@@ -344,7 +340,9 @@ trait DeltaCommand extends DeltaLogging {
           data = Map("exception" -> Utils.exceptionString(e), "operation" -> op.name))
         // Actions of a commit which went in before ours
         val deltaLog = txn.deltaLog
-        val logs = deltaLog.store.readAsIterator(deltaFile(deltaLog.logPath, attemptVersion))
+        val logs = deltaLog.store.readAsIterator(
+          deltaFile(deltaLog.logPath, attemptVersion),
+          deltaLog.newDeltaHadoopConf())
         try {
           val winningCommitActions = logs.map(Action.fromJson)
           val commitInfo = winningCommitActions.collectFirst { case a: CommitInfo => a }

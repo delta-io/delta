@@ -16,17 +16,17 @@
 
 import java.nio.file.Files
 
-val sparkVersion = "3.1.1"
-scalaVersion := "2.12.10"
+val sparkVersion = "3.2.0"
+scalaVersion := "2.12.14"
 
 lazy val commonSettings = Seq(
   organization := "io.delta",
-  scalaVersion := "2.12.10",
+  scalaVersion := "2.12.14",
   fork := true
 )
 
 lazy val core = (project in file("core"))
-  .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin)
+  .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin, Antlr4Plugin)
   .settings (
     name := "delta-core",
     commonSettings,
@@ -51,23 +51,22 @@ lazy val core = (project in file("core"))
       "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
 
       // Compiler plugins
-      // -- Bump up the genjavadoc version explicitly to 0.16 to work with Scala 2.12
-      compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.16" cross CrossVersion.full)
+      // -- Bump up the genjavadoc version explicitly to 0.18 to work with Scala 2.12
+      compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.18" cross CrossVersion.full)
     ),
-    (mappings in (Compile, packageBin)) := (mappings in (Compile, packageBin)).value ++
+    Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
         listPythonFiles(baseDirectory.value.getParentFile / "python"),
 
-    antlr4Settings,
-    antlr4Version in Antlr4 := "4.8",
-    antlr4PackageName in Antlr4 := Some("io.delta.sql.parser"),
-    antlr4GenListener in Antlr4 := true,
-    antlr4GenVisitor in Antlr4 := true,
+    Antlr4 / antlr4Version:= "4.8",
+    Antlr4 / antlr4PackageName := Some("io.delta.sql.parser"),
+    Antlr4 / antlr4GenListener := true,
+    Antlr4 / antlr4GenVisitor := true,
 
-    testOptions in Test += Tests.Argument("-oDF"),
-    testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
+    Test / testOptions += Tests.Argument("-oDF"),
+    Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
 
     // Don't execute in parallel since we can't have multiple Sparks in the same JVM
-    parallelExecution in Test := false,
+    Test / parallelExecution := false,
 
     scalacOptions ++= Seq(
       "-target:jvm-1.8",
@@ -77,7 +76,7 @@ lazy val core = (project in file("core"))
     javaOptions += "-Xmx1024m",
 
     // Configurations to speed up tests and reduce memory footprint
-    javaOptions in Test ++= Seq(
+    Test / javaOptions ++= Seq(
       "-Dspark.ui.enabled=false",
       "-Dspark.ui.showConsoleProgress=false",
       "-Dspark.databricks.delta.snapshotPartitions=2",
@@ -92,7 +91,7 @@ lazy val core = (project in file("core"))
       val dir = baseDirectory.value.getParentFile / "target" / "scala-2.12" / "classes"
       Files.createDirectories(dir.toPath)
     },
-    (compile in Compile) := ((compile in Compile) dependsOn createTargetClassesDir).value
+    Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value
   )
 
 lazy val contribs = (project in file("contribs"))
@@ -102,14 +101,14 @@ lazy val contribs = (project in file("contribs"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
-    (mappings in (Compile, packageBin)) := (mappings in (Compile, packageBin)).value ++
+    Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
       listPythonFiles(baseDirectory.value.getParentFile / "python"),
 
-    testOptions in Test += Tests.Argument("-oDF"),
-    testOptions in Test += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
+    Test / testOptions += Tests.Argument("-oDF"),
+    Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
 
     // Don't execute in parallel since we can't have multiple Sparks in the same JVM
-    parallelExecution in Test := false,
+    Test / parallelExecution := false,
 
     scalacOptions ++= Seq(
       "-target:jvm-1.8"
@@ -118,7 +117,7 @@ lazy val contribs = (project in file("contribs"))
     javaOptions += "-Xmx1024m",
 
     // Configurations to speed up tests and reduce memory footprint
-    javaOptions in Test ++= Seq(
+    Test / javaOptions ++= Seq(
       "-Dspark.ui.enabled=false",
       "-Dspark.ui.showConsoleProgress=false",
       "-Dspark.databricks.delta.snapshotPartitions=2",
@@ -133,7 +132,7 @@ lazy val contribs = (project in file("contribs"))
       val dir = baseDirectory.value.getParentFile / "target" / "scala-2.12" / "classes"
       Files.createDirectories(dir.toPath)
     },
-    (compile in Compile) := ((compile in Compile) dependsOn createTargetClassesDir).value
+    Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value
   )
 
 /**
@@ -148,10 +147,11 @@ def listPythonFiles(pythonBase: File): Seq[(File, String)] = {
     .filter { file => file.getName.endsWith(".py") && ! file.getName.contains("test") }
     .filter { file => ! pythonExcludeDirs.exists { base => IO.relativize(base, file).nonEmpty} }
     .toSeq
-  pythonFiles pair relativeTo(pythonBase)
+
+  pythonFiles pair Path.relativeTo(pythonBase)
 }
 
-parallelExecution in ThisBuild := false
+ThisBuild / parallelExecution := false
 
 val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
@@ -160,19 +160,19 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
  * ScalaStyle settings *
  ***********************
  */
-scalastyleConfig in ThisBuild := baseDirectory.value / "scalastyle-config.xml"
+ThisBuild / scalastyleConfig := baseDirectory.value / "scalastyle-config.xml"
 
 lazy val compileScalastyle = taskKey[Unit]("compileScalastyle")
 lazy val testScalastyle = taskKey[Unit]("testScalastyle")
 
 lazy val scalaStyleSettings = Seq(
-  compileScalastyle := scalastyle.in(Compile).toTask("").value,
+  compileScalastyle := (Compile / scalastyle).toTask("").value,
 
-  (compile in Compile) := ((compile in Compile) dependsOn compileScalastyle).value,
+  Compile / compile := ((Compile / compile) dependsOn compileScalastyle).value,
 
-  testScalastyle := scalastyle.in(Test).toTask("").value,
+  testScalastyle := (Test / scalastyle).toTask("").value,
 
-  (test in Test) := ((test in Test) dependsOn testScalastyle).value
+  Test / test := ((Test / test) dependsOn testScalastyle).value
 )
 
 /*
@@ -211,7 +211,7 @@ def getPrevVersion(currentVersion: String): String = {
 }
 
 lazy val mimaSettings = Seq(
-  (test in Test) := ((test in Test) dependsOn mimaReportBinaryIssues).value,
+  Test / test := ((Test / test) dependsOn mimaReportBinaryIssues).value,
   mimaPreviousArtifacts := Set("io.delta" %% "delta-core" %  getPrevVersion(version.value)),
   mimaBinaryIssueFilters ++= MimaExcludes.ignoredABIProblems
 )
@@ -232,15 +232,15 @@ def ignoreUndocumentedPackages(packages: Seq[Seq[java.io.File]]): Seq[Seq[java.i
 }
 
 lazy val unidocSettings = Seq(
-
+  
   // Configure Scala unidoc
-  scalacOptions in(ScalaUnidoc, unidoc) ++= Seq(
+  ScalaUnidoc / unidoc / scalacOptions ++= Seq(
     "-skip-packages", "org:com:io.delta.sql:io.delta.tables.execution",
     "-doc-title", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " ScalaDoc"
   ),
 
   // Configure Java unidoc
-  javacOptions in(JavaUnidoc, unidoc) := Seq(
+  JavaUnidoc / unidoc / javacOptions := Seq(
     "-public",
     "-exclude", "org:com:io.delta.sql:io.delta.tables.execution",
     "-windowtitle", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
@@ -250,12 +250,12 @@ lazy val unidocSettings = Seq(
     "-Xdoclint:all"
   ),
 
-  unidocAllSources in(JavaUnidoc, unidoc) := {
-    ignoreUndocumentedPackages((unidocAllSources in(JavaUnidoc, unidoc)).value)
+  JavaUnidoc / unidoc / unidocAllSources := {
+    ignoreUndocumentedPackages((JavaUnidoc / unidoc / unidocAllSources).value)
   },
 
   // Ensure unidoc is run with tests
-  (test in Test) := ((test in Test) dependsOn unidoc.in(Compile)).value
+  Test / test := ((Test / test) dependsOn (Compile / unidoc)).value
 )
 
 /*

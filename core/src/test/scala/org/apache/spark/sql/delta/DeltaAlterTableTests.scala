@@ -35,7 +35,8 @@ import org.apache.spark.util.Utils
 
 trait DeltaAlterTableTestBase
   extends QueryTest
-  with SharedSparkSession {
+  with SharedSparkSession
+  with DeltaColumnMappingTestUtils  with DeltaTestUtilsForTempViews {
 
   protected def createTable(schema: String, tblProperties: Map[String, String]): String
 
@@ -109,7 +110,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
 
       val deltaLog = getDeltaLog(tableName)
       val snapshot1 = deltaLog.update()
-      assert(snapshot1.metadata.configuration == Map(
+      assertEqual(snapshot1.metadata.configuration, Map(
         "delta.logRetentionDuration" -> "2 weeks",
         "delta.checkpointInterval" -> "20",
         "key" -> "value"))
@@ -119,10 +120,30 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName UNSET TBLPROPERTIES ('delta.checkpointInterval', 'key')")
 
       val snapshot2 = deltaLog.update()
-      assert(snapshot2.metadata.configuration == Map("delta.logRetentionDuration" -> "2 weeks"))
+      assertEqual(snapshot2.metadata.configuration,
+        Map("delta.logRetentionDuration" -> "2 weeks"))
       assert(deltaLog.deltaRetentionMillis == 2 * 7 * 24 * 60 * 60 * 1000)
       assert(deltaLog.checkpointInterval ==
         CHECKPOINT_INTERVAL.fromString(CHECKPOINT_INTERVAL.defaultValue))
+    }
+  }
+
+  testQuietlyWithTempView("negative case - not supported on temp views") { isSQLTempView =>
+    withDeltaTable("v1 int, v2 string") { tableName =>
+      createTempViewFromTable(tableName, isSQLTempView)
+
+      val e = intercept[AnalysisException] {
+        sql(
+          """
+            |ALTER TABLE v
+            |SET TBLPROPERTIES (
+            |  'delta.logRetentionDuration' = '2 weeks',
+            |  'delta.checkpointInterval' = '20',
+            |  'key' = 'value'
+            |)""".stripMargin)
+      }
+      assert(e.getMessage.contains("expects a table. Please use ALTER VIEW instead.") ||
+        e.getMessage.contains("'v' is a view not a table."))
     }
   }
 
@@ -139,7 +160,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
 
       val deltaLog = getDeltaLog(tableName)
       val snapshot1 = deltaLog.update()
-      assert(snapshot1.metadata.configuration == Map(
+      assertEqual(snapshot1.metadata.configuration, Map(
         "delta.logRetentionDuration" -> "1 weeks",
         "delta.checkpointInterval" -> "5",
         "key" -> "value1"))
@@ -155,7 +176,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         |)""".stripMargin)
 
       val snapshot2 = deltaLog.update()
-      assert(snapshot2.metadata.configuration == Map(
+      assertEqual(snapshot2.metadata.configuration, Map(
         "delta.logRetentionDuration" -> "2 weeks",
         "delta.checkpointInterval" -> "20",
         "key" -> "value1",
@@ -166,7 +187,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName UNSET TBLPROPERTIES ('DelTa.ChEckPoiNtinTervAl', 'kEy')")
 
       val snapshot3 = deltaLog.update()
-      assert(snapshot3.metadata.configuration ==
+      assertEqual(snapshot3.metadata.configuration,
         Map("delta.logRetentionDuration" -> "2 weeks", "key" -> "value1"))
       assert(deltaLog.deltaRetentionMillis == 2 * 7 * 24 * 60 * 60 * 1000)
       assert(deltaLog.checkpointInterval ==
@@ -278,7 +299,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName ADD COLUMNS (v3 long, v4 double)")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v1", "integer").add("v2", "string")
         .add("v3", "long").add("v4", "double"))
 
@@ -297,7 +318,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
          """.stripMargin)
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v1", "integer").add("v2", "string")
         .add("a", ArrayType(new StructType()
           .add("v1", "integer")
@@ -308,7 +329,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
            |ALTER TABLE $tableName ADD COLUMNS (a.element.v4 struct<f1:long>)
          """.stripMargin)
 
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v1", "integer").add("v2", "string")
         .add("a", ArrayType(new StructType()
           .add("v1", "integer")
@@ -320,7 +341,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
            |ALTER TABLE $tableName ADD COLUMNS (a.element.v4.f2 string)
          """.stripMargin)
 
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v1", "integer").add("v2", "string")
         .add("a", ArrayType(new StructType()
           .add("v1", "integer")
@@ -341,7 +362,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
          """.stripMargin)
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v1", "integer").add("v2", "string")
         .add("m", MapType(IntegerType,
           new StructType()
@@ -360,7 +381,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
          """.stripMargin)
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v1", "integer").add("v2", "string")
         .add("m", MapType(
           new StructType()
@@ -380,15 +401,17 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
              |ALTER TABLE $tableName ADD COLUMNS (m.key.mkv3 long)
          """.stripMargin)
       }
-      assert(ex.getMessage.contains("Cannot add"))
+      assert(ex.getMessage.contains("Field name m.key.mkv3 is invalid: m.key is not a struct") ||
+        ex.getMessage.contains("Cannot add m.key.mkv3"))
 
       ex = intercept[AnalysisException] {
         sql(
           s"""
-             |ALTER TABLE $tableName ADD COLUMNS (m.key.mkv3 long)
+             |ALTER TABLE $tableName ADD COLUMNS (m.value.mkv3 long)
          """.stripMargin)
       }
-      assert(ex.getMessage.contains("Cannot add"))
+      assert(ex.getMessage.contains("Cannot add m.value.mkv3") ||
+        ex.getMessage.contains("Field name m.value.mkv3 is invalid: m.value is not a struct"))
     }
   }
 
@@ -402,7 +425,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
          """.stripMargin)
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v1", "integer").add("v2", "string")
         .add("m", MapType(
           new StructType()
@@ -425,7 +448,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
          """.stripMargin)
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v1", "integer").add("v2", "string")
         .add("m", MapType(
           new StructType()
@@ -444,7 +467,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
            |(m.value.mvv3.f2.element.p string)
          """.stripMargin)
 
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v1", "integer").add("v2", "string")
         .add("m", MapType(
           new StructType()
@@ -470,7 +493,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
              |ALTER TABLE $tableName ADD COLUMNS (m.mkv3 long)
            """.stripMargin)
       }
-      assert(ex.getMessage.contains("Cannot add"))
+      assert(ex.getMessage.contains("Field name m.mkv3 is invalid: m is not a struct") ||
+        ex.getMessage.contains("Cannot add m.mkv3"))
     }
   }
 
@@ -497,7 +521,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName ADD COLUMNS (v3 long, v4 double)")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v1", "integer").add("v2", "string")
         .add("v3", "long").add("v4", "double"))
 
@@ -517,7 +541,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName ADD COLUMNS (v3 long COMMENT 'new column')")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v1", "integer").add("v2", "string")
         .add("v3", "long", true, "new column"))
 
@@ -533,8 +557,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       val ex = intercept[AnalysisException] {
         sql(s"ALTER TABLE $tableName ADD COLUMNS (v2.x long)")
       }
-      assert(ex.getMessage.contains("Cannot add"))
-      assert(ex.getMessage.contains("not a StructType"))
+      assert(ex.getMessage.contains("Field name v2.x is invalid: v2 is not a struct") ||
+        ex.getMessage.contains("Cannot add v2.x"))
     }
   }
 
@@ -561,7 +585,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       val ex = intercept[AnalysisException] {
         sql(s"ALTER TABLE $tableName ADD COLUMNS (`a column name with spaces` long)")
       }
-      assert(ex.getMessage.contains("contains invalid character(s)"))
+      assert(ex.getMessage.contains("invalid character(s)"))
     }
   }
 
@@ -573,7 +597,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       val ex = intercept[AnalysisException] {
         sql(s"ALTER TABLE $tableName ADD COLUMNS (struct.`a column name with spaces` long)")
       }
-      assert(ex.getMessage.contains("contains invalid character(s)"))
+      assert(ex.getMessage.contains("invalid character(s)"))
     }
   }
 
@@ -589,7 +613,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName ADD COLUMNS (`x.x` long, `z.z`.`y.y` double)")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v1", "integer").add("v2", "string")
         .add("z.z", new StructType()
           .add("v1", "integer").add("v2", "string").add("y.y", "double"))
@@ -612,7 +636,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName ADD COLUMNS (v3 long FIRST, v4 long AFTER v1, v5 long)")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v3", "long").add("v1", "integer")
         .add("v4", "long").add("v2", "string").add("v5", "long"))
 
@@ -633,7 +657,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql("ALTER TABLE delta_test ADD COLUMNS (v3 long FIRST, v4 long AFTER v3, v5 long AFTER v4)")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v3", "long").add("v4", "long").add("v5", "long")
         .add("v1", "integer").add("v2", "string"))
 
@@ -656,7 +680,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         "(struct.v3 long FIRST, struct.v4 long AFTER v1, struct.v5 long)")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v1", "integer").add("v2", "string")
         .add("struct", new StructType()
           .add("v3", "long").add("v1", "integer")
@@ -681,7 +705,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName ADD COLUMNS (`x.x` long after v1, `z.z`.`y.y` double)")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v1", "integer").add("x.x", "long").add("v2", "string")
         .add("z.z", new StructType()
           .add("v1", "integer").add("v2", "string").add("y.y", "double"))
@@ -712,7 +736,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         sql(s"ALTER TABLE $tableName ADD COLUMNS (v3 long AFTER V1)")
 
         val deltaLog = getDeltaLog(tableName)
-        assert(deltaLog.snapshot.schema == new StructType()
+        assertEqual(deltaLog.snapshot.schema, new StructType()
           .add("v1", "integer").add("v3", "long").add("v2", "string"))
       }
     }
@@ -741,7 +765,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName CHANGE COLUMN v1 v1 integer COMMENT 'a comment'")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v1", "integer", true, "a comment").add("v2", "string"))
     }
   }
@@ -752,7 +776,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName CHANGE COLUMN v2 v2 string COMMENT 'a comment'")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v1", "integer").add("v2", "string", true, "a comment"))
     }
   }
@@ -766,7 +790,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName CHANGE COLUMN `x.x` `x.x` integer COMMENT 'another comment'")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("x.x", "integer", true, "another comment")
         .add("y.y", "string")
         .add("z.z", new StructType()
@@ -790,7 +814,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
          """.stripMargin)
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v1", "integer").add("v2", "string")
         .add("a", ArrayType(new StructType()
             .add("col1", ArrayType(new StructType()
@@ -813,7 +837,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
          """.stripMargin)
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v1", "integer").add("v2", "string")
         .add("m", MapType(
           new StructType()
@@ -832,7 +856,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName CHANGE COLUMN a a ARRAY<int> COMMENT 'a comment'")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v1", "integer").add("v2", "string")
         .add("a", ArrayType(IntegerType), nullable = true, "a comment"))
     }
@@ -849,7 +873,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
          """.stripMargin)
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v1", "integer").add("v2", "string")
         .add("a", MapType(IntegerType, StringType), nullable = true, "a comment"))
     }
@@ -891,7 +915,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName CHANGE COLUMN v2 v2 string FIRST")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v2", "string").add("v1", "integer"))
 
       checkDatasetUnorderly(
@@ -908,7 +932,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName CHANGE COLUMN struct.v2 v2 string FIRST")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.update().schema == new StructType()
+      assertEqual(deltaLog.update().schema, new StructType()
         .add("v1", "integer").add("v2", "string")
         .add("struct", new StructType()
           .add("v2", "string").add("v1", "integer")))
@@ -924,7 +948,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName CHANGE COLUMN struct struct " +
         "STRUCT<v2:string, v1:integer> FIRST")
 
-      assert(deltaLog.update().schema == new StructType()
+      assertEqual(deltaLog.update().schema, new StructType()
         .add("struct", new StructType().add("v2", "string").add("v1", "integer"))
         .add("v1", "integer").add("v2", "string"))
     }
@@ -937,7 +961,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName CHANGE COLUMN v3 v3 boolean FIRST")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v3", "boolean").add("v1", "integer").add("v2", "string"))
 
       checkDatasetUnorderly(
@@ -953,7 +977,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName CHANGE COLUMN v1 v1 integer AFTER v2")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v2", "string").add("v1", "integer"))
 
       checkDatasetUnorderly(
@@ -970,7 +994,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName CHANGE COLUMN struct.v1 v1 integer AFTER v2")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.update().schema == new StructType()
+      assertEqual(deltaLog.update().schema, new StructType()
         .add("v1", "integer").add("v2", "string")
         .add("struct", new StructType()
           .add("v2", "string").add("v1", "integer")))
@@ -987,7 +1011,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName CHANGE COLUMN struct struct " +
         "STRUCT<v2:string, v1:integer> AFTER v1")
 
-      assert(deltaLog.update().schema == new StructType()
+      assertEqual(deltaLog.update().schema, new StructType()
         .add("v1", "integer")
         .add("struct", new StructType().add("v2", "string").add("v1", "integer"))
         .add("v2", "string"))
@@ -1001,7 +1025,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName CHANGE COLUMN v1 v1 integer AFTER v1")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v1", "integer").add("v2", "string"))
 
       checkDatasetUnorderly(
@@ -1018,7 +1042,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName CHANGE COLUMN struct.v1 v1 integer AFTER v1")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v1", "integer").add("v2", "string")
         .add("struct", new StructType()
           .add("v1", "integer").add("v2", "string")))
@@ -1036,7 +1060,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName CHANGE COLUMN v3 v3 boolean AFTER v1")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v1", "integer").add("v3", "boolean").add("v2", "string"))
 
       checkDatasetUnorderly(
@@ -1052,7 +1076,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName CHANGE COLUMN v1 v1 integer AFTER v2")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v2", "string").add("v1", "integer"))
     }
   }
@@ -1063,7 +1087,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName CHANGE COLUMN `x.x` `x.x` integer AFTER `y.y`")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("y.y", "string").add("x.x", "integer"))
 
       checkDatasetUnorderly(
@@ -1080,7 +1104,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName CHANGE COLUMN `z.z`.`x.x` `x.x` integer AFTER `y.y`")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("x.x", "integer").add("y.y", "string")
         .add("z.z", new StructType()
           .add("y.y", "string").add("x.x", "integer")))
@@ -1098,8 +1122,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       val ex = intercept[AnalysisException] {
         sql(s"ALTER TABLE $tableName CHANGE COLUMN v1 v1 integer AFTER unknown")
       }
-      assert(ex.getMessage.contains("Couldn't"))
-      assert(ex.getMessage.contains("unknown"))
+      assert(ex.getMessage.contains("Missing field unknown") ||
+        ex.getMessage.contains("Couldn't resolve positional argument AFTER unknown"))
     }
   }
 
@@ -1111,8 +1135,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       val ex = intercept[AnalysisException] {
         sql(s"ALTER TABLE $tableName CHANGE COLUMN struct.v1 v1 integer AFTER unknown")
       }
-      assert(ex.getMessage.contains("Couldn't"))
-      assert(ex.getMessage.contains("unknown"))
+      assert(ex.getMessage.contains("Missing field struct.unknown") ||
+        ex.getMessage.contains("Couldn't resolve positional argument AFTER unknown"))
     }
   }
 
@@ -1173,7 +1197,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName CHANGE COLUMN struct.v1 v1 integer COMMENT 'a comment'")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.update().schema == new StructType()
+      assertEqual(deltaLog.update().schema, new StructType()
         .add("v1", "integer").add("v2", "string")
         .add("struct", new StructType()
           .add("v1", "integer", true, "a comment").add("v2", "string")))
@@ -1219,7 +1243,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       val ex = intercept[AnalysisException] {
         sql(s"ALTER TABLE $tableName CHANGE COLUMN unknown unknown string FIRST")
       }
-      assert(ex.getMessage.contains("Cannot update missing field unknown"))
+      assert(ex.getMessage.contains("Missing field unknown") ||
+        ex.getMessage.contains("Cannot update missing field unknown"))
     }
   }
 
@@ -1231,7 +1256,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       val ex = intercept[AnalysisException] {
         sql(s"ALTER TABLE $tableName CHANGE COLUMN struct.unknown unknown string FIRST")
       }
-      assert(ex.getMessage.contains("Cannot update missing field struct.unknown in"))
+      assert(ex.getMessage.contains("Missing field struct.unknown") ||
+        ex.getMessage.contains("Cannot update missing field struct.unknown"))
     }
   }
 
@@ -1245,19 +1271,19 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
 
         sql(s"ALTER TABLE $tableName CHANGE COLUMN V1 v1 integer")
 
-        assert(deltaLog.update().schema == new StructType()
+        assertEqual(deltaLog.update().schema, new StructType()
           .add("v1", "integer").add("v2", "string")
           .add("s", new StructType().add("v1", "integer").add("v2", "string")))
 
         sql(s"ALTER TABLE $tableName CHANGE COLUMN v1 V1 integer")
 
-        assert(deltaLog.update().schema == new StructType()
+        assertEqual(deltaLog.update().schema, new StructType()
           .add("v1", "integer").add("v2", "string")
           .add("s", new StructType().add("v1", "integer").add("v2", "string")))
 
         sql(s"ALTER TABLE $tableName CHANGE COLUMN v1 v1 integer AFTER V2")
 
-        assert(deltaLog.update().schema == new StructType()
+        assertEqual(deltaLog.update().schema, new StructType()
           .add("v2", "string").add("v1", "integer")
           .add("s", new StructType().add("v1", "integer").add("v2", "string")))
 
@@ -1268,7 +1294,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         sql(
           s"ALTER TABLE $tableName CHANGE COLUMN s s struct<v1:integer,v2:string> AFTER V2")
 
-        assert(deltaLog.update().schema == new StructType()
+        assertEqual(deltaLog.update().schema, new StructType()
           .add("v2", "string")
           .add("s", new StructType().add("v1", "integer").add("v2", "string"))
           .add("v1", "integer"))
@@ -1285,7 +1311,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         val ex1 = intercept[AnalysisException] {
           sql(s"ALTER TABLE $tableName CHANGE COLUMN V1 V1 integer")
         }
-        assert(ex1.getMessage.contains("Cannot update missing field V1"))
+        assert(ex1.getMessage.contains("Missing field V1") ||
+          ex1.getMessage.contains("Cannot update missing field V1"))
 
         val ex2 = intercept[AnalysisException] {
           sql(s"ALTER TABLE $tableName CHANGE COLUMN v1 V1 integer")
@@ -1295,7 +1322,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         val ex3 = intercept[AnalysisException] {
           sql(s"ALTER TABLE $tableName CHANGE COLUMN v1 v1 integer AFTER V2")
         }
-        assert(ex3.getMessage.contains("Couldn't resolve positional argument"))
+        assert(ex3.getMessage.contains("Missing field V2") ||
+          ex3.getMessage.contains("Couldn't resolve positional argument AFTER V2"))
 
         val ex4 = intercept[AnalysisException] {
           sql(s"ALTER TABLE $tableName CHANGE COLUMN s s struct<V1:integer,v2:string> AFTER v2")
@@ -1348,7 +1376,7 @@ trait DeltaAlterTableByNameTests extends DeltaAlterTableTests {
         sql("ALTER TABLE delta_test ADD COLUMNS (v3 long, v4 double)")
 
         val deltaLog = DeltaLog.forTable(spark, path)
-        assert(deltaLog.snapshot.schema == new StructType()
+        assertEqual(deltaLog.snapshot.schema, new StructType()
           .add("v1", "integer").add("v2", "string")
           .add("v3", "long").add("v4", "double"))
 
@@ -1477,7 +1505,7 @@ trait DeltaAlterTableByPathTests extends DeltaAlterTableTestBase {
 
       val deltaLog = getDeltaLog(tableName)
       val snapshot1 = deltaLog.update()
-      assert(snapshot1.metadata.configuration == Map(
+      assertEqual(snapshot1.metadata.configuration, Map(
         "delta.logRetentionDuration" -> "2 weeks",
         "delta.checkpointInterval" -> "20",
         "key" -> "value"))
@@ -1487,7 +1515,8 @@ trait DeltaAlterTableByPathTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName UNSET TBLPROPERTIES ('delta.checkpointInterval', 'key')")
 
       val snapshot2 = deltaLog.update()
-      assert(snapshot2.metadata.configuration == Map("delta.logRetentionDuration" -> "2 weeks"))
+      assertEqual(snapshot2.metadata.configuration,
+        Map("delta.logRetentionDuration" -> "2 weeks"))
       assert(deltaLog.deltaRetentionMillis == 2 * 7 * 24 * 60 * 60 * 1000)
       assert(deltaLog.checkpointInterval ==
         CHECKPOINT_INTERVAL.fromString(CHECKPOINT_INTERVAL.defaultValue))
@@ -1503,7 +1532,7 @@ trait DeltaAlterTableByPathTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName ADD COLUMNS (v3 long, v4 double)")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v1", "integer").add("v2", "string")
         .add("v3", "long").add("v4", "double"))
 
@@ -1519,7 +1548,7 @@ trait DeltaAlterTableByPathTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName CHANGE COLUMN v1 v1 integer COMMENT 'a comment'")
 
       val deltaLog = getDeltaLog(tableName)
-      assert(deltaLog.snapshot.schema == new StructType()
+      assertEqual(deltaLog.snapshot.schema, new StructType()
         .add("v1", "integer", true, "a comment").add("v2", "string"))
     }
   }
@@ -1554,7 +1583,7 @@ class DeltaAlterTableByNameSuite
 
       val deltaLog = getDeltaLog(tableName)
       val snapshot1 = deltaLog.update()
-      assert(snapshot1.metadata.configuration == Map(
+      assertEqual(snapshot1.metadata.configuration, Map(
         "delta.randomPrefixLength" -> "5",
         "key" -> "value"))
 
@@ -1562,10 +1591,11 @@ class DeltaAlterTableByNameSuite
         "('delta.randomizeFilePrefixes', 'kEy')")
 
       val snapshot2 = deltaLog.update()
-      assert(snapshot2.metadata.configuration ==
+      assertEqual(snapshot2.metadata.configuration,
         Map("delta.randomPrefixLength" -> "5", "key" -> "value"))
     }
   }
 }
 
 class DeltaAlterTableByPathSuite extends DeltaAlterTableByPathTests with DeltaSQLCommandTest
+

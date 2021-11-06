@@ -38,7 +38,6 @@ import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.BucketSpec
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
@@ -151,6 +150,11 @@ object DeltaErrors
       s"For more information, see $faqPath"
   }
 
+  def columnNotFound(path: Seq[String], schema: StructType): Throwable = {
+    val name = UnresolvedAttribute(path).name
+    new AnalysisException(s"Can't resolve column ${name} in ${schema.treeString}")
+  }
+
 
   def formatColumn(colName: String): String = s"`$colName`"
 
@@ -187,6 +191,10 @@ object DeltaErrors
     new AnalysisException(
       s"Constraint '$name' already exists as a CHECK constraint. Please delete the old " +
         s"constraint first.\nOld constraint:\n${oldExpr}")
+  }
+
+  def invalidConstraintName(name: String): AnalysisException = {
+    new AnalysisException(s"Cannot use '$name' as the name of a CHECK constraint.")
   }
 
   def checkConstraintNotBoolean(name: String, expr: String): AnalysisException = {
@@ -444,6 +452,10 @@ object DeltaErrors
     new AnalysisException(s"$path doesn't exist")
   }
 
+  def directoryNotFoundException(path: String): Throwable = {
+    new FileNotFoundException(s"$path doesn't exist")
+  }
+
   def pathAlreadyExistsException(path: Path): Throwable = {
     new AnalysisException(s"$path already exists.")
   }
@@ -512,6 +524,15 @@ object DeltaErrors
       s"Data written into Delta needs to contain at least one non-partitioned column.$msg")
   }
 
+  def replaceWhereMismatchException(
+      replaceWhere: String,
+      invariantViolation: InvariantViolationException): Throwable = {
+    new AnalysisException(
+      s"Data written out does not match replaceWhere '$replaceWhere'.\n" +
+        invariantViolation.getMessage,
+      cause = Some(invariantViolation))
+  }
+
   def replaceWhereMismatchException(replaceWhere: String, badPartitions: String): Throwable = {
     new AnalysisException(
       s"""Data written out does not match replaceWhere '$replaceWhere'.
@@ -561,8 +582,11 @@ object DeltaErrors
        """.stripMargin)
   }
 
-  def schemaChangedException(oldSchema: StructType, newSchema: StructType): Throwable = {
-    new IllegalStateException(
+  def schemaChangedException(
+      oldSchema: StructType,
+      newSchema: StructType,
+      retryable: Boolean): Throwable = {
+    val msg =
       s"""Detected schema change:
         |old schema: ${formatSchema(oldSchema)}
         |
@@ -571,7 +595,8 @@ object DeltaErrors
         |Please try restarting the query. If this issue repeats across query restarts without making
         |progress, you have made an incompatible schema change and need to start your query from
         |scratch using a new checkpoint directory.
-      """.stripMargin)
+      """.stripMargin
+    new IllegalStateException(msg)
   }
 
   def streamWriteNullTypeException: Throwable = {
@@ -1129,10 +1154,123 @@ object DeltaErrors
         s"but the column type is ${columnType.sql}")
   }
 
-  def updateOnTempViewWithGenerateColsNotSupported: Throwable = {
+  def operationOnTempViewWithGenerateColsNotSupported(op: String): Throwable = {
     new AnalysisException(
-      s"Updating a temp view referring to a Delta table that contains generated columns is not " +
-        s"supported. Please run the update command on the Delta table directly")
+      s"${op} command on a temp view referring to a Delta table that contains generated columns " +
+        s"is not supported. Please run the ${op} command on the Delta table directly")
+  }
+
+  def cannotModifyTableProperty(prop: String): Throwable =
+    new UnsupportedOperationException(
+      s"The Delta table configuration $prop cannot be specified by the user")
+
+  /**
+   * We have plans to support more column mapping modes, but they are not implemented yet,
+   * so we error for now to be forward compatible with tables created in the future.
+   */
+  def unknownColumnMappingMode(mode: String): Throwable =
+    new ColumnMappingUnsupportedException(s"The column mapping mode `$mode` is not" +
+      s" supported. Supported modes in this version are: `none` and `id`." +
+      s" Please upgrade Delta to access this table.")
+
+  def missingColumnId(mode: DeltaColumnMappingMode, field: String): Throwable = {
+    ColumnMappingException(s"Missing column ID in column mapping mode `${mode.name}`" +
+      s" in the field: $field", mode)
+  }
+
+  def missingPhysicalName(mode: DeltaColumnMappingMode, field: String): Throwable =
+    ColumnMappingException(s"Missing physical name in column mapping mode `${mode.name}`" +
+      s" in the field: $field", mode)
+
+  def duplicatedColumnId(
+      mode: DeltaColumnMappingMode,
+      field: String,
+      field2: String): Throwable = {
+    ColumnMappingException(
+      s"Duplicated column IDs found in column mapping mode `${mode.name}`" +
+      s" for field $field and $field2", mode
+    )
+  }
+
+  def duplicatedPhysicalName(
+      mode: DeltaColumnMappingMode,
+      field: String,
+      field2: String): Throwable =
+    ColumnMappingException(
+      s"Duplicated physical names found in column mapping mode `${mode.name}`" +
+      s" for field $field and $field2", mode
+    )
+
+  def changeColumnMappingModeNotSupported: Throwable = {
+    new ColumnMappingUnsupportedException("Changing column mapping mode using" +
+      s" config ${DeltaConfigs.COLUMN_MAPPING_MODE.key} is not supported.")
+  }
+
+  def writesWithColumnMappingNotSupported: Throwable = {
+    new ColumnMappingUnsupportedException("Writing data with column mapping mode is not " +
+      "supported.")
+  }
+
+  def generateManifestWithColumnMappingNotSupported: Throwable = {
+    new ColumnMappingUnsupportedException("Manifest generation is not supported for tables that " +
+      "leverage column mapping, as external readers cannot read these Delta tables. " +
+      "See Databricks documentation for more details.")
+  }
+
+  def convertToDeltaWithColumnMappingNotSupported(mode: DeltaColumnMappingMode): Throwable = {
+    new ColumnMappingUnsupportedException(
+      s"The configuration '${DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey}' " +
+        s"cannot be set to `${mode.name}` when using CONVERT TO DELTA.")
+  }
+
+  def setColumnMappingModeOnOldProtocol(oldProtocol: Protocol): Throwable = {
+    // scalastyle:off line.size.limit
+    new ColumnMappingUnsupportedException(
+      s"""
+         |Your current table protocol version does not support the setting of column mapping mode
+         |using ${DeltaConfigs.COLUMN_MAPPING_MODE.key}.
+         |
+         |Required Delta protocol version for column mapping:
+         |${DeltaColumnMapping.MIN_PROTOCOL_VERSION}
+         |
+         |Your table's current Delta protocol version:
+         |$oldProtocol
+         |
+         |Please upgrade your table's protocol version using ALTER TABLE SET TBLPROPERTIES and try again.
+         |
+         |""".stripMargin)
+    // scalastyle:on line.size.limit
+  }
+
+  def schemaChangeInColumnMappingProtocolNotSupported(
+      oldSchema: StructType,
+      newSchema: StructType,
+      mappingMode: DeltaColumnMappingMode): Throwable = {
+    // scalastyle:off line.size.limit
+    new ColumnMappingUnsupportedException(
+      s"""
+         |Schema change is detected:
+         |
+         |old schema:
+         |${formatSchema(oldSchema)}
+         |
+         |new schema:
+         |${formatSchema(newSchema)}
+         |
+         |Schema changes are not allowed in column mapping mode `$mappingMode`.
+         |
+         |""".stripMargin)
+    // scalastyle:on line.size.limit
+  }
+
+  def foundInvalidCharsInColumnNames(cause: Throwable): Throwable = {
+    var adviceMsg = "Please use alias to rename it."
+
+    new AnalysisException(
+      s"""
+        |Found invalid character(s) among " ,;{}()\\n\\t=" in the column names of your
+        |schema. $adviceMsg
+        |""".stripMargin, cause = Some(cause))
   }
 
 
@@ -1239,6 +1377,7 @@ object DeltaErrors
       conflictingCommit)
     new io.delta.exceptions.ConcurrentTransactionException(message)
   }
+
 }
 
 /** The basic class for all Tahoe commit conflict exceptions. */
@@ -1410,3 +1549,9 @@ class MetadataMismatchErrorBuilder {
     throw new AnalysisException(bits.mkString("\n"))
   }
 }
+
+/** Errors thrown around column mapping. */
+class ColumnMappingUnsupportedException(msg: String)
+  extends UnsupportedOperationException(msg)
+case class ColumnMappingException(msg: String, mode: DeltaColumnMappingMode)
+  extends AnalysisException(msg)

@@ -16,27 +16,26 @@
 
 package org.apache.spark.sql.catalyst.plans.logical
 
-/**
- * ALTER TABLE ... ADD CONSTRAINT command, as parsed from SQL
- */
-case class AlterTableAddConstraintStatement(
-    tableName: Seq[String],
-    constraintName: String,
-    expr: String) extends ParsedStatement {
-  // TODO: extend LeafParsedStatement when new Spark version released, now fails on OSS Delta build
-  override def children: Seq[LogicalPlan] = Nil
+import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
 
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+import org.apache.spark.sql.connector.catalog.TableChange
+
+/**
+ * The logical plan of the ALTER TABLE ... ADD CONSTRAINT command.
+ */
+case class AlterTableAddConstraint(
+    table: LogicalPlan, constraintName: String, expr: String) extends AlterTableCommand {
+  override def changes: Seq[TableChange] = Seq(AddConstraint(constraintName, expr))
+
+  protected def withNewChildInternal(newChild: LogicalPlan): LogicalPlan = copy(table = newChild)
 }
 
 /**
- * ALTER TABLE ... DROP CONSTRAINT command, as parsed from SQL
+ * The logical plan of the ALTER TABLE ... DROP CONSTRAINT command.
  */
-case class AlterTableDropConstraintStatement(
-    tableName: Seq[String],
-    constraintName: String) extends ParsedStatement {
-  // TODO: extend LeafParsedStatement when new Spark version released, now fails on OSS Delta build
-  override def children: Seq[LogicalPlan] = Nil
+case class AlterTableDropConstraint(
+    table: LogicalPlan, constraintName: String) extends AlterTableCommand {
+  override def changes: Seq[TableChange] = Seq(DropConstraint(constraintName))
 
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+  protected def withNewChildInternal(newChild: LogicalPlan): LogicalPlan = copy(table = newChild)
 }

@@ -20,6 +20,7 @@ import java.io.File
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql._
@@ -30,7 +31,8 @@ import org.apache.spark.sql.streaming.{StreamingQuery, StreamingQueryException}
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 
 class CaseSensitivitySuite extends QueryTest
-  with SharedSparkSession  with SQLTestUtils {
+  with SharedSparkSession  with SQLTestUtils
+  with DeltaSQLCommandTest {
 
   import testImplicits._
 
@@ -193,7 +195,7 @@ class CaseSensitivitySuite extends QueryTest
             .option("replaceWhere", "key = 2") // note the different case
             .save(path)
         }
-        assert(e.getMessage.contains("Key"))
+        assert(e.getErrorClass == "MISSING_COLUMN")
       }
 
       checkAnswer(

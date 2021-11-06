@@ -144,7 +144,7 @@ trait OpenSourceDataFrameWriterV2Tests
     val e = intercept[AnalysisException] {
       spark.table("source2").writeTo("table_name").overwrite($"id" === 3)
     }
-    assert(e.getMessage.contains("Invalid data would be written to partitions"))
+    assert(e.getMessage.startsWith("Data written out does not match replaceWhere"))
 
     checkAnswer(
       spark.table("table_name"),
@@ -682,3 +682,4 @@ class DeltaDataFrameWriterV2Suite
     }
   }
 }
+

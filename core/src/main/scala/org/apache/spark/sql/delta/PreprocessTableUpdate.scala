@@ -63,7 +63,7 @@ case class PreprocessTableUpdate(sqlConf: SQLConf)
       // expressions for them automatically. Currently, we assume `update.child.output` is the same
       // as the table schema when checking whether a column in `update.child.output` is a generated
       // column in the table.
-      throw DeltaErrors.updateOnTempViewWithGenerateColsNotSupported
+      throw DeltaErrors.operationOnTempViewWithGenerateColsNotSupported("UPDATE")
     }
 
     val targetColNameParts = update.updateColumns.map(DeltaUpdateTable.getTargetColNameParts(_))

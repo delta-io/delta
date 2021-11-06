@@ -19,11 +19,19 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.schema.ImplicitMetadataOperation
+import org.apache.spark.sql.delta.constraints.Constraint
+import org.apache.spark.sql.delta.constraints.Constraints.Check
+import org.apache.spark.sql.delta.constraints.Invariants.ArbitraryExpression
+import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, InvariantViolationException}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.expressions.{And, Expression}
+import org.apache.spark.sql.catalyst.plans.logical.{DeleteFromTable, LogicalPlan}
+import org.apache.spark.sql.catalyst.util.CharVarcharUtils
+import org.apache.spark.sql.execution.command.LeafRunnableCommand
+import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -55,7 +63,7 @@ case class WriteIntoDelta(
     configuration: Map[String, String],
     data: DataFrame,
     schemaInCatalog: Option[StructType] = None)
-  extends RunnableCommand
+  extends LeafRunnableCommand
   with ImplicitMetadataOperation
   with DeltaCommand {
 
@@ -77,6 +85,21 @@ case class WriteIntoDelta(
     Seq.empty
   }
 
+  // TODO: replace the method below with `CharVarcharUtils.replaceCharWithVarchar`, when 3.3 is out.
+  import org.apache.spark.sql.types.{ArrayType, CharType, DataType, MapType, VarcharType}
+  private def replaceCharWithVarchar(dt: DataType): DataType = dt match {
+    case ArrayType(et, nullable) =>
+      ArrayType(replaceCharWithVarchar(et), nullable)
+    case MapType(kt, vt, nullable) =>
+      MapType(replaceCharWithVarchar(kt), replaceCharWithVarchar(vt), nullable)
+    case StructType(fields) =>
+      StructType(fields.map { field =>
+        field.copy(dataType = replaceCharWithVarchar(field.dataType))
+      })
+    case CharType(length) => VarcharType(length)
+    case _ => dt
+  }
+
   def write(txn: OptimisticTransaction, sparkSession: SparkSession): Seq[Action] = {
     import sparkSession.implicits._
     if (txn.readVersion > -1) {
@@ -90,33 +113,46 @@ case class WriteIntoDelta(
       }
     }
     val rearrangeOnly = options.rearrangeOnly
-    updateMetadata(data.sparkSession, txn, schemaInCatalog.getOrElse(data.schema),
+    // Delta does not support char padding and we should only have varchar type. This does not
+    // change the actual behavior, but makes DESC TABLE to show varchar instead of char.
+    val dataSchema = CharVarcharUtils.replaceCharVarcharWithStringInSchema(
+      replaceCharWithVarchar(CharVarcharUtils.getRawSchema(data.schema)).asInstanceOf[StructType])
+    updateMetadata(data.sparkSession, txn, schemaInCatalog.getOrElse(dataSchema),
       partitionColumns, configuration, isOverwriteOperation, rearrangeOnly)
 
+    val replaceOnDataColsEnabled =
+      sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_ENABLED)
+
     // Validate partition predicates
-    val replaceWhere = options.replaceWhere
-    val partitionFilters = if (replaceWhere.isDefined) {
-      val predicates = parsePartitionPredicates(sparkSession, replaceWhere.get)
-      if (mode == SaveMode.Overwrite) {
-        verifyPartitionPredicates(
-          sparkSession, txn.metadata.partitionColumns, predicates)
+    val replaceWhere = options.replaceWhere.flatMap { replace =>
+      val parsed = parsePredicates(sparkSession, replace)
+      if (replaceOnDataColsEnabled) {
+        // Helps split the predicate into separate expressions
+        val (metadataPredicates, dataFilters) = DeltaTableUtils.splitMetadataAndDataPredicates(
+          parsed.head, txn.metadata.partitionColumns, sparkSession)
+        if (rearrangeOnly && dataFilters.nonEmpty) {
+          throw new AnalysisException("'replaceWhere' cannot be used with data filters when " +
+            s"'dataChange' is set to false. Filters: ${dataFilters.mkString(",")}")
+        }
+        Some(metadataPredicates ++ dataFilters)
+      } else if (mode == SaveMode.Overwrite) {
+        verifyPartitionPredicates(sparkSession, txn.metadata.partitionColumns, parsed)
+        Some(parsed)
+      } else {
+        None
       }
-      Some(predicates)
-    } else {
-      None
     }
 
     if (txn.readVersion < 0) {
       // Initialize the log path
-      deltaLog.fs.mkdirs(deltaLog.logPath)
+      deltaLog.createLogDirectory()
     }
 
-    val newFiles = txn.writeFiles(data, Some(options))
-    val addFiles = newFiles.collect { case a: AddFile => a }
-    val deletedFiles = (mode, partitionFilters) match {
-      case (SaveMode.Overwrite, None) =>
-        txn.filterFiles().map(_.remove)
-      case (SaveMode.Overwrite, Some(predicates)) =>
+    val (newFiles, addFiles, deletedFiles) = (mode, replaceWhere) match {
+      case (SaveMode.Overwrite, Some(predicates)) if !replaceOnDataColsEnabled =>
+        // fall back to match on partition cols only when replaceArbitrary is disabled.
+        val newFiles = txn.writeFiles(data, Some(options))
+        val addFiles = newFiles.collect { case a: AddFile => a }
         // Check to make sure the files we wrote out were actually valid.
         val matchingFiles = DeltaLog.filterFileList(
           txn.metadata.partitionSchema, addFiles.toDF(), predicates).as[AddFile].collect()
@@ -126,20 +162,73 @@ case class WriteIntoDelta(
             .map(_.partitionValues)
             .map { _.map { case (k, v) => s"$k=$v" }.mkString("/") }
             .mkString(", ")
-          throw DeltaErrors.replaceWhereMismatchException(replaceWhere.get, badPartitions)
+          throw DeltaErrors.replaceWhereMismatchException(options.replaceWhere.get, badPartitions)
         }
-
-        txn.filterFiles(predicates).map(_.remove)
-      case _ => Nil
+        (newFiles, addFiles, txn.filterFiles(predicates).map(_.remove))
+      case (SaveMode.Overwrite, Some(condition)) if txn.snapshot.version >= 0 =>
+        val constraints = extractConstraints(sparkSession, condition)
+        val newFiles = try txn.writeFiles(data, Some(options), constraints) catch {
+          case e: InvariantViolationException =>
+            throw DeltaErrors.replaceWhereMismatchException(
+              options.replaceWhere.get,
+              e)
+        }
+        (newFiles,
+          newFiles.collect { case a: AddFile => a },
+          removeFiles(sparkSession, txn, condition))
+      case (SaveMode.Overwrite, None) =>
+        val newFiles = txn.writeFiles(data, Some(options))
+        (newFiles, newFiles.collect { case a: AddFile => a }, txn.filterFiles().map(_.remove))
+      case _ =>
+        val newFiles = txn.writeFiles(data, Some(options))
+        (newFiles, newFiles.collect { case a: AddFile => a }, Nil)
     }
 
     val fileActions = if (rearrangeOnly) {
       addFiles.map(_.copy(dataChange = !rearrangeOnly)) ++
-        deletedFiles.map(_.copy(dataChange = !rearrangeOnly))
+        deletedFiles.map {
+          case add: AddFile => add.copy(dataChange = !rearrangeOnly)
+          case remove: RemoveFile => remove.copy(dataChange = !rearrangeOnly)
+          case other =>
+            throw new IllegalStateException(
+              s"Illegal files found in a dataChange = false transaction. Files: $other")
+        }
     } else {
       newFiles ++ deletedFiles
     }
     fileActions
   }
 
+
+  private def extractConstraints(
+      sparkSession: SparkSession,
+      expr: Seq[Expression]): Seq[Constraint] = {
+    if (!sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_CONSTRAINT_CHECK_ENABLED)) {
+      Seq.empty
+    } else {
+      expr.flatMap { e =>
+        // While writing out the new data, we only want to enforce constraint on expressions
+        // with UnresolvedAttribute, that is, containing column name. Because we parse a
+        // predicate string without analyzing it, if there's a column name, it has to be
+        // unresolved.
+        e.collectFirst {
+          case _: UnresolvedAttribute =>
+            val arbitraryExpression = ArbitraryExpression(e)
+            Check(arbitraryExpression.name, arbitraryExpression.expression)
+        }
+      }
+    }
+  }
+
+  private def removeFiles(
+      spark: SparkSession,
+      txn: OptimisticTransaction,
+      condition: Seq[Expression]): Seq[Action] = {
+    val relation = LogicalRelation(
+        txn.deltaLog.createRelation(snapshotToUseOpt = Some(txn.snapshot)))
+    val processedCondition = condition.reduceOption(And)
+    val command = spark.sessionState.analyzer.execute(DeleteFromTable(relation, processedCondition))
+    spark.sessionState.analyzer.checkAnalysis(command)
+    command.asInstanceOf[DeleteCommand].performDelete(spark, txn.deltaLog, txn)
+  }
 }

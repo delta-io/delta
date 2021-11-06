@@ -34,17 +34,25 @@ case class DeltaConfig[T](
     fromString: String => T,
     validationFunction: T => Boolean,
     helpMessage: String,
-    minimumProtocolVersion: Option[Protocol] = None) {
+    minimumProtocolVersion: Option[Protocol] = None,
+    editable: Boolean = true,
+    alternateKeys: Seq[String] = Seq.empty) {
   /**
-   * Recover the saved value of this configuration from `Metadata` or return the default if this
-   * value hasn't been changed.
+   * Recover the saved value of this configuration from `Metadata`. If undefined, fall back to
+   * alternate keys, returning defaultValue if none match.
    */
   def fromMetaData(metadata: Metadata): T = {
-    fromString(metadata.configuration.getOrElse(key, defaultValue))
+    for (usedKey <- key +: alternateKeys) {
+      metadata.configuration.get(usedKey).map { value => return fromString(value) }
+    }
+    fromString(defaultValue)
   }
 
   /** Validate the setting for this configuration */
   private def validate(value: String): Unit = {
+    if (!editable) {
+      throw DeltaErrors.cannotModifyTableProperty(key)
+    }
     val onErrorMessage = s"$key $helpMessage"
     try {
       require(validationFunction(fromString(value)), onErrorMessage)
@@ -117,13 +125,19 @@ trait DeltaConfigsBase extends DeltaLogging {
       fromString: String => T,
       validationFunction: T => Boolean,
       helpMessage: String,
-      minimumProtocolVersion: Option[Protocol] = None): DeltaConfig[T] = {
+      minimumProtocolVersion: Option[Protocol] = None,
+      userConfigurable: Boolean = true,
+      alternateConfs: Seq[DeltaConfig[T]] = Seq.empty): DeltaConfig[T] = {
+
     val deltaConfig = DeltaConfig(s"delta.$key",
       defaultValue,
       fromString,
       validationFunction,
       helpMessage,
-      minimumProtocolVersion)
+      minimumProtocolVersion,
+      userConfigurable,
+      alternateConfs.map(_.key))
+
     entries.put(key.toLowerCase(Locale.ROOT), deltaConfig)
     deltaConfig
   }
@@ -364,7 +378,7 @@ trait DeltaConfigsBase extends DeltaLogging {
     Some(Protocol(0, 2)))
 
   /**
-   * Whether this table will automagically optimize the layout of files during writes.
+   * Whether this table will automatically optimize the layout of files during writes.
    */
   val AUTO_OPTIMIZE = buildConfig[Option[Boolean]](
     "autoOptimize",
@@ -418,24 +432,46 @@ trait DeltaConfigsBase extends DeltaLogging {
     "needs to be a boolean.")
 
   /**
-   * Enable change data feed output. Not implemented.
+   * Deprecated in favor of CHANGE_DATA_FEED.
    */
-  val CHANGE_DATA_CAPTURE = buildConfig[Boolean](
-    "enableChangeDataFeed",
+  private val CHANGE_DATA_FEED_LEGACY = buildConfig[Boolean](
+    "enableChangeDataCapture",
     "false",
     _.toBoolean,
     _ => true,
     "needs to be a boolean.")
 
   /**
-   *  Old configuration which has been replaced by CHANGE_DATA_CAPTURE
+   * Enable change data feed output. Not implemented.
    */
-  val CHANGE_DATA_CAPTURE_LEGACY = buildConfig[Boolean](
-    "enableChangeDataCapture",
+  val CHANGE_DATA_FEED = buildConfig[Boolean](
+    "enableChangeDataFeed",
     "false",
     _.toBoolean,
     _ => true,
-    "needs to be a boolean.")
+    "needs to be a boolean.",
+    alternateConfs = Seq(CHANGE_DATA_FEED_LEGACY))
+
+  val COLUMN_MAPPING_MODE = buildConfig[DeltaColumnMappingMode](
+    "columnMapping.mode",
+    "none",
+    DeltaColumnMappingMode(_),
+    _ => true,
+    "",
+    minimumProtocolVersion = Some(DeltaColumnMapping.MIN_PROTOCOL_VERSION))
+
+  /**
+   * Maximum columnId used in the schema so far for column mapping. Internal property that cannot
+   * be set by users.
+   */
+  val COLUMN_MAPPING_MAX_ID = buildConfig[Long](
+    "columnMapping.maxColumnId",
+    "0",
+    _.toLong,
+    _ => true,
+    "",
+    minimumProtocolVersion = Some(DeltaColumnMapping.MIN_PROTOCOL_VERSION),
+    userConfigurable = false)
 }
 
 object DeltaConfigs extends DeltaConfigsBase

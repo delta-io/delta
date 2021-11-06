@@ -26,7 +26,7 @@ object FileNames {
   val checksumFilePattern = "\\d+\\.crc".r.pattern
   val checkpointFilePattern = "\\d+\\.checkpoint(\\.\\d+\\.\\d+)?\\.parquet".r.pattern
 
-  /** Returns the path for a given delta file. */
+  /** Returns the delta (json format) path for a given delta file. */
   def deltaFile(path: Path, version: Long): Path = new Path(path, f"$version%020d.json")
 
   /** Returns the path for a given sample file */
@@ -36,7 +36,7 @@ object FileNames {
   def checksumFile(path: Path, version: Long): Path = new Path(path, f"$version%020d.crc")
 
   /** Returns the version for the given delta path. */
-  def deltaVersion(path: Path): Long = path.getName.stripSuffix(".json").toLong
+  def deltaVersion(path: Path): Long = path.getName.split("\\.")(0).toLong
 
   /** Returns the version for the given checksum file. */
   def checksumVersion(path: Path): Long = path.getName.stripSuffix(".crc").toLong

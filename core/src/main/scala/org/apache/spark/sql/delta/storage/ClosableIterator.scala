@@ -19,3 +19,84 @@ package org.apache.spark.sql.delta.storage
 import java.io.Closeable
 
 trait ClosableIterator[T] extends Iterator[T] with Closeable
+
+object ClosableIterator {
+  /**
+   * An implicit class for applying a function to a [[ClosableIterator]] and returning the
+   * resulting iterator as a [[ClosableIterator]] with the original `close()` method.
+   */
+  implicit class IteratorCloseOps[A](val iterator: ClosableIterator[A]) extends AnyVal {
+    def withClose[B](f: Iterator[A] => Iterator[B]): ClosableIterator[B] = new ClosableIterator[B] {
+      private val iter =
+        try {
+          f(iterator)
+        } catch {
+          case e: Throwable =>
+            iterator.close()
+            throw e
+        }
+      override def next(): B = iter.next()
+      override def hasNext: Boolean = iter.hasNext
+      override def close(): Unit = iterator.close()
+    }
+  }
+
+  /**
+   * An implicit class for a `flatMap` implementation that returns a [[ClosableIterator]]
+   * which (a) closes inner iterators upon reaching their end, and (b) has a `close()` method
+   * that closes any opened and unclosed inner iterators.
+   */
+  implicit class IteratorFlatMapCloseOp[A](val iterator: Iterator[A]) extends AnyVal {
+    def flatMapWithClose[B](f: A => ClosableIterator[B]): ClosableIterator[B] =
+      new ClosableIterator[B] {
+        private var iter_curr =
+          if (iterator.hasNext) {
+            f(iterator.next())
+          } else {
+            null
+          }
+        override def next(): B = {
+          if (!hasNext) {
+            throw new NoSuchElementException
+          }
+          iter_curr.next()
+        }
+        @scala.annotation.tailrec
+        override def hasNext: Boolean = {
+          if (iter_curr == null) {
+            false
+          }
+          else if (iter_curr.hasNext) {
+            true
+          }
+          else {
+            iter_curr.close()
+            if (iterator.hasNext) {
+              iter_curr = f(iterator.next())
+              hasNext
+            } else {
+              iter_curr = null
+              false
+            }
+          }
+        }
+        override def close(): Unit = {
+          if (iter_curr != null) {
+            iter_curr.close()
+          }
+        }
+      }
+  }
+
+  /**
+   * An implicit class for wrapping an iterator to be a [[ClosableIterator]] with a `close` method
+   * that does nothing.
+   */
+  implicit class ClosableWrapper[A](val iterator: Iterator[A]) extends AnyVal {
+    def toClosable: ClosableIterator[A] = new ClosableIterator[A] {
+      override def next(): A = iterator.next()
+      override def hasNext: Boolean = iterator.hasNext
+      override def close(): Unit = ()
+    }
+  }
+}

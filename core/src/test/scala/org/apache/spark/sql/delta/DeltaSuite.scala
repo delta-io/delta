@@ -43,7 +43,8 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
 
 class DeltaSuite extends QueryTest
-  with SharedSparkSession  with SQLTestUtils
+  with SharedSparkSession
+  with DeltaColumnMappingTestUtils  with SQLTestUtils
   with DeltaSQLCommandTest {
 
   import testImplicits._
@@ -144,7 +145,9 @@ class DeltaSuite extends QueryTest
     Seq(1).toDF().write.format("delta").save(tempDir.toString)
 
     val df = spark.read.format("delta").load(tempDir.toString)
+    // scalastyle:off deltahadoopconfiguration
     val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
+    // scalastyle:on deltahadoopconfiguration
     fs.delete(path, true)
 
     val e = intercept[AnalysisException] {
@@ -167,7 +170,9 @@ class DeltaSuite extends QueryTest
     val path = new Path(tempDir.getCanonicalPath)
     Seq(1).toDF().write.format("delta").save(tempDir.toString)
 
+    // scalastyle:off deltahadoopconfiguration
     val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
+    // scalastyle:on deltahadoopconfiguration
     fs.delete(path, true)
 
     val e = intercept[AnalysisException] {
@@ -231,69 +236,258 @@ class DeltaSuite extends QueryTest
   }
 
   test("invalid replaceWhere") {
-    val tempDir = Utils.createTempDir()
-    Seq(1, 2, 3, 4).toDF()
-      .withColumn("is_odd", $"value" % 2 =!= 0)
-      .write
-      .format("delta")
-      .partitionBy("is_odd")
-      .save(tempDir.toString)
+    Seq(true, false).foreach { enabled =>
+      withSQLConf(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_ENABLED.key -> enabled.toString) {
+        val tempDir = Utils.createTempDir()
+        Seq(1, 2, 3, 4).toDF()
+          .withColumn("is_odd", $"value" % 2 =!= 0)
+          .write
+          .format("delta")
+          .partitionBy("is_odd")
+          .save(tempDir.toString)
+        val e1 = intercept[AnalysisException] {
+          Seq(6).toDF()
+            .withColumn("is_odd", $"value" % 2 =!= 0)
+            .write
+            .format("delta")
+            .mode("overwrite")
+            .option(DeltaOptions.REPLACE_WHERE_OPTION, "is_odd = true")
+            .save(tempDir.toString)
+        }.getMessage
+        assert(e1.contains("Data written out does not match replaceWhere"))
 
-    val e1 = intercept[AnalysisException] {
-      Seq(6).toDF()
+        val e2 = intercept[AnalysisException] {
+          Seq(true).toDF("is_odd")
+            .write
+            .format("delta")
+            .mode("overwrite")
+            .option(DeltaOptions.REPLACE_WHERE_OPTION, "is_odd = true")
+            .save(tempDir.toString)
+        }.getMessage
+        assert(e2.contains(
+          "Data written into Delta needs to contain at least one non-partitioned"))
+
+        val e3 = intercept[AnalysisException] {
+          Seq(6).toDF()
+            .withColumn("is_odd", $"value" % 2 =!= 0)
+            .write
+            .format("delta")
+            .mode("overwrite")
+            .option(DeltaOptions.REPLACE_WHERE_OPTION, "not_a_column = true")
+            .save(tempDir.toString)
+        }.getMessage
+        if (enabled) {
+          assert(e3.contains(
+            "Data written out does not match replaceWhere 'not_a_column = true'"))
+        } else {
+          assert(e3.contains(
+            "Predicate references non-partition column 'not_a_column'. Only the " +
+              "partition columns may be referenced: [is_odd]"))
+        }
+
+        val e4 = intercept[AnalysisException] {
+          Seq(6).toDF()
+            .withColumn("is_odd", $"value" % 2 =!= 0)
+            .write
+            .format("delta")
+            .mode("overwrite")
+            .option(DeltaOptions.REPLACE_WHERE_OPTION, "value = 1")
+            .save(tempDir.toString)
+        }.getMessage
+        if (enabled) {
+          assert(e4.contains("Data written out does not match replaceWhere 'value = 1'"))
+        } else {
+          assert(e4.contains("Predicate references non-partition column 'value'. Only the " +
+            "partition columns may be referenced: [is_odd]"))
+        }
+
+        val e5 = intercept[AnalysisException] {
+          Seq(6).toDF()
+            .withColumn("is_odd", $"value" % 2 =!= 0)
+            .write
+            .format("delta")
+            .mode("overwrite")
+            .option(DeltaOptions.REPLACE_WHERE_OPTION, "")
+            .save(tempDir.toString)
+        }.getMessage
+        assert(e5.contains("Cannot recognize the predicate ''"))
+      }
+    }
+  }
+
+  test("replaceWhere with rearrangeOnly") {
+    withTempDir { dir =>
+      Seq(1, 2, 3, 4).toDF()
+        .withColumn("is_odd", $"value" % 2 =!= 0)
+        .write
+        .format("delta")
+        .partitionBy("is_odd")
+        .save(dir.toString)
+
+      // dataFilter non empty
+      val e = intercept[AnalysisException] {
+        Seq(9).toDF()
+          .withColumn("is_odd", $"value" % 2 =!= 0)
+          .write
+          .format("delta")
+          .mode("overwrite")
+          .option(DeltaOptions.REPLACE_WHERE_OPTION, "is_odd = true and value < 2")
+          .option(DeltaOptions.DATA_CHANGE_OPTION, "false")
+          .save(dir.toString)
+      }.getMessage
+      assert(e.contains(
+        "'replaceWhere' cannot be used with data filters when 'dataChange' is set to false"))
+
+      Seq(9).toDF()
         .withColumn("is_odd", $"value" % 2 =!= 0)
         .write
         .format("delta")
         .mode("overwrite")
         .option(DeltaOptions.REPLACE_WHERE_OPTION, "is_odd = true")
-        .save(tempDir.toString)
-    }.getMessage
-    assert(e1.contains("Data written out does not match replaceWhere"))
+        .option(DeltaOptions.DATA_CHANGE_OPTION, "false")
+        .save(dir.toString)
+      checkAnswer(
+        spark.read.format("delta").load(dir.toString),
+        Seq(2, 4, 9).toDF().withColumn("is_odd", $"value" % 2 =!= 0))
+    }
+  }
 
-    val e2 = intercept[AnalysisException] {
-      Seq(true).toDF("is_odd")
+  test("valid replaceWhere") {
+    Seq(true, false).foreach { enabled =>
+      withSQLConf(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_ENABLED.key -> enabled.toString) {
+        Seq(true, false).foreach { partitioned =>
+          // Skip when it's not enabled and not partitioned.
+          if (enabled || partitioned) {
+            withTempDir { dir =>
+              val writer = Seq(1, 2, 3, 4).toDF()
+                .withColumn("is_odd", $"value" % 2 =!= 0)
+                .withColumn("is_even", $"value" % 2 === 0)
+                .write
+                .format("delta")
+
+              if (partitioned) {
+                writer.partitionBy("is_odd").save(dir.toString)
+              } else {
+                writer.save(dir.toString)
+              }
+
+              def data: DataFrame = spark.read.format("delta").load(dir.toString)
+
+              Seq(5, 7).toDF()
+                .withColumn("is_odd", $"value" % 2 =!= 0)
+                .withColumn("is_even", $"value" % 2 === 0)
+                .write
+                .format("delta")
+                .mode("overwrite")
+                .option(DeltaOptions.REPLACE_WHERE_OPTION, "is_odd = true")
+                .save(dir.toString)
+              checkAnswer(
+                data,
+                Seq(2, 4, 5, 7).toDF()
+                  .withColumn("is_odd", $"value" % 2 =!= 0)
+                  .withColumn("is_even", $"value" % 2 === 0))
+
+              // replaceWhere on non-partitioning columns if enabled.
+              if (enabled) {
+                Seq(6, 8).toDF()
+                  .withColumn("is_odd", $"value" % 2 =!= 0)
+                  .withColumn("is_even", $"value" % 2 === 0)
+                  .write
+                  .format("delta")
+                  .mode("overwrite")
+                  .option(DeltaOptions.REPLACE_WHERE_OPTION, "is_even = true")
+                  .save(dir.toString)
+                checkAnswer(
+                  data,
+                  Seq(5, 6, 7, 8).toDF()
+                    .withColumn("is_odd", $"value" % 2 =!= 0)
+                    .withColumn("is_even", $"value" % 2 === 0))
+
+                // nothing to be replaced because the condition is false.
+                Seq(10, 12).toDF()
+                  .withColumn("is_odd", $"value" % 2 =!= 0)
+                  .withColumn("is_even", $"value" % 2 === 0)
+                  .write
+                  .format("delta")
+                  .mode("overwrite")
+                  .option(DeltaOptions.REPLACE_WHERE_OPTION, "1 = 2")
+                  .save(dir.toString)
+                checkAnswer(
+                  data,
+                  Seq(5, 6, 7, 8, 10, 12).toDF()
+                    .withColumn("is_odd", $"value" % 2 =!= 0)
+                    .withColumn("is_even", $"value" % 2 === 0)
+                )
+
+                // replace the whole thing because the condition is true.
+                Seq(10, 12).toDF()
+                  .withColumn("is_odd", $"value" % 2 =!= 0)
+                  .withColumn("is_even", $"value" % 2 === 0)
+                  .write
+                  .format("delta")
+                  .mode("overwrite")
+                  .option(DeltaOptions.REPLACE_WHERE_OPTION, "1 = 1")
+                  .save(dir.toString)
+                checkAnswer(
+                  data,
+                  Seq(10, 12).toDF()
+                    .withColumn("is_odd", $"value" % 2 =!= 0)
+                    .withColumn("is_even", $"value" % 2 === 0)
+                )
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  test("replace arbitrary with multiple references") {
+    withTempDir { dir =>
+      def data: DataFrame = spark.read.format("delta").load(dir.toString)
+
+      Seq((1, 3, 8), (1, 5, 9)).toDF("a", "b", "c")
         .write
         .format("delta")
         .mode("overwrite")
-        .option(DeltaOptions.REPLACE_WHERE_OPTION, "is_odd = true")
-        .save(tempDir.toString)
-    }.getMessage
-    assert(e2.contains("Data written into Delta needs to contain at least one non-partitioned"))
+        .save(dir.toString)
 
-    val e3 = intercept[AnalysisException] {
-      Seq(6).toDF()
-        .withColumn("is_odd", $"value" % 2 =!= 0)
+      Seq((2, 4, 6)).toDF("a", "b", "c")
         .write
         .format("delta")
         .mode("overwrite")
-        .option(DeltaOptions.REPLACE_WHERE_OPTION, "not_a_column = true")
-        .save(tempDir.toString)
-    }.getMessage
-    assert(e3.contains("Predicate references non-partition column 'not_a_column'. Only the " +
-      "partition columns may be referenced: [is_odd]"))
+        .option(DeltaOptions.REPLACE_WHERE_OPTION, "a + c < 10")
+        .save(dir.toString)
 
-    val e4 = intercept[AnalysisException] {
-      Seq(6).toDF()
-        .withColumn("is_odd", $"value" % 2 =!= 0)
-        .write
-        .format("delta")
-        .mode("overwrite")
-        .option(DeltaOptions.REPLACE_WHERE_OPTION, "value = 1")
-        .save(tempDir.toString)
-    }.getMessage
-    assert(e4.contains("Predicate references non-partition column 'value'. Only the " +
-      "partition columns may be referenced: [is_odd]"))
+      checkAnswer(
+        data,
+        Seq((1, 5, 9), (2, 4, 6)).toDF("a", "b", "c"))
+    }
+  }
 
-    val e5 = intercept[AnalysisException] {
-      Seq(6).toDF()
-        .withColumn("is_odd", $"value" % 2 =!= 0)
-        .write
-        .format("delta")
-        .mode("overwrite")
-        .option(DeltaOptions.REPLACE_WHERE_OPTION, "")
-        .save(tempDir.toString)
-    }.getMessage
-    assert(e5.contains("Cannot recognize the predicate ''"))
+  test("replaceWhere with constraint check disabled") {
+    withSQLConf(DeltaSQLConf.REPLACEWHERE_CONSTRAINT_CHECK_ENABLED.key -> "false") {
+      withTempDir { dir =>
+        Seq(1, 2, 3, 4).toDF()
+          .withColumn("is_odd", $"value" % 2 =!= 0)
+          .write
+          .format("delta")
+          .partitionBy("is_odd")
+          .save(dir.toString)
+
+        def data: DataFrame = spark.read.format("delta").load(dir.toString)
+
+        Seq(6).toDF()
+          .withColumn("is_odd", $"value" % 2 =!= 0)
+          .write
+          .format("delta")
+          .mode("overwrite")
+          .option(DeltaOptions.REPLACE_WHERE_OPTION, "is_odd = true")
+          .save(dir.toString)
+
+        checkAnswer(data, Seq(2, 4, 6).toDF().withColumn("is_odd", $"value" % 2 =!= 0))
+      }
+    }
   }
 
   test("move delta table") {
@@ -549,8 +743,9 @@ class DeltaSuite extends QueryTest
 
       val files = spark.read.format("delta").load(tempDir.toString).inputFiles
 
-      assert(files.forall(path => path.contains("by4=") && path.contains("/by8=")),
-        s"${files.toSeq.mkString("\n")}\ndidn't contain partition columns by4 and by8")
+      val deltaLog = loadDeltaLog(tempDir.getAbsolutePath)
+      assertPartitionExists("by4", deltaLog, files)
+      assertPartitionExists("by8", deltaLog, files)
     }
   }
 
@@ -579,31 +774,6 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  test("columns with commas as partition columns") {
-    withTempDir { tempDir =>
-      if (tempDir.exists()) {
-        assert(tempDir.delete())
-      }
-
-      val dfw = spark.range(100).select('id, 'id % 4 as "by,4")
-        .write
-        .format("delta")
-        .partitionBy("by,4")
-
-      val e = intercept[AnalysisException] {
-        dfw.save(tempDir.toString)
-      }
-      assert(e.getMessage.contains("invalid character(s)"))
-      withSQLConf(DeltaSQLConf.DELTA_PARTITION_COLUMN_CHECK_ENABLED.key -> "false") {
-        dfw.save(tempDir.toString)
-      }
-
-      val files = spark.read.format("delta").load(tempDir.toString).inputFiles
-
-      assert(files.forall(path => path.contains("by,4=")),
-        s"${files.toSeq.mkString("\n")}\ndidn't contain partition columns by,4")
-    }
-  }
 
   test("throw exception when users are trying to write in batch with different partitioning") {
     withTempDir { tempDir =>
@@ -695,8 +865,8 @@ class DeltaSuite extends QueryTest
 
       val files = spark.read.format("delta").load(tempDir.toString).inputFiles
 
-      assert(files.forall(path => path.contains("by4=")),
-        s"${files.toSeq.mkString("\n")}\ndidn't contain partition columns by4")
+      val deltaLog = loadDeltaLog(tempDir.getAbsolutePath)
+      assertPartitionExists("by4", deltaLog, files)
 
       val e = intercept[AnalysisException] {
         spark.range(101, 200).select('id, 'id % 4 as 'by4, 'id % 8 as 'by8)
@@ -736,7 +906,7 @@ class DeltaSuite extends QueryTest
       spark.range(10).write.format("delta").save(tempDir.toString)
       val deltaLog = DeltaLog.forTable(spark, tempDir)
       val numParts = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS).get
-      assert(deltaLog.snapshot.state.rdd.getNumPartitions == numParts)
+      assert(deltaLog.snapshot.stateDS.rdd.getNumPartitions == numParts)
     }
   }
 
@@ -755,7 +925,7 @@ class DeltaSuite extends QueryTest
       withSQLConf(("spark.databricks.delta.snapshotPartitions", "410")) {
         spark.range(10).write.format("delta").save(tempDir.toString)
         val deltaLog = DeltaLog.forTable(spark, tempDir)
-        assert(deltaLog.snapshot.state.rdd.getNumPartitions == 410)
+        assert(deltaLog.snapshot.stateDS.rdd.getNumPartitions == 410)
       }
     }
   }
@@ -791,7 +961,7 @@ class DeltaSuite extends QueryTest
         assert(filesToDelete.size == 1)
         filesToDelete.foreach { f =>
           val deleted = tryDeleteNonRecursive(
-            tempDirPath.getFileSystem(spark.sessionState.newHadoopConf()),
+            tempDirPath.getFileSystem(deltaLog.newDeltaHadoopConf()),
             new Path(tempDirPath, f))
           assert(deleted)
         }
@@ -821,7 +991,7 @@ class DeltaSuite extends QueryTest
 
         val filesToCorrupt = inputFiles.filter(_.split("/").last.startsWith("part-00001"))
         assert(filesToCorrupt.size == 1)
-        val fs = tempDirPath.getFileSystem(spark.sessionState.newHadoopConf())
+        val fs = tempDirPath.getFileSystem(deltaLog.newDeltaHadoopConf())
         filesToCorrupt.foreach { f =>
           val filePath = new Path(tempDirPath, f)
           fs.create(filePath, true).close()
@@ -850,7 +1020,7 @@ class DeltaSuite extends QueryTest
         val filesToDelete = inputFiles.take(4)
         filesToDelete.foreach { f =>
           val deleted = tryDeleteNonRecursive(
-            tempDirPath.getFileSystem(spark.sessionState.newHadoopConf()),
+            tempDirPath.getFileSystem(deltaLog.newDeltaHadoopConf()),
             new Path(tempDirPath, f))
           assert(deleted)
         }
@@ -877,7 +1047,7 @@ class DeltaSuite extends QueryTest
       val filesToDelete = inputFiles.take(4)
       filesToDelete.foreach { f =>
         val deleted = tryDeleteNonRecursive(
-          tempDirPath.getFileSystem(spark.sessionState.newHadoopConf()),
+          tempDirPath.getFileSystem(deltaLog.newDeltaHadoopConf()),
           new Path(tempDirPath, f))
         assert(deleted)
       }
@@ -923,6 +1093,29 @@ class DeltaSuite extends QueryTest
       checkAnswer(
         spark.read.format("delta").load(basePath.getCanonicalPath),
         spark.range(10).toDF()
+      )
+    }
+  }
+
+  test("get touched files for update, delete and merge") {
+    withTempDir { dir =>
+      val directory = new File(dir, "test with space")
+      val df = Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value")
+      val writer = df.write.format("delta").mode("append")
+      writer.save(directory.getCanonicalPath)
+      spark.sql(s"UPDATE delta.`${directory.getCanonicalPath}` SET value = value + 10")
+      spark.sql(s"DELETE FROM delta.`${directory.getCanonicalPath}` WHERE key = 4")
+      Seq((3, 30)).toDF("key", "value").createOrReplaceTempView("inbound")
+      spark.sql(s"""|MERGE INTO delta.`${directory.getCanonicalPath}` AS base
+                       |USING inbound
+                       |ON base.key = inbound.key
+                       |WHEN MATCHED THEN UPDATE SET base.value =
+                       |base.value+inbound.value""".stripMargin)
+      spark.sql(s"UPDATE delta.`${directory.getCanonicalPath}` SET value = 40 WHERE key = 1")
+      spark.sql(s"DELETE FROM delta.`${directory.getCanonicalPath}` WHERE key = 2")
+      checkAnswer(
+        spark.read.format("delta").load(directory.getCanonicalPath),
+        Seq((1, 40), (3, 70)).toDF("key", "value")
       )
     }
   }
@@ -1006,7 +1199,7 @@ class DeltaSuite extends QueryTest
   test("SC-24982 - initial snapshot has zero partitions") {
     withTempDir { tempDir =>
       val deltaLog = DeltaLog.forTable(spark, tempDir)
-      assert(deltaLog.snapshot.state.rdd.getNumPartitions == 0)
+      assert(deltaLog.snapshot.stateDS.rdd.getNumPartitions == 0)
     }
   }
 
@@ -1024,7 +1217,7 @@ class DeltaSuite extends QueryTest
     sparkContext.addSparkListener(listener)
     try {
       withTempDir { tempDir =>
-        val files = DeltaLog.forTable(spark, tempDir).snapshot.state.collect()
+        val files = DeltaLog.forTable(spark, tempDir).snapshot.stateDS.collect()
         assert(files.isEmpty)
       }
       sparkContext.listenerBus.waitUntilEmpty(15000)
@@ -1034,8 +1227,8 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  def lastCommitInfo(dir: String): CommitInfo =
-    io.delta.tables.DeltaTable.forPath(spark, dir).history(1).as[CommitInfo].head
+  def lastDeltaHistory(dir: String): DeltaHistory =
+    io.delta.tables.DeltaTable.forPath(spark, dir).history(1).as[DeltaHistory].head
 
   test("history includes user-defined metadata for DataFrame.Write API") {
     val tempDir = Utils.createTempDir().toString
@@ -1044,12 +1237,12 @@ class DeltaSuite extends QueryTest
     df.option("userMetadata", "meta1")
       .save(tempDir)
 
-    assert(lastCommitInfo(tempDir).userMetadata === Some("meta1"))
+    assert(lastDeltaHistory(tempDir).userMetadata === Some("meta1"))
 
     df.option("userMetadata", "meta2")
       .save(tempDir)
 
-    assert(lastCommitInfo(tempDir).userMetadata === Some("meta2"))
+    assert(lastDeltaHistory(tempDir).userMetadata === Some("meta2"))
   }
 
   test("history includes user-defined metadata for SQL API") {
@@ -1060,17 +1253,17 @@ class DeltaSuite extends QueryTest
       withSQLConf(DeltaSQLConf.DELTA_USER_METADATA.key -> "meta1") {
         spark.sql(s"CREATE TABLE $tblName (data STRING) USING delta LOCATION '$tempDir';")
       }
-      assert(lastCommitInfo(tempDir).userMetadata === Some("meta1"))
+      assert(lastDeltaHistory(tempDir).userMetadata === Some("meta1"))
 
       withSQLConf(DeltaSQLConf.DELTA_USER_METADATA.key -> "meta2") {
         spark.sql(s"INSERT INTO $tblName VALUES ('test');")
       }
-      assert(lastCommitInfo(tempDir).userMetadata === Some("meta2"))
+      assert(lastDeltaHistory(tempDir).userMetadata === Some("meta2"))
 
       withSQLConf(DeltaSQLConf.DELTA_USER_METADATA.key -> "meta3") {
         spark.sql(s"INSERT INTO $tblName VALUES ('test2');")
       }
-      assert(lastCommitInfo(tempDir).userMetadata === Some("meta3"))
+      assert(lastDeltaHistory(tempDir).userMetadata === Some("meta3"))
     }
   }
 
@@ -1081,13 +1274,13 @@ class DeltaSuite extends QueryTest
     withSQLConf(DeltaSQLConf.DELTA_USER_METADATA.key -> "meta1") {
       df.save(tempDir)
     }
-    assert(lastCommitInfo(tempDir).userMetadata === Some("meta1"))
+    assert(lastDeltaHistory(tempDir).userMetadata === Some("meta1"))
 
     withSQLConf(DeltaSQLConf.DELTA_USER_METADATA.key -> "meta2") {
       df.option("userMetadata", "optionMeta2")
         .save(tempDir)
     }
-    assert(lastCommitInfo(tempDir).userMetadata === Some("optionMeta2"))
+    assert(lastDeltaHistory(tempDir).userMetadata === Some("optionMeta2"))
   }
 
   test("history includes user-defined metadata for SQL + DF.Write API") {
@@ -1099,20 +1292,20 @@ class DeltaSuite extends QueryTest
       df.option("userMetadata", "optionMeta1")
         .save(tempDir)
     }
-    assert(lastCommitInfo(tempDir).userMetadata === Some("optionMeta1"))
+    assert(lastDeltaHistory(tempDir).userMetadata === Some("optionMeta1"))
 
     withSQLConf(DeltaSQLConf.DELTA_USER_METADATA.key -> "meta2") {
       df.option("userMetadata", "optionMeta2")
         .save(tempDir)
     }
-    assert(lastCommitInfo(tempDir).userMetadata === Some("optionMeta2"))
+    assert(lastDeltaHistory(tempDir).userMetadata === Some("optionMeta2"))
   }
 
   test("SC-77958 - history includes user-defined metadata for createOrReplace") {
     withTable("tbl") {
       spark.range(10).writeTo("tbl").using("delta").option("userMetadata", "meta").createOrReplace()
 
-      val history = sql("DESCRIBE HISTORY tbl LIMIT 1").as[CommitInfo].head()
+      val history = sql("DESCRIBE HISTORY tbl LIMIT 1").as[DeltaHistory].head()
       assert(history.userMetadata === Some("meta"))
     }
   }
@@ -1122,7 +1315,7 @@ class DeltaSuite extends QueryTest
       spark.range(10).write.format("delta").option("userMetadata", "meta1")
         .mode("overwrite").saveAsTable("tbl")
 
-      val history = sql("DESCRIBE HISTORY tbl LIMIT 1").as[CommitInfo].head()
+      val history = sql("DESCRIBE HISTORY tbl LIMIT 1").as[DeltaHistory].head()
       assert(history.userMetadata === Some("meta1"))
     }
   }
@@ -1229,7 +1422,7 @@ class DeltaSuite extends QueryTest
     withTable("tbl") {
       sql("CREATE TABLE tbl(id INT) USING DELTA")
       val ex = intercept[AnalysisException] {
-        sql(s"ALTER TABLE tbl SET TBLPROPERTIES (${DeltaConfigs.CHANGE_DATA_CAPTURE.key} = true)")
+        sql(s"ALTER TABLE tbl SET TBLPROPERTIES (${DeltaConfigs.CHANGE_DATA_FEED.key} = true)")
       }
 
       assert(ex.getMessage.contains("Configuration delta.enableChangeDataFeed cannot be set"))
@@ -1246,7 +1439,9 @@ class DeltaSuite extends QueryTest
       log.store.write(
         deltaFile(log.logPath, 1),
         Iterator(log.snapshot.metadata.copy(
-          configuration = Map(DeltaConfigs.CHANGE_DATA_CAPTURE.key -> "true")).json))
+          configuration = Map(DeltaConfigs.CHANGE_DATA_FEED.key -> "true")).json),
+        overwrite = false,
+        log.newDeltaHadoopConf())
       log.update()
 
       val ex = intercept[AnalysisException] {
@@ -1263,22 +1458,33 @@ class DeltaSuite extends QueryTest
     spark.range(10, 20).coalesce(1).write.format("delta").mode("append").save(tempDir)
 
     val deltaLog = DeltaLog.forTable(spark, tempDir)
+    val hadoopConf = deltaLog.newDeltaHadoopConf()
     val snapshot = deltaLog.snapshot
     val files = snapshot.allFiles.collect()
 
+    // assign physical name to new schema
+    val newMetadata = if (columnMappingEnabled) {
+      DeltaColumnMapping.assignColumnIdAndPhysicalName(
+        snapshot.metadata.copy(schemaString = new StructType().add("data", "bigint").json)
+      )
+    } else {
+      snapshot.metadata.copy(schemaString = new StructType().add("data", "bigint").json)
+    }
+
     // Now make a commit that comes from an "external" writer that deletes existing data and
     // changes the schema
-    val actions = Seq(
-      Protocol(),
-      snapshot.metadata.copy(schemaString = new StructType().add("data", "bigint").json)
-    ) ++ files.map(_.remove)
+    val actions = Seq(Protocol(), newMetadata) ++ files.map(_.remove)
     deltaLog.store.write(
       FileNames.deltaFile(deltaLog.logPath, snapshot.version + 1),
-      actions.map(_.json).iterator)
+      actions.map(_.json).iterator,
+      overwrite = false,
+      hadoopConf)
 
     deltaLog.store.write(
       FileNames.deltaFile(deltaLog.logPath, snapshot.version + 2),
-      files.take(1).map(_.json).iterator)
+      files.take(1).map(_.json).iterator,
+      overwrite = false,
+      hadoopConf)
 
     // Since the column `data` doesn't exist in our old files, we read it as null.
     checkAnswer(
@@ -1338,26 +1544,87 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  test("replaceWhere should support backtick") {
+  test("replaceWhere should support backtick when flag is disabled") {
+    val table = "replace_where_backtick"
+    withSQLConf(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_ENABLED.key -> "false") {
+      withTable(table) {
+        // The STRUCT column is added to prevent us from introducing any ambiguity in future
+        sql(s"CREATE TABLE $table(`a.b` STRING, `c.d` STRING, a STRUCT<b:STRING>)" +
+          s"USING delta PARTITIONED BY (`a.b`)")
+        Seq(("a", "b", "c"))
+          .toDF("a.b", "c.d", "ab")
+          .withColumn("a", struct($"ab".alias("b")))
+          .drop("ab")
+          .write
+          .format("delta")
+          // "replaceWhere" should support backtick and remove it correctly. Technically,
+          // "a.b" is not correct, but some users may already use it,
+          // so we keep supporting both. This is not ambiguous since "replaceWhere" only
+          // supports partition columns and it doesn't support struct type or map type.
+          .option("replaceWhere", "`a.b` = 'a' AND a.b = 'a'")
+          .mode("overwrite")
+          .saveAsTable(table)
+        checkAnswer(sql(s"SELECT `a.b`, `c.d`, a.b from $table"), Row("a", "b", "c") :: Nil)
+      }
+    }
+  }
+
+  test("replaceArbitrary should enforce proper usage of backtick") {
     val table = "replace_where_backtick"
     withTable(table) {
-      // The STRUCT column is added to prevent us from introducing any ambiguity in future
       sql(s"CREATE TABLE $table(`a.b` STRING, `c.d` STRING, a STRUCT<b:STRING>)" +
         s"USING delta PARTITIONED BY (`a.b`)")
+
+      // User has to use backtick properly. If they want to use a.b to match on `a.b`,
+      // error will be thrown if `a.b` doesn't have the value.
+      val e = intercept[AnalysisException] {
+        Seq(("a", "b", "c"))
+          .toDF("a.b", "c.d", "ab")
+          .withColumn("a", struct($"ab".alias("b")))
+          .drop("ab")
+          .write
+          .format("delta")
+          .option("replaceWhere", "a.b = 'a' AND `a.b` = 'a'")
+          .mode("overwrite")
+          .saveAsTable(table)
+      }
+      assert(e.getMessage.startsWith("Data written out does not match replaceWhere"))
+
+      Seq(("a", "b", "c"), ("d", "e", "f"))
+        .toDF("a.b", "c.d", "ab")
+        .withColumn("a", struct($"ab".alias("b")))
+        .drop("ab")
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .saveAsTable(table)
+
+      // Use backtick properly for `a.b`
+      Seq(("a", "h", "c"))
+        .toDF("a.b", "c.d", "ab")
+        .withColumn("a", struct($"ab".alias("b")))
+        .drop("ab")
+        .write
+        .format("delta")
+        .option("replaceWhere", "`a.b` = 'a'")
+        .mode("overwrite")
+        .saveAsTable(table)
+
+      checkAnswer(sql(s"SELECT `a.b`, `c.d`, a.b from $table"),
+        Row("a", "h", "c") :: Row("d", "e", "f") :: Nil)
+
+      // struct field can only be referred by "a.b".
       Seq(("a", "b", "c"))
         .toDF("a.b", "c.d", "ab")
         .withColumn("a", struct($"ab".alias("b")))
         .drop("ab")
         .write
         .format("delta")
-        // "replaceWhere" should support backtick and remove it correctly. Technically, "a.b" is not
-        // correct, but some users may already use it, so we keep supporting both. This is not
-        // ambiguous since "replaceWhere" only supports partition columns and it doesn't support
-        // struct type or map type.
-        .option("replaceWhere", "`a.b` = 'a' AND a.b = 'a'")
+        .option("replaceWhere", "a.b = 'c'")
         .mode("overwrite")
         .saveAsTable(table)
-      checkAnswer(sql(s"SELECT `a.b`, `c.d`, a.b from $table"), Row("a", "b", "c") :: Nil)
+      checkAnswer(sql(s"SELECT `a.b`, `c.d`, a.b from $table"),
+        Row("a", "b", "c") :: Row("d", "e", "f") :: Nil)
     }
   }
 
@@ -1380,3 +1647,4 @@ class DeltaSuite extends QueryTest
     checkAnswer(spark.read.format("delta").load(dir1.getCanonicalPath), spark.range(10).toDF)
   }
 }
+

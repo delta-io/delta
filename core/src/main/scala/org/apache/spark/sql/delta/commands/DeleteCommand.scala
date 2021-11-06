@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.commands
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Action
-import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
+import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{Column, Dataset, Row, SparkSession}
@@ -27,11 +27,10 @@ import org.apache.spark.sql.catalyst.expressions.{EqualNullSafe, Expression, Inp
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
 import org.apache.spark.sql.execution.SQLExecution
-import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.functions.udf
-import org.apache.spark.sql.types.BooleanType
 
 /**
  * Performs a Delete based on the search condition
@@ -44,10 +43,10 @@ import org.apache.spark.sql.types.BooleanType
  *      the affected files that are identified in step 1.
  */
 case class DeleteCommand(
-    tahoeFileIndex: TahoeFileIndex,
+    deltaLog: DeltaLog,
     target: LogicalPlan,
     condition: Option[Expression])
-  extends RunnableCommand with DeltaCommand {
+  extends LeafRunnableCommand with DeltaCommand {
 
   override def innerChildren: Seq[QueryPlan[_]] = Seq(target)
 
@@ -63,11 +62,13 @@ case class DeleteCommand(
   )
 
   final override def run(sparkSession: SparkSession): Seq[Row] = {
-    recordDeltaOperation(tahoeFileIndex.deltaLog, "delta.dml.delete") {
-      val deltaLog = tahoeFileIndex.deltaLog
+    recordDeltaOperation(deltaLog, "delta.dml.delete") {
       deltaLog.assertRemovable()
       deltaLog.withNewTransaction { txn =>
-        performDelete(sparkSession, deltaLog, txn)
+        val deleteActions = performDelete(sparkSession, deltaLog, txn)
+        if (deleteActions.nonEmpty) {
+          txn.commit(deleteActions, DeltaOperations.Delete(condition.map(_.sql).toSeq))
+        }
       }
       // Re-cache all cached plans(including this relation itself, if it's cached) that refer to
       // this data source relation.
@@ -77,8 +78,10 @@ case class DeleteCommand(
     Seq.empty[Row]
   }
 
-  private def performDelete(
-      sparkSession: SparkSession, deltaLog: DeltaLog, txn: OptimisticTransaction) = {
+  def performDelete(
+      sparkSession: SparkSession,
+      deltaLog: DeltaLog,
+      txn: OptimisticTransaction): Seq[Action] = {
     import sparkSession.implicits._
 
     var numTouchedFiles: Long = 0
@@ -124,7 +127,7 @@ case class DeleteCommand(
           val nameToAddFileMap = generateCandidateFileMap(deltaLog.dataPath, candidateFiles)
 
           val fileIndex = new TahoeBatchFileIndex(
-            sparkSession, "delete", candidateFiles, deltaLog, tahoeFileIndex.path, txn.snapshot)
+            sparkSession, "delete", candidateFiles, deltaLog, deltaLog.dataPath, txn.snapshot)
           // Keep everything from the resolved target except a new TahoeFileIndex
           // that only involves the affected files instead of all files.
           val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
@@ -156,7 +159,7 @@ case class DeleteCommand(
             // Case 3.2: some files need an update to remove the deleted files
             // Do the second pass and just read the affected files
             val baseRelation = buildBaseRelation(
-              sparkSession, txn, "delete", tahoeFileIndex.path, filesToRewrite, nameToAddFileMap)
+              sparkSession, txn, "delete", deltaLog.dataPath, filesToRewrite, nameToAddFileMap)
             // Keep everything from the resolved target except a new TahoeFileIndex
             // that only involves the affected files instead of all files.
             val newTarget = DeltaTableUtils.replaceFileIndex(target, baseRelation.location)
@@ -186,7 +189,6 @@ case class DeleteCommand(
       metrics("scanTimeMs").set(scanTimeMs)
       metrics("rewriteTimeMs").set(rewriteTimeMs)
       txn.registerSQLMetrics(sparkSession, metrics)
-      txn.commit(deleteActions, DeltaOperations.Delete(condition.map(_.sql).toSeq))
       // This is needed to make the SQL metrics visible in the Spark UI
       val executionId = sparkSession.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
       SQLMetrics.postDriverMetricUpdates(
@@ -206,9 +208,9 @@ case class DeleteCommand(
         scanTimeMs,
         rewriteTimeMs)
     )
-  }
 
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+    deleteActions
+  }
 }
 
 object DeleteCommand {
@@ -219,7 +221,7 @@ object DeleteCommand {
       case o =>
         throw DeltaErrors.notADeltaSourceException("DELETE", Some(o))
     }
-    DeleteCommand(index, delete.child, delete.condition)
+    DeleteCommand(index.deltaLog, delete.child, delete.condition)
   }
 
   val FILE_NAME_COLUMN = "_input_file_name_"

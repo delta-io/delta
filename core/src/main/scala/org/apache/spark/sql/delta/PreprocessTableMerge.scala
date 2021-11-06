@@ -18,16 +18,20 @@ package org.apache.spark.sql.delta
 
 import java.util.Locale
 
+import scala.collection.mutable
+import scala.reflect.ClassTag
+
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
 
-import org.apache.spark.sql.AnalysisException
+import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
-import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, Literal, SubqueryExpression}
+import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Expression, Literal, SubqueryExpression}
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.{StructField, StructType}
 
 case class PreprocessTableMerge(override val conf: SQLConf)
   extends Rule[LogicalPlan] with UpdateExpressionsSupport {
@@ -71,6 +75,11 @@ case class PreprocessTableMerge(override val conf: SQLConf)
       case DeltaFullTable(index) => index
       case o => throw DeltaErrors.notADeltaSourceException("MERGE", Some(o))
     }
+    val generatedColumns = GeneratedColumn.getGeneratedColumns(
+      tahoeFileIndex.snapshotAtAnalysis)
+    if (generatedColumns.nonEmpty && !deltaLogicalPlan.isInstanceOf[LogicalRelation]) {
+      throw DeltaErrors.operationOnTempViewWithGenerateColsNotSupported("MERGE INTO")
+    }
 
     val processedMatched = matched.map {
       case m: DeltaMergeIntoUpdateClause =>
@@ -78,14 +87,28 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         // update clause.
         val existingColumns = m.resolvedActions.map(_.targetColNameParts.head) ++
           target.output.map(_.name)
-        val newColsFromInsert = notMatched.toSeq.flatMap {
+        val newColumns = notMatched.toSeq.flatMap {
           _.resolvedActions.filterNot { insertAct =>
             existingColumns.exists { colName =>
               conf.resolver(insertAct.targetColNameParts.head, colName)
             }
           }
-        }.map { updateAction =>
-          AttributeReference(updateAction.targetColNameParts.head, updateAction.dataType)()
+        }
+
+        // TODO: Remove this once Scala 2.13 is available in Spark.
+        def distinctBy[A : ClassTag, B](a: Seq[A])(f: A => B): Seq[A] = {
+          val builder = mutable.ArrayBuilder.make[A]
+          val seen = mutable.HashSet.empty[B]
+          a.foreach { x =>
+            if (seen.add(f(x))) {
+              builder += x
+            }
+          }
+          builder.result()
+        }
+
+        val newColsFromInsert = distinctBy(newColumns)(_.targetColNameParts).map { action =>
+          AttributeReference(action.targetColNameParts.head, action.dataType)()
         }
 
         // Get the operations for columns that already exist...
@@ -108,12 +131,6 @@ case class PreprocessTableMerge(override val conf: SQLConf)
               AttributeReference(field.name, field.dataType)()
             }
           }
-
-        val generatedColumns = GeneratedColumn.getGeneratedColumns(
-          tahoeFileIndex.snapshotAtAnalysis)
-        if (generatedColumns.nonEmpty && !deltaLogicalPlan.isInstanceOf[LogicalRelation]) {
-          throw DeltaErrors.updateOnTempViewWithGenerateColsNotSupported
-        }
 
         // Use the helper methods for in UpdateExpressionsSupport to generate expressions such
         // that nested fields can be updated (only for existing columns).
@@ -159,7 +176,10 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         throw new AnalysisException(s"Duplicate column names in INSERT clause")
       }
 
-      val newActionsFromTargetSchema = target.output.filterNot { col =>
+      // Generate actions for columns that are not explicitly inserted. They might come from
+      // the original schema of target table or the schema evolved columns. In either case they are
+      // covered by `finalSchema`.
+      val implicitActions = finalSchema.filterNot { col =>
         m.resolvedActions.exists { insertAct =>
           conf.resolver(insertAct.targetColNameParts.head, col.name)
         }
@@ -167,18 +187,11 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         DeltaMergeAction(Seq(col.name), Literal(null, col.dataType), targetColNameResolved = true)
       }
 
-      val newActionsFromUpdate = matched.flatMap {
-        _.resolvedActions.filterNot { updateAct =>
-          m.resolvedActions.exists { insertAct =>
-            conf.resolver(insertAct.targetColNameParts.head, updateAct.targetColNameParts.head)
-          }
-        }.toSeq
-      }.map { updateAction => updateAction.copy(expr = Literal(null, updateAction.dataType)) }
-
-      // Reorder actions by the target column order, with columns to be schema evolved that
-      // aren't currently in the target at the end.
+      val actions = m.resolvedActions ++ implicitActions
+      val actionsWithGeneratedColumns = resolveNonExplicitlyInsertedGeneratedColumns(
+        m.resolvedActions, actions, source, generatedColumns, finalSchema)
       val alignedActions: Seq[DeltaMergeAction] = finalSchema.map { targetAttrib =>
-        (m.resolvedActions ++ newActionsFromTargetSchema ++ newActionsFromUpdate).find { a =>
+        actionsWithGeneratedColumns.find { a =>
           conf.resolver(targetAttrib.name, a.targetColNameParts.head)
         }.map { a =>
           DeltaMergeAction(
@@ -212,6 +225,67 @@ case class PreprocessTableMerge(override val conf: SQLConf)
     } else {
       DeltaMergeInto(source, target, condition,
         processedMatched, processedNotMatched, migrateSchema, finalSchemaOpt)
+    }
+  }
+
+  /**
+   * Resolves any non explicitly inserted generated columns in `allActions` to its
+   * corresponding generated expression.
+   *
+   * For each action, if it's a generated column that is not explicitly inserted, we will
+   * use its generated expression to calculate its value by resolving to a fake project of all the
+   * inserted values. Note that this fake project is created after we set all non explicitly
+   * inserted columns to nulls. This guarantees that all columns referenced by the generated
+   * column, regardless of whether they are explicitly inserted or not, will have a
+   * corresponding expression in the fake project and hence the generated expression can
+   * always be resolved.
+   *
+   * @param explicitActions Actions explicitly specified by users.
+   * @param allActions Actions with non explicitly specified columns added with nulls.
+   * @param sourcePlan Logical plan node of the source table of merge.
+   * @param generatedColumns All the generated columns in the target table.
+   * @return `allActions` with expression for non explicitly inserted generated columns expression
+   *        resolved.
+   */
+  private def resolveNonExplicitlyInsertedGeneratedColumns(
+    explicitActions: Seq[DeltaMergeAction],
+    allActions: Seq[DeltaMergeAction],
+    sourcePlan: LogicalPlan,
+    generatedColumns: Seq[StructField],
+    finalSchema: StructType
+  ): Seq[DeltaMergeAction] = {
+    val nonExplicitlyInsertedGeneratedColumns = generatedColumns.filter {
+      field =>
+        !explicitActions.exists { insertAct =>
+          conf.resolver(insertAct.targetColNameParts.head, field.name)
+        }
+    }
+    if (nonExplicitlyInsertedGeneratedColumns.isEmpty) {
+      return allActions
+    }
+    assert(finalSchema.size == allActions.size)
+    val fakeProjectMap = allActions.map {
+      action => {
+        val exprForProject = Alias(action.expr, action.targetColNameParts.head)()
+        exprForProject.exprId -> exprForProject
+      }
+    }.toMap
+    val fakeProject = Project(fakeProjectMap.values.toArray[Alias], sourcePlan)
+    allActions.map { action =>
+      val colName = action.targetColNameParts.head
+      nonExplicitlyInsertedGeneratedColumns.find(f => conf.resolver(f.name, colName)) match {
+        case Some(field) =>
+          val expr = GeneratedColumn.getGenerationExpression(field).get
+          val resolvedExpr = resolveReferencesForExpressions(SparkSession.active, expr :: Nil,
+            fakeProject).head
+          // Replace references to fakeProject with original expression.
+          val transformedExpr = resolvedExpr.transform {
+            case a: AttributeReference if fakeProjectMap.contains(a.exprId) =>
+              fakeProjectMap(a.exprId).child
+          }
+          action.copy(expr = transformedExpr)
+        case _ => action
+      }
     }
   }
 }

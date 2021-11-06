@@ -30,10 +30,10 @@ import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
 
-import org.apache.spark.sql.{AnalysisException, Row}
+import org.apache.spark.sql.{AnalysisException, Dataset, Row}
 import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.streaming._
-import org.apache.spark.sql.streaming.{OutputMode, StreamingQueryException, Trigger}
+import org.apache.spark.sql.streaming.{OutputMode, StreamingQuery, StreamingQueryException, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.unsafe.types.UTF8String
@@ -153,7 +153,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
         AssertOnQuery { q => q.processAllAvailable(); true },
         CheckAnswer((0 until 5).map(_.toString): _*),
         AssertOnQuery { _ =>
-          withMetadata(deltaLog, StructType.fromDDL("id LONG, value STRING"))
+          withMetadata(deltaLog, StructType.fromDDL("id int, value int"))
           true
         },
         ExpectFailure[IllegalStateException](t =>
@@ -904,7 +904,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
           stream.processAllAvailable()
         }
 
-        val fs = deltaLog.dataPath.getFileSystem(spark.sessionState.newHadoopConf())
+        val fs = deltaLog.dataPath.getFileSystem(deltaLog.newDeltaHadoopConf())
         for (version <- 0 to 3) {
           val possibleFiles = Seq(
             f"/$version%020d.checkpoint.parquet",
@@ -950,7 +950,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
           deltaLog.startTransaction().commit(Seq(), DeltaOperations.ManualUpdate)
         }
 
-        val fs = deltaLog.dataPath.getFileSystem(spark.sessionState.newHadoopConf())
+        val fs = deltaLog.dataPath.getFileSystem(deltaLog.newDeltaHadoopConf())
         for (version <- 0 to 3) {
           val possibleFiles = Seq(
             f"/$version%020d.checkpoint.parquet",
@@ -995,7 +995,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
         deltaLog.store.write(
           FileNames.deltaFile(deltaLog.logPath, deltaLog.snapshot.version + 1),
           // Write a large reader version to fail the streaming query
-          Iterator(Protocol(minReaderVersion = Int.MaxValue).json))
+          Iterator(Protocol(minReaderVersion = Int.MaxValue).json),
+          overwrite = false,
+          deltaLog.newDeltaHadoopConf())
 
         // The streaming query should fail because its version is too old
         val e = intercept[StreamingQueryException] {
@@ -1713,7 +1715,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
       checkAnswer(writtenStreamDf, expectedRows)
     }
   }
+
 }
+
 
 /**
  * A FileSystem implementation that returns monotonically increasing timestamps for file creation.

@@ -45,16 +45,24 @@ import org.apache.spark.annotation.Unstable
  *       See https://docs.delta.io/latest/delta-storage.html for details.
  */
 @Unstable
-class IBMCOSLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
-  extends HadoopFileSystemLogStore(sparkConf, hadoopConf) {
+class IBMCOSLogStore(sparkConf: SparkConf, initHadoopConf: Configuration)
+  extends HadoopFileSystemLogStore(sparkConf, initHadoopConf) {
   val preconditionFailedExceptionMessage =
     "At least one of the preconditions you specified did not hold"
 
-  assert(hadoopConf.getBoolean("fs.cos.atomic.write", false) == true,
+  assert(initHadoopConf.getBoolean("fs.cos.atomic.write", false) == true,
     "'fs.cos.atomic.write' must be set to true to use IBMCOSLogStore " +
       "in order to enable atomic write")
 
   override def write(path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit = {
+    write(path, actions, overwrite, getHadoopConfiguration)
+  }
+
+  override def write(
+      path: Path,
+      actions: Iterator[String],
+      overwrite: Boolean,
+      hadoopConf: Configuration): Unit = {
     val fs = path.getFileSystem(hadoopConf)
 
     val exists = fs.exists(path)
@@ -90,4 +98,6 @@ class IBMCOSLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
   override def invalidateCache(): Unit = {}
 
   override def isPartialWriteVisible(path: Path): Boolean = false
+
+  override def isPartialWriteVisible(path: Path, hadoopConf: Configuration): Boolean = false
 }

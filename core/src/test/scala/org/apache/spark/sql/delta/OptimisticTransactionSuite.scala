@@ -254,7 +254,9 @@ class OptimisticTransactionSuite
   test("AddFile with different partition schema compared to metadata should fail") {
     withTempDir { tempDir =>
       val log = DeltaLog(spark, new Path(tempDir.getAbsolutePath))
-      log.startTransaction().commit(Seq(Metadata(partitionColumns = Seq("col2"))), ManualUpdate)
+      log.startTransaction().commit(Seq(Metadata(
+        schemaString = StructType.fromDDL("col2 string, a int").json,
+        partitionColumns = Seq("col2"))), ManualUpdate)
       withSQLConf(DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "true") {
         val e = intercept[IllegalStateException] {
           log.startTransaction().commit(Seq(AddFile(
@@ -270,6 +272,22 @@ class OptimisticTransactionSuite
           log.dataPath.toString, Map("col3" -> "1"), 12322, 0L, true, null, null)), ManualUpdate)
         assert(log.update().version === 1)
       }
+    }
+  }
+
+  test("isolation level shouldn't be null") {
+    withTempDir { tempDir =>
+      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+
+      log.startTransaction().commit(Seq(Metadata()), ManualUpdate)
+
+      val txn = log.startTransaction()
+      txn.commit(addA :: Nil, ManualUpdate)
+
+      val isolationLevels = log.history.getHistory(Some(10)).map(_.isolationLevel)
+      assert(isolationLevels.size == 2)
+      assert(isolationLevels(0).exists(_.contains("Serializable")))
+      assert(isolationLevels(1) == Some(SnapshotIsolation.toString))
     }
   }
 }

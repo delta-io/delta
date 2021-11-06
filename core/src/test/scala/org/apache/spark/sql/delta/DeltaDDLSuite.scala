@@ -82,6 +82,7 @@ class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession
 }
 
 
+
 abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
   import testImplicits._
 
@@ -431,9 +432,12 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
   }
 
   /**
-   * SHOW CREATE TABLE is NOT supported in spark 3.1 for v2 tables.
+   * Although Spark 3.2 adds the support for SHOW CREATE TABLE for v2 tables, it doesn't work
+   * properly for some delta features, such as Delta constraints and generated columns.
+   *
+   * TODO(SC-83986): We should block it for unsupported tables
    */
-  test("SHOW CREATE TABLE should not include OPTIONS except for path - not supported") {
+  ignore("SHOW CREATE TABLE should not include OPTIONS except for path - not supported") {
     withTable("delta_test") {
       sql(
         s"""

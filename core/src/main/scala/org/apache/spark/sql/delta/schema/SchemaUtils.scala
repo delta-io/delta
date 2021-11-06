@@ -17,23 +17,29 @@
 package org.apache.spark.sql.delta.schema
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.util.Locale
+
 import scala.collection.Set._
 import scala.collection.mutable
+import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaErrors, GeneratedColumn}
+import org.apache.spark.sql.delta.{DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, GeneratedColumn, NoMapping}
+import org.apache.spark.sql.delta.actions
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.spark.internal.Logging
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
+import org.apache.spark.sql.catalyst.analysis.{Resolver, TypeCoercion, UnresolvedAttribute}
+import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
+import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
 import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
-object SchemaUtils extends Logging {
+object SchemaUtils {
   // We use case insensitive resolution while writing into Delta
   val DELTA_COL_RESOLVER: (String, String) => Boolean =
     org.apache.spark.sql.catalyst.analysis.caseInsensitiveResolution
@@ -60,7 +66,8 @@ object SchemaUtils extends Logging {
           val includeLevel = if (f(sf)) Seq((columnStack, sf)) else Nil
           includeLevel ++ recurseIntoComplexTypes(sf.dataType, columnStack :+ sf.name)
         }
-      case a: ArrayType if checkComplexTypes => recurseIntoComplexTypes(a.elementType, columnStack)
+      case a: ArrayType if checkComplexTypes =>
+        recurseIntoComplexTypes(a.elementType, columnStack :+ "element")
       case m: MapType if checkComplexTypes =>
         recurseIntoComplexTypes(m.keyType, columnStack :+ "key") ++
           recurseIntoComplexTypes(m.valueType, columnStack :+ "value")
@@ -108,8 +115,6 @@ object SchemaUtils extends Logging {
       case st: StructType =>
         val nested = st.fields.flatMap { f =>
           if (f.dataType.isInstanceOf[NullType]) {
-            logInfo(
-              s"Dropping column '${f.name}' from nested column because it is of NullType.")
             None
           } else {
             Some(generateSelectExpr(f, nameStack :+ sf.name))
@@ -132,12 +137,7 @@ object SchemaUtils extends Logging {
     }
 
     val selectExprs = schema.flatMap { f =>
-      if (f.dataType.isInstanceOf[NullType]) {
-        logInfo(s"Dropping column '${f.name}' from ${schema.toString} because it is of NullType.")
-        None
-      } else {
-        Some(generateSelectExpr(f, Nil))
-      }
+      if (f.dataType.isInstanceOf[NullType]) None else Some(generateSelectExpr(f, Nil))
     }
     df.select(selectExprs: _*)
   }
@@ -152,9 +152,7 @@ object SchemaUtils extends Logging {
       struct.flatMap {
         case sf @ StructField(_, s: StructType, _, _) =>
           Some(sf.copy(dataType = StructType(recurseAndRemove(s))))
-        case StructField(name, n: NullType, _, _) =>
-          logInfo(s"Dropping column '$name' because it is of NullType.")
-          None
+        case StructField(_, n: NullType, _, _) => None
         case other => Some(other)
       }
     }
@@ -403,6 +401,66 @@ object SchemaUtils extends Logging {
     }
 
     structDifference(existingSchema, specifiedSchema, "")
+  }
+
+  /**
+   * Copied verbatim from Apache Spark.
+   *
+   * Returns a field in this struct and its child structs, case insensitively. This is slightly less
+   * performant than the case sensitive version.
+   *
+   * If includeCollections is true, this will return fields that are nested in maps and arrays.
+   *
+   * @param fieldNames The path to the field, in order from the root. For example, the column
+   *                   nested.a.b.c would be Seq("nested", "a", "b", "c").
+   */
+  @scala.annotation.tailrec
+  def findNestedFieldIgnoreCase(
+      schema: StructType,
+      fieldNames: Seq[String],
+      includeCollections: Boolean = false): Option[StructField] = {
+    val fieldOption = fieldNames.headOption.flatMap {
+      fieldName => schema.find(_.name.equalsIgnoreCase(fieldName))
+    }
+    fieldOption match {
+      case Some(field) =>
+        (fieldNames.tail, field.dataType, includeCollections) match {
+          case (Seq(), _, _) =>
+            Some(field)
+
+          case (names, struct: StructType, _) =>
+            findNestedFieldIgnoreCase(struct, names, includeCollections)
+
+          case (_, _, false) =>
+            None // types nested in maps and arrays are not used
+
+          case (Seq("key"), MapType(keyType, _, _), true) =>
+            // return the key type as a struct field to include nullability
+            Some(StructField("key", keyType, nullable = false))
+
+          case (Seq("key", names @ _*), MapType(struct: StructType, _, _), true) =>
+            findNestedFieldIgnoreCase(struct, names, includeCollections)
+
+          case (Seq("value"), MapType(_, valueType, isNullable), true) =>
+            // return the value type as a struct field to include nullability
+            Some(StructField("value", valueType, nullable = isNullable))
+
+          case (Seq("value", names @ _*), MapType(_, struct: StructType, _), true) =>
+            findNestedFieldIgnoreCase(struct, names, includeCollections)
+
+          case (Seq("element"), ArrayType(elementType, isNullable), true) =>
+            // return the element type as a struct field to include nullability
+            Some(StructField("element", elementType, nullable = isNullable))
+
+          case (Seq("element", names @ _*), ArrayType(struct: StructType, _), true) =>
+            findNestedFieldIgnoreCase(struct, names, includeCollections)
+
+          case _ =>
+            None
+        }
+      case _ =>
+        None
+    }
   }
 
   /**
@@ -656,7 +714,7 @@ object SchemaUtils extends Logging {
       (fromDt, toDt) match {
         case (ArrayType(fromElement, fn), ArrayType(toElement, tn)) =>
           verifyNullability(fn, tn, columnPath)
-          check(fromElement, toElement, columnPath)
+          check(fromElement, toElement, columnPath :+ "element")
 
         case (MapType(fromKey, fromValue, fn), MapType(toKey, toValue, tn)) =>
           verifyNullability(fn, tn, columnPath)
@@ -730,37 +788,6 @@ object SchemaUtils extends Logging {
   }
 
   /**
-   * Transform (nested) columns in a schema.
-   *
-   * @param schema to transform.
-   * @param tf function to apply.
-   * @return the transformed schema.
-   */
-  def transformColumns(
-      schema: StructType)(
-      tf: (Seq[String], StructField, Resolver) => StructField): StructType = {
-    def transform[E <: DataType](path: Seq[String], dt: E): E = {
-      val newDt = dt match {
-        case StructType(fields) =>
-          StructType(fields.map { field =>
-            val newField = tf(path, field, DELTA_COL_RESOLVER)
-            newField.copy(dataType = transform(path :+ newField.name, newField.dataType))
-          })
-        case ArrayType(elementType, containsNull) =>
-          ArrayType(transform(path, elementType), containsNull)
-        case MapType(keyType, valueType, valueContainsNull) =>
-          MapType(
-            transform(path :+ "key", keyType),
-            transform(path :+ "value", valueType),
-            valueContainsNull)
-        case other => other
-      }
-      newDt.asInstanceOf[E]
-    }
-    transform(Seq.empty, schema)
-  }
-
-  /**
    * Transform (nested) columns in a schema. Runs the transform function on all nested StructTypes
    *
    * @param schema to transform.
@@ -816,7 +843,7 @@ object SchemaUtils extends Logging {
       tf: (Seq[String], StructField, Seq[(Seq[String], E)]) => StructField): StructType = {
     // scalastyle:off caselocale
     val inputLookup = input.groupBy(_._1.map(_.toLowerCase))
-    SchemaUtils.transformColumns(schema) { (path, field, resolver) =>
+    SchemaMergingUtils.transformColumns(schema) { (path, field, resolver) =>
       // Find the parameters that match this field name.
       val fullPath = path :+ field.name
       val normalizedFullPath = fullPath.map(_.toLowerCase)
@@ -835,12 +862,26 @@ object SchemaUtils extends Logging {
   }
 
   /**
+   * Check if the schema contains invalid char in the column names depending on the mode.
+   * TODO: We can suggest the mapping mode flag when this feature is in public preview.
+   */
+  def checkSchemaFieldNames(schema: StructType, columnMappingMode: DeltaColumnMappingMode): Unit = {
+    if (columnMappingMode != NoMapping) return
+    try {
+      checkFieldNames(SchemaMergingUtils.explodeNestedFieldNames(schema))
+    } catch {
+      case NonFatal(e) =>
+        throw DeltaErrors.foundInvalidCharsInColumnNames(e)
+    }
+  }
+
+  /**
    * Verifies that the column names are acceptable by Parquet and henceforth Delta. Parquet doesn't
-   * accept the characters ' ,;{}()\n\t'. We ensure that neither the data columns nor the partition
+   * accept the characters ' ,;{}()\n\t='. We ensure that neither the data columns nor the partition
    * columns have these characters.
    */
   def checkFieldNames(names: Seq[String]): Unit = {
-    ParquetSchemaConverter.checkFieldNames(names)
+    names.foreach(ParquetSchemaConverter.checkFieldName)
     // The method checkFieldNames doesn't have a valid regex to search for '\n'. That should be
     // fixed in Apache Spark, and we can remove this additional check here.
     names.find(_.contains("\n")).foreach(col => throw DeltaErrors.invalidColumnName(col))
@@ -892,7 +933,7 @@ object SchemaUtils extends Logging {
       case s: StructField => s
     }
 
-    SchemaUtils.transformColumns(schema)(checkField)
+    SchemaMergingUtils.transformColumns(schema)(checkField)
   }
 
   def fieldToColumn(field: StructField): Column = {

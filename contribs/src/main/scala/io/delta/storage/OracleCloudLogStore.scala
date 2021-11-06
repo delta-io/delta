@@ -42,14 +42,24 @@ import org.apache.spark.annotation.Unstable
  *       See https://docs.delta.io/latest/delta-storage.html for details.
  */
 @Unstable
-class OracleCloudLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
-  extends HadoopFileSystemLogStore(sparkConf, hadoopConf) {
+class OracleCloudLogStore(sparkConf: SparkConf, initHadoopConf: Configuration)
+  extends HadoopFileSystemLogStore(sparkConf, initHadoopConf) {
 
   override def write(path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit = {
-    writeWithRename(path, actions, overwrite)
+    write(path, actions, overwrite, getHadoopConfiguration)
+  }
+
+  override def write(
+      path: Path,
+      actions: Iterator[String],
+      overwrite: Boolean,
+      hadoopConf: Configuration): Unit = {
+    writeWithRename(path, actions, overwrite, hadoopConf)
   }
 
   override def invalidateCache(): Unit = {}
 
   override def isPartialWriteVisible(path: Path): Boolean = true
+
+  override def isPartialWriteVisible(path: Path, hadoopConf: Configuration): Boolean = true
 }

@@ -20,16 +20,18 @@ package org.apache.spark.sql.delta.actions
 import java.net.URI
 import java.sql.Timestamp
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 import scala.collection.mutable.ArrayBuffer
+import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, GeneratedColumn}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, GeneratedColumn}
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation.{JsonIgnore, JsonInclude}
-import com.fasterxml.jackson.core.JsonGenerator
-import com.fasterxml.jackson.databind.{JsonSerializer, ObjectMapper, SerializerProvider}
+import com.fasterxml.jackson.core.{JsonGenerator, JsonProcessingException}
+import com.fasterxml.jackson.databind.{JsonMappingException, JsonSerializer, ObjectMapper, SerializerProvider}
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 import org.codehaus.jackson.annotate.JsonRawValue
 
@@ -50,8 +52,8 @@ class ProtocolDowngradeException(oldProtocol: Protocol, newProtocol: Protocol)
 
 object Action {
   /** The maximum version of the protocol that this version of Delta understands. */
-  val readerVersion = 1
-  val writerVersion = 4
+  val readerVersion = 2
+  val writerVersion = 5
   val protocolVersion: Protocol = Protocol(readerVersion, writerVersion)
 
   def fromJson(json: String): Action = {
@@ -148,11 +150,14 @@ object Protocol {
       featuresUsed.append("Using Generated Columns")
     }
 
-    if (DeltaConfigs.CHANGE_DATA_CAPTURE.fromMetaData(metadata) ||
-        DeltaConfigs.CHANGE_DATA_CAPTURE_LEGACY.fromMetaData(metadata)) {
+    if (DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(metadata)) {
       minimumRequired = Protocol(0, minWriterVersion = 4)
       featuresUsed.append("Change data feed")
       throw DeltaErrors.cdcNotAllowedInThisVersion()
+    }
+
+    if (DeltaColumnMapping.requiresNewProtocol(metadata)) {
+      minimumRequired = DeltaColumnMapping.MIN_PROTOCOL_VERSION
     }
 
     minimumRequired -> featuresUsed
@@ -245,7 +250,9 @@ case class AddFile(
 
   @JsonIgnore
   lazy val insertionTime: Long = tag(AddFile.Tags.INSERTION_TIME)
-    .getOrElse(modificationTime.toString).toLong
+    // From modification time in milliseconds to microseconds.
+    .getOrElse(TimeUnit.MICROSECONDS.convert(modificationTime, TimeUnit.MILLISECONDS).toString)
+    .toLong
 
   def tag(tag: AddFile.Tags.KeyType): Option[String] =
     Option(tags).getOrElse(Map.empty).get(tag.name)
@@ -280,7 +287,8 @@ object AddFile {
     /** [[ZCUBE_ZORDER_CURVE]]: Clustering strategy of the corresponding ZCube */
     object ZCUBE_ZORDER_CURVE extends AddFile.Tags.KeyType("ZCUBE_ZORDER_CURVE")
 
-    /** [[INSERTION_TIME]]: the latest timestamp when the data in the file was inserted */
+    /** [[INSERTION_TIME]]: the latest timestamp in micro seconds when the data in the file
+     * was inserted */
     object INSERTION_TIME extends AddFile.Tags.KeyType("INSERTION_TIME")
 
     /** [[PARTITION_ID]]: rdd partition id that has written the file, will not be stored in the
@@ -318,6 +326,24 @@ case class RemoveFile(
 
   @JsonIgnore
   val delTimestamp: Long = deletionTimestamp.getOrElse(0L)
+
+  /**
+   * Return tag value if extendedFileMetadata is true and the tag present.
+   */
+  def getTag(tagName: String): Option[String] = {
+    if (!extendedFileMetadata || tags == null) {
+      None
+    } else {
+      tags.get(tagName)
+    }
+  }
+
+  /**
+   * Create a copy with the new tag.
+   */
+  def copyWithTag(tag: String, value: String): RemoveFile =
+    copy(tags = Option(tags).getOrElse(Map.empty) + (tag -> value), extendedFileMetadata = true)
+
 }
 // scalastyle:on
 
@@ -339,6 +365,8 @@ case class AddCDCFile(
 
 case class Format(
     provider: String = "parquet",
+    // If we support `options` in future, we should not store any file system options since they may
+    // contain credentials.
     options: Map[String, String] = Map.empty)
 
 /**
@@ -361,17 +389,34 @@ case class Metadata(
   // defs, because parsing StructTypes from JSON is extremely expensive and has
   // caused perf. problems here in the past:
 
+  /**
+   * Column mapping mode for this table
+   */
+  @JsonIgnore
+  lazy val columnMappingMode: DeltaColumnMappingMode =
+    DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(this)
+
+  /**
+   * Column mapping max id for this table
+   */
+  @JsonIgnore
+  lazy val columnMappingMaxId: Long =
+    DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(this)
+
   /** Returns the schema as a [[StructType]] */
   @JsonIgnore
-  lazy val schema: StructType =
-    Option(schemaString).map { s =>
-      DataType.fromJson(s).asInstanceOf[StructType]
-    }.getOrElse(StructType.apply(Nil))
+  lazy val schema: StructType = Option(schemaString)
+    .map(DataType.fromJson(_).asInstanceOf[StructType])
+    .getOrElse(StructType.apply(Nil))
 
   /** Returns the partitionSchema as a [[StructType]] */
   @JsonIgnore
   lazy val partitionSchema: StructType =
     new StructType(partitionColumns.map(c => schema(c)).toArray)
+
+  /** Partition value keys in the AddFile map. */
+  @JsonIgnore
+  lazy val physicalPartitionSchema: StructType = DeltaColumnMapping.renameColumns(partitionSchema)
 
   /** Columns written out to files. */
   @JsonIgnore
@@ -379,6 +424,10 @@ case class Metadata(
     val partitions = partitionColumns.toSet
     StructType(schema.filterNot(f => partitions.contains(f.name)))
   }
+
+  /** Partition value written out to files */
+  @JsonIgnore
+  lazy val physicalPartitionColumns: Seq[String] = physicalPartitionSchema.fieldNames.toSeq
 
   /**
    * Columns whose type should never be changed. For example, if a column is used by a generated
@@ -432,7 +481,8 @@ case class CommitInfo(
     /** Whether this commit has blindly appended without caring about existing files */
     isBlindAppend: Option[Boolean],
     operationMetrics: Option[Map[String, String]],
-    userMetadata: Option[String]) extends Action with CommitMarker {
+    userMetadata: Option[String],
+    tags: Option[Map[String, String]]) extends Action with CommitMarker {
   override def wrap: SingleAction = SingleAction(commitInfo = this)
 
   override def withTimestamp(timestamp: Long): CommitInfo = {
@@ -442,6 +492,7 @@ case class CommitInfo(
   override def getTimestamp: Long = timestamp.getTime
   @JsonIgnore
   override def getVersion: Long = version.get
+
 }
 
 case class JobInfo(
@@ -475,7 +526,7 @@ object NotebookInfo {
 object CommitInfo {
   def empty(version: Option[Long] = None): CommitInfo = {
     CommitInfo(version, null, None, None, null, null, None, None,
-                None, None, None, None, None, None)
+                None, None, None, None, None, None, None)
   }
 
   def apply(
@@ -487,7 +538,8 @@ object CommitInfo {
       isolationLevel: Option[String],
       isBlindAppend: Option[Boolean],
       operationMetrics: Option[Map[String, String]],
-      userMetadata: Option[String]): CommitInfo = {
+      userMetadata: Option[String],
+      tags: Option[Map[String, String]]): CommitInfo = {
     val getUserName = commandContext.get("user").flatMap {
       case "unknown" => None
       case other => Option(other)
@@ -507,8 +559,10 @@ object CommitInfo {
       isolationLevel,
       isBlindAppend,
       operationMetrics,
-      userMetadata)
+      userMetadata,
+      tags)
   }
+
 }
 
 /** A serialization helper to create a common action envelope. */

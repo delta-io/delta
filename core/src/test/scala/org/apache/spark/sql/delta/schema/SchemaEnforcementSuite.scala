@@ -802,9 +802,11 @@ trait CompleteOutputModeTests extends SchemaEnforcementSuiteBase with SharedSpar
         assert(df.schema.length == 3)
 
         val deltaLog = DeltaLog.forTable(spark, dir)
-        val lastCommitFile = deltaLog.store.listFrom(FileNames.deltaFile(deltaLog.logPath, 0L))
+        val hadoopConf = deltaLog.newDeltaHadoopConf()
+        val lastCommitFile = deltaLog.store
+          .listFrom(FileNames.deltaFile(deltaLog.logPath, 0L), hadoopConf)
           .map(_.getPath).filter(FileNames.isDeltaFile).toArray.last
-        val lastCommitContainsMetadata = deltaLog.store.read(lastCommitFile)
+        val lastCommitContainsMetadata = deltaLog.store.read(lastCommitFile, hadoopConf)
           .exists(JsonUtils.mapper.readValue[SingleAction](_).metaData != null)
 
         assert(!lastCommitContainsMetadata,
@@ -859,9 +861,11 @@ trait CompleteOutputModeTests extends SchemaEnforcementSuiteBase with SharedSpar
         assert(df.schema.length == 3)
 
         val deltaLog = DeltaLog.forTable(spark, dir)
-        val lastCommitFile = deltaLog.store.listFrom(FileNames.deltaFile(deltaLog.logPath, 0L))
+        val hadoopConf = deltaLog.newDeltaHadoopConf()
+        val lastCommitFile = deltaLog.store
+          .listFrom(FileNames.deltaFile(deltaLog.logPath, 0L), hadoopConf)
           .map(_.getPath).filter(FileNames.isDeltaFile).toArray.last
-        val lastCommitContainsMetadata = deltaLog.store.read(lastCommitFile)
+        val lastCommitContainsMetadata = deltaLog.store.read(lastCommitFile, hadoopConf)
           .exists(JsonUtils.mapper.readValue[SingleAction](_).metaData != null)
 
         assert(!lastCommitContainsMetadata,
@@ -878,7 +882,8 @@ trait CompleteOutputModeTests extends SchemaEnforcementSuiteBase with SharedSpar
 class SchemaEnforcementWithPathSuite
   extends AppendSaveModeTests
   with AppendSaveModeNullTests
-  with OverwriteSaveModeTests {
+  with OverwriteSaveModeTests
+  with DeltaSQLCommandTest {
   override val saveOperation = SaveWithPath()
 }
 
