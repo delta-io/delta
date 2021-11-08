@@ -26,7 +26,6 @@ import org.apache.hadoop.hive.metastore.HiveMetaHook
 import org.apache.hadoop.hive.metastore.api.MetaException
 import org.apache.hadoop.hive.metastore.api.Table
 import org.apache.hadoop.hive.metastore.api.hive_metastoreConstants.META_TABLE_LOCATION
-import org.apache.hadoop.hive.metastore.utils.MetaStoreUtils
 import org.apache.hadoop.hive.ql.exec.FunctionRegistry
 import org.apache.hadoop.hive.ql.index.IndexSearchCondition
 import org.apache.hadoop.hive.ql.io.IOConstants
@@ -62,13 +61,23 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook
 
   override def getSerDeClass(): Class[_ <: AbstractSerDe] = classOf[ParquetHiveSerDe]
 
+  /**
+   * DataWritableReadSupport.getColumnNames is private before Hive 2.3. Using reflection to make it
+   * compatible with versions before Hive 2.3.
+   */
+  private def getColumnNames(columns: String): java.util.List[String] = {
+    val getColumnNamesMethod =
+      classOf[DataWritableReadSupport].getDeclaredMethod("getColumnNames", classOf[String])
+    getColumnNamesMethod.setAccessible(true)
+    getColumnNamesMethod.invoke(null, columns).asInstanceOf[java.util.List[String]]
+  }
+
   override def configureInputJobProperties(
       tableDesc: TableDesc,
       jobProperties: java.util.Map[String, String]): Unit = {
     super.configureInputJobProperties(tableDesc, jobProperties)
     val tableProps = tableDesc.getProperties()
-    val columnNames =
-      DataWritableReadSupport.getColumnNames(tableProps.getProperty(IOConstants.COLUMNS))
+    val columnNames = getColumnNames(tableProps.getProperty(IOConstants.COLUMNS))
     val columnTypes =
       DataWritableReadSupport.getColumnTypes(tableProps.getProperty(IOConstants.COLUMNS_TYPES))
     val hiveSchema = TypeInfoFactory.getStructTypeInfo(columnNames, columnTypes)
@@ -169,11 +178,26 @@ class DeltaStorageHandler extends DefaultStorageHandler with HiveMetaHook
 
   override def getMetaHook: HiveMetaHook = this
 
+  /**
+   * We include `MetaStoreUtils.isExternalTable` to make our code compatible with Hive 2 and 3.
+   * `MetaStoreUtils` is in different packages in Hive 2 and 3.
+   */
+  private def isExternalTable(table: Table): Boolean = {
+    if (table == null) {
+      return false
+    }
+    val params = table.getParameters();
+    if (params == null) {
+      return false
+    }
+    "TRUE".equalsIgnoreCase(params.get("EXTERNAL"));
+  }
+
   override def preCreateTable(tbl: Table): Unit = {
-    if (!MetaStoreUtils.isExternalTable(tbl)) {
+    if (!isExternalTable(tbl)) {
       throw new UnsupportedOperationException(
         s"The type of table ${tbl.getDbName}:${tbl.getTableName} is ${tbl.getTableType}." +
-          "Only external Delta tables can be read in Hive right now")
+          " Only external Delta tables can be read in Hive right now")
     }
 
     if (tbl.getPartitionKeysSize > 0) {

@@ -65,11 +65,13 @@ import io.delta.standalone.internal.exception.DeltaErrors
  * @param record the internal parquet4s record
  * @param schema the intended schema for this record
  * @param timeZone the timeZone as which time-based data will be read
+ * @param partitionValues the deserialized partition values of current record
  */
 private[internal] case class RowParquetRecordImpl(
-    private val record: RowParquetRecord,
-    private val schema: StructType,
-    private val timeZone: TimeZone) extends RowParquetRecordJ {
+    record: RowParquetRecord,
+    schema: StructType,
+    timeZone: TimeZone,
+    partitionValues: Map[String, Any]) extends RowParquetRecordJ {
 
   /**
    * Needed to decode values. Constructed with the `timeZone` to properly decode time-based data.
@@ -82,9 +84,15 @@ private[internal] case class RowParquetRecordImpl(
 
   override def getSchema: StructType = schema
 
-  override def getLength: Int = record.length
+  override def getLength: Int = record.length + partitionValues.size
 
-  override def isNullAt(fieldName: String): Boolean = record.get(fieldName) == NullValue
+  override def isNullAt(fieldName: String): Boolean = {
+    if (partitionValues.contains(fieldName)) { // is partition field
+      partitionValues(fieldName) == null
+    } else {
+      record.get(fieldName) == NullValue
+    }
+  }
 
   override def getInt(fieldName: String): Int = getAs[Int](fieldName)
 
@@ -135,6 +143,10 @@ private[internal] case class RowParquetRecordImpl(
    */
   private def getAs[T](fieldName: String): T = {
     val schemaField = schema.get(fieldName)
+
+    if (partitionValues.contains(fieldName)) { // partition field
+      return partitionValues(fieldName).asInstanceOf[T]
+    }
     val parquetVal = record.get(fieldName)
 
     if (parquetVal == NullValue && !schemaField.isNullable) {
@@ -150,7 +162,7 @@ private[internal] case class RowParquetRecordImpl(
   }
 
   /**
-   * Decode the parquet `parqetVal` into the corresponding Scala type for `elemType`
+   * Decode the parquet `parquetVal` into the corresponding Scala type for `elemType`
    */
   private def decode(elemType: DataType, parquetVal: Value): Any = {
     val elemTypeName = elemType.getTypeName
@@ -165,7 +177,7 @@ private[internal] case class RowParquetRecordImpl(
     (elemType, parquetVal) match {
       case (x: ArrayType, y: ListParquetRecord) => decodeList(x.getElementType, y)
       case (x: MapType, y: MapParquetRecord) => decodeMap(x.getKeyType, x.getValueType, y)
-      case (x: StructType, y: RowParquetRecord) => RowParquetRecordImpl(y, x, timeZone)
+      case (x: StructType, y: RowParquetRecord) => RowParquetRecordImpl(y, x, timeZone, Map.empty)
       case _ =>
         throw new RuntimeException(s"Unknown non-primitive decode type $elemTypeName, $parquetVal")
     }
@@ -195,7 +207,9 @@ private[internal] case class RowParquetRecordImpl(
         }.asJava
       case x: StructType =>
         // List of records
-        listVal.map { case y: RowParquetRecord => RowParquetRecordImpl(y, x, timeZone) }.asJava
+        listVal.map {
+          case y: RowParquetRecord => RowParquetRecordImpl(y, x, timeZone, Map.empty)
+        }.asJava
       case _ => throw new RuntimeException(s"Unknown non-primitive list decode type $elemTypeName")
     }
   }
