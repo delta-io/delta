@@ -139,7 +139,7 @@ You can add an explicit scheme to specify which file system you would like to us
 ### Frequently asked questions (FAQ)
 
 #### Supported Hive versions
-Hive 2.x.
+Hive 2.x and 3.x.
 
 #### Can I use this connector in Apache Spark or Presto?
 No. The connector **must** be used with Apache Hive. It doesn't work in other systems, such as Apache Spark or Presto.

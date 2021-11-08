@@ -87,7 +87,9 @@ trait HiveTest extends FunSuite with BeforeAndAfterAll {
     if (cluster != null) {
       cluster.close()
     }
-    driver.close()
+    // Use reflection to call Driver.close because the method signatures (return types) are
+    // different in Hive 2 and 3.
+    driver.getClass.getDeclaredMethod("close").invoke(driver)
     driver.destroy()
     JavaUtils.deleteRecursively(tempPath)
     // TODO Remove leaked "target/MiniMRCluster-XXX" directories
