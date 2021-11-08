@@ -507,17 +507,18 @@ class OptimisticTransactionLegacySuite extends FunSuite {
   // commit() tests
   ///////////////////////////////////////////////////////////////////////////
 
-  test("CommitInfo operation and engineInfo is persisted to the delta log") {
+  test("CommitInfo operation and engineInfo is persisted to the delta log correctly") {
     withTempDir { dir =>
       val opParams = Collections.singletonMap(Operation.Metrics.numAddedFiles, "0")
       val op = new Operation(Operation.Name.MANUAL_UPDATE, opParams)
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
-      log.startTransaction().commit(Metadata() :: Nil, op, engineInfo)
+      log.startTransaction().commit(Metadata() :: Nil, op, "Foo Connector/1.1.0")
 
       val log2 = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
       val commitInfo = log2.getCommitInfoAt(0)
       assert(commitInfo.getEngineInfo.isPresent)
-      assert(commitInfo.getEngineInfo.get() == s"$engineInfo $NAME/$VERSION")
+      assert(commitInfo.getEngineInfo.get() ==
+        s"Foo-Connector/1.1.0 ${NAME.replaceAll("\\s", "-")}/$VERSION")
       assert(commitInfo.getOperation == op.getName.toString)
       assert(commitInfo.getOperationParameters.asScala == Map("numAddedFiles" -> "0"))
     }
@@ -735,5 +736,4 @@ class OptimisticTransactionLegacySuite extends FunSuite {
       }
     }
   }
-
 }

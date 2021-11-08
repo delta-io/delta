@@ -201,7 +201,7 @@ public class CommitInfo implements Action {
 
     /**
      * @return the engineInfo of the operation that performed this commit. It should be of the form
-     *         "{engineName}-{engineVersion}-deltaStandalone-{deltaStandaloneVersion}"
+     *         "{engineName}/{engineVersion} Delta-Standalone/{deltaStandaloneVersion}"
      */
     public Optional<String> getEngineInfo() {
         return engineInfo;

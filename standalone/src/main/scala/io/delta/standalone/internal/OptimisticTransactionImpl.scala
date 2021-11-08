@@ -129,7 +129,7 @@ private[internal] class OptimisticTransactionImpl(
       Some(isBlindAppend),
       Some(op.getMetrics.asScala.toMap),
       if (op.getUserMetadata.isPresent) Some(op.getUserMetadata.get()) else None,
-      Some(s"$engineInfo $NAME/$VERSION")
+      Some(s"${engineInfo.replaceAll("\\s", "-")} ${NAME.replaceAll("\\s", "-")}/$VERSION")
     )
 
     preparedActions = commitInfo +: preparedActions
