@@ -21,7 +21,7 @@ import java.util.Optional
 import io.delta.standalone.expressions.Expression
 import io.delta.standalone.types.StructType
 
-import io.delta.standalone.internal.actions.AddFile
+import io.delta.standalone.internal.actions.{AddFile, MemoryOptimizedLogReplay}
 import io.delta.standalone.internal.data.PartitionRowRecord
 import io.delta.standalone.internal.util.PartitionUtils
 
@@ -32,9 +32,9 @@ import io.delta.standalone.internal.util.PartitionUtils
  * If the pushed predicate is empty, then all files are returned.
  */
 final private[internal] class FilteredDeltaScanImpl(
-    files: Seq[AddFile],
+    replay: MemoryOptimizedLogReplay,
     expr: Expression,
-    partitionSchema: StructType) extends DeltaScanImpl(files) {
+    partitionSchema: StructType) extends DeltaScanImpl(replay) {
 
   private val partitionColumns = partitionSchema.getFieldNames.toSeq
 
