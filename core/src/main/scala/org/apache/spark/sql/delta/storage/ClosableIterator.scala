@@ -92,10 +92,10 @@ object ClosableIterator {
    * An implicit class for wrapping an iterator to be a [[ClosableIterator]] with a `close` method
    * that does nothing.
    */
-  implicit class ClosableWrapper[A](val iterator: Iterator[A]) extends AnyVal {
+  implicit class ClosableWrapper[A](val iter: Iterator[A]) extends AnyVal {
     def toClosable: ClosableIterator[A] = new ClosableIterator[A] {
-      override def next(): A = iterator.next()
-      override def hasNext: Boolean = iterator.hasNext
+      override def next(): A = iter.next()
+      override def hasNext: Boolean = iter.hasNext
       override def close(): Unit = ()
     }
   }
