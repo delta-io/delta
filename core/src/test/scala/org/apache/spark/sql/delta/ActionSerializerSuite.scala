@@ -141,9 +141,9 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
       isBlindAppend = Some(true),
       operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
       userMetadata = Some("123"),
-      tags = None)
+      tags = None).copy(engineInfo = None)
 
-    // json of commit info actions without tag field
+    // json of commit info actions without tag or engineInfo field
     val json1 =
       """{"commitInfo":{"timestamp":123,"operation":"CONVERT",""" +
         """"operationParameters":{},"readVersion":23,""" +
@@ -240,7 +240,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
       isBlindAppend = Some(true),
       operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
       userMetadata = Some("123"),
-      tags = Some(Map("k1" -> "v1")))
+      tags = Some(Map("k1" -> "v1"))).copy(engineInfo = None)
 
     testActionSerDe(
       "CommitInfo (without operationParameters) - json serialization/deserialization",
@@ -273,6 +273,15 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
       assert(newCommitInfo1.copy(operationParameters = Map.empty) ==
         commitInfo.copy(operationParameters = Map.empty))
     }
+
+    testActionSerDe(
+      "CommitInfo (with engineInfo) - json serialization/deserialization",
+      commitInfo.copy(engineInfo = Some("Apache-Spark/3.1.1 Delta-Lake/10.1.0")),
+      expectedJson = """{"commitInfo":{"timestamp":123,"operation":"CONVERT",""" +
+        """"operationParameters":{},"clusterId":"23","readVersion":23,""" +
+        """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
+        """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
+        """"tags":{"k1":"v1"},"engineInfo":"Apache-Spark/3.1.1 Delta-Lake/10.1.0"}}""".stripMargin)
   }
 
   private def roundTripCompare(name: String, actions: Action*) = {
