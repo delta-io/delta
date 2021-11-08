@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.metering
 
+import scala.collection.mutable
 import scala.util.Try
 import scala.util.control.NonFatal
 
@@ -75,10 +76,12 @@ trait DeltaLogging
       } else {
         Map.empty[TagDefinition, String]
       }
-
+      val finalTags = mutable.Map[TagDefinition, String](TAG_OP_TYPE -> opType)
+      finalTags ++= tableTags
+      finalTags ++= tags
       recordProductEvent(
         EVENT_TAHOE,
-        Map(TAG_OP_TYPE -> opType) ++ tableTags ++ tags,
+        finalTags.toMap,
         blob = json)
     } catch {
       case NonFatal(e) =>
@@ -107,9 +110,12 @@ trait DeltaLogging
     } else {
       Map.empty
     }
+    val finalTags = mutable.Map[TagDefinition, String]()
+    finalTags ++= tableTags
+    finalTags ++= tags
     recordOperation(
       new OpType(opType, ""),
-      extraTags = tableTags ++ tags) {
+      extraTags = finalTags.toMap) {
           thunk
     }
   }

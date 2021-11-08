@@ -229,7 +229,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
           // scalastyle:on deltahadoopconfiguration
           partitionColumns = partitioningColumns,
           bucketSpec = None,
-          statsTrackers = statsTrackers,
+          statsTrackers = statsTrackers.toSeq,
           options = Map.empty)
       } catch {
         case s: SparkException =>
@@ -243,6 +243,6 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       }
     }
 
-    committer.addedStatuses
+    committer.addedStatuses.toSeq
   }
 }

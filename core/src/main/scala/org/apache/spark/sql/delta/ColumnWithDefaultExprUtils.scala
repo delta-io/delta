@@ -85,7 +85,7 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
       case _ => data.select(selectExprs: _*)
     }
     recordDeltaEvent(deltaLog, "delta.generatedColumns.write")
-    (newData, constraints)
+    (newData, constraints.toSeq)
   }
 
   /**

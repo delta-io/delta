@@ -3,6 +3,11 @@ on: [push, pull_request]
 jobs:
   test:
     runs-on: ubuntu-20.04
+    strategy:
+      matrix:
+        scala: [2.12.14, 2.13.5]
+    env:
+      SCALA_VERSION: ${{ matrix.scala }}
     steps:
       - uses: actions/checkout@v2
       - name: install java

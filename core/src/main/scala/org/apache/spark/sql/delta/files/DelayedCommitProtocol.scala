@@ -145,12 +145,12 @@ class DelayedCommitProtocol(
   override def commitTask(taskContext: TaskAttemptContext): TaskCommitMessage = {
     if (addedFiles.nonEmpty) {
       val fs = new Path(path, addedFiles.head._2).getFileSystem(taskContext.getConfiguration)
-      val statuses: Seq[FileAction] = addedFiles.map { f =>
+      val statuses: Array[FileAction] = addedFiles.map { f =>
         val filePath = new Path(path, new Path(new URI(f._2)))
         val stat = fs.getFileStatus(filePath)
 
         buildActionFromAddedFile(f, stat, taskContext)
-      }
+      }.toArray
 
       new TaskCommitMessage(statuses)
     } else {

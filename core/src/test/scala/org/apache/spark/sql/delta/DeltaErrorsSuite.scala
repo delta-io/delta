@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.io.{PrintWriter, StringWriter}
 
+import scala.collection.mutable
 import scala.sys.process.Process
 
 import org.apache.hadoop.fs.Path
@@ -60,8 +61,12 @@ trait DeltaErrorsSuiteBase
           DeltaErrors.faqRelativePath,
           skipValidation = true), path))
 
-  def errorMessagesToTest: Map[String, String] =
-    errorsToTest.mapValues(_.getMessage) ++ otherMessagesToTest
+  def errorMessagesToTest: Map[String, String] = {
+    val map = mutable.Map[String, String]()
+    map ++= errorsToTest.mapValues(_.getMessage)
+    map ++= otherMessagesToTest
+    map.toMap
+  }
 
   def checkIfValidResponse(url: String, response: String): Boolean = {
     response.contains("HTTP/1.1 200 OK") || response.contains("HTTP/2 200")
