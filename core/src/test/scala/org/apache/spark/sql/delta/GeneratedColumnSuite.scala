@@ -533,8 +533,8 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
     spark.udf.register("myudf", (s: Array[Int]) => s)
     for ((exprString, error) <- Seq(
       "myudf(foo)" -> "Found myudf(foo). A generated column cannot use a user-defined function",
-      "first(foo)" ->
-        "Found first(foo). A generated column cannot use a non deterministic expression",
+      "rand()" ->
+        "Found rand(). A generated column cannot use a non deterministic expression",
       "max(foo)" -> "Found max(foo). A generated column cannot use an aggregate expression",
       "explode(foo)" -> "explode(foo) cannot be used in a generated column",
       "current_timestamp" -> "current_timestamp() cannot be used in a generated column"
