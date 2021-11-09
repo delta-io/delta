@@ -488,7 +488,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
           tags = None)
       }
 
-      val currentTransactionInfo = CurrentTransactionInfo(
+      val currentTransactionInfo = new CurrentTransactionInfo(
         readPredicates = readPredicates,
         readFiles = readFiles.toSet,
         readWholeTable = readTheWholeTable,
