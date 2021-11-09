@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.constraints.{Constraint, Constraints}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -43,6 +43,11 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
     GeneratedColumn.isGeneratedColumn(protocol, col)
   }
 
+  // Return true if the table with `metadata` has default expressions.
+  def tableHasDefaultExpr(protocol: Protocol, metadata: Metadata): Boolean = {
+    GeneratedColumn.enforcesGeneratedColumns(protocol, metadata)
+  }
+
   /**
    * If there are columns with default expressions in `schema`, add a new project to generate
    * those columns missing in the schema, and return constraints for generated columns existing in
@@ -59,10 +64,11 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
       deltaLog: DeltaLog,
       queryExecution: QueryExecution,
       schema: StructType,
-      data: DataFrame): (DataFrame, Seq[Constraint]) = {
+      data: DataFrame): (DataFrame, Seq[Constraint], Set[String]) = {
     val topLevelOutputNames = CaseInsensitiveMap(data.schema.map(f => f.name -> f).toMap)
     lazy val metadataOutputNames = CaseInsensitiveMap(schema.map(f => f.name -> f).toMap)
     val constraints = mutable.ArrayBuffer[Constraint]()
+    val track = mutable.Set[String]()
     var selectExprs = schema.map { f =>
       GeneratedColumn.getGenerationExpression(f) match {
         case Some(expr) =>
@@ -76,7 +82,7 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
             new Column(expr).alias(f.name)
           }
         case None =>
-          SchemaUtils.fieldToColumn(f).alias(f.name)
+            SchemaUtils.fieldToColumn(f).alias(f.name)
       }
     }
     val newData = queryExecution match {
@@ -85,7 +91,7 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
       case _ => data.select(selectExprs: _*)
     }
     recordDeltaEvent(deltaLog, "delta.generatedColumns.write")
-    (newData, constraints)
+    (newData, constraints, track.toSet)
   }
 
   /**

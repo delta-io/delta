@@ -252,6 +252,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   def updateMetadata(_metadata: Metadata): Unit = {
     assert(!hasWritten,
       "Cannot update the metadata in a transaction that has already written data.")
+    updateMetadataInternal(_metadata)
+  }
+
+  /**
+   * Do the actual checks and works to update the metadata and save it into the `newMetadata`
+   * field, which will be added to the actions to commit in [[prepareCommit]].
+   */
+  protected def updateMetadataInternal(_metadata: Metadata): Unit = {
     assert(newMetadata.isEmpty,
       "Cannot change the metadata more than once in a transaction.")
 
