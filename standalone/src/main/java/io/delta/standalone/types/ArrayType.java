@@ -21,7 +21,7 @@
  */
 
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -75,7 +75,13 @@ public final class ArrayType extends DataType {
      */
     protected void buildFormattedString(String prefix, StringBuilder builder) {
         final String nextPrefix = prefix + "    |";
-        builder.append(String.format("%s-- element: %s (containsNull = %b)\n", prefix, elementType.getTypeName(), containsNull));
+        builder.append(
+            String.format(
+                "%s-- element: %s (containsNull = %b)\n",
+                prefix,
+                elementType.getTypeName(),
+                containsNull)
+        );
         DataType.buildFormattedString(elementType, nextPrefix, builder);
     }
 

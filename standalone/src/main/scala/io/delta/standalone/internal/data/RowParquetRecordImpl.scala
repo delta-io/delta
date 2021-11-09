@@ -28,7 +28,7 @@
 // scalastyle:on
 
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -46,7 +46,6 @@
 package io.delta.standalone.internal.data
 
 import java.sql.{Date, Timestamp}
-import java.util
 import java.util.TimeZone
 
 import scala.collection.JavaConverters._
@@ -56,8 +55,9 @@ import scala.reflect.ClassTag
 import com.github.mjakubowski84.parquet4s._
 
 import io.delta.standalone.data.{RowRecord => RowParquetRecordJ}
-import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.types._
+
+import io.delta.standalone.internal.exception.DeltaErrors
 
 /**
  * Scala implementation of Java interface [[RowParquetRecordJ]].
@@ -121,9 +121,11 @@ private[internal] case class RowParquetRecordImpl(
 
   override def getRecord(fieldName: String): RowParquetRecordJ = getAs[RowParquetRecordJ](fieldName)
 
-  override def getList[T](fieldName: String): util.List[T] = getAs[util.List[T]](fieldName)
+  override def getList[T](fieldName: String): java.util.List[T] =
+    getAs[java.util.List[T]](fieldName)
 
-  override def getMap[K, V](fieldName: String): util.Map[K, V] = getAs[util.Map[K, V]](fieldName)
+  override def getMap[K, V](fieldName: String): java.util.Map[K, V] =
+    getAs[java.util.Map[K, V]](fieldName)
 
   ///////////////////////////////////////////////////////////////////////////
   // Decoding Helper Methods

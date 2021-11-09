@@ -9,6 +9,7 @@ public class CastingComparator<T extends Comparable<T>> implements Comparator<Ob
         comparator = Comparator.naturalOrder();
     }
 
+    @SuppressWarnings("unchecked")
     @Override
     public int compare(Object a, Object b) {
         return comparator.compare((T) a, (T) b);

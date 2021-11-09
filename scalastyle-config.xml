@@ -19,7 +19,7 @@
   ~It contains modifications, which are licensed as follows:
   -->
 <!--
-  ~ Copyright (2020) The Delta Lake Project Authors.
+  ~ Copyright (2020-present) The Delta Lake Project Authors.
   ~
   ~ Licensed under the Apache License, Version 2.0 (the "License");
   ~ you may not use this file except in compliance with the License.
@@ -92,7 +92,7 @@ This file is divided into 3 sections:
  */
 
 \E)?\Q/*
- * Copyright (202\E[0-1]\Q) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -304,6 +304,17 @@ This file is divided into 3 sections:
     <parameters><parameter name="regex">extractOpt</parameter></parameters>
     <customMessage>Use jsonOption(x).map(.extract[T]) instead of .extractOpt[T], as the latter
     is slower.  </customMessage>
+  </check>
+
+  <check level="error" class="org.scalastyle.scalariform.ImportOrderChecker" enabled="true">
+    <parameters>
+      <parameter name="groups">java,scala,3rdParty,standalone,standaloneInternal</parameter>
+      <parameter name="group.java">javax?\..*</parameter>
+      <parameter name="group.scala">scala\..*</parameter>
+      <parameter name="group.3rdParty">(?!io\.delta\.standalone\.).*</parameter>
+      <parameter name="group.standalone">io\.delta\.standalone\.(?!internal).*</parameter>
+      <parameter name="group.standaloneInternal">io\.delta\.standalone\.internal\..*</parameter>
+    </parameters>
   </check>
 
   <check level="error" class="org.scalastyle.scalariform.DisallowSpaceBeforeTokenChecker" enabled="true">

@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,8 @@ package io.delta.standalone.internal
 
 import java.io.FileNotFoundException
 import java.sql.Timestamp
+
+import scala.collection.JavaConverters._
 
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -64,7 +66,19 @@ private[internal] trait SnapshotManagement { self: DeltaLogImpl =>
     try {
       val segment = getLogSegmentForVersion(currentSnapshot.logSegment.checkpointVersion)
       if (segment != currentSnapshot.logSegment) {
+        val startingFrom = segment.checkpointVersion
+          .map(v => s" starting from checkpoint version $v.").getOrElse(".")
+        logInfo(s"Loading version ${segment.version}$startingFrom")
+
         val newSnapshot = createSnapshot(segment, segment.lastCommitTimestamp)
+
+        if (currentSnapshot.version > -1 &&
+          currentSnapshot.metadataScala.id != newSnapshot.metadataScala.id) {
+          logError(s"Change in the table id detected while updating snapshot. " +
+            s"\nPrevious snapshot = $currentSnapshot\nNew snapshot = $newSnapshot.")
+        }
+
+        logInfo(s"Updated snapshot to $newSnapshot")
         currentSnapshot = newSnapshot
       }
     } catch {
@@ -73,6 +87,7 @@ private[internal] trait SnapshotManagement { self: DeltaLogImpl =>
         if (Option(e.getMessage).exists(_.contains("reconstruct state at version"))) {
           throw e
         }
+        logInfo(s"No delta log found for the Delta table at $logPath")
         currentSnapshot = new InitialSnapshotImpl(hadoopConf, logPath, this)
     }
     currentSnapshot
@@ -99,7 +114,9 @@ private[internal] trait SnapshotManagement { self: DeltaLogImpl =>
 
     // List from the starting checkpoint. If a checkpoint doesn't exist, this will still return
     // deltaVersion=0.
-    val newFiles = store.listFrom(checkpointPrefix(logPath, startCheckpoint.getOrElse(0L)))
+    val newFiles = store
+      .listFrom(checkpointPrefix(logPath, startCheckpoint.getOrElse(0L)), hadoopConf)
+      .asScala
       // Pick up all checkpoint and delta files
       .filter { file => isCheckpointFile(file.getPath) || isDeltaFile(file.getPath) }
       // filter out files that aren't atomically visible. Checkpoint files of 0 size are invalid
@@ -199,10 +216,19 @@ private[internal] trait SnapshotManagement { self: DeltaLogImpl =>
   private def getSnapshotAtInit: SnapshotImpl = {
     try {
       val logSegment = getLogSegmentForVersion(lastCheckpoint.map(_.version))
+
+      val startCheckpoint = logSegment.checkpointVersion
+        .map(v => s" starting from checkpoint $v.").getOrElse(".")
+      logInfo(s"Loading version ${logSegment.version}$startCheckpoint")
+
       val snapshot = createSnapshot(logSegment, logSegment.lastCommitTimestamp)
+
+      logInfo(s"Returning initial snapshot $snapshot")
+
       snapshot
     } catch {
       case _: FileNotFoundException =>
+        logInfo(s"Creating initial snapshot without metadata, because the directory is empty")
         new InitialSnapshotImpl(hadoopConf, logPath, this)
     }
   }
@@ -226,6 +252,7 @@ private[internal] trait SnapshotManagement { self: DeltaLogImpl =>
       logPath,
       segment.version,
       segment,
+      minFileRetentionTimestamp,
       this,
       lastCommitTimestamp)
   }

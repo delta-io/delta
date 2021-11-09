@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,21 +17,23 @@
 package io.delta.standalone.internal
 
 import java.net.URI
-import java.util.TimeZone
 
 import scala.collection.JavaConverters._
 
 import com.github.mjakubowski84.parquet4s.ParquetReader
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
+
 import io.delta.standalone.{DeltaScan, Snapshot}
-import io.delta.standalone.actions.{AddFile => AddFileJ, Metadata => MetadataJ}
+import io.delta.standalone.actions.{AddFile => AddFileJ, Metadata => MetadataJ, Protocol => ProtocolJ, RemoveFile => RemoveFileJ, SetTransaction => SetTransactionJ}
 import io.delta.standalone.data.{CloseableIterator, RowRecord => RowParquetRecordJ}
 import io.delta.standalone.expressions.Expression
-import io.delta.standalone.internal.actions.{Action, AddFile, InMemoryLogReplay, Metadata, Parquet4sSingleActionWrapper, Protocol, SingleAction}
+
+import io.delta.standalone.internal.actions.{AddFile, InMemoryLogReplay, MemoryOptimizedLogReplay, Metadata, Parquet4sSingleActionWrapper, Protocol, RemoveFile, SetTransaction, SingleAction}
 import io.delta.standalone.internal.data.CloseableParquetDataIterator
 import io.delta.standalone.internal.exception.DeltaErrors
-import io.delta.standalone.internal.sources.StandaloneHadoopConf
+import io.delta.standalone.internal.logging.Logging
+import io.delta.standalone.internal.scan.{DeltaScanImpl, FilteredDeltaScanImpl}
 import io.delta.standalone.internal.util.{ConversionUtils, FileNames, JsonUtils}
 
 /**
@@ -46,32 +48,30 @@ private[internal] class SnapshotImpl(
     val path: Path,
     val version: Long,
     val logSegment: LogSegment,
+    val minFileRetentionTimestamp: Long,
     val deltaLog: DeltaLogImpl,
-    val timestamp: Long) extends Snapshot {
+    val timestamp: Long) extends Snapshot with Logging {
 
   import SnapshotImpl._
 
-  /** Convert the timeZoneId to an actual timeZone that can be used for decoding. */
-  private val readTimeZone = {
-    if (hadoopConf.get(StandaloneHadoopConf.PARQUET_DATA_TIME_ZONE_ID) == null) {
-      TimeZone.getDefault
-    } else {
-      TimeZone.getTimeZone(hadoopConf.get(StandaloneHadoopConf.PARQUET_DATA_TIME_ZONE_ID))
-    }
-  }
+  private val memoryOptimizedLogReplay =
+    new MemoryOptimizedLogReplay(files, deltaLog.store, hadoopConf, deltaLog.timezone)
 
   ///////////////////////////////////////////////////////////////////////////
   // Public API Methods
   ///////////////////////////////////////////////////////////////////////////
 
-  override def scan(): DeltaScan = new DeltaScanImpl(activeFiles)
+  override def scan(): DeltaScan = new DeltaScanImpl(memoryOptimizedLogReplay)
 
   override def scan(predicate: Expression): DeltaScan =
-    new DeltaScanImpl(activeFiles, Some(predicate))
+    new FilteredDeltaScanImpl(
+      memoryOptimizedLogReplay,
+      predicate,
+      metadataScala.partitionSchema)
 
-  override def getAllFiles: java.util.List[AddFileJ] = activeFiles
+  override def getAllFiles: java.util.List[AddFileJ] = activeFilesJ
 
-  override def getMetadata: MetadataJ = ConversionUtils.convertMetadata(state.metadata)
+  override def getMetadata: MetadataJ = ConversionUtils.convertMetadata(metadataScala)
 
   override def getVersion: Long = version
 
@@ -83,38 +83,110 @@ private[internal] class SnapshotImpl(
         },
       getMetadata.getSchema,
       // the time zone ID if it exists, else null
-      readTimeZone,
+      deltaLog.timezone,
       hadoopConf)
 
   ///////////////////////////////////////////////////////////////////////////
   // Internal-Only Methods
   ///////////////////////////////////////////////////////////////////////////
 
-  def allFilesScala: Seq[AddFile] = state.activeFiles.values.toSeq
-  def protocolScala: Protocol = state.protocol
-  def metadataScala: Metadata = state.metadata
+  /**
+   * Returns an implementation that provides an accessor to the files as internal Scala
+   * [[AddFile]]s. This prevents us from having to replay the log internally, generate Scala
+   * actions, convert them to Java actions (as per the [[DeltaScan]] interface), and then
+   * convert them back to Scala actions.
+   */
+  def scanScala(): DeltaScanImpl = new DeltaScanImpl(memoryOptimizedLogReplay)
 
-  private def load(paths: Seq[Path]): Seq[SingleAction] = {
+  def scanScala(predicate: Expression): DeltaScanImpl =
+    new FilteredDeltaScanImpl(
+      memoryOptimizedLogReplay,
+      predicate,
+      metadataScala.partitionSchema)
+
+  def tombstones: Seq[RemoveFileJ] = state.tombstones.toSeq.map(ConversionUtils.convertRemoveFile)
+  def setTransactions: Seq[SetTransactionJ] =
+    state.setTransactions.map(ConversionUtils.convertSetTransaction)
+  def protocol: ProtocolJ = ConversionUtils.convertProtocol(protocolScala)
+
+  def allFilesScala: Seq[AddFile] = state.activeFiles.toSeq
+  def tombstonesScala: Seq[RemoveFile] = state.tombstones.toSeq
+  def setTransactionsScala: Seq[SetTransaction] = state.setTransactions
+  def numOfFiles: Long = state.numOfFiles
+
+  /** A map to look up transaction version by appId. */
+  lazy val transactions: Map[String, Long] =
+    setTransactionsScala.map(t => t.appId -> t.version).toMap
+
+  // These values need to be declared lazy. In Scala, strict values (i.e. non-lazy) in superclasses
+  // (e.g. SnapshotImpl) are fully initialized before subclasses (e.g. InitialSnapshotImpl).
+  // If these were 'strict', or 'eager', vals, then `loadTableProtocolAndMetadata` would be called
+  // for all new InitialSnapshotImpl instances, causing an exception.
+  lazy val (protocolScala, metadataScala) = loadTableProtocolAndMetadata()
+
+  private def loadTableProtocolAndMetadata(): (Protocol, Metadata) = {
+    var protocol: Protocol = null
+    var metadata: Metadata = null
+    val iter = memoryOptimizedLogReplay.getReverseIterator
+
+    try {
+      // We replay logs from newest to oldest and will stop when we find the latest Protocol and
+      // Metadata.
+      iter.asScala.foreach { case (action, _) =>
+        action match {
+          case p: Protocol if null == protocol =>
+            // We only need the latest protocol
+            protocol = p
+
+            if (protocol != null && metadata != null) {
+              // Stop since we have found the latest Protocol and metadata.
+              return (protocol, metadata)
+            }
+          case m: Metadata if null == metadata =>
+            metadata = m
+
+            if (protocol != null && metadata != null) {
+              // Stop since we have found the latest Protocol and metadata.
+              return (protocol, metadata)
+            }
+          case _ => // do nothing
+        }
+      }
+    } finally {
+      iter.close()
+    }
+
+    // Sanity check. Should not happen in any valid Delta logs.
+    if (protocol == null) {
+      throw DeltaErrors.actionNotFoundException("protocol", logSegment.version)
+    }
+    if (metadata == null) {
+      throw DeltaErrors.actionNotFoundException("metadata", logSegment.version)
+    }
+    throw new IllegalStateException("should not happen")
+  }
+
+  private def loadInMemory(paths: Seq[Path]): Seq[SingleAction] = {
     paths.map(_.toString).sortWith(_ < _).par.flatMap { path =>
       if (path.endsWith("json")) {
-        deltaLog.store.read(path).map { line =>
-          JsonUtils.mapper.readValue[SingleAction](line)
-        }
+        import io.delta.standalone.internal.util.Implicits._
+        deltaLog.store
+          .read(new Path(path), hadoopConf)
+          .toArray
+          .map { line => JsonUtils.mapper.readValue[SingleAction](line) }
       } else if (path.endsWith("parquet")) {
         ParquetReader.read[Parquet4sSingleActionWrapper](
-          path, ParquetReader.Options(
-          timeZone = readTimeZone, hadoopConf = hadoopConf)
+          path,
+          ParquetReader.Options(
+            timeZone = deltaLog.timezone,
+            hadoopConf = hadoopConf)
         ).toSeq.map(_.unwrap)
       } else Seq.empty[SingleAction]
     }.toList
   }
 
-  /**
-   * Reconstruct the state by applying deltas in order to the checkpoint.
-   */
-  protected lazy val state: State = {
+  private def files: Seq[Path] = {
     val logPathURI = path.toUri
-    val replay = new InMemoryLogReplay(hadoopConf)
     val files = (logSegment.deltas ++ logSegment.checkpoints).map(_.getPath)
 
     // assert that the log belongs to table
@@ -127,7 +199,15 @@ private[internal] class SnapshotImpl(
       }
     }
 
-    val actions = load(files).map(_.unwrap)
+    files
+  }
+
+  /**
+   * Reconstruct the state by applying deltas in order to the checkpoint.
+   */
+  protected lazy val state: State = {
+    val replay = new InMemoryLogReplay(hadoopConf, minFileRetentionTimestamp)
+    val actions = loadInMemory(files).map(_.unwrap)
 
     replay.append(0, actions.iterator)
 
@@ -139,36 +219,23 @@ private[internal] class SnapshotImpl(
     }
 
     State(
-      replay.currentProtocolVersion,
-      replay.currentMetaData,
+      replay.getSetTransactions,
       replay.getActiveFiles,
+      replay.getTombstones,
       replay.sizeInBytes,
       replay.getActiveFiles.size,
-      replay.numMetadata,
-      replay.numProtocol
+      replay.getTombstones.size,
+      replay.getSetTransactions.size
     )
   }
 
-  private lazy val activeFiles =
-    state.activeFiles.values.map(ConversionUtils.convertAddFile).toList.asJava
+  private lazy val activeFilesJ =
+    state.activeFiles.map(ConversionUtils.convertAddFile).toList.asJava
 
-  /**
-   * Asserts that the client is up to date with the protocol and allowed
-   * to read the table that is using this Snapshot's `protocol`.
-   */
-  private def assertProtocolRead(): Unit = {
-    if (null != protocolScala) {
-      val clientVersion = Action.readerVersion
-      val tblVersion = protocolScala.minReaderVersion
-
-      if (clientVersion < tblVersion) {
-        throw DeltaErrors.InvalidProtocolVersionException(clientVersion, tblVersion)
-      }
-    }
-  }
+  logInfo(s"[tableId=${deltaLog.tableId}] Created snapshot $this")
 
   /** Complete initialization by checking protocol version. */
-  assertProtocolRead()
+  deltaLog.assertProtocolRead(protocolScala)
 }
 
 private[internal] object SnapshotImpl {
@@ -187,22 +254,22 @@ private[internal] object SnapshotImpl {
   /**
    * Metrics and metadata computed around the Delta table.
    *
-   * @param protocol The protocol version of the Delta table
-   * @param metadata The metadata of the table
+   * @param setTransactions The streaming queries writing to this table
    * @param activeFiles The files in this table
+   * @param tombstones The unexpired tombstones
    * @param sizeInBytes The total size of the table (of active files, not including tombstones)
    * @param numOfFiles The number of files in this table
-   * @param numOfMetadata The number of metadata actions in the state. Should be 1
-   * @param numOfProtocol The number of protocol actions in the state. Should be 1
+   * @param numOfRemoves The number of tombstones in the state
+   * @param numOfSetTransactions Number of streams writing to this table
    */
   case class State(
-      protocol: Protocol,
-      metadata: Metadata,
-      activeFiles: scala.collection.immutable.Map[URI, AddFile],
+      setTransactions: Seq[SetTransaction],
+      activeFiles: Iterable[AddFile],
+      tombstones: Iterable[RemoveFile],
       sizeInBytes: Long,
       numOfFiles: Long,
-      numOfMetadata: Long,
-      numOfProtocol: Long)
+      numOfRemoves: Long,
+      numOfSetTransactions: Long)
 }
 
 /**
@@ -216,18 +283,21 @@ private class InitialSnapshotImpl(
     override val hadoopConf: Configuration,
     val logPath: Path,
     override val deltaLog: DeltaLogImpl)
-  extends SnapshotImpl(hadoopConf, logPath, -1, LogSegment.empty(logPath), deltaLog, -1) {
+  extends SnapshotImpl(hadoopConf, logPath, -1, LogSegment.empty(logPath), -1, deltaLog, -1) {
+
+  private val memoryOptimizedLogReplay =
+    new MemoryOptimizedLogReplay(Nil, deltaLog.store, hadoopConf, deltaLog.timezone)
 
   override lazy val state: SnapshotImpl.State = {
-    SnapshotImpl.State(
-      Protocol(),
-      Metadata(),
-      Map.empty[URI, AddFile],
-      0L, 0L, 1L, 1L)
+    SnapshotImpl.State(Nil, Nil, Nil, 0L, 0L, 0L, 0L)
   }
 
-  override def scan(): DeltaScan = new DeltaScanImpl(Nil.asJava)
+  override lazy val protocolScala: Protocol = Protocol()
+
+  override lazy val metadataScala: Metadata = Metadata()
+
+  override def scan(): DeltaScan = new DeltaScanImpl(memoryOptimizedLogReplay)
 
   override def scan(predicate: Expression): DeltaScan =
-    new DeltaScanImpl(Nil.asJava, Some(predicate))
+    new FilteredDeltaScanImpl(memoryOptimizedLogReplay, predicate, metadataScala.partitionSchema)
 }

@@ -2,10 +2,11 @@ package io.delta.standalone.expressions;
 
 /**
  * A {@link BinaryExpression} that is an operator, with two properties:
- *
- * 1. The string representation is "x symbol y", rather than "funcName(x, y)".
- * 2. Two inputs are expected to be of the same type. If the two inputs have different types, a
- *    {@link IllegalArgumentException} will be thrown.
+ * <ol>
+ *   <li>The string representation is {@code x symbol y}, rather than {@code funcName(x, y)}.</li>
+ *   <li>Two inputs are expected to be of the same type. If the two inputs have different types, an
+ *       {@link IllegalArgumentException} will be thrown.</li>
+ * </ol>
  */
 public abstract class BinaryOperator extends BinaryExpression {
     protected final String symbol;

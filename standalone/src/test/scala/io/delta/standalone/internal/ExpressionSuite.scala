@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,23 +17,31 @@
 package io.delta.standalone.internal
 
 import java.math.{BigDecimal => BigDecimalJ}
-import java.util.{Objects, Arrays => ArraysJ}
 import java.sql.{Date => DateJ, Timestamp => TimestampJ}
+import java.util.{Arrays => ArraysJ, Objects}
 
 import scala.collection.JavaConverters._
 
-import io.delta.standalone.data.RowRecord
-import io.delta.standalone.expressions.{Column, _}
-import io.delta.standalone.internal.actions.AddFile
-import io.delta.standalone.internal.data.PartitionRowRecord
-import io.delta.standalone.internal.exception.DeltaErrors
-import io.delta.standalone.types._
-
-// scalastyle:off funsuite
 import org.scalatest.FunSuite
 
+import io.delta.standalone.data.RowRecord
+import io.delta.standalone.expressions.{Column, _}
+import io.delta.standalone.types._
+
+import io.delta.standalone.internal.actions.AddFile
+import io.delta.standalone.internal.data.PartitionRowRecord
+import io.delta.standalone.internal.util.PartitionUtils
+
 class ExpressionSuite extends FunSuite {
-  // scalastyle:on funsuite
+
+  private val partitionSchema = new StructType(Array(
+    new StructField("col1", new IntegerType(), true),
+    new StructField("col2", new IntegerType(), true)))
+
+  private val dataSchema = new StructType(Array(
+    new StructField("col3", new IntegerType(), true),
+    new StructField("col4", new IntegerType(), true),
+    new StructField("col5", new IntegerType(), true)))
 
   private def testPredicate(
       predicate: Expression,
@@ -112,8 +120,8 @@ class ExpressionSuite extends FunSuite {
       (Literal.of(1.0), Literal.of(2.0), Literal.of(1.0), Literal.ofNull(new DoubleType())),
       (Literal.of(1.toByte), Literal.of(2.toByte), Literal.of(1.toByte),
         Literal.ofNull(new ByteType())),
-      (Literal.of(new BigDecimalJ("0.1")), Literal.of(new BigDecimalJ("0.2")),
-        Literal.of(new BigDecimalJ("0.1")), Literal.ofNull(DecimalType.USER_DEFAULT)),
+      (Literal.of(new BigDecimalJ("123.45")), Literal.of(new BigDecimalJ("887.62")),
+        Literal.of(new BigDecimalJ("123.45")), Literal.ofNull(new DecimalType(5, 2))),
       (Literal.False, Literal.True, Literal.False, Literal.ofNull(new BooleanType())),
       (Literal.of(new TimestampJ(0)), Literal.of(new TimestampJ(1000000)),
       Literal.of(new TimestampJ(0)), Literal.ofNull(new TimestampType())),
@@ -191,7 +199,7 @@ class ExpressionSuite extends FunSuite {
   }
 
   test("In predicate") {
-    // IN TESTS
+    // invalid List param
     testException[IllegalArgumentException](
       new In(null, List(Literal.True, Literal.True).asJava),
       "'In' expression 'value' cannot be null")
@@ -201,6 +209,7 @@ class ExpressionSuite extends FunSuite {
     testException[IllegalArgumentException](
       new In(Literal.True, List().asJava),
       "'In' expression 'elems' cannot be empty")
+
     // mismatched DataTypes throws exception
     testException[IllegalArgumentException](
       new In(Literal.of(1), List(Literal.True, Literal.True).asJava),
@@ -211,15 +220,16 @@ class ExpressionSuite extends FunSuite {
 
     // value.eval() null -> null
     testPredicate(new In(Literal.ofNull(new BooleanType()), List(Literal.True).asJava), null)
-    // value in list (w/ null in  list)
+
+    // value in list (with null in list)
     testPredicate(new In(Literal.True, List(Literal.True,
       Literal.ofNull(new BooleanType())).asJava), true)
-    // value not in list (w/ null in list)
+
+    // value not in list (with null in list)
     testPredicate(new In(Literal.False, List(Literal.True,
       Literal.ofNull(new BooleanType())).asJava), null)
 
-    // test correct output
-    // TODO: test all types? uses comparator same as the other comparison expressions
+    // non-null cases
     testPredicate( new In(Literal.of(1),
       (0 to 10).map{Literal.of}.asJava), true)
     testPredicate( new In(Literal.of(100),
@@ -245,10 +255,10 @@ class ExpressionSuite extends FunSuite {
     testLiteral(Literal.ofNull(new IntegerType()), null)
     testLiteral(Literal.of(5.toShort), 5.toShort)
     testLiteral(Literal.of("test"), "test")
-    val curr_time = System.currentTimeMillis()
+    val now = System.currentTimeMillis()
     testLiteral(
-      Literal.of(new TimestampJ(curr_time)), new TimestampJ(curr_time))
-    testLiteral(Literal.of(new DateJ(curr_time)), new DateJ(curr_time))
+      Literal.of(new TimestampJ(now)), new TimestampJ(now))
+    testLiteral(Literal.of(new DateJ(now)), new DateJ(now))
     testLiteral(Literal.of(new BigDecimalJ("0.1")),
       new BigDecimalJ("0.1"))
     assert(ArraysJ.equals(
@@ -260,16 +270,19 @@ class ExpressionSuite extends FunSuite {
       Literal.ofNull(new NullType()),
       "null is an invalid data type for Literal"
     )
+
     // Literal.ofNull(ArrayType) is prohibited
     testException[IllegalArgumentException](
       Literal.ofNull(new ArrayType(new IntegerType(), true)),
       "array is an invalid data type for Literal"
     )
+
     // Literal.ofNull(MapType) is prohibited
     testException[IllegalArgumentException](
       Literal.ofNull(new MapType(new IntegerType(), new IntegerType(), true)),
       "map is an invalid data type for Literal"
     )
+
     // Literal.ofNull(StructType) is prohibited
     testException[IllegalArgumentException](
       Literal.ofNull(new StructType(Array())),
@@ -277,14 +290,15 @@ class ExpressionSuite extends FunSuite {
     )
   }
 
-  private def testColumn(fieldName: String, dataType: DataType, record: RowRecord,
-      expectedResult: Any) = {
-    assert(Objects.equals(new Column(fieldName, dataType).eval(record),
-      expectedResult))
-  }
-
   test("Column tests") {
-    // COLUMN tests
+    def testColumn(
+        fieldName: String,
+        dataType: DataType,
+        record: RowRecord,
+        expectedResult: Any): Unit = {
+      assert(Objects.equals(new Column(fieldName, dataType).eval(record), expectedResult))
+    }
+
     val schema = new StructType(Array(
       new StructField("testInt", new IntegerType(), true),
       new StructField("testLong", new LongType(), true),
@@ -298,11 +312,12 @@ class ExpressionSuite extends FunSuite {
       new StructField("testDecimal", DecimalType.USER_DEFAULT, true),
       new StructField("testTimestamp", new TimestampType(), true),
       new StructField("testDate", new DateType(), true)))
+
     val partRowRecord = new PartitionRowRecord(schema,
       Map("testInt"->"1",
         "testLong"->"10",
         "testByte" ->"8",
-      "testShort" -> "100",
+        "testShort" -> "100",
         "testBoolean" -> "true",
         "testFloat" -> "20.0",
         "testDouble" -> "22.0",
@@ -322,7 +337,7 @@ class ExpressionSuite extends FunSuite {
     testColumn("testString", new StringType(), partRowRecord, "onetwothree")
     assert(Array(1.toByte, 5.toByte, 8.toByte) sameElements
       (new Column("testBinary", new BinaryType())).eval(partRowRecord).asInstanceOf[Array[Byte]])
-    testColumn("testDecimal", DecimalType.USER_DEFAULT, partRowRecord, new BigDecimalJ("0.123"))
+    testColumn("testDecimal", new DecimalType(4, 3), partRowRecord, new BigDecimalJ("0.123"))
     testColumn("testTimestamp", new TimestampType(), partRowRecord, new TimestampJ(12345678))
     testColumn("testDate", new DateType(), partRowRecord, new DateJ(70, 0, 1))
 
@@ -337,16 +352,17 @@ class ExpressionSuite extends FunSuite {
       "The data type of column testStruct is struct. This is not supported yet")
   }
 
-  private def buildPartitionRowRecord(
-      dataType: DataType,
-      nullable: Boolean,
-      value: String,
-      name: String = "test") = {
-    new PartitionRowRecord(new StructType(Array(new StructField(name, dataType, nullable))),
-      Map(name -> value))
-  }
-
   test("PartitionRowRecord tests") {
+    def buildPartitionRowRecord(
+        dataType: DataType,
+        nullable: Boolean,
+        value: String,
+        name: String = "test"): PartitionRowRecord = {
+      new PartitionRowRecord(
+        new StructType(Array(new StructField(name, dataType, nullable))),
+        Map(name -> value))
+    }
+
     val testPartitionRowRecord = buildPartitionRowRecord(new IntegerType(), nullable = true, "5")
     assert(buildPartitionRowRecord(new IntegerType(), nullable = true, null).isNullAt("test"))
     assert(!buildPartitionRowRecord(new IntegerType(), nullable = true, "5").isNullAt("test"))
@@ -383,7 +399,7 @@ class ExpressionSuite extends FunSuite {
         "Field \"test\" does not exist.")
     }
 
-    val curr_time = System.currentTimeMillis()
+    val now = System.currentTimeMillis()
     // non primitive types can be null ONLY when nullable (test both)
     // for non-primitive type T:
     // (DataType, getter: partitionRowRecord => T, value: String, value: T)
@@ -392,12 +408,12 @@ class ExpressionSuite extends FunSuite {
       (DecimalType.USER_DEFAULT, (x: PartitionRowRecord) => x.getBigDecimal("test"), "0.01",
         new BigDecimalJ("0.01")),
       (new TimestampType(), (x: PartitionRowRecord) => x.getTimestamp("test"),
-        (new TimestampJ(curr_time)).toString, new TimestampJ(curr_time)),
+        (new TimestampJ(now)).toString, new TimestampJ(now)),
       (new DateType(), (x: PartitionRowRecord) => x.getDate("test"), "1970-01-01",
         DateJ.valueOf("1970-01-01"))
     )
     nonPrimTypes.foreach {
-      case (dataType: DataType, f: (PartitionRowRecord => Any), s: String, v) =>
+      case (dataType: DataType, f: (PartitionRowRecord => Any), s: String, v: Any) =>
         assert(Objects.equals(f(buildPartitionRowRecord(dataType, nullable = true, s)), v))
         assert(f(buildPartitionRowRecord(dataType, nullable = true, null)) == null)
         testException[NullPointerException](
@@ -436,11 +452,14 @@ class ExpressionSuite extends FunSuite {
       "Map is not a supported partition type.")
   }
 
-  // TODO: add nested expression tree tests?
+  // TODO: nested expression tree tests
 
-  private def testPartitionFilter(inputSchema: StructType, inputFiles: Seq[AddFile],
-      filters: Seq[Expression], expectedMatchedFiles: Seq[AddFile]) = {
-    val matchedFiles = DeltaLogImpl.filterFileList(inputSchema, inputFiles, filters)
+  private def testPartitionFilter(
+      partitionSchema: StructType,
+      inputFiles: Seq[AddFile],
+      filter: Expression,
+      expectedMatchedFiles: Seq[AddFile]) = {
+    val matchedFiles = PartitionUtils.filterFileList(partitionSchema, inputFiles, filter)
     assert(matchedFiles.length == expectedMatchedFiles.length)
     assert(matchedFiles.forall(expectedMatchedFiles.contains(_)))
   }
@@ -461,45 +480,87 @@ class ExpressionSuite extends FunSuite {
     val add22 = AddFile("4", Map("col1" -> "2", "col2" -> "2"), 0, 0, dataChange = true)
     val inputFiles = Seq(add00, add01, add02, add10, add11, add12, add20, add21, add22)
 
-    val f1Expr1 = new EqualTo(schema.column("col1"), Literal.of(0))
-    val f1Expr2 = new EqualTo(schema.column("col2"), Literal.of(1))
+    val f1Expr1 = new EqualTo(partitionSchema.column("col1"), Literal.of(0))
+    val f1Expr2 = new EqualTo(partitionSchema.column("col2"), Literal.of(1))
     val f1 = new And(f1Expr1, f1Expr2)
 
-    testPartitionFilter(schema, inputFiles, f1 :: Nil, add01 :: Nil)
-    testPartitionFilter(schema, inputFiles, f1Expr1 :: f1Expr2 :: Nil, add01 :: Nil)
+    testPartitionFilter(partitionSchema, inputFiles, f1, add01 :: Nil)
 
-    val f2Expr1 = new LessThan(schema.column("col1"), Literal.of(1))
-    val f2Expr2 = new LessThan(schema.column("col2"), Literal.of(1))
+    val f2Expr1 = new LessThan(partitionSchema.column("col1"), Literal.of(1))
+    val f2Expr2 = new LessThan(partitionSchema.column("col2"), Literal.of(1))
     val f2 = new And(f2Expr1, f2Expr2)
-    testPartitionFilter(schema, inputFiles, f2 :: Nil, add00 :: Nil)
-    testPartitionFilter(schema, inputFiles, f2Expr1 :: f2Expr2 :: Nil, add00 :: Nil)
+    testPartitionFilter(partitionSchema, inputFiles, f2, add00 :: Nil)
 
-    val f3Expr1 = new EqualTo(schema.column("col1"), Literal.of(2))
-    val f3Expr2 = new LessThan(schema.column("col2"), Literal.of(1))
+    val f3Expr1 = new EqualTo(partitionSchema.column("col1"), Literal.of(2))
+    val f3Expr2 = new LessThan(partitionSchema.column("col2"), Literal.of(1))
     val f3 = new Or(f3Expr1, f3Expr2)
-    testPartitionFilter(schema, inputFiles, f3 :: Nil, Seq(add20, add21, add22, add00, add10))
+    testPartitionFilter(
+      partitionSchema, inputFiles, f3, Seq(add20, add21, add22, add00, add10))
 
     val inSet4 = (2 to 10).map(Literal.of).asJava
-    val f4 = new In(schema.column("col1"), inSet4)
-    testPartitionFilter(schema, inputFiles, f4 :: Nil, add20 :: add21 :: add22 :: Nil)
+    val f4 = new In(partitionSchema.column("col1"), inSet4)
+    testPartitionFilter(partitionSchema, inputFiles, f4, add20 :: add21 :: add22 :: Nil)
 
     val inSet5 = (100 to 110).map(Literal.of).asJava
-    val f5 = new In(schema.column("col1"), inSet5)
-//    testPartitionFilter(schema, inputFiles, f5 :: Nil, Nil)
+    val f5 = new In(partitionSchema.column("col1"), inSet5)
+    testPartitionFilter(partitionSchema, inputFiles, f5, Nil)
   }
 
-  // TODO: add additional partition filter tests
-
   test("not null partition filter") {
-    val schema = new StructType(Array(
-      new StructField("col1", new IntegerType(), true),
-      new StructField("col2", new IntegerType(), true)))
-
     val add0Null = AddFile("1", Map("col1" -> "0", "col2" -> null), 0, 0, dataChange = true)
     val addNull1 = AddFile("1", Map("col1" -> null, "col2" -> "1"), 0, 0, dataChange = true)
     val inputFiles = Seq(add0Null, addNull1)
 
-    val f1 = new IsNotNull(schema.column("col1"))
-    testPartitionFilter(schema, inputFiles, f1 :: Nil, add0Null :: Nil)
+    val f1 = new IsNotNull(partitionSchema.column("col1"))
+    testPartitionFilter(partitionSchema, inputFiles, f1, add0Null :: Nil)
+  }
+
+  test("Expr.references() and PredicateUtils.isPredicateMetadataOnly()") {
+    val dataExpr = new And(
+      new LessThan(dataSchema.column("col3"), Literal.of(5)),
+      new Or(
+        new EqualTo(dataSchema.column("col3"), dataSchema.column("col4")),
+        new EqualTo(dataSchema.column("col3"), dataSchema.column("col5"))
+      )
+    )
+
+    assert(dataExpr.references().size() == 3)
+
+    val partitionExpr = new EqualTo(partitionSchema.column("col1"), partitionSchema.column("col2"))
+
+    assert(
+      !PartitionUtils.isPredicateMetadataOnly(dataExpr, partitionSchema.getFieldNames.toSeq))
+
+    assert(
+      PartitionUtils.isPredicateMetadataOnly(partitionExpr, partitionSchema.getFieldNames.toSeq))
+  }
+
+  test("expression content equality") {
+    // BinaryExpression
+    val and = new And(partitionSchema.column("col1"), partitionSchema.column("col2"))
+    val andCopy = new And(partitionSchema.column("col1"), partitionSchema.column("col2"))
+    val and2 = new And(dataSchema.column("col3"), Literal.of(44))
+    assert(and == andCopy)
+    assert(and != and2)
+
+    // UnaryExpression
+    val not = new Not(new EqualTo(Literal.of(1), Literal.of(1)))
+    val notCopy = new Not(new EqualTo(Literal.of(1), Literal.of(1)))
+    val not2 = new Not(new EqualTo(Literal.of(45), dataSchema.column("col4")))
+    assert(not == notCopy)
+    assert(not != not2)
+
+    // LeafExpression
+    val col1 = partitionSchema.column("col1")
+    val col1Copy = partitionSchema.column("col1")
+    val col2 = partitionSchema.column("col2")
+    assert(col1 == col1Copy)
+    assert(col1 != col2)
+  }
+
+  test("decimal literal creation") {
+    val dec52 = new BigDecimalJ("123.45")
+    val lit52 = Literal.of(dec52)
+    assert(lit52.dataType().equals(new DecimalType(5, 2)))
   }
 }

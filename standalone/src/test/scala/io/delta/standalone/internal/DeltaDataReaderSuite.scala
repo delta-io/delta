@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,23 +18,23 @@ package io.delta.standalone.internal
 
 import java.math.{BigDecimal => JBigDecimal}
 import java.sql.Timestamp
-import java.util.{TimeZone, List => JList, Map => JMap}
+import java.util.{List => JList, Map => JMap, TimeZone}
 import java.util.Arrays.{asList => asJList}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ListBuffer
 
-import io.delta.standalone.data.{CloseableIterator, RowRecord => JRowRecord}
-import io.delta.standalone.DeltaLog
-
-import io.delta.standalone.internal.sources.StandaloneHadoopConf
-import io.delta.standalone.internal.util.DataTypeParser
-import io.delta.standalone.internal.util.GoldenTableUtils._
-import io.delta.standalone.types._
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.FunSuite
 
+import io.delta.standalone.DeltaLog
+import io.delta.standalone.data.{CloseableIterator, RowRecord => JRowRecord}
+import io.delta.standalone.types._
+
 import io.delta.standalone.internal.data.RowParquetRecordImpl
+import io.delta.standalone.internal.sources.StandaloneHadoopConf
+import io.delta.standalone.internal.util.DataTypeParser
+import io.delta.standalone.internal.util.GoldenTableUtils._
 
 /**
  * Instead of using Spark in this project to WRITE data and log files for tests, we have
@@ -46,7 +46,6 @@ import io.delta.standalone.internal.data.RowParquetRecordImpl
  * been generated.
  */
 class DeltaDataReaderSuite extends FunSuite {
-  // scalastyle:on funsuite
 
   test("read - primitives") {
     withLogForGoldenTable("data-reader-primitives") { log =>

@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,10 +17,13 @@
 package io.delta.standalone.internal.sources
 
 /**
- * [[org.apache.hadoop.conf.Configuration]] entries for Delta Standalone Reader features.
+ * [[org.apache.hadoop.conf.Configuration]] entries for Delta Standalone features.
  */
 private[internal] object StandaloneHadoopConf {
 
-  /** time zone as which time-based parquet values will be decoded */
+  /** Time zone as which time-based parquet values will be encoded and decoded. */
   val PARQUET_DATA_TIME_ZONE_ID = "io.delta.standalone.PARQUET_DATA_TIME_ZONE_ID"
+
+  /** Class name for the desired [[LogStore]] implementation to be used. */
+  val LOG_STORE_CLASS_KEY = "io.delta.standalone.LOG_STORE_CLASS_KEY"
 }

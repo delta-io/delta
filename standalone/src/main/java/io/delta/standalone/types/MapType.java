@@ -21,7 +21,7 @@
  */
 
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -87,7 +87,13 @@ public final class MapType extends DataType {
         final String nextPrefix = prefix + "    |";
         builder.append(String.format("%s-- key: %s\n", prefix, keyType.getTypeName()));
         DataType.buildFormattedString(keyType, nextPrefix, builder);
-        builder.append(String.format("%s-- value: %s (valueContainsNull = %b)\n", prefix, valueType.getTypeName(), valueContainsNull));
+        builder.append(
+            String.format(
+                "%s-- value: %s (valueContainsNull = %b)\n",
+                prefix,
+                valueType.getTypeName(),
+                valueContainsNull)
+        );
     }
 
     @Override

@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ import java.io.File
 
 import io.delta.hive.test.HiveTest
 import io.delta.hive.util.JavaUtils
-
 import org.scalatest.BeforeAndAfterEach
 
 abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {

@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,9 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.delta.standalone.actions;
 
-import java.util.*;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 
 import io.delta.standalone.types.StructType;
 
@@ -85,7 +90,7 @@ public final class Metadata implements Action {
      *         columns by which the data should be partitioned
      */
     public List<String> getPartitionColumns() {
-        return Collections.unmodifiableList(partitionColumns);
+        return partitionColumns != null ? Collections.unmodifiableList(partitionColumns) : null;
     }
 
     /**
@@ -93,7 +98,7 @@ public final class Metadata implements Action {
      *         options for this metadata
      */
     public Map<String, String> getConfiguration() {
-        return Collections.unmodifiableMap(configuration);
+        return configuration != null ? Collections.unmodifiableMap(configuration) : null;
     }
 
     /**
@@ -128,8 +133,8 @@ public final class Metadata implements Action {
 
     @Override
     public int hashCode() {
-        return Objects.hash(id, name, description, format, partitionColumns,
-                configuration, createdTime, schema);
+        return Objects.hash(id, name, description, format, partitionColumns, configuration,
+                createdTime, schema);
     }
 
     /**

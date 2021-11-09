@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,25 +16,35 @@
 
 package io.delta.standalone;
 
+import java.util.Optional;
+
 import io.delta.standalone.actions.AddFile;
 import io.delta.standalone.data.CloseableIterator;
 import io.delta.standalone.expressions.Expression;
 
-import java.util.Optional;
-
+/**
+ * Provides access to an iterator over the files in this snapshot.
+ * <p>
+ * Typically created with a read predicate {@link Expression} to let users filter files.
+ */
 public interface DeltaScan {
 
     /**
      * Creates a {@link CloseableIterator} which can iterate over files belonging to this snapshot.
-     *
+     * <p>
      * It provides no iteration ordering guarantee among files.
-     *
+     * <p>
      * Files returned are guaranteed to satisfy the predicate, if any, returned by
      * {@link #getPushedPredicate()}.
      *
      * @return a {@link CloseableIterator} to iterate over files.
      */
     CloseableIterator<AddFile> getFiles();
+
+    /**
+     * @return the input predicate used to filter files.
+     */
+    Optional<Expression> getInputPredicate();
 
     /**
      * @return portion of the input predicate that can be evaluated by Delta Standalone using only

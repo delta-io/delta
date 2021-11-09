@@ -21,7 +21,7 @@
  */
 
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,8 +40,8 @@ package io.delta.standalone.types;
 
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.Map;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -113,7 +113,7 @@ public final class FieldMetadata {
                                 Arrays.hashCode((Object[]) entry.getValue()) :
                         entry.hashCode())
                 ).sum();
-        }
+    }
 
     /**
      * @return a new {@code FieldMetadata.Builder}

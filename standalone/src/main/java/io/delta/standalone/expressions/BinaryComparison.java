@@ -1,11 +1,12 @@
 package io.delta.standalone.expressions;
 
-import io.delta.standalone.internal.expressions.Util;
-
 import java.util.Comparator;
 
+import io.delta.standalone.internal.expressions.Util;
+
 /**
- * A {@link BinaryOperator} that compares the left and right {@link Expression}s and returns a boolean value.
+ * A {@link BinaryOperator} that compares the left and right {@link Expression}s and returns a
+ * boolean value.
  */
 public abstract class BinaryComparison extends BinaryOperator implements Predicate {
     private final Comparator<Object> comparator;

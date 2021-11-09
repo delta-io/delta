@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,10 +20,9 @@ import java.io.{Closeable, File}
 import java.nio.file.Files
 import java.util.{Locale, TimeZone}
 
-import io.delta.hive.util.JavaUtils
-
 import scala.collection.JavaConverters._
 
+import io.delta.hive.util.JavaUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.hive.cli.CliSessionState
@@ -31,7 +30,6 @@ import org.apache.hadoop.hive.conf.HiveConf
 import org.apache.hadoop.hive.ql.Driver
 import org.apache.hadoop.hive.ql.metadata.Hive
 import org.apache.hadoop.hive.ql.session.SessionState
-
 import org.scalatest.{BeforeAndAfterAll, FunSuite}
 
 // TODO Yarn is using log4j2. Disable its verbose logs.

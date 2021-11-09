@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,8 +45,8 @@ lazy val commonSettings = Seq(
   organization := "io.delta",
   scalaVersion := "2.12.8",
   fork := true,
-  javacOptions ++= Seq("-source", "1.8", "-target", "1.8"),
-  scalacOptions += "-target:jvm-1.8",
+  javacOptions ++= Seq("-source", "1.8", "-target", "1.8", "-Xlint:unchecked"),
+  scalacOptions ++= Seq("-target:jvm-1.8", "-Ywarn-unused-import"),
   // Configurations to speed up tests and reduce memory footprint
   javaOptions in Test ++= Seq(
     "-Dspark.ui.enabled=false",
@@ -60,7 +60,15 @@ lazy val commonSettings = Seq(
   compileScalastyle := scalastyle.in(Compile).toTask("").value,
   (compile in Compile) := ((compile in Compile) dependsOn compileScalastyle).value,
   testScalastyle := scalastyle.in(Test).toTask("").value,
-  (test in Test) := ((test in Test) dependsOn testScalastyle).value
+  (test in Test) := ((test in Test) dependsOn testScalastyle).value,
+
+  // Can be run explicitly via: build/sbt $module/checkstyle
+  // Will automatically be run during compilation (e.g. build/sbt compile)
+  // and during tests (e.g. build/sbt test)
+  checkstyleConfigLocation := CheckstyleConfigLocation.File("dev/checkstyle.xml"),
+  checkstyleSeverityLevel := Some(CheckstyleSeverityLevel.Error),
+  (checkstyle in Compile) := (checkstyle in Compile).triggeredBy(compile in Compile).value,
+  (checkstyle in Test) := (checkstyle in Test).triggeredBy(compile in Test).value
 )
 
 lazy val releaseSettings = Seq(
@@ -360,12 +368,12 @@ lazy val hive2Tez = (project in file("hive2-tez")) settings (
  * - creates connectors/standalone/target/scala-2.12/delta-standalone-original-shaded_2.12-0.2.1-SNAPSHOT.jar
  *   (this is the shaded JAR we want)
  *
- * build/sbt standaloneCosmetic/publishLocal
+ * build/sbt standaloneCosmetic/publishM2
  * - packages the shaded JAR (above) and then produces:
- * -- .ivy2/local/io.delta/delta-standalone_2.12/0.2.1-SNAPSHOT/poms/delta-standalone_2.12.pom
- * -- .ivy2/local/io.delta/delta-standalone_2.12/0.2.1-SNAPSHOT/jars/delta-standalone_2.12.jar
- * -- .ivy2/local/io.delta/delta-standalone_2.12/0.2.1-SNAPSHOT/srcs/delta-standalone_2.12-sources.jar
- * -- .ivy2/local/io.delta/delta-standalone_2.12/0.2.1-SNAPSHOT/docs/delta-standalone_2.12-javadoc.jar
+ * -- .m2/repository/io/delta/delta-standalone_2.12/0.2.1-SNAPSHOT/delta-standalone_2.12-0.2.1-SNAPSHOT.pom
+ * -- .m2/repository/io/delta/delta-standalone_2.12/0.2.1-SNAPSHOT/delta-standalone_2.12-0.2.1-SNAPSHOT.jar
+ * -- .m2/repository/io/delta/delta-standalone_2.12/0.2.1-SNAPSHOT/delta-standalone_2.12-0.2.1-SNAPSHOT-sources.jar
+ * -- .m2/repository/io/delta/delta-standalone_2.12/0.2.1-SNAPSHOT/delta-standalone_2.12-0.2.1-SNAPSHOT-javadoc.jar
  */
 lazy val standaloneCosmetic = project
   .settings(
@@ -417,8 +425,22 @@ lazy val standalone = (project in file("standalone"))
         ExclusionRule("com.fasterxml.jackson.core"),
         ExclusionRule("com.fasterxml.jackson.module")
       ),
-      "org.scalatest" %% "scalatest" % scalaTestVersion % "test"
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+      "org.slf4j" % "slf4j-api" % "1.7.25",
+      "org.slf4j" % "slf4j-log4j12" % "1.7.25"
     ),
+    sourceGenerators in Compile += Def.task {
+      val file = (sourceManaged in Compile).value / "meta" / "package.scala"
+      IO.write(file,
+        s"""package io.delta
+          |
+          |package object standalone {
+          |  val VERSION = "${version.value}"
+          |  val NAME = "Delta Standalone"
+          |}
+          |""".stripMargin)
+      Seq(file)
+    },
 
     /**
      * Standalone packaged (unshaded) jar.
@@ -531,6 +553,24 @@ lazy val mimaSettings = Seq(
   mimaBinaryIssueFilters ++= StandaloneMimaExcludes.ignoredABIProblems
 )
 
+lazy val compatibility = (project in file("oss-compatibility-tests"))
+  // depend on standalone test codes as well
+  .dependsOn(standalone % "compile->compile;test->test")
+  .settings(
+    name := "compatibility",
+    commonSettings,
+    skipReleaseSettings,
+    libraryDependencies ++= Seq(
+      // Test Dependencies
+      "org.scalatest" %% "scalatest" % "3.1.0" % "test",
+      "org.apache.spark" % "spark-sql_2.12" % "3.1.1" % "test",
+      "io.delta" % "delta-core_2.12" % "1.0.0" % "test",
+      "commons-io" % "commons-io" % "2.8.0" % "test",
+      "org.apache.spark" % "spark-catalyst_2.12" % "3.1.1" % "test" classifier "tests",
+      "org.apache.spark" % "spark-core_2.12" % "3.1.1" % "test" classifier "tests",
+      "org.apache.spark" % "spark-sql_2.12" % "3.1.1" % "test" classifier "tests"
+    )
+  )
 
 lazy val goldenTables = (project in file("golden-tables")) settings (
   name := "golden-tables",

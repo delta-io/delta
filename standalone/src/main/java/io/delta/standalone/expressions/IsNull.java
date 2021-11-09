@@ -1,11 +1,9 @@
 package io.delta.standalone.expressions;
 
 import io.delta.standalone.data.RowRecord;
-import io.delta.standalone.types.BooleanType;
-import io.delta.standalone.types.DataType;
 
 /**
- * Usage: {@code new IsNull(expr)} - Returns true if `expr` is null, else false.
+ * Usage: {@code new IsNull(expr)} - Returns true if {@code expr} is null, else false.
  */
 public class IsNull extends UnaryExpression implements Predicate {
     public IsNull(Expression child) {

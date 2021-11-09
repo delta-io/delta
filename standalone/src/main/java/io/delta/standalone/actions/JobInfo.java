@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,19 +13,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.delta.standalone.actions;
 
 import java.util.Objects;
 
 /** Represents the Databricks Job information that committed to the Delta table. */
-public class JobInfo implements Action {
+public class JobInfo {
     private final String jobId;
     private final String jobName;
     private final String runId;
     private final String jobOwnerId;
     private final String triggerType;
 
-    public JobInfo(String jobId, String jobName, String runId, String jobOwnerId, String triggerType) {
+    public JobInfo(String jobId, String jobName, String runId, String jobOwnerId,
+                   String triggerType) {
         this.jobId = jobId;
         this.jobName = jobName;
         this.runId = runId;

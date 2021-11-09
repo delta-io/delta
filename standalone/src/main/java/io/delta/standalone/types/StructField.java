@@ -21,7 +21,7 @@
  */
 
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,10 +38,7 @@
 
 package io.delta.standalone.types;
 
-import java.util.Collections;
-import java.util.Map;
 import java.util.Objects;
-import java.util.stream.Collectors;
 
 /**
  * A field inside a {@link StructType}.
@@ -53,15 +50,22 @@ public final class StructField {
     private final FieldMetadata metadata;
 
     /**
+     * Constructor with default {@code nullable = true}.
+     *
+     * @param name  the name of this field
+     * @param dataType  the data type of this field
+     */
+    public StructField(String name, DataType dataType) {
+        this(name, dataType, true);
+    }
+
+    /**
      * @param name  the name of this field
      * @param dataType  the data type of this field
      * @param nullable  indicates if values of this field can be {@code null} values
      */
     public StructField(String name, DataType dataType, boolean nullable) {
-        this.name = name;
-        this.dataType = dataType;
-        this.nullable = nullable;
-        this.metadata = FieldMetadata.builder().build();
+        this(name, dataType, nullable, FieldMetadata.builder().build());
     }
 
     /**
@@ -75,16 +79,6 @@ public final class StructField {
         this.dataType = dataType;
         this.nullable = nullable;
         this.metadata = metadata;
-    }
-
-    /**
-     * Constructor with default {@code nullable = true}.
-     *
-     * @param name  the name of this field
-     * @param dataType  the data type of this field
-     */
-    public StructField(String name, DataType dataType) {
-        this(name, dataType, true);
     }
 
     /**

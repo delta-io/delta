@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,18 +16,18 @@
 
 package io.delta.standalone;
 
+import java.util.List;
+
 import io.delta.standalone.actions.AddFile;
 import io.delta.standalone.actions.Metadata;
 import io.delta.standalone.data.CloseableIterator;
 import io.delta.standalone.data.RowRecord;
 import io.delta.standalone.expressions.Expression;
 
-import java.util.List;
-
 /**
  * {@link Snapshot} provides APIs to access the Delta table state (such as table metadata, active
  * files) at some version.
- *
+ * <p>
  * See <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md">Delta Transaction Log Protocol</a>
  * for more details about the transaction logs.
  */

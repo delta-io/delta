@@ -1,12 +1,13 @@
 package io.delta.hive
 
 import scala.collection.JavaConverters._
-import io.delta.standalone.types._
+
 import org.apache.hadoop.hive.metastore.api.MetaException
 import org.apache.hadoop.hive.ql.io.parquet.read.DataWritableReadSupport
 import org.apache.hadoop.hive.serde2.typeinfo.{StructTypeInfo, TypeInfoFactory}
-
 import org.scalatest.FunSuite
+
+import io.delta.standalone.types._
 
 class DeltaHelperTest extends FunSuite {
 

@@ -21,7 +21,7 @@
  */
 
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -82,15 +82,26 @@ public abstract class DataType {
     public String toJson() { return DataTypeParser.toJson(this); }
 
     /**
+     * @return a pretty (i.e. indented) JSON (@code String} representation of the type
+     */
+    public String toPrettyJson() { return DataTypeParser.toPrettyJson(this); }
+
+    /**
      * Builds a readable {@code String} representation of the {@code ArrayType}
      */
     protected static void buildFormattedString(
             DataType dataType,
             String prefix,
             StringBuilder builder) {
-        if (dataType instanceof ArrayType) ((ArrayType) dataType).buildFormattedString(prefix, builder);
-        if (dataType instanceof StructType) ((StructType) dataType).buildFormattedString(prefix, builder);
-        if (dataType instanceof MapType) ((MapType) dataType).buildFormattedString(prefix, builder);
+        if (dataType instanceof ArrayType) {
+            ((ArrayType) dataType).buildFormattedString(prefix, builder);
+        }
+        if (dataType instanceof StructType) {
+            ((StructType) dataType).buildFormattedString(prefix, builder);
+        }
+        if (dataType instanceof MapType) {
+            ((MapType) dataType).buildFormattedString(prefix, builder);
+        }
     }
 
     @Override

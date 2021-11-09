@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,10 +19,8 @@ package io.delta.connectors.spark.jdbc
 import java.util.Properties
 
 import io.delta.tables.DeltaTable
-import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.{DataFrame, SaveMode, SparkSession}
-
-import scala.collection.JavaConverters._
+import org.apache.spark.sql.functions.col
 
 /**
  * Class that contains JDBC source, read parallelism params and target table name

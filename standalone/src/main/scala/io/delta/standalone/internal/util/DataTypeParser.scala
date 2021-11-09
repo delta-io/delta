@@ -21,7 +21,7 @@
  */
 
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,12 +38,14 @@
 
 package io.delta.standalone.internal.util
 
-import io.delta.standalone.types._
-import org.json4s._
-import org.json4s.jackson.JsonMethods._
-import org.json4s.JsonDSL._
-import org.json4s.JsonAST.JValue
 import scala.collection.JavaConverters._
+
+import org.json4s._
+import org.json4s.JsonAST.JValue
+import org.json4s.JsonDSL._
+import org.json4s.jackson.JsonMethods._
+
+import io.delta.standalone.types._
 
 private[standalone] object DataTypeParser {
 
@@ -84,9 +86,9 @@ private[standalone] object DataTypeParser {
         s"Failed to convert the JSON string '${compact(render(other))}' to a data type.")
   }
 
-  def toJson(value : DataType): String = {
-    compact(render(dataTypeToJValue(value)))
-  }
+  def toJson(value: DataType): String = compact(render(dataTypeToJValue(value)))
+
+  def toPrettyJson(value: DataType): String = pretty(render(dataTypeToJValue(value)))
 
   private def dataTypeToJValue(dataType: DataType): JValue = dataType match {
     case array: ArrayType =>

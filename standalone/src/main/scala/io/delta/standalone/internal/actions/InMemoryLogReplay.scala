@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,8 +26,8 @@ import io.delta.standalone.internal.SnapshotImpl.canonicalizePath
  * Replays a history of action, resolving them to produce the current state
  * of the table. The protocol for resolution is as follows:
  *  - The most recent [[AddFile]] and accompanying metadata for any `path` wins.
- *  - [[RemoveFile]] deletes a corresponding [[AddFile]] and is NOT retained. No tombstones are
- *    kept.
+ *  - [[RemoveFile]] deletes a corresponding [[AddFile]] and is retained as a
+ *    tombstone until `minFileRetentionTimestamp` has passed.
  *  - The most recent [[Metadata]] wins.
  *  - The most recent [[Protocol]] version wins.
  *  - For each path, this class should always output only one [[FileAction]] (either [[AddFile]] or
@@ -35,13 +35,16 @@ import io.delta.standalone.internal.SnapshotImpl.canonicalizePath
  *
  * This class is not thread safe.
  */
-private[internal] class InMemoryLogReplay(hadoopConf: Configuration) {
+private[internal] class InMemoryLogReplay(
+    hadoopConf: Configuration,
+    minFileRetentionTimestamp: Long) {
   var currentProtocolVersion: Protocol = null
   var currentVersion: Long = -1
   var currentMetaData: Metadata = null
   var sizeInBytes: Long = 0
   var numMetadata: Long = 0
   var numProtocol: Long = 0
+  private val transactions = new scala.collection.mutable.HashMap[String, SetTransaction]()
   private val activeFiles = new scala.collection.mutable.HashMap[URI, AddFile]()
   private val tombstones = new scala.collection.mutable.HashMap[URI, RemoveFile]()
 
@@ -50,6 +53,8 @@ private[internal] class InMemoryLogReplay(hadoopConf: Configuration) {
       s"Attempted to replay version $version, but state is at $currentVersion")
     currentVersion = version
     actions.foreach {
+      case a: SetTransaction =>
+        transactions(a.appId) = a
       case a: Metadata =>
         currentMetaData = a
         numMetadata += 1
@@ -78,5 +83,12 @@ private[internal] class InMemoryLogReplay(hadoopConf: Configuration) {
     }
   }
 
-  def getActiveFiles: Map[URI, AddFile] = activeFiles.toMap
+  def getSetTransactions: Seq[SetTransaction] = transactions.values.toSeq
+
+  def getActiveFiles: Iterable[AddFile] = activeFiles.values
+
+  def getTombstones: Iterable[RemoveFile] = {
+    tombstones.values.filter(_.delTimestamp > minFileRetentionTimestamp)
+  }
+
 }

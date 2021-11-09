@@ -70,8 +70,7 @@ public final class Literal extends LeafExpression {
     }
 
     public static Literal of(BigDecimal value) {
-        //TODO: get the precision and scale from the value
-        return new Literal(value, DecimalType.USER_DEFAULT);
+        return new Literal(value, new DecimalType(value.precision(), value.scale()));
     }
 
     public static Literal of(double value) {

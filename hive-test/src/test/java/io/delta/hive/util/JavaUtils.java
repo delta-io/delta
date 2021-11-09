@@ -3,9 +3,7 @@ package io.delta.hive.util;
 import java.io.*;
 
 import com.google.common.base.Preconditions;
-
 import org.apache.commons.lang3.SystemUtils;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -47,8 +45,8 @@ public class JavaUtils {
                 deleteRecursivelyUsingUnixNative(file);
                 return;
             } catch (IOException e) {
-                logger.warn("Attempt to delete using native Unix OS command failed for path = {}. " +
-                    "Falling back to Java IO way", file.getAbsolutePath(), e);
+                logger.warn("Attempt to delete using native Unix OS command failed for path = {}. "
+                    + "Falling back to Java IO way", file.getAbsolutePath(), e);
             }
         }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.delta.standalone.actions;
 
 import java.sql.Timestamp;
@@ -43,7 +44,9 @@ public class CommitInfo implements Action {
     private final Optional<Boolean> isBlindAppend;
     private final Optional<Map<String, String>> operationMetrics;
     private final Optional<String> userMetadata;
+    private final Optional<String> engineInfo;
 
+    // For binary compatibility with version 0.2.0
     public CommitInfo(Optional<Long> version, Timestamp timestamp, Optional<String> userId,
                       Optional<String> userName, String operation,
                       Map<String, String> operationParameters, Optional<JobInfo> jobInfo,
@@ -66,6 +69,32 @@ public class CommitInfo implements Action {
         this.isBlindAppend = isBlindAppend;
         this.operationMetrics = operationMetrics;
         this.userMetadata = userMetadata;
+        this.engineInfo = Optional.empty();
+    }
+
+    public CommitInfo(Optional<Long> version, Timestamp timestamp, Optional<String> userId,
+                      Optional<String> userName, String operation,
+                      Map<String, String> operationParameters, Optional<JobInfo> jobInfo,
+                      Optional<NotebookInfo> notebookInfo, Optional<String> clusterId,
+                      Optional<Long> readVersion, Optional<String> isolationLevel,
+                      Optional<Boolean> isBlindAppend,
+                      Optional<Map<String, String>> operationMetrics,
+                      Optional<String> userMetadata, Optional<String> engineInfo) {
+        this.version = version;
+        this.timestamp = timestamp;
+        this.userId = userId;
+        this.userName = userName;
+        this.operation = operation;
+        this.operationParameters = operationParameters;
+        this.jobInfo = jobInfo;
+        this.notebookInfo = notebookInfo;
+        this.clusterId = clusterId;
+        this.readVersion = readVersion;
+        this.isolationLevel = isolationLevel;
+        this.isBlindAppend = isBlindAppend;
+        this.operationMetrics = operationMetrics;
+        this.userMetadata = userMetadata;
+        this.engineInfo = engineInfo;
     }
 
     /**
@@ -107,7 +136,8 @@ public class CommitInfo implements Action {
      * @return any relevant operation parameters. e.g. "mode", "partitionBy"
      */
     public Map<String, String> getOperationParameters() {
-        return Collections.unmodifiableMap(operationParameters);
+        if (operationParameters != null) return Collections.unmodifiableMap(operationParameters);
+        return null;
     }
 
     /**
@@ -169,6 +199,14 @@ public class CommitInfo implements Action {
         return userMetadata;
     }
 
+    /**
+     * @return the engineInfo of the operation that performed this commit. It should be of the form
+     *         "{engineName}/{engineVersion} Delta-Standalone/{deltaStandaloneVersion}"
+     */
+    public Optional<String> getEngineInfo() {
+        return engineInfo;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -187,14 +225,15 @@ public class CommitInfo implements Action {
                 Objects.equals(isolationLevel, that.isolationLevel) &&
                 Objects.equals(isBlindAppend, that.isBlindAppend) &&
                 Objects.equals(operationMetrics, that.operationMetrics) &&
-                Objects.equals(userMetadata, that.userMetadata);
+                Objects.equals(userMetadata, that.userMetadata) &&
+                Objects.equals(engineInfo, that.engineInfo);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(version, timestamp, userId, userName, operation, operationParameters,
                 jobInfo, notebookInfo, clusterId, readVersion, isolationLevel, isBlindAppend,
-                operationMetrics, userMetadata);
+                operationMetrics, userMetadata, engineInfo);
     }
 
     /**
@@ -222,6 +261,7 @@ public class CommitInfo implements Action {
         private Optional<Boolean> isBlindAppend = Optional.empty();
         private Optional<Map<String, String>> operationMetrics = Optional.empty();
         private Optional<String> userMetadata = Optional.empty();
+        private Optional<String> engineInfo = Optional.empty();
 
         public Builder version(Long version) {
             this.version = Optional.of(version);
@@ -293,6 +333,11 @@ public class CommitInfo implements Action {
             return this;
         }
 
+        public Builder engineInfo(String engineInfo) {
+            this.engineInfo = Optional.of(engineInfo);
+            return this;
+        }
+
         /**
          * @return a new {@code CommitInfo} with the same properties as {@code this}
          */
@@ -300,7 +345,7 @@ public class CommitInfo implements Action {
             CommitInfo commitInfo = new CommitInfo(this.version, this.timestamp, this.userId,
                     this.userName, this.operation, this.operationParameters, this.jobInfo,
                     this.notebookInfo, this.clusterId, this.readVersion, this.isolationLevel,
-                    this.isBlindAppend, this.operationMetrics, this.userMetadata);
+                    this.isBlindAppend, this.operationMetrics, this.userMetadata, this.engineInfo);
             return commitInfo;
         }
     }

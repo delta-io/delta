@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,25 +19,24 @@ package io.delta.standalone.internal
 import java.io.File
 import java.nio.file.Files
 import java.sql.Timestamp
-import java.util.Collections
-import java.util.Optional
 import java.util.UUID
 
 import scala.collection.JavaConverters._
 
-import io.delta.standalone.{DeltaLog, Snapshot}
-import io.delta.standalone.actions.{AddFile => AddFileJ, CommitInfo => CommitInfoJ,
-  Format => FormatJ, JobInfo => JobInfoJ, Metadata => MetadataJ, NotebookInfo => NotebookInfoJ,
- RemoveFile => RemoveFileJ}
-import io.delta.standalone.internal.actions.Action
-import io.delta.standalone.internal.exception.DeltaErrors
-import io.delta.standalone.internal.util.GoldenTableUtils._
-import io.delta.standalone.types.{IntegerType, StructField => StructFieldJ, StructType => StructTypeJ}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-
 import org.scalatest.FunSuite
+
+import io.delta.standalone.{DeltaLog, Operation, Snapshot}
+import io.delta.standalone.actions.{AddFile => AddFileJ, JobInfo => JobInfoJ, Metadata => MetadataJ, NotebookInfo => NotebookInfoJ, RemoveFile => RemoveFileJ}
+import io.delta.standalone.exceptions.DeltaStandaloneException
+
+import io.delta.standalone.internal.actions.{Action, AddFile, Metadata, Protocol, RemoveFile}
+import io.delta.standalone.internal.exception.DeltaErrors
+import io.delta.standalone.internal.util.{ConversionUtils, FileNames}
+import io.delta.standalone.internal.util.GoldenTableUtils._
+import io.delta.standalone.internal.util.TestUtils._
 
 /**
  * Instead of using Spark in this project to WRITE data and log files for tests, we have
@@ -48,13 +47,28 @@ import org.scalatest.FunSuite
  * See io.delta.golden.GoldenTables for documentation on how to ensure that the needed files have
  * been generated.
  */
-class DeltaLogSuite extends FunSuite {
+abstract class DeltaLogSuiteBase extends FunSuite {
+
+  val engineInfo = "test-engine-info"
+  val manualUpdate = new Operation(Operation.Name.MANUAL_UPDATE)
+
+  // We want to allow concrete child test suites to use their own "get all AddFiles" APIs.
+  // e.g. snapshot.getAllFiles or snapshot.scan.getFiles
+  //
+  // Child test suites should create their own concrete `CustomAddFilesAccessor` class and then
+  // override `createCustomAddFilesAccessor` to return a new instance of it.
+  abstract class CustomAddFilesAccessor(snapshot: Snapshot) {
+    def _getFiles(): java.util.List[AddFileJ]
+  }
+
+  implicit def createCustomAddFilesAccessor(snapshot: Snapshot): CustomAddFilesAccessor
+
   // scalastyle:on funsuite
   test("checkpoint") {
     withLogForGoldenTable("checkpoint") { log =>
       assert(log.snapshot.getVersion == 14)
-      assert(log.snapshot.getAllFiles.size == 1)
-      log.snapshot.getAllFiles.hashCode()
+      assert(log.snapshot._getFiles().size == 1)
+      log.snapshot._getFiles().hashCode()
     }
   }
 
@@ -71,9 +85,9 @@ class DeltaLogSuite extends FunSuite {
         expectedFiles: Array[File],
         expectedVersion: Int): Unit = {
       assert(snapshot.getVersion == expectedVersion)
-      assert(snapshot.getAllFiles.size() == expectedFiles.length)
+      assert(snapshot._getFiles().size() == expectedFiles.length)
       assert(
-        snapshot.getAllFiles.asScala.forall(f => expectedFiles.exists(_.getName == f.getPath)))
+        snapshot._getFiles().asScala.forall(f => expectedFiles.exists(_.getName == f.getPath)))
     }
 
     // Append data0
@@ -119,7 +133,7 @@ class DeltaLogSuite extends FunSuite {
 
     // Repartition into 2 files
     withLogForGoldenTable("snapshot-repartitioned") { log =>
-      assert(log.snapshot().getAllFiles.size == 2)
+      assert(log.snapshot()._getFiles().size == 2)
       assert(log.snapshot().getVersion == 5)
     }
 
@@ -143,6 +157,50 @@ class DeltaLogSuite extends FunSuite {
         // just in case
         FileUtils.deleteDirectory(tempDir)
       }
+    }
+  }
+
+  test("update shouldn't pick up delta files earlier than checkpoint") {
+    withTempDir { tempDir =>
+      val log1 = DeltaLog.forTable(new Configuration(), new Path(tempDir.getCanonicalPath))
+
+      (1 to 5).foreach { i =>
+        val txn = log1.startTransaction()
+        val metadata = if (i == 1) Metadata() :: Nil else Nil
+        val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
+        val delete: Seq[Action] = if (i > 1) {
+          RemoveFile(i - 1 toString, Some(System.currentTimeMillis()), true) :: Nil
+        } else {
+          Nil
+        }
+
+        val filesToCommit = (metadata ++ delete ++ file).map(ConversionUtils.convertAction)
+
+        txn.commit(filesToCommit.asJava, manualUpdate, engineInfo)
+      }
+
+      // DeltaOSS performs `DeltaLog.clearCache()` here, but we can't
+      val log2 = DeltaLogImpl.forTable(new Configuration(), new Path(tempDir.getCanonicalPath))
+
+      (6 to 15).foreach { i =>
+        val txn = log1.startTransaction()
+        val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
+        val delete = RemoveFile(i - 1 toString, Some(System.currentTimeMillis()), true) :: Nil
+
+        val filesToCommit = (delete ++ file).map(ConversionUtils.convertAction)
+
+        txn.commit(filesToCommit.asJava, manualUpdate, engineInfo)
+      }
+
+      // Since log2 is a separate instance, it shouldn't be updated to version 15
+      assert(log2.snapshot.getVersion == 4)
+      val updateLog2 = log2.update()
+      assert(updateLog2.getVersion == log1.snapshot.getVersion, "Did not update to correct version")
+
+      val deltas = log2.snapshot.logSegment.deltas
+      assert(deltas.length === 4, "Expected 4 files starting at version 11 to 14")
+      val versions = deltas.map(f => FileNames.deltaVersion(f.getPath)).sorted
+      assert(versions === Seq[Long](11, 12, 13, 14), "Received the wrong files for update")
     }
   }
 
@@ -170,37 +228,58 @@ class DeltaLogSuite extends FunSuite {
   test("paths should be canonicalized - normal characters") {
     withLogForGoldenTable("canonicalized-paths-normal-a") { log =>
       assert(log.update().getVersion == 1)
-      assert(log.snapshot.getAllFiles.size == 0)
+      assert(log.snapshot._getFiles().size == 0)
     }
 
     withLogForGoldenTable("canonicalized-paths-normal-b") { log =>
       assert(log.update().getVersion == 1)
-      assert(log.snapshot.getAllFiles.size == 0)
+      assert(log.snapshot._getFiles().size == 0)
     }
   }
 
   test("paths should be canonicalized - special characters") {
     withLogForGoldenTable("canonicalized-paths-special-a") { log =>
       assert(log.update().getVersion == 1)
-      assert(log.snapshot.getAllFiles.size == 0)
+      assert(log.snapshot._getFiles().size == 0)
     }
 
     withLogForGoldenTable("canonicalized-paths-special-b") { log =>
       assert(log.update().getVersion == 1)
-      assert(log.snapshot.getAllFiles.size == 0)
+      assert(log.snapshot._getFiles().size == 0)
+    }
+  }
+
+  test("do not relativize paths in RemoveFiles") {
+    withTempDir { dir =>
+      val log = DeltaLogImpl.forTable(new Configuration(), dir.getCanonicalPath)
+      assert(new File(log.logPath.toUri).mkdirs())
+      val path = new File(dir, "a/b/c").getCanonicalPath
+
+      val removeFile = RemoveFileJ
+        .builder(path)
+        .deletionTimestamp(System.currentTimeMillis())
+        .dataChange(true)
+        .build()
+      val metadata = MetadataJ.builder().build()
+      val actions = java.util.Arrays.asList(removeFile, metadata)
+
+      log.startTransaction().commit(actions, manualUpdate, engineInfo)
+
+      val committedRemove = log.update().tombstonesScala
+      assert(committedRemove.head.path === s"file://$path")
     }
   }
 
   test("delete and re-add the same file in different transactions") {
     withLogForGoldenTable("delete-re-add-same-file-different-transactions") { log =>
-      assert(log.snapshot().getAllFiles.size() == 2)
+      assert(log.snapshot()._getFiles().size() == 2)
 
-      assert(log.snapshot().getAllFiles.asScala.map(_.getPath).toSet == Set("foo", "bar"))
+      assert(log.snapshot()._getFiles().asScala.map(_.getPath).toSet == Set("foo", "bar"))
 
       // We added two add files with the same path `foo`. The first should have been removed.
       // The second should remain, and should have a hard-coded modification time of 1700000000000L
-      assert(log.snapshot().getAllFiles.asScala.find(_.getPath == "foo").get.getModificationTime
-        == 1700000000000L)
+      assert(log.snapshot()._getFiles().asScala.find(_.getPath == "foo").get
+        .getModificationTime == 1700000000000L)
     }
   }
 
@@ -239,8 +318,8 @@ class DeltaLogSuite extends FunSuite {
       withLogForGoldenTable("deltalog-invalid-protocol-version") { _ => }
     }
 
-    assert(e.getMessage ===
-      DeltaErrors.InvalidProtocolVersionException(Action.readerVersion, 99).getMessage)
+    assert(e.getMessage === new DeltaErrors.InvalidProtocolVersionException(Action.protocolVersion,
+      Protocol(99)).getMessage)
   }
 
   test("get commit info") {
@@ -277,7 +356,7 @@ class DeltaLogSuite extends FunSuite {
       }
 
       // test illegal version
-      assertThrows[IllegalArgumentException] {
+      assertThrows[DeltaStandaloneException] {
         log.getCommitInfoAt(99)
       }
     }
@@ -350,185 +429,32 @@ class DeltaLogSuite extends FunSuite {
       }
     }
   }
+}
 
-  test("builder action class constructor for Metadata") {
-    val metadataFromBuilderDefaults = MetadataJ.builder().build()
-    val metadataFromConstructorDefaults = new MetadataJ(
-      metadataFromBuilderDefaults.getId(),
-      null,
-      null,
-      new FormatJ("parquet", Collections.emptyMap()),
-      Collections.emptyList(),
-      Collections.emptyMap(),
-      metadataFromBuilderDefaults.getCreatedTime(),
-      null);
-    assert(metadataFromBuilderDefaults == metadataFromConstructorDefaults)
+///////////////////////////////////////////////////////////////////////////
+// Concrete Implementations
+///////////////////////////////////////////////////////////////////////////
 
-    val metadataFromBuilder = MetadataJ.builder()
-      .id("test_id")
-      .name("test_name")
-      .description("test_description")
-      .format(new FormatJ("csv", Collections.emptyMap()))
-      .partitionColumns(List("id", "name").asJava)
-      .configuration(Map("test"->"foo").asJava)
-      .createdTime(0L)
-      .schema(new StructTypeJ(Array(new StructFieldJ("test_field", new IntegerType()))))
-      .build()
-    val metadataFromConstructor = new MetadataJ(
-      "test_id",
-      "test_name",
-      "test_description",
-      new FormatJ("csv", Collections.emptyMap()),
-      List("id", "name").asJava,
-      Map("test"->"foo").asJava,
-      Optional.of(0L),
-      new StructTypeJ(Array(new StructFieldJ("test_field", new IntegerType()))))
-    assert(metadataFromBuilder == metadataFromConstructor)
+class StandardDeltaLogSuite extends DeltaLogSuiteBase {
+  class StandardSnapshot(snapshot: Snapshot) extends CustomAddFilesAccessor(snapshot) {
+    override def _getFiles(): java.util.List[AddFileJ] = snapshot.getAllFiles
   }
 
-  test("builder action class constructor for AddFile") {
-    val addFileFromBuilderDefaults = AddFileJ.builder(
-      "/test",
-      Collections.emptyMap(),
-      0L,
-      0L,
-      true).build()
-    val addFileFromConstructorDefaults = new AddFileJ(
-      "/test",
-      Collections.emptyMap(),
-      0L,
-      0L,
-      true,
-      null,
-      null)
-    assert(addFileFromBuilderDefaults == addFileFromConstructorDefaults)
+  override implicit def createCustomAddFilesAccessor(snapshot: Snapshot): CustomAddFilesAccessor = {
+    new StandardSnapshot(snapshot)
+  }
+}
 
-    val addFileFromBuilder = AddFileJ.builder(
-      "/test",
-      Collections.emptyMap(),
-      0L,
-      0L,
-      true)
-      .stats("test_stats")
-      .tags(Map("test"->"foo").asJava)
-      .build()
-    val addFileFromConstructor = new AddFileJ(
-      "/test",
-      Collections.emptyMap(),
-      0L,
-      0L,
-      true,
-      "test_stats",
-      Map("test"->"foo").asJava)
-    assert(addFileFromBuilder == addFileFromConstructor)
+class MemoryOptimizedDeltaLogSuite extends DeltaLogSuiteBase {
+  class MemoryOptimizedSnapshot(snapshot: Snapshot) extends CustomAddFilesAccessor(snapshot) {
+    override def _getFiles(): java.util.List[AddFileJ] = {
+      import io.delta.standalone.internal.util.Implicits._
+
+      snapshot.scan().getFiles.toArray.toList.asJava
+    }
   }
 
-  test("builder action class constructor for JobInfo") {
-    val jobInfoFromBuilderDefaults = JobInfoJ.builder("test").build()
-    val jobInfoFromConstructorDefaults = new JobInfoJ(
-      "test",
-      null,
-      null,
-      null,
-      null)
-    assert(jobInfoFromBuilderDefaults == jobInfoFromConstructorDefaults)
-
-    val jobInfoFromBuilder = JobInfoJ.builder("test")
-      .jobName("test_name")
-      .runId("test_id")
-      .jobOwnerId("test_job_id")
-      .triggerType("test_trigger_type")
-      .build()
-    val jobInfoFromConstructor = new JobInfoJ(
-      "test",
-      "test_name",
-      "test_id",
-      "test_job_id",
-    "test_trigger_type")
-    assert(jobInfoFromBuilder == jobInfoFromConstructor)
-  }
-
-  test("builder action class constructor for RemoveFile") {
-    val removeFileJFromBuilderDefaults = RemoveFileJ.builder("/test").build()
-    val removeFileJFromConstructorDefaults = new RemoveFileJ(
-      "/test",
-      Optional.empty(),
-      true,
-      false,
-      null,
-      0L,
-      null)
-    assert(removeFileJFromBuilderDefaults == removeFileJFromConstructorDefaults)
-
-    val removeFileJFromBuilder = RemoveFileJ.builder("/test")
-      .deletionTimestamp(0L)
-      .dataChange(false)
-      .extendedFileMetadata(true)
-      .partitionValues(Map("test"->"foo").asJava)
-      .size(1L)
-      .tags(Map("tag"->"foo").asJava)
-      .build()
-    val removeFileJFromConstructor = new RemoveFileJ(
-      "/test",
-      Optional.of(0L),
-      false,
-      true,
-      Map("test"->"foo").asJava,
-      1L,
-      Map("tag"->"foo").asJava)
-    assert(removeFileJFromBuilder == removeFileJFromConstructor)
-  }
-
-  test("builder action class constructor for CommitInfo") {
-    val commitInfoFromBuilderDefaults = CommitInfoJ.builder().build()
-    val commitInfoFromConstructorDefaults = new CommitInfoJ(
-      Optional.empty(),
-      null,
-      Optional.empty(),
-      Optional.empty(),
-      null,
-      null,
-      Optional.empty(),
-      Optional.empty(),
-      Optional.empty(),
-      Optional.empty(),
-      Optional.empty(),
-      Optional.empty(),
-      Optional.empty(),
-      Optional.empty())
-    assert(commitInfoFromBuilderDefaults == commitInfoFromConstructorDefaults)
-
-    val commitInfoFromBuilder = CommitInfoJ.builder()
-      .version(0L)
-      .timestamp(new Timestamp(1540415658000L))
-      .userId("test_id")
-      .userName("test_name")
-      .operation("test_op")
-      .operationParameters(Map("test"->"op").asJava)
-      .jobInfo(JobInfoJ.builder("test").build())
-      .notebookInfo(new NotebookInfoJ("test"))
-      .clusterId("test_clusterId")
-      .readVersion(0L)
-      .isolationLevel("test_level")
-      .isBlindAppend(true)
-      .operationMetrics(Map("test"->"metric").asJava)
-      .userMetadata("user_metadata")
-      .build()
-    val commitInfoFromConstructor = new CommitInfoJ(
-      Optional.of(0L),
-      new Timestamp(1540415658000L),
-      Optional.of("test_id"),
-      Optional.of("test_name"),
-      "test_op",
-      Map("test"->"op").asJava,
-      Optional.of(JobInfoJ.builder("test").build()),
-      Optional.of(new NotebookInfoJ("test")),
-      Optional.of("test_clusterId"),
-      Optional.of(0L),
-      Optional.of("test_level"),
-      Optional.of(true),
-      Optional.of(Map("test"->"metric").asJava),
-      Optional.of("user_metadata"))
-    assert(commitInfoFromBuilder == commitInfoFromConstructor)
+  override implicit def createCustomAddFilesAccessor(snapshot: Snapshot): CustomAddFilesAccessor = {
+    new MemoryOptimizedSnapshot(snapshot)
   }
 }

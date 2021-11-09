@@ -1,5 +1,5 @@
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,9 @@ import com.fasterxml.jackson.annotation.{JsonIgnore, JsonInclude, JsonRawValue}
 import com.fasterxml.jackson.core.JsonGenerator
 import com.fasterxml.jackson.databind.{JsonSerializer, SerializerProvider}
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
+
 import io.delta.standalone.types.StructType
+
 import io.delta.standalone.internal.util.{DataTypeParser, JsonUtils}
 
 private[internal] object Action {
@@ -67,11 +69,23 @@ private[internal] case class Protocol(
   def simpleString: String = s"($minReaderVersion,$minWriterVersion)"
 }
 
+private[internal] object Protocol {
+  val MIN_READER_VERSION_PROP = "delta.minReaderVersion"
+  val MIN_WRITER_VERSION_PROP = "delta.minWriterVersion"
+
+  def checkMetadataProtocolProperties(metadata: Metadata, protocol: Protocol): Unit = {
+    assert(!metadata.configuration.contains(MIN_READER_VERSION_PROP), s"Should not have the " +
+      s"protocol version ($MIN_READER_VERSION_PROP) as part of table properties")
+    assert(!metadata.configuration.contains(MIN_WRITER_VERSION_PROP), s"Should not have the " +
+      s"protocol version ($MIN_WRITER_VERSION_PROP) as part of table properties")
+  }
+}
+
 /**
 * Sets the committed version for a given application. Used to make operations
 * like streaming append idempotent.
 */
-case class SetTransaction(
+private[internal] case class SetTransaction(
     appId: String,
     version: Long,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
@@ -120,6 +134,11 @@ private[internal] case class AddFile(
 /**
  * Logical removal of a given file from the reservoir. Acts as a tombstone before a file is
  * deleted permanently.
+ *
+ * Note that for protocol compatibility reasons, the fields `partitionValues`, `size`, and `tags`
+ * are only present when the extendedFileMetadata flag is true. New writers should generally be
+ * setting this flag, but old writers (and FSCK) won't, so readers must check this flag before
+ * attempting to consume those values.
  */
 private[internal] case class RemoveFile(
     path: String,
@@ -141,7 +160,7 @@ private[internal] case class RemoveFile(
  * ignore this, CDC readers should scan all ChangeFiles in a version rather than computing
  * changes from AddFile and RemoveFile actions.
  */
-case class AddCDCFile(
+private[internal] case class AddCDCFile(
     path: String,
     partitionValues: Map[String, String],
     size: Long,
@@ -177,6 +196,18 @@ private[internal] case class Metadata(
     Option(schemaString).map { s =>
       DataTypeParser.fromJson(s).asInstanceOf[StructType]
     }.getOrElse(new StructType(Array.empty))
+
+  /** Columns written out to files. */
+  @JsonIgnore
+  lazy val dataSchema: StructType = {
+    val partitions = partitionColumns.toSet
+    new StructType(schema.getFields.filterNot(f => partitions.contains(f.getName)))
+  }
+
+  /** Returns the partitionSchema as a [[StructType]] */
+  @JsonIgnore
+  lazy val partitionSchema: StructType =
+    new StructType(partitionColumns.map(c => schema.get(c)).toArray)
 
   override def wrap: SingleAction = SingleAction(metaData = this)
 }
@@ -220,7 +251,8 @@ private[internal] case class CommitInfo(
     /** Whether this commit has blindly appended without caring about existing files */
     isBlindAppend: Option[Boolean],
     operationMetrics: Option[Map[String, String]],
-    userMetadata: Option[String]) extends Action with CommitMarker {
+    userMetadata: Option[String],
+    engineInfo: Option[String]) extends Action with CommitMarker {
   override def wrap: SingleAction = SingleAction(commitInfo = this)
 
   override def withTimestamp(timestamp: Long): CommitInfo = {
@@ -235,7 +267,42 @@ private[internal] case class CommitInfo(
 private[internal] object CommitInfo {
   def empty(version: Option[Long] = None): CommitInfo = {
     CommitInfo(version, null, None, None, null, null, None, None,
-      None, None, None, None, None, None)
+      None, None, None, None, None, None, None)
+  }
+
+  def apply(
+      time: Long,
+      operation: String,
+      operationParameters: Map[String, String],
+      commandContext: Map[String, String],
+      readVersion: Option[Long],
+      isolationLevel: Option[String],
+      isBlindAppend: Option[Boolean],
+      operationMetrics: Option[Map[String, String]],
+      userMetadata: Option[String],
+      engineInfo: Option[String]): CommitInfo = {
+    val getUserName = commandContext.get("user").flatMap {
+      case "unknown" => None
+      case other => Option(other)
+    }
+
+    CommitInfo(
+      None,
+      new Timestamp(time),
+      commandContext.get("userId"),
+      getUserName,
+      operation,
+      operationParameters,
+      JobInfo.fromContext(commandContext),
+      NotebookInfo.fromContext(commandContext),
+      commandContext.get("clusterId"),
+      readVersion,
+      isolationLevel,
+      isBlindAppend,
+      operationMetrics,
+      userMetadata,
+      engineInfo
+    )
   }
 }
 
@@ -246,7 +313,26 @@ private[internal] case class JobInfo(
     jobOwnerId: String,
     triggerType: String)
 
+private[internal] object JobInfo {
+  def fromContext(context: Map[String, String]): Option[JobInfo] = {
+    context.get("jobId").map { jobId =>
+      JobInfo(
+        jobId,
+        context.get("jobName").orNull,
+        context.get("runId").orNull,
+        context.get("jobOwnerId").orNull,
+        context.get("jobTriggerType").orNull)
+    }
+  }
+}
+
 private[internal] case class NotebookInfo(notebookId: String)
+
+private[internal] object NotebookInfo {
+  def fromContext(context: Map[String, String]): Option[NotebookInfo] = {
+    context.get("notebookId").map { nbId => NotebookInfo(nbId) }
+  }
+}
 
 /** A serialization helper to create a common action envelope. */
 private[internal] case class SingleAction(
@@ -304,7 +390,7 @@ private[internal] class JsonMapSerializer extends JsonSerializer[Map[String, Str
  *
  * With the inclusion of RemoveFile as an exposed Java API, and since it was upgraded to match the
  * latest Delta OSS release, we now had a case class inside of [[SingleAction]] that had "primitive"
- * default paramaters. They are primitive in the sense that Parquet4s would try to decode them using
+ * default parameters. They are primitive in the sense that Parquet4s would try to decode them using
  * the [[PrimitiveValueCodecs]] trait. But since these parameters have default values, there is no
  * guarantee that they will exist in the underlying parquet checkpoint files. Thus (without these
  * classes), parquet4s would throw errors like this:

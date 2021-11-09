@@ -21,7 +21,7 @@
  */
 
 /*
- * Copyright (2020) The Delta Lake Project Authors.
+ * Copyright (2020-present) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,10 +38,10 @@
 
 package io.delta.standalone.types;
 
-import io.delta.standalone.expressions.Column;
-
 import java.util.Arrays;
 import java.util.HashMap;
+
+import io.delta.standalone.expressions.Column;
 
 /**
  * The data type representing a table's schema, consisting of a collection of
@@ -53,10 +53,69 @@ public final class StructType extends DataType {
     private final StructField[] fields;
     private final HashMap<String, StructField> nameToField;
 
+    public StructType() {
+        this(new StructField[0]);
+    }
+
     public StructType(StructField[] fields) {
         this.fields = fields;
         this.nameToField = new HashMap<>();
         Arrays.stream(fields).forEach(field -> nameToField.put(field.getName(), field));
+    }
+
+    /**
+     * Creates a new {@link StructType} by adding a new field.
+     *
+     * <pre>{@code
+     * StructType schema = new StructType()
+     *     .add(new StructField("a", new IntegerType(), true))
+     *     .add(new StructField("b", new LongType(), false))
+     *     .add(new StructField("c", new StringType(), true))
+     * }</pre>
+     * @param field  The new field to add.
+     * @return The new {@link StructType}.
+     */
+    public StructType add(StructField field) {
+        StructField[] newFields = Arrays.copyOf(fields, fields.length + 1);
+        newFields[newFields.length - 1] = field;
+        return new StructType(newFields);
+    }
+
+    /**
+     * Creates a new {@link StructType} by adding a new nullable field with no metadata.
+     *
+     * <pre>{@code
+     * StructType schema = new StructType()
+     *     .add("a", new IntegerType())
+     *     .add("b", new LongType())
+     *     .add("c", new StringType())
+     * }</pre>
+     * @param fieldName  The name of the new field.
+     * @param dataType  The datatype for the new field.
+     * @return The new {@link StructType}.
+     */
+    public StructType add(String fieldName, DataType dataType) {
+        StructField newField = new StructField(fieldName, dataType, true);
+        return add(newField);
+    }
+
+    /**
+     * Creates a new {@link StructType} by adding a new field with no metadata.
+     *
+     * <pre>{@code
+     * StructType schema = new StructType()
+     *     .add("a", new IntegerType(), true)
+     *     .add("b", new LongType(), false)
+     *     .add("c", new StringType(), true)
+     * }</pre>
+     * @param fieldName  The name of the new field.
+     * @param dataType  The datatype for the new field.
+     * @param nullable  Whether or not the new field is nullable.
+     * @return The new {@link StructType}.
+     */
+    public StructType add(String fieldName, DataType dataType, boolean nullable) {
+        StructField newField = new StructField(fieldName, dataType, nullable);
+        return add(newField);
     }
 
     /**
@@ -71,6 +130,13 @@ public final class StructType extends DataType {
      */
     public String[] getFieldNames() {
         return Arrays.stream(fields).map(StructField::getName).toArray(String[]::new);
+    }
+
+    /**
+     * @return the number of fields
+     */
+    public int length() {
+        return fields.length;
     }
 
     /**
