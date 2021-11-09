@@ -1641,6 +1641,7 @@ class DeltaTableCreationSuite
       .filterKeys(!CatalogV2Util.TABLE_RESERVED_PROPERTIES.contains(_))
       .filterKeys(k =>
         k != Protocol.MIN_READER_VERSION_PROP &&  k != Protocol.MIN_WRITER_VERSION_PROP)
+      .toMap
   }
 
   testQuietly("REPLACE TABLE") {

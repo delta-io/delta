@@ -501,7 +501,7 @@ object DeltaHistoryManager extends DeltaLogging {
      */
     private def flushBuffer(): Unit = {
       if (maybeDeleteFiles.lastOption.exists(shouldDeleteFile)) {
-        filesToDelete.enqueue(maybeDeleteFiles: _*)
+        filesToDelete ++= maybeDeleteFiles
       }
       maybeDeleteFiles.clear()
     }
