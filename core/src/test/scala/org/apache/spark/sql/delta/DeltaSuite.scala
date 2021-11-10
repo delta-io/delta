@@ -43,7 +43,8 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
 
 class DeltaSuite extends QueryTest
-  with SharedSparkSession  with SQLTestUtils
+  with SharedSparkSession
+  with DeltaColumnMappingTestUtils  with SQLTestUtils
   with DeltaSQLCommandTest {
 
   import testImplicits._
@@ -831,8 +832,9 @@ class DeltaSuite extends QueryTest
 
       val files = spark.read.format("delta").load(tempDir.toString).inputFiles
 
-      assert(files.forall(path => path.contains("by4=") && path.contains("/by8=")),
-        s"${files.toSeq.mkString("\n")}\ndidn't contain partition columns by4 and by8")
+      val deltaLog = loadDeltaLog(tempDir.getAbsolutePath)
+      assertPartitionExists("by4", deltaLog, files)
+      assertPartitionExists("by8", deltaLog, files)
     }
   }
 
@@ -861,31 +863,6 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  test("columns with commas as partition columns") {
-    withTempDir { tempDir =>
-      if (tempDir.exists()) {
-        assert(tempDir.delete())
-      }
-
-      val dfw = spark.range(100).select('id, 'id % 4 as "by,4")
-        .write
-        .format("delta")
-        .partitionBy("by,4")
-
-      val e = intercept[AnalysisException] {
-        dfw.save(tempDir.toString)
-      }
-      assert(e.getMessage.contains("invalid character(s)"))
-      withSQLConf(DeltaSQLConf.DELTA_PARTITION_COLUMN_CHECK_ENABLED.key -> "false") {
-        dfw.save(tempDir.toString)
-      }
-
-      val files = spark.read.format("delta").load(tempDir.toString).inputFiles
-
-      assert(files.forall(path => path.contains("by,4=")),
-        s"${files.toSeq.mkString("\n")}\ndidn't contain partition columns by,4")
-    }
-  }
 
   test("throw exception when users are trying to write in batch with different partitioning") {
     withTempDir { tempDir =>
@@ -977,8 +954,8 @@ class DeltaSuite extends QueryTest
 
       val files = spark.read.format("delta").load(tempDir.toString).inputFiles
 
-      assert(files.forall(path => path.contains("by4=")),
-        s"${files.toSeq.mkString("\n")}\ndidn't contain partition columns by4")
+      val deltaLog = loadDeltaLog(tempDir.getAbsolutePath)
+      assertPartitionExists("by4", deltaLog, files)
 
       val e = intercept[AnalysisException] {
         spark.range(101, 200).select('id, 'id % 4 as 'by4, 'id % 8 as 'by8)
@@ -1574,12 +1551,18 @@ class DeltaSuite extends QueryTest
     val snapshot = deltaLog.snapshot
     val files = snapshot.allFiles.collect()
 
+    // assign physical name to new schema
+    val newMetadata = if (columnMappingEnabled) {
+      DeltaColumnMapping.assignColumnIdAndPhysicalName(
+        snapshot.metadata.copy(schemaString = new StructType().add("data", "bigint").json)
+      )
+    } else {
+      snapshot.metadata.copy(schemaString = new StructType().add("data", "bigint").json)
+    }
+
     // Now make a commit that comes from an "external" writer that deletes existing data and
     // changes the schema
-    val actions = Seq(
-      Protocol(),
-      snapshot.metadata.copy(schemaString = new StructType().add("data", "bigint").json)
-    ) ++ files.map(_.remove)
+    val actions = Seq(Protocol(), newMetadata) ++ files.map(_.remove)
     deltaLog.store.write(
       FileNames.deltaFile(deltaLog.logPath, snapshot.version + 1),
       actions.map(_.json).iterator,
@@ -1753,3 +1736,4 @@ class DeltaSuite extends QueryTest
     checkAnswer(spark.read.format("delta").load(dir1.getCanonicalPath), spark.range(10).toDF)
   }
 }
+

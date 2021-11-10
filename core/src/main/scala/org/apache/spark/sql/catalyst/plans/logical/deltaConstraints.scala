@@ -16,22 +16,26 @@
 
 package org.apache.spark.sql.catalyst.plans.logical
 
+import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
+
+import org.apache.spark.sql.connector.catalog.TableChange
+
 /**
  * The logical plan of the ALTER TABLE ... ADD CONSTRAINT command.
  */
 case class AlterTableAddConstraint(
-    table: LogicalPlan, constraintName: String, expr: String) extends Command {
-  // TODO: extend UnaryCommand when new Spark version released, now fails on OSS Delta build
-  override def children: Seq[LogicalPlan] = Seq(table)
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+    table: LogicalPlan, constraintName: String, expr: String) extends AlterTableCommand {
+  override def changes: Seq[TableChange] = Seq(AddConstraint(constraintName, expr))
+
+  protected def withNewChildInternal(newChild: LogicalPlan): LogicalPlan = copy(table = newChild)
 }
 
 /**
  * The logical plan of the ALTER TABLE ... DROP CONSTRAINT command.
  */
 case class AlterTableDropConstraint(
-    table: LogicalPlan, constraintName: String) extends Command {
-  // TODO: extend UnaryCommand when new Spark version released, now fails on OSS Delta build
-  override def children: Seq[LogicalPlan] = Seq(table)
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+    table: LogicalPlan, constraintName: String) extends AlterTableCommand {
+  override def changes: Seq[TableChange] = Seq(DropConstraint(constraintName))
+
+  protected def withNewChildInternal(newChild: LogicalPlan): LogicalPlan = copy(table = newChild)
 }

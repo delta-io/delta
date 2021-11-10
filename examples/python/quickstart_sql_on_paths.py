@@ -4,10 +4,7 @@ import shutil
 
 table_dir = "/tmp/delta-table"
 # Clear any previous runs
-try:
-    shutil.rmtree(table_dir)
-except:
-    pass
+shutil.rmtree(table_dir, ignore_errors=True)
 
 # Enable SQL/DML commands and Metastore tables for the current spark session.
 # We need to set the following configs

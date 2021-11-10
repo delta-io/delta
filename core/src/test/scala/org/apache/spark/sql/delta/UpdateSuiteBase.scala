@@ -355,6 +355,7 @@ abstract class UpdateSuiteBase
       var ae = intercept[AnalysisException] {
         executeUpdate("table", set = "column_doesnt_exist = 'San Francisco'", where = "t = 'a'")
       }
+      assert(ae.getErrorClass == "MISSING_COLUMN")
 
       withSQLConf(SQLConf.CASE_SENSITIVE.key -> "false") {
         executeUpdate(target = "table", set = "S = 1, T = 'b'", where = "T = 'a'")
@@ -368,15 +369,18 @@ abstract class UpdateSuiteBase
         ae = intercept[AnalysisException] {
           executeUpdate(target = "table", set = "S = 1", where = "t = 'a'")
         }
+        assert(ae.getErrorClass == "MISSING_COLUMN")
 
         ae = intercept[AnalysisException] {
           executeUpdate(target = "table", set = "S = 1, s = 'b'", where = "s = 1")
         }
+        assert(ae.getErrorClass == "MISSING_COLUMN")
 
         // unresolved column in condition
         ae = intercept[AnalysisException] {
           executeUpdate(target = "table", set = "s = 1", where = "T = 'a'")
         }
+        assert(ae.getErrorClass == "MISSING_COLUMN")
       }
     }
   }

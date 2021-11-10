@@ -135,5 +135,6 @@ case class CheckDeltaInvariant(
     ev.copy(code = code, isNull = TrueLiteral, value = JavaCode.literal("null", NullType))
   }
 
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+  override protected def withNewChildInternal(newChild: Expression): CheckDeltaInvariant =
+    copy(child = newChild)
 }

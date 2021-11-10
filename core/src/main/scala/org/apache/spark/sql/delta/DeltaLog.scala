@@ -37,7 +37,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStoreProvider
 import com.google.common.cache.{CacheBuilder, RemovalNotification}
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -245,6 +245,27 @@ class DeltaLog private(
       }
       lastSeenVersion = version
       (version, store.read(p, hadoopConf).map(Action.fromJson))
+    }
+  }
+
+  /**
+   * Get access to all actions starting from "startVersion" (inclusive) via [[FileStatus]].
+   * If `startVersion` doesn't exist, return an empty Iterator.
+   */
+  def getChangeLogFiles(
+      startVersion: Long,
+      failOnDataLoss: Boolean = false): Iterator[(Long, FileStatus)] = {
+    val deltas = store.listFrom(deltaFile(logPath, startVersion), newDeltaHadoopConf())
+      .filter(f => isDeltaFile(f.getPath))
+    // Subtract 1 to ensure that we have the same check for the inclusive startVersion
+    var lastSeenVersion = startVersion - 1
+    deltas.map { status =>
+      val version = deltaVersion(status.getPath)
+      if (failOnDataLoss && version > lastSeenVersion + 1) {
+        throw DeltaErrors.failOnDataLossException(lastSeenVersion + 1, version)
+      }
+      lastSeenVersion = version
+      (version, status)
     }
   }
 

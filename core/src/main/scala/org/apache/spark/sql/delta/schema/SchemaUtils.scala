@@ -877,11 +877,11 @@ object SchemaUtils {
 
   /**
    * Verifies that the column names are acceptable by Parquet and henceforth Delta. Parquet doesn't
-   * accept the characters ' ,;{}()\n\t'. We ensure that neither the data columns nor the partition
+   * accept the characters ' ,;{}()\n\t='. We ensure that neither the data columns nor the partition
    * columns have these characters.
    */
   def checkFieldNames(names: Seq[String]): Unit = {
-    ParquetSchemaConverter.checkFieldNames(names)
+    names.foreach(ParquetSchemaConverter.checkFieldName)
     // The method checkFieldNames doesn't have a valid regex to search for '\n'. That should be
     // fixed in Apache Spark, and we can remove this additional check here.
     names.find(_.contains("\n")).foreach(col => throw DeltaErrors.invalidColumnName(col))

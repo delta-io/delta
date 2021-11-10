@@ -135,17 +135,21 @@ class DeltaAnalysis(session: SparkSession)
           DeltaMergeIntoUpdateClause(
             update.condition,
             DeltaMergeIntoClause.toActions(update.assignments))
+        case update: UpdateStarAction =>
+          DeltaMergeIntoUpdateClause(update.condition, DeltaMergeIntoClause.toActions(Nil))
         case delete: DeleteAction =>
           DeltaMergeIntoDeleteClause(delete.condition)
-        case insert =>
+        case other =>
           throw new AnalysisException(
-            "Insert clauses cannot be part of the WHEN MATCHED clause in MERGE INTO.")
+            s"${other.prettyName} clauses cannot be part of the WHEN MATCHED clause in MERGE INTO.")
       }
       val notMatchedActions = notMatched.map {
         case insert: InsertAction =>
           DeltaMergeIntoInsertClause(
             insert.condition,
             DeltaMergeIntoClause.toActions(insert.assignments))
+        case insert: InsertStarAction =>
+          DeltaMergeIntoInsertClause(insert.condition, DeltaMergeIntoClause.toActions(Nil))
         case other =>
           throw new AnalysisException(s"${other.prettyName} clauses cannot be part of the " +
             s"WHEN NOT MATCHED clause in MERGE INTO.")
@@ -165,23 +169,6 @@ class DeltaAnalysis(session: SparkSession)
         DeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(tryResolveReferences(session))
       } else deltaMerge
       d.copy(target = stripTempViewForMergeWrapper(d.target))
-
-    // TODO: remove the 2 cases below after OSS 3.2 is released.
-    case AlterTableAddConstraint(t: ResolvedTable, constraintName, expr)
-        if t.table.isInstanceOf[DeltaTableV2] =>
-      CatalogV2Util.createAlterTable(
-        t.catalog.name +: t.identifier.asMultipartIdentifier,
-        t.catalog,
-        t.identifier.asMultipartIdentifier,
-        Seq(AddConstraint(constraintName, expr)))
-
-    case AlterTableDropConstraint(t: ResolvedTable, constraintName)
-        if t.table.isInstanceOf[DeltaTableV2] =>
-      CatalogV2Util.createAlterTable(
-        t.catalog.name +: t.identifier.asMultipartIdentifier,
-        t.catalog,
-        t.identifier.asMultipartIdentifier,
-        Seq(DropConstraint(constraintName)))
 
   }
 

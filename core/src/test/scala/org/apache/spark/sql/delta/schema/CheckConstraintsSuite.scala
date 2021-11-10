@@ -50,9 +50,7 @@ class CheckConstraintsSuite extends QueryTest
   }
 
   private def errorContains(errMsg: String, str: String): Unit = {
-    val actual = errMsg.replaceAll("`", "")
-    val expected = str.replaceAll("`", "")
-    assert(actual.contains(expected))
+    errMsg.contains(str)
   }
 
   test("can't add unparseable constraint") {

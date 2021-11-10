@@ -61,7 +61,7 @@ setup(
     package_dir={'': 'python'},
     packages=['delta'],
     install_requires=[
-        'pyspark>=3.1.0,<3.2.0',
+        'pyspark>=3.2.0,<3.3.0',
         'importlib_metadata>=1.0.0',
     ],
     python_requires='>=3.6',

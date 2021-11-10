@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
 import org.apache.hadoop.mapreduce.{Job, TaskType}
@@ -196,9 +197,8 @@ trait Checkpoints extends DeltaLogging {
       val checkpoints = store.listFrom(
             checkpointPrefix(logPath, math.max(0, cur - 1000)),
             hadoopConf)
-          .map(_.getPath)
-          .filter(isCheckpointFile)
-          .map(CheckpointInstance(_))
+          .filter { file => isCheckpointFile(file.getPath) }
+          .map{ file => CheckpointInstance(file.getPath) }
           .takeWhile(tv => (cur == 0 || tv.version <= cur) && tv.isEarlierThan(cv))
           .toArray
       val lastCheckpoint = getLatestCompleteCheckpointFromList(checkpoints, cv)
@@ -222,7 +222,7 @@ trait Checkpoints extends DeltaLogging {
       case (CheckpointInstance(_, None), inst) => inst.length == 1
       case (CheckpointInstance(_, Some(parts)), inst) => inst.length == parts
     }
-    complete.keys.toArray.sorted.lastOption
+    if (complete.isEmpty) None else Some(complete.keys.max)
   }
 }
 
@@ -286,28 +286,44 @@ object Checkpoints extends DeltaLogging {
           } else {
             path
           }
-        try {
-          val writer = factory.newInstance(
-            writtenPath,
-            schema,
-            new TaskAttemptContextImpl(
-              new JobConf(serConf.value),
-              new TaskAttemptID("", 0, TaskType.REDUCE, 0, 0)))
+        val writeAction = () => {
+          try {
+            val writer = factory.newInstance(
+              writtenPath,
+              schema,
+              new TaskAttemptContextImpl(
+                new JobConf(serConf.value),
+                new TaskAttemptID("", 0, TaskType.REDUCE, 0, 0)))
 
-          iter.foreach { row =>
-            checkpointSize.add(1)
-            writer.write(row)
-          }
-          writer.close()
-        } catch {
-          case e: org.apache.hadoop.fs.FileAlreadyExistsException if !useRename =>
-            val p = new Path(writtenPath)
-            if (p.getFileSystem(serConf.value).exists(p)) {
-              // The file has been written by a zombie task. We can just use this checkpoint file
-              // rather than failing a Delta commit.
-            } else {
-              throw e
+            iter.foreach { row =>
+              checkpointSize.add(1)
+              writer.write(row)
             }
+            // Note: `writer.close()` is not put in a `finally` clause because we don't want to
+            // close it when an exception happens. Closing the file would flush the content to the
+            // storage and create an incomplete file. A concurrent reader might see it and fail.
+            // This would leak resources but we don't have a way to abort the storage request here.
+            writer.close()
+          } catch {
+            case e: org.apache.hadoop.fs.FileAlreadyExistsException if !useRename =>
+              val p = new Path(writtenPath)
+              if (p.getFileSystem(serConf.value).exists(p)) {
+                // The file has been written by a zombie task. We can just use this checkpoint file
+                // rather than failing a Delta commit.
+              } else {
+                throw e
+              }
+          }
+        }
+        if (isGCSPath(serConf.value, new Path(writtenPath))) {
+          // GCS may upload an incomplete file when the current thread is interrupted, hence we move
+          // the write to a new thread so that the write cannot be interrupted.
+          // TODO Remove this hack when the GCS Hadoop connector fixes the issue.
+          DeltaFileOperations.runInNewThread("delta-gcs-checkpoint-write") {
+            writeAction()
+          }
+        } else {
+          writeAction()
         }
         Iterator(writtenPath)
       }.collect().head
@@ -342,6 +358,25 @@ object Checkpoints extends DeltaLogging {
       logWarning(DeltaErrors.EmptyCheckpointErrorMessage)
     }
     CheckpointMetaData(snapshot.version, checkpointSize.value, None)
+  }
+
+  // scalastyle:off line.size.limit
+  /**
+   * All GCS paths can only have the scheme of "gs". Note: the scheme checking is case insensitive.
+   * See:
+   * - https://github.com/databricks/hadoop-connectors/blob/master/gcs/src/main/java/com/google/cloud/hadoop/fs/gcs/GoogleHadoopFileSystemBase.java#L493
+   * - https://github.com/GoogleCloudDataproc/hadoop-connectors/blob/v2.2.3/gcsio/src/main/java/com/google/cloud/hadoop/gcsio/GoogleCloudStorageFileSystem.java#L88
+   */
+  // scalastyle:on line.size.limit
+  private[delta] def isGCSPath(hadoopConf: Configuration, path: Path): Boolean = {
+    val scheme = path.toUri.getScheme
+    if (scheme != null) {
+      scheme.equalsIgnoreCase("gs")
+    } else {
+      // When the schema is not available in the path, we check the file system scheme resolved from
+      // the path.
+      path.getFileSystem(hadoopConf).getScheme.equalsIgnoreCase("gs")
+    }
   }
 
   /**

@@ -36,6 +36,7 @@ object DeltaSourceUtils {
   val GENERATION_EXPRESSION_METADATA_KEY = "delta.generationExpression"
 
 
+
   def isDeltaDataSourceName(name: String): Boolean = {
     name.toLowerCase(Locale.ROOT) == NAME || name.toLowerCase(Locale.ROOT) == ALT_NAME
   }

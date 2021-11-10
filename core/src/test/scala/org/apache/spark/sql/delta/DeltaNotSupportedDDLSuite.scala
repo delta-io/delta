@@ -127,22 +127,28 @@ abstract class DeltaNotSupportedDDLBase extends QueryTest
   test("ALTER TABLE ADD PARTITION") {
     assertUnsupported(
       s"ALTER TABLE $partitionedTableName ADD PARTITION (p1=3)",
-      "can not alter partitions")
+      "does not support partition management")
   }
 
   test("ALTER TABLE DROP PARTITION") {
     assertUnsupported(
       s"ALTER TABLE $partitionedTableName DROP PARTITION (p1=2)",
-      "can not alter partitions")
+      "does not support partition management")
   }
 
   test("ALTER TABLE RECOVER PARTITIONS") {
-    assertUnsupported(s"ALTER TABLE $partitionedTableName RECOVER PARTITIONS")
-    assertUnsupported(s"MSCK REPAIR TABLE $partitionedTableName")
+    assertUnsupported(
+      s"ALTER TABLE $partitionedTableName RECOVER PARTITIONS",
+      "alter table ... recover partitions is not supported for v2 tables")
+    assertUnsupported(
+      s"MSCK REPAIR TABLE $partitionedTableName",
+      "msck repair table is not supported for v2 tables")
   }
 
   test("ALTER TABLE SET SERDEPROPERTIES") {
-    assertUnsupported(s"ALTER TABLE $nonPartitionedTableName SET SERDEPROPERTIES (s1=3)")
+    assertUnsupported(
+      s"ALTER TABLE $nonPartitionedTableName SET SERDEPROPERTIES (s1=3)",
+      "alter table ... set [serde|serdeproperties] is not supported for v2 tables")
   }
 
 

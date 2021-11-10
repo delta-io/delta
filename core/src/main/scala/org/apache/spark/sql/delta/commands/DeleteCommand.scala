@@ -27,7 +27,7 @@ import org.apache.spark.sql.catalyst.expressions.{EqualNullSafe, Expression, Inp
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
 import org.apache.spark.sql.execution.SQLExecution
-import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.functions.udf
@@ -46,7 +46,7 @@ case class DeleteCommand(
     deltaLog: DeltaLog,
     target: LogicalPlan,
     condition: Option[Expression])
-  extends RunnableCommand with DeltaCommand {
+  extends LeafRunnableCommand with DeltaCommand {
 
   override def innerChildren: Seq[QueryPlan[_]] = Seq(target)
 
@@ -211,8 +211,6 @@ case class DeleteCommand(
 
     deleteActions
   }
-
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 object DeleteCommand {
