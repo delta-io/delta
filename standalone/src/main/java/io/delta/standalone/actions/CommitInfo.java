@@ -21,6 +21,8 @@ import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 
 /**
  * Holds provenance information about changes to the table. This CommitInfo
@@ -30,31 +32,38 @@ import java.util.Optional;
  * @see  <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md">Delta Transaction Log Protocol</a>
  */
 public class CommitInfo implements Action {
-    private final Optional<Long> version;
-    private final Timestamp timestamp;
-    private final Optional<String> userId;
-    private final Optional<String> userName;
-    private final String operation;
-    private final Map<String, String> operationParameters;
-    private final Optional<JobInfo> jobInfo;
-    private final Optional<NotebookInfo> notebookInfo;
-    private final Optional<String> clusterId;
-    private final Optional<Long> readVersion;
-    private final Optional<String> isolationLevel;
-    private final Optional<Boolean> isBlindAppend;
-    private final Optional<Map<String, String>> operationMetrics;
-    private final Optional<String> userMetadata;
-    private final Optional<String> engineInfo;
+    @Nonnull private final Optional<Long> version;
+    @Nullable private final Timestamp timestamp;
+    @Nonnull private final Optional<String> userId;
+    @Nonnull private final Optional<String> userName;
+    @Nullable private final String operation;
+    @Nullable private final Map<String, String> operationParameters;
+    @Nonnull private final Optional<JobInfo> jobInfo;
+    @Nonnull private final Optional<NotebookInfo> notebookInfo;
+    @Nonnull private final Optional<String> clusterId;
+    @Nonnull private final Optional<Long> readVersion;
+    @Nonnull private final Optional<String> isolationLevel;
+    @Nonnull private final Optional<Boolean> isBlindAppend;
+    @Nonnull private final Optional<Map<String, String>> operationMetrics;
+    @Nonnull private final Optional<String> userMetadata;
+    @Nonnull private final Optional<String> engineInfo;
 
     // For binary compatibility with version 0.2.0
-    public CommitInfo(Optional<Long> version, Timestamp timestamp, Optional<String> userId,
-                      Optional<String> userName, String operation,
-                      Map<String, String> operationParameters, Optional<JobInfo> jobInfo,
-                      Optional<NotebookInfo> notebookInfo, Optional<String> clusterId,
-                      Optional<Long> readVersion, Optional<String> isolationLevel,
-                      Optional<Boolean> isBlindAppend,
-                      Optional<Map<String, String>> operationMetrics,
-                      Optional<String> userMetadata) {
+    public CommitInfo(
+            @Nonnull Optional<Long> version,
+            @Nullable Timestamp timestamp,
+            @Nonnull Optional<String> userId,
+            @Nonnull Optional<String> userName,
+            @Nullable String operation,
+            @Nullable Map<String, String> operationParameters,
+            @Nonnull Optional<JobInfo> jobInfo,
+            @Nonnull Optional<NotebookInfo> notebookInfo,
+            @Nonnull Optional<String> clusterId,
+            @Nonnull Optional<Long> readVersion,
+            @Nonnull Optional<String> isolationLevel,
+            @Nonnull Optional<Boolean> isBlindAppend,
+            @Nonnull Optional<Map<String, String>> operationMetrics,
+            @Nonnull Optional<String> userMetadata) {
         this.version = version;
         this.timestamp = timestamp;
         this.userId = userId;
@@ -72,14 +81,22 @@ public class CommitInfo implements Action {
         this.engineInfo = Optional.empty();
     }
 
-    public CommitInfo(Optional<Long> version, Timestamp timestamp, Optional<String> userId,
-                      Optional<String> userName, String operation,
-                      Map<String, String> operationParameters, Optional<JobInfo> jobInfo,
-                      Optional<NotebookInfo> notebookInfo, Optional<String> clusterId,
-                      Optional<Long> readVersion, Optional<String> isolationLevel,
-                      Optional<Boolean> isBlindAppend,
-                      Optional<Map<String, String>> operationMetrics,
-                      Optional<String> userMetadata, Optional<String> engineInfo) {
+    public CommitInfo(
+            @Nonnull Optional<Long> version,
+            @Nullable Timestamp timestamp,
+            @Nonnull Optional<String> userId,
+            @Nonnull Optional<String> userName,
+            @Nullable String operation,
+            @Nullable Map<String, String> operationParameters,
+            @Nonnull Optional<JobInfo> jobInfo,
+            @Nonnull Optional<NotebookInfo> notebookInfo,
+            @Nonnull Optional<String> clusterId,
+            @Nonnull Optional<Long> readVersion,
+            @Nonnull Optional<String> isolationLevel,
+            @Nonnull Optional<Boolean> isBlindAppend,
+            @Nonnull Optional<Map<String, String>> operationMetrics,
+            @Nonnull Optional<String> userMetadata,
+            @Nonnull Optional<String> engineInfo) {
         this.version = version;
         this.timestamp = timestamp;
         this.userId = userId;
@@ -100,6 +117,7 @@ public class CommitInfo implements Action {
     /**
      * @return the log version for this commit
      */
+    @Nonnull
     public Optional<Long> getVersion() {
         return version;
     }
@@ -107,6 +125,7 @@ public class CommitInfo implements Action {
     /**
      * @return the time the files in this commit were committed
      */
+    @Nullable
     public Timestamp getTimestamp() {
         return timestamp;
     }
@@ -114,6 +133,7 @@ public class CommitInfo implements Action {
     /**
      * @return the userId of the user who committed this file
      */
+    @Nonnull
     public Optional<String> getUserId() {
         return userId;
     }
@@ -121,6 +141,7 @@ public class CommitInfo implements Action {
     /**
      * @return the userName of the user who committed this file
      */
+    @Nonnull
     public Optional<String> getUserName() {
         return userName;
     }
@@ -128,6 +149,7 @@ public class CommitInfo implements Action {
     /**
      * @return the type of operation for this commit. e.g. "WRITE"
      */
+    @Nullable
     public String getOperation() {
         return operation;
     }
@@ -135,6 +157,7 @@ public class CommitInfo implements Action {
     /**
      * @return any relevant operation parameters. e.g. "mode", "partitionBy"
      */
+    @Nullable
     public Map<String, String> getOperationParameters() {
         if (operationParameters != null) return Collections.unmodifiableMap(operationParameters);
         return null;
@@ -143,6 +166,7 @@ public class CommitInfo implements Action {
     /**
      * @return the JobInfo for this commit
      */
+    @Nonnull
     public Optional<JobInfo> getJobInfo() {
         return jobInfo;
     }
@@ -150,6 +174,7 @@ public class CommitInfo implements Action {
     /**
      * @return the NotebookInfo for this commit
      */
+    @Nonnull
     public Optional<NotebookInfo> getNotebookInfo() {
         return notebookInfo;
     }
@@ -157,6 +182,7 @@ public class CommitInfo implements Action {
     /**
      * @return the ID of the cluster used to generate this commit
      */
+    @Nonnull
     public Optional<String> getClusterId() {
         return clusterId;
     }
@@ -164,6 +190,7 @@ public class CommitInfo implements Action {
     /**
      * @return the version that the transaction used to generate this commit is reading from
      */
+    @Nonnull
     public Optional<Long> getReadVersion() {
         return readVersion;
     }
@@ -171,6 +198,7 @@ public class CommitInfo implements Action {
     /**
      * @return the isolation level at which this commit was generated
      */
+    @Nonnull
     public Optional<String> getIsolationLevel() {
         return isolationLevel;
     }
@@ -178,6 +206,7 @@ public class CommitInfo implements Action {
     /**
      * @return whether this commit has blindly appended without caring about existing files
      */
+    @Nonnull
     public Optional<Boolean> getIsBlindAppend() {
         return isBlindAppend;
     }
@@ -185,16 +214,15 @@ public class CommitInfo implements Action {
     /**
      * @return any operation metrics calculated
      */
+    @Nonnull
     public Optional<Map<String, String>> getOperationMetrics() {
-        if (operationMetrics.isPresent()) {
-            return Optional.of(Collections.unmodifiableMap(operationMetrics.get()));
-        }
-        return operationMetrics;
+        return operationMetrics.map(Collections::unmodifiableMap);
     }
 
     /**
      * @return any additional user metadata
      */
+    @Nonnull
     public Optional<String> getUserMetadata() {
         return userMetadata;
     }
@@ -203,6 +231,7 @@ public class CommitInfo implements Action {
      * @return the engineInfo of the operation that performed this commit. It should be of the form
      *         "{engineName}/{engineVersion} Delta-Standalone/{deltaStandaloneVersion}"
      */
+    @Nonnull
     public Optional<String> getEngineInfo() {
         return engineInfo;
     }
@@ -247,33 +276,33 @@ public class CommitInfo implements Action {
      * Builder class for CommitInfo. Enables construction of CommitInfo object with default values.
      */
     public static class Builder {
-        private Optional<Long> version = Optional.empty();
-        private Timestamp timestamp;
-        private Optional<String> userId = Optional.empty();
-        private Optional<String> userName = Optional.empty();
-        private String operation;
-        private Map<String, String> operationParameters;
-        private Optional<JobInfo> jobInfo = Optional.empty();
-        private Optional<NotebookInfo> notebookInfo = Optional.empty();
-        private Optional<String> clusterId = Optional.empty();
-        private Optional<Long> readVersion = Optional.empty();
-        private Optional<String> isolationLevel = Optional.empty();
-        private Optional<Boolean> isBlindAppend = Optional.empty();
-        private Optional<Map<String, String>> operationMetrics = Optional.empty();
-        private Optional<String> userMetadata = Optional.empty();
-        private Optional<String> engineInfo = Optional.empty();
+        @Nonnull private Optional<Long> version = Optional.empty();
+        @Nullable private Timestamp timestamp;
+        @Nonnull private Optional<String> userId = Optional.empty();
+        @Nonnull private Optional<String> userName = Optional.empty();
+        @Nullable private String operation;
+        @Nullable private Map<String, String> operationParameters;
+        @Nonnull private Optional<JobInfo> jobInfo = Optional.empty();
+        @Nonnull private Optional<NotebookInfo> notebookInfo = Optional.empty();
+        @Nonnull private Optional<String> clusterId = Optional.empty();
+        @Nonnull private Optional<Long> readVersion = Optional.empty();
+        @Nonnull private Optional<String> isolationLevel = Optional.empty();
+        @Nonnull private Optional<Boolean> isBlindAppend = Optional.empty();
+        @Nonnull private Optional<Map<String, String>> operationMetrics = Optional.empty();
+        @Nonnull private Optional<String> userMetadata = Optional.empty();
+        @Nonnull private Optional<String> engineInfo = Optional.empty();
 
         public Builder version(Long version) {
             this.version = Optional.of(version);
             return this;
         }
 
-        public Builder timestamp(Timestamp timestamp) {
+        public Builder timestamp(@Nullable Timestamp timestamp) {
             this.timestamp = timestamp;
             return this;
         }
 
-        public Builder userId(String userId) {
+        public Builder userId(@Nullable String userId) {
             this.userId = Optional.of(userId);
             return this;
         }
@@ -288,7 +317,7 @@ public class CommitInfo implements Action {
             return this;
         }
 
-        public Builder operationParameters(Map<String, String> operationParameters) {
+        public Builder operationParameters(@Nullable Map<String, String> operationParameters) {
             this.operationParameters = operationParameters;
             return this;
         }

@@ -26,8 +26,12 @@ public class JobInfo {
     private final String jobOwnerId;
     private final String triggerType;
 
-    public JobInfo(String jobId, String jobName, String runId, String jobOwnerId,
-                   String triggerType) {
+    public JobInfo(
+            String jobId,
+            String jobName,
+            String runId,
+            String jobOwnerId,
+            String triggerType) {
         this.jobId = jobId;
         this.jobName = jobName;
         this.runId = runId;

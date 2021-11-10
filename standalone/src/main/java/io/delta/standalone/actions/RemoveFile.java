@@ -26,11 +26,14 @@ import javax.annotation.Nullable;
 /**
  * Logical removal of a given file from the reservoir. Acts as a tombstone before a file is
  * deleted permanently.
- *
- * Note that for protocol compatibility reasons, the fields {@code partitionValues}, {@code size},
- * and {@code tags} are only present when the extendedFileMetadata flag is true. New writers should
- * generally be setting this flag, but old writers (and FSCK) won't, so readers must check this flag
- * before attempting to consume those values.
+ * <p>
+ * Note that users should onlu instantiate {@link RemoveFile} instances using one of the various
+ * {@link AddFile#remove()} methods.
+ * <p>
+ * As well, note that for protocol compatibility reasons, the fields {@code partitionValues},
+ * {@code size}, and {@code tags} are only present when the extendedFileMetadata flag is true. New
+ * writers should generally be setting this flag, but old writers (and FSCK) won't, so readers must
+ * check this flag before attempting to consume those values.
  */
 public class RemoveFile implements FileAction {
     @Nonnull
@@ -51,10 +54,19 @@ public class RemoveFile implements FileAction {
     @Nullable
     private final Map<String, String> tags;
 
-    public RemoveFile(@Nonnull String path, @Nonnull Optional<Long> deletionTimestamp,
-                      boolean dataChange, boolean extendedFileMetadata,
-                      @Nullable Map<String, String> partitionValues, long size,
-                      @Nullable Map<String, String> tags) {
+    /**
+     * Users should <b>not</b> construct {@link RemoveFile}s themselves, and should instead use one
+     * of the various {@link AddFile#remove()} methods to instantiate the correct {@link RemoveFile}
+     * for a given {@link AddFile} instance.
+     */
+    public RemoveFile(
+            @Nonnull String path,
+            @Nonnull Optional<Long> deletionTimestamp,
+            boolean dataChange,
+            boolean extendedFileMetadata,
+            @Nullable Map<String, String> partitionValues,
+            long size,
+            @Nullable Map<String, String> tags) {
         this.path = path;
         this.deletionTimestamp = deletionTimestamp;
         this.dataChange = dataChange;
@@ -143,76 +155,5 @@ public class RemoveFile implements FileAction {
     public int hashCode() {
         return Objects.hash(path, deletionTimestamp, dataChange, extendedFileMetadata,
                 partitionValues, size, tags);
-    }
-
-    /**
-     * @return a new {@code RemoveFile.Builder}
-     */
-    public static Builder builder(String path) {
-        return new Builder(path);
-    }
-
-    /**
-     * Builder class for RemoveFile. Enables construction of RemoveFile object with default values.
-     */
-    public static class Builder {
-        // required RemoveFile fields
-        private final String path;
-        // optional RemoveFile fields
-        private Optional<Long> deletionTimestamp = Optional.empty();
-        private boolean dataChange = true;
-        private boolean extendedFileMetadata = false;
-        private Map<String, String> partitionValues;
-        private long size = 0;
-        private Map<String, String> tags;
-
-        public Builder(String path) {
-            this.path = path;
-        }
-
-        public Builder deletionTimestamp(Long deletionTimestamp) {
-            this.deletionTimestamp = Optional.of(deletionTimestamp);
-            return this;
-        }
-
-        public Builder dataChange(boolean dataChange) {
-            this.dataChange = dataChange;
-            return this;
-        }
-
-        public Builder extendedFileMetadata(boolean extendedFileMetadata) {
-            this.extendedFileMetadata = extendedFileMetadata;
-            return this;
-        }
-
-        public Builder partitionValues(Map<String, String> partitionValues) {
-            this.partitionValues = partitionValues;
-            return this;
-        }
-
-        public Builder size(long size) {
-            this.size = size;
-            return this;
-        }
-
-        public Builder tags(Map<String, String> tags) {
-            this.tags = tags;
-            return this;
-        }
-
-        /**
-         * @return a new {@code RemoveFile} with the same properties as {@code this}
-         */
-        public RemoveFile build() {
-            RemoveFile removeFile = new RemoveFile(
-                    this.path,
-                    this.deletionTimestamp,
-                    this.dataChange,
-                    this.extendedFileMetadata,
-                    this.partitionValues,
-                    this.size,
-                    this.tags);
-            return removeFile;
-        }
     }
 }

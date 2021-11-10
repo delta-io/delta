@@ -38,8 +38,11 @@ public final class AddCDCFile implements FileAction {
     @Nullable
     private final Map<String, String> tags;
 
-    public AddCDCFile(@Nonnull String path, @Nonnull Map<String, String> partitionValues, long size,
-                      @Nullable Map<String, String> tags) {
+    public AddCDCFile(
+            @Nonnull String path,
+            @Nonnull Map<String, String> partitionValues,
+            long size,
+            @Nullable Map<String, String> tags) {
         this.path = path;
         this.partitionValues = partitionValues;
         this.size = size;

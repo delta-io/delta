@@ -255,11 +255,16 @@ abstract class DeltaLogSuiteBase extends FunSuite {
       assert(new File(log.logPath.toUri).mkdirs())
       val path = new File(dir, "a/b/c").getCanonicalPath
 
-      val removeFile = RemoveFileJ
-        .builder(path)
-        .deletionTimestamp(System.currentTimeMillis())
-        .dataChange(true)
-        .build()
+      val removeFile = new RemoveFileJ(
+        path,
+        java.util.Optional.of(System.currentTimeMillis()),
+        true, // dataChange
+        false, // extendedFileMetadata
+        null, // partitionValues
+        0L, // size
+        null // null
+      )
+
       val metadata = MetadataJ.builder().build()
       val actions = java.util.Arrays.asList(removeFile, metadata)
 

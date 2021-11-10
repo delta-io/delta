@@ -32,8 +32,10 @@ public final class SetTransaction implements Action {
     @Nonnull
     private final Optional<Long> lastUpdated;
 
-    public SetTransaction(@Nonnull String appId, long version,
-                          @Nonnull Optional<Long> lastUpdated) {
+    public SetTransaction(
+            @Nonnull String appId,
+            long version,
+            @Nonnull Optional<Long> lastUpdated) {
         this.appId = appId;
         this.version = version;
         this.lastUpdated = lastUpdated;

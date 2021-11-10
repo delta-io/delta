@@ -19,7 +19,7 @@ package io.delta.standalone.actions;
 /**
  * A marker interface for all Actions that can be applied to a Delta Table.
  * Each action represents a single change to the state of a Delta table.
- *
+ * <p>
  * You can use the following code to extract the concrete type of an {@link Action}.
  * <pre>{@code
  *   // {@link io.delta.standalone.DeltaLog.getChanges} is one way to get such actions

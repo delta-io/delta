@@ -23,7 +23,7 @@ import scala.collection.JavaConverters._
 
 import org.scalatest.FunSuite
 
-import io.delta.standalone.actions.{AddFile => AddFileJ, CommitInfo => CommitInfoJ, Format => FormatJ, JobInfo => JobInfoJ, Metadata => MetadataJ, NotebookInfo => NotebookInfoJ, RemoveFile => RemoveFileJ}
+import io.delta.standalone.actions.{AddFile => AddFileJ, CommitInfo => CommitInfoJ, Format => FormatJ, JobInfo => JobInfoJ, Metadata => MetadataJ, NotebookInfo => NotebookInfoJ}
 import io.delta.standalone.types.{IntegerType, StructField => StructFieldJ, StructType => StructTypeJ}
 
 class ActionBuildersSuite extends FunSuite {
@@ -122,37 +122,6 @@ class ActionBuildersSuite extends FunSuite {
       "test_job_id",
       "test_trigger_type")
     assert(jobInfoFromBuilder == jobInfoFromConstructor)
-  }
-
-  test("builder action class constructor for RemoveFile") {
-    val removeFileJFromBuilderDefaults = RemoveFileJ.builder("/test").build()
-    val removeFileJFromConstructorDefaults = new RemoveFileJ(
-      "/test",
-      Optional.empty(),
-      true,
-      false,
-      null,
-      0L,
-      null)
-    assert(removeFileJFromBuilderDefaults == removeFileJFromConstructorDefaults)
-
-    val removeFileJFromBuilder = RemoveFileJ.builder("/test")
-      .deletionTimestamp(0L)
-      .dataChange(false)
-      .extendedFileMetadata(true)
-      .partitionValues(Map("test"->"foo").asJava)
-      .size(1L)
-      .tags(Map("tag"->"foo").asJava)
-      .build()
-    val removeFileJFromConstructor = new RemoveFileJ(
-      "/test",
-      Optional.of(0L),
-      false,
-      true,
-      Map("test"->"foo").asJava,
-      1L,
-      Map("tag"->"foo").asJava)
-    assert(removeFileJFromBuilder == removeFileJFromConstructor)
   }
 
   test("builder action class constructor for CommitInfo") {

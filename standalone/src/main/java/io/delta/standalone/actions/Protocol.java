@@ -23,7 +23,7 @@ import java.util.Objects;
  * incompatible changes are made to the protocol. Readers and writers are
  * responsible for checking that they meet the minimum versions before performing
  * any other operations.
- *
+ * <p>
  * Since this action allows us to explicitly block older clients in the case of a
  * breaking change to the protocol, clients should be tolerant of messages and
  * fields that they do not understand.

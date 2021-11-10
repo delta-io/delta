@@ -20,7 +20,7 @@ import java.util.Collections
 
 import scala.collection.JavaConverters._
 
-import io.delta.standalone.actions.{AddFile => AddFileJ, Metadata => MetadataJ, RemoveFile => RemoveFileJ}
+import io.delta.standalone.actions.{AddFile => AddFileJ, Metadata => MetadataJ}
 import io.delta.standalone.expressions.{EqualTo, Literal}
 import io.delta.standalone.types.{IntegerType, StructField, StructType}
 
@@ -33,8 +33,8 @@ trait OptimisticTransactionSuiteTestVals {
   val addA = new AddFileJ("a", Collections.emptyMap(), 1, 1, true, null, null)
   val addB = new AddFileJ("b", Collections.emptyMap(), 1, 1, true, null, null)
 
-  val removeA = RemoveFileJ.builder("a").deletionTimestamp(4L).build()
-  val removeA_time5 = RemoveFileJ.builder("a").deletionTimestamp(5L).build()
+  val removeA = addA.remove(4L)
+  val removeA_time5 = addA.remove(5L)
 
   val addA_partX1 = new AddFileJ("a", Map("x" -> "1").asJava, 1, 1, true, null, null)
   val addA_partX2 = new AddFileJ("a", Map("x" -> "2").asJava, 1, 1, true, null, null)

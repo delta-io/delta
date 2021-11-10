@@ -19,13 +19,14 @@ package io.delta.standalone.actions;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
 /**
  * Represents an action that adds a new file to the table. The path of a file acts as the primary
  * key for the entry in the set of files.
- *
+ * <p>
  * Note: since actions within a given Delta file are not guaranteed to be applied in order, it is
  * not valid for multiple file operations with the same path to exist in a single version.
  *
@@ -50,9 +51,14 @@ public final class AddFile implements FileAction {
     @Nullable
     private final Map<String, String> tags;
 
-    public AddFile(@Nonnull String path, @Nonnull Map<String, String> partitionValues, long size,
-                   long modificationTime, boolean dataChange, @Nullable String stats,
-                   @Nullable Map<String, String> tags) {
+    public AddFile(
+            @Nonnull String path,
+            @Nonnull Map<String, String> partitionValues,
+            long size,
+            long modificationTime,
+            boolean dataChange,
+            @Nullable String stats,
+            @Nullable Map<String, String> tags) {
         this.path = path;
         this.partitionValues = partitionValues;
         this.size = size;
@@ -60,6 +66,42 @@ public final class AddFile implements FileAction {
         this.dataChange = dataChange;
         this.stats = stats;
         this.tags = tags;
+    }
+
+    /**
+     * @return the corresponding {@link RemoveFile} for this file
+     */
+    @Nonnull
+    public RemoveFile remove() {
+        return remove(System.currentTimeMillis(), dataChange);
+    }
+
+    /**
+     * @return the corresponding {@link RemoveFile} for this file, instantiated with the given
+     *         {@code deletionTimestamp}
+     */
+    @Nonnull
+    public RemoveFile remove(long deletionTimestamp) {
+        return remove(deletionTimestamp, dataChange);
+    }
+
+    /**
+     * @return the corresponding {@link RemoveFile} for this file, instantiated with the given
+     *         {@code dataChange} flag
+     */
+    @Nonnull
+    public RemoveFile remove(boolean dataChange) {
+        return remove(System.currentTimeMillis(), dataChange);
+    }
+
+    /**
+     * @return the corresponding {@link RemoveFile} for this file, instantiated with the given
+     *         {@code deletionTimestamp} value and {@code dataChange} flag
+     */
+    @Nonnull
+    public RemoveFile remove(long deletionTimestamp, boolean dataChange) {
+        return new RemoveFile(path, Optional.of(deletionTimestamp), dataChange, true,
+            partitionValues, size, tags);
     }
 
     /**
