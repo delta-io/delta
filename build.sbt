@@ -98,7 +98,19 @@ lazy val core = (project in file("core"))
       val dir = baseDirectory.value.getParentFile / "target" / "scala-2.12" / "classes"
       Files.createDirectories(dir.toPath)
     },
-    Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value
+    Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value,
+    // Generate the package object to provide the version information in runtime.
+    Compile / sourceGenerators += Def.task {
+      val file = (Compile / sourceManaged).value / "io" / "delta" / "package.scala"
+      IO.write(file,
+        s"""package io
+           |
+           |package object delta {
+           |  val VERSION = "${version.value}"
+           |}
+           |""".stripMargin)
+      Seq(file)
+    }
   )
 
 lazy val contribs = (project in file("contribs"))

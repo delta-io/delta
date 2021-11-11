@@ -571,7 +571,7 @@ object CommitInfo {
   }
 
   private def getEngineInfo: Option[String] = {
-    Some(s"Apache-Spark/${org.apache.spark.SPARK_VERSION} Delta-Lake/<unknown>")
+    Some(s"Apache-Spark/${org.apache.spark.SPARK_VERSION} Delta-Lake/${io.delta.VERSION}")
   }
 
 }
