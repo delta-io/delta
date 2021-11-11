@@ -430,7 +430,7 @@ lazy val standalone = (project in file("standalone"))
       "org.slf4j" % "slf4j-log4j12" % "1.7.25"
     ),
     sourceGenerators in Compile += Def.task {
-      val file = (sourceManaged in Compile).value / "meta" / "package.scala"
+      val file = (sourceManaged in Compile).value / "io" / "delta" / "standalone" / "package.scala"
       IO.write(file,
         s"""package io.delta
           |
