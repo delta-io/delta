@@ -175,12 +175,17 @@ private[internal] class SnapshotImpl(
           .toArray
           .map { line => JsonUtils.mapper.readValue[SingleAction](line) }
       } else if (path.endsWith("parquet")) {
-        ParquetReader.read[Parquet4sSingleActionWrapper](
+        val parquetIterable = ParquetReader.read[Parquet4sSingleActionWrapper](
           path,
           ParquetReader.Options(
             timeZone = deltaLog.timezone,
             hadoopConf = hadoopConf)
-        ).toSeq.map(_.unwrap)
+        )
+        try {
+          parquetIterable.toArray.map(_.unwrap)
+        } finally {
+          parquetIterable.close()
+        }
       } else Seq.empty[SingleAction]
     }.toList
   }
