@@ -84,8 +84,6 @@ case class AlterTableSetPropertiesDeltaCommand(
           false
         case k if k == TableCatalog.PROP_PROVIDER =>
           throw DeltaErrors.cannotChangeProvider()
-        case k if k == DeltaConfigs.COLUMN_MAPPING_MODE.key =>
-          throw DeltaErrors.changeColumnMappingModeNotSupported
         case _ =>
           true
       }
