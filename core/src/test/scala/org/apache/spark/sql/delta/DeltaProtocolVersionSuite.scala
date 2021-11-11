@@ -33,7 +33,8 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
 trait DeltaProtocolVersionSuiteBase extends QueryTest
-  with SharedSparkSession  with DeltaSQLCommandTest {
+  with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   private lazy val testTableSchema = spark.range(1).schema
 

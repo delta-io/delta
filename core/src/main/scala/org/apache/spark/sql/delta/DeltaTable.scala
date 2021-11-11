@@ -87,10 +87,9 @@ object DeltaTableUtils extends PredicateHelper
   def isDeltaTable(spark: SparkSession, tableName: TableIdentifier): Boolean = {
     val catalog = spark.sessionState.catalog
     val tableIsNotTemporaryTable = !catalog.isTempView(tableName)
-    val tableExists = {
-        (tableName.database.isEmpty || catalog.databaseExists(tableName.database.get)) &&
-        catalog.tableExists(tableName)
-    }
+    val tableExists =
+      (tableName.database.isEmpty || catalog.databaseExists(tableName.database.get)) &&
+      catalog.tableExists(tableName)
     tableIsNotTemporaryTable && tableExists && isDeltaTable(catalog.getTableMetadata(tableName))
   }
 
@@ -166,8 +165,6 @@ object DeltaTableUtils extends PredicateHelper
     // scalastyle:off deltahadoopconfiguration
     val fs = path.getFileSystem(spark.sessionState.newHadoopConfWithOptions(options))
     // scalastyle:on deltahadoopconfiguration
-
-
     var currentPath = path
     while (currentPath != null && currentPath.getName != "_delta_log" &&
         currentPath.getName != "_samples") {

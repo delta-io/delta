@@ -23,7 +23,6 @@ import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.constraints.{Constraint, Constraints}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
-import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder}
 import org.apache.spark.sql.catalyst.encoders.RowEncoder
@@ -31,39 +30,12 @@ import org.apache.spark.sql.catalyst.expressions.EqualNullSafe
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.execution.QueryExecution
 import org.apache.spark.sql.execution.streaming.IncrementalExecution
-import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
+import org.apache.spark.sql.types.{StructField, StructType}
 
 /**
  * Provide utilities to handle columns with default expressions.
  */
 object ColumnWithDefaultExprUtils extends DeltaLogging {
-
-  // Min writer version that supports writing to IDENTITY columns.
-  val IDENTITY_MIN_WRITER_VERSION = 6
-
-  // Returns true if column `field` is defined as an IDENTITY column.
-  def isIdentityColumn(field: StructField): Boolean = {
-    val md = field.metadata
-    val hasStart = md.contains(DeltaSourceUtils.IDENTITY_INFO_START)
-    val hasStep = md.contains(DeltaSourceUtils.IDENTITY_INFO_STEP)
-    val hasInsert = md.contains(DeltaSourceUtils.IDENTITY_INFO_ALLOW_EXPLICIT_INSERT)
-    // Verify that we have all or none of the three fields.
-    if (!((hasStart == hasStep) && (hasStart == hasInsert))) {
-      throw DeltaErrors.identityColumnInconsistentMetadata(field.name, hasStart, hasStep, hasInsert)
-    }
-    hasStart && hasStep && hasInsert
-  }
-
-  // Return true if `schema` contains any number of IDENTITY column.
-  def hasIdentityColumn(schema: StructType): Boolean = schema.exists(isIdentityColumn)
-
-  // Return a pair of Booleans indicating:
-  // (true if `protocol` satisfies the requirement for Generated columns,
-  //  true if `protocol` satisfies the requirement for IDENTITY columns).
-  def satisfyProtocol(protocol: Protocol): (Boolean, Boolean) = {
-    (GeneratedColumn.satisfyGeneratedColumnProtocol(protocol),
-      protocol.minWriterVersion >= IDENTITY_MIN_WRITER_VERSION)
-  }
 
   // Return true if the column `col` has default expressions (and can thus be omitted from the
   // insertion list).
@@ -120,41 +92,6 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
     }
     recordDeltaEvent(deltaLog, "delta.generatedColumns.write")
     (newData, constraints.toSeq, track.toSet)
-  }
-
-  // Removes the default expressions properties from the schema. If `keepGeneratedColumns` is
-  // true, generated column expressions are kept (so only IDENTITY column properties are removed).
-  def removeDefaultExpressions(
-      schema: StructType,
-      keepGeneratedColumns: Boolean = false): StructType = {
-    var updated = false
-    val updatedSchema = schema.map { field =>
-      if (!keepGeneratedColumns && GeneratedColumn.isGeneratedColumn(field)) {
-        updated = true
-        val newMetadata = new MetadataBuilder()
-          .withMetadata(field.metadata)
-          .remove(DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY)
-          .build()
-        field.copy(metadata = newMetadata)
-      } else if (isIdentityColumn(field)) {
-        updated = true
-        val newMetadata = new MetadataBuilder()
-          .withMetadata(field.metadata)
-          .remove(DeltaSourceUtils.IDENTITY_INFO_ALLOW_EXPLICIT_INSERT)
-          .remove(DeltaSourceUtils.IDENTITY_INFO_HIGHWATERMARK)
-          .remove(DeltaSourceUtils.IDENTITY_INFO_START)
-          .remove(DeltaSourceUtils.IDENTITY_INFO_STEP)
-          .build()
-        field.copy(metadata = newMetadata)
-      } else {
-        field
-      }
-    }
-    if (updated) {
-      StructType(updatedSchema)
-    } else {
-      schema
-    }
   }
 
   /**

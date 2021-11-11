@@ -796,8 +796,6 @@ class SchemaUtilsSuite extends QueryTest
         new StructType()
           .add("k", new StructType()
           .add("l", IntegerType))))
-      .add("m", ArrayType(
-        MapType(StringType, StringType)))
     assert(SchemaUtils.findColumnPosition(Seq("a"), schema) === ((Seq(0), 2)))
     assert(SchemaUtils.findColumnPosition(Seq("A"), schema) === ((Seq(0), 2)))
     expectFailure("Couldn't find", schema.treeString) {
@@ -820,7 +818,6 @@ class SchemaUtilsSuite extends QueryTest
     assert(SchemaUtils.findColumnPosition(Seq("i", "value", "k"), schema) === ((Seq(4, 1, 0), 1)))
     assert(SchemaUtils.findColumnPosition(Seq("i", "key"), schema) === ((Seq(4, 0), 0)))
     assert(SchemaUtils.findColumnPosition(Seq("i", "value"), schema) === ((Seq(4, 1), 1)))
-    assert(SchemaUtils.findColumnPosition(Seq("m"), schema) === ((Seq(5), 0)))
 
     val resolver = org.apache.spark.sql.catalyst.analysis.caseSensitiveResolution
     Seq(Seq("A", "b"), Seq("a", "B"), Seq("d", "element", "B"), Seq("f", "key", "H"))

@@ -34,7 +34,7 @@ import org.apache.spark.sql.catalyst.analysis.{Resolver, TypeCoercion, Unresolve
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.catalog.Identifier
-import org.apache.spark.sql.errors.QueryCompilationErrors
+import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
 import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
@@ -505,7 +505,7 @@ object SchemaUtils {
         case (Seq(), ArrayType(s: StructType, _)) =>
           find(colTail, s, stack :+ thisCol)
         case (Seq(), ArrayType(_, _)) =>
-          (Nil, 0)
+          (Seq(0), 0)
         case (_, ArrayType(_, _)) =>
           throw new AnalysisException(
             s"""An ArrayType was found. In order to access elements of an ArrayType, specify
@@ -793,21 +793,18 @@ object SchemaUtils {
   /**
    * Transform (nested) columns in a schema. Runs the transform function on all nested StructTypes
    *
-   * If `colName` is defined, we also check if the struct to process contains the column name.
-   *
    * @param schema to transform.
-   * @param colName Optional name to match for
    * @param tf function to apply on the StructType.
    * @return the transformed schema.
    */
   def transformColumnsStructs(
       schema: StructType,
-      colName: Option[String] = None)(
+      colName: String)(
       tf: (Seq[String], StructType, Resolver) => Seq[StructField]): StructType = {
     def transform[E <: DataType](path: Seq[String], dt: E): E = {
       val newDt = dt match {
         case struct @ StructType(fields) =>
-          val newFields = if (colName.isEmpty || fields.exists(f => colName.contains(f.name))) {
+          val newFields = if (fields.exists(_.name == colName)) {
             tf(path, struct, DELTA_COL_RESOLVER)
           } else {
             fields.toSeq
@@ -887,12 +884,7 @@ object SchemaUtils {
    * columns have these characters.
    */
   def checkFieldNames(names: Seq[String]): Unit = {
-    names.foreach { name =>
-      // ,;{}()\n\t= and space are special characters in Delta schema
-      if (name.matches(".*[ ,;{}()\n\t=].*")) {
-        throw QueryCompilationErrors.columnNameContainsInvalidCharactersError(name)
-      }
-    }
+    names.foreach(ParquetSchemaConverter.checkFieldName)
     // The method checkFieldNames doesn't have a valid regex to search for '\n'. That should be
     // fixed in Apache Spark, and we can remove this additional check here.
     names.find(_.contains("\n")).foreach(col => throw DeltaErrors.invalidColumnName(col))

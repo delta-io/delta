@@ -117,8 +117,7 @@ case class WriteIntoDelta(
     // change the actual behavior, but makes DESC TABLE to show varchar instead of char.
     val dataSchema = CharVarcharUtils.replaceCharVarcharWithStringInSchema(
       replaceCharWithVarchar(CharVarcharUtils.getRawSchema(data.schema)).asInstanceOf[StructType])
-    var finalSchema = schemaInCatalog.getOrElse(dataSchema)
-    updateMetadata(data.sparkSession, txn, finalSchema,
+    updateMetadata(data.sparkSession, txn, schemaInCatalog.getOrElse(dataSchema),
       partitionColumns, configuration, isOverwriteOperation, rearrangeOnly)
 
     val replaceOnDataColsEnabled =

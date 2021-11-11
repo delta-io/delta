@@ -52,9 +52,6 @@ private[delta] class CurrentTransactionInfo(
 
   /** Final actions to commit - including the [[CommitInfo]] */
   lazy val finalActionsToCommit: Seq[Action] = actions ++ commitInfo
-
-  /** Whether this transaction wants to commit actions other than [[FileAction]] */
-  val hasOnlyFileActions = actions.forall(_.isInstanceOf[FileAction])
 }
 
 /**
@@ -165,10 +162,10 @@ private[delta] class ConflictChecker(
     recordTime("checked-appends") {
       // Fail if new files have been added that the txn should have read.
       val addedFilesToCheckForConflicts = isolationLevel match {
-        case WriteSerializable if currentTransactionInfo.hasOnlyFileActions =>
-          winningCommitSummary.changedDataAddedFiles // don't conflict with blind appends
-        case Serializable | WriteSerializable =>
+        case Serializable =>
           winningCommitSummary.changedDataAddedFiles ++ winningCommitSummary.blindAppendAddedFiles
+        case WriteSerializable =>
+          winningCommitSummary.changedDataAddedFiles // don't conflict with blind appends
         case SnapshotIsolation =>
           Seq.empty
       }

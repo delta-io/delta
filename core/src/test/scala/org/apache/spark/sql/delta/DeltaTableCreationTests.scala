@@ -42,7 +42,8 @@ import org.apache.spark.util.Utils
 
 trait DeltaTableCreationTests
   extends QueryTest
-  with SharedSparkSession  with DeltaColumnMappingTestUtils {
+  with SharedSparkSession
+  with DeltaColumnMappingTestUtils {
 
   import testImplicits._
 
@@ -1552,16 +1553,6 @@ trait DeltaTableCreationTests
   }
 
   testQuietly("CREATE TABLE with existing data path") {
-    // Re-use `filterV2TableProperties()` from `SQLTestUtils` as soon as it will be released.
-    def isReservedProperty(propName: String): Boolean = {
-      CatalogV2Util.TABLE_RESERVED_PROPERTIES.contains(propName) ||
-        propName.startsWith(TableCatalog.OPTION_PREFIX) ||
-        propName == TableCatalog.PROP_EXTERNAL
-    }
-    def filterV2TableProperties(properties: Map[String, String]): Map[String, String] = {
-      properties.filterNot(kv => isReservedProperty(kv._1))
-    }
-
     withTempPath { path =>
       withTable("src", "t1", "t2", "t3", "t4", "t5", "t6") {
         sql("CREATE TABLE src(i int, p string) USING delta PARTITIONED BY (p) " +
@@ -1578,7 +1569,7 @@ trait DeltaTableCreationTests
           s"LOCATION '${path.getAbsolutePath}'")
         checkAnswer(spark.table("t2"), Row(1, "a"))
         // Table properties should not be changed to empty.
-        assert(filterV2TableProperties(getTableProperties("t2")).filter(_._1 != "Type") ==
+        assert(getTableProperties("t2").filter(_._1 != "Type") ==
           Map("delta.randomizeFilePrefixes" -> "true"))
 
         // CREATE TABLE with the same schema but no partitioning fails.

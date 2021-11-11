@@ -35,7 +35,8 @@ import org.apache.spark.util.Utils
 abstract class MergeIntoSuiteBase
     extends QueryTest
     with SharedSparkSession
-    with BeforeAndAfterEach    with SQLTestUtils
+    with BeforeAndAfterEach
+    with SQLTestUtils
     with DeltaTestUtilsForTempViews {
 
   import testImplicits._

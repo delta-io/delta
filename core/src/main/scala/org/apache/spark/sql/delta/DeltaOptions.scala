@@ -57,7 +57,6 @@ trait DeltaWriteOptions
    */
   val optimizeWrite: Option[Boolean] = options.get(OPTIMIZE_WRITE_OPTION)
     .map(toBoolean(_, OPTIMIZE_WRITE_OPTION))
-
 }
 
 trait DeltaWriteOptionsImpl extends DeltaOptionParser {

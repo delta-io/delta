@@ -95,8 +95,7 @@ trait DocsPath {
     "faqRelativePath",
     "ignoreStreamingUpdatesAndDeletesWarning",
     "concurrentModificationExceptionMsg",
-    "incorrectLogStoreImplementationException",
-    "columnRenameNotSupported"
+    "incorrectLogStoreImplementationException"
   )
 }
 
@@ -975,43 +974,29 @@ object DeltaErrors
     new AnalysisException("Cannot describe the history of a view.")
   }
 
-  def copyIntoValidationRequireDeltaTableExists: Throwable = {
-    new AnalysisException("COPY INTO validation failed. Target table does not exist.")
-  }
-
-  def copyIntoEncryptionNotAllowedOn(scheme: String): Throwable = {
-    // TODO: add `wasbs` once supported
+  def copyIntoEncryptionOnlyS3(scheme: String): Throwable = {
     new IllegalArgumentException(
-      s"Invalid scheme $scheme. " +
-        s"COPY INTO source encryption currently only supports s3/s3n/s3a/abfss.")
+      s"Invalid scheme $scheme. COPY INTO source encryption is only supported for S3 paths.")
   }
 
-  def copyIntoCredentialsNotAllowedOn(scheme: String): Throwable = {
-     new IllegalArgumentException(
-      s"Invalid scheme $scheme. " +
-        s"COPY INTO source encryption currently only supports s3/s3n/s3a/wasbs/abfss.")
-  }
-
-  def copyIntoEncryptionRequired(
-      requiredKey: String, expectedValue: Option[String] = None): Throwable = {
+  def copyIntoEncryptionSseCRequired(): Throwable = {
     new IllegalArgumentException(
-      if (expectedValue.nonEmpty) {
-        s"Invalid encryption option $requiredKey. " +
-          s"COPY INTO source encryption must specify '$requiredKey' = '${expectedValue.get}'."
-      } else {
-        s"COPY INTO source encryption must specify '$requiredKey'."
-      }
-    )
+      s"Invalid encryption type. COPY INTO source encryption must specify 'type' = 'SSE-C'.")
   }
 
-  def copyIntoCredentialsRequired(keys: String*): Throwable = {
-    new IllegalArgumentException(s"COPY INTO source credentials must " +
-      s"specify ${keys.mkString(", ")}.")
-  }
-
-  def copyIntoEncryptionNotSupportedForAzure: Throwable = {
+  def copyIntoEncryptionMasterKeyRequired(): Throwable = {
     new IllegalArgumentException(
-      "COPY INTO encryption only supports ADLS Gen2, or abfss:// file scheme")
+      s"Invalid encryption arguments. COPY INTO source encryption must specify a masterKey.")
+  }
+
+  def copyIntoCredentialsOnlyS3(scheme: String): Throwable = {
+    new IllegalArgumentException(
+      s"Invalid scheme $scheme. COPY INTO source credentials are only supported for S3 paths.")
+  }
+
+  def copyIntoCredentialsAllRequired(cause: Throwable): Throwable = {
+    new IllegalArgumentException(
+      "COPY INTO credentials must include awsKeyId, awsSecretKey, and awsSessionToken.", cause)
   }
 
   def postCommitHookFailedException(
@@ -1257,34 +1242,6 @@ object DeltaErrors
     // scalastyle:on line.size.limit
   }
 
-  def columnRenameNotSupported(spark: SparkSession, protocol: Protocol): Throwable = {
-    // scalastyle:off line.size.limit
-    val adviceMsg = if (!DeltaColumnMapping.satisfyColumnMappingProtocol(protocol)) {
-      s"""
-         |Please upgrade your Delta table to reader version 2 and writer version 5 (Refer to table versioning at ${generateDocsLink(spark.sparkContext.getConf, "/versioning.html")})
-         | and change the column mapping mode to name mapping. You can use the following command:
-         |
-         | ALTER TABLE <table_name> SET TBLPROPERTIES (
-         |   'delta.columnMapping.mode' = 'name',
-         |   'delta.minReaderVersion' = '2',
-         |   'delta.minWriterVersion' = '5')
-         |
-      """.stripMargin
-    } else {
-      s"""
-         |Please change the column mapping mode to name mapping mode. You can use the following command:
-         |
-         | ALTER TABLE <table_name> SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
-      """.stripMargin
-    }
-
-    new AnalysisException(
-      s"""
-         |Column rename is not supported for your Delta table. $adviceMsg
-         |""".stripMargin)
-    // scalastyle:on line.size.limit
-  }
-
   def schemaChangeDuringMappingModeChangeNotSupported(
       oldSchema: StructType,
       newSchema: StructType): Throwable =
@@ -1415,29 +1372,6 @@ object DeltaErrors
         " at the same time?",
       conflictingCommit)
     new io.delta.exceptions.ConcurrentTransactionException(message)
-  }
-
-  def restoreMissedDataFilesError(missedFiles: Array[String], version: Long): Throwable =
-    new IllegalArgumentException(
-      s"""Not all files from version $version are available in file system.
-         | Missed files (top 100 files): ${missedFiles.mkString(",")}.
-         | Please use more recent version or timestamp for restoring.
-         | To disable check update option ${SQLConf.IGNORE_MISSING_FILES.key}"""
-        .stripMargin
-    )
-
-
-  def identityColumnNotSupported(): Throwable = {
-    new AnalysisException("IDENTITY column is not supported")
-  }
-
-  def identityColumnInconsistentMetadata(
-      colName: String,
-      hasStart: Boolean,
-      hasStep: Boolean,
-      hasInsert: Boolean): Throwable = {
-    new AnalysisException(s"Inconsistent IDENTITY metadata for column $colName " +
-      s"detected: $hasStart, $hasStep, $hasInsert")
   }
 
 }

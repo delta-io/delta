@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.{File, IOException}
-import java.lang.ref.WeakReference
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
 
@@ -40,7 +39,6 @@ import com.google.common.cache.{CacheBuilder, RemovalNotification}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
-import org.apache.spark.SparkContext
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
@@ -79,13 +77,6 @@ class DeltaLog private(
   private lazy implicit val _clock = clock
 
   protected def spark = SparkSession.active
-
-  /**
-   * Keep a reference to `SparkContext` used to create `DeltaLog`. `DeltaLog` cannot be used when
-   * `SparkContext` is stopped. We keep the reference so that we can check whether the cache is
-   * still valid and drop invalid `DeltaLog`` objects.
-   */
-  private val sparkContext = new WeakReference(spark.sparkContext)
 
   /**
    * Returns the Hadoop [[Configuration]] object which can be used to access the file system. All
@@ -368,7 +359,7 @@ class DeltaLog private(
       // append them to the end of `dataSchema`.
       dataSchema =
         DeltaColumnMapping.dropColumnMappingMetadata(
-          ColumnWithDefaultExprUtils.removeDefaultExpressions(snapshot.metadata.schema)),
+          GeneratedColumn.removeGenerationExpressions(snapshot.metadata.schema)),
       bucketSpec = None,
       snapshot.deltaLog.fileFormat(snapshot.metadata),
       snapshot.metadata.format.options)(spark)
@@ -406,7 +397,7 @@ class DeltaLog private(
       // locations. Otherwise, for any partition columns not in `dataSchema`, Spark would just
       // append them to the end of `dataSchema`
       dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        ColumnWithDefaultExprUtils.removeDefaultExpressions(
+        GeneratedColumn.removeGenerationExpressions(
           SchemaUtils.dropNullTypeColumns(snapshotToUse.metadata.schema))),
       bucketSpec = bucketSpec,
       fileFormat(snapshotToUse.metadata),
@@ -562,28 +553,16 @@ object DeltaLog extends DeltaLogging {
           new DeltaLog(path, path.getParent, fileSystemOptions, clock)
         }
     }
-    def getDeltaLogFromCache(): DeltaLog = {
-      // The following cases will still create a new ActionLog even if there is a cached
-      // ActionLog using a different format path:
-      // - Different `scheme`
-      // - Different `authority` (e.g., different user tokens in the path)
-      // - Different mount point.
-      try {
-        deltaLogCache.get(path -> fileSystemOptions, () => createDeltaLog())
-      } catch {
-        case e: com.google.common.util.concurrent.UncheckedExecutionException =>
-          throw e.getCause
-      }
-    }
-
-    val deltaLog = getDeltaLogFromCache()
-    if (Option(deltaLog.sparkContext.get).map(_.isStopped).getOrElse(true)) {
-      // Invalid the cached `DeltaLog` and create a new one because the `SparkContext` of the cached
-      // `DeltaLog` has been stopped.
-      deltaLogCache.invalidate(path -> fileSystemOptions)
-      getDeltaLogFromCache()
-    } else {
-      deltaLog
+    // The following cases will still create a new ActionLog even if there is a cached
+    // ActionLog using a different format path:
+    // - Different `scheme`
+    // - Different `authority` (e.g., different user tokens in the path)
+    // - Different mount point.
+    try {
+      deltaLogCache.get(path -> fileSystemOptions, () => createDeltaLog())
+    } catch {
+      case e: com.google.common.util.concurrent.UncheckedExecutionException =>
+        throw e.getCause
     }
   }
 

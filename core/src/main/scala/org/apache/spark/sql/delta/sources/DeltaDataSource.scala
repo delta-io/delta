@@ -88,7 +88,7 @@ class DeltaDataSource
     }
 
     val deltaLog = DeltaLog.forTable(sqlContext.sparkSession, path)
-    val schemaToUse = ColumnWithDefaultExprUtils.removeDefaultExpressions(deltaLog.snapshot.schema)
+    val schemaToUse = GeneratedColumn.removeGenerationExpressions(deltaLog.snapshot.schema)
     if (schemaToUse.isEmpty) {
       throw DeltaErrors.schemaNotSetException
     }

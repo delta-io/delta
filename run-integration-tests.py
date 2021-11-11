@@ -30,15 +30,14 @@ def delete_if_exists(path):
         print("Deleted %s " % path)
 
 
-def run_scala_integration_tests(root_dir, version, test_name, extra_maven_repo, scala_version):
-    print("\n\n##### Running Scala tests on delta version %s and scala version %s #####"
-          % (str(version), scala_version))
+def run_scala_integration_tests(root_dir, version, test_name, extra_maven_repo):
+    print("\n\n##### Running Scala tests on version %s #####" % str(version))
     clear_artifact_cache()
     test_dir = path.join(root_dir, "examples", "scala")
     test_src_dir = path.join(test_dir, "src", "main", "scala", "example")
     test_classes = [f.replace(".scala", "") for f in os.listdir(test_src_dir)
                     if f.endswith(".scala") and not f.startswith("_")]
-    env = {"DELTA_VERSION": str(version), "SCALA_VERSION": scala_version}
+    env = {"DELTA_VERSION": str(version)}
     if extra_maven_repo:
         env["EXTRA_MAVEN_REPO"] = extra_maven_repo
     with WorkingDirectory(test_dir):
@@ -129,7 +128,6 @@ def run_pip_installation_tests(root_dir, version, use_testpypi, extra_maven_repo
 def clear_artifact_cache():
     print("Clearing Delta artifacts from ivy2 and mvn cache")
     delete_if_exists(os.path.expanduser("~/.ivy2/cache/io.delta"))
-    delete_if_exists(os.path.expanduser("~/.ivy2/local/io.delta"))
     delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
 
 
@@ -205,11 +203,6 @@ if __name__ == "__main__":
         action="store_true",
         help="Run only Scala tests")
     parser.add_argument(
-        "--scala-version",
-        required=False,
-        default="2.12",
-        help="Specify scala version for scala tests only, valid values are '2.12' and '2.13'")
-    parser.add_argument(
         "--pip-only",
         required=False,
         default=False,
@@ -240,10 +233,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    if args.scala_version not in ["2.12", "2.13"]:
-        raise Exception("Scala version can only be specified as --scala-version 2.12 or " +
-                        "--scala-version 2.13")
-
     if args.pip_only and args.no_pip:
         raise Exception("Cannot specify both --pip-only and --no-pip")
 
@@ -252,8 +241,7 @@ if __name__ == "__main__":
     run_pip = not args.python_only and not args.scala_only and not args.no_pip
 
     if run_scala:
-        run_scala_integration_tests(root_dir, args.version, args.test, args.maven_repo,
-                                    args.scala_version)
+        run_scala_integration_tests(root_dir, args.version, args.test, args.maven_repo)
 
     if run_python:
         run_python_integration_tests(root_dir, args.version, args.test, args.maven_repo)

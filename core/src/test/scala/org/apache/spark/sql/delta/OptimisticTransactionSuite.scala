@@ -17,15 +17,13 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
-import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Metadata, Protocol, RemoveFile, SetTransaction}
+import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, RemoveFile, SetTransaction}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{EqualTo, Literal}
 import org.apache.spark.sql.types.{IntegerType, StructType}
-import org.apache.spark.util.ManualClock
 
 
 class OptimisticTransactionSuite
@@ -321,42 +319,7 @@ class OptimisticTransactionSuite
       val isolationLevels = log.history.getHistory(Some(10)).map(_.isolationLevel)
       assert(isolationLevels.size == 2)
       assert(isolationLevels(0).exists(_.contains("Serializable")))
-      assert(isolationLevels(0).exists(_.contains("Serializable")))
-    }
-  }
-
-  test("every transaction should use a unique identifier in the commit") {
-    withTempDir { tempDir =>
-      // Initialize delta table.
-      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
-      log.startTransaction().commit(Seq(Metadata()), ManualUpdate)
-
-      // Start two transactions which commits at same time with same content.
-      val clock = new ManualClock()
-      val txn1 = new OptimisticTransaction(log)(clock)
-      val txn2 = new OptimisticTransaction(log)(clock)
-      clock.advance(100)
-      val version1 = txn1.commit(Seq(), ManualUpdate)
-      val version2 = txn2.commit(Seq(), ManualUpdate)
-
-      // Validate that actions in both transactions are not exactly same.
-      def readActions(version: Long): Seq[Action] = {
-        log.store.read(FileNames.deltaFile(log.logPath, version), log.newDeltaHadoopConf())
-          .map(Action.fromJson)
-      }
-      def removeTxnIdFromActions(actions: Seq[Action]): Seq[Action] = actions.map {
-        case c: CommitInfo => c.copy(txnId = None)
-        case other => other
-      }
-      val actions1 = readActions(version1)
-      val actions2 = readActions(version2)
-      val actionsWithoutTxnId1 = removeTxnIdFromActions(actions1)
-      val actionsWithoutTxnId2 = removeTxnIdFromActions(actions2)
-      assert(actions1 !== actions2)
-      // Without the txn id, the actions are same as of today but they need not be in future. In
-      // future we might have other fields which may make these actions from two different
-      // transactions different. In that case, the below assertion can be removed.
-      assert(actionsWithoutTxnId1 === actionsWithoutTxnId2)
+      assert(isolationLevels(1) == Some(SnapshotIsolation.toString))
     }
   }
 }

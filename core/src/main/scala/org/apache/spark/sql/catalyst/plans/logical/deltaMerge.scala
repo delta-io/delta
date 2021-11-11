@@ -395,16 +395,9 @@ object DeltaMergeInto {
             // If clause allows nested field to be target, then this will return the all the
             // parts of the name (e.g., "a.b" -> Seq("a", "b")). Otherwise, this will
             // return only one string.
-            val resolvedNameParts = {
-              try {
-                DeltaUpdateTable.getTargetColNameParts(
-                  resolveOrFail(unresolvedAttrib, fakeTargetPlan, s"$typ clause"),
-                  resolutionErrorMsg)
-              } catch {
-                case e: Throwable => throw e
-              }
-            }
-
+            val resolvedNameParts = DeltaUpdateTable.getTargetColNameParts(
+              resolveOrFail(unresolvedAttrib, fakeTargetPlan, s"$typ clause"),
+              resolutionErrorMsg)
             val resolvedExpr = resolveOrFail(expr, planToResolveAction, s"$typ clause")
             Seq(DeltaMergeAction(resolvedNameParts, resolvedExpr, targetColNameResolved = true))
 
@@ -433,7 +426,7 @@ object DeltaMergeInto {
     val containsStarAction =
       (matchedClauses ++ notMatchedClause).flatMap(_.actions).exists(_.isInstanceOf[UnresolvedStar])
 
-    var migrateSchema = canAutoMigrate && containsStarAction
+    val migrateSchema = canAutoMigrate && containsStarAction
 
     val finalSchema = if (migrateSchema) {
       // The implicit conversions flag allows any type to be merged from source to target if Spark

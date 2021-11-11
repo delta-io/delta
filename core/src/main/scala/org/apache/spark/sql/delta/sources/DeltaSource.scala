@@ -22,7 +22,7 @@ import java.sql.Timestamp
 
 import scala.util.matching.Regex
 
-import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaErrors, DeltaLog, DeltaOptions, DeltaTimeTravelSpec, GeneratedColumn, StartingVersion, StartingVersionLatest}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTimeTravelSpec, GeneratedColumn, StartingVersion, StartingVersionLatest}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -84,7 +84,7 @@ trait DeltaSourceBase extends Source
     with DeltaLogging { self: DeltaSource =>
 
   override val schema: StructType =
-    ColumnWithDefaultExprUtils.removeDefaultExpressions(deltaLog.snapshot.metadata.schema)
+    GeneratedColumn.removeGenerationExpressions(deltaLog.snapshot.metadata.schema)
 
   protected var lastOffsetForTriggerAvailableNow: DeltaSourceOffset = _
 
@@ -284,16 +284,12 @@ case class DeltaSource(
     initialState.iterator()
   }
 
-  protected def iteratorLast[T](iter: ClosableIterator[T]): Option[T] = {
-    try {
-      var last: Option[T] = None
-      while (iter.hasNext) {
-        last = Some(iter.next())
-      }
-      last
-    } finally {
-      iter.close()
+  protected def iteratorLast[T](iter: Iterator[T]): Option[T] = {
+    var last: Option[T] = None
+    while (iter.hasNext) {
+      last = Some(iter.next())
     }
+    last
   }
 
   private def getStartingOffset(
@@ -502,7 +498,7 @@ case class DeltaSource(
           case a: AddFile =>
             a.size
           case r: RemoveFile =>
-            r.size.getOrElse(0L)
+            r.size
           case cdc: AddCDCFile =>
             cdc.size
         }

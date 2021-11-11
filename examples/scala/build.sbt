@@ -21,19 +21,7 @@ organizationName := "example"
 val scala212 = "2.12.14"
 val scala213 = "2.13.5"
 
-def getScalaVersion(): String = {
-  val envVars = System.getenv
-  if (envVars.containsKey("SCALA_VERSION")) {
-    val version = envVars.get("SCALA_VERSION")
-    println("Using Scala version " + version)
-    if (version == "2.13") {
-      return scala213
-    }
-  }
-  scala212
-}
-
-scalaVersion := getScalaVersion
+scalaVersion := scala212
 version := "0.1.0"
 
 def getDeltaVersion(): String = {

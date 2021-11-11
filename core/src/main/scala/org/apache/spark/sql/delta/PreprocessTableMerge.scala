@@ -36,10 +36,6 @@ import org.apache.spark.sql.types.{StructField, StructType}
 case class PreprocessTableMerge(override val conf: SQLConf)
   extends Rule[LogicalPlan] with UpdateExpressionsSupport {
 
-  private var trackHighWaterMarks = Set[String]()
-
-  def getTrackHighWaterMarks: Set[String] = trackHighWaterMarks
-
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
     case m: DeltaMergeInto if m.resolved => apply(m, true)
   }
@@ -84,8 +80,6 @@ case class PreprocessTableMerge(override val conf: SQLConf)
     if (generatedColumns.nonEmpty && !deltaLogicalPlan.isInstanceOf[LogicalRelation]) {
       throw DeltaErrors.operationOnTempViewWithGenerateColsNotSupported("MERGE INTO")
     }
-    // Additional columns with default expressions.
-    var additionalColumns = Seq[StructField]()
 
     val processedMatched = matched.map {
       case m: DeltaMergeIntoUpdateClause =>
@@ -177,7 +171,6 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         }
       }
 
-
       val targetColNames = m.resolvedActions.map(_.targetColNameParts.head)
       if (targetColNames.distinct.size < targetColNames.size) {
         throw new AnalysisException(s"Duplicate column names in INSERT clause")
@@ -195,15 +188,8 @@ case class PreprocessTableMerge(override val conf: SQLConf)
       }
 
       val actions = m.resolvedActions ++ implicitActions
-      val (actionsWithGeneratedColumns, trackFromInsert) = resolveImplicitColumns(
-        m.resolvedActions,
-        actions,
-        source,
-        generatedColumns.map(f => (f, true)) ++ additionalColumns.map(f => (f, false)),
-        finalSchema)
-
-      trackHighWaterMarks ++= trackFromInsert
-
+      val actionsWithGeneratedColumns = resolveNonExplicitlyInsertedGeneratedColumns(
+        m.resolvedActions, actions, source, generatedColumns, finalSchema)
       val alignedActions: Seq[DeltaMergeAction] = finalSchema.map { targetAttrib =>
         actionsWithGeneratedColumns.find { a =>
           conf.resolver(targetAttrib.name, a.targetColNameParts.head)
@@ -257,30 +243,27 @@ case class PreprocessTableMerge(override val conf: SQLConf)
    * @param explicitActions Actions explicitly specified by users.
    * @param allActions Actions with non explicitly specified columns added with nulls.
    * @param sourcePlan Logical plan node of the source table of merge.
-   * @param columnWithDefaultExpr All the generated columns in the target table.
+   * @param generatedColumns All the generated columns in the target table.
    * @return `allActions` with expression for non explicitly inserted generated columns expression
    *        resolved.
    */
-  private def resolveImplicitColumns(
+  private def resolveNonExplicitlyInsertedGeneratedColumns(
     explicitActions: Seq[DeltaMergeAction],
     allActions: Seq[DeltaMergeAction],
     sourcePlan: LogicalPlan,
-    columnWithDefaultExpr: Seq[(StructField, Boolean)],
-    finalSchema: StructType): (Seq[DeltaMergeAction], Set[String]) = {
-    val implicitColumns = columnWithDefaultExpr.filter {
-      case (field, _) =>
+    generatedColumns: Seq[StructField],
+    finalSchema: StructType
+  ): Seq[DeltaMergeAction] = {
+    val nonExplicitlyInsertedGeneratedColumns = generatedColumns.filter {
+      field =>
         !explicitActions.exists { insertAct =>
           conf.resolver(insertAct.targetColNameParts.head, field.name)
         }
     }
-    if (implicitColumns.isEmpty) {
-      return (allActions, Set[String]())
+    if (nonExplicitlyInsertedGeneratedColumns.isEmpty) {
+      return allActions
     }
     assert(finalSchema.size == allActions.size)
-
-    val track = mutable.Set[String]()
-
-    // Fake projection used to resolve generated column expressions.
     val fakeProjectMap = allActions.map {
       action => {
         val exprForProject = Alias(action.expr, action.targetColNameParts.head)()
@@ -288,13 +271,10 @@ case class PreprocessTableMerge(override val conf: SQLConf)
       }
     }.toMap
     val fakeProject = Project(fakeProjectMap.values.toArray[Alias], sourcePlan)
-
-    val resolvedActions = allActions.map { action =>
+    allActions.map { action =>
       val colName = action.targetColNameParts.head
-      implicitColumns.find {
-        case (field, _) => conf.resolver(field.name, colName)
-      } match {
-        case Some((field, true)) =>
+      nonExplicitlyInsertedGeneratedColumns.find(f => conf.resolver(f.name, colName)) match {
+        case Some(field) =>
           val expr = GeneratedColumn.getGenerationExpression(field).get
           val resolvedExpr = resolveReferencesForExpressions(SparkSession.active, expr :: Nil,
             fakeProject).head
@@ -307,6 +287,5 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         case _ => action
       }
     }
-    (resolvedActions, track.toSet)
   }
 }

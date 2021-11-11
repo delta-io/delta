@@ -76,7 +76,8 @@ trait ConvertToDeltaTestUtils extends QueryTest { self: SQLTestUtils =>
 
 /** Tests for CONVERT TO DELTA that can be leveraged across SQL and Scala APIs. */
 trait ConvertToDeltaSuiteBase extends ConvertToDeltaTestUtils
-  with SharedSparkSession  with SQLTestUtils
+  with SharedSparkSession
+  with SQLTestUtils
   with ConvertToDeltaHiveTableTests
   with DeltaSQLCommandTest  with DeltaTestUtilsForTempViews {
 
@@ -134,8 +135,7 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaTestUtils
       }
 
       assert(ae.getMessage.contains("Converting a view to a Delta table") ||
-        ae.getMessage.contains("Table default.v not found") ||
-        ae.getMessage.contains("Table or view 'v' not found in database 'default'"))
+        ae.getMessage.contains("Table default.v not found"))
     }
   }
 

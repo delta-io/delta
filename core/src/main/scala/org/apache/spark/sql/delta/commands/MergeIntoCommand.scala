@@ -38,7 +38,6 @@ import org.apache.spark.sql.catalyst.expressions.BasePredicate
 import org.apache.spark.sql.catalyst.expressions.NamedExpression
 import org.apache.spark.sql.catalyst.expressions.codegen._
 import org.apache.spark.sql.catalyst.plans.logical._
-import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.LogicalRelation
@@ -209,29 +208,14 @@ case class MergeIntoCommand(
     migratedSchema: Option[StructType]) extends LeafRunnableCommand
   with DeltaCommand with PredicateHelper with AnalysisHelper with ImplicitMetadataOperation {
 
-  import MergeIntoCommand._
-
   import SQLMetrics._
+  import MergeIntoCommand._
 
   override val canMergeSchema: Boolean = conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE)
   override val canOverwriteSchema: Boolean = false
 
   @transient private lazy val sc: SparkContext = SparkContext.getOrCreate()
   @transient private lazy val targetDeltaLog: DeltaLog = targetFileIndex.deltaLog
-  /**
-   * Map to get target output attributes by name.
-   * The case sensitivity of the map is set accordingly to Spark configuration.
-   */
-  @transient private lazy val targetOutputAttributesMap: Map[String, Attribute] = {
-    val attrMap: Map[String, Attribute] = target
-      .outputSet.view
-      .map(attr => attr.name -> attr).toMap
-    if (conf.caseSensitiveAnalysis) {
-      attrMap
-    } else {
-      CaseInsensitiveMap(attrMap)
-    }
-  }
 
   /** Whether this merge statement has only a single insert (NOT MATCHED) clause. */
   private def isSingleInsertOnly: Boolean = matchedClauses.isEmpty && notMatchedClauses.length == 1
@@ -586,16 +570,6 @@ case class MergeIntoCommand(
     deltaTxn: OptimisticTransaction,
     files: Seq[AddFile]): LogicalPlan = {
     val targetOutputCols = getTargetOutputCols(deltaTxn)
-    val targetOutputColsMap = {
-      val colsMap: Map[String, NamedExpression] = targetOutputCols.view
-          .map(col => col.name -> col).toMap
-      if (conf.caseSensitiveAnalysis) {
-        colsMap
-      } else {
-        CaseInsensitiveMap(colsMap)
-      }
-    }
-
     val plan = {
       // We have to do surgery to use the attributes from `targetOutputCols` to scan the table.
       // In cases of schema evolution, they may not be the same type as the original attributes.
@@ -616,11 +590,12 @@ case class MergeIntoCommand(
     // create an alias
     val aliases = plan.output.map {
       case newAttrib: AttributeReference =>
-        val existingTargetAttrib = targetOutputColsMap.get(newAttrib.name)
-          .getOrElse {
+        val existingTargetAttrib = getTargetOutputCols(deltaTxn).find { col =>
+          conf.resolver(col.name, newAttrib.name)
+        }.getOrElse {
             throw new AnalysisException(
               s"Could not find ${newAttrib.name} among the existing target output " +
-                s"${targetOutputCols}")
+                s"${getTargetOutputCols(deltaTxn)}")
           }.asInstanceOf[AttributeReference]
 
         if (existingTargetAttrib.exprId == newAttrib.exprId) {
@@ -646,13 +621,10 @@ case class MergeIntoCommand(
 
   private def getTargetOutputCols(txn: OptimisticTransaction): Seq[NamedExpression] = {
     txn.metadata.schema.map { col =>
-      targetOutputAttributesMap
-        .get(col.name)
-        .map { a =>
-          AttributeReference(col.name, col.dataType, col.nullable)(a.exprId)
-        }
-        .getOrElse(Alias(Literal(null), col.name)()
-      )
+      target.output.find(attr => conf.resolver(attr.name, col.name)).map { a =>
+        AttributeReference(col.name, col.dataType, col.nullable)(a.exprId)
+      }.getOrElse(
+        Alias(Literal(null), col.name)())
     }
   }
 
