@@ -378,36 +378,20 @@ class CheckConstraintsSuite extends QueryTest
         }.getMessage()
         assert(e.contains("Cannot change nullable column to non-nullable"))
       }
-
     }
   }
 
-  // TODO fix this
-  testQuietly("ending semi-colons make ADD, DROP constraint commands fail") {
+  testQuietly("ending semi-colons no longer makes ADD, DROP constraint commands fail") {
     withTable("my_table") {
       sql("CREATE TABLE my_table (birthday DATE) USING DELTA;")
       sql("INSERT INTO my_table VALUES ('2021-11-11');")
 
-      // ADD - no semi-colon will PASS
       sql("ALTER TABLE my_table ADD CONSTRAINT aaa CHECK (birthday > '1900-01-01')")
       sql("ALTER TABLE my_table ADD CONSTRAINT bbb CHECK (birthday > '1900-02-02')")
+      sql("ALTER TABLE my_table ADD CONSTRAINT ccc CHECK (birthday > '1900-03-03');") // semi-colon
 
-      // ADD - with a semi-colon will FAIL
-      val e = intercept[ParseException] {
-        sql("ALTER TABLE my_table ADD CONSTRAINT ccc CHECK (birthday > '1900-03-03');")
-      }.getMessage()
-      assert(e.contains("no viable alternative at input 'ALTER TABLE my_table ADD CONSTRAINT'" +
-        "(line 1, pos 25)"))
-
-      // DROP - no semi-colon will PASS
       sql("ALTER TABLE my_table DROP CONSTRAINT aaa")
-
-      // DROP - with a semi-colon will FAIL
-      val e2 = intercept[ParseException] {
-        sql("ALTER TABLE my_table DROP CONSTRAINT bbb;")
-      }.getMessage()
-      assert(e2.contains("no viable alternative at input 'ALTER TABLE my_table DROP CONSTRAINT'" +
-        "(line 1, pos 26)"))
+      sql("ALTER TABLE my_table DROP CONSTRAINT bbb;") // semi-colon
     }
   }
 
