@@ -367,17 +367,15 @@ class CheckConstraintsSuite extends QueryTest
     }
   }
 
-  // TODO fix this
+  // TODO: https://github.com/delta-io/delta/issues/831
   testQuietly("SET NOT NULL constraint fails") {
-    withSQLConf((DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key, "3")) {
-      withTable("my_table") {
-        sql("CREATE TABLE my_table (id INT) USING DELTA;")
-        sql("INSERT INTO my_table VALUES (1);")
-        val e = intercept[AnalysisException] {
-          sql("ALTER TABLE my_table CHANGE COLUMN id SET NOT NULL;")
-        }.getMessage()
-        assert(e.contains("Cannot change nullable column to non-nullable"))
-      }
+    withTable("my_table") {
+      sql("CREATE TABLE my_table (id INT) USING DELTA;")
+      sql("INSERT INTO my_table VALUES (1);")
+      val e = intercept[AnalysisException] {
+        sql("ALTER TABLE my_table CHANGE COLUMN id SET NOT NULL;")
+      }.getMessage()
+      assert(e.contains("Cannot change nullable column to non-nullable"))
     }
   }
 
