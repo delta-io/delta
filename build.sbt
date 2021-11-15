@@ -427,7 +427,11 @@ lazy val standalone = (project in file("standalone"))
       ),
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "org.slf4j" % "slf4j-api" % "1.7.25",
-      "org.slf4j" % "slf4j-log4j12" % "1.7.25"
+      "org.slf4j" % "slf4j-log4j12" % "1.7.25",
+
+      // Compiler plugins
+      // -- Bump up the genjavadoc version explicitly to 0.18 to work with Scala 2.12
+      compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.18" cross CrossVersion.full)
     ),
     sourceGenerators in Compile += Def.task {
       val file = (sourceManaged in Compile).value / "io" / "delta" / "standalone" / "package.scala"
@@ -495,7 +499,6 @@ lazy val standalone = (project in file("standalone"))
       "-public",
       "-windowtitle", "Delta Standalone Reader " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
       "-noqualifier", "java.lang",
-      "-tag", "return:X",
       // `doclint` is disabled on Circle CI. Need to enable it manually to test our javadoc.
       "-Xdoclint:all"
     ),
