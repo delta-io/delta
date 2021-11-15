@@ -413,6 +413,15 @@ class DeltaDataReaderSuite extends FunSuite {
     assert(struct == DataTypeParser.fromJson(struct.toJson()))
   }
 
+  test("#124: getBigDecimal decode correctly for LongValue") {
+    withLogForGoldenTable("124-decimal-decode-bug") { log =>
+      val recordIter = log.snapshot().open()
+      val row = recordIter.next()
+      assert(row.getBigDecimal("large_decimal") == new JBigDecimal(1000000))
+      assert(!recordIter.hasNext)
+    }
+  }
+
   // scalastyle:off line.size.limit
   test("#125: CloseableParquetDataIterator should not stop iteration when processing an empty file") {
     // scalastyle:on line.size.limit

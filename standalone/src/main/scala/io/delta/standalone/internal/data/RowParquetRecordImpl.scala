@@ -247,6 +247,7 @@ private[internal] case class RowParquetRecordImpl(
           case IntValue(int) => new java.math.BigDecimal(int)
           case DoubleValue(double) => BigDecimal.decimal(double).bigDecimal
           case FloatValue(float) => BigDecimal.decimal(float).bigDecimal
+          case LongValue(long) => new java.math.BigDecimal(long)
           case BinaryValue(binary) => Decimals.decimalFromBinary(binary).bigDecimal
           case _ => throw new RuntimeException(s"Unknown decimal decode type $value")
         }

@@ -50,7 +50,7 @@ import org.apache.spark.sql.types._
  * GENERATE_GOLDEN_TABLES=1 build/sbt 'goldenTables/test-only *GoldenTables -- -z tbl_name'
  * ```
  *
- * After generating golden tables, ensure to package or test project standalone, otherwise the
+ * After generating golden tables, be sure to package or test project standalone, otherwise the
  * test resources won't be available when running tests with IntelliJ.
  */
 class GoldenTables extends QueryTest with SharedSparkSession {
@@ -722,6 +722,13 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     data.foreach { row =>
       Seq(row).toDF().write.format("delta").mode("append").partitionBy("_2").save(tablePath)
     }
+  }
+
+  /** TEST: DeltaDataReaderSuite > #124: decimal decode bug */
+  generateGoldenTable("124-decimal-decode-bug") { tablePath =>
+    val data = Seq(Row(new JBigDecimal(1000000)))
+    val schema = new StructType().add("large_decimal", DecimalType(10, 0))
+    writeDataWithSchema(tablePath, data, schema)
   }
 
   /** TEST: DeltaDataReaderSuite > #125: iterator bug */
