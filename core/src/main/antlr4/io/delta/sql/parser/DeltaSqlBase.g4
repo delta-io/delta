@@ -67,7 +67,7 @@ tokens {
 }
 
 singleStatement
-    : statement EOF
+    : statement ';'* EOF
     ;
 
 // If you add keywords here that should not be reserved, add them to 'nonReserved' list.

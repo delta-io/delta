@@ -367,4 +367,31 @@ class CheckConstraintsSuite extends QueryTest
     }
   }
 
+
+  // TODO: https://github.com/delta-io/delta/issues/831
+  test("SET NOT NULL constraint fails") {
+    withTable("my_table") {
+      sql("CREATE TABLE my_table (id INT) USING DELTA;")
+      sql("INSERT INTO my_table VALUES (1);")
+      val e = intercept[AnalysisException] {
+        sql("ALTER TABLE my_table CHANGE COLUMN id SET NOT NULL;")
+      }.getMessage()
+      assert(e.contains("Cannot change nullable column to non-nullable"))
+    }
+  }
+
+  testQuietly("ending semi-colons no longer makes ADD, DROP constraint commands fail") {
+    withTable("my_table") {
+      sql("CREATE TABLE my_table (birthday DATE) USING DELTA;")
+      sql("INSERT INTO my_table VALUES ('2021-11-11');")
+
+      sql("ALTER TABLE my_table ADD CONSTRAINT aaa CHECK (birthday > '1900-01-01')")
+      sql("ALTER TABLE my_table ADD CONSTRAINT bbb CHECK (birthday > '1900-02-02')")
+      sql("ALTER TABLE my_table ADD CONSTRAINT ccc CHECK (birthday > '1900-03-03');") // semi-colon
+
+      sql("ALTER TABLE my_table DROP CONSTRAINT aaa")
+      sql("ALTER TABLE my_table DROP CONSTRAINT bbb;") // semi-colon
+    }
+  }
+
 }
