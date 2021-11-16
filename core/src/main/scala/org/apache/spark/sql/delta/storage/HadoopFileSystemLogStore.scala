@@ -54,7 +54,7 @@ abstract class HadoopFileSystemLogStore(
     val stream = fs.open(path)
     try {
       val reader = new BufferedReader(new InputStreamReader(stream, UTF_8))
-      IOUtils.readLines(reader).asScala.map(_.trim)
+      IOUtils.readLines(reader).asScala.map(_.trim).toSeq
     } finally {
       stream.close()
     }

@@ -85,11 +85,11 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
    */
   protected def normalizeData(
       deltaLog: DeltaLog,
-      data: Dataset[_]): (QueryExecution, Seq[Attribute], Seq[Constraint]) = {
+      data: Dataset[_]): (QueryExecution, Seq[Attribute], Seq[Constraint], Set[String]) = {
     val normalizedData = SchemaUtils.normalizeColumnNames(metadata.schema, data)
-    val enforcesGeneratedColumns = GeneratedColumn.enforcesGeneratedColumns(protocol, metadata)
-    val (dataWithGeneratedColumns, generatedColumnConstraints) =
-      if (enforcesGeneratedColumns) {
+    val enforcesDefaultExprs = ColumnWithDefaultExprUtils.tableHasDefaultExpr(protocol, metadata)
+    val (dataWithDefaultExprs, generatedColumnConstraints, trackHighWaterMarks) =
+      if (enforcesDefaultExprs) {
         ColumnWithDefaultExprUtils.addDefaultExprsOrReturnConstraints(
           deltaLog,
           // We need the original query execution if this is a streaming query, because
@@ -98,18 +98,18 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
           metadata.schema,
           normalizedData)
       } else {
-        (normalizedData, Nil)
+        (normalizedData, Nil, Set[String]())
       }
-    val cleanedData = SchemaUtils.dropNullTypeColumns(dataWithGeneratedColumns)
-    val queryExecution = if (cleanedData.schema != dataWithGeneratedColumns.schema) {
+    val cleanedData = SchemaUtils.dropNullTypeColumns(dataWithDefaultExprs)
+    val queryExecution = if (cleanedData.schema != dataWithDefaultExprs.schema) {
       // This must be batch execution as DeltaSink doesn't accept NullType in micro batch DataFrame.
       // For batch executions, we need to use the latest DataFrame query execution
       cleanedData.queryExecution
-    } else if (enforcesGeneratedColumns) {
-      dataWithGeneratedColumns.queryExecution
+    } else if (enforcesDefaultExprs) {
+      dataWithDefaultExprs.queryExecution
     } else {
       assert(
-        normalizedData == dataWithGeneratedColumns,
+        normalizedData == dataWithDefaultExprs,
         "should not change data when there is no generate column")
       // Ideally, we should use `normalizedData`. But it may use `QueryExecution` rather than
       // `IncrementalExecution`. So we use the input `data` and leverage the `nullableOutput`
@@ -126,7 +126,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     val mappedOutput = if (columnMapping == NoMapping) nullableOutput else {
       mapColumnAttributes(nullableOutput, columnMapping)
     }
-    (queryExecution, mappedOutput, generatedColumnConstraints)
+    (queryExecution, mappedOutput, generatedColumnConstraints, trackHighWaterMarks)
   }
 
   protected def checkPartitionColumns(
@@ -189,7 +189,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     val partitionSchema = metadata.physicalPartitionSchema
     val outputPath = deltaLog.dataPath
 
-    val (queryExecution, output, generatedColumnConstraints) = normalizeData(deltaLog, data)
+    val (queryExecution, output, generatedColumnConstraints, _) =
+      normalizeData(deltaLog, data)
     val partitioningColumns = getPartitioningColumns(partitionSchema, output)
 
     val committer = getCommitter(outputPath)
@@ -229,7 +230,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
           // scalastyle:on deltahadoopconfiguration
           partitionColumns = partitioningColumns,
           bucketSpec = None,
-          statsTrackers = statsTrackers,
+          statsTrackers = statsTrackers.toSeq,
           options = Map.empty)
       } catch {
         case s: SparkException =>
@@ -243,6 +244,6 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       }
     }
 
-    committer.addedStatuses
+    committer.addedStatuses.toSeq
   }
 }

@@ -45,7 +45,8 @@ object InvariantViolationException {
       return new InvariantViolationException("Exceeds char/varchar type length limitation")
     }
 
-    val valueLines = values.map {
+    // Sort by the column name to generate consistent error messages in Scala 2.12 and 2.13.
+    val valueLines = values.toSeq.sortBy(_._1).map {
       case (column, value) =>
         s" - $column : $value"
     }.mkString("\n")

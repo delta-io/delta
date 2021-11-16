@@ -1554,8 +1554,9 @@ class DeltaSuite extends QueryTest
     // assign physical name to new schema
     val newMetadata = if (columnMappingEnabled) {
       DeltaColumnMapping.assignColumnIdAndPhysicalName(
-        snapshot.metadata.copy(schemaString = new StructType().add("data", "bigint").json)
-      )
+        snapshot.metadata.copy(schemaString = new StructType().add("data", "bigint").json),
+        snapshot.metadata,
+        isChangingModeOnExistingTable = false)
     } else {
       snapshot.metadata.copy(schemaString = new StructType().add("data", "bigint").json)
     }

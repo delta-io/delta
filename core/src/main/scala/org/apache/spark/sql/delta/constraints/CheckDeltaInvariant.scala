@@ -59,7 +59,7 @@ case class CheckDeltaInvariant(
     case c: Check =>
       val result = child.eval(input)
       if (result == null || result == false) {
-        throw InvariantViolationException(c, columnExtractors.mapValues(_.eval(input)))
+        throw InvariantViolationException(c, columnExtractors.mapValues(_.eval(input)).toMap)
       }
   }
 

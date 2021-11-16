@@ -28,40 +28,30 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionSet}
 
 /**
- * A trait representing different attributes of current transaction needed for conflict detection.
+ * A class representing different attributes of current transaction needed for conflict detection.
+ *
+ * @param readPredicates partition predicates by which files have been queried by the transaction
+ * @param readFiles files that have been seen by the transaction
+ * @param readWholeTable whether the whole table was read during the transaction
+ * @param readAppIds appIds that have been seen by the transaction
+ * @param metadata table metadata for the transaction
+ * @param actions delta log actions that the transaction wants to commit
+ * @param readSnapshot read [[Snapshot]] used for the transaction
+ * @param commitInfo [[CommitInfo]] for the commit
  */
-private[delta] trait CurrentTransactionInfoBase {
-  /** partition predicates by which files have been queried by the transaction */
-  val readPredicates: Seq[Expression]
-  /** files that have been seen by the transaction */
-  val readFiles: Set[AddFile]
-  /** whether the whole table was read during the transaction */
-  val readWholeTable: Boolean
-  /** appIds that have been seen by the transaction */
-  val readAppIds: Set[String]
-  /** table metadata for the transaction */
-  val metadata: Metadata
-  /** delta log actions that the transaction wants to commit */
-  val actions: Seq[Action]
-  /** read [[Snapshot]] used for the transaction */
-  val readSnapshot: Snapshot
-  /** [[CommitInfo]] for the commit */
-  val commitInfo: Option[CommitInfo]
+private[delta] class CurrentTransactionInfo(
+    val readPredicates: Seq[Expression],
+    val readFiles: Set[AddFile],
+    val readWholeTable: Boolean,
+    val readAppIds: Set[String],
+    val metadata: Metadata,
+    val actions: Seq[Action],
+    val readSnapshot: Snapshot,
+    val commitInfo: Option[CommitInfo]) {
 
   /** Final actions to commit - including the [[CommitInfo]] */
   lazy val finalActionsToCommit: Seq[Action] = actions ++ commitInfo
 }
-
-private[delta] case class CurrentTransactionInfo(
-    readPredicates: Seq[Expression],
-    readFiles: Set[AddFile],
-    readWholeTable: Boolean,
-    readAppIds: Set[String],
-    metadata: Metadata,
-    actions: Seq[Action],
-    readSnapshot: Snapshot,
-    commitInfo: Option[CommitInfo])
-  extends CurrentTransactionInfoBase
 
 /**
  * Summary of the Winning commit against which we want to check the conflict
@@ -102,7 +92,8 @@ private[delta] class ConflictChecker(
 
   protected val timingStats = mutable.HashMap[String, Long]()
   protected val deltaLog = initialCurrentTransactionInfo.readSnapshot.deltaLog
-  protected var currentTransactionInfo: CurrentTransactionInfo = initialCurrentTransactionInfo
+
+  def currentTransactionInfo: CurrentTransactionInfo = initialCurrentTransactionInfo
   protected val winningCommitSummary: WinningCommitSummary = createWinningCommitSummary()
 
   /**

@@ -41,14 +41,15 @@ object DeltaOperations {
   sealed abstract class Operation(val name: String) {
     val parameters: Map[String, Any]
 
-    lazy val jsonEncodedValues: Map[String, String] = parameters.mapValues(JsonUtils.toJson(_))
+    lazy val jsonEncodedValues: Map[String, String] =
+      parameters.mapValues(JsonUtils.toJson(_)).toMap
 
     val operationMetrics: Set[String] = Set()
 
     def transformMetrics(metrics: Map[String, SQLMetric]): Map[String, String] = {
       metrics.filterKeys( s =>
         operationMetrics.contains(s)
-      ).transform((_, v) => v.value.toString)
+      ).mapValues(_.value.toString).toMap
     }
 
     val userMetadata: Option[String] = None

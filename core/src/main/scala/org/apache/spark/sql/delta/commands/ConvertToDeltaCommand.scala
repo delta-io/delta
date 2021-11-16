@@ -118,7 +118,7 @@ abstract class ConvertToDeltaCommandBase(
         case v1: V1Table =>
           val table = v1.catalogTable
           // Hive adds some transient table properties which should be ignored
-          val props = table.properties.filterKeys(_ != "transient_lastDdlTime")
+          val props = table.properties.filterKeys(_ != "transient_lastDdlTime").toMap
           Some(ConvertTarget(Some(table), table.provider, new Path(table.location).toString, props))
         case _: DeltaTableV2 =>
           // Already a Delta table

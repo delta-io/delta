@@ -1201,9 +1201,9 @@ object DeltaErrors
       s" for field $field and $field2", mode
     )
 
-  def changeColumnMappingModeNotSupported: Throwable = {
-    new ColumnMappingUnsupportedException("Changing column mapping mode using" +
-      s" config ${DeltaConfigs.COLUMN_MAPPING_MODE.key} is not supported.")
+  def changeColumnMappingModeNotSupported(oldMode: String, newMode: String): Throwable = {
+    new ColumnMappingUnsupportedException("Changing column mapping mode from" +
+      s" '$oldMode' to '$newMode' is not supported.")
   }
 
   def writesWithColumnMappingNotSupported: Throwable = {
@@ -1223,11 +1223,11 @@ object DeltaErrors
         s"cannot be set to `${mode.name}` when using CONVERT TO DELTA.")
   }
 
-  def setColumnMappingModeOnOldProtocol(oldProtocol: Protocol): Throwable = {
+  def changeColumnMappingModeOnOldProtocol(oldProtocol: Protocol): Throwable = {
     // scalastyle:off line.size.limit
     new ColumnMappingUnsupportedException(
       s"""
-         |Your current table protocol version does not support the setting of column mapping mode
+         |Your current table protocol version does not support changing column mapping modes
          |using ${DeltaConfigs.COLUMN_MAPPING_MODE.key}.
          |
          |Required Delta protocol version for column mapping:
@@ -1242,11 +1242,9 @@ object DeltaErrors
     // scalastyle:on line.size.limit
   }
 
-  def schemaChangeInColumnMappingProtocolNotSupported(
+  def schemaChangeDuringMappingModeChangeNotSupported(
       oldSchema: StructType,
-      newSchema: StructType,
-      mappingMode: DeltaColumnMappingMode): Throwable = {
-    // scalastyle:off line.size.limit
+      newSchema: StructType): Throwable =
     new ColumnMappingUnsupportedException(
       s"""
          |Schema change is detected:
@@ -1257,11 +1255,9 @@ object DeltaErrors
          |new schema:
          |${formatSchema(newSchema)}
          |
-         |Schema changes are not allowed in column mapping mode `$mappingMode`.
+         |Schema changes are not allowed during the change of column mapping mode.
          |
          |""".stripMargin)
-    // scalastyle:on line.size.limit
-  }
 
   def foundInvalidCharsInColumnNames(cause: Throwable): Throwable = {
     var adviceMsg = "Please use alias to rename it."

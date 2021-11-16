@@ -528,7 +528,7 @@ object DeltaLog extends DeltaLogging {
           DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
         // We pick up only file system options so that we don't pass any parquet or json options to
         // the code that reads Delta transaction logs.
-        options.filterKeys(_.startsWith("fs."))
+        options.filterKeys(_.startsWith("fs.")).toMap
       } else {
         Map.empty
       }

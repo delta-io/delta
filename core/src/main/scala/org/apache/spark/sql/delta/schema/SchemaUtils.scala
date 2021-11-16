@@ -722,7 +722,8 @@ object SchemaUtils {
           check(fromValue, toValue, columnPath :+ "value")
 
         case (StructType(fromFields), StructType(toFields)) =>
-          val remainingFields = fromFields.to[mutable.Set]
+          val remainingFields = mutable.Set[StructField]()
+          remainingFields ++= fromFields
           toFields.foreach { toField =>
             fromFields.find(field => resolver(field.name, toField.name)) match {
               case Some(fromField) =>
