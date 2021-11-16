@@ -151,7 +151,7 @@ class DeltaDataSource
       new DeltaOptions(parameters, sqlContext.sparkSession.sessionState.conf),
       partitionColumns = partitionColumns,
       configuration = DeltaConfigs.validateConfigurations(
-        parameters.filterKeys(_.startsWith("delta."))),
+        parameters.filterKeys(_.startsWith("delta.")).toMap),
       data = data).run(sqlContext.sparkSession)
 
     deltaLog.createRelation()
