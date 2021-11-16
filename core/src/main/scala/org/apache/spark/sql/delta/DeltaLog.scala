@@ -353,6 +353,9 @@ class DeltaLog private(
       fileIndex,
       partitionSchema =
         DeltaColumnMapping.dropColumnMappingMetadata(snapshot.metadata.partitionSchema),
+      // We pass all table columns as `dataSchema` so that Spark will preserve the partition column
+      // locations. Otherwise, for any partition columns not in `dataSchema`, Spark would just
+      // append them to the end of `dataSchema`.
       dataSchema =
         DeltaColumnMapping.dropColumnMappingMetadata(
           GeneratedColumn.removeGenerationExpressions(snapshot.metadata.schema)),
@@ -389,6 +392,9 @@ class DeltaLog private(
       fileIndex,
       partitionSchema = DeltaColumnMapping.dropColumnMappingMetadata(
         snapshotToUse.metadata.partitionSchema),
+      // We pass all table columns as `dataSchema` so that Spark will preserve the partition column
+      // locations. Otherwise, for any partition columns not in `dataSchema`, Spark would just
+      // append them to the end of `dataSchema`
       dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
         GeneratedColumn.removeGenerationExpressions(
           SchemaUtils.dropNullTypeColumns(snapshotToUse.metadata.schema))),
