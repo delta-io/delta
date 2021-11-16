@@ -482,6 +482,17 @@ trait DeltaSQLConfBase {
           |`DataFrameReader.table/DataFrameWriter.saveAsTable` doesn't support this.""".stripMargin)
       .booleanConf
       .createWithDefault(true)
+
+  val CONVERT_EMPTY_TO_NULL_FOR_STRING_PARTITION_COL =
+    buildConf("convertEmptyToNullForStringPartitionCol")
+      .internal()
+      .doc(
+        """
+          |If true, always convert empty string to null for string partition columns before
+          |constraint checks.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase
