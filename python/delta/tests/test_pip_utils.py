@@ -51,10 +51,10 @@ class PipUtilsTests(unittest.TestCase):
         self.spark.read.format("delta").load(self.tempFile)
 
 
-# if __name__ == "__main__":
-#     try:
-#         import xmlrunner
-#         testRunner = xmlrunner.XMLTestRunner(output='target/test-reports', verbosity=4)
-#     except ImportError:
-#         testRunner = None
-#     unittest.main(testRunner=testRunner, verbosity=4)
+if __name__ == "__main__":
+    try:
+        import xmlrunner
+        testRunner = xmlrunner.XMLTestRunner(output='target/test-reports', verbosity=4)
+    except ImportError:
+        testRunner = None
+    unittest.main(testRunner=testRunner, verbosity=4)
