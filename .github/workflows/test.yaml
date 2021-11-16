@@ -37,3 +37,4 @@ jobs:
           build/sbt "++ ${{ matrix.scala }} hiveTez/test"
           build/sbt "++ ${{ matrix.scala }} hive2MR/test"
           build/sbt "++ ${{ matrix.scala }} hive2Tez/test"
+          build/sbt "++ ${{ matrix.scala }} flinkConnector/test"
