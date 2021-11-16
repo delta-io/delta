@@ -20,10 +20,7 @@ from delta.tables import DeltaTable
 import shutil
 
 # Clear any previous runs
-try:
-    shutil.rmtree("/tmp/delta-table")
-except:
-    pass
+shutil.rmtree("/tmp/delta-table", ignore_errors=True)
 
 # Enable SQL commands and Update/Delete/Merge for the current spark session.
 # we need to set the following configs

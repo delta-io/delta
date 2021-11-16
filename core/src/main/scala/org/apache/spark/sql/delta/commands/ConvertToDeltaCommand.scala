@@ -39,7 +39,7 @@ import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, Se
 import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog, V1Table}
-import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.PartitioningUtils
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, ParquetToSparkSchemaConverter}
 import org.apache.spark.sql.execution.streaming.{FileStreamSink, MetadataLogFileIndex}
@@ -71,7 +71,7 @@ import org.apache.spark.util.SerializableConfiguration
 abstract class ConvertToDeltaCommandBase(
     tableIdentifier: TableIdentifier,
     partitionSchema: Option[StructType],
-    deltaPath: Option[String]) extends RunnableCommand with DeltaCommand {
+    deltaPath: Option[String]) extends LeafRunnableCommand with DeltaCommand {
 
   protected def isSupportedProvider(lowerCaseProvider: String): Boolean = {
     lowerCaseProvider == "parquet"
@@ -118,7 +118,7 @@ abstract class ConvertToDeltaCommandBase(
         case v1: V1Table =>
           val table = v1.catalogTable
           // Hive adds some transient table properties which should be ignored
-          val props = table.properties.filterKeys(_ != "transient_lastDdlTime")
+          val props = table.properties.filterKeys(_ != "transient_lastDdlTime").toMap
           Some(ConvertTarget(Some(table), table.provider, new Path(table.location).toString, props))
         case _: DeltaTableV2 =>
           // Already a Delta table
@@ -227,9 +227,8 @@ abstract class ConvertToDeltaCommandBase(
 
       if (mergedConfig != deltaLogConfig) {
         if (deltaLogConfig.nonEmpty &&
-          spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_METADATA_CHECK_ENABLED)) {
-          throw DeltaErrors
-            .convertMetastoreMetadataMismatchException(tableProps, deltaLogConfig)
+            conf.getConf(DeltaSQLConf.DELTA_CONVERT_METADATA_CHECK_ENABLED)) {
+          throw DeltaErrors.convertMetastoreMetadataMismatchException(tableProps, deltaLogConfig)
         }
         val newMetadata = txn.metadata.copy(
           configuration = mergedConfig
@@ -397,9 +396,8 @@ abstract class ConvertToDeltaCommandBase(
   private def checkColumnMapping(
       txnMetadata: Metadata,
       convertTargetTable: ConvertTargetTable): Unit = {
-    val columnMappingMode = DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(txnMetadata)
-    if (convertTargetTable.requiredColumnMappingMode != columnMappingMode) {
-      throw DeltaErrors.convertToDeltaWithColumnMappingNotSupported(columnMappingMode)
+    if (convertTargetTable.requiredColumnMappingMode != txnMetadata.columnMappingMode) {
+      throw DeltaErrors.convertToDeltaWithColumnMappingNotSupported(txnMetadata.columnMappingMode)
     }
   }
 
@@ -409,9 +407,7 @@ case class ConvertToDeltaCommand(
     tableIdentifier: TableIdentifier,
     partitionSchema: Option[StructType],
     deltaPath: Option[String])
-  extends ConvertToDeltaCommandBase(tableIdentifier, partitionSchema, deltaPath) {
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
-}
+  extends ConvertToDeltaCommandBase(tableIdentifier, partitionSchema, deltaPath)
 
 /**
  * An interface for the table to be converted to Delta.
@@ -686,11 +682,13 @@ object ConvertToDeltaCommand {
 
       val tz = Option(conf.sessionLocalTimeZone)
       // Check if the partition value can be casted to the provided type
-      partValues.literals.zip(partitionFields).foreach { case (literal, field) =>
-        if (literal.eval() != null && Cast(literal, field.dataType, tz).eval() == null) {
-          val partitionValue = Cast(literal, StringType, tz).eval()
-          val partitionValueStr = Option(partitionValue).map(_.toString).orNull
-          throw DeltaErrors.castPartitionValueException(partitionValueStr, field.dataType)
+      if (!conf.getConf(DeltaSQLConf.DELTA_CONVERT_PARTITION_VALUES_IGNORE_CAST_FAILURE)) {
+        partValues.literals.zip(partitionFields).foreach { case (literal, field) =>
+          if (literal.eval() != null && Cast(literal, field.dataType, tz).eval() == null) {
+            val partitionValue = Cast(literal, StringType, tz).eval()
+            val partitionValueStr = Option(partitionValue).map(_.toString).orNull
+            throw DeltaErrors.castPartitionValueException(partitionValueStr, field.dataType)
+          }
         }
       }
 

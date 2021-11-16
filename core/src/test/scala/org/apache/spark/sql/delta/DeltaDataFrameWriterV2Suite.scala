@@ -66,6 +66,7 @@ trait OpenSourceDataFrameWriterV2Tests
       .filterKeys(!reservedProp.contains(_))
       .filterKeys(k =>
         k != Protocol.MIN_READER_VERSION_PROP &&  k != Protocol.MIN_WRITER_VERSION_PROP)
+      .toMap
   }
 
   test("Append: basic append") {
@@ -682,3 +683,4 @@ class DeltaDataFrameWriterV2Suite
     }
   }
 }
+

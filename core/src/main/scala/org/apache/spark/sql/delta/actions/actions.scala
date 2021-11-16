@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaConfigs, DeltaErrors, GeneratedColumn}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, GeneratedColumn}
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -160,7 +160,7 @@ object Protocol {
       minimumRequired = DeltaColumnMapping.MIN_PROTOCOL_VERSION
     }
 
-    minimumRequired -> featuresUsed
+    minimumRequired -> featuresUsed.toSeq
   }
 
   /** Cast the table property for the protocol version to an integer. */
@@ -365,6 +365,8 @@ case class AddCDCFile(
 
 case class Format(
     provider: String = "parquet",
+    // If we support `options` in future, we should not store any file system options since they may
+    // contain credentials.
     options: Map[String, String] = Map.empty)
 
 /**
@@ -387,15 +389,25 @@ case class Metadata(
   // defs, because parsing StructTypes from JSON is extremely expensive and has
   // caused perf. problems here in the past:
 
+  /**
+   * Column mapping mode for this table
+   */
+  @JsonIgnore
+  lazy val columnMappingMode: DeltaColumnMappingMode =
+    DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(this)
+
+  /**
+   * Column mapping max id for this table
+   */
+  @JsonIgnore
+  lazy val columnMappingMaxId: Long =
+    DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(this)
+
   /** Returns the schema as a [[StructType]] */
   @JsonIgnore
-  lazy val schema: StructType =
-    Option(schemaString).map { s =>
-      DeltaColumnMapping.setColumnMetadata(
-        DataType.fromJson(s).asInstanceOf[StructType],
-        DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(this)
-      )
-    }.getOrElse(StructType.apply(Nil))
+  lazy val schema: StructType = Option(schemaString)
+    .map(DataType.fromJson(_).asInstanceOf[StructType])
+    .getOrElse(StructType.apply(Nil))
 
   /** Returns the partitionSchema as a [[StructType]] */
   @JsonIgnore
@@ -448,6 +460,11 @@ trait CommitMarker {
  * Holds provenance information about changes to the table. This [[Action]]
  * is not stored in the checkpoint and has reduced compatibility guarantees.
  * Information stored in it is best effort (i.e. can be falsified by the writer).
+ *
+ * @param isBlindAppend Whether this commit has blindly appended without caring about existing files
+ * @param engineInfo The information for the engine that makes the commit.
+ *                   If a commit is made by Delta Lake 1.1.0 or above, it will be
+ *                   `Apache-Spark/x.y.z Delta-Lake/x.y.z`.
  */
 case class CommitInfo(
     // The commit version should be left unfilled during commit(). When reading a delta file, we can
@@ -466,11 +483,11 @@ case class CommitInfo(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     readVersion: Option[Long],
     isolationLevel: Option[String],
-    /** Whether this commit has blindly appended without caring about existing files */
     isBlindAppend: Option[Boolean],
     operationMetrics: Option[Map[String, String]],
     userMetadata: Option[String],
-    tags: Option[Map[String, String]]) extends Action with CommitMarker {
+    tags: Option[Map[String, String]],
+    engineInfo: Option[String]) extends Action with CommitMarker {
   override def wrap: SingleAction = SingleAction(commitInfo = this)
 
   override def withTimestamp(timestamp: Long): CommitInfo = {
@@ -514,7 +531,7 @@ object NotebookInfo {
 object CommitInfo {
   def empty(version: Option[Long] = None): CommitInfo = {
     CommitInfo(version, null, None, None, null, null, None, None,
-                None, None, None, None, None, None, None)
+      None, None, None, None, None, None, None, None)
   }
 
   def apply(
@@ -528,6 +545,7 @@ object CommitInfo {
       operationMetrics: Option[Map[String, String]],
       userMetadata: Option[String],
       tags: Option[Map[String, String]]): CommitInfo = {
+
     val getUserName = commandContext.get("user").flatMap {
       case "unknown" => None
       case other => Option(other)
@@ -548,7 +566,12 @@ object CommitInfo {
       isBlindAppend,
       operationMetrics,
       userMetadata,
-      tags)
+      tags,
+      getEngineInfo)
+  }
+
+  private def getEngineInfo: Option[String] = {
+    Some(s"Apache-Spark/${org.apache.spark.SPARK_VERSION} Delta-Lake/${io.delta.VERSION}")
   }
 
 }

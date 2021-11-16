@@ -16,12 +16,19 @@
 
 import java.nio.file.Files
 
-val sparkVersion = "3.1.1"
-scalaVersion := "2.12.14"
+val sparkVersion = "3.2.0"
+val scala212 = "2.12.14"
+val scala213 = "2.13.5"
+
+scalaVersion := scala212
+
+// crossScalaVersions must be set to Nil on the root project
+crossScalaVersions := Nil
 
 lazy val commonSettings = Seq(
   organization := "io.delta",
   scalaVersion := "2.12.14",
+  crossScalaVersions := Seq(scala212, scala213),
   fork := true
 )
 
@@ -42,7 +49,7 @@ lazy val core = (project in file("core"))
       "org.apache.spark" %% "spark-catalyst" % sparkVersion % "provided",
 
       // Test deps
-      "org.scalatest" %% "scalatest" % "3.1.0" % "test",
+      "org.scalatest" %% "scalatest" % "3.2.9" % "test",
       "junit" % "junit" % "4.12" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion % "test" classifier "tests",
@@ -91,7 +98,19 @@ lazy val core = (project in file("core"))
       val dir = baseDirectory.value.getParentFile / "target" / "scala-2.12" / "classes"
       Files.createDirectories(dir.toPath)
     },
-    Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value
+    Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value,
+    // Generate the package object to provide the version information in runtime.
+    Compile / sourceGenerators += Def.task {
+      val file = (Compile / sourceManaged).value / "io" / "delta" / "package.scala"
+      IO.write(file,
+        s"""package io
+           |
+           |package object delta {
+           |  val VERSION = "${version.value}"
+           |}
+           |""".stripMargin)
+      Seq(file)
+    }
   )
 
 lazy val contribs = (project in file("contribs"))
@@ -212,7 +231,15 @@ def getPrevVersion(currentVersion: String): String = {
 
 lazy val mimaSettings = Seq(
   Test / test := ((Test / test) dependsOn mimaReportBinaryIssues).value,
-  mimaPreviousArtifacts := Set("io.delta" %% "delta-core" %  getPrevVersion(version.value)),
+  mimaPreviousArtifacts := {
+    if (CrossVersion.partialVersion(scalaVersion.value) == Some((2, 13))) {
+      // Skip mima check since we don't have a Scala 2.13 release yet.
+      // TODO Update this after releasing 1.1.0.
+      Set.empty
+    } else {
+      Set("io.delta" %% "delta-core" % getPrevVersion(version.value))
+    }
+  },
   mimaBinaryIssueFilters ++= MimaExcludes.ignoredABIProblems
 )
 

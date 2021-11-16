@@ -35,14 +35,14 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException, UnresolvedAttribute}
+import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException, UnresolvedAttribute, UnresolvedFieldName, UnresolvedFieldPosition}
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable, CatalogTableType, CatalogUtils, SessionCatalog}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, QualifiedColType}
 import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableChange, V1Table}
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.TableChange._
 import org.apache.spark.sql.connector.expressions.{BucketTransform, FieldReference, IdentityTransform, Transform}
-import org.apache.spark.sql.connector.write.{LogicalWriteInfo, V1WriteBuilder, WriteBuilder}
+import org.apache.spark.sql.connector.write.{LogicalWriteInfo, V1Write, WriteBuilder}
 import org.apache.spark.sql.execution.datasources.{DataSource, PartitioningUtils}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
 import org.apache.spark.sql.internal.SQLConf
@@ -139,7 +139,6 @@ class DeltaCatalog extends DelegatingCatalogExtension
       comment = commentOpt)
 
     val withDb = verifyTableAndSolidify(tableDesc, None)
-    ParquetSchemaConverter.checkFieldNames(tableDesc.schema.fieldNames)
 
     val writer = sourceQuery.map { df =>
       WriteIntoDelta(
@@ -281,7 +280,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
         throw DeltaErrors.operationNotSupportedException(s"Partitioning by expressions")
     }
 
-    (identityCols, bucketSpec)
+    (identityCols.toSeq, bucketSpec)
   }
 
   /** Performs checks on the parameters provided for table creation for a Delta table. */
@@ -397,7 +396,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
     override def capabilities(): util.Set[TableCapability] = Set(V1_BATCH_WRITE).asJava
 
-    override def newWriteBuilder(info: LogicalWriteInfo): V1WriteBuilder = {
+    override def newWriteBuilder(info: LogicalWriteInfo): WriteBuilder = {
       writeOptions = info.options.asCaseSensitiveMap().asScala.toMap
       new DeltaV1WriteBuilder
     }
@@ -405,11 +404,13 @@ class DeltaCatalog extends DelegatingCatalogExtension
     /*
      * WriteBuilder for creating a Delta table.
      */
-    private class DeltaV1WriteBuilder extends WriteBuilder with V1WriteBuilder {
-      override def buildForV1Write(): InsertableRelation = {
-        new InsertableRelation {
-          override def insert(data: DataFrame, overwrite: Boolean): Unit = {
-            asSelectQuery = Option(data)
+    private class DeltaV1WriteBuilder extends WriteBuilder {
+      override def build(): V1Write = new V1Write {
+        override def toInsertableRelation(): InsertableRelation = {
+          new InsertableRelation {
+            override def insert(data: DataFrame, overwrite: Boolean): Unit = {
+              asSelectQuery = Option(data)
+            }
           }
         }
       }
@@ -438,12 +439,17 @@ class DeltaCatalog extends DelegatingCatalogExtension
         AlterTableAddColumnsDeltaCommand(
           table,
           newColumns.asInstanceOf[Seq[AddColumn]].map { col =>
+            // Convert V2 `AddColumn` to V1 `QualifiedColType` as `AlterTableAddColumnsDeltaCommand`
+            // is a V1 command.
+            val name = col.fieldNames()
+            val path = if (name.length > 1) Some(UnresolvedFieldName(name.init)) else None
             QualifiedColType(
-              col.fieldNames(),
+              path,
+              name.last,
               col.dataType(),
               col.isNullable,
               Option(col.comment()),
-              Option(col.position()))
+              Option(col.position()).map(UnresolvedFieldPosition))
           }).run(spark)
 
       case (t, newProperties) if t == classOf[SetProperty] =>
@@ -605,7 +611,6 @@ trait SupportsPathIdentifier extends TableCatalog { self: DeltaCatalog =>
     if (isPathIdentifier(ident)) {
       val path = new Path(ident.name())
       // scalastyle:off deltahadoopconfiguration
-      // TODO(SC-85267) Figure out how to pass the DataFrame options into this method.
       val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
       // scalastyle:on deltahadoopconfiguration
       fs.exists(path) && fs.listStatus(path).nonEmpty

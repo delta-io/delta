@@ -61,7 +61,7 @@ trait DeltaErrorsSuiteBase
           skipValidation = true), path))
 
   def errorMessagesToTest: Map[String, String] =
-    errorsToTest.mapValues(_.getMessage) ++ otherMessagesToTest
+    errorsToTest.mapValues(_.getMessage).toMap ++ otherMessagesToTest
 
   def checkIfValidResponse(url: String, response: String): Boolean = {
     response.contains("HTTP/1.1 200 OK") || response.contains("HTTP/2 200")

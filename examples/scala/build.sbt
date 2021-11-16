@@ -17,7 +17,11 @@
 name := "example"
 organization := "com.example"
 organizationName := "example"
-scalaVersion := "2.12.10"
+
+val scala212 = "2.12.14"
+val scala213 = "2.13.5"
+
+scalaVersion := scala212
 version := "0.1.0"
 
 def getDeltaVersion(): String = {
@@ -27,7 +31,7 @@ def getDeltaVersion(): String = {
     println("Using Delta version " + version)
     version
   } else {
-    "1.0.0"
+    "1.1.0"
   }
 }
 
@@ -38,8 +42,9 @@ lazy val extraMavenRepo = sys.env.get("EXTRA_MAVEN_REPO").toSeq.map { repo =>
 lazy val root = (project in file("."))
   .settings(
     name := "hello-world",
+    crossScalaVersions := Seq(scala212, scala213),
     libraryDependencies += "io.delta" %% "delta-core" % getDeltaVersion(),
-    libraryDependencies += "org.apache.spark" %% "spark-sql" % "3.1.0",
+    libraryDependencies += "org.apache.spark" %% "spark-sql" % "3.2.0",
     extraMavenRepo
   )
   

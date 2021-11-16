@@ -16,7 +16,9 @@
 
 package org.apache.spark.sql.delta.util
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaErrors
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.AnalysisErrorAt
@@ -105,6 +107,7 @@ trait AnalysisHelper {
         throw DeltaErrors.configureSparkSessionWithExtensionAndCatalog(e)
     }
   }
+
 }
 
 object AnalysisHelper {
@@ -113,6 +116,7 @@ object AnalysisHelper {
     extends LogicalPlan {
     override def output: Seq[Attribute] = Nil
 
-    // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+    override protected def withNewChildrenInternal(
+      newChildren: IndexedSeq[LogicalPlan]): FakeLogicalPlan = copy(children = newChildren)
   }
 }

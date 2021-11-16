@@ -40,7 +40,7 @@ trait OptimisticTransactionLegacyTests
 
   test("block append against metadata change") {
     withTempDir { tempDir =>
-      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+      val log = DeltaLog.forTable(spark, tempDir)
       // Initialize the log.
       log.startTransaction().commitManually()
 
@@ -55,7 +55,7 @@ trait OptimisticTransactionLegacyTests
 
   test("block read+append against append") {
     withTempDir { tempDir =>
-      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+      val log = DeltaLog.forTable(spark, tempDir)
       // Initialize the log.
       log.startTransaction().commitManually()
 
@@ -72,7 +72,7 @@ trait OptimisticTransactionLegacyTests
 
   test("allow blind-append against any data change") {
     withTempDir { tempDir =>
-      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+      val log = DeltaLog.forTable(spark, tempDir)
       // Initialize the log and add data.
       log.startTransaction().commitManually(addA)
 
@@ -86,7 +86,7 @@ trait OptimisticTransactionLegacyTests
 
   test("allow read+append+delete against no data change") {
     withTempDir { tempDir =>
-      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+      val log = DeltaLog.forTable(spark, tempDir)
       // Initialize the log and add data. ManualUpdate is just a no-op placeholder.
       log.startTransaction().commitManually(addA)
 
@@ -665,7 +665,7 @@ trait OptimisticTransactionLegacyTests
     val actionWithMetaData = actions :+ metadata
 
     withTempDir { tempDir =>
-      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+      val log = DeltaLog.forTable(spark, tempDir)
       // Initialize the log and add data. ManualUpdate is just a no-op placeholder.
       log.startTransaction().commit(Seq(metadata), ManualUpdate)
       log.startTransaction().commitManually(actionWithMetaData: _*)
@@ -675,7 +675,7 @@ trait OptimisticTransactionLegacyTests
 
   test("allow concurrent set-txns with different app ids") {
     withTempDir { tempDir =>
-      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+      val log = DeltaLog.forTable(spark, tempDir)
       // Initialize the log.
       log.startTransaction().commitManually()
 
@@ -691,7 +691,7 @@ trait OptimisticTransactionLegacyTests
 
   test("block concurrent set-txns with the same app id") {
     withTempDir { tempDir =>
-      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+      val log = DeltaLog.forTable(spark, tempDir)
       // Initialize the log.
       log.startTransaction().commitManually()
 

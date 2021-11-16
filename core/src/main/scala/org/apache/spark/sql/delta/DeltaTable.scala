@@ -85,7 +85,7 @@ object DeltaTableUtils extends PredicateHelper
    */
   def isDeltaTable(spark: SparkSession, tableName: TableIdentifier): Boolean = {
     val catalog = spark.sessionState.catalog
-    val tableIsNotTemporaryTable = !catalog.isTemporaryTable(tableName)
+    val tableIsNotTemporaryTable = !catalog.isTempView(tableName)
     val tableExists =
       (tableName.database.isEmpty || catalog.databaseExists(tableName.database.get)) &&
       catalog.tableExists(tableName)
@@ -323,15 +323,15 @@ object DeltaTableUtils extends PredicateHelper
    */
   def extractIfPathContainsTimeTravel(
       session: SparkSession,
-      path: String): (String, Option[DeltaTimeTravelSpec]) = {
+      path: String,
+      options: Map[String, String]): (String, Option[DeltaTimeTravelSpec]) = {
     val conf = session.sessionState.conf
     if (!DeltaTimeTravelSpec.isApplicable(conf, path)) return path -> None
 
     val maybePath = new Path(path)
 
     // scalastyle:off deltahadoopconfiguration
-    // TODO(SC-85267) Use DataFrame options to create Hadoop Configuration
-    val fs = maybePath.getFileSystem(session.sessionState.newHadoopConf())
+    val fs = maybePath.getFileSystem(session.sessionState.newHadoopConfWithOptions(options))
     // scalastyle:on deltahadoopconfiguration
 
     // If the folder really exists, quit

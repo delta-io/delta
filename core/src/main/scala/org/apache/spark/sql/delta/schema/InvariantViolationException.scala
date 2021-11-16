@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.schema
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.constraints.Constraints
+import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraints}
 
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 
@@ -41,7 +41,12 @@ object InvariantViolationException {
   def apply(
       constraint: Constraints.Check,
       values: Map[String, Any]): InvariantViolationException = {
-    val valueLines = values.map {
+    if (constraint.name == CharVarcharConstraint.INVARIANT_NAME) {
+      return new InvariantViolationException("Exceeds char/varchar type length limitation")
+    }
+
+    // Sort by the column name to generate consistent error messages in Scala 2.12 and 2.13.
+    val valueLines = values.toSeq.sortBy(_._1).map {
       case (column, value) =>
         s" - $column : $value"
     }.mkString("\n")

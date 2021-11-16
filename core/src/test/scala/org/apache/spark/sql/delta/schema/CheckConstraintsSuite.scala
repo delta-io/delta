@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.schema
 import scala.collection.JavaConverters._
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
@@ -49,9 +50,7 @@ class CheckConstraintsSuite extends QueryTest
   }
 
   private def errorContains(errMsg: String, str: String): Unit = {
-    val actual = errMsg.replaceAll("`", "")
-    val expected = str.replaceAll("`", "")
-    assert(actual.contains(expected))
+    errMsg.contains(str)
   }
 
   test("can't add unparseable constraint") {
@@ -90,6 +89,16 @@ class CheckConstraintsSuite extends QueryTest
       errorContains(e.getMessage,
         s"Constraint 'trivial' already exists as a CHECK constraint. Please delete the " +
           s"old constraint first.\nOld constraint:\ntrue")
+    }
+  }
+
+  test("can't add constraint with names that are reserved for internal usage") {
+    withTestTable { table =>
+      val reservedName = CharVarcharConstraint.INVARIANT_NAME
+      val e = intercept[AnalysisException] {
+        sql(s"ALTER TABLE $table ADD CONSTRAINT $reservedName CHECK (true)")
+      }
+      errorContains(e.getMessage, s"Cannot use '$reservedName' as the name of a CHECK constraint")
     }
   }
 

@@ -21,6 +21,8 @@ import java.io.{File, IOException}
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
 
+import scala.collection.JavaConverters._
+import scala.collection.mutable
 import scala.concurrent.Future
 import scala.util.Try
 import scala.util.control.NonFatal
@@ -35,7 +37,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStoreProvider
 import com.google.common.cache.{CacheBuilder, RemovalNotification}
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -60,6 +62,7 @@ import org.apache.spark.util.{Clock, SystemClock}
 class DeltaLog private(
     val logPath: Path,
     val dataPath: Path,
+    val options: Map[String, String],
     val clock: Clock)
   extends Checkpoints
   with MetadataCleanup
@@ -78,11 +81,10 @@ class DeltaLog private(
    * Returns the Hadoop [[Configuration]] object which can be used to access the file system. All
    * Delta code should use this method to create the Hadoop [[Configuration]] object, so that the
    * hadoop file system configurations specified in DataFrame options will come into effect.
-   *
-   * TODO(SC-85267) Add the DataFrame options to the Hadoop [[Configuration]] object.
    */
   // scalastyle:off deltahadoopconfiguration
-  final def newDeltaHadoopConf(): Configuration = spark.sessionState.newHadoopConf
+  final def newDeltaHadoopConf(): Configuration =
+    spark.sessionState.newHadoopConfWithOptions(options)
   // scalastyle:on deltahadoopconfiguration
 
   /** Used to read and write physical log files and checkpoints. */
@@ -246,6 +248,27 @@ class DeltaLog private(
     }
   }
 
+  /**
+   * Get access to all actions starting from "startVersion" (inclusive) via [[FileStatus]].
+   * If `startVersion` doesn't exist, return an empty Iterator.
+   */
+  def getChangeLogFiles(
+      startVersion: Long,
+      failOnDataLoss: Boolean = false): Iterator[(Long, FileStatus)] = {
+    val deltas = store.listFrom(deltaFile(logPath, startVersion), newDeltaHadoopConf())
+      .filter(f => isDeltaFile(f.getPath))
+    // Subtract 1 to ensure that we have the same check for the inclusive startVersion
+    var lastSeenVersion = startVersion - 1
+    deltas.map { status =>
+      val version = deltaVersion(status.getPath)
+      if (failOnDataLoss && version > lastSeenVersion + 1) {
+        throw DeltaErrors.failOnDataLossException(lastSeenVersion + 1, version)
+      }
+      lastSeenVersion = version
+      (version, status)
+    }
+  }
+
   /* --------------------- *
    |  Protocol validation  |
    * --------------------- */
@@ -371,7 +394,10 @@ class DeltaLog private(
           SchemaUtils.dropNullTypeColumns(snapshotToUse.metadata.schema))),
       bucketSpec = bucketSpec,
       snapshotToUse.fileFormat,
-      snapshotToUse.metadata.format.options)(spark) with InsertableRelation {
+      // `metadata.format.options` is not set today. Even if we support it in future, we shouldn't
+      // store any file system options since they may contain credentials. Hence, it will never
+      // conflict with `DeltaLog.options`.
+      snapshotToUse.metadata.format.options ++ options)(spark) with InsertableRelation {
       def insert(data: DataFrame, overwrite: Boolean): Unit = {
         val mode = if (overwrite) SaveMode.Overwrite else SaveMode.Append
         WriteIntoDelta(
@@ -389,13 +415,19 @@ class DeltaLog private(
 object DeltaLog extends DeltaLogging {
 
   /**
-   * We create only a single [[DeltaLog]] for any given path to avoid wasted work
+   * The key type of `DeltaLog` cache. It's a pair of the canonicalized table path and the file
+   * system options (options starting with "fs." prefix) passed into `DataFrameReader/Writer`
+   */
+  private type DeltaLogCacheKey = (Path, Map[String, String])
+
+  /**
+   * We create only a single [[DeltaLog]] for any given `DeltaLogCacheKey` to avoid wasted work
    * in reconstructing the log.
    */
   private val deltaLogCache = {
     val builder = CacheBuilder.newBuilder()
       .expireAfterAccess(60, TimeUnit.MINUTES)
-      .removalListener((removalNotification: RemovalNotification[Path, DeltaLog]) => {
+      .removalListener((removalNotification: RemovalNotification[DeltaLogCacheKey, DeltaLog]) => {
           val log = removalNotification.getValue
           try log.snapshot.uncache() catch {
             case _: java.lang.NullPointerException =>
@@ -405,12 +437,17 @@ object DeltaLog extends DeltaLogging {
     sys.props.get("delta.log.cacheSize")
       .flatMap(v => Try(v.toLong).toOption)
       .foreach(builder.maximumSize)
-    builder.build[Path, DeltaLog]()
+    builder.build[DeltaLogCacheKey, DeltaLog]()
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: String): DeltaLog = {
-    apply(spark, new Path(dataPath, "_delta_log"), new SystemClock)
+    apply(spark, new Path(dataPath, "_delta_log"), Map.empty, new SystemClock)
+  }
+
+  /** Helper for creating a log when it stored at the root of the data. */
+  def forTable(spark: SparkSession, dataPath: String, options: Map[String, String]): DeltaLog = {
+    apply(spark, new Path(dataPath, "_delta_log"), options, new SystemClock)
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
@@ -421,6 +458,11 @@ object DeltaLog extends DeltaLogging {
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: Path): DeltaLog = {
     apply(spark, new Path(dataPath, "_delta_log"), new SystemClock)
+  }
+
+  /** Helper for creating a log when it stored at the root of the data. */
+  def forTable(spark: SparkSession, dataPath: Path, options: Map[String, String]): DeltaLog = {
+    apply(spark, new Path(dataPath, "_delta_log"), options, new SystemClock)
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
@@ -472,10 +514,26 @@ object DeltaLog extends DeltaLogging {
     }
   }
 
-  // TODO: Don't assume the data path here.
   def apply(spark: SparkSession, rawPath: Path, clock: Clock = new SystemClock): DeltaLog = {
+    apply(spark, rawPath, Map.empty, clock)
+  }
+
+  def apply(
+      spark: SparkSession,
+      rawPath: Path,
+      options: Map[String, String],
+      clock: Clock): DeltaLog = {
+    val fileSystemOptions: Map[String, String] =
+      if (spark.sessionState.conf.getConf(
+          DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
+        // We pick up only file system options so that we don't pass any parquet or json options to
+        // the code that reads Delta transaction logs.
+        options.filterKeys(_.startsWith("fs.")).toMap
+      } else {
+        Map.empty
+      }
     // scalastyle:off deltahadoopconfiguration
-    val hadoopConf = spark.sessionState.newHadoopConf()
+    val hadoopConf = spark.sessionState.newHadoopConfWithOptions(fileSystemOptions)
     // scalastyle:on deltahadoopconfiguration
     val fs = rawPath.getFileSystem(hadoopConf)
     val path = fs.makeQualified(rawPath)
@@ -484,7 +542,7 @@ object DeltaLog extends DeltaLogging {
       "delta.log.create",
       Map(TAG_TAHOE_PATH -> path.getParent.toString)) {
         AnalysisHelper.allowInvokingTransformsInAnalyzer {
-          new DeltaLog(path, path.getParent, clock)
+          new DeltaLog(path, path.getParent, fileSystemOptions, clock)
         }
     }
     // The following cases will still create a new ActionLog even if there is a cached
@@ -493,7 +551,7 @@ object DeltaLog extends DeltaLogging {
     // - Different `authority` (e.g., different user tokens in the path)
     // - Different mount point.
     try {
-      deltaLogCache.get(path, () => createDeltaLog())
+      deltaLogCache.get(path -> fileSystemOptions, () => createDeltaLog())
     } catch {
       case e: com.google.common.util.concurrent.UncheckedExecutionException =>
         throw e.getCause
@@ -505,10 +563,28 @@ object DeltaLog extends DeltaLogging {
     try {
       val rawPath = new Path(dataPath, "_delta_log")
       // scalastyle:off deltahadoopconfiguration
+      // This method cannot be called from DataFrameReader/Writer so it's safe to assume the user
+      // has set the correct file system configurations in the session configs.
       val fs = rawPath.getFileSystem(spark.sessionState.newHadoopConf())
       // scalastyle:on deltahadoopconfiguration
       val path = fs.makeQualified(rawPath)
-      deltaLogCache.invalidate(path)
+
+      if (spark.sessionState.conf.getConf(
+          DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
+        // We rely on the fact that accessing the key set doesn't modify the entry access time. See
+        // `CacheBuilder.expireAfterAccess`.
+        val keysToBeRemoved = mutable.ArrayBuffer[DeltaLogCacheKey]()
+        val iter = deltaLogCache.asMap().keySet().iterator()
+        while (iter.hasNext) {
+          val key = iter.next()
+          if (key._1 == path) {
+            keysToBeRemoved += key
+          }
+        }
+        deltaLogCache.invalidateAll(keysToBeRemoved.asJava)
+      } else {
+        deltaLogCache.invalidate(path -> Map.empty)
+      }
     } catch {
       case NonFatal(e) => logWarning(e.getMessage, e)
     }
@@ -516,6 +592,11 @@ object DeltaLog extends DeltaLogging {
 
   def clearCache(): Unit = {
     deltaLogCache.invalidateAll()
+  }
+
+  /** Return the number of cached `DeltaLog`s. Exposing for testing */
+  private[delta] def cacheSize: Long = {
+    deltaLogCache.size()
   }
 
   /**

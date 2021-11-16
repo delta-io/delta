@@ -501,7 +501,7 @@ object DeltaHistoryManager extends DeltaLogging {
      */
     private def flushBuffer(): Unit = {
       if (maybeDeleteFiles.lastOption.exists(shouldDeleteFile)) {
-        filesToDelete.enqueue(maybeDeleteFiles: _*)
+        filesToDelete ++= maybeDeleteFiles
       }
       maybeDeleteFiles.clear()
     }
@@ -574,7 +574,8 @@ case class DeltaHistory(
     isolationLevel: Option[String],
     isBlindAppend: Option[Boolean],
     operationMetrics: Option[Map[String, String]],
-    userMetadata: Option[String]) extends CommitMarker {
+    userMetadata: Option[String],
+    engineInfo: Option[String]) extends CommitMarker {
 
   override def withTimestamp(timestamp: Long): DeltaHistory = {
     this.copy(timestamp = new Timestamp(timestamp))
@@ -602,7 +603,8 @@ object DeltaHistory {
       isolationLevel = ci.isolationLevel,
       isBlindAppend = ci.isBlindAppend,
       operationMetrics = ci.operationMetrics,
-      userMetadata = ci.userMetadata)
+      userMetadata = ci.userMetadata,
+      engineInfo = ci.engineInfo)
   }
 }
 

@@ -67,6 +67,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_CONVERT_PARTITION_VALUES_IGNORE_CAST_FAILURE =
+    buildConf("convert.partitionValues.ignoreCastFailure")
+      .doc(
+        """ When converting to Delta, ignore the failure when casting a partition value to
+        | the specified data type, in which case the partition column will be filled with null.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_SNAPSHOT_PARTITIONS =
     buildConf("snapshotPartitions")
       .internal()
@@ -223,9 +232,17 @@ trait DeltaSQLConfBase {
     buildConf("vacuum.parallelDelete.enabled")
       .doc("Enables parallelizing the deletion of files during a vacuum command. Enabling " +
         "may result hitting rate limits on some storage backends. When enabled, parallelization " +
-        "is controlled by the default number of shuffle partitions.")
+        "is controlled 'spark.databricks.delta.vacuum.parallelDelete.parallelism'.")
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_VACUUM_PARALLEL_DELETE_PARALLELISM =
+    buildConf("vacuum.parallelDelete.parallelism")
+      .doc("Sets the number of partitions to use for parallel deletes. If not set, defaults to " +
+        "spark.sql.shuffle.partitions.")
+      .intConf
+      .checkValue(_ > 0, "parallelDelete.parallelism must be positive")
+      .createOptional
 
   val DELTA_SCHEMA_AUTO_MIGRATE =
     buildConf("schema.autoMerge.enabled")
@@ -305,7 +322,7 @@ trait DeltaSQLConfBase {
           |writing the files.
         """.stripMargin)
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val MERGE_MATCHED_ONLY_ENABLED =
     buildConf("merge.optimizeMatchedOnlyMerge.enabled")
@@ -442,6 +459,27 @@ trait DeltaSQLConfBase {
           |rows in the source dataframe match that constraint.
           |If disabled, it will skip the constraint check and replace with all the rows
           |from the new dataframe.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val LOG_SIZE_IN_MEMORY_THRESHOLD =
+    buildConf("streaming.logSizeInMemoryThreshold")
+      .internal()
+      .doc(
+        """
+          |The threshold of transaction log file size to read into the memory. When a file is larger
+          |than this, we will read the log file in multiple passes rather than loading it into
+          |the memory entirely.""".stripMargin)
+      .longConf
+      .createWithDefault(128L * 1024 * 1024) // 128MB
+
+  val LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS =
+    buildConf("loadFileSystemConfigsFromDataFrameOptions")
+      .internal()
+      .doc(
+        """Whether to load file systems configs provided in DataFrameReader/Writer options when
+          |calling `DataFrameReader.load/DataFrameWriter.save` using a Delta table path.
+          |`DataFrameReader.table/DataFrameWriter.saveAsTable` doesn't support this.""".stripMargin)
       .booleanConf
       .createWithDefault(true)
 }

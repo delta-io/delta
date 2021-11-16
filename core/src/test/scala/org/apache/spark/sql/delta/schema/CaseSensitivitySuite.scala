@@ -195,6 +195,7 @@ class CaseSensitivitySuite extends QueryTest
             .option("replaceWhere", "key = 2") // note the different case
             .save(path)
         }
+        assert(e.getErrorClass == "MISSING_COLUMN")
       }
 
       checkAnswer(

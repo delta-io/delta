@@ -38,7 +38,8 @@ case class DeltaUpdateTable(
 
   override def output: Seq[Attribute] = Seq.empty
 
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+  override protected def withNewChildInternal(newChild: LogicalPlan): DeltaUpdateTable =
+    copy(child = newChild)
 }
 
 object DeltaUpdateTable {

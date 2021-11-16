@@ -32,7 +32,7 @@ import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.types.StructType
 
 /** The result returned by the `describe detail` command. */
@@ -68,7 +68,7 @@ object TableDetail {
  */
 case class DescribeDeltaDetailCommand(
     path: Option[String],
-    tableIdentifier: Option[TableIdentifier]) extends RunnableCommand with DeltaLogging {
+    tableIdentifier: Option[TableIdentifier]) extends LeafRunnableCommand with DeltaLogging {
 
   override val output: Seq[Attribute] = TableDetail.schema.toAttributes
 
@@ -199,6 +199,4 @@ case class DescribeDeltaDetailCommand(
         snapshot.protocol.minReaderVersion,
         snapshot.protocol.minWriterVersion))
   }
-
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }

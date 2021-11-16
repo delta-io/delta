@@ -39,7 +39,7 @@ import org.apache.spark.sql.catalyst.expressions.NamedExpression
 import org.apache.spark.sql.catalyst.expressions.codegen._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.execution.SQLExecution
-import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.functions._
@@ -205,7 +205,7 @@ case class MergeIntoCommand(
     condition: Expression,
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
     notMatchedClauses: Seq[DeltaMergeIntoInsertClause],
-    migratedSchema: Option[StructType]) extends RunnableCommand
+    migratedSchema: Option[StructType]) extends LeafRunnableCommand
   with DeltaCommand with PredicateHelper with AnalysisHelper with ImplicitMetadataOperation {
 
   import SQLMetrics._
@@ -658,8 +658,6 @@ case class MergeIntoCommand(
     }
     r
   }
-
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 object MergeIntoCommand {

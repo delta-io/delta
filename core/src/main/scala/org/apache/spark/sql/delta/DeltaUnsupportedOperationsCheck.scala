@@ -24,7 +24,7 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 import org.apache.spark.sql.catalyst.catalog.CatalogTableType
-import org.apache.spark.sql.catalyst.plans.logical.{AppendData, DropTable, LogicalPlan, OverwriteByExpression, V2WriteCommand}
+import org.apache.spark.sql.catalyst.plans.logical.{AppendData, DropTable, LogicalPlan, OverwriteByExpression, ShowCreateTable, V2WriteCommand}
 import org.apache.spark.sql.execution.command._
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 
@@ -83,7 +83,7 @@ case class DeltaUnsupportedOperationsCheck(spark: SparkSession)
       recordDeltaEvent(null, "delta.unsupported.dropPartition")
       fail(operation = "ALTER TABLE DROP PARTITION", a.tableName)
 
-    case a: AlterTableRecoverPartitionsCommand =>
+    case a: RepairTableCommand =>
       recordDeltaEvent(null, "delta.unsupported.recoverPartitions")
       fail(operation = "ALTER TABLE RECOVER PARTITIONS", a.tableName)
 
@@ -98,6 +98,10 @@ case class DeltaUnsupportedOperationsCheck(spark: SparkSession)
     case i: InsertIntoDataSourceDirCommand =>
       recordDeltaEvent(null, "delta.unsupported.insertDirectory")
       fail(operation = "INSERT OVERWRITE DIRECTORY", i.provider)
+
+    case ShowCreateTable(t: ResolvedTable, _, _) if t.table.isInstanceOf[DeltaTableV2] =>
+        recordDeltaEvent(null, "delta.unsupported.showCreateTable")
+        fail(operation = "SHOW CREATE TABLE", "DELTA")
 
     // Delta table checks
     case append: AppendData =>

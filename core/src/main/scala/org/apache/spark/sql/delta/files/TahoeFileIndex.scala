@@ -22,7 +22,7 @@ import java.util.Objects
 import scala.collection.mutable.ArrayBuffer
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, NoMapping, Snapshot}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.actions.SingleAction.addFileEncoder
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -164,16 +164,17 @@ case class TahoeLogFileIndex(
 
   def getSnapshot: Snapshot = {
     val snapshotToScan = getSnapshotToScan
-    if (checkSchemaOnRead) {
+    if (checkSchemaOnRead || snapshotToScan.metadata.columnMappingMode != NoMapping) {
       // Ensure that the schema hasn't changed in an incompatible manner since analysis time
       val snapshotSchema = snapshotToScan.metadata.schema
       if (!SchemaUtils.isReadCompatible(snapshotAtAnalysis.schema, snapshotSchema)) {
         throw DeltaErrors.schemaChangedSinceAnalysis(
             snapshotAtAnalysis.schema,
             snapshotSchema,
-            mentionLegacyFlag = true)
+            mentionLegacyFlag = snapshotToScan.metadata.columnMappingMode == NoMapping)
       }
     }
+
     snapshotToScan
   }
 

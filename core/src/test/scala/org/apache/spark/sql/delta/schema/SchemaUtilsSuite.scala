@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.schema
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
+import java.util.regex.Pattern
 
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
@@ -43,6 +44,16 @@ class SchemaUtilsSuite extends QueryTest
     val msg = e.getMessage.toLowerCase(Locale.ROOT)
     assert(shouldContain.map(_.toLowerCase(Locale.ROOT)).forall(msg.contains),
       s"Error message '$msg' didn't contain: $shouldContain")
+  }
+
+  private def expectFailurePattern(shouldContainPatterns: String*)(f: => Unit): Unit = {
+    val e = intercept[AnalysisException] {
+      f
+    }
+    val patterns =
+      shouldContainPatterns.map(regex => Pattern.compile(regex, Pattern.CASE_INSENSITIVE))
+    assert(patterns.forall(_.matcher(e.getMessage).find()),
+      s"Error message '${e.getMessage}' didn't contain the patterns: $shouldContainPatterns")
   }
 
   /////////////////////////////
@@ -1046,7 +1057,12 @@ class SchemaUtilsSuite extends QueryTest
       mergeSchemas(base, new StructType()
         .add("struct", new StructType().add("a", DateType)))
     }
-    expectFailure("'struct'", "structType", "MapType") {
+    // StructType's toString is different between Scala 2.12 and 2.13.
+    // - In Scala 2.12, it extends `scala.collection.Seq` which returns
+    //   `StructType(StructField(a,IntegerType,true))`.
+    // - In Scala 2.13, it extends `scala.collection.immutable.Seq` which returns
+    //   `Seq(StructField(a,IntegerType,true))`.
+    expectFailurePattern("'struct'", "StructType|Seq\\(", "MapType") {
       mergeSchemas(base, new StructType()
         .add("struct", MapType(StringType, IntegerType)))
     }
@@ -1062,7 +1078,8 @@ class SchemaUtilsSuite extends QueryTest
       mergeSchemas(base, new StructType()
         .add("array", ArrayType(new StructType().add("b", DecimalType(16, 10)))))
     }
-    expectFailure("'map'", "MapType", "StructType") {
+    // See the above comment about `StructType`
+    expectFailurePattern("'map'", "MapType", "StructType|Seq\\(") {
       mergeSchemas(base, new StructType()
         .add("map", new StructType().add("b", StringType)))
     }

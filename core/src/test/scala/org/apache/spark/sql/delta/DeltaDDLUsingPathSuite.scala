@@ -30,7 +30,7 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 
 trait DeltaDDLUsingPathTests extends QueryTest
-  with SharedSparkSession {
+  with SharedSparkSession with DeltaColumnMappingTestUtils {
 
   import testImplicits._
 
@@ -96,9 +96,7 @@ trait DeltaDDLUsingPathTests extends QueryTest
   }
 
   private def errorContains(errMsg: String, str: String): Unit = {
-    val actual = errMsg.replaceAll("`", "")
-    val expected = str.replaceAll("`", "")
-    assert(actual.contains(expected))
+    assert(errMsg.contains(str))
   }
 
   testUsingPath("SELECT") { (table, path) =>
@@ -146,4 +144,5 @@ trait DeltaDDLUsingPathTests extends QueryTest
 
 class DeltaDDLUsingPathSuite extends DeltaDDLUsingPathTests with DeltaSQLCommandTest {
 }
+
 
