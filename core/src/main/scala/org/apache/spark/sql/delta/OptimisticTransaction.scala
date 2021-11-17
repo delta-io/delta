@@ -497,6 +497,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       }
 
       val currentTransactionInfo = new CurrentTransactionInfo(
+        txnId = txnId,
         readPredicates = readPredicates.toSeq,
         readFiles = readFiles.toSet,
         readWholeTable = readTheWholeTable,
@@ -843,7 +844,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       spark,
       currentTransactionInfo,
       otherCommitVersion,
-      commitIsolationLevel, logPrefix)
+      commitIsolationLevel)
     conflictChecker.checkConflicts()
   }
 
