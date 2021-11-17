@@ -161,5 +161,5 @@ if __name__ == "__main__":
     package = prepare(root_dir)
 
     run_python_style_checks(root_dir)
-    test(root_dir, package)
     run_pypi_packaging_tests(root_dir)
+    test(root_dir, package)
