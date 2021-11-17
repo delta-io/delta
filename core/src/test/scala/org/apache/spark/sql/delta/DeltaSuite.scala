@@ -1657,6 +1657,7 @@ class DeltaSuite extends QueryTest
         .write
         .format("delta")
         .option("delta.sampleRetentionDuration", "123 days")
+        .option("mergeSchema", "true")
         .partitionBy("part")
         .mode("append")
         .save(testPath)
