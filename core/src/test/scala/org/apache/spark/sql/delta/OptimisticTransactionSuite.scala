@@ -137,6 +137,38 @@ class OptimisticTransactionSuite
     actions = Seq())
 
   check(
+    "add in part=2 / read from part=1,2 and write to part=1",
+    conflicts = true,
+    setup = Seq(
+      Metadata(
+        schemaString = new StructType().add("x", IntegerType).json,
+        partitionColumns = Seq("x"))
+    ),
+    reads = Seq(
+      t => {
+        // Filter files twice - once for x=1 and again for x=2
+        t.filterFiles(Seq(EqualTo('x, Literal(1))))
+        t.filterFiles(Seq(EqualTo('x, Literal(2))))
+      }
+    ),
+    concurrentWrites = Seq(
+      AddFile(
+        path = "a",
+        partitionValues = Map("x" -> "1"),
+        size = 1,
+        modificationTime = 1,
+        dataChange = true)
+    ),
+    actions = Seq(
+      AddFile(
+        path = "b",
+        partitionValues = Map("x" -> "2"),
+        size = 1,
+        modificationTime = 1,
+        dataChange = true)
+    ))
+
+  check(
     "delete / read",
     conflicts = true,
     setup = Seq(
