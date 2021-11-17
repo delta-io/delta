@@ -414,53 +414,55 @@ object SchemaUtils {
    * @param fieldNames The path to the field, in order from the root. For example, the column
    *                   nested.a.b.c would be Seq("nested", "a", "b", "c").
    */
-  @scala.annotation.tailrec
   def findNestedFieldIgnoreCase(
       schema: StructType,
       fieldNames: Seq[String],
       includeCollections: Boolean = false): Option[StructField] = {
-    val fieldOption = fieldNames.headOption.flatMap {
-      fieldName => schema.find(_.name.equalsIgnoreCase(fieldName))
+
+    @scala.annotation.tailrec
+    def findRecursively(
+      dataType: DataType,
+      fieldNames: Seq[String],
+      includeCollections: Boolean): Option[StructField] = {
+
+      (fieldNames, dataType, includeCollections) match {
+        case (Seq(fieldName, names @ _*), struct: StructType, _) =>
+          val field = struct.find(_.name.equalsIgnoreCase(fieldName))
+          if (names.isEmpty || field.isEmpty) {
+            field
+          } else {
+            findRecursively(field.get.dataType, names, includeCollections)
+          }
+
+        case (_, _, false) => None // types nested in maps and arrays are not used
+
+        case (Seq("key"), MapType(keyType, _, _), true) =>
+          // return the key type as a struct field to include nullability
+          Some(StructField("key", keyType, nullable = false))
+
+        case (Seq("key", names @ _*), MapType(keyType, _, _), true) =>
+          findRecursively(keyType, names, includeCollections)
+
+        case (Seq("value"), MapType(_, valueType, isNullable), true) =>
+          // return the value type as a struct field to include nullability
+          Some(StructField("value", valueType, nullable = isNullable))
+
+        case (Seq("value", names @ _*), MapType(_, valueType, _), true) =>
+          findRecursively(valueType, names, includeCollections)
+
+        case (Seq("element"), ArrayType(elementType, isNullable), true) =>
+          // return the element type as a struct field to include nullability
+          Some(StructField("element", elementType, nullable = isNullable))
+
+        case (Seq("element", names @ _*), ArrayType(elementType, _), true) =>
+          findRecursively(elementType, names, includeCollections)
+
+        case _ =>
+          None
+      }
     }
-    fieldOption match {
-      case Some(field) =>
-        (fieldNames.tail, field.dataType, includeCollections) match {
-          case (Seq(), _, _) =>
-            Some(field)
 
-          case (names, struct: StructType, _) =>
-            findNestedFieldIgnoreCase(struct, names, includeCollections)
-
-          case (_, _, false) =>
-            None // types nested in maps and arrays are not used
-
-          case (Seq("key"), MapType(keyType, _, _), true) =>
-            // return the key type as a struct field to include nullability
-            Some(StructField("key", keyType, nullable = false))
-
-          case (Seq("key", names @ _*), MapType(struct: StructType, _, _), true) =>
-            findNestedFieldIgnoreCase(struct, names, includeCollections)
-
-          case (Seq("value"), MapType(_, valueType, isNullable), true) =>
-            // return the value type as a struct field to include nullability
-            Some(StructField("value", valueType, nullable = isNullable))
-
-          case (Seq("value", names @ _*), MapType(_, struct: StructType, _), true) =>
-            findNestedFieldIgnoreCase(struct, names, includeCollections)
-
-          case (Seq("element"), ArrayType(elementType, isNullable), true) =>
-            // return the element type as a struct field to include nullability
-            Some(StructField("element", elementType, nullable = isNullable))
-
-          case (Seq("element", names @ _*), ArrayType(struct: StructType, _), true) =>
-            findNestedFieldIgnoreCase(struct, names, includeCollections)
-
-          case _ =>
-            None
-        }
-      case _ =>
-        None
-    }
+    findRecursively(schema, fieldNames, includeCollections)
   }
 
   /**
