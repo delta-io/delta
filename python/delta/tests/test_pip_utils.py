@@ -26,7 +26,6 @@ import delta
 class PipUtilsTests(unittest.TestCase):
 
     def setUp(self):
-        print("PipUtilsTests >> setup")
         builder = SparkSession.builder \
             .appName("pip-test") \
             .master("local[*]") \
@@ -40,12 +39,10 @@ class PipUtilsTests(unittest.TestCase):
         self.tempFile = os.path.join(self.tempPath, "tempFile")
 
     def tearDown(self):
-        print("PipUtilsTests >> tearDown")
         self.spark.stop()
         shutil.rmtree(self.tempPath)
 
     def test_maven_jar_loaded(self):
-        print("PipUtilsTests >> test_maven_jar_loaded")
         # Read and write Delta table to check that the maven jars are loaded and Delta works.
         self.spark.range(0, 5).write.format("delta").save(self.tempFile)
         self.spark.read.format("delta").load(self.tempFile)
