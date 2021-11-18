@@ -26,7 +26,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.analysis.CannotReplaceMissingTableException
+import org.apache.spark.sql.catalyst.analysis.{Analyzer, CannotReplaceMissingTableException}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -72,7 +72,7 @@ case class CreateDeltaTableCommand(
       throw new AnalysisException(s"Table ${table.identifier.quotedString} already exists.")
     }
 
-    val tableWithLocation = if (tableExists) {
+    var tableWithLocation = if (tableExists) {
       val existingTable = existingTableOpt.get
       table.storage.locationUri match {
         case Some(location) if location.getPath != existingTable.location.getPath =>
@@ -97,6 +97,7 @@ case class CreateDeltaTableCommand(
       //    CTAS flow.
       table
     }
+
 
     val isManagedTable = tableWithLocation.tableType == CatalogTableType.MANAGED
     val tableLocation = new Path(tableWithLocation.location)
@@ -152,7 +153,7 @@ case class CreateDeltaTableCommand(
               mode = mode,
               options,
               partitionColumns = table.partitionColumnNames,
-              configuration = table.properties + ("comment" -> table.comment.orNull),
+              configuration = tableWithLocation.properties + ("comment" -> table.comment.orNull),
               data = data).write(txn, sparkSession)
 
             val op = getOperation(txn.metadata, isManagedTable, Some(options))
@@ -176,7 +177,7 @@ case class CreateDeltaTableCommand(
             assertPathEmpty(hadoopConf, tableWithLocation)
             // This is a user provided schema.
             // Doesn't come from a query, Follow nullability invariants.
-            val newMetadata = getProvidedMetadata(table, table.schema.json)
+            val newMetadata = getProvidedMetadata(tableWithLocation, table.schema.json)
             txn.updateMetadataForNewTable(newMetadata)
 
             val op = getOperation(newMetadata, isManagedTable, None)
@@ -224,6 +225,7 @@ case class CreateDeltaTableCommand(
       result
     }
   }
+
 
   private def getProvidedMetadata(table: CatalogTable, schemaString: String): Metadata = {
     Metadata(
