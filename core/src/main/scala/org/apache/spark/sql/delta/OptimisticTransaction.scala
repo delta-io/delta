@@ -639,9 +639,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   protected def postCommit(commitVersion: Long): Unit = {
     committed = true
     if (shouldCheckpoint(commitVersion)) {
-      // We checkpoint the version to be committed to so that no two transactions will checkpoint
-      // the same version.
-      deltaLog.checkpoint(deltaLog.getSnapshotAt(commitVersion))
+      try {
+        // We checkpoint the version to be committed to so that no two transactions will checkpoint
+        // the same version.
+        deltaLog.checkpoint(deltaLog.getSnapshotAt(commitVersion))
+      } catch {
+        case e: IllegalStateException =>
+          logWarning("Failed to checkpoint table state.", e)
+      }
     }
   }
 
