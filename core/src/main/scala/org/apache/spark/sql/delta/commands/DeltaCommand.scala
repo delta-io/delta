@@ -147,7 +147,7 @@ trait DeltaCommand extends DeltaLogging {
       partitionSchema = txn.metadata.partitionSchema,
       dataSchema = txn.metadata.schema,
       bucketSpec = None,
-      deltaLog.snapshot.fileFormat,
+      deltaLog.fileFormat(txn.metadata),
       txn.metadata.format.options)(spark)
   }
 

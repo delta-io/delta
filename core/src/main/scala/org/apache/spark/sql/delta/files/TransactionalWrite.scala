@@ -262,7 +262,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         FileFormatWriter.write(
           sparkSession = spark,
           plan = physicalPlan,
-          fileFormat = snapshot.fileFormat, // TODO doesn't support changing formats.
+          fileFormat = deltaLog.fileFormat(metadata), // TODO doesn't support changing formats.
           committer = committer,
           outputSpec = outputSpec,
           // scalastyle:off deltahadoopconfiguration

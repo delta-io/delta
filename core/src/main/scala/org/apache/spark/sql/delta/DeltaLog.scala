@@ -68,6 +68,7 @@ class DeltaLog private(
   with MetadataCleanup
   with LogStoreProvider
   with SnapshotManagement
+  with DeltaFileFormat
   with ReadChecksum {
 
   import org.apache.spark.sql.delta.util.FileNames._
@@ -360,7 +361,7 @@ class DeltaLog private(
         DeltaColumnMapping.dropColumnMappingMetadata(
           GeneratedColumn.removeGenerationExpressions(snapshot.metadata.schema)),
       bucketSpec = None,
-      snapshot.fileFormat,
+      snapshot.deltaLog.fileFormat(snapshot.metadata),
       snapshot.metadata.format.options)(spark)
 
     Dataset.ofRows(spark, LogicalRelation(relation, isStreaming = isStreaming))
@@ -399,7 +400,7 @@ class DeltaLog private(
         GeneratedColumn.removeGenerationExpressions(
           SchemaUtils.dropNullTypeColumns(snapshotToUse.metadata.schema))),
       bucketSpec = bucketSpec,
-      snapshotToUse.fileFormat,
+      fileFormat(snapshotToUse.metadata),
       // `metadata.format.options` is not set today. Even if we support it in future, we shouldn't
       // store any file system options since they may contain credentials. Hence, it will never
       // conflict with `DeltaLog.options`.
@@ -416,6 +417,7 @@ class DeltaLog private(
       }
     }
   }
+
 }
 
 object DeltaLog extends DeltaLogging {
