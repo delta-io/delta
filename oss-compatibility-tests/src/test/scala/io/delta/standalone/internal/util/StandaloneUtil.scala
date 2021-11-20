@@ -69,16 +69,7 @@ class StandaloneUtil(now: Long) {
     )
   }
 
-  val removeFiles: Seq[RemoveFile] = addFiles.map { a =>
-    RemoveFile.builder(a.getPath)
-      .deletionTimestamp(now + 100)
-      .dataChange(true)
-      .extendedFileMetadata(true)
-      .partitionValues(a.getPartitionValues)
-      .size(a.getSize)
-      .tags(a.getTags)
-      .build()
-  }
+  val removeFiles: Seq[RemoveFile] = addFiles.map(_.remove(now + 100, true))
 
   val setTransaction: SetTransaction =
     new SetTransaction("appId", 123, java.util.Optional.of(now + 200))

@@ -3,7 +3,7 @@ on: [push, pull_request]
 jobs:
   build:
     name: "Run tests "
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-18.04
     strategy:
       matrix:
         scala: [2.12.8, 2.11.12]
@@ -14,27 +14,15 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: '8'
-      - name: Cache Scala, SBT
-        uses: actions/cache@v2
-        with:
-          path: |
-            ~/.sbt
-            ~/.ivy2
-            ~/.cache/coursier
-          key: delta-sbt-cache-hive23-scala${{ matrix.scala }}
       - name: Run sqlDeltaImport tests
-        shell: bash -l {0}
-        run: build/sbt "++ ${{ matrix.scala }} sqlDeltaImport/test"
+        run: build/sbt "++ ${{ matrix.scala }}" sqlDeltaImport/test
         if: matrix.scala != '2.11.12'
-      - name: Run SBT tests
-        shell: bash -l {0}
-        run: |
-          build/sbt "++ ${{ matrix.scala }} testScalastyle"
-          build/sbt "++ ${{ matrix.scala }} standalone/test"
-          build/sbt "++ ${{ matrix.scala }} testStandaloneCosmetic/test"
-          build/sbt "++ ${{ matrix.scala }} compatibility/test"
-          build/sbt "++ ${{ matrix.scala }} hiveMR/test"
-          build/sbt "++ ${{ matrix.scala }} hiveTez/test"
-          build/sbt "++ ${{ matrix.scala }} hive2MR/test"
-          build/sbt "++ ${{ matrix.scala }} hive2Tez/test"
-          build/sbt "++ ${{ matrix.scala }} flinkConnector/test"
+      - name: Run testScalastyle
+        run: build/sbt "++ ${{ matrix.scala }}" testScalastyle
+      - name: Run standalone and testStandaloneCosmetic tests
+        run: build/sbt "++ ${{ matrix.scala }}" standalone/test testStandaloneCosmetic/test
+      - name: Run compatibility tests
+        run: build/sbt "++ ${{ matrix.scala }}" compatibility/test
+        if: matrix.scala != '2.11.12'
+      - name: Run flink tests
+        run: build/sbt "++ ${{ matrix.scala }}" flinkConnector/test

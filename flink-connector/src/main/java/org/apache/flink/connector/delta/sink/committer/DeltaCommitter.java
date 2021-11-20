@@ -50,7 +50,6 @@ import org.apache.flink.connector.file.sink.FileSink;
  *       Valid note here is that's also the default {@link FileSink}'s behaviour for all of the
  *       bulk formats (Parquet included).
  * </ol>
- * </p>
  */
 public class DeltaCommitter implements Committer<DeltaCommittable> {
 
