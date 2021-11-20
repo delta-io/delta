@@ -516,4 +516,15 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
     }
   }
 
+  test("Analyze Table should fall back to v1 command") {
+    val tblName = "delta_test"
+    withTable(tblName) {
+      sql(s"CREATE TABLE $tblName USING delta AS SELECT 'foo' as a")
+      val tblIdent = TableIdentifier(tblName)
+      assert(spark.sessionState.catalog.getTableMetadata(tblIdent).stats.isEmpty)
+      sql(s"ANALYZE TABLE $tblName COMPUTE STATISTICS")
+      assert(spark.sessionState.catalog.getTableMetadata(tblIdent).stats.nonEmpty)
+    }
+  }
+
 }

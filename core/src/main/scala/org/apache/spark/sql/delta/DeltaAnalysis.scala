@@ -40,6 +40,7 @@ import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
+import org.apache.spark.sql.connector.catalog.V1Table
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
@@ -170,6 +171,9 @@ class DeltaAnalysis(session: SparkSession)
       } else deltaMerge
       d.copy(target = stripTempViewForMergeWrapper(d.target))
 
+    // We can remove this when Spark supports ANALYZE TABLE for v2 tables.
+    case a @ AnalyzeTable(t @ ResolvedTable(_, _, dt: DeltaTableV2, _), _, _) =>
+      a.copy(child = t.copy(table = V1Table(dt.v1Table)))
   }
 
 
