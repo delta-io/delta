@@ -29,7 +29,7 @@ import org.apache.spark.SparkEnv
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.NoSuchPartitionException
-import org.apache.spark.sql.catalyst.catalog.CatalogUtils
+import org.apache.spark.sql.catalyst.catalog.{CatalogStatistics, CatalogUtils}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructType}
@@ -520,9 +520,17 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
     val tblName = "delta_test"
     withTable(tblName) {
       sql(s"CREATE TABLE $tblName USING delta AS SELECT 'foo' as a")
-      sql(s"ANALYZE TABLE $tblName COMPUTE STATISTICS")
+
       val tblIdent = TableIdentifier(tblName)
-      assert(spark.sessionState.catalog.getTableMetadata(tblIdent).stats.nonEmpty)
+      val statsBefore = spark.sessionState.catalog.getTableMetadata(tblIdent).stats
+      // Hive catalog inserts stats for size in bytes by default, but row count shouldn't
+      // be populated unless 'analyze table` is run.
+      assert(statsBefore.isEmpty || statsBefore.get.rowCount.isEmpty)
+
+      sql(s"ANALYZE TABLE $tblName COMPUTE STATISTICS")
+      val statsAfter = spark.sessionState.catalog.getTableMetadata(tblIdent).stats
+      assert(statsAfter.nonEmpty)
+      assert(statsAfter.get.rowCount.get === 1)
     }
   }
 
