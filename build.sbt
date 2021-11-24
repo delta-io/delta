@@ -20,6 +20,11 @@ import ReleaseTransformations._
 import scala.xml.{Node => XmlNode, NodeSeq => XmlNodeSeq, _}
 import scala.xml.transform._
 
+// Disable parallel execution to workaround https://github.com/etsy/sbt-checkstyle-plugin/issues/32
+concurrentRestrictions in Global := {
+  Tags.limitAll(1) :: Nil
+}
+
 parallelExecution in ThisBuild := false
 scalastyleConfig in ThisBuild := baseDirectory.value / "scalastyle-config.xml"
 crossScalaVersions in ThisBuild := Seq("2.12.8", "2.11.12")
