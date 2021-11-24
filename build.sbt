@@ -48,6 +48,9 @@ lazy val core = (project in file("core"))
       "org.apache.spark" %% "spark-core" % sparkVersion % "provided",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion % "provided",
 
+      // Spark 3.2 no longer includes org.codehaus.jackson as a runtime dependency
+      "org.codehaus.jackson" % "jackson-core-asl" % "1.9.13",
+
       // Test deps
       "org.scalatest" %% "scalatest" % "3.2.9" % "test",
       "junit" % "junit" % "4.12" % "test",
