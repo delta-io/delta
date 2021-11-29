@@ -76,6 +76,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_CONVERT_ICEBERG_USE_NATIVE_PARTITION_VALUES =
+    buildConf("convert.iceberg.useNativePartitionValues")
+      .doc(
+        """ When enabled, obtain the partition values from Iceberg table's metadata, instead
+          | of inferring from file paths.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_SNAPSHOT_PARTITIONS =
     buildConf("snapshotPartitions")
       .internal()

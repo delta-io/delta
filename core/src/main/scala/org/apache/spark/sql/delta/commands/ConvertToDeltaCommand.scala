@@ -322,7 +322,7 @@ abstract class ConvertToDeltaCommandBase(
     val fs = targetPath.getFileSystem(sessionHadoopConf)
     val manifest = targetTable.fileManifest
     try {
-      val initialList = manifest.getFiles
+      val initialList = manifest.getFiles()
       if (!initialList.hasNext) {
         throw DeltaErrors.emptyDirectoryException(convertProperties.targetDir)
       }
@@ -408,6 +408,18 @@ case class ConvertToDeltaCommand(
     partitionSchema: Option[StructType],
     deltaPath: Option[String])
   extends ConvertToDeltaCommandBase(tableIdentifier, partitionSchema, deltaPath)
+
+/**
+ * An interface for the file to be included during conversion.
+ *
+ * @param fileStatus the file info
+ * @param partitionValues partition values of this file that may be available from the source
+ *                        table format. If none, the converter will infer partition values from the
+ *                        file path, assuming the Hive directory format.
+ */
+case class ConvertTargetFile(
+    fileStatus: SerializableFileStatus,
+    partitionValues: Option[Map[String, String]] = None)
 
 /**
  * An interface for the table to be converted to Delta.
@@ -564,7 +576,7 @@ class ParquetTable(
   }
 
   private def inferSchema(): Unit = {
-    val initialList = fileManifest.getFiles
+    val initialList = fileManifest.getFiles.map(_.fileStatus)
     val schemaBatchSize =
       spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_IMPORT_BATCH_SIZE_SCHEMA_INFERENCE)
     var numFiles = 0L
@@ -606,7 +618,7 @@ trait ConvertTargetFileManifest extends Closeable {
   val basePath: String
 
   /** Return the active files for a table */
-  def getFiles: Iterator[SerializableFileStatus]
+  def getFiles(): Iterator[ConvertTargetFile]
 }
 
 /** A file manifest generated through recursively listing a base path. */
@@ -626,7 +638,8 @@ class ManualListingFileManifest(
     ds
   }
 
-  override def getFiles: Iterator[SerializableFileStatus] = list.toLocalIterator().asScala
+  override def getFiles(): Iterator[ConvertTargetFile] =
+    list.toLocalIterator().asScala.map(ConvertTargetFile(_))
 
   override def close(): Unit = list.unpersist()
 }
@@ -636,9 +649,10 @@ class MetadataLogFileManifest(
     spark: SparkSession,
     override val basePath: String) extends ConvertTargetFileManifest {
   val index = new MetadataLogFileIndex(spark, new Path(basePath), Map.empty, None)
-  override def getFiles: Iterator[SerializableFileStatus] = index.allFiles
+  override def getFiles(): Iterator[ConvertTargetFile] = index.allFiles
     .toIterator
     .map { fs => SerializableFileStatus.fromStatus(fs) }
+    .map { ConvertTargetFile(_) }
 
   override def close(): Unit = {}
 }
@@ -646,7 +660,7 @@ class MetadataLogFileManifest(
 object ConvertToDeltaCommand {
   val timestampPartitionPattern = "yyyy-MM-dd HH:mm:ss[.S]"
   def createAddFile(
-      file: SerializableFileStatus,
+      targetFile: ConvertTargetFile,
       basePath: Path,
       fs: FileSystem,
       conf: SQLConf,
@@ -657,59 +671,63 @@ object ConvertToDeltaCommand {
     val physicalPartitionColNames = partitionSchema.map(_.map { f =>
       DeltaColumnMapping.getPhysicalName(f)
     }).getOrElse(Nil)
+    val file = targetFile.fileStatus
     val path = file.getPath
-    val pathStr = file.getPath.toUri.toString
-    val dateFormatter = DateFormatter()
-    val timestampFormatter =
-      TimestampFormatter(timestampPartitionPattern, java.util.TimeZone.getDefault)
-    val resolver = conf.resolver
-    val dir = if (file.isDir) file.getPath else file.getPath.getParent
-    val (partitionOpt, _) = PartitionUtils.parsePartition(
-      dir,
-      typeInference = false,
-      basePaths = Set(basePath),
-      userSpecifiedDataTypes = Map.empty,
-      validatePartitionColumns = false,
-      java.util.TimeZone.getDefault,
-      dateFormatter,
-      timestampFormatter)
+    val partition = targetFile.partitionValues.getOrElse {
+      // partition values are not provided by the source table format, so infer from the file path
+      val pathStr = file.getPath.toUri.toString
+      val dateFormatter = DateFormatter()
+      val timestampFormatter =
+        TimestampFormatter(timestampPartitionPattern, java.util.TimeZone.getDefault)
+      val resolver = conf.resolver
+      val dir = if (file.isDir) file.getPath else file.getPath.getParent
+      val (partitionOpt, _) = PartitionUtils.parsePartition(
+        dir,
+        typeInference = false,
+        basePaths = Set(basePath),
+        userSpecifiedDataTypes = Map.empty,
+        validatePartitionColumns = false,
+        java.util.TimeZone.getDefault,
+        dateFormatter,
+        timestampFormatter)
 
-    val partition = partitionOpt.map { partValues =>
-      if (partitionColNames.size != partValues.columnNames.size) {
-        throw DeltaErrors.unexpectedNumPartitionColumnsFromFileNameException(
-          pathStr, partValues.columnNames, partitionColNames)
-      }
+      partitionOpt.map { partValues =>
+        if (partitionColNames.size != partValues.columnNames.size) {
+          throw DeltaErrors.unexpectedNumPartitionColumnsFromFileNameException(
+            pathStr, partValues.columnNames, partitionColNames)
+        }
 
-      val tz = Option(conf.sessionLocalTimeZone)
-      // Check if the partition value can be casted to the provided type
-      if (!conf.getConf(DeltaSQLConf.DELTA_CONVERT_PARTITION_VALUES_IGNORE_CAST_FAILURE)) {
-        partValues.literals.zip(partitionFields).foreach { case (literal, field) =>
-          if (literal.eval() != null && Cast(literal, field.dataType, tz).eval() == null) {
-            val partitionValue = Cast(literal, StringType, tz).eval()
-            val partitionValueStr = Option(partitionValue).map(_.toString).orNull
-            throw DeltaErrors.castPartitionValueException(partitionValueStr, field.dataType)
+        val tz = Option(conf.sessionLocalTimeZone)
+        // Check if the partition value can be casted to the provided type
+        if (!conf.getConf(DeltaSQLConf.DELTA_CONVERT_PARTITION_VALUES_IGNORE_CAST_FAILURE)) {
+          partValues.literals.zip(partitionFields).foreach { case (literal, field) =>
+            if (literal.eval() != null && Cast(literal, field.dataType, tz).eval() == null) {
+              val partitionValue = Cast(literal, StringType, tz).eval()
+              val partitionValueStr = Option(partitionValue).map(_.toString).orNull
+              throw DeltaErrors.castPartitionValueException(partitionValueStr, field.dataType)
+            }
           }
         }
-      }
 
-      val values = partValues
-        .literals
-        .map(l => Cast(l, StringType, tz).eval())
-        .map(Option(_).map(_.toString).orNull)
+        val values = partValues
+          .literals
+          .map(l => Cast(l, StringType, tz).eval())
+          .map(Option(_).map(_.toString).orNull)
 
-      partitionColNames.zip(partValues.columnNames).foreach { case (expected, parsed) =>
-        if (!resolver(expected, parsed)) {
-          throw DeltaErrors.unexpectedPartitionColumnFromFileNameException(
-            pathStr, parsed, expected)
+        partitionColNames.zip(partValues.columnNames).foreach { case (expected, parsed) =>
+          if (!resolver(expected, parsed)) {
+            throw DeltaErrors.unexpectedPartitionColumnFromFileNameException(
+              pathStr, parsed, expected)
+          }
         }
+        physicalPartitionColNames.zip(values).toMap
+      }.getOrElse {
+        if (partitionColNames.nonEmpty) {
+          throw DeltaErrors.unexpectedNumPartitionColumnsFromFileNameException(
+            pathStr, Seq.empty, partitionColNames)
+        }
+        Map[String, String]()
       }
-      physicalPartitionColNames.zip(values).toMap
-    }.getOrElse {
-      if (partitionColNames.nonEmpty) {
-        throw DeltaErrors.unexpectedNumPartitionColumnsFromFileNameException(
-          pathStr, Seq.empty, partitionColNames)
-      }
-      Map[String, String]()
     }
 
     val pathStrForAddFile = if (!useAbsolutePath) {
