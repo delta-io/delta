@@ -19,24 +19,28 @@ package io.delta.storage
 import java.io.FileNotFoundException
 import java.net.URI
 import java.nio.charset.StandardCharsets.UTF_8
-import java.nio.file.FileSystemException
+
+import scala.util.control.NonFatal
 
 import com.google.common.io.CountingOutputStream
 import org.apache.commons.io.IOUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs._
+
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.storage.HadoopFileSystemLogStore
+import org.apache.spark.sql.delta.util.FileNames
 
 abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
-  extends HadoopFileSystemLogStore(sparkConf, hadoopConf)
-    with DeltaLogging {
+  extends HadoopFileSystemLogStore(sparkConf, hadoopConf) with DeltaLogging {
+
+  import BaseExternalLogStore._
 
   /**
    * Delete file from filesystem.
-   * @param fs reference to [[FileSystem]]
+   *
+   * @param fs   reference to [[FileSystem]]
    * @param path path to delete
    * @return Boolean true if delete is successful else false
    */
@@ -46,8 +50,11 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
   }
 
   /**
-   * Copies file within filesystem
-   * @param fs reference to [[FileSystem]]
+   * Copies file within filesystem.
+   *
+   * Ensures that the `src` file is either entirely copied to the `dst` file, or not at all.
+   *
+   * @param fs  reference to [[FileSystem]]
    * @param src path to source file
    * @param dst path to destination file
    */
@@ -57,8 +64,8 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
     val output_stream = fs.create(dst, true)
     try {
       IOUtils.copy(input_stream, output_stream)
-    } finally {
       output_stream.close()
+    } finally {
       input_stream.close()
     }
   }
@@ -76,11 +83,15 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
    * `iterWithPrecedence` and discard that from `iter`.
    */
   private def mergeFileIterators(
-    iter: Iterator[FileStatus],
-    iterWithPrecedence: Iterator[FileStatus]
+      iter: Iterator[FileStatus],
+      iterWithPrecedence: Iterator[FileStatus]
   ): Iterator[FileStatus] = {
-    val result = (iter.map(f => (f.getPath, f)).toMap
-      ++ iterWithPrecedence.map(f => (f.getPath, f))).values.toSeq
+    val result = (
+        iter.map(f => (f.getPath, f)).toMap ++
+        iterWithPrecedence.map(f => (f.getPath, f))
+      )
+      .values
+      .toSeq
       .sortBy(_.getPath.getName)
     result.iterator
   }
@@ -106,24 +117,30 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
   }
 
   /**
-   * Method for assuring consistency on filesystem according to the external cache.
-   * Method tries to rewrite TransactionLog entry from temporary path if it does not exists.
-   * Method returns completed [[LogEntryMetadata]]
+   * Best-effort at assuring consistency on file system according to the external cache.
+   * Tries to rewrite TransactionLog entry from temporary path if it does not exists.
+   * Will retry at most 3 times.
+   *
+   * @returns the correct FileStatus to read the entry's data from
    */
-
-   private def tryFixTransactionLog(fs: FileSystem, entry: LogEntryMetadata): LogEntryMetadata = {
+  private def tryFixTransactionLog(fs: FileSystem, entry: LogEntryMetadata): FileStatus = {
     logDebug(s"Try to fix: ${entry.path}")
-    val tempPath = entry.tempPath.get
-    try {
-      copyFile(fs, tempPath, entry.path)
-      val completedEntry = entry.complete()
-      writeCache(fs, completedEntry, overwrite = true)
-      completedEntry
-    } catch {
-      case e: FileNotFoundException =>
-        logWarning(s"ignoring $e while fixing (already done?)")
-        entry
+    val completedEntry = entry.complete()
+
+    for (i <- 0 until 3) {
+      try {
+        if (!fs.exists(entry.path)) {
+          copyFile(fs, entry.tempPath, entry.path)
+        }
+        writeCache(fs, completedEntry, overwrite = true)
+        return completedEntry.asFileStatus(fs)
+      } catch {
+        case NonFatal(e) =>
+          logWarning(s"Ignoring $e while fixing. Iteration $i of 3.")
+      }
     }
+
+    entry.tempPathAsFileStatus(fs)
   }
 
   /**
@@ -146,9 +163,9 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
    * the file system list and the db list
    */
   protected def listFrom(
-    fs: FileSystem,
-    resolvedPath: Path,
-    useCache: Boolean = true): Iterator[FileStatus] = {
+      fs: FileSystem,
+      resolvedPath: Path,
+      useCache: Boolean = true): Iterator[FileStatus] = {
     val parentPath = resolvedPath.getParent
     if (!fs.exists(parentPath)) {
       throw new FileNotFoundException(s"No such file or directory: $parentPath")
@@ -165,8 +182,9 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
 
     val listedFromDB = listFromCache(fs, resolvedPath)
       .toList
-      .map(entry => if (!entry.isComplete) tryFixTransactionLog(fs, entry) else entry)
-      .map(entry => entry.asFileStatus(fs))
+      .map { entry =>
+        if (!entry.isComplete) tryFixTransactionLog(fs, entry) else entry.asFileStatus(fs)
+      }
 
     // for debug
     listedFromFs.iterator
@@ -185,8 +203,8 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
    * Write file with actions under a specific path.
    */
   protected def writeActions(fs: FileSystem,
-    path: Path,
-    actions: Iterator[String]): Long = {
+      path: Path,
+      actions: Iterator[String]): Long = {
     logDebug(s"writeActions to: $path")
     val stream = new CountingOutputStream(fs.create(path, true))
     actions.map(_ + "\n").map(_.getBytes(UTF_8)).foreach(stream.write)
@@ -204,19 +222,38 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
     listFrom(fs, resolvedPath)
   }
 
-  override def write(path: Path,
-    actions: Iterator[String],
-    overwrite: Boolean = false): Unit = {
+  override def write(
+      path: Path,
+      actions: Iterator[String],
+      overwrite: Boolean = false): Unit = {
     val (fs, resolvedPath) = resolved(path)
 
-    logDebug(s"write path: ${path}, ${overwrite}")
+    // 1. If N.json already exists in the _delta_log, exit early
+    if (fs.exists(resolvedPath)) {
+      logDebug(s"$resolvedPath already exists. Returning early.")
+    }
+
+    // 2. Else, ensure N-1.json exists in the _delta_log
+    val prevVersionPath = getPreviousVersionPath(resolvedPath)
+    if (!prevVersionPath.exists(fs.exists)) {
+      val prevVersionEntry = lookup(fs, prevVersionPath.get)
+
+      if (prevVersionEntry.isEmpty) {
+        logError(s"While trying to write $path, the preceding _delta_log entry " +
+          s"${prevVersionPath.get} was not found and neither was the preceding external entry. " +
+          s"This means that file ${prevVersionPath.get} has been lost.")
+      }
+
+      logDebug(s"Previous file $prevVersionPath doesn't exist in the _delta_log. Fixing now.")
+      tryFixTransactionLog(fs, prevVersionEntry.get)
+    }
+
+    logDebug(s"Writing file: $path, $overwrite")
 
     val tempPath = getTemporaryPath(resolvedPath)
-    val actionsSeq = actions.toSeq
-    val fileLength = writeActions(fs, tempPath, actionsSeq.iterator)
+    val fileLength = writeActions(fs, tempPath, actions)
 
-    val logEntryMetadata =
-      LogEntryMetadata(resolvedPath, fileLength, Some(tempPath))
+    val logEntryMetadata = LogEntryMetadata(resolvedPath, fileLength, tempPath, isComplete = false)
 
     try {
       writeCache(fs, logEntryMetadata, overwrite)
@@ -225,13 +262,16 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
         logError(s"${e.getClass.getName}: $e")
         throw e
     }
+
     try {
-      writeActions(fs, resolvedPath, actionsSeq.iterator)
+      copyFile(fs, tempPath, resolvedPath)
       writeCache(fs, logEntryMetadata.complete(), overwrite = true)
     } catch {
       case e: Throwable =>
         logWarning(s"${e.getClass.getName}: ignoring recoverable error: $e")
     }
+
+    // TODO: delete old DBB entries and temp files
   }
 
   /*
@@ -239,35 +279,67 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
    * Method should throw @java.nio.file.FileAlreadyExistsException if path exists in cache.
    */
   protected def writeCache(
-    fs: FileSystem,
-    logEntry: LogEntryMetadata,
-    overwrite: Boolean = false): Unit
+      fs: FileSystem,
+      logEntry: LogEntryMetadata,
+      overwrite: Boolean = false): Unit
 
   protected def listFromCache(fs: FileSystem, resolvedPath: Path): Iterator[LogEntryMetadata]
+
+  protected def lookup(fs: FileSystem, resolvedPath: Path): Option[LogEntryMetadata]
 
   override def isPartialWriteVisible(path: Path): Boolean = false
 }
 
+object BaseExternalLogStore {
+
+  /**
+   * Returns the path for the previous version N-1 given the input version N, if such a path exists
+   */
+  def getPreviousVersionPath(currVersionPath: Path): Option[Path] = {
+    val currVersion = FileNames.deltaVersion(currVersionPath)
+
+    if (currVersion > 0) {
+      val prevVersion = currVersion - 1
+      val parentPath = currVersionPath.getParent
+      Some(FileNames.deltaFile(parentPath, prevVersion))
+    } else {
+      None
+    }
+  }
+}
+
 class CachedFileStatus(
-  length: Long,
-  isdir: Boolean,
-  block_replication: Int,
-  blocksize: Long,
-  modification_time: Long,
-  path: Path
+    length: Long,
+    isdir: Boolean,
+    block_replication: Int,
+    blocksize: Long,
+    modification_time: Long,
+    path: Path
 ) extends FileStatus(length, isdir, block_replication, blocksize, modification_time, path)
 
 /**
  * The file metadata to be stored in the external db
  */
-case class LogEntryMetadata(path: Path,
-  length: Long,
-  tempPath: Option[Path] = None,
-  isComplete: Boolean = false,
-  modificationTime: Long = System.currentTimeMillis()
-) {
+case class LogEntryMetadata(
+    path: Path,
+    length: Long,
+    tempPath: Path,
+    isComplete: Boolean,
+    modificationTime: Long = System.currentTimeMillis()) {
+
   def complete(): LogEntryMetadata = {
-    LogEntryMetadata(this.path, this.length, this.tempPath, true)
+    LogEntryMetadata(this.path, this.length, this.tempPath, isComplete = true)
+  }
+
+  def tempPathAsFileStatus(fs: FileSystem): FileStatus = {
+    new CachedFileStatus(
+      length,
+      false,
+      1,
+      fs.getDefaultBlockSize(tempPath),
+      modificationTime,
+      tempPath
+    )
   }
 
   def asFileStatus(fs: FileSystem): FileStatus = {

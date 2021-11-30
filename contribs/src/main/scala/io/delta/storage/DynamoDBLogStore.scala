@@ -16,26 +16,18 @@
 
 package io.delta.storage
 
-import scala.collection.JavaConverters._
-import scala.language.implicitConversions
-import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient
-import com.amazonaws.auth.BasicAWSCredentials
-import com.amazonaws.services.dynamodbv2.model.{
-  AttributeValue,
-  ComparisonOperator,
-  Condition,
-  ConditionalCheckFailedException,
-  ExpectedAttributeValue,
-  PutItemRequest,
-  QueryRequest
-}
 import java.util.NoSuchElementException
 
+import scala.collection.JavaConverters._
+import scala.language.implicitConversions
+
+import com.amazonaws.regions.{Region, Regions}
+import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient
+import com.amazonaws.services.dynamodbv2.model._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
+
 import org.apache.spark.SparkConf
-import com.amazonaws.regions.Region
-import com.amazonaws.regions.Regions
 
 /*
   DynamoDB requirements:
@@ -65,8 +57,8 @@ import com.amazonaws.regions.Regions
     `com.amazonaws.auth.AWSCredentialsProvider` (defaults to 'DefaultAWSCredentialsProviderChain')
 */
 class DynamoDBLogStore(
-  sparkConf: SparkConf,
-  hadoopConf: Configuration) extends BaseExternalLogStore(sparkConf, hadoopConf) {
+    sparkConf: SparkConf,
+    hadoopConf: Configuration) extends BaseExternalLogStore(sparkConf, hadoopConf) {
 
   import DynamoDBLogStore._
 
@@ -75,9 +67,9 @@ class DynamoDBLogStore(
   private val client: AmazonDynamoDBClient = DynamoDBLogStore.getClient(sparkConf)
 
   override protected def writeCache(
-    fs: FileSystem,
-    logEntry: LogEntryMetadata,
-    overwrite: Boolean): Unit = {
+      fs: FileSystem,
+      logEntry: LogEntryMetadata,
+      overwrite: Boolean): Unit = {
     try {
       logInfo(s"putItem $logEntry, overwrite: $overwrite")
       client.putItem(logEntry.asPutItemRequest(tableName, overwrite))
@@ -92,7 +84,8 @@ class DynamoDBLogStore(
   }
 
   override protected def listFromCache(
-    fs: FileSystem, resolvedPath: Path): Iterator[LogEntryMetadata] = {
+      fs: FileSystem,
+      resolvedPath: Path): Iterator[LogEntryMetadata] = {
     val filename = resolvedPath.getName
     val parentPath = resolvedPath.getParent
     logInfo(s"query parentPath = $parentPath AND filename >= $filename")
@@ -119,10 +112,11 @@ class DynamoDBLogStore(
       logInfo(s"query result item: ${item.toString}")
       val parentPath = item.get("parentPath").getS
       val filename = item.get("filename").getS
-      val tempPath = Option(item.get("tempPath").getS).map(new Path(_))
+      val tempPath = new Path(item.get("tempPath").getS)
       val length = item.get("length").getN.toLong
       val modificationTime = item.get("modificationTime").getN.toLong
       val isComplete = item.get("isComplete").getS() == "true"
+
       LogEntryMetadata(
         path = new Path(s"$parentPath/$filename"),
         tempPath = tempPath,
