@@ -27,7 +27,7 @@ crossScalaVersions := Nil
 
 lazy val commonSettings = Seq(
   organization := "io.delta",
-  scalaVersion := "2.12.14",
+  scalaVersion := scala212,
   crossScalaVersions := Seq(scala212, scala213),
   fork := true
 )
@@ -302,9 +302,6 @@ lazy val releaseSettings = Seq(
   Test / publishArtifact := false,
   releasePublishArtifactsAction := PgpKeys.publishSigned.value,
   releaseCrossBuild := true,
-  // Following two lines need to get around https://github.com/sbt/sbt/issues/4275
-  publishConfiguration := publishConfiguration.value.withOverwrite(true),
-  publishLocalConfiguration := publishLocalConfiguration.value.withOverwrite(true),
   publishTo := {
     val nexus = "https://oss.sonatype.org/"
     if (isSnapshot.value) {
@@ -363,8 +360,7 @@ lazy val releaseSettings = Seq(
 publishArtifact := false  // Don't release the root project
 publish / skip := true
 publishTo := Some("snapshots" at "https://oss.sonatype.org/content/repositories/snapshots")
-// don't use sbt-release's cross facility
-releaseCrossBuild := false
+releaseCrossBuild := false  // Don't use sbt-release's cross facility
 releaseProcess := Seq[ReleaseStep](
   checkSnapshotDependencies,
   inquireVersions,
@@ -374,5 +370,6 @@ releaseProcess := Seq[ReleaseStep](
   tagRelease,
   releaseStepCommandAndRemaining("+publishSigned"),
   setNextVersion,
-  commitNextVersion
+  commitNextVersion,
+  pushChanges
 )
