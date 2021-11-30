@@ -21,18 +21,21 @@ package org.apache.flink.connector.delta.sink.writer;
 import java.io.IOException;
 
 import org.apache.flink.annotation.Internal;
+import org.apache.flink.core.fs.Path;
+import org.apache.flink.core.io.SimpleVersionedSerialization;
 import org.apache.flink.core.io.SimpleVersionedSerializer;
 import org.apache.flink.core.memory.DataInputDeserializer;
 import org.apache.flink.core.memory.DataInputView;
 import org.apache.flink.core.memory.DataOutputSerializer;
 import org.apache.flink.core.memory.DataOutputView;
+import org.apache.flink.streaming.api.functions.sink.filesystem.bucketassigners.SimpleVersionedStringSerializer;
 
 /**
  * Versioned serializer for {@link DeltaWriterBucketState}.
  */
 @Internal
 public class DeltaWriterBucketStateSerializer
-        implements SimpleVersionedSerializer<DeltaWriterBucketState> {
+    implements SimpleVersionedSerializer<DeltaWriterBucketState> {
 
     /**
      * Magic number value for sanity check whether the provided bytes where not corrupted
@@ -64,7 +67,10 @@ public class DeltaWriterBucketStateSerializer
     }
 
     private void serializeV1(DeltaWriterBucketState state, DataOutputView dataOutputView)
-            throws IOException {
+        throws IOException {
+        SimpleVersionedSerialization.writeVersionAndSerialize(
+            SimpleVersionedStringSerializer.INSTANCE, state.getBucketId(), dataOutputView);
+        dataOutputView.writeUTF(state.getBucketPath().toString());
     }
 
     private DeltaWriterBucketState deserializeV1(DataInputView in) throws IOException {
@@ -72,16 +78,27 @@ public class DeltaWriterBucketStateSerializer
     }
 
     private DeltaWriterBucketState internalDeserialize(
-            DataInputView dataInputView
+        DataInputView dataInputView
     ) throws IOException {
-        return new DeltaWriterBucketState();
+
+        String bucketId = SimpleVersionedSerialization.readVersionAndDeSerialize(
+            SimpleVersionedStringSerializer.INSTANCE,
+            dataInputView
+        );
+
+        String bucketPathStr = dataInputView.readUTF();
+
+        return new DeltaWriterBucketState(
+            bucketId,
+            new Path(bucketPathStr)
+        );
     }
 
     private void validateMagicNumber(DataInputView in) throws IOException {
         int magicNumber = in.readInt();
         if (magicNumber != MAGIC_NUMBER) {
             throw new IOException(
-                    String.format("Corrupt data: Unexpected magic number %08X", magicNumber));
+                String.format("Corrupt data: Unexpected magic number %08X", magicNumber));
         }
     }
 }

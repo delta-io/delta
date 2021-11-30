@@ -24,12 +24,35 @@ import org.apache.flink.annotation.Internal;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
- * Simple wrapper class required to comply with
+ * Simple wrapper class for a collection of {@link DeltaCommittable} instances.
+ * <p>
+ * This class is provided to comply with the
  * {@link org.apache.flink.api.connector.sink.GlobalCommitter}
  * interfaces' structure. It's only purpose is to wrap {@link DeltaCommittable} collection during
  * {@link org.apache.flink.connector.delta.sink.committer.DeltaGlobalCommitter#combine} method
  * that will be further flattened and processed inside
  * {@link org.apache.flink.connector.delta.sink.committer.DeltaGlobalCommitter#commit} method.
+ * <p>
+ * Lifecycle of instances of this class is as follows:
+ * <ol>
+ *     <li>Every instance is created in
+ *         {@link org.apache.flink.connector.delta.sink.committer.DeltaGlobalCommitter#combine}
+ *         method during a global commit phase.</li>
+ *     <li>When certain checkpointing barriers are reached then generated committables are
+ *         snapshotted along with the rest of the application's state.
+ *         See Flink's docs for details
+ *         @see <a href="https://nightlies.apache.org/flink/flink-docs-master/docs/learn-flink/fault_tolerance/#how-does-state-snapshotting-work" target="_blank">here</a></li>
+ *     <li>Every {@link DeltaGlobalCommittable} instance is delivered to
+ *         {@link org.apache.flink.connector.delta.sink.committer.DeltaGlobalCommitter#combine}
+ *         method when they are being committed to a {@link io.delta.standalone.DeltaLog}.</li>
+ *     <li>If there's any failure of the app's execution then Flink may recover previously generated
+ *         set of committables that may have not been committed. In such cases those recovered
+ *         committables will be again passed to the
+ *         {@link org.apache.flink.api.connector.sink.GlobalCommitter} instance along with the new
+ *         set of committables from the next checkpoint interval.</li>
+ *     <li>If checkpoint was successfull then committables from the given checkpoint interval are
+ *         no longer recovered and exist only in the previously snapshotted states.</li>
+ * </ol>
  */
 @Internal
 public class DeltaGlobalCommittable {

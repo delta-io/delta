@@ -37,6 +37,7 @@ import org.apache.flink.core.io.SimpleVersionedSerializer;
 import org.apache.flink.formats.parquet.ParquetWriterFactory;
 import org.apache.flink.formats.parquet.row.ParquetRowDataBuilder;
 import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.types.logical.RowType;
 import org.apache.flink.util.FlinkRuntimeException;
 import org.apache.hadoop.conf.Configuration;
 import static org.apache.flink.util.Preconditions.checkNotNull;
@@ -82,7 +83,7 @@ import io.delta.standalone.DeltaLog;
  * from FileSink.
  */
 public class DeltaSink<IN>
-        implements Sink<IN, DeltaCommittable, DeltaWriterBucketState, DeltaGlobalCommittable> {
+    implements Sink<IN, DeltaCommittable, DeltaWriterBucketState, DeltaGlobalCommittable> {
 
     private final DeltaSinkBuilder<IN> sinkBuilder;
 
@@ -90,12 +91,22 @@ public class DeltaSink<IN>
         this.sinkBuilder = checkNotNull(sinkBuilder);
     }
 
+    /**
+     * This method creates the {@link SinkWriter} instance that will be responsible for passing
+     * incoming stream events to the correct bucket writer and then flushed to the underlying files.
+     *
+     * @param context {@link SinkWriter} init context object
+     * @param states  restored states of the writers. Will be empty collection for fresh start.
+     * @return new {@link SinkWriter} object
+     * @throws IOException When the recoverable writer cannot be instantiated.
+     */
     @Override
     public SinkWriter<IN, DeltaCommittable, DeltaWriterBucketState> createWriter(
-            InitContext context,
-            List<DeltaWriterBucketState> states
+        InitContext context,
+        List<DeltaWriterBucketState> states
     ) throws IOException {
-        DeltaWriter<IN> writer = sinkBuilder.createWriter();
+        DeltaWriter<IN> writer = sinkBuilder.createWriter(context);
+        writer.initializeState(states);
         return writer;
     }
 
@@ -123,15 +134,14 @@ public class DeltaSink<IN>
     }
 
     @Override
-    public Optional<
-            GlobalCommitter<DeltaCommittable,
-                    DeltaGlobalCommittable>> createGlobalCommitter() {
+    public Optional<GlobalCommitter<DeltaCommittable,
+        DeltaGlobalCommittable>> createGlobalCommitter() {
         return Optional.of(sinkBuilder.createGlobalCommitter());
     }
 
     @Override
     public Optional<
-            SimpleVersionedSerializer<DeltaGlobalCommittable>> getGlobalCommittableSerializer() {
+        SimpleVersionedSerializer<DeltaGlobalCommittable>> getGlobalCommittableSerializer() {
         try {
             return Optional.of(sinkBuilder.getGlobalCommittableSerializer());
         } catch (IOException e) {
@@ -149,15 +159,54 @@ public class DeltaSink<IN>
      * @param conf     Hadoop's conf object that will be used for creating instances of
      *                 {@link io.delta.standalone.DeltaLog} and will be also passed to the
      *                 {@link ParquetRowDataBuilder} to create {@link ParquetWriterFactory}
+     * @param rowType  Flink's logical type to indicate the structure of the events in the stream
      * @return builder for the DeltaSink
      */
     public static DeltaSinkBuilder<RowData> forDeltaFormat(
-            final Path basePath,
-            final Configuration conf
+        final Path basePath,
+        final Configuration conf,
+        final RowType rowType
+    ) {
+        conf.set("parquet.compression", "SNAPPY");
+        ParquetWriterFactory<RowData> writerFactory = ParquetRowDataBuilder.createWriterFactory(
+            rowType,
+            conf,
+            true // utcTimestamp
+        );
+
+        return new DeltaSinkBuilder.DefaultDeltaFormatBuilder<>(
+            basePath,
+            conf,
+            writerFactory
+        );
+    }
+
+    /**
+     * Convenience method for creating {@link DeltaSink}.
+     * <p>
+     * Developer must ensure that writerFactory is configured to use SNAPPY compression codec.
+     * <p>
+     * For configuring additional options (e.g. bucket assigners in case of partitioning tables)
+     * see {@link DeltaSinkBuilder}.
+     *
+     * @param basePath      root path of the DeltaLake's table
+     * @param conf          Hadoop's conf object that will be used for creating instances of
+     *                      {@link io.delta.standalone.DeltaLog}
+     * @param writerFactory writer factory with predefined configuration for creating new writers
+     *                      that will be writing Parquet files with DeltaLake's expected format
+     * @param <IN>          Type of the elements in the input of the sink that are also the elements
+     *                      to be written to its output
+     * @return builder for the DeltaSink
+     */
+    public static <IN> DeltaSinkBuilder<IN> forDeltaFormat(
+        final Path basePath,
+        final Configuration conf,
+        final ParquetWriterFactory<IN> writerFactory
     ) {
         return new DeltaSinkBuilder.DefaultDeltaFormatBuilder<>(
-                basePath,
-                conf
+            basePath,
+            conf,
+            writerFactory
         );
     }
 }

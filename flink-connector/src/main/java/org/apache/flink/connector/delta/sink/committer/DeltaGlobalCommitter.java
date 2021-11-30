@@ -35,6 +35,18 @@ import org.apache.flink.connector.delta.sink.committables.DeltaGlobalCommittable
  * identifier of the given Flink's job and checkpoint id) it will never commit them multiple times.
  * Such behaviour is achieved by constructing transactional id using mentioned app identifier and
  * checkpointId.
+ * <p>
+ * Lifecycle of instances of this class is as follows:
+ * <ol>
+ *     <li>Instances of this class are being created during a (global) commit stage</li>
+ *     <li>For given commit stage there is only one singleton instance of
+ *         {@link DeltaGlobalCommitter}</li>
+ *     <li>Every instance exists only during given commit stage after finishing particular
+ *         checkpoint interval. Despite being bundled to a finish phase of a checkpoint interval
+ *         a single instance of {@link DeltaGlobalCommitter} may process committables from multiple
+ *         checkpoints intervals (it happens e.g. when there was a app's failure and Flink has
+ *         recovered committables from previous commit stage to be re-committed.</li>
+ * </ol>
  */
 public class DeltaGlobalCommitter
         implements GlobalCommitter<DeltaCommittable, DeltaGlobalCommittable> {

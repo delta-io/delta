@@ -22,6 +22,7 @@ import java.io.Serializable;
 
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.streaming.api.functions.sink.filesystem.DeltaPendingFile;
+import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
  * Committable object that carries the information about files written to the file system
@@ -37,9 +38,39 @@ import org.apache.flink.streaming.api.functions.sink.filesystem.DeltaPendingFile
  * {@link org.apache.flink.api.connector.sink.GlobalCommitter#commit} we are using both:
  * metadata carried inside {@link DeltaPendingFile} and also transactional identifier constructed by
  * application's unique id and checkpoint interval's id.
+ * <p>
+ * Lifecycle of instances of this class is as follows:
+ * <ol>
+ *     <li>Every instance is created in
+ *         {@link org.apache.flink.connector.delta.sink.writer.DeltaWriterBucket#prepareCommit}
+ *         method during a pre-commit phase.</li>
+ *     <li>When certain checkpointing barriers are reached then generated committables are
+ *         snapshotted along with the rest of the application's state.
+ *         See Flink's docs for details
+ *         @see <a href="https://nightlies.apache.org/flink/flink-docs-master/docs/learn-flink/fault_tolerance/#how-does-state-snapshotting-work" target="_blank">here</a></li>
+ *     <li>During commit phase every committable is first delivered to
+ *         {@link org.apache.flink.connector.delta.sink.committer.DeltaCommitter#commit}
+ *         and then to
+ *         {@link org.apache.flink.connector.delta.sink.committer.DeltaGlobalCommitter#combine}
+ *         methods when they are being committed.</li>
+ *     <li>If there's any failure of the app's execution then Flink may recover previously generated
+ *         set of committables that may have not been committed. In such cases those recovered
+ *         committables will be again passed to the committers' instance along with the new
+ *         committables from the next checkpoint interval.</li>
+ *     <li>If checkpoint was successfull then committables from the given checkpoint interval are
+ *         no longer recovered and exist only in the previously snapshotted states.</li>
+ * </ol>
  */
 @Internal
 public class DeltaCommittable implements Serializable {
 
-    public DeltaCommittable() {}
+    private final DeltaPendingFile deltaPendingFile;
+
+    public DeltaCommittable(DeltaPendingFile deltaPendingFile) {
+        this.deltaPendingFile = checkNotNull(deltaPendingFile);
+    }
+
+    public DeltaPendingFile getDeltaPendingFile() {
+        return deltaPendingFile;
+    }
 }

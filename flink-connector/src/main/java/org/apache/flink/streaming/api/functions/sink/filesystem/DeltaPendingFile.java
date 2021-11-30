@@ -18,6 +18,13 @@
 
 package org.apache.flink.streaming.api.functions.sink.filesystem;
 
+import java.io.IOException;
+
+import org.apache.flink.core.io.SimpleVersionedSerialization;
+import org.apache.flink.core.io.SimpleVersionedSerializer;
+import org.apache.flink.core.memory.DataInputView;
+import org.apache.flink.core.memory.DataOutputView;
+
 /**
  * Wrapper class for {@link InProgressFileWriter.PendingFileRecoverable} object.
  * This class carries the internal committable information to be used during the checkpoint/commit
@@ -29,8 +36,105 @@ package org.apache.flink.streaming.api.functions.sink.filesystem;
  * in DeltaSink we need to perform also "global" commit to the {@link io.delta.standalone.DeltaLog}
  * and for that additional file metadata must be provided. Hence, this class provides the required
  * information for both types of commits by wrapping pending file and attaching file's metadata.
+ * <p>
+ * Lifecycle of instances of this class is as follows:
+ * <ol>
+ *     <li>Instances of this class are being created inside
+ *         {@link org.apache.flink.connector.delta.sink.writer.DeltaWriterBucket#closePartFile}
+ *         method every time when any in-progress is called to be closed. This happens either when
+ *         some conditions for closing are met or at the end of every checkpoint interval during a
+ *         pre-commit phase when we are closing all the open files in all buckets</li>
+ *     <li>Its life span holds only until the end of a checkpoint interval</li>
+ *     <li>During pre-commit phase (and after closing every in-progress files) every existing
+ *         {@link DeltaPendingFile} instance is automatically transformed into a
+ *         {@link org.apache.flink.connector.delta.sink.committables.DeltaCommittable} instance</li>
+ * </ol>
  */
 public class DeltaPendingFile {
 
-    public DeltaPendingFile() {}
+    private final String fileName;
+
+    private final InProgressFileWriter.PendingFileRecoverable pendingFile;
+
+    private final long recordCount;
+
+    private final long fileSize;
+
+    private final long lastUpdateTime;
+
+    public DeltaPendingFile(String fileName,
+                            InProgressFileWriter.PendingFileRecoverable pendingFile,
+                            long recordCount,
+                            long fileSize,
+                            long lastUpdateTime) {
+        this.fileName = fileName;
+        this.pendingFile = pendingFile;
+        this.fileSize = fileSize;
+        this.recordCount = recordCount;
+        this.lastUpdateTime = lastUpdateTime;
+    }
+
+    public String getFileName() {
+        return fileName;
+    }
+
+    public InProgressFileWriter.PendingFileRecoverable getPendingFile() {
+        return pendingFile;
+    }
+
+    public long getFileSize() {
+        return fileSize;
+    }
+
+    public long getRecordCount() {
+        return recordCount;
+    }
+
+    public long getLastUpdateTime() {
+        return lastUpdateTime;
+    }
+
+    ///////////////////////////////////////////////////////////////////////////
+    // serde utils
+    ///////////////////////////////////////////////////////////////////////////
+
+    public static void serialize(
+        DeltaPendingFile deltaPendingFile,
+        DataOutputView dataOutputView,
+        SimpleVersionedSerializer<InProgressFileWriter.PendingFileRecoverable>
+            pendingFileSerializer) throws IOException {
+        assert deltaPendingFile.getFileName() != null;
+        assert deltaPendingFile.getPendingFile() != null;
+
+        dataOutputView.writeUTF(deltaPendingFile.getFileName());
+        dataOutputView.writeLong(deltaPendingFile.getRecordCount());
+        dataOutputView.writeLong(deltaPendingFile.getFileSize());
+        dataOutputView.writeLong(deltaPendingFile.getLastUpdateTime());
+
+        SimpleVersionedSerialization.writeVersionAndSerialize(
+            pendingFileSerializer,
+            deltaPendingFile.getPendingFile(),
+            dataOutputView
+        );
+    }
+
+    public static DeltaPendingFile deserialize(
+        DataInputView dataInputView,
+        SimpleVersionedSerializer<InProgressFileWriter.PendingFileRecoverable>
+            pendingFileSerializer) throws IOException {
+
+        String pendingFileName = dataInputView.readUTF();
+        long pendingFileRecordCount = dataInputView.readLong();
+        long pendingFileSize = dataInputView.readLong();
+        long lastUpdateTime = dataInputView.readLong();
+        InProgressFileWriter.PendingFileRecoverable pendingFile =
+            SimpleVersionedSerialization.readVersionAndDeSerialize(
+                pendingFileSerializer, dataInputView);
+        return new DeltaPendingFile(
+            pendingFileName,
+            pendingFile,
+            pendingFileRecordCount,
+            pendingFileSize,
+            lastUpdateTime);
+    }
 }
