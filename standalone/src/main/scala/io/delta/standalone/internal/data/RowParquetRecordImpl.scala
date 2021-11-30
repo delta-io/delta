@@ -144,9 +144,16 @@ private[internal] case class RowParquetRecordImpl(
   private def getAs[T](fieldName: String): T = {
     val schemaField = schema.get(fieldName)
 
-    if (partitionValues.contains(fieldName)) { // partition field
+    // Partition Field
+    if (partitionValues.contains(fieldName)) {
+      if (partitionValues(fieldName) == null && !schemaField.isNullable) {
+        throw DeltaErrors.nullValueFoundForNonNullSchemaField(fieldName, schema)
+      }
+
       return partitionValues(fieldName).asInstanceOf[T]
     }
+
+    // Data Field
     val parquetVal = record.get(fieldName)
 
     if (parquetVal == NullValue && !schemaField.isNullable) {
