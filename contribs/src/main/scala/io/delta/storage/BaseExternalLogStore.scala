@@ -38,18 +38,6 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
   import BaseExternalLogStore._
 
   /**
-   * Delete file from filesystem.
-   *
-   * @param fs   reference to [[FileSystem]]
-   * @param path path to delete
-   * @return Boolean true if delete is successful else false
-   */
-  private def deleteFile(fs: FileSystem, path: Path): Boolean = {
-    logDebug(s"delete file: $path")
-    fs.delete(path, false)
-  }
-
-  /**
    * Copies file within filesystem.
    *
    * Ensures that the `src` file is either entirely copied to the `dst` file, or not at all.
@@ -68,13 +56,6 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
     } finally {
       input_stream.close()
     }
-  }
-
-  /**
-   * Check if the path is an initial version of a Delta log.
-   */
-  private def isInitialVersion(path: Path): Boolean = {
-    FileNames.isDeltaFile(path) && FileNames.deltaVersion(path) == 0L
   }
 
   /**
@@ -257,7 +238,7 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
     val prevVersionPathOpt = getPreviousVersionPath(resolvedPath)
     if (prevVersionPathOpt.isDefined && !fs.exists(prevVersionPathOpt.get)) {
       val prevVersionPath = prevVersionPathOpt.get
-      val prevVersionEntryOpt = lookup(fs, prevVersionPath)
+      val prevVersionEntryOpt = lookupInCache(fs, prevVersionPath)
 
       if (prevVersionEntryOpt.isEmpty) {
         logWarning(s"While trying to write $path, the preceding _delta_log entry " +
@@ -296,7 +277,9 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
         logWarning(s"${e.getClass.getName}: ignoring recoverable error: $e")
     }
 
-    // TODO: delete old DBB entries and temp files
+    val tempFilesToDelete =
+      deleteFromCacheAllOlderThan(fs, System.currentTimeMillis() - MILLIS_IN_DAY)
+    tempFilesToDelete.foreach(fs.delete(_, false))
   }
 
   /**
@@ -312,12 +295,24 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
 
   protected def listFromCache(fs: FileSystem, resolvedPath: Path): Iterator[LogEntryMetadata]
 
-  protected def lookup(fs: FileSystem, resolvedPath: Path): Option[LogEntryMetadata]
+  /**
+   * Returns the LogEntryMetadata from the external cache with the matching resolvedPath if it
+   * exists, else None
+   */
+  protected def lookupInCache(fs: FileSystem, resolvedPath: Path): Option[LogEntryMetadata]
+
+  /**
+   * Deletes all incomplete external cache LogEntryMetadata entries with modification times greater
+   * than or equal to the given `expirationTime`, and returns their temp paths.
+   */
+  protected def deleteFromCacheAllOlderThan(fs: FileSystem, expirationTime: Long): Iterator[Path]
 
   override def isPartialWriteVisible(path: Path): Boolean = false
 }
 
 object BaseExternalLogStore {
+
+  val MILLIS_IN_DAY = 86400000
 
   /**
    * Returns the path for the previous version N-1 given the input version N, if such a path exists
