@@ -264,7 +264,7 @@ case class AlterTableChangeColumnDeltaCommand(
       // Verify that the columnName provided actually exists in the schema
       SchemaUtils.findColumnPosition(columnPath :+ columnName, oldSchema, resolver)
 
-      val newSchema = transformColumnsStructs(oldSchema, columnName) {
+      val newSchema = transformColumnsStructs(oldSchema, Some(columnName)) {
         case (`columnPath`, struct @ StructType(fields), _) =>
           val oldColumn = struct(columnName)
           verifyColumnChange(sparkSession, struct(columnName), resolver, txn)

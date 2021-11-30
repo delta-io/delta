@@ -793,18 +793,21 @@ object SchemaUtils {
   /**
    * Transform (nested) columns in a schema. Runs the transform function on all nested StructTypes
    *
+   * If `colName` is defined, we also check if the struct to process contains the column name.
+   *
    * @param schema to transform.
+   * @param colName Optional name to match for
    * @param tf function to apply on the StructType.
    * @return the transformed schema.
    */
   def transformColumnsStructs(
       schema: StructType,
-      colName: String)(
+      colName: Option[String] = None)(
       tf: (Seq[String], StructType, Resolver) => Seq[StructField]): StructType = {
     def transform[E <: DataType](path: Seq[String], dt: E): E = {
       val newDt = dt match {
         case struct @ StructType(fields) =>
-          val newFields = if (fields.exists(_.name == colName)) {
+          val newFields = if (colName.isEmpty || fields.exists(f => colName.contains(f.name))) {
             tf(path, struct, DELTA_COL_RESOLVER)
           } else {
             fields.toSeq
