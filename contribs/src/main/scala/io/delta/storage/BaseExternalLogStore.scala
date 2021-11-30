@@ -117,30 +117,46 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
   }
 
   /**
-   * Best-effort at assuring consistency on file system according to the external cache.
-   * Tries to rewrite TransactionLog entry from temporary path if it does not exists.
+   * Best-effort at ensuring consistency on file system according to the external cache.
+   *
+   * Tries to copy a LogEntryMetadata's temp file into the target _delta_log file, if it does not
+   * exist already, and then commit to the external cache.
+   *
    * Will retry at most 3 times.
    *
-   * @returns the correct FileStatus to read the entry's data from
+   * @return the correct FileStatus from which to read the entry's data
    */
-  private def tryFixTransactionLog(fs: FileSystem, entry: LogEntryMetadata): FileStatus = {
+  private def tryFixTransactionLog(
+      fs: FileSystem,
+      entry: LogEntryMetadata,
+      failureAcceptable: Boolean): FileStatus = {
     logDebug(s"Try to fix: ${entry.path}")
     val completedEntry = entry.complete()
+    var fileCopied = false
 
     for (i <- 0 until 3) {
       try {
-        if (!fs.exists(entry.path)) {
+        if (!fileCopied && !fs.exists(entry.path)) {
           copyFile(fs, entry.tempPath, entry.path)
+          fileCopied = true
         }
+
+        // Since overwrite is true, we do not expect any FileAlreadyExistsExceptions
         writeCache(fs, completedEntry, overwrite = true)
+
         return completedEntry.asFileStatus(fs)
       } catch {
         case NonFatal(e) =>
-          logWarning(s"Ignoring $e while fixing. Iteration $i of 3.")
+          logWarning(s"${e.getClass.getName}: Ignoring error while fixing. Iteration $i of 3. $e")
       }
     }
 
-    entry.tempPathAsFileStatus(fs)
+    if (failureAcceptable) {
+      // We weren't able to commit to the external cache, but we can still read from the temp file
+      entry.tempPathAsFileStatus(fs)
+    } else {
+      throw new RuntimeException(s"Unable to fix the transaction log for path ${entry.path}")
+    }
   }
 
   /**
@@ -183,7 +199,11 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
     val listedFromDB = listFromCache(fs, resolvedPath)
       .toList
       .map { entry =>
-        if (!entry.isComplete) tryFixTransactionLog(fs, entry) else entry.asFileStatus(fs)
+        if (!entry.isComplete) {
+          tryFixTransactionLog(fs, entry, failureAcceptable = true)
+        } else {
+          entry.asFileStatus(fs)
+        }
       }
 
     // for debug
@@ -212,7 +232,6 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
     stream.getCount
   }
 
-
   /**
    * List files starting from `resolvedPath` (inclusive) in the same directory.
    */
@@ -231,28 +250,34 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
     // 1. If N.json already exists in the _delta_log, exit early
     if (fs.exists(resolvedPath)) {
       logDebug(s"$resolvedPath already exists. Returning early.")
+      return
     }
 
-    // 2. Else, ensure N-1.json exists in the _delta_log
-    val prevVersionPath = getPreviousVersionPath(resolvedPath)
-    if (!prevVersionPath.exists(fs.exists)) {
-      val prevVersionEntry = lookup(fs, prevVersionPath.get)
+    // 2. Ensure N-1.json exists in the _delta_log
+    val prevVersionPathOpt = getPreviousVersionPath(resolvedPath)
+    if (prevVersionPathOpt.isDefined && !fs.exists(prevVersionPathOpt.get)) {
+      val prevVersionPath = prevVersionPathOpt.get
+      val prevVersionEntryOpt = lookup(fs, prevVersionPath)
 
-      if (prevVersionEntry.isEmpty) {
-        logError(s"While trying to write $path, the preceding _delta_log entry " +
-          s"${prevVersionPath.get} was not found and neither was the preceding external entry. " +
-          s"This means that file ${prevVersionPath.get} has been lost.")
+      if (prevVersionEntryOpt.isEmpty) {
+        logWarning(s"While trying to write $path, the preceding _delta_log entry " +
+          s"$prevVersionPath was not found and neither was the preceding external entry. " +
+          s"This means that file $prevVersionPath has been lost.")
+      } else {
+        if (prevVersionEntryOpt.get.isComplete) {
+          logWarning(s"External entry for file $prevVersionPath is marked as complete, " +
+            s"but file does not exist in the _delta_log.")
+        }
+
+        logDebug(s"Previous file $prevVersionPath doesn't exist in the _delta_log. Fixing now.")
+        tryFixTransactionLog(fs, prevVersionEntryOpt.get, failureAcceptable = false)
       }
-
-      logDebug(s"Previous file $prevVersionPath doesn't exist in the _delta_log. Fixing now.")
-      tryFixTransactionLog(fs, prevVersionEntry.get)
     }
 
     logDebug(s"Writing file: $path, $overwrite")
 
     val tempPath = getTemporaryPath(resolvedPath)
     val fileLength = writeActions(fs, tempPath, actions)
-
     val logEntryMetadata = LogEntryMetadata(resolvedPath, fileLength, tempPath, isComplete = false)
 
     try {
@@ -274,9 +299,11 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
     // TODO: delete old DBB entries and temp files
   }
 
-  /*
+  /**
    * Write cache in exclusive way.
-   * Method should throw @java.nio.file.FileAlreadyExistsException if path exists in cache.
+   *
+   * @throws java.nio.file.FileAlreadyExistsException if path exists in cache and `overwrite` is
+   *                                                  false
    */
   protected def writeCache(
       fs: FileSystem,
