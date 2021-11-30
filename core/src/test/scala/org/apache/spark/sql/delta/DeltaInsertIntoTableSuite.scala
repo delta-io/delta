@@ -231,6 +231,7 @@ abstract class DeltaInsertIntoTests(
   override def afterEach(): Unit = {
     spark.catalog.listTables().collect().foreach(t =>
       sql(s"drop table ${t.name}"))
+    super.afterEach()
   }
 
   // START Apache Spark tests

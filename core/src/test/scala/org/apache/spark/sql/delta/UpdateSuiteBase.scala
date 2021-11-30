@@ -34,8 +34,7 @@ import org.apache.spark.util.Utils
 abstract class UpdateSuiteBase
   extends QueryTest
   with SharedSparkSession
-  with BeforeAndAfterEach
-  with SQLTestUtils
+  with BeforeAndAfterEach  with SQLTestUtils
   with DeltaTestUtilsForTempViews {
   import testImplicits._
 

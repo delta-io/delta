@@ -34,8 +34,7 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructType}
 
-class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession
-  with DeltaSQLCommandTest {
+class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession  with DeltaSQLCommandTest {
 
   override protected def verifyDescribeTable(tblName: String): Unit = {
     val res = sql(s"DESCRIBE TABLE $tblName").collect()

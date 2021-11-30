@@ -38,8 +38,7 @@ class DeltaGenerateSymlinkManifestSuite
   with DeltaSQLCommandTest
 
 trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
-  with SharedSparkSession
-  with DeltaTestUtilsForTempViews {
+  with SharedSparkSession  with DeltaTestUtilsForTempViews {
 
   import testImplicits._
 

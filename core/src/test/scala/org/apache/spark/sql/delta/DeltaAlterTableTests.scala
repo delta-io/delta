@@ -35,8 +35,7 @@ import org.apache.spark.util.Utils
 
 trait DeltaAlterTableTestBase
   extends QueryTest
-  with SharedSparkSession
-  with DeltaColumnMappingTestUtils  with DeltaTestUtilsForTempViews {
+  with SharedSparkSession  with DeltaColumnMappingTestUtils  with DeltaTestUtilsForTempViews {
 
   protected def createTable(schema: String, tblProperties: Map[String, String]): String
 
