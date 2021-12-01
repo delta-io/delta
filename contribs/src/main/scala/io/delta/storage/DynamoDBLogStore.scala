@@ -31,17 +31,16 @@ import org.apache.spark.SparkConf
 
 /*
   DynamoDB requirements:
-
   Single dynamodb table is required. Default table name is 'delta_log',
   it may be changed by setting spark property.
 
   Required key schema:
-   - parentPath: String, HASH
-   - filename: String, RANGE
+    - parentPath: String, HASH
+    - filename: String, RANGE
 
   Table may be created with following aws cli command:
 
-    aws --region us-east-1 dynamodb create-table \
+  aws --region us-east-1 dynamodb create-table \
       --table-name delta_log \
       --attribute-definitions AttributeName=parentPath,AttributeType=S \
                               AttributeName=filename,AttributeType=S \
@@ -50,12 +49,17 @@ import org.apache.spark.SparkConf
       --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5
 
   Following spark properties are recognized:
-  - spark.delta.DynamoDBLogStore.tableName - table name (defaults to 'delta_log')
-  - spark.delta.DynamoDBLogStore.endpoint - endpoint (defaults to 'Amazon AWS')
-  - spark.delta.DynamoDBLogStore.region - AWS region (defaults to 'us-east-1')
-  - spark.delta.DynamoDBLogStore.credentials.provider - name of class implementing
-    `com.amazonaws.auth.AWSCredentialsProvider` (defaults to 'DefaultAWSCredentialsProviderChain')
-*/
+    - spark.delta.DynamoDBLogStore.tableName - table name (defaults to 'delta_log')
+    - spark.delta.DynamoDBLogStore.endpoint - endpoint (defaults to 'Amazon AWS')
+    - spark.delta.DynamoDBLogStore.region - AWS region (defaults to 'us-east-1')
+    - spark.delta.DynamoDBLogStore.credentials.provider - name of class implementing
+  `com.amazonaws.auth.AWSCredentialsProvider` (defaults to 'DefaultAWSCredentialsProviderChain')
+
+  Implementation Notes:
+  - key schema
+      - parentPath == LogEntryMetadata.path.getParent.toString
+      - filename == LogEntryMetadata.path.getName
+ */
 class DynamoDBLogStore(
     sparkConf: SparkConf,
     hadoopConf: Configuration) extends BaseExternalLogStore(sparkConf, hadoopConf) {
@@ -87,8 +91,8 @@ class DynamoDBLogStore(
       fs: FileSystem,
       resolvedPath: Path): Iterator[LogEntryMetadata] = {
     val filename = resolvedPath.getName
-    val parentPath = resolvedPath.getParent
-    logInfo(s"query parentPath = $parentPath AND filename >= $filename")
+    val parentPathStr = resolvedPath.getParent.toString
+    logInfo(s"query parentPath = $parentPathStr AND filename >= $filename")
 
     val result = client
       .query(
@@ -101,30 +105,73 @@ class DynamoDBLogStore(
                 .withAttributeValueList(new AttributeValue(filename)),
               "parentPath" -> new Condition()
                 .withComparisonOperator(ComparisonOperator.EQ)
-                .withAttributeValueList(new AttributeValue(parentPath.toString))
+                .withAttributeValueList(new AttributeValue(parentPathStr))
             ).asJava
           )
       )
       .getItems
       .asScala
 
-    result.iterator.map(item => {
+    result.iterator.map { item =>
       logInfo(s"query result item: ${item.toString}")
-      val parentPath = item.get("parentPath").getS
-      val filename = item.get("filename").getS
-      val tempPath = new Path(item.get("tempPath").getS)
-      val length = item.get("length").getN.toLong
-      val modificationTime = item.get("modificationTime").getN.toLong
-      val isComplete = item.get("isComplete").getS() == "true"
+      parseItem(item)
+    }
+  }
 
-      LogEntryMetadata(
-        path = new Path(s"$parentPath/$filename"),
-        tempPath = tempPath,
-        length = length,
-        isComplete = isComplete,
-        modificationTime = modificationTime
+  override protected def lookupInCache(
+      fs: FileSystem,
+      resolvedPath: Path): Option[LogEntryMetadata] = {
+    val itemKey = Map(
+        "parentPath" -> new AttributeValue(resolvedPath.getParent.toString),
+        "filename" -> new AttributeValue(resolvedPath.getName)
+      ).asJava
+
+    val result = client.getItem(tableName, itemKey)
+
+    if (result == null || result.getItem == null || result.getItem.isEmpty) {
+      logDebug(s"lookupInCache: ${resolvedPath.toString} not found")
+      None
+    } else {
+      logDebug(s"lookupInCache: ${resolvedPath.toString} found")
+      Some(parseItem(result.getItem))
+    }
+  }
+
+  override protected def deleteFromCacheAllOlderThan(
+      fs: FileSystem,
+      parentPath: Path,
+      expirationTime: Long): Iterator[Path] = {
+    val parentPathStr = parentPath.toString
+    logInfo(s"delete query: parentPath = $parentPathStr AND modificationTime <= $expirationTime")
+
+    val result = client
+      .query(
+        new QueryRequest(tableName)
+          .withConsistentRead(true)
+          .withKeyConditions(
+            Map(
+              "parentPath" -> new Condition()
+                .withComparisonOperator(ComparisonOperator.EQ)
+                .withAttributeValueList(new AttributeValue(parentPathStr)),
+              "modificationTime" -> new Condition()
+                .withComparisonOperator(ComparisonOperator.LE)
+                .withAttributeValueList(new AttributeValue().withN(expirationTime.toString))
+            ).asJava
+          )
       )
-    })
+      .getItems
+      .asScala
+
+    result.foreach { item =>
+      val itemKey = Map(
+        "parentPath" -> item.get("parentPath"),
+        "filename" -> item.get("filename")
+      ).asJava
+
+      client.deleteItem(tableName, itemKey)
+    }
+
+    result.iterator.map { item => new Path(item.get("tempPath").getS) }
   }
 }
 
@@ -133,8 +180,24 @@ object DynamoDBLogStore {
 
   implicit def logEntryToWrapper(entry: LogEntryMetadata): LogEntryWrapper = LogEntryWrapper(entry)
 
-  def getClient(sparkConf: SparkConf): AmazonDynamoDBClient = {
+  def parseItem(item: java.util.Map[String, AttributeValue] ): LogEntryMetadata = {
+    val parentPath = item.get("parentPath").getS
+    val filename = item.get("filename").getS
+    val tempPath = new Path(item.get("tempPath").getS)
+    val length = item.get("length").getN.toLong
+    val modificationTime = item.get("modificationTime").getN.toLong
+    val isComplete = item.get("isComplete").getS == "true"
 
+    LogEntryMetadata(
+      path = new Path(s"$parentPath/$filename"),
+      tempPath = tempPath,
+      length = length,
+      isComplete = isComplete,
+      modificationTime = modificationTime
+    )
+  }
+
+  def getClient(sparkConf: SparkConf): AmazonDynamoDBClient = {
     val credentialsProviderName = sparkConf.get(
       s"${confPrefix}credentials.provider",
       "com.amazonaws.auth.DefaultAWSCredentialsProviderChain"
@@ -145,7 +208,7 @@ object DynamoDBLogStore {
     // scalastyle:on classforname
     val auth = authClass.getConstructor().newInstance()
       .asInstanceOf[com.amazonaws.auth.AWSCredentialsProvider];
-    var client = new AmazonDynamoDBClient(auth)
+    val client = new AmazonDynamoDBClient(auth)
     val regionName = sparkConf.get(s"${confPrefix}region", "us-east-1")
     if (regionName != "") {
       client.setRegion(Region.getRegion(Regions.fromName(regionName)))
@@ -166,11 +229,7 @@ case class LogEntryWrapper(entry: LogEntryMetadata) {
       Map(
         "parentPath" -> new AttributeValue(entry.path.getParent.toString),
         "filename" -> new AttributeValue(entry.path.getName),
-        "tempPath" -> (
-          entry.tempPath
-            .map(path => new AttributeValue(path.toString))
-            .getOrElse(new AttributeValue().withN("0"))
-          ),
+        "tempPath" -> new AttributeValue(entry.tempPath.toString),
         "length" -> new AttributeValue().withN(entry.length.toString),
         "modificationTime" -> new AttributeValue().withN(System.currentTimeMillis().toString),
         "isComplete" -> new AttributeValue().withS(entry.isComplete.toString)

@@ -30,7 +30,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.spark.SparkConf
 import java.nio.file.FileSystemException
 
-
+// TODO: make this more generic
 class ExternalLogStoreSuite extends LogStoreSuiteBase {
 
   override val logStoreClassName: String = classOf[MemoryLogStore].getName
@@ -89,12 +89,11 @@ class ExternalLogStoreSuite extends LogStoreSuiteBase {
           val entry = MemoryLogStore.hash_map.get(path)
           assert(entry != null)
           assert(!entry.isComplete)
-          assert(entry.tempPath.nonEmpty)
 
           assertThrows[java.io.FileNotFoundException] {
             store.read(path)
           }
-          val contents = store.read(entry.tempPath.get).toList
+          val contents = store.read(entry.tempPath).toList
 
           FailingFileSystem.failOnSuffix = null
           val files = store.listFrom(s"failing:${file.getCanonicalPath}")
@@ -133,7 +132,7 @@ class MemoryLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
       .asScala
       .iterator
       .filter {
-        case (path, _) => path.getParent == pathKey.getParent() && path.getName >= pathKey.getName
+        case (path, _) => path.getParent == pathKey.getParent && path.getName >= pathKey.getName
       }
       .map {
         case (_, logEntry) => logEntry
@@ -159,33 +158,39 @@ class MemoryLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
     }
   }
 
-  /**
-   * Check path exists on filesystem or in cache
-   * @param fs reference to [[FileSystem]]
-   * @param resolvedPath path to check
-   * @return Boolean true if file exists else false
-   */
-  private def exists(
-    fs: FileSystem,
-    resolvedPath: Path,
-    includeCache: Boolean = true): Boolean = {
-    // Ignore the cache for the first file of a Delta log
-    listFrom(fs, resolvedPath, useCache = includeCache)
-      .take(1)
-      .exists(_.getPath.getName == resolvedPath.getName)
+  override protected def lookupInCache(
+      fs: FileSystem,
+      resolvedPath: Path): Option[LogEntryMetadata] = {
+    if (hash_map.containsKey(resolvedPath)) {
+      Some(hash_map.get(resolvedPath))
+    } else {
+      None
+    }
   }
 
+  override protected def deleteFromCacheAllOlderThan(
+      fs: FileSystem,
+      parentPath: Path,
+      expirationTime: Long): Iterator[Path] = {
+    val result = hash_map
+      .asScala
+      .iterator
+      .filter { case (path, entry) =>
+        path.getParent == parentPath && entry.modificationTime <= expirationTime
+      }
+      .map {
+        case (_, logEntry) => logEntry
+      }
+
+    result.foreach { entry => hash_map.remove(entry.path) }
+
+    result.map { entry => entry.tempPath }
+  }
 }
 
 object MemoryLogStore {
+  // Map from LogEntryMetadata.path => LogEntryMetadata
   val hash_map = new ConcurrentHashMap[Path, LogEntryMetadata]()
-}
-
-class TestLogStore(
-    sparkConf: SparkConf,
-    hadoopConf: Configuration
-) extends MemoryLogStore(sparkConf, hadoopConf) {
-
 }
 
 class FailingFileSystem extends RawLocalFileSystem {
