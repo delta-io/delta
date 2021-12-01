@@ -370,6 +370,5 @@ releaseProcess := Seq[ReleaseStep](
   tagRelease,
   releaseStepCommandAndRemaining("+publishSigned"),
   setNextVersion,
-  commitNextVersion,
-  pushChanges
+  commitNextVersion
 )
