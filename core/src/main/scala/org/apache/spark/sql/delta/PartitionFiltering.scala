@@ -38,6 +38,6 @@ trait PartitionFiltering { self: Snapshot =>
         partitionFilters).as[AddFile].collect()
     }
 
-    DeltaScan(version = version, files, null, null, null)(null, null, null, null)
+    DeltaScan(version = version, files, null, null, null)(null, null, null, null, 0, null)
   }
 }
