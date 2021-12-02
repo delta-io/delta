@@ -73,8 +73,8 @@ class ExpressionSuite extends FunSuite {
     testPredicate(new And(Literal.False, Literal.True), false)
     testPredicate(new And(Literal.True, Literal.True), true)
     testException[IllegalArgumentException](
-      new And(Literal.of(1), Literal.of(2)).eval(null),
-      "AND expression requires Boolean type.")
+      new And(Literal.of(1), Literal.of(2)),
+      "AND expression requires bool type.")
     testException[IllegalArgumentException](
       new And(Literal.False, Literal.ofNull(new IntegerType())),
       "BinaryOperator left and right DataTypes must be the same")
@@ -92,10 +92,9 @@ class ExpressionSuite extends FunSuite {
     testPredicate(new Or(Literal.True, Literal.False), true)
     testPredicate(new Or(Literal.False, Literal.True), true)
     testPredicate(new Or(Literal.True, Literal.True), true)
-    // TODO: fail upon creation instead of eval
     testException[IllegalArgumentException](
-      new Or(Literal.of(1), Literal.of(2)).eval(null),
-      "OR expression requires Boolean type.")
+      new Or(Literal.of(1), Literal.of(2)),
+      "OR expression requires bool type.")
     testException[IllegalArgumentException](
       new Or(Literal.False, Literal.ofNull(new IntegerType())),
       "BinaryOperator left and right DataTypes must be the same")
@@ -105,8 +104,8 @@ class ExpressionSuite extends FunSuite {
     testPredicate(new Not(Literal.True), false)
     testPredicate(new Not(Literal.ofNull(new BooleanType())), null)
     testException[IllegalArgumentException](
-      new Not(Literal.of(1)).eval(null),
-      "NOT expression requires Boolean type.")
+      new Not(Literal.of(1)),
+      "NOT expression requires bool type.")
   }
 
   test("comparison predicates") {
@@ -537,11 +536,11 @@ class ExpressionSuite extends FunSuite {
 
   test("expression content equality") {
     // BinaryExpression
-    val and = new And(partitionSchema.column("col1"), partitionSchema.column("col2"))
-    val andCopy = new And(partitionSchema.column("col1"), partitionSchema.column("col2"))
-    val and2 = new And(dataSchema.column("col3"), Literal.of(44))
-    assert(and == andCopy)
-    assert(and != and2)
+    val equalTo = new EqualTo(partitionSchema.column("col1"), partitionSchema.column("col2"))
+    val equalToCopy = new EqualTo(partitionSchema.column("col1"), partitionSchema.column("col2"))
+    val equalTo2 = new EqualTo(dataSchema.column("col3"), Literal.of(44))
+    assert(equalTo == equalToCopy)
+    assert(equalTo != equalTo2)
 
     // UnaryExpression
     val not = new Not(new EqualTo(Literal.of(1), Literal.of(1)))
