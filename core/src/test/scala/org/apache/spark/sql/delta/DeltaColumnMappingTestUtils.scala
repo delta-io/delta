@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.File
 
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import io.delta.tables.{DeltaTable => OSSDeltaTable}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
@@ -341,23 +342,64 @@ trait DeltaColumnMappingTestUtilsBase extends SharedSparkSession {
     }
   }
 
+  /**
+   * Standard CONVERT TO DELTA
+   * @param tableOrPath String
+   */
+  protected def convertToDelta(tableOrPath: String): Unit = {
+    sql(s"CONVERT TO DELTA $tableOrPath")
+  }
+
 }
 
 trait DeltaColumnMappingTestUtils extends DeltaColumnMappingTestUtilsBase
 
-
 /**
  * Include this trait to enable Id column mapping mode for a suite
  */
-trait DeltaColumnMappingEnableIdMode extends SharedSparkSession {
+trait DeltaColumnMappingEnableIdMode extends SharedSparkSession
+  with DeltaColumnMappingTestUtils {
   protected override def sparkConf: SparkConf =
     super.sparkConf.set(DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey, "id")
+
+  /**
+   * CONVERT TO DELTA blocked in id mode
+   */
+  protected override def convertToDelta(tableOrPath: String): Unit =
+    throw DeltaErrors.convertToDeltaWithColumnMappingNotSupported(
+      DeltaColumnMappingMode(columnMappingModeString)
+    )
 }
 
 /**
  * Include this trait to enable Name column mapping mode for a suite
  */
-trait DeltaColumnMappingEnableNameMode extends SharedSparkSession {
+trait DeltaColumnMappingEnableNameMode extends SharedSparkSession
+  with DeltaColumnMappingTestUtils {
+
   protected override def sparkConf: SparkConf =
     super.sparkConf.set(DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey, "name")
+
+  /**
+   * CONVERT TO DELTA can be possible under name mode in tests
+   */
+  protected override def convertToDelta(tableOrPath: String): Unit = {
+    withColumnMappingConf("none") {
+      super.convertToDelta(tableOrPath)
+    }
+
+    val deltaPath = if (tableOrPath.contains("parquet") && tableOrPath.contains("`")) {
+      // parquet.`PATH`
+      s"""delta.${tableOrPath.split('.').last}"""
+    } else {
+      tableOrPath
+    }
+
+    sql(s"""ALTER TABLE $deltaPath SET TBLPROPERTIES (
+         |${DeltaConfigs.COLUMN_MAPPING_MODE.key} = 'name',
+         |${DeltaConfigs.MIN_READER_VERSION.key} = '2',
+         |${DeltaConfigs.MIN_WRITER_VERSION.key} = '5'
+         |)""".stripMargin)
+  }
+
 }
