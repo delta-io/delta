@@ -41,6 +41,7 @@ import org.apache.spark.sql.functions.{col, struct, when}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
+import org.apache.spark.util.Utils
 
 /**
  * Records information about a checkpoint.
@@ -129,21 +130,43 @@ trait Checkpoints extends DeltaLogging {
 
   /**
    * Creates a checkpoint using snapshotToCheckpoint. By default it uses the current log version.
+   * Note that this function captures and logs all exceptions, since the checkpoint shouldn't fail
+   * the overall commit operation.
    */
   def checkpoint(snapshotToCheckpoint: Snapshot): Unit =
     recordDeltaOperation(this, "delta.checkpoint") {
-      if (snapshotToCheckpoint.version < 0) {
-        throw DeltaErrors.checkpointNonExistTable(dataPath)
-      }
-      val checkpointMetaData = writeCheckpointFiles(snapshotToCheckpoint)
-      val json = JsonUtils.toJson(checkpointMetaData)
-      store.write(
-        LAST_CHECKPOINT,
-        Iterator(json),
-        overwrite = true,
-        newDeltaHadoopConf())
+      try {
+        if (snapshotToCheckpoint.version < 0) {
+          throw DeltaErrors.checkpointNonExistTable(dataPath)
+        }
+        val checkpointMetaData = writeCheckpointFiles(snapshotToCheckpoint)
+        val json = JsonUtils.toJson(checkpointMetaData)
+        store.write(
+          LAST_CHECKPOINT,
+          Iterator(json),
+          overwrite = true,
+          newDeltaHadoopConf())
 
-      doLogCleanup()
+        doLogCleanup()
+      } catch {
+        // Catch all non-fatal exceptions, since the checkpoint is written after the commit
+        // has completed. From the perspective of the user, the commit completed successfully.
+        // However, throw if this is in a testing environment - that way any breaking changes
+        // can be caught in unit tests.
+        case NonFatal(e) =>
+          recordDeltaEvent(
+            snapshotToCheckpoint.deltaLog,
+            "delta.checkpoint.sync.error",
+            data = Map(
+              "exception" -> e.getMessage(),
+              "stackTrace" -> e.getStackTrace()
+            )
+          )
+          logWarning(s"Error when writing checkpoint synchronously", e)
+          if (Utils.isTesting) {
+            throw e
+          }
+      }
     }
 
   protected def writeCheckpointFiles(snapshotToCheckpoint: Snapshot): CheckpointMetaData = {
