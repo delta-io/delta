@@ -71,6 +71,8 @@ public class DeltaWriterBucketStateSerializer
         SimpleVersionedSerialization.writeVersionAndSerialize(
             SimpleVersionedStringSerializer.INSTANCE, state.getBucketId(), dataOutputView);
         dataOutputView.writeUTF(state.getBucketPath().toString());
+        dataOutputView.writeUTF(state.getAppId());
+        dataOutputView.writeLong(state.getCheckpointId());
     }
 
     private DeltaWriterBucketState deserializeV1(DataInputView in) throws IOException {
@@ -87,10 +89,14 @@ public class DeltaWriterBucketStateSerializer
         );
 
         String bucketPathStr = dataInputView.readUTF();
+        String appId = dataInputView.readUTF();
+        long checkpointId = dataInputView.readLong();
 
         return new DeltaWriterBucketState(
             bucketId,
-            new Path(bucketPathStr)
+            new Path(bucketPathStr),
+            appId,
+            checkpointId
         );
     }
 

@@ -51,7 +51,7 @@ public class DeltaCommitterTest {
 
         // WHEN
         DeltaCommittable deltaCommittable =
-            new DeltaCommittable(DeltaSinkTestUtils.getTestDeltaPendingFile());
+            new DeltaCommittable(DeltaSinkTestUtils.getTestDeltaPendingFile(), "1", 1);
         List<DeltaCommittable> toRetry =
             deltaCommitter.commit(Collections.singletonList(deltaCommittable));
 
@@ -69,9 +69,9 @@ public class DeltaCommitterTest {
 
         // WHEN
         List<DeltaCommittable> committables = Arrays.asList(
-            new DeltaCommittable(DeltaSinkTestUtils.getTestDeltaPendingFile()),
-            new DeltaCommittable(DeltaSinkTestUtils.getTestDeltaPendingFile()),
-            new DeltaCommittable(DeltaSinkTestUtils.getTestDeltaPendingFile())
+            new DeltaCommittable(DeltaSinkTestUtils.getTestDeltaPendingFile(), "1", 1),
+            new DeltaCommittable(DeltaSinkTestUtils.getTestDeltaPendingFile(), "1", 1),
+            new DeltaCommittable(DeltaSinkTestUtils.getTestDeltaPendingFile(), "1", 1)
         );
         List<DeltaCommittable> toRetry =
             deltaCommitter.commit(committables);

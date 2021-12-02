@@ -52,7 +52,8 @@ import static org.apache.flink.util.Preconditions.checkState;
  * <p>
  * Most of the logic for this class was sourced from {@link FileWriter} as the behaviour is very
  * similar. The main differences are use of custom implementations for some member classes and also
- * managing {@link io.delta.standalone.DeltaLog} transactional ids: appId and nextCheckpointId.
+ * managing {@link io.delta.standalone.DeltaLog} transactional ids: {@link DeltaWriter#appId} and
+ * {@link DeltaWriter#nextCheckpointId}.
  * <p>
  * Lifecycle of instances of this class is as follows:
  * <ol>
@@ -74,6 +75,34 @@ public class DeltaWriter<IN>
     Sink.ProcessingTimeService.ProcessingTimeCallback {
 
     private static final Logger LOG = LoggerFactory.getLogger(DeltaWriter.class);
+
+    /**
+     * Value used as a bucket id for noop bucket states. It will be used to snapshot and indicate
+     * the writer's states with no active buckets.
+     */
+    public static final String NOOP_WRITER_STATE = "<noop-writer-state>";
+
+    ///////////////////////////////////////////////////////////////////////////
+    // DeltaSink-specific fields
+    ///////////////////////////////////////////////////////////////////////////
+
+    /**
+     * Unique identifier of the application that will be passed as part of committables' information
+     * during {@link DeltaWriter#prepareCommit} method. It's also snapshotted as a part of the
+     * writer's state in order to support failure recovery and provide exactly-once delivery
+     * guarantee.
+     */
+    private final String appId;
+
+    /**
+     * Unique identifier of a checkpoint interval. It's necessary to maintain and increment this
+     * value inside writer as this needs to be passed as a part of committables' information during
+     * {@link DeltaWriter#prepareCommit} method. Its value is always incremented by one after
+     * generating set of committables for given checkpoint interval. It's also snapshotted as a part
+     * of the writer's state in order to support failure recovery and provide exactly-once delivery
+     * guarantee. For a fresh start of an application it always starts with the value of "1".
+     */
+    private long nextCheckpointId;
 
     ///////////////////////////////////////////////////////////////////////////
     // FileSink-specific fields
@@ -108,10 +137,10 @@ public class DeltaWriter<IN>
     /**
      * A constructor creating a new empty bucket (DeltaLake table's partitions) manager.
      *
-     * @param basePath       the base path for the table
-     * @param bucketAssigner The {@link BucketAssigner} provided by the user.
-     * @param bucketWriter   The {@link DeltaBulkBucketWriter} to be used when writing data.
-     * @param rollingPolicy  The {@link CheckpointRollingPolicy} as specified by the user.
+     * @param basePath              the base path for the table
+     * @param bucketAssigner        The {@link BucketAssigner} provided by the user.
+     * @param bucketWriter          The {@link DeltaBulkBucketWriter} to be used when writing data.
+     * @param rollingPolicy         The {@link CheckpointRollingPolicy} as specified by the user.
      * @param outputFileConfig      The {@link OutputFileConfig} to configure the options for output
      *                              files.
      * @param processingTimeService The {@link Sink.ProcessingTimeService} that allows to get the
@@ -120,6 +149,12 @@ public class DeltaWriter<IN>
      *                              firing.
      * @param bucketCheckInterval   interval for invoking the {@link Sink.ProcessingTimeService}'s
      *                              callback.
+     * @param appId                 Unique identifier of the current Flink app. This identifier
+     *                              needs to be constant across all app's restarts to guarantee
+     *                              idempotent writes/commits to the DeltaLake's table.
+     * @param nextCheckpointId      Identifier of the next checkpoint interval to be committed.
+     *                              During DeltaLog's commit phase it will be used as transaction's
+     *                              version.
      */
     public DeltaWriter(
         final Path basePath,
@@ -128,7 +163,9 @@ public class DeltaWriter<IN>
         final CheckpointRollingPolicy<IN, String> rollingPolicy,
         final OutputFileConfig outputFileConfig,
         final Sink.ProcessingTimeService processingTimeService,
-        final long bucketCheckInterval) {
+        final long bucketCheckInterval,
+        final String appId,
+        final long nextCheckpointId) {
 
         this.basePath = checkNotNull(basePath);
         this.bucketAssigner = checkNotNull(bucketAssigner);
@@ -145,11 +182,14 @@ public class DeltaWriter<IN>
             bucketCheckInterval > 0,
             "Bucket checking interval for processing time should be positive.");
         this.bucketCheckInterval = bucketCheckInterval;
+        this.appId = appId;
+        this.nextCheckpointId = nextCheckpointId;
     }
 
     /**
      * Prepares the writer's state to be snapshotted between checkpoint intervals.
      * <p>
+     *
      * @implNote This method behaves in the similar way as
      * {@link org.apache.flink.connector.file.sink.writer.FileWriter#snapshotState}
      * except that it uses custom {@link DeltaWriterBucketState} and {@link DeltaWriterBucket}
@@ -169,10 +209,25 @@ public class DeltaWriter<IN>
 
         List<DeltaWriterBucketState> states = new ArrayList<>();
         for (DeltaWriterBucket<IN> bucket : activeBuckets.values()) {
-            states.add(bucket.snapshotState());
+            states.add(bucket.snapshotState(appId, nextCheckpointId));
         }
 
+        if (states.isEmpty()) {
+            // we still need to snapshot transactional ids (appId and checkpointId) even though
+            // there are no active buckets in the writer.
+            states.add(
+                new DeltaWriterBucketState(NOOP_WRITER_STATE, basePath, appId, nextCheckpointId)
+            );
+        }
         return states;
+    }
+
+    private void incrementNextCheckpointId() {
+        nextCheckpointId += 1;
+    }
+
+    long getNextCheckpointId() {
+        return nextCheckpointId;
     }
 
     ///////////////////////////////////////////////////////////////////////////
@@ -209,7 +264,8 @@ public class DeltaWriter<IN>
      *
      * @implNote This method behaves in the same way as
      * {@link org.apache.flink.connector.file.sink.writer.FileWriter#prepareCommit}
-     * except that it uses custom {@link DeltaWriterBucket} implementation.
+     * except that it uses custom {@link DeltaWriterBucket} implementation and
+     * also increments the {@link DeltaWriter#nextCheckpointId} counter.
      */
     @Override
     public List<DeltaCommittable> prepareCommit(boolean flush) throws IOException {
@@ -225,10 +281,11 @@ public class DeltaWriter<IN>
             if (!entry.getValue().isActive()) {
                 activeBucketIter.remove();
             } else {
-                committables.addAll(entry.getValue().prepareCommit(flush));
+                committables.addAll(entry.getValue().prepareCommit(flush, appId, nextCheckpointId));
             }
         }
 
+        incrementNextCheckpointId();
         return committables;
     }
 
@@ -242,12 +299,18 @@ public class DeltaWriter<IN>
      * {@link org.apache.flink.connector.file.sink.writer.FileWriter#initializeState}
      * except that it uses custom {@link DeltaWriterBucketState} and {@link DeltaWriterBucket}
      * implementations.
+     * Additionally, it skips restoring the bucket in case of bucket id equal to the value of
+     * {@link DeltaWriter#NOOP_WRITER_STATE}.
      */
     public void initializeState(List<DeltaWriterBucketState> bucketStates) throws IOException {
         checkNotNull(bucketStates, "The retrieved state was null.");
 
         for (DeltaWriterBucketState state : bucketStates) {
             String bucketId = state.getBucketId();
+            if (bucketId.equals(NOOP_WRITER_STATE)) {
+                // nothing to restore
+                continue;
+            }
 
             if (LOG.isDebugEnabled()) {
                 LOG.debug("Restoring: {}", state);

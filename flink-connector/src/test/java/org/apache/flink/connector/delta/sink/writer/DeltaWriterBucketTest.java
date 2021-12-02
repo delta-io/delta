@@ -47,6 +47,7 @@ public class DeltaWriterBucketTest {
     @ClassRule
     public static final TemporaryFolder TEMP_FOLDER = new TemporaryFolder();
     private static final String BUCKET_ID = "testing-bucket";
+    private static final String APP_ID = "1";
 
     @Test
     public void testOnCheckpointNoPendingRecoverable() throws IOException {
@@ -185,7 +186,9 @@ public class DeltaWriterBucketTest {
         DeltaWriterBucketState bucketState =
             new DeltaWriterBucketState(
                 "bucketId",
-                new Path("file:///tmp/bucketId")
+                new Path("file:///tmp/bucketId"),
+                "appId",
+                1
             );
         DeltaWriterBucketState deserialized = serializeAndDeserialize(bucketState);
         assertBucketStateEquals(bucketState, deserialized);
@@ -214,8 +217,8 @@ public class DeltaWriterBucketTest {
     private static List<DeltaCommittable> onCheckpointActions(DeltaWriterBucket<RowData> bucket,
                                                               Path bucketPath,
                                                               boolean doCommit) throws IOException {
-        List<DeltaCommittable> deltaCommittables = bucket.prepareCommit(false);
-        DeltaWriterBucketState bucketState = bucket.snapshotState();
+        List<DeltaCommittable> deltaCommittables = bucket.prepareCommit(false, APP_ID, 1);
+        DeltaWriterBucketState bucketState = bucket.snapshotState(APP_ID, 1);
 
         assertEquals(BUCKET_ID, bucketState.getBucketId());
         assertEquals(bucketPath, bucketState.getBucketPath());

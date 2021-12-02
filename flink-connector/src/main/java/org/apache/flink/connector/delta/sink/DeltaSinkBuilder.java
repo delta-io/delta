@@ -20,6 +20,7 @@ package org.apache.flink.connector.delta.sink;
 
 import java.io.IOException;
 import java.io.Serializable;
+import java.util.UUID;
 
 import org.apache.flink.api.connector.sink.Sink;
 import org.apache.flink.connector.delta.sink.committables.DeltaCommittable;
@@ -40,9 +41,7 @@ import org.apache.flink.streaming.api.functions.sink.filesystem.BucketAssigner;
 import org.apache.flink.streaming.api.functions.sink.filesystem.BucketWriter;
 import org.apache.flink.streaming.api.functions.sink.filesystem.DeltaBulkBucketWriter;
 import org.apache.flink.streaming.api.functions.sink.filesystem.OutputFileConfig;
-import org.apache.flink.streaming.api.functions.sink.filesystem.bucketassigners.BasePathBucketAssigner;
 import org.apache.flink.streaming.api.functions.sink.filesystem.rollingpolicies.CheckpointRollingPolicy;
-import org.apache.flink.streaming.api.functions.sink.filesystem.rollingpolicies.OnCheckpointRollingPolicy;
 import org.apache.hadoop.conf.Configuration;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
@@ -62,6 +61,10 @@ public class DeltaSinkBuilder<IN> implements Serializable {
 
     protected static final long DEFAULT_BUCKET_CHECK_INTERVAL = 60L * 1000L;
 
+    private static String generateNewAppId() {
+        return UUID.randomUUID().toString();
+    }
+
     ///////////////////////////////////////////////////////////////////////////
     // DeltaLake-specific fields
     ///////////////////////////////////////////////////////////////////////////
@@ -72,6 +75,13 @@ public class DeltaSinkBuilder<IN> implements Serializable {
     private final Path tableBasePath;
 
     /**
+     * Unique identifier of the current Flink's app. Value from this builder will be read
+     * only during the fresh start of the application. For restarts or failure recovery
+     * it will be resolved from the snapshoted state.
+     */
+    private final String appId;
+
+    /**
      * Serializable wrapper for {@link Configuration} object
      */
     private final SerializableConfiguration serializableConfiguration;
@@ -80,7 +90,15 @@ public class DeltaSinkBuilder<IN> implements Serializable {
     // FileSink-specific fields
     ///////////////////////////////////////////////////////////////////////////
 
-    private long bucketCheckInterval;
+    /**
+     * Interval for triggering {@link Sink.ProcessingTimeService} within {@link DeltaWriter}
+     * instance.
+     * <p>
+     * In some scenarios, the open buckets are required to change based on time. In these cases,
+     * the user can specify a bucketCheckInterval and the sink will check
+     * periodically and roll the part file if the specified rolling policy says so.
+     */
+    private final long bucketCheckInterval;
 
     private final ParquetWriterFactory<IN> writerFactory;
 
@@ -94,15 +112,17 @@ public class DeltaSinkBuilder<IN> implements Serializable {
         Path basePath,
         Configuration conf,
         ParquetWriterFactory<IN> writerFactory,
-        BucketAssigner<IN, String> assigner) {
+        BucketAssigner<IN, String> assigner,
+        CheckpointRollingPolicy<IN, String> policy) {
         this(
             basePath,
             conf,
             DEFAULT_BUCKET_CHECK_INTERVAL,
             writerFactory,
             assigner,
-            OnCheckpointRollingPolicy.build(),
-            OutputFileConfig.builder().withPartSuffix(".snappy.parquet").build()
+            policy,
+            OutputFileConfig.builder().withPartSuffix(".snappy.parquet").build(),
+            generateNewAppId()
         );
     }
 
@@ -113,7 +133,8 @@ public class DeltaSinkBuilder<IN> implements Serializable {
         ParquetWriterFactory<IN> writerFactory,
         BucketAssigner<IN, String> assigner,
         CheckpointRollingPolicy<IN, String> policy,
-        OutputFileConfig outputFileConfig) {
+        OutputFileConfig outputFileConfig,
+        String appId) {
         this.tableBasePath = checkNotNull(basePath);
         this.serializableConfiguration = new SerializableConfiguration(checkNotNull(conf));
         this.bucketCheckInterval = bucketCheckInterval;
@@ -121,6 +142,7 @@ public class DeltaSinkBuilder<IN> implements Serializable {
         this.bucketAssigner = checkNotNull(assigner);
         this.rollingPolicy = checkNotNull(policy);
         this.outputFileConfig = checkNotNull(outputFileConfig);
+        this.appId = appId;
     }
 
     DeltaCommitter createCommitter() throws IOException {
@@ -135,6 +157,10 @@ public class DeltaSinkBuilder<IN> implements Serializable {
         return tableBasePath;
     }
 
+    String getAppId() {
+        return appId;
+    }
+
     SerializableConfiguration getSerializableConfiguration() {
         return serializableConfiguration;
     }
@@ -142,11 +168,6 @@ public class DeltaSinkBuilder<IN> implements Serializable {
     ///////////////////////////////////////////////////////////////////////////
     // FileSink-specific methods
     ///////////////////////////////////////////////////////////////////////////
-
-    public DeltaSinkBuilder<IN> withBucketCheckInterval(final long interval) {
-        this.bucketCheckInterval = interval;
-        return this;
-    }
 
     public DeltaSinkBuilder<IN> withBucketAssigner(BucketAssigner<IN, String> assigner) {
         this.bucketAssigner = checkNotNull(assigner);
@@ -164,27 +185,18 @@ public class DeltaSinkBuilder<IN> implements Serializable {
         return this;
     }
 
-    public DeltaSinkBuilder<IN> withNewBucketAssigner(
-        BucketAssigner<IN, String> assigner) {
-        return new DeltaSinkBuilder<>(
-            tableBasePath,
-            serializableConfiguration.conf(),
-            bucketCheckInterval,
-            writerFactory,
-            checkNotNull(assigner),
-            rollingPolicy,
-            outputFileConfig);
-    }
-
     /**
      * Creates the actual sink.
+     *
      * @return constructed {@link DeltaSink} object
      */
     public DeltaSink<IN> build() {
         return new DeltaSink<>(this);
     }
 
-    DeltaWriter<IN> createWriter(Sink.InitContext context) throws IOException {
+    DeltaWriter<IN> createWriter(Sink.InitContext context,
+                                 String appId,
+                                 long nextCheckpointId) throws IOException {
         return new DeltaWriter<>(
             tableBasePath,
             bucketAssigner,
@@ -192,7 +204,9 @@ public class DeltaSinkBuilder<IN> implements Serializable {
             rollingPolicy,
             outputFileConfig,
             context.getProcessingTimeService(),
-            bucketCheckInterval);
+            bucketCheckInterval,
+            appId,
+            nextCheckpointId);
     }
 
     SimpleVersionedSerializer<DeltaWriterBucketState> getWriterStateSerializer()
@@ -230,8 +244,10 @@ public class DeltaSinkBuilder<IN> implements Serializable {
         DefaultDeltaFormatBuilder(
             Path basePath,
             final Configuration conf,
-            ParquetWriterFactory<IN> writerFactory) {
-            super(basePath, conf, writerFactory, new BasePathBucketAssigner<>());
+            ParquetWriterFactory<IN> writerFactory,
+            BucketAssigner<IN, String> assigner,
+            CheckpointRollingPolicy<IN, String> policy) {
+            super(basePath, conf, writerFactory, assigner, policy);
         }
     }
 }

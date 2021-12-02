@@ -48,7 +48,6 @@ package org.apache.flink.streaming.api.functions.sink.filesystem;
 public class DeltaInProgressPart<IN> {
 
     private final String fileName;
-
     private final DeltaBulkPartWriter<IN, String> bulkPartWriter;
 
     public DeltaInProgressPart(String fileName,

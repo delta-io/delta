@@ -52,6 +52,7 @@ public class DeltaWriterTest {
 
     @ClassRule
     public static final TemporaryFolder TEMP_FOLDER = new TemporaryFolder();
+    private static final String APP_ID = "1";
 
     @Test
     public void testPreCommit() throws Exception {
@@ -69,6 +70,7 @@ public class DeltaWriterTest {
         // THEN
         assertEquals(1, writer.getActiveBuckets().size());
         assertEquals(1, committables.size());
+        assertEquals(writer.getNextCheckpointId(), 2);
     }
 
     @Test
@@ -192,7 +194,9 @@ public class DeltaWriterTest {
             DeltaSinkTestUtils.ON_CHECKPOINT_ROLLING_POLICY,
             OutputFileConfig.builder().withPartSuffix(".snappy.parquet").build(),
             new ManuallyTriggeredProcessingTimeService(),
-            10
+            10,
+            APP_ID,
+            1
         );
     }
 

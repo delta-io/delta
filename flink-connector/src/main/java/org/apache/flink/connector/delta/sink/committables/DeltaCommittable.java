@@ -66,11 +66,37 @@ public class DeltaCommittable implements Serializable {
 
     private final DeltaPendingFile deltaPendingFile;
 
-    public DeltaCommittable(DeltaPendingFile deltaPendingFile) {
+    /**
+     * Unique identifier of the application used for interacting with
+     * {@link io.delta.standalone.DeltaLog} and for identifying previous table's versions committed
+     * by this application.
+     */
+    private final String appId;
+
+    /**
+     * Unique identifier of the current checkpoint interval. It's necessary to carry this as a part
+     * of committable information in order to guarantee idempotent behaviour of
+     * {@link org.apache.flink.connector.delta.sink.committer.DeltaGlobalCommitter#commit}.
+     */
+    private final long checkpointId;
+
+    public DeltaCommittable(DeltaPendingFile deltaPendingFile,
+                            String appId,
+                            long checkpointId) {
         this.deltaPendingFile = checkNotNull(deltaPendingFile);
+        this.appId = appId;
+        this.checkpointId = checkpointId;
     }
 
     public DeltaPendingFile getDeltaPendingFile() {
         return deltaPendingFile;
+    }
+
+    public long getCheckpointId() {
+        return checkpointId;
+    }
+
+    public String getAppId() {
+        return appId;
     }
 }

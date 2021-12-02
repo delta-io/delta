@@ -158,6 +158,8 @@ public class DeltaWriterBucket<IN> {
      * <ol>
      *   <li>it uses custom {@link DeltaInProgressPart} implementation in order to carry additional
      *       file's metadata that will be used during global commit phase</li>
+     *   <li>it adds transactional identifier for current checkpoint interval (appId + checkpointId)
+     *       to the committables</li>
      *   <li>it does not handle any in progress files to cleanup as it's supposed to always roll
      *       part files on checkpoint which is also the default behaviour for bulk formats in
      *       {@link org.apache.flink.connector.file.sink.FileSink} as well. The reason why its
@@ -165,7 +167,9 @@ public class DeltaWriterBucket<IN> {
      *       required in case of DeltaSink.</li>
      * </ol>
      */
-    List<DeltaCommittable> prepareCommit(boolean flush) throws IOException {
+    List<DeltaCommittable> prepareCommit(boolean flush,
+                                         String appId,
+                                         long checkpointId) throws IOException {
         if (deltaInProgressPart != null) {
             if (rollingPolicy.shouldRollOnCheckpoint(deltaInProgressPart.getBulkPartWriter())
                 || flush) {
@@ -185,7 +189,8 @@ public class DeltaWriterBucket<IN> {
         }
 
         List<DeltaCommittable> committables = new ArrayList<>();
-        pendingFiles.forEach(pendingFile -> committables.add(new DeltaCommittable(pendingFile)));
+        pendingFiles.forEach(pendingFile -> committables.add(
+            new DeltaCommittable(pendingFile, appId, checkpointId)));
         pendingFiles.clear();
 
         return committables;
@@ -200,12 +205,17 @@ public class DeltaWriterBucket<IN> {
      * much state to snapshot and recover from except bucket metadata (id and path) and also
      * unique identifier for the application that the writer is part of.
      *
+     * @param appId        unique identifier of the Flink app that needs to be retained within all
+     *                     app restarts
+     * @param checkpointId identifier of current in-progress checkpoint interval
      * @return snapshot of the current bucket writer's state
      */
-    DeltaWriterBucketState snapshotState() {
+    DeltaWriterBucketState snapshotState(String appId, long checkpointId) {
         return new DeltaWriterBucketState(
             bucketId,
-            bucketPath
+            bucketPath,
+            appId,
+            checkpointId
         );
     }
 
@@ -249,8 +259,8 @@ public class DeltaWriterBucket<IN> {
 
     /**
      * Method responsible for "closing" currently opened in-progress file and appending new
-     * {@link DeltaPendingFile} instance to {@link this#pendingFiles}. Those pending files
-     * during commit will become critical part of committables information passed to both
+     * {@link DeltaPendingFile} instance to {@link DeltaWriterBucket#pendingFiles}. Those pending
+     * files during commit will become critical part of committables information passed to both
      * types of committers.
      *
      * @throws IOException Thrown if the encoder cannot be flushed, or if the output stream throws
@@ -401,7 +411,6 @@ public class DeltaWriterBucket<IN> {
     ///////////////////////////////////////////////////////////////////////////
 
     public static class DeltaWriterBucketFactory {
-
         static <IN> DeltaWriterBucket<IN> getNewBucket(
             final String bucketId,
             final Path bucketPath,

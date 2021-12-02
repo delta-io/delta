@@ -77,14 +77,18 @@ public class DeltaCommittableSerializer
 
     void serializeV1(DeltaCommittable committable, DataOutputView dataOutputView)
         throws IOException {
+        dataOutputView.writeUTF(committable.getAppId());
+        dataOutputView.writeLong(committable.getCheckpointId());
         DeltaPendingFile.serialize(
             committable.getDeltaPendingFile(), dataOutputView, pendingFileSerializer);
     }
 
     DeltaCommittable deserializeV1(DataInputView dataInputView) throws IOException {
+        String appId = dataInputView.readUTF();
+        long checkpointId = dataInputView.readLong();
         DeltaPendingFile deltaPendingFile =
             DeltaPendingFile.deserialize(dataInputView, pendingFileSerializer);
-        return new DeltaCommittable(deltaPendingFile);
+        return new DeltaCommittable(deltaPendingFile, appId, checkpointId);
     }
 
     private static void validateMagicNumber(DataInputView in) throws IOException {

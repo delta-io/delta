@@ -20,14 +20,14 @@ package org.apache.flink.connector.delta.sink.utils;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Objects;
 import java.util.Random;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.RestOptions;
@@ -107,9 +107,14 @@ public class DeltaSinkTestUtils {
     // test delta committable utils
     ///////////////////////////////////////////////////////////////////////////
 
+    static final String TEST_APP_ID = UUID.randomUUID().toString();
+    static final long TEST_CHECKPOINT_ID = new Random().nextInt(10);
+
     public static DeltaCommittable getTestDeltaCommittableWithPendingFile() {
         return new DeltaCommittable(
-            DeltaSinkTestUtils.getTestDeltaPendingFile()
+            DeltaSinkTestUtils.getTestDeltaPendingFile(),
+            TEST_APP_ID,
+            TEST_CHECKPOINT_ID
         );
     }
 
@@ -119,6 +124,8 @@ public class DeltaSinkTestUtils {
         assertEquals(
             committable.getDeltaPendingFile().getPendingFile(),
             deserialized.getDeltaPendingFile().getPendingFile());
+        assertEquals(committable.getCheckpointId(), deserialized.getCheckpointId());
+        assertEquals(committable.getAppId(), deserialized.getAppId());
         assertEquals(
             committable.getDeltaPendingFile().getFileName(),
             deserialized.getDeltaPendingFile().getFileName());
@@ -149,12 +156,12 @@ public class DeltaSinkTestUtils {
 
     public static int validateIfPathContainsParquetFilesWithData(String deltaTablePath)
         throws IOException {
-        List<File> files =
-            Stream.of(Objects.requireNonNull(new File(deltaTablePath).listFiles()))
-                .filter(file -> !file.isDirectory())
-                .filter(file -> !file.getName().contains("inprogress"))
-                .filter(file -> file.getName().endsWith(".snappy.parquet"))
-                .collect(Collectors.toList());
+        List<File> files = Files.walk(Paths.get(deltaTablePath))
+            .map(java.nio.file.Path::toFile)
+            .filter(file -> !file.isDirectory())
+            .filter(file -> !file.getName().contains("inprogress"))
+            .filter(file -> file.getName().endsWith(".snappy.parquet"))
+            .collect(Collectors.toList());
 
         assertTrue(files.size() > 0);
 
@@ -224,14 +231,11 @@ public class DeltaSinkTestUtils {
     ///////////////////////////////////////////////////////////////////////////
 
     public static DeltaSink<RowData> createDeltaSink(String deltaTablePath) {
-        ParquetWriterFactory<RowData> factory = DeltaSinkTestUtils.createTestWriterFactory();
-
         return DeltaSink
             .forDeltaFormat(
                 new Path(deltaTablePath),
                 DeltaSinkTestUtils.getHadoopConf(),
-                factory)
-            .build();
+                DeltaSinkTestUtils.TEST_ROW_TYPE).build();
     }
 
     public static MiniCluster getMiniCluster() {
