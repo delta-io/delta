@@ -81,7 +81,7 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
         }
 
         logDebug(s"Previous file $prevVersionPath doesn't exist in the _delta_log. Fixing now.")
-        tryFixTransactionLog(fs, prevVersionEntryOpt.get, copyFailureAcceptable = false)
+        tryFixTransactionLog(fs, prevVersionEntryOpt.get, ensureTargetFileExists = true)
       }
     }
 
@@ -187,7 +187,7 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
     val listedFromDB = listFromCache(fs, resolvedPath)
       .toList // TODO remove when productionizing
       .filter { entry => !entry.isComplete }
-      .map { entry => tryFixTransactionLog(fs, entry, copyFailureAcceptable = true) }
+      .map { entry => tryFixTransactionLog(fs, entry, ensureTargetFileExists = false) }
 
     // for debug
     listedFromFs.iterator
@@ -294,33 +294,40 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
   /**
    * Best-effort at ensuring consistency on file system according to the external cache.
    *
-   * Tries to copy a LogEntryMetadata's temp file into the target _delta_log file, if it does not
-   * exist already, and then commit to the external cache.
+   * Tries to copy the file in the LogEntryMetadata's `tempPath` to the target LogEntryMetadata's
+   * `path`, if it does not exist already, and then commit to the external cache.
    *
    * Will retry at most 3 times.
    *
-   * @param copyFailureAcceptable whether this function should still successfully return even if
-   *                              the temp file wasn't copied into the target _delta_log file
+   * It is valid for the target LogEntryMetadata's `path` file to already exist. In that case, this
+   * method will just try to commit to the external cache.
+   *
+   * @param ensureTargetFileExists whether this function should still successfully return even if,
+   *                               after trying to copy, the target `path` file does not exist
    * @param commitFailureAcceptable whether this function should still successfully return even if
    *                                the external commit didn't succeed
-   * @return the correct FileStatus from which to read the entry's data. If the copy was successful,
-   *         this will be the entry's path (as a FileStatus), else the entry's temp path (as a
-   *         FileStatus)
+   * @return the correct FileStatus from which to read the entry's data. If the copy was successful
+   *         or the target `path` file already exists, this will be the entry's `path` (as a
+   *         FileStatus). Else, returns the entry's `tempPath` (as a FileStatus).
+   * @throws RuntimeException if, after 3 failed attempts, external entry E(N, complete=true) was
+   *                          not committed and `commitFailureAcceptable` is true
+   * @throws RuntimeException if, after 3 failed attempts, the target `path` file does not exist and
+   *                          `ensureTargetFileExists` is true
    */
   private def tryFixTransactionLog(
       fs: FileSystem,
       entry: LogEntryMetadata,
-      copyFailureAcceptable: Boolean,
+      ensureTargetFileExists: Boolean,
       commitFailureAcceptable: Boolean = true): FileStatus = {
     logDebug(s"Try to fix: ${entry.path}")
     val completedEntry = entry.complete()
-    var fileCopied = false
+    var targetFileExists = fs.exists(entry.path)
 
     for (i <- 0 until 3) {
       try {
-        if (!fileCopied && !fs.exists(entry.path)) {
+        if (!targetFileExists) {
           copyFile(fs, entry.tempPath, entry.path)
-          fileCopied = true
+          targetFileExists = true
         }
 
         // Since overwrite is true, we do not expect any FileAlreadyExistsExceptions
@@ -336,10 +343,10 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
     if (!commitFailureAcceptable) {
       throw new RuntimeException(
         s"External commit failure while trying to fix transaction log for path ${entry.path}")
-    } else if (!copyFailureAcceptable && !fileCopied) {
+    } else if (ensureTargetFileExists && !targetFileExists) {
       throw new RuntimeException(
         s"Copy failure while trying to fix the transaction log for path ${entry.path}")
-    } else if (fileCopied) {
+    } else if (targetFileExists) {
       completedEntry.asFileStatus(fs)
     } else {
       entry.tempPathAsFileStatus(fs)
