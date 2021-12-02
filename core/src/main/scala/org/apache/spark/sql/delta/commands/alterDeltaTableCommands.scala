@@ -264,21 +264,27 @@ case class AlterTableChangeColumnDeltaCommand(
       // Verify that the columnName provided actually exists in the schema
       SchemaUtils.findColumnPosition(columnPath :+ columnName, oldSchema, resolver)
 
-      val newSchema = transformColumnsStructs(oldSchema, columnName) {
+      val newSchema = transformColumnsStructs(oldSchema, Some(columnName)) {
         case (`columnPath`, struct @ StructType(fields), _) =>
           val oldColumn = struct(columnName)
-          verifyColumnChange(struct(columnName), resolver, txn)
+          verifyColumnChange(sparkSession, struct(columnName), resolver, txn)
 
-          // Take the comment, nullability and data type from newField
+          // Take the name, comment, nullability and data type from newField
+          // It's crucial to keep the old column's metadata, which may contain column mapping
+          // metadata.
           val newField = newColumn.getComment().map(oldColumn.withComment).getOrElse(oldColumn)
             .copy(
+              name = newColumn.name,
               dataType =
                 SchemaUtils.changeDataType(oldColumn.dataType, newColumn.dataType, resolver),
               nullable = newColumn.nullable)
 
           // Replace existing field with new field
           val newFieldList = fields.map { field =>
-            if (field.name == columnName) newField else field
+            if (DeltaColumnMapping.getPhysicalName(field) ==
+              DeltaColumnMapping.getPhysicalName(newField)) {
+              newField
+            } else field
           }
 
           // Reorder new field to correct position if necessary
@@ -289,7 +295,15 @@ case class AlterTableChangeColumnDeltaCommand(
         case (_, _ @ StructType(fields), _) => fields
       }
 
-      val newMetadata = metadata.copy(schemaString = newSchema.json)
+      // update `partitionColumns` if the changed column is a partition column
+      val newPartitionColumns = if (columnPath.isEmpty) {
+        metadata.partitionColumns.map { partCol =>
+          if (partCol == columnName) newColumn.name else partCol
+        }
+      } else metadata.partitionColumns
+
+      val newMetadata = metadata.copy(
+        schemaString = newSchema.json, partitionColumns = newPartitionColumns)
       txn.updateMetadata(newMetadata)
       txn.commit(Nil, DeltaOperations.ChangeColumn(
         columnPath, columnName, newColumn, colPosition.map(_.toString)))
@@ -347,6 +361,7 @@ case class AlterTableChangeColumnDeltaCommand(
    * @param originalField The existing column
    */
   private def verifyColumnChange(
+      spark: SparkSession,
       originalField: StructField,
       resolver: Resolver,
       txn: OptimisticTransaction): Unit = {
@@ -375,8 +390,7 @@ case class AlterTableChangeColumnDeltaCommand(
         throw new AnalysisException(s"Cannot update ${table.name()} field of type $o")
     }
 
-    if (columnName != newColumn.name ||
-      SchemaUtils.canChangeDataType(originalField.dataType, newColumn.dataType, resolver,
+    if (SchemaUtils.canChangeDataType(originalField.dataType, newColumn.dataType, resolver,
         columnPath :+ originalField.name).nonEmpty) {
       throw DeltaErrors.alterTableChangeColumnException(
         s"'${UnresolvedAttribute(columnPath :+ originalField.name).name}' with type " +
@@ -385,6 +399,12 @@ case class AlterTableChangeColumnDeltaCommand(
         s"'${UnresolvedAttribute(Seq(newColumn.name)).name}' with type " +
           s"'${newColumn.dataType}" +
           s" (nullable = ${newColumn.nullable})'")
+    }
+
+    if (columnName != newColumn.name) {
+      if (txn.metadata.columnMappingMode == NoMapping) {
+        throw DeltaErrors.columnRenameNotSupported(spark, txn.protocol)
+      }
     }
 
     if (originalField.nullable && !newColumn.nullable) {

@@ -147,7 +147,7 @@ trait DeltaCommand extends DeltaLogging {
       partitionSchema = txn.metadata.partitionSchema,
       dataSchema = txn.metadata.schema,
       bucketSpec = None,
-      deltaLog.snapshot.fileFormat,
+      deltaLog.fileFormat(txn.metadata),
       txn.metadata.format.options)(spark)
   }
 
@@ -232,7 +232,12 @@ trait DeltaCommand extends DeltaLogging {
 
     logInfo(s"Committed delta #$attemptVersion to ${deltaLog.logPath}. Wrote $commitSize actions.")
 
-    deltaLog.checkpoint(currentSnapshot)
+    try {
+      deltaLog.checkpoint(currentSnapshot)
+    } catch {
+      case e: IllegalStateException =>
+        logWarning("Failed to checkpoint table state.", e)
+    }
   }
 
   /**

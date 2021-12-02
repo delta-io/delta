@@ -40,6 +40,7 @@ import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionSet}
  * @param commitInfo [[CommitInfo]] for the commit
  */
 private[delta] class CurrentTransactionInfo(
+    val txnId: String,
     val readPredicates: Seq[Expression],
     val readFiles: Set[AddFile],
     val readWholeTable: Boolean,
@@ -87,8 +88,7 @@ private[delta] class ConflictChecker(
     spark: SparkSession,
     initialCurrentTransactionInfo: CurrentTransactionInfo,
     winningCommitVersion: Long,
-    isolationLevel: IsolationLevel,
-    logPrefixStr: String) extends DeltaLogging {
+    isolationLevel: IsolationLevel) extends DeltaLogging {
 
   protected val timingStats = mutable.HashMap[String, Long]()
   protected val deltaLog = initialCurrentTransactionInfo.readSnapshot.deltaLog
@@ -282,6 +282,12 @@ private[delta] class ConflictChecker(
 
   protected def reportMetrics(): Unit = {
     val timingStr = timingStats.keys.toSeq.sorted.map(k => s"$k=${timingStats(k)}").mkString(",")
-    logInfo(s"[$logPrefixStr] Timing stats against $winningCommitVersion [$timingStr]")
+    logInfo(s"[$logPrefix] Timing stats against $winningCommitVersion [$timingStr]")
+  }
+
+  protected lazy val logPrefix: String = {
+    def truncate(uuid: String): String = uuid.split("-").head
+    s"[tableId=${truncate(initialCurrentTransactionInfo.readSnapshot.metadata.id)}," +
+      s"txnId=${truncate(initialCurrentTransactionInfo.txnId)}] "
   }
 }

@@ -27,7 +27,7 @@ crossScalaVersions := Nil
 
 lazy val commonSettings = Seq(
   organization := "io.delta",
-  scalaVersion := "2.12.14",
+  scalaVersion := scala212,
   crossScalaVersions := Seq(scala212, scala213),
   fork := true
 )
@@ -47,6 +47,10 @@ lazy val core = (project in file("core"))
       "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
       "org.apache.spark" %% "spark-core" % sparkVersion % "provided",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion % "provided",
+
+      // spark-sql 3.2.0's parquet-hadoop 1.12.1 dependency no longer includes org.codehaus.jackson
+      // as a dependency, so we include it here instead.
+      "org.codehaus.jackson" % "jackson-core-asl" % "1.9.13",
 
       // Test deps
       "org.scalatest" %% "scalatest" % "3.2.9" % "test",
@@ -294,7 +298,10 @@ import ReleaseTransformations._
 
 lazy val releaseSettings = Seq(
   publishMavenStyle := true,
-
+  publishArtifact := true,
+  Test / publishArtifact := false,
+  releasePublishArtifactsAction := PgpKeys.publishSigned.value,
+  releaseCrossBuild := true,
   publishTo := {
     val nexus = "https://oss.sonatype.org/"
     if (isSnapshot.value) {
@@ -303,25 +310,7 @@ lazy val releaseSettings = Seq(
       Some("releases"  at nexus + "service/local/staging/deploy/maven2")
     }
   },
-
-  releasePublishArtifactsAction := PgpKeys.publishSigned.value,
-
-  releaseCrossBuild := true,
-
-  releaseProcess := Seq[ReleaseStep](
-    checkSnapshotDependencies,
-    inquireVersions,
-    runTest,
-    setReleaseVersion,
-    commitReleaseVersion,
-    tagRelease,
-    releaseStepCommandAndRemaining("+publishLocalSigned"),
-    setNextVersion,
-    commitNextVersion
-  ),
-
   licenses += ("Apache-2.0", url("http://www.apache.org/licenses/LICENSE-2.0")),
-
   pomExtra :=
     <url>https://delta.io/</url>
       <scm>
@@ -369,6 +358,17 @@ lazy val releaseSettings = Seq(
 
 // Looks like some of release settings should be set for the root project as well.
 publishArtifact := false  // Don't release the root project
-publish := {}
+publish / skip := true
 publishTo := Some("snapshots" at "https://oss.sonatype.org/content/repositories/snapshots")
-releaseCrossBuild := false
+releaseCrossBuild := false  // Don't use sbt-release's cross facility
+releaseProcess := Seq[ReleaseStep](
+  checkSnapshotDependencies,
+  inquireVersions,
+  runTest,
+  setReleaseVersion,
+  commitReleaseVersion,
+  tagRelease,
+  releaseStepCommandAndRemaining("+publishSigned"),
+  setNextVersion,
+  commitNextVersion
+)

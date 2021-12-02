@@ -26,8 +26,7 @@ import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.types.{Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
 
-object DeltaColumnMapping
-{
+trait DeltaColumnMappingBase {
   val MIN_WRITER_VERSION = 5
   val MIN_READER_VERSION = 2
   val MIN_PROTOCOL_VERSION = Protocol(MIN_READER_VERSION, MIN_WRITER_VERSION)
@@ -36,6 +35,24 @@ object DeltaColumnMapping
   val COLUMN_MAPPING_METADATA_PREFIX = "delta.columnMapping."
   val COLUMN_MAPPING_METADATA_ID_KEY = COLUMN_MAPPING_METADATA_PREFIX + "id"
   val COLUMN_MAPPING_PHYSICAL_NAME_KEY = COLUMN_MAPPING_METADATA_PREFIX + "physicalName"
+
+  /**
+   * This list of internal columns (and only this list) is allowed to have missing
+   * column mapping metadata such as field id and physical name because
+   * they might not be present in user's table schema.
+   *
+   * These fields, if materialized to parquet, will always be matched by their display name in the
+   * downstream parquet reader even under column mapping modes.
+   *
+   * For future developers who want to utilize additional internal columns without generating
+   * column mapping metadata, please add them here.
+   *
+   * This list is case-insensitive.
+   */
+  protected val DELTA_INTERNAL_COLUMNS: Set[String] = Set.empty
+
+  def isInternalField(field: StructField): Boolean = DELTA_INTERNAL_COLUMNS
+    .contains(field.name.toLowerCase(Locale.ROOT))
 
   def requiresNewProtocol(metadata: Metadata): Boolean =
     metadata.columnMappingMode match {
@@ -116,9 +133,9 @@ object DeltaColumnMapping
         // drop all column mapping related fields
         new MetadataBuilder()
           .withMetadata(field.metadata)
-          .remove(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY)
-          .remove(DeltaColumnMapping.PARQUET_FIELD_ID_METADATA_KEY)
-          .remove(DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
+          .remove(COLUMN_MAPPING_METADATA_ID_KEY)
+          .remove(PARQUET_FIELD_ID_METADATA_KEY)
+          .remove(COLUMN_MAPPING_PHYSICAL_NAME_KEY)
           .build()
 
       case IdMapping =>
@@ -130,7 +147,7 @@ object DeltaColumnMapping
         }
         new MetadataBuilder()
           .withMetadata(field.metadata)
-          .putLong(DeltaColumnMapping.PARQUET_FIELD_ID_METADATA_KEY, getColumnId(field))
+          .putLong(PARQUET_FIELD_ID_METADATA_KEY, getColumnId(field))
           .build()
 
       case NameMapping =>
@@ -139,8 +156,8 @@ object DeltaColumnMapping
         }
         new MetadataBuilder()
           .withMetadata(field.metadata)
-          .remove(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY)
-          .remove(DeltaColumnMapping.PARQUET_FIELD_ID_METADATA_KEY)
+          .remove(COLUMN_MAPPING_METADATA_ID_KEY)
+          .remove(PARQUET_FIELD_ID_METADATA_KEY)
           .build()
 
       case mode =>
@@ -317,14 +334,49 @@ object DeltaColumnMapping
       field.copy(
         metadata = new MetadataBuilder()
           .withMetadata(field.metadata)
-          .remove(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY)
-          .remove(DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
-          .remove(DeltaColumnMapping.PARQUET_FIELD_ID_METADATA_KEY)
+          .remove(COLUMN_MAPPING_METADATA_ID_KEY)
+          .remove(COLUMN_MAPPING_PHYSICAL_NAME_KEY)
+          .remove(PARQUET_FIELD_ID_METADATA_KEY)
           .build()
       )
     }
   }
+
+  /**
+   * Create a physical schema for the given schema using the Delta table schema as a reference.
+   *
+   * @param schema the given logical schema (potentially without any metadata)
+   * @param referenceSchema the schema from the delta log, which has all the metadata
+   * @param columnMappingMode column mapping mode of the delta table, which determines which
+   *                          metadata to fill in
+   */
+  def createPhysicalSchema(
+      schema: StructType,
+      referenceSchema: StructType,
+      columnMappingMode: DeltaColumnMappingMode): StructType = {
+    if (columnMappingMode == NoMapping) {
+      return schema
+    }
+    SchemaMergingUtils.transformColumns(schema) { (path, field, _) =>
+      val fullName = path :+ field.name
+      val inSchema = SchemaUtils
+        .findNestedFieldIgnoreCase(referenceSchema, fullName, includeCollections = true)
+      inSchema.map { refField =>
+        val sparkMetadata = getColumnMappingMetadata(refField, columnMappingMode)
+        field.copy(metadata = sparkMetadata, name = getPhysicalName(refField))
+      }.getOrElse {
+        if (isInternalField(field)) {
+          field
+        } else {
+          throw DeltaErrors.columnNotFound(fullName, referenceSchema)
+        }
+      }
+    }
+  }
+
 }
+
+object DeltaColumnMapping extends DeltaColumnMappingBase
 
 /**
  * A trait for Delta column mapping modes.

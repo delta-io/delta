@@ -14,12 +14,24 @@
 # limitations under the License.
 #
 
+from typing import (
+    TYPE_CHECKING, cast, overload, Any, Iterable, Optional, Union, NoReturn, List, Tuple
+)
+
 import delta.exceptions  # noqa: F401; pylint: disable=unused-variable
+from delta._typing import (
+    ColumnMapping, OptionalColumnMapping, ExpressionOrColumn, OptionalExpressionOrColumn
+)
 
 from pyspark import since
 from pyspark.sql import Column, DataFrame, functions, SparkSession
-from pyspark.sql.column import _to_seq
+from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
 from pyspark.sql.types import DataType, StructType, StructField
+
+
+if TYPE_CHECKING:
+    from py4j.java_gateway import JavaObject, JVMView  # type: ignore[import]
+    from py4j.java_collections import JavaMap  # type: ignore[import]
 
 
 class DeltaTable(object):
@@ -35,27 +47,30 @@ class DeltaTable(object):
 
         .. versionadded:: 0.4
     """
-    def __init__(self, spark, jdt):
+    def __init__(self, spark: SparkSession, jdt: "JavaObject"):
         self._spark = spark
         self._jdt = jdt
 
-    @since(0.4)
-    def toDF(self):
+    @since(0.4)  # type: ignore[arg-type]
+    def toDF(self) -> DataFrame:
         """
         Get a DataFrame representation of this Delta table.
         """
-        return DataFrame(self._jdt.toDF(), self._spark._wrapped)
+        return DataFrame(
+            self._jdt.toDF(),
+            self._spark._wrapped  # type: ignore[attr-defined]
+        )
 
-    @since(0.4)
-    def alias(self, aliasName):
+    @since(0.4)  # type: ignore[arg-type]
+    def alias(self, aliasName: str) -> "DeltaTable":
         """
         Apply an alias to the Delta table.
         """
         jdt = self._jdt.alias(aliasName)
         return DeltaTable(self._spark, jdt)
 
-    @since(0.5)
-    def generate(self, mode):
+    @since(0.5)  # type: ignore[arg-type]
+    def generate(self, mode: str) -> None:
         """
         Generate manifest files for the given delta table.
 
@@ -69,8 +84,8 @@ class DeltaTable(object):
         """
         self._jdt.generate(mode)
 
-    @since(0.4)
-    def delete(self, condition=None):
+    @since(0.4)  # type: ignore[arg-type]
+    def delete(self, condition: OptionalExpressionOrColumn = None) -> None:
         """
         Delete data from the table that match the given ``condition``.
 
@@ -88,8 +103,21 @@ class DeltaTable(object):
         else:
             self._jdt.delete(DeltaTable._condition_to_jcolumn(condition))
 
-    @since(0.4)
-    def update(self, condition=None, set=None):
+    @overload
+    def update(
+        self, condition: ExpressionOrColumn, set: ColumnMapping
+    ) -> None:
+        ...
+
+    @overload
+    def update(self, *, set: ColumnMapping) -> None:
+        ...
+
+    def update(
+        self,
+        condition: OptionalExpressionOrColumn = None,
+        set: OptionalColumnMapping = None
+    ) -> None:
         """
         Update data from the table on the rows that match the given ``condition``,
         which performs the rules defined by ``set``.
@@ -112,6 +140,8 @@ class DeltaTable(object):
                     *Note: This param is required.* Default value None is present to allow
                     positional args in same order across languages.
         :type set: dict with str as keys and str or pyspark.sql.Column as values
+
+        .. versionadded:: 0.4
         """
         jmap = DeltaTable._dict_to_jmap(self._spark, set, "'set'")
         jcolumn = DeltaTable._condition_to_jcolumn(condition)
@@ -120,8 +150,10 @@ class DeltaTable(object):
         else:
             self._jdt.update(jcolumn, jmap)
 
-    @since(0.4)
-    def merge(self, source, condition):
+    @since(0.4)  # type: ignore[arg-type]
+    def merge(
+        self, source: DataFrame, condition: ExpressionOrColumn
+    ) -> "DeltaMergeBuilder":
         """
         Merge data from the `source` DataFrame based on the given merge `condition`. This returns
         a :class:`DeltaMergeBuilder` object that can be used to specify the update, delete, or
@@ -188,8 +220,8 @@ class DeltaTable(object):
         jbuilder = self._jdt.merge(source._jdf, DeltaTable._condition_to_jcolumn(condition))
         return DeltaMergeBuilder(self._spark, jbuilder)
 
-    @since(0.4)
-    def vacuum(self, retentionHours=None):
+    @since(0.4)  # type: ignore[arg-type]
+    def vacuum(self, retentionHours: Optional[float] = None) -> DataFrame:
         """
         Recursively delete files and directories in the table that are not needed by the table for
         maintaining older versions up to the given retention threshold. This method will return an
@@ -206,12 +238,18 @@ class DeltaTable(object):
         """
         jdt = self._jdt
         if retentionHours is None:
-            return DataFrame(jdt.vacuum(), self._spark._wrapped)
+            return DataFrame(
+                jdt.vacuum(),
+                self._spark._wrapped  # type: ignore[attr-defined]
+            )
         else:
-            return DataFrame(jdt.vacuum(float(retentionHours)), self._spark._wrapped)
+            return DataFrame(
+                jdt.vacuum(float(retentionHours)),
+                self._spark._wrapped  # type: ignore[attr-defined]
+            )
 
-    @since(0.4)
-    def history(self, limit=None):
+    @since(0.4)  # type: ignore[arg-type]
+    def history(self, limit: Optional[int] = None) -> DataFrame:
         """
         Get the information of the latest `limit` commits on this table as a Spark DataFrame.
         The information is in reverse chronological order.
@@ -228,13 +266,24 @@ class DeltaTable(object):
         """
         jdt = self._jdt
         if limit is None:
-            return DataFrame(jdt.history(), self._spark._wrapped)
+            return DataFrame(
+                jdt.history(),
+                self._spark._wrapped  # type: ignore[attr-defined]
+            )
         else:
-            return DataFrame(jdt.history(limit), self._spark._wrapped)
+            return DataFrame(
+                jdt.history(limit),
+                self._spark._wrapped  # type: ignore[attr-defined]
+            )
 
     @classmethod
-    @since(0.4)
-    def convertToDelta(cls, sparkSession, identifier, partitionSchema=None):
+    @since(0.4)  # type: ignore[arg-type]
+    def convertToDelta(
+        cls,
+        sparkSession: SparkSession,
+        identifier: str,
+        partitionSchema: Optional[Union[str, StructType]] = None,
+    ) -> "DeltaTable":
         """
         Create a DeltaTable from the given parquet table. Takes an existing parquet table and
         constructs a delta transaction log in the base path of the table.
@@ -262,20 +311,25 @@ class DeltaTable(object):
         :rtype: :py:class:`~delta.tables.DeltaTable`
         """
         assert sparkSession is not None
+
+        jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
+        jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]
+
         if partitionSchema is None:
-            jdt = sparkSession._sc._jvm.io.delta.tables.DeltaTable.convertToDelta(
-                sparkSession._jsparkSession, identifier)
+            jdt = jvm.io.delta.tables.DeltaTable.convertToDelta(
+                jsparkSession, identifier
+            )
         else:
             if not isinstance(partitionSchema, str):
-                partitionSchema = sparkSession._jsparkSession.parseDataType(partitionSchema.json())
-            jdt = sparkSession._sc._jvm.io.delta.tables.DeltaTable.convertToDelta(
-                sparkSession._jsparkSession, identifier,
+                partitionSchema = jsparkSession.parseDataType(partitionSchema.json())
+            jdt = jvm.io.delta.tables.DeltaTable.convertToDelta(
+                jsparkSession, identifier,
                 partitionSchema)
         return DeltaTable(sparkSession, jdt)
 
     @classmethod
-    @since(0.4)
-    def forPath(cls, sparkSession, path):
+    @since(0.4)  # type: ignore[arg-type]
+    def forPath(cls, sparkSession: SparkSession, path: str) -> "DeltaTable":
         """
         Create a DeltaTable for the data at the given `path` using the given SparkSession.
 
@@ -289,13 +343,18 @@ class DeltaTable(object):
             deltaTable = DeltaTable.forPath(spark, "/path/to/table")
         """
         assert sparkSession is not None
-        jdt = sparkSession._sc._jvm.io.delta.tables.DeltaTable.forPath(
-            sparkSession._jsparkSession, path)
+
+        jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
+        jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]
+
+        jdt = jvm.io.delta.tables.DeltaTable.forPath(jsparkSession, path)
         return DeltaTable(sparkSession, jdt)
 
     @classmethod
-    @since(0.7)
-    def forName(cls, sparkSession, tableOrViewName):
+    @since(0.7)  # type: ignore[arg-type]
+    def forName(
+        cls, sparkSession: SparkSession, tableOrViewName: str
+    ) -> "DeltaTable":
         """
         Create a DeltaTable using the given table or view name using the given SparkSession.
 
@@ -309,13 +368,18 @@ class DeltaTable(object):
             deltaTable = DeltaTable.forName(spark, "tblName")
         """
         assert sparkSession is not None
-        jdt = sparkSession._sc._jvm.io.delta.tables.DeltaTable.forName(
-            sparkSession._jsparkSession, tableOrViewName)
+
+        jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
+        jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]
+
+        jdt = jvm.io.delta.tables.DeltaTable.forName(jsparkSession, tableOrViewName)
         return DeltaTable(sparkSession, jdt)
 
     @classmethod
-    @since(1.0)
-    def create(cls, sparkSession=None):
+    @since(1.0)  # type: ignore[arg-type]
+    def create(
+        cls, sparkSession: Optional[SparkSession] = None
+    ) -> "DeltaTableBuilder":
         """
         Return :class:`DeltaTableBuilder` object that can be used to specify
         the table name, location, columns, partitioning columns, table comment,
@@ -334,13 +398,18 @@ class DeltaTable(object):
         if sparkSession is None:
             sparkSession = SparkSession.getActiveSession()
         assert sparkSession is not None
-        jdt = sparkSession._sc._jvm.io.delta.tables.DeltaTable.create(
-            sparkSession._jsparkSession)
+
+        jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
+        jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]
+
+        jdt = jvm.io.delta.tables.DeltaTable.create(jsparkSession)
         return DeltaTableBuilder(sparkSession, jdt)
 
     @classmethod
-    @since(1.0)
-    def createIfNotExists(cls, sparkSession=None):
+    @since(1.0)  # type: ignore[arg-type]
+    def createIfNotExists(
+        cls, sparkSession: Optional[SparkSession] = None
+    ) -> "DeltaTableBuilder":
         """
         Return :class:`DeltaTableBuilder` object that can be used to specify
         the table name, location, columns, partitioning columns, table comment,
@@ -359,13 +428,18 @@ class DeltaTable(object):
         if sparkSession is None:
             sparkSession = SparkSession.getActiveSession()
         assert sparkSession is not None
-        jdt = sparkSession._sc._jvm.io.delta.tables.DeltaTable.createIfNotExists(
-            sparkSession._jsparkSession)
+
+        jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
+        jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]
+
+        jdt = jvm.io.delta.tables.DeltaTable.createIfNotExists(jsparkSession)
         return DeltaTableBuilder(sparkSession, jdt)
 
     @classmethod
-    @since(1.0)
-    def replace(cls, sparkSession=None):
+    @since(1.0)  # type: ignore[arg-type]
+    def replace(
+        cls, sparkSession: Optional[SparkSession] = None
+    ) -> "DeltaTableBuilder":
         """
         Return :class:`DeltaTableBuilder` object that can be used to specify
         the table name, location, columns, partitioning columns, table comment,
@@ -384,13 +458,18 @@ class DeltaTable(object):
         if sparkSession is None:
             sparkSession = SparkSession.getActiveSession()
         assert sparkSession is not None
-        jdt = sparkSession._sc._jvm.io.delta.tables.DeltaTable.replace(
-            sparkSession._jsparkSession)
+
+        jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
+        jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]
+
+        jdt = jvm.io.delta.tables.DeltaTable.replace(jsparkSession)
         return DeltaTableBuilder(sparkSession, jdt)
 
     @classmethod
-    @since(1.0)
-    def createOrReplace(cls, sparkSession=None):
+    @since(1.0)  # type: ignore[arg-type]
+    def createOrReplace(
+        cls, sparkSession: Optional[SparkSession] = None
+    ) -> "DeltaTableBuilder":
         """
         Return :class:`DeltaTableBuilder` object that can be used to specify
         the table name, location, columns, partitioning columns, table comment,
@@ -409,13 +488,16 @@ class DeltaTable(object):
         if sparkSession is None:
             sparkSession = SparkSession.getActiveSession()
         assert sparkSession is not None
-        jdt = sparkSession._sc._jvm.io.delta.tables.DeltaTable.createOrReplace(
-            sparkSession._jsparkSession)
+
+        jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
+        jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]
+
+        jdt = jvm.io.delta.tables.DeltaTable.createOrReplace(jsparkSession)
         return DeltaTableBuilder(sparkSession, jdt)
 
     @classmethod
-    @since(0.4)
-    def isDeltaTable(cls, sparkSession, identifier):
+    @since(0.4)  # type: ignore[arg-type]
+    def isDeltaTable(cls, sparkSession: SparkSession, identifier: str) -> bool:
         """
         Check if the provided `identifier` string, in this case a file path,
         is the root of a Delta table using the given SparkSession.
@@ -430,11 +512,14 @@ class DeltaTable(object):
             DeltaTable.isDeltaTable(spark, "/path/to/table")
         """
         assert sparkSession is not None
-        return sparkSession._sc._jvm.io.delta.tables.DeltaTable.isDeltaTable(
-            sparkSession._jsparkSession, identifier)
 
-    @since(0.8)
-    def upgradeTableProtocol(self, readerVersion, writerVersion):
+        jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
+        jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]
+
+        return jvm.io.delta.tables.DeltaTable.isDeltaTable(jsparkSession, identifier)
+
+    @since(0.8)  # type: ignore[arg-type]
+    def upgradeTableProtocol(self, readerVersion: int, writerVersion: int) -> None:
         """
         Updates the protocol version of the table to leverage new features. Upgrading the reader
         version will prevent all clients that have an older version of Delta Lake from accessing
@@ -453,7 +538,11 @@ class DeltaTable(object):
         jdt.upgradeTableProtocol(readerVersion, writerVersion)
 
     @staticmethod
-    def _dict_to_jmap(sparkSession, pydict, argname):
+    def _dict_to_jmap(
+        sparkSession: SparkSession,
+        pydict: OptionalColumnMapping,
+        argname: str,
+    ) -> "JavaObject":
         """
         convert dict<str, pColumn/str> to Map<str, jColumn>
         """
@@ -464,7 +553,9 @@ class DeltaTable(object):
             e = "%s must be a dict, found to be %s" % (argname, str(type(pydict)))
             raise TypeError(e)
 
-        jmap = sparkSession._sc._jvm.java.util.HashMap()
+        jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
+
+        jmap: "JavaMap" = jvm.java.util.HashMap()
         for col, expr in pydict.items():
             if type(col) is not str:
                 e = ("Keys of dict in %s must contain only strings with column names" % argname) + \
@@ -482,7 +573,9 @@ class DeltaTable(object):
         return jmap
 
     @staticmethod
-    def _condition_to_jcolumn(condition, argname="'condition'"):
+    def _condition_to_jcolumn(
+        condition: OptionalExpressionOrColumn, argname: str = "'condition'"
+    ) -> "JavaObject":
         if condition is None:
             jcondition = None
         elif type(condition) is Column:
@@ -588,12 +681,27 @@ class DeltaMergeBuilder(object):
 
     .. versionadded:: 0.4
     """
-    def __init__(self, spark, jbuilder):
+    def __init__(self, spark: SparkSession, jbuilder: "JavaObject"):
         self._spark = spark
         self._jbuilder = jbuilder
 
-    @since(0.4)
-    def whenMatchedUpdate(self, condition=None, set=None):
+    @overload
+    def whenMatchedUpdate(
+        self, condition: OptionalExpressionOrColumn, set: ColumnMapping
+    ) -> "DeltaMergeBuilder":
+        ...
+
+    @overload
+    def whenMatchedUpdate(
+        self, *, set: ColumnMapping
+    ) -> "DeltaMergeBuilder":
+        ...
+
+    def whenMatchedUpdate(
+        self,
+        condition: OptionalExpressionOrColumn = None,
+        set: OptionalColumnMapping = None
+    ) -> "DeltaMergeBuilder":
         """
         Update a matched table row based on the rules defined by ``set``.
         If a ``condition`` is specified, then it must evaluate to true for the row to be updated.
@@ -607,13 +715,17 @@ class DeltaMergeBuilder(object):
                     positional args in same order across languages.
         :type set: dict with str as keys and str or pyspark.sql.Column as values
         :return: this builder
+
+        .. versionadded:: 0.4
         """
         jset = DeltaTable._dict_to_jmap(self._spark, set, "'set' in whenMatchedUpdate")
         new_jbuilder = self.__getMatchedBuilder(condition).update(jset)
         return DeltaMergeBuilder(self._spark, new_jbuilder)
 
-    @since(0.4)
-    def whenMatchedUpdateAll(self, condition=None):
+    @since(0.4)  # type: ignore[arg-type]
+    def whenMatchedUpdateAll(
+        self, condition: OptionalExpressionOrColumn = None
+    ) -> "DeltaMergeBuilder":
         """
         Update all the columns of the matched table row with the values of the  corresponding
         columns in the source row. If a ``condition`` is specified, then it must be
@@ -628,8 +740,10 @@ class DeltaMergeBuilder(object):
         new_jbuilder = self.__getMatchedBuilder(condition).updateAll()
         return DeltaMergeBuilder(self._spark, new_jbuilder)
 
-    @since(0.4)
-    def whenMatchedDelete(self, condition=None):
+    @since(0.4)  # type: ignore[arg-type]
+    def whenMatchedDelete(
+        self, condition: OptionalExpressionOrColumn = None
+    ) -> "DeltaMergeBuilder":
         """
         Delete a matched row from the table only if the given ``condition`` (if specified) is
         true for the matched row.
@@ -643,8 +757,23 @@ class DeltaMergeBuilder(object):
         new_jbuilder = self.__getMatchedBuilder(condition).delete()
         return DeltaMergeBuilder(self._spark, new_jbuilder)
 
-    @since(0.4)
-    def whenNotMatchedInsert(self, condition=None, values=None):
+    @overload
+    def whenNotMatchedInsert(
+        self, condition: ExpressionOrColumn, values: ColumnMapping
+    ) -> "DeltaMergeBuilder":
+        ...
+
+    @overload
+    def whenNotMatchedInsert(
+        self, *, values: ColumnMapping = ...
+    ) -> "DeltaMergeBuilder":
+        ...
+
+    def whenNotMatchedInsert(
+        self,
+        condition: OptionalExpressionOrColumn = None,
+        values: OptionalColumnMapping = None
+    ) -> "DeltaMergeBuilder":
         """
         Insert a new row to the target table based on the rules defined by ``values``. If a
         ``condition`` is specified, then it must evaluate to true for the new row to be inserted.
@@ -658,13 +787,17 @@ class DeltaMergeBuilder(object):
                        positional args in same order across languages.
         :type values: dict with str as keys and str or pyspark.sql.Column as values
         :return: this builder
+
+        .. versionadded:: 0.4
         """
         jvalues = DeltaTable._dict_to_jmap(self._spark, values, "'values' in whenNotMatchedInsert")
         new_jbuilder = self.__getNotMatchedBuilder(condition).insert(jvalues)
         return DeltaMergeBuilder(self._spark, new_jbuilder)
 
-    @since(0.4)
-    def whenNotMatchedInsertAll(self, condition=None):
+    @since(0.4)  # type: ignore[arg-type]
+    def whenNotMatchedInsertAll(
+        self, condition: OptionalExpressionOrColumn = None
+    ) -> "DeltaMergeBuilder":
         """
         Insert a new target Delta table row by assigning the target columns to the values of the
         corresponding columns in the source row. If a ``condition`` is specified, then it must
@@ -679,8 +812,8 @@ class DeltaMergeBuilder(object):
         new_jbuilder = self.__getNotMatchedBuilder(condition).insertAll()
         return DeltaMergeBuilder(self._spark, new_jbuilder)
 
-    @since(0.4)
-    def execute(self):
+    @since(0.4)  # type: ignore[arg-type]
+    def execute(self) -> None:
         """
         Execute the merge operation based on the built matched and not matched actions.
 
@@ -688,13 +821,17 @@ class DeltaMergeBuilder(object):
         """
         self._jbuilder.execute()
 
-    def __getMatchedBuilder(self, condition=None):
+    def __getMatchedBuilder(
+        self, condition: OptionalExpressionOrColumn = None
+    ) -> "JavaObject":
         if condition is None:
             return self._jbuilder.whenMatched()
         else:
             return self._jbuilder.whenMatched(DeltaTable._condition_to_jcolumn(condition))
 
-    def __getNotMatchedBuilder(self, condition=None):
+    def __getNotMatchedBuilder(
+        self, condition: OptionalExpressionOrColumn = None
+    ) -> "JavaObject":
         if condition is None:
             return self._jbuilder.whenNotMatched()
         else:
@@ -739,18 +876,18 @@ class DeltaTableBuilder(object):
 
     .. note:: Evolving
     """
-    def __init__(self, spark, jbuilder):
+    def __init__(self, spark: SparkSession, jbuilder: "JavaObject"):
         self._spark = spark
         self._jbuilder = jbuilder
 
-    def _raise_type_error(self, msg, objs):
+    def _raise_type_error(self, msg: str, objs: Iterable[Any]) -> NoReturn:
         errorMsg = msg
         for obj in objs:
             errorMsg += " Found %s with type %s" % ((str(obj)), str(type(obj)))
         raise TypeError(errorMsg)
 
-    @since(1.0)
-    def tableName(self, identifier):
+    @since(1.0)  # type: ignore[arg-type]
+    def tableName(self, identifier: str) -> "DeltaTableBuilder":
         """
         Specify the table name.
         Optionally qualified with a database name [database_name.] table_name.
@@ -766,8 +903,8 @@ class DeltaTableBuilder(object):
         self._jbuilder = self._jbuilder.tableName(identifier)
         return self
 
-    @since(1.0)
-    def location(self, location):
+    @since(1.0)  # type: ignore[arg-type]
+    def location(self, location: str) -> "DeltaTableBuilder":
         """
         Specify the path to the directory where table data is stored,
         which could be a path on distributed storage.
@@ -783,8 +920,8 @@ class DeltaTableBuilder(object):
         self._jbuilder = self._jbuilder.location(location)
         return self
 
-    @since(1.0)
-    def comment(self, comment):
+    @since(1.0)  # type: ignore[arg-type]
+    def comment(self, comment: str) -> "DeltaTableBuilder":
         """
         Comment to describe the table.
 
@@ -799,9 +936,15 @@ class DeltaTableBuilder(object):
         self._jbuilder = self._jbuilder.comment(comment)
         return self
 
-    @since(1.0)
-    def addColumn(self, colName, dataType,
-                  nullable=True, generatedAlwaysAs=None, comment=None):
+    @since(1.0)  # type: ignore[arg-type]
+    def addColumn(
+        self,
+        colName: str,
+        dataType: Union[str, DataType],
+        nullable: bool = True,
+        generatedAlwaysAs: Optional[str] = None,
+        comment: Optional[str] = None,
+    ) -> "DeltaTableBuilder":
         """
         Specify a column in the table
 
@@ -827,10 +970,13 @@ class DeltaTableBuilder(object):
         if type(dataType) is not str and not isinstance(dataType, DataType):
             self._raise_type_error("Column data type must be str or DataType.",
                                    [dataType])
-        _col_jbuilder = self._spark._sc._jvm.io.delta.tables.DeltaTable \
-            .columnBuilder(self._spark._jsparkSession, colName)
+
+        jvm: "JVMView" = self._spark._sc._jvm  # type: ignore[attr-defined]
+        jsparkSession: "JavaObject" = self._spark._jsparkSession  # type: ignore[attr-defined]
+
+        _col_jbuilder = jvm.io.delta.tables.DeltaTable.columnBuilder(jsparkSession, colName)
         if isinstance(dataType, DataType):
-            dataType = self._spark._jsparkSession.parseDataType(dataType.json())
+            dataType = jsparkSession.parseDataType(dataType.json())
         _col_jbuilder = _col_jbuilder.dataType(dataType)
         if type(nullable) is not bool:
             self._raise_type_error("Column nullable must be bool.", [nullable])
@@ -847,8 +993,10 @@ class DeltaTableBuilder(object):
         self._jbuilder = self._jbuilder.addColumn(_col_jbuilder.build())
         return self
 
-    @since(1.0)
-    def addColumns(self, cols):
+    @since(1.0)  # type: ignore[arg-type]
+    def addColumns(
+        self, cols: Union[StructType, List[StructField]]
+    ) -> "DeltaTableBuilder":
         """
         Specify columns in the table using an existing schema
 
@@ -870,12 +1018,29 @@ class DeltaTableBuilder(object):
             self._raise_type_error("Schema must be StructType " +
                                    "or a list of StructField.",
                                    [cols])
-        scalaSchema = self._spark._jsparkSession.parseDataType(cols.json())
+
+        jsparkSession: "JavaObject" = self._spark._jsparkSession  # type: ignore[attr-defined]
+
+        scalaSchema = jsparkSession.parseDataType(cols.json())
         self._jbuilder = self._jbuilder.addColumns(scalaSchema)
         return self
 
-    @since(1.0)
-    def partitionedBy(self, *cols):
+    @overload
+    def partitionedBy(
+        self, *cols: str
+    ) -> "DeltaTableBuilder":
+        ...
+
+    @overload
+    def partitionedBy(
+        self, __cols: Union[List[str], Tuple[str, ...]]
+    ) -> "DeltaTableBuilder":
+        ...
+
+    @since(1.0)  # type: ignore[arg-type]
+    def partitionedBy(
+        self, *cols: Union[str, List[str], Tuple[str, ...]]
+    ) -> "DeltaTableBuilder":
         """
         Specify columns for partitioning
 
@@ -887,15 +1052,18 @@ class DeltaTableBuilder(object):
         .. note:: Evolving
         """
         if len(cols) == 1 and isinstance(cols[0], (list, tuple)):
-            cols = cols[0]
+            cols = cols[0]  # type: ignore[assignment]
         for c in cols:
             if type(c) is not str:
                 self._raise_type_error("Partitioning column must be str.", [c])
-        self._jbuilder = self._jbuilder.partitionedBy(_to_seq(self._spark._sc, cols))
+        self._jbuilder = self._jbuilder.partitionedBy(_to_seq(
+            self._spark._sc,  # type: ignore[attr-defined]
+            cast(Iterable[Union[Column, str]], cols)
+        ))
         return self
 
-    @since(1.0)
-    def property(self, key, value):
+    @since(1.0)  # type: ignore[arg-type]
+    def property(self, key: str, value: str) -> "DeltaTableBuilder":
         """
         Specify a table property
 
@@ -912,8 +1080,8 @@ class DeltaTableBuilder(object):
         self._jbuilder = self._jbuilder.property(key, value)
         return self
 
-    @since(1.0)
-    def execute(self):
+    @since(1.0)  # type: ignore[arg-type]
+    def execute(self) -> DeltaTable:
         """
         Execute Table Creation.
 

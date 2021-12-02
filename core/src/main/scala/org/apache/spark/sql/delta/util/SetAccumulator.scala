@@ -16,29 +16,41 @@
 
 package org.apache.spark.sql.delta.util
 
-import java.util.Collections
-
 import org.apache.spark.util.AccumulatorV2
 
 /**
  * Accumulator to collect distinct elements as a set.
  */
 class SetAccumulator[T] extends AccumulatorV2[T, java.util.Set[T]] {
-  private val _set = Collections.synchronizedSet(new java.util.HashSet[T]())
+  private var _set: java.util.HashSet[T] = _
 
-  override def isZero: Boolean = _set.isEmpty
+  private def getOrCreate = {
+    _set = Option(_set).getOrElse(new java.util.HashSet[T]())
+    _set
+  }
 
-  override def reset(): Unit = _set.clear()
+  override def isZero: Boolean = this.synchronized(getOrCreate.isEmpty)
 
-  override def add(v: T): Unit = _set.add(v)
+  override def reset(): Unit = this.synchronized {
+    _set = null
+  }
+  override def add(v: T): Unit = this.synchronized(getOrCreate.add(v))
 
-  override def merge(other: AccumulatorV2[T, java.util.Set[T]]): Unit = _set.addAll(other.value)
+  override def merge(other: AccumulatorV2[T, java.util.Set[T]]): Unit = other match {
+    case o: SetAccumulator[T] => this.synchronized(getOrCreate.addAll(o.value))
+    case _ => throw new UnsupportedOperationException(
+      s"Cannot merge ${this.getClass.getName} with ${other.getClass.getName}")
+  }
 
-  override def value: java.util.Set[T] = _set
+  override def value: java.util.Set[T] = this.synchronized {
+    java.util.Collections.unmodifiableSet(new java.util.HashSet[T](getOrCreate))
+  }
 
   override def copy(): AccumulatorV2[T, java.util.Set[T]] = {
     val newAcc = new SetAccumulator[T]()
-    newAcc._set.addAll(_set)
+    this.synchronized {
+      newAcc.getOrCreate.addAll(getOrCreate)
+    }
     newAcc
   }
 }

@@ -76,6 +76,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_CONVERT_ICEBERG_USE_NATIVE_PARTITION_VALUES =
+    buildConf("convert.iceberg.useNativePartitionValues")
+      .doc(
+        """ When enabled, obtain the partition values from Iceberg table's metadata, instead
+          | of inferring from file paths.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_SNAPSHOT_PARTITIONS =
     buildConf("snapshotPartitions")
       .internal()
@@ -480,6 +489,17 @@ trait DeltaSQLConfBase {
         """Whether to load file systems configs provided in DataFrameReader/Writer options when
           |calling `DataFrameReader.load/DataFrameWriter.save` using a Delta table path.
           |`DataFrameReader.table/DataFrameWriter.saveAsTable` doesn't support this.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val CONVERT_EMPTY_TO_NULL_FOR_STRING_PARTITION_COL =
+    buildConf("convertEmptyToNullForStringPartitionCol")
+      .internal()
+      .doc(
+        """
+          |If true, always convert empty string to null for string partition columns before
+          |constraint checks.
+          |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
 }

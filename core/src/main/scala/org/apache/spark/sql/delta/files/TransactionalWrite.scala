@@ -29,10 +29,10 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.Dataset
-import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
+import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, AttributeSet, NamedExpression}
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.datasources.{BasicWriteJobStatsTracker, FileFormatWriter, WriteJobStatsTracker}
-import org.apache.spark.sql.types.{ArrayType, MapType, MetadataBuilder, StructType}
+import org.apache.spark.sql.types.{ArrayType, MapType, MetadataBuilder, StringType, StructType}
 import org.apache.spark.util.SerializableConfiguration
 
 /**
@@ -155,6 +155,45 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     partitionColumns
   }
 
+  /**
+   * If there is any string partition column and there are constraints defined, add a projection to
+   * convert empty string to null for that column. The empty strings will be converted to null
+   * eventually even without this convert, but we want to do this earlier before check constraints
+   * so that empty strings are correctly rejected. Note that this should not cause the downstream
+   * logic in `FileFormatWriter` to add duplicate conversions because the logic there checks the
+   * partition column using the original plan's output. When the plan is modified with additional
+   * projections, the partition column check won't match and will not add more conversion.
+   *
+   * @param plan The original SparkPlan.
+   * @param partCols The partition columns.
+   * @param constraints The defined constraints.
+   * @return A SparkPlan potentially modified with an additional projection on top of `plan`
+   */
+  protected def convertEmptyToNullIfNeeded(
+      plan: SparkPlan,
+      partCols: Seq[Attribute],
+      constraints: Seq[Constraint]): SparkPlan = {
+    if (!spark.conf.get(DeltaSQLConf.CONVERT_EMPTY_TO_NULL_FOR_STRING_PARTITION_COL)) {
+      return plan
+    }
+    // No need to convert if there are no constraints. The empty strings will be converted later by
+    // FileFormatWriter and FileFormatDataWriter. Note that we might still do unnecessary convert
+    // here as the constraints might not be related to the string partition columns. A precise
+    // check will need to walk the constraints to see if such columns are really involved. It
+    // doesn't seem to worth the effort.
+    if (constraints.isEmpty) return plan
+
+    val partSet = AttributeSet(partCols)
+    var needConvert = false
+    val projectList: Seq[NamedExpression] = plan.output.map {
+      case p if partSet.contains(p) && p.dataType == StringType =>
+        needConvert = true
+        Alias(FileFormatWriter.Empty2Null(p), p.name)()
+      case attr => attr
+    }
+    if (needConvert) ProjectExec(projectList, plan) else plan
+  }
+
   def writeFiles(
       data: Dataset[_],
       writeOptions: Option[DeltaOptions],
@@ -205,7 +244,9 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         Map.empty,
         output)
 
-      val physicalPlan = DeltaInvariantCheckerExec(queryExecution.executedPlan, constraints)
+      val empty2NullPlan = convertEmptyToNullIfNeeded(queryExecution.executedPlan,
+        partitioningColumns, constraints)
+      val physicalPlan = DeltaInvariantCheckerExec(empty2NullPlan, constraints)
 
       val statsTrackers: ListBuffer[WriteJobStatsTracker] = ListBuffer()
 
@@ -221,7 +262,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         FileFormatWriter.write(
           sparkSession = spark,
           plan = physicalPlan,
-          fileFormat = snapshot.fileFormat, // TODO doesn't support changing formats.
+          fileFormat = deltaLog.fileFormat(metadata), // TODO doesn't support changing formats.
           committer = committer,
           outputSpec = outputSpec,
           // scalastyle:off deltahadoopconfiguration
