@@ -60,12 +60,8 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
     val (fs, resolvedPath) = resolved(path)
 
     // 1. If N.json already exists in the _delta_log, exit early
-    if (fs.exists(resolvedPath)) {
-      if (overwrite) {
-        return
-      } else {
-        throw new java.nio.file.FileAlreadyExistsException(resolvedPath.toString)
-      }
+    if (fs.exists(resolvedPath) && !overwrite) {
+      throw new java.nio.file.FileAlreadyExistsException(resolvedPath.toString)
     }
 
     // 2. Ensure N-1.json exists in the _delta_log
@@ -85,7 +81,7 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
         }
 
         logDebug(s"Previous file $prevVersionPath doesn't exist in the _delta_log. Fixing now.")
-        tryFixTransactionLog(fs, prevVersionEntryOpt.get, failureAcceptable = false)
+        tryFixTransactionLog(fs, prevVersionEntryOpt.get, copyFailureAcceptable = false)
       }
     }
 
@@ -122,7 +118,7 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
     val tempFilesToDelete = deleteFromCacheAllOlderThan(
       fs, resolvedPath.getParent, System.currentTimeMillis() - MILLIS_IN_DAY)
 
-    // 8. Delete the temp file T(*) for each deleted external cache entry older than 1 day
+    // 8. Delete the temp file T(*) for each deleted external entry E(*, true) older than 1 day
     tempFilesToDelete.foreach(fs.delete(_, false))
   }
 
@@ -165,6 +161,46 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
   ///////////////////////////////////////////////////////////////////////////
   // Private Helper Methods
   ///////////////////////////////////////////////////////////////////////////
+
+  /**
+   * List files starting from `resolvedPath` (inclusive) in the same directory, which merges
+   * the file system list and the db list
+   */
+  protected def listFrom(
+      fs: FileSystem,
+      resolvedPath: Path,
+      useCache: Boolean = true): Iterator[FileStatus] = {
+    val parentPath = resolvedPath.getParent
+    if (!fs.exists(parentPath)) {
+      throw new FileNotFoundException(s"No such file or directory: $parentPath")
+    }
+
+    val listedFromFs =
+      fs.listStatus(parentPath)
+        .filter(path => !path.getPath.getName.endsWith(".temp"))
+        .filter(path => path.getPath.getName >= resolvedPath.getName)
+
+    if (!useCache) {
+      return listedFromFs.iterator
+    }
+
+    val listedFromDB = listFromCache(fs, resolvedPath)
+      .toList // TODO remove when productionizing
+      .filter { entry => !entry.isComplete }
+      .map { entry => tryFixTransactionLog(fs, entry, copyFailureAcceptable = true) }
+
+    // for debug
+    listedFromFs.iterator
+      .map(entry => s"fs item: ${entry.getPath}")
+      .foreach(x => logDebug(x))
+
+    listedFromDB.iterator
+      .map(entry => s"db item: ${entry.getPath}")
+      .foreach(x => logDebug(x))
+    // end debug
+
+    mergeFileIterators(listedFromDB.iterator, listedFromFs.iterator)
+  }
 
   /**
    * Returns the path for the previous version N-1 given the input version N, if such a path exists
@@ -224,8 +260,7 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
    */
   private def mergeFileIterators(
       iter: Iterator[FileStatus],
-      iterWithPrecedence: Iterator[FileStatus]
-  ): Iterator[FileStatus] = {
+      iterWithPrecedence: Iterator[FileStatus]): Iterator[FileStatus] = {
     val result = (
         iter.map(f => (f.getPath, f)).toMap ++
         iterWithPrecedence.map(f => (f.getPath, f))
@@ -264,12 +299,19 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
    *
    * Will retry at most 3 times.
    *
-   * @return the correct FileStatus from which to read the entry's data
+   * @param copyFailureAcceptable whether this function should still successfully return even if
+   *                              the temp file wasn't copied into the target _delta_log file
+   * @param commitFailureAcceptable whether this function should still successfully return even if
+   *                                the external commit didn't succeed
+   * @return the correct FileStatus from which to read the entry's data. If the copy was successful,
+   *         this will be the entry's path (as a FileStatus), else the entry's temp path (as a
+   *         FileStatus)
    */
   private def tryFixTransactionLog(
       fs: FileSystem,
       entry: LogEntryMetadata,
-      failureAcceptable: Boolean): FileStatus = {
+      copyFailureAcceptable: Boolean,
+      commitFailureAcceptable: Boolean = true): FileStatus = {
     logDebug(s"Try to fix: ${entry.path}")
     val completedEntry = entry.complete()
     var fileCopied = false
@@ -291,11 +333,16 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
       }
     }
 
-    if (failureAcceptable) {
-      // We weren't able to commit to the external cache, but we can still read from the temp file
-      entry.tempPathAsFileStatus(fs)
+    if (!commitFailureAcceptable) {
+      throw new RuntimeException(
+        s"External commit failure while trying to fix transaction log for path ${entry.path}")
+    } else if (!copyFailureAcceptable && !fileCopied) {
+      throw new RuntimeException(
+        s"Copy failure while trying to fix the transaction log for path ${entry.path}")
+    } else if (fileCopied) {
+      completedEntry.asFileStatus(fs)
     } else {
-      throw new RuntimeException(s"Unable to fix the transaction log for path ${entry.path}")
+      entry.tempPathAsFileStatus(fs)
     }
   }
 
@@ -312,51 +359,6 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
   protected def getTemporaryPath(path: Path): Path = {
     val uuid = java.util.UUID.randomUUID().toString
     new Path(s"${path.getParent}/.temp/${path.getName}.$uuid")
-  }
-
-  /**
-   * List files starting from `resolvedPath` (inclusive) in the same directory, which merges
-   * the file system list and the db list
-   */
-  protected def listFrom(
-      fs: FileSystem,
-      resolvedPath: Path,
-      useCache: Boolean = true): Iterator[FileStatus] = {
-    val parentPath = resolvedPath.getParent
-    if (!fs.exists(parentPath)) {
-      throw new FileNotFoundException(s"No such file or directory: $parentPath")
-    }
-
-    val listedFromFs =
-      fs.listStatus(parentPath)
-        .filter(path => !path.getPath.getName.endsWith(".temp"))
-        .filter(path => path.getPath.getName >= resolvedPath.getName)
-
-    if (!useCache) {
-      return listedFromFs.iterator
-    }
-
-    val listedFromDB = listFromCache(fs, resolvedPath)
-      .toList
-      .map { entry =>
-        if (!entry.isComplete) {
-          tryFixTransactionLog(fs, entry, failureAcceptable = true)
-        } else {
-          entry.asFileStatus(fs)
-        }
-      }
-
-    // for debug
-    listedFromFs.iterator
-      .map(entry => s"fs item: ${entry.getPath}")
-      .foreach(x => logDebug(x))
-
-    listedFromDB.iterator
-      .map(entry => s"db item: ${entry.getPath}")
-      .foreach(x => logDebug(x))
-    // end debug
-
-    mergeFileIterators(listedFromDB.iterator, listedFromFs.iterator)
   }
 }
 
