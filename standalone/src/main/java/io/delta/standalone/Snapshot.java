@@ -34,13 +34,14 @@ import io.delta.standalone.expressions.Expression;
 public interface Snapshot {
 
     /**
-     * @return a {@link DeltaScan} of the files in this snapshot.
+     * @return a {@link DeltaScan} of the files in this snapshot
      */
     DeltaScan scan();
 
     /**
      * @param predicate  the predicate to be used to filter the files in this snapshot.
-     * @return a {@link DeltaScan} of the files in this snapshot.
+     * @return a {@link DeltaScan} of the files in this snapshot matching the pushed portion of
+     *         {@code predicate}
      */
     DeltaScan scan(Expression predicate);
 

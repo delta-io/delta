@@ -73,7 +73,7 @@ public final class StructType extends DataType {
      *     .add(new StructField("c", new StringType(), true))
      * }</pre>
      * @param field  The new field to add.
-     * @return The new {@link StructType}.
+     * @return a {@link StructType} with the added field
      */
     public StructType add(StructField field) {
         StructField[] newFields = Arrays.copyOf(fields, fields.length + 1);
@@ -92,7 +92,7 @@ public final class StructType extends DataType {
      * }</pre>
      * @param fieldName  The name of the new field.
      * @param dataType  The datatype for the new field.
-     * @return The new {@link StructType}.
+     * @return a {@link StructType} with the added field
      */
     public StructType add(String fieldName, DataType dataType) {
         StructField newField = new StructField(fieldName, dataType, true);
@@ -111,7 +111,7 @@ public final class StructType extends DataType {
      * @param fieldName  The name of the new field.
      * @param dataType  The datatype for the new field.
      * @param nullable  Whether or not the new field is nullable.
-     * @return The new {@link StructType}.
+     * @return a {@link StructType} with the added field
      */
     public StructType add(String fieldName, DataType dataType, boolean nullable) {
         StructField newField = new StructField(fieldName, dataType, nullable);
@@ -157,6 +157,11 @@ public final class StructType extends DataType {
         return nameToField.get(fieldName);
     }
 
+    /**
+     * Creates a {@link Column} expression for the field with the given {@code fieldName}.
+     * @param fieldName  the name of the {@link StructField} to create a column for
+     * @return a {@link Column} expression for the {@link StructField} with name {@code fieldName}
+     */
     public Column column(String fieldName) {
         StructField field = nameToField.get(fieldName);
         return new Column(fieldName, field.getDataType());

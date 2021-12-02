@@ -4,7 +4,9 @@ import io.delta.standalone.types.BooleanType;
 import io.delta.standalone.internal.exception.DeltaErrors;
 
 /**
- * Usage: {@code new Not(expr)} - Logical not.
+ * Evaluates logical NOT {@code expr} for {@code new Not(expr)}.
+ * <p>
+ * Requires the child expression evaluates to a boolean.
  */
 public class Not extends UnaryExpression implements Predicate {
     public Not(Expression child) {

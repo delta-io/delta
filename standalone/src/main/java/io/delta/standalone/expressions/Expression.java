@@ -54,7 +54,7 @@ public interface Expression {
     }
 
     /**
-     * @return a {@link List} of the children of this node. Children should not change.
+     * @return a {@link List} of the immediate children of this node
      */
     List<Expression> children();
 }

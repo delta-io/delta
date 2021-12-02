@@ -30,7 +30,7 @@ import javax.annotation.Nullable;
  * Note: since actions within a given Delta file are not guaranteed to be applied in order, it is
  * not valid for multiple file operations with the same path to exist in a single version.
  *
- * @see  <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md">Delta Transaction Log Protocol</a>
+ * @see  <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#add-file-and-remove-file">Delta Transaction Log Protocol: Add File and Remove File</a>
  */
 public final class AddFile implements FileAction {
     @Nonnull
@@ -69,7 +69,8 @@ public final class AddFile implements FileAction {
     }
 
     /**
-     * @return the corresponding {@link RemoveFile} for this file
+     * @return the corresponding {@link RemoveFile} for this file, instantiated with
+     *         {@code deletionTimestamp =} {@link System#currentTimeMillis()}
      */
     @Nonnull
     public RemoveFile remove() {
@@ -188,7 +189,7 @@ public final class AddFile implements FileAction {
     }
 
     /**
-     * @return a new {@code AddFile.Builder}
+     * @return a new {@link AddFile.Builder}
      */
     public static Builder builder(String path, Map<String, String> partitionValues, long size,
                                   long modificationTime, boolean dataChange) {
@@ -196,7 +197,8 @@ public final class AddFile implements FileAction {
     }
 
     /**
-     * Builder class for AddFile. Enables construction of AddFile object with default values.
+     * Builder class for {@link AddFile}. Enables construction of {@link AddFile}s with default
+     * values.
      */
     public static class Builder {
         // required AddFile fields
@@ -230,7 +232,10 @@ public final class AddFile implements FileAction {
         }
 
         /**
-         * @return a new {@code AddFile} with the same properties as {@code this}
+         * Builds an {@link AddFile} using the provided parameters. If a parameter is not provided
+         * its default values is used.
+         *
+         * @return a new {@link AddFile} with the properties added to the builder
          */
         public AddFile build() {
             AddFile addFile = new AddFile(this.path, this.partitionValues, this.size,

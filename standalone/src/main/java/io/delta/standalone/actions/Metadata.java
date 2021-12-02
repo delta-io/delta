@@ -35,7 +35,7 @@ import io.delta.standalone.types.StructType;
  * after any change. There can be at most one {@link Metadata} action in a
  * given version of the table.
  *
- * @see  <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md">Delta Transaction Log Protocol</a>
+ * @see  <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#change-metadata">Delta Transaction Log Protocol: Change Metadata</a>
  */
 public final class Metadata implements Action {
     @Nonnull private final String id;
@@ -155,14 +155,15 @@ public final class Metadata implements Action {
     }
 
     /**
-     * @return a new {@code Metadata.Builder}
+     * @return a new {@link Metadata.Builder}
      */
     public static Builder builder() {
         return new Builder();
     }
 
     /**
-     * Builder class for Metadata. Enables construction of Metadata object with default values.
+     * Builder class for {@link Metadata}. Enables construction of {@link Metadata}s with default
+     * values.
      */
     public static class Builder {
         @Nonnull private String id = java.util.UUID.randomUUID().toString();
@@ -215,7 +216,10 @@ public final class Metadata implements Action {
         }
 
         /**
-         * @return a new {@code Metadata} with the same properties as {@code this}
+         * Builds a {@link Metadata} using the provided parameters. If a parameter is not provided
+         * its default values is used.
+         *
+         * @return a new {@link Metadata} with the properties added to the builder
          */
         public Metadata build() {
             Metadata metadata = new Metadata(

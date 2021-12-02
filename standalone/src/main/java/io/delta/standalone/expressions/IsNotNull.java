@@ -3,7 +3,7 @@ package io.delta.standalone.expressions;
 import io.delta.standalone.data.RowRecord;
 
 /**
- * Usage: {@code new IsNotNull(expr)} - Returns true if {@code expr} is not null, else false.
+ * Evaluates if {@code expr} is not null for {@code new IsNotNull(expr)}.
  */
 public class IsNotNull extends UnaryExpression implements Predicate {
     public IsNotNull(Expression child) {

@@ -1,8 +1,7 @@
 package io.delta.standalone.expressions;
 
 /**
- * Usage: {@code new LessThan(expr1, expr2)} - Returns true if {@code expr1} is less than
- * {@code expr2}, else false.
+ * Evaluates {@code expr1} &lt; {@code expr2} for {@code new LessThan(expr1, expr2)}.
  */
 public final class LessThan extends BinaryComparison implements Predicate {
     public LessThan(Expression left, Expression right) {
@@ -10,7 +9,7 @@ public final class LessThan extends BinaryComparison implements Predicate {
     }
 
     @Override
-    public Object nullSafeEval(Object leftResult, Object rightResult) {
+    protected Object nullSafeEval(Object leftResult, Object rightResult) {
         return compare(leftResult, rightResult) < 0;
     }
 }

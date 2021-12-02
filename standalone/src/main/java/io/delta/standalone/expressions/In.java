@@ -25,14 +25,19 @@ import io.delta.standalone.data.RowRecord;
 import io.delta.standalone.internal.expressions.Util;
 
 /**
- * Usage: {@code new In(expr, exprList)} - Returns true if {@code expr} is equal to any in
- * {@code exprList}, else false.
+ * Evaluates if {@code expr} is in {@code exprList} for {@code new In(expr, exprList)}. True if
+ * {@code expr} is equal to any expression in {@code exprList}, else false.
  */
 public final class In implements Predicate {
     private final Expression value;
     private final List<? extends Expression> elems;
     private final Comparator<Object> comparator;
 
+    /**
+     * @param value  a nonnull expression
+     * @param elems  a nonnull, nonempty list of expressions with the same data type as
+     *               {@code value}
+     */
     public In(Expression value, List<? extends Expression> elems) {
         if (null == value) {
             throw new IllegalArgumentException("'In' expression 'value' cannot be null");

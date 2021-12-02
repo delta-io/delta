@@ -22,7 +22,7 @@ import io.delta.standalone.expressions.Expression;
 
 /**
  * Used to perform a set of reads in a transaction and then commit a set of updates to the
- * state of the log.  All reads from the {@link DeltaLog}, MUST go through this instance rather
+ * state of the log.  All reads from the {@link DeltaLog} MUST go through this instance rather
  * than directly to the {@link DeltaLog} otherwise they will not be checked for logical conflicts
  * with concurrent updates.
  * <p>
@@ -31,9 +31,9 @@ import io.delta.standalone.expressions.Expression;
 public interface OptimisticTransaction {
 
     /**
-     * Modifies the state of the log by adding a new commit that is based on a read at
-     * the given `lastVersion`. In the case of a conflict with a concurrent writer this
-     * method will throw an exception.
+     * Modifies the state of the log by adding a new commit that is based on a read at the table's
+     * latest version as of this transaction's instantiation. In the case of a conflict with a
+     * concurrent writer this method will throw an exception.
      *
      * @param <T>  A derived class of {@link Action}. This allows, for example, both a
      *             {@code List<Action>} and a {@code List<AddFile>} to be accepted.
@@ -47,11 +47,16 @@ public interface OptimisticTransaction {
     <T extends Action> CommitResult commit(Iterable<T> actions, Operation op, String engineInfo);
 
     /**
-     * Mark files matched by the {@code readPredicates} as read by this transaction.
+     * Mark files matched by the {@code readPredicate} as read by this transaction.
      * <p>
-     * Internally, the {@code readPredicates} parameter and the resultant {@code readFiles} will be
-     * used to determine if logical conflicts between this transaction and previously-committed
-     * transactions can be resolved (i.e. no error thrown).
+     * Please note filtering is only supported on <b>partition columns</b>, thus the files matched
+     * may be a superset of the files in the Delta table that satisfy {@code readPredicate}. Users
+     * should use {@link DeltaScan#getResidualPredicate()} to check for any unapplied portion of the
+     * input predicate.
+     * <p>
+     * Internally, {@code readPredicate} and the matched {@code readFiles} will be used to determine
+     * if logical conflicts between this transaction and previously-committed transactions can be
+     * resolved (i.e. no error thrown).
      * <p>
      * For example:
      * <ul>
@@ -66,15 +71,14 @@ public interface OptimisticTransaction {
      * </ul>
      *
      * @param readPredicate  Predicate used to determine which files were read.
-     * @return a {@link DeltaScan} containing the list of files matching the push portion of the
+     * @return a {@link DeltaScan} containing the list of files matching the pushed portion of the
      *         readPredicate.
      */
     DeltaScan markFilesAsRead(Expression readPredicate);
 
     /**
      * Records an update to the metadata that should be committed with this transaction.
-     * Note that this must be done before writing out any files so that file writing
-     * and checks happen with the final metadata for the table.
+     *
      * <p>
      * IMPORTANT: It is the responsibility of the caller to ensure that files currently
      * present in the table are still valid under the new metadata.
@@ -96,8 +100,9 @@ public interface OptimisticTransaction {
     long txnVersion(String id);
 
     /**
-     * @return the metadata for this transaction. The metadata refers to the metadata of the
-     *         snapshot at the transaction's read version unless updated during the transaction.
+     * @return the metadata for this transaction. The metadata refers to the metadata of the table's
+     *         latest version as of this transaction's instantiation unless updated during the
+     *         transaction.
      */
     Metadata metadata();
 }

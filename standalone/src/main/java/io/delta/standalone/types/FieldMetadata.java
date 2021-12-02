@@ -55,7 +55,7 @@ public final class FieldMetadata {
     }
 
     /**
-     * @return list of the key-value pairs in {@code this}.
+     * @return list of the key-value pairs in this {@link FieldMetadata}
      */
     public Map<String, Object> getEntries() {
         return Collections.unmodifiableMap(metadata);
@@ -116,14 +116,14 @@ public final class FieldMetadata {
     }
 
     /**
-     * @return a new {@code FieldMetadata.Builder}
+     * @return a new {@link FieldMetadata.Builder}
      */
     public static Builder builder() {
         return new Builder();
     }
 
     /**
-     * Builder class for FieldMetadata.
+     * Builder class for {@link FieldMetadata}.
      */
     public static class Builder {
         private Map<String, Object> metadata = new HashMap<String, Object>();
@@ -184,7 +184,7 @@ public final class FieldMetadata {
         }
 
         /**
-         * @return a new {@code FieldMetadata} with the same mappings as {@code this}
+         * @return a new {@link FieldMetadata} with the mappings added to the builder
          */
         public FieldMetadata build() {
             return new FieldMetadata(this.metadata);

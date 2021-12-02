@@ -77,12 +77,12 @@ public abstract class DataType {
     }
 
     /**
-     * @return a JSON (@code String} representation of the type
+     * @return a JSON {@code String} representation of the type
      */
     public String toJson() { return DataTypeParser.toJson(this); }
 
     /**
-     * @return a pretty (i.e. indented) JSON (@code String} representation of the type
+     * @return a pretty (i.e. indented) JSON {@code String} representation of the type
      */
     public String toPrettyJson() { return DataTypeParser.toPrettyJson(this); }
 

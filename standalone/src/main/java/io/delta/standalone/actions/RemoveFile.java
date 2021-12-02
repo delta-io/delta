@@ -27,13 +27,15 @@ import javax.annotation.Nullable;
  * Logical removal of a given file from the reservoir. Acts as a tombstone before a file is
  * deleted permanently.
  * <p>
- * Note that users should onlu instantiate {@link RemoveFile} instances using one of the various
+ * Users should only instantiate {@link RemoveFile} instances using one of the various
  * {@link AddFile#remove()} methods.
  * <p>
- * As well, note that for protocol compatibility reasons, the fields {@code partitionValues},
- * {@code size}, and {@code tags} are only present when the extendedFileMetadata flag is true. New
- * writers should generally be setting this flag, but old writers (and FSCK) won't, so readers must
- * check this flag before attempting to consume those values.
+ * Note that for protocol compatibility reasons, the fields {@code partitionValues},
+ * {@code size}, and {@code tags} are only present when the {@code extendedFileMetadata} flag is
+ * true. New writers should generally be setting this flag, but old writers (and FSCK) won't, so
+ * readers must check this flag before attempting to consume those values.
+ *
+ * @see  <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#add-file-and-remove-file">Delta Transaction Log Protocol: Add File and Remove File</a>
  */
 public class RemoveFile implements FileAction {
     @Nonnull
@@ -94,9 +96,9 @@ public class RemoveFile implements FileAction {
     }
 
     /**
-     * @return whether any data was changed as a result of this file being created. When
-     *         {@code false} the file must already be present in the table or the records in the
-     *         added file must be contained in one or more remove actions in the same version
+     * @return whether any data was changed as a result of this file being removed. When
+     *         {@code false} the records in the removed file must be contained in one or more add
+     *         actions in the same version
      */
     @Override
     public boolean isDataChange() {

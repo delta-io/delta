@@ -25,10 +25,10 @@ import io.delta.standalone.actions.CommitInfo;
 import io.delta.standalone.internal.DeltaLogImpl;
 
 /**
- * {@link DeltaLog} is the representation of the transaction logs of a Delta table. It provides APIs
- * to access the states of a Delta table.
+ * Represents the transaction logs of a Delta table. It provides APIs to access the states of a
+ * Delta table.
  * <p>
- * You can use the following codes to create a {@link DeltaLog} instance.
+ * You can use the following code to create a {@link DeltaLog} instance.
  * <pre>{@code
  *   Configuration conf = ... // Create your own Hadoop Configuration instance
  *   DeltaLog deltaLog = DeltaLog.forTable(conf, "/the/delta/table/path");
@@ -99,7 +99,7 @@ public interface DeltaLog {
      *
      * @param startVersion the table version to begin retrieving actions from (inclusive)
      * @param failOnDataLoss whether to throw when data loss detected
-     * @return an {@code Iterator} of {@link VersionLog}s
+     * @return an {@code Iterator} of {@link VersionLog}s starting from {@code startVersion}
      * @throws IllegalArgumentException if {@code startVersion} is negative
      * @throws IllegalStateException if data loss detected and {@code failOnDataLoss} is true
      */
@@ -118,7 +118,7 @@ public interface DeltaLog {
     }
 
     /**
-     * Create a {@link DeltaLog} instance representing the table located at the provide
+     * Create a {@link DeltaLog} instance representing the table located at the provided
      * {@code path}.
      *
      * @param hadoopConf  Hadoop {@code Configuration} to use when accessing the Delta table

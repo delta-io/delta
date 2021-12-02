@@ -4,7 +4,9 @@ import io.delta.standalone.types.BooleanType;
 import io.delta.standalone.internal.exception.DeltaErrors;
 
 /**
- * Usage: {@code new And(expr1, expr2)} - Logical AND
+ * Evaluates logical {@code expr1} AND {@code expr2} for {@code new And(expr1, expr2)}.
+ * <p>
+ * Requires both left and right input expressions evaluate to booleans.
  */
 public final class And extends BinaryOperator implements Predicate {
 

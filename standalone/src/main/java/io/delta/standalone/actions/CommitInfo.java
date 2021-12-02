@@ -29,7 +29,7 @@ import javax.annotation.Nullable;
  * is not stored in the checkpoint and has reduced compatibility guarantees.
  * Information stored in it is best effort (i.e. can be falsified by a writer).
  *
- * @see  <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md">Delta Transaction Log Protocol</a>
+ * @see  <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#commit-provenance-information">Delta Transaction Log Protocol: Commit Provenance Information</a>
  */
 public class CommitInfo implements Action {
     @Nonnull private final Optional<Long> version;
@@ -228,7 +228,7 @@ public class CommitInfo implements Action {
     }
 
     /**
-     * @return the engineInfo of the operation that performed this commit. It should be of the form
+     * @return the engineInfo of the engine that performed this commit. It should be of the form
      *         "{engineName}/{engineVersion} Delta-Standalone/{deltaStandaloneVersion}"
      */
     @Nonnull
@@ -266,14 +266,15 @@ public class CommitInfo implements Action {
     }
 
     /**
-     * @return a new {@code CommitInfo.Builder}
+     * @return a new {@link CommitInfo.Builder}
      */
     public static Builder builder() {
         return new Builder();
     }
 
     /**
-     * Builder class for CommitInfo. Enables construction of CommitInfo object with default values.
+     * Builder class for {@link CommitInfo}. Enables construction of {@link CommitInfo}s with
+     * default values.
      */
     public static class Builder {
         @Nonnull private Optional<Long> version = Optional.empty();
@@ -368,7 +369,10 @@ public class CommitInfo implements Action {
         }
 
         /**
-         * @return a new {@code CommitInfo} with the same properties as {@code this}
+         * Builds a {@link CommitInfo} using the provided parameters. If a parameter is not provided
+         * its default values is used.
+         *
+         * @return a new {@link CommitInfo} with the properties added to the builder
          */
         public CommitInfo build() {
             CommitInfo commitInfo = new CommitInfo(this.version, this.timestamp, this.userId,

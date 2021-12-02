@@ -20,8 +20,10 @@ import java.util.Optional;
 import javax.annotation.Nonnull;
 
 /**
- * Sets the committed version for a given application. Used to make operations like streaming append
- * idempotent.
+ * Sets the committed version for a given application. Used to make operations like
+ * {@link io.delta.standalone.Operation.Name#STREAMING_UPDATE} idempotent.
+ *
+ * @see  <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#transaction-identifiers">Delta Transaction Log Protocol: Transaction Identifiers</a>
  */
 public final class SetTransaction implements Action {
     @Nonnull
@@ -42,7 +44,7 @@ public final class SetTransaction implements Action {
     }
 
     /**
-     * @return the application ID
+     * @return the unique identifier for the application performing the transaction
      */
     @Nonnull
     public String getAppId() {
@@ -50,14 +52,15 @@ public final class SetTransaction implements Action {
     }
 
     /**
-     * @return the committed version for the application ID
+     * @return the application-specific numeric identifier for this transaction
      */
     public long getVersion() {
         return version;
     }
 
     /**
-     * @return the last updated timestamp of this transaction (milliseconds since the epoch)
+     * @return the time when this transaction action was created, in milliseconds since the Unix
+     *         epoch
      */
     @Nonnull
     public Optional<Long> getLastUpdated() {

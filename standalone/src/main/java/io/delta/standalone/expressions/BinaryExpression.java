@@ -23,14 +23,14 @@ import java.util.Objects;
 import io.delta.standalone.data.RowRecord;
 
 /**
- * An expression with two inputs and one output. The output is by default evaluated to null
- * if any input is evaluated to null.
+ * An {@link Expression} with two inputs and one output. The output is by default evaluated to null
+ * if either input is evaluated to null.
  */
 public abstract class BinaryExpression implements Expression {
     protected final Expression left;
     protected final Expression right;
 
-    public BinaryExpression(Expression left, Expression right) {
+    protected BinaryExpression(Expression left, Expression right) {
         this.left = left;
         this.right = right;
     }

@@ -23,13 +23,13 @@ import java.util.Objects;
 import io.delta.standalone.data.RowRecord;
 
 /**
- * An expression with one input and one output. The output is by default evaluated to null
+ * An {@link Expression} with one input and one output. The output is by default evaluated to null
  * if the input is evaluated to null.
  */
 public abstract class UnaryExpression implements Expression {
     protected final Expression child;
 
-    public UnaryExpression(Expression child) {
+    protected UnaryExpression(Expression child) {
         this.child = child;
     }
 

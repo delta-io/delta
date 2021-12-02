@@ -10,10 +10,11 @@ import io.delta.standalone.types.*;
 /**
  * A column whose row-value will be computed based on the data in a {@link RowRecord}.
  * <p>
- * Usage: {@code new Column(columnName, columnDataType)}.
+ * It is recommended that you instantiate using an existing table schema {@link StructType}
+ * with {@link StructType#column(String)}. For example, {@code mySchema.column(columnName)}.
  * <p>
- * It is recommended that you instantiate using an existing table schema ({@link StructType}).
- * e.g. {@code mySchema.column(columnName)}
+ * Only supports primitive data types, see
+ * <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#primitive-types">Delta Transaction Log Protocol: Primitive Types</a>.
  */
 public final class Column extends LeafExpression {
     private final String name;

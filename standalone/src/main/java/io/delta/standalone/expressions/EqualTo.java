@@ -1,8 +1,7 @@
 package io.delta.standalone.expressions;
 
 /**
- * Usage: {@code new EqualTo(expr1, expr2)} - Returns true if {@code expr1} equals {@code expr2},
- * else false.
+ * Evaluates {@code expr1} = {@code expr2} for {@code new EqualTo(expr1, expr2)}.
  */
 public final class EqualTo extends BinaryComparison implements Predicate {
 
@@ -11,7 +10,7 @@ public final class EqualTo extends BinaryComparison implements Predicate {
     }
 
     @Override
-    public Object nullSafeEval(Object leftResult, Object rightResult) {
+    protected Object nullSafeEval(Object leftResult, Object rightResult) {
         return compare(leftResult, rightResult) == 0;
     }
 }

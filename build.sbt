@@ -514,6 +514,8 @@ lazy val standalone = (project in file("standalone"))
         .map(_.filterNot(_.getCanonicalPath.contains("/internal/")))
         // ignore project `hive` which depends on this project
         .map(_.filterNot(_.getCanonicalPath.contains("/hive/")))
+        // ignore project `flink-connector` which depends on this project
+        .map(_.filterNot(_.getCanonicalPath.contains("/flink-connector/")))
     },
     // Ensure unidoc is run with tests. Must be cleaned before test for unidoc to be generated.
     (test in Test) := ((test in Test) dependsOn unidoc.in(Compile)).value

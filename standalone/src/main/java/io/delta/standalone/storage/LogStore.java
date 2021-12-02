@@ -48,8 +48,9 @@ import io.delta.standalone.data.CloseableIterator;
  *     </li>
  * </ol>
  * <p>
- * All subclasses of this interface is required to have a constructor that takes Configuration
- * as a single parameter. This constructor is used to dynamically create the LogStore.
+ * All subclasses of this interface are required to have a constructor that takes
+ * {@link Configuration} as a single parameter. This constructor is used to dynamically create the
+ * LogStore.
  * <p>
  * LogStore and its implementations are not meant for direct access but for configuration based
  * on storage system.

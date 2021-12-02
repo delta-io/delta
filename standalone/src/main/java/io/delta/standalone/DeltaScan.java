@@ -25,31 +25,36 @@ import io.delta.standalone.expressions.Expression;
 /**
  * Provides access to an iterator over the files in this snapshot.
  * <p>
- * Typically created with a read predicate {@link Expression} to let users filter files.
+ * Typically created with a read predicate {@link Expression} to let users filter files. Please note
+ * filtering is only supported on <b>partition columns</b> and users should use
+ * {@link DeltaScan#getResidualPredicate()} to check for any unapplied portion of the input
+ * predicate.
  */
 public interface DeltaScan {
 
     /**
-     * Creates a {@link CloseableIterator} which can iterate over files belonging to this snapshot.
+     * Creates a {@link CloseableIterator} over files belonging to this snapshot.
      * <p>
-     * It provides no iteration ordering guarantee among files.
+     * There is no iteration ordering guarantee among files.
      * <p>
      * Files returned are guaranteed to satisfy the predicate, if any, returned by
      * {@link #getPushedPredicate()}.
      *
-     * @return a {@link CloseableIterator} to iterate over files.
+     * @return a {@link CloseableIterator} over the files in this snapshot that satisfy
+     *         {@link #getPushedPredicate()}
      */
     CloseableIterator<AddFile> getFiles();
 
     /**
-     * @return the input predicate used to filter files.
+     * @return the input predicate passed in by the user
      */
     Optional<Expression> getInputPredicate();
 
     /**
      * @return portion of the input predicate that can be evaluated by Delta Standalone using only
-     *         metadata. Files returned by {@link #getFiles()} are guaranteed to satisfy the pushed
-     *         predicate, and the caller doesn’t need to apply them again on the returned files.
+     *         metadata (filters on partition columns). Files returned by {@link #getFiles()} are
+     *         guaranteed to satisfy the pushed predicate, and the caller doesn’t need to apply them
+     *         again on the returned files.
      */
     Optional<Expression> getPushedPredicate();
 

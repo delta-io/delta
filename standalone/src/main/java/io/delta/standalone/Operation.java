@@ -110,13 +110,13 @@ public final class Operation {
 
     /**
      * Some possible operation metrics and their suggested corresponding operation types.
-     * These are purely exemplary, and users may user whichever metrics best fit their application.
+     * These are purely exemplary, and users may use whichever metrics best fit their application.
      */
     public static class Metrics {
         /**
          * Number of files written.
          *
-         * Usually used with WRITE operation.
+         * Usually used with the WRITE operation.
          */
         public static final String numFiles = "numFiles";
 
@@ -152,7 +152,7 @@ public final class Operation {
         /**
          * Number of rows removed.
          *
-         * Usually used with DELETE operation.
+         * Usually used with the DELETE operation.
          */
         public static final String numDeletedRows = "numDeletedRows";
 

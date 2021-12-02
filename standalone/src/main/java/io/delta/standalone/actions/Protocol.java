@@ -27,6 +27,8 @@ import java.util.Objects;
  * Since this action allows us to explicitly block older clients in the case of a
  * breaking change to the protocol, clients should be tolerant of messages and
  * fields that they do not understand.
+ *
+ * @see  <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#protocol-evolution">Delta Transaction Log Protocol: Protocol Evolution</a>
  */
 public class Protocol implements Action {
     private final int minReaderVersion;
@@ -42,10 +44,18 @@ public class Protocol implements Action {
         this.minWriterVersion = minWriterVersion;
     }
 
+    /**
+     * @return the minimum version of the Delta read protocol that a client must implement in order
+     *         to correctly read this table
+     */
     public int getMinReaderVersion() {
         return minReaderVersion;
     }
 
+    /**
+     * @return the minimum version of the Delta write protocol that a client must implement in order
+     *         to correctly write this table
+     */
     public int getMinWriterVersion() {
         return minWriterVersion;
     }
