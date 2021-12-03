@@ -434,6 +434,23 @@ abstract class DeltaLogSuiteBase extends FunSuite {
       }
     }
   }
+
+  test("DeltaLog.tableExists") {
+    withTempDir { dir =>
+
+      val conf = new Configuration()
+      val log = DeltaLog.forTable(conf, dir.getCanonicalPath)
+
+      assert(!log.tableExists())
+
+      log.startTransaction().commit(
+        Seq(MetadataJ.builder().build()).asJava,
+        new Operation(Operation.Name.CREATE_TABLE),
+        "test"
+      )
+      assert(log.tableExists())
+    }
+  }
 }
 
 ///////////////////////////////////////////////////////////////////////////

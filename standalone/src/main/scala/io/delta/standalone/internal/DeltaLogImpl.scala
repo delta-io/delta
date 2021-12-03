@@ -138,6 +138,9 @@ private[internal] class DeltaLogImpl private(
     new OptimisticTransactionImpl(this, snapshot)
   }
 
+  /** Whether a Delta table exists at this directory. */
+  override def tableExists: Boolean = snapshot.version >= 0
+
   ///////////////////////////////////////////////////////////////////////////
   // Internal Methods
   ///////////////////////////////////////////////////////////////////////////

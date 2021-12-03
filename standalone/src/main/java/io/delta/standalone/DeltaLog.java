@@ -106,6 +106,11 @@ public interface DeltaLog {
     Iterator<VersionLog> getChanges(long startVersion, boolean failOnDataLoss);
 
     /**
+     * @return Whether a Delta table exists at this directory.
+     */
+    boolean tableExists();
+
+    /**
      * Create a {@link DeltaLog} instance representing the table located at the provided
      * {@code path}.
      *
