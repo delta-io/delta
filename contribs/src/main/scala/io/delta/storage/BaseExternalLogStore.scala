@@ -301,19 +301,22 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
    * Tries (in most cases) to copy the file in the LogEntryMetadata's `tempPath` to the target
    * LogEntryMetadata's `path` and then commit to the external cache.
    *
-   * The specific cases when the `tempPath` will be copied into `path` are outlined here:
-   * - Let O=entry.overwrite, and let T=target `path` file already exists
-   * - O=false & T=false => perform copy
-   * - O=false & T=true  => don't perform copy
-   * - O=true  & T=false => perform copy
-   * - O=true  & T=true  => perform copy
+   * The specific cases when the `tempPath` will be copied into `path` are outlined below.
+   * Let O = entry.overwrite and let T = target `path` file already exists:
+   * +-------+-------+--------------+
+   * | O     | T     | perform copy |
+   * +-------+-------+--------------+
+   * | false | false | yes          |
+   * +-------+-------+--------------+
+   * | false | true  | no           |
+   * +-------+-------+--------------+
+   * | true  | false | yes          |
+   * +-------+-------+--------------+
+   * | true  | true  | yes          |
+   * +-------+-------+--------------+
    *
-   * @param ensureTargetFileExists whether this function should still successfully return even if,
-   *                               after trying to copy, either
-   *                               a) `entry.overwrite` is false and the target `path` file does not
-   *                                   exist, or
-   *                               b) `entry.overwrite` is true but the target `path` file was not
-   *                                   successfully overwritten
+   * @param ensureTargetFileExists true if this function should still successfully return even if
+   *                               a copy was attempted but not completed, else false.
    * @param commitFailureAcceptable whether this function should still successfully return even if
    *                                the external commit didn't succeed
    * @return the correct FileStatus from which to read the entry's data. If the copy was successful
@@ -321,11 +324,8 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
    *         FileStatus). Else, returns the entry's `tempPath` (as a FileStatus).
    * @throws RuntimeException if `commitFailureAcceptable` is true and after 3 failed attempts,
    *                          external entry E(N, complete=true) was not committed and
-   * @throws RuntimeException if `ensureTargetFileExists` is true and after 3 failed attempts either
-   *                          a) `entry.overwrite` is false and the target `path` file does not
-   *                              exist
-   *                          b) `entry.overwrite` is true and the target `path` file was not
-   *                              successfully overwritten
+   * @throws RuntimeException if `ensureTargetFileExists` is true and after 3 failed attempts an
+   *                          attempted copy was not completed
    */
   private def tryFixTransactionLog(
       fs: FileSystem,
