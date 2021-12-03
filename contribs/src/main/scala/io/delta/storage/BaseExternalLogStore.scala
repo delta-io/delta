@@ -322,8 +322,8 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
    * @return the correct FileStatus from which to read the entry's data. If the copy was successful
    *         or the target `path` file already exists, this will be the entry's `path` (as a
    *         FileStatus). Else, returns the entry's `tempPath` (as a FileStatus).
-   * @throws RuntimeException if `commitFailureAcceptable` is true and after 3 failed attempts,
-   *                          external entry E(N, complete=true) was not committed and
+   * @throws RuntimeException if `commitFailureAcceptable` is false and after 3 failed attempts
+   *                          external entry E(N, complete=true) was not committed
    * @throws RuntimeException if `ensureTargetFileExists` is true and after 3 failed attempts an
    *                          attempted copy was not completed
    */
