@@ -21,7 +21,6 @@ The founding technical charter can be found [here](delta-charter.pdf).
 # Coding style
 We generally follow the [Apache Spark Scala Style Guide](https://spark.apache.org/contributing.html).
 
-
 # Sign your work
 The sign-off is a simple line at the end of the explanation for the patch. Your signature certifies that you wrote the patch or otherwise have the right to pass it on as an open-source patch. The rules are pretty simple: if you can certify the below (from developercertificate.org):
 
