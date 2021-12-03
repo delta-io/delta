@@ -92,7 +92,9 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
     val fileLength = writeActions(fs, tempPath, actions)
 
     // 4. Commit to external cache entry E(N, complete = false)
-    val logEntryMetadata = LogEntryMetadata(resolvedPath, fileLength, tempPath, isComplete = false)
+    val logEntryMetadata =
+      LogEntryMetadata(resolvedPath, fileLength, tempPath, overwrite, isComplete = false)
+
     try {
       writeCache(fs, logEntryMetadata, overwrite)
     } catch {
@@ -187,6 +189,7 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
     val listedFromDB = listFromCache(fs, resolvedPath)
       .toList // TODO remove when productionizing
       .filter { entry => !entry.isComplete }
+      // ensureTargetFileExists = false as we can just read the temp file T(N) instead
       .map { entry => tryFixTransactionLog(fs, entry, ensureTargetFileExists = false) }
 
     // for debug
@@ -233,7 +236,7 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
   }
 
   /**
-   * Copies file within filesystem.
+   * Copies file within filesystem with overwrite = true.
    *
    * Ensures that the `src` file is either entirely copied to the `dst` file, or not at all.
    *
@@ -292,27 +295,37 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
   }
 
   /**
-   * Best-effort at ensuring consistency on file system according to the external cache.
+   * Best-effort at ensuring consistency on file system according to the external cache. In case of
+   * failure, will retry at most 3 times.
    *
-   * Tries to copy the file in the LogEntryMetadata's `tempPath` to the target LogEntryMetadata's
-   * `path`, if it does not exist already, and then commit to the external cache.
+   * Tries (in most cases) to copy the file in the LogEntryMetadata's `tempPath` to the target
+   * LogEntryMetadata's `path` and then commit to the external cache.
    *
-   * Will retry at most 3 times.
-   *
-   * It is valid for the target LogEntryMetadata's `path` file to already exist. In that case, this
-   * method will just try to commit to the external cache.
+   * The specific cases when the `tempPath` will be copied into `path` are outlined here:
+   * - Let O=entry.overwrite, and let T=target `path` file already exists
+   * - O=false & T=false => perform copy
+   * - O=false & T=true  => don't perform copy
+   * - O=true  & T=false => perform copy
+   * - O=true  & T=true  => perform copy
    *
    * @param ensureTargetFileExists whether this function should still successfully return even if,
-   *                               after trying to copy, the target `path` file does not exist
+   *                               after trying to copy, either
+   *                               a) `entry.overwrite` is false and the target `path` file does not
+   *                                   exist, or
+   *                               b) `entry.overwrite` is true but the target `path` file was not
+   *                                   successfully overwritten
    * @param commitFailureAcceptable whether this function should still successfully return even if
    *                                the external commit didn't succeed
    * @return the correct FileStatus from which to read the entry's data. If the copy was successful
    *         or the target `path` file already exists, this will be the entry's `path` (as a
    *         FileStatus). Else, returns the entry's `tempPath` (as a FileStatus).
-   * @throws RuntimeException if, after 3 failed attempts, external entry E(N, complete=true) was
-   *                          not committed and `commitFailureAcceptable` is true
-   * @throws RuntimeException if, after 3 failed attempts, the target `path` file does not exist and
-   *                          `ensureTargetFileExists` is true
+   * @throws RuntimeException if `commitFailureAcceptable` is true and after 3 failed attempts,
+   *                          external entry E(N, complete=true) was not committed and
+   * @throws RuntimeException if `ensureTargetFileExists` is true and after 3 failed attempts either
+   *                          a) `entry.overwrite` is false and the target `path` file does not
+   *                              exist
+   *                          b) `entry.overwrite` is true and the target `path` file was not
+   *                              successfully overwritten
    */
   private def tryFixTransactionLog(
       fs: FileSystem,
@@ -321,16 +334,19 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
       commitFailureAcceptable: Boolean = true): FileStatus = {
     logDebug(s"Try to fix: ${entry.path}")
     val completedEntry = entry.complete()
-    var targetFileExists = fs.exists(entry.path)
+    val performCopy = entry.overwrite || !fs.exists(entry.path)
+    var copySuccess = !performCopy
 
     for (i <- 0 until 3) {
       try {
-        if (!targetFileExists) {
+        // Both copyFile and writeCache have overwrite=true, so we don't expect any
+        // FileAlreadyExistsExceptions from those calls
+
+        if (performCopy && !copySuccess) {
           copyFile(fs, entry.tempPath, entry.path)
-          targetFileExists = true
+          copySuccess = true
         }
 
-        // Since overwrite is true, we do not expect any FileAlreadyExistsExceptions
         writeCache(fs, completedEntry, overwrite = true)
 
         return completedEntry.asFileStatus(fs)
@@ -343,10 +359,10 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
     if (!commitFailureAcceptable) {
       throw new RuntimeException(
         s"External commit failure while trying to fix transaction log for path ${entry.path}")
-    } else if (ensureTargetFileExists && !targetFileExists) {
+    } else if (ensureTargetFileExists && !copySuccess) {
       throw new RuntimeException(
         s"Copy failure while trying to fix the transaction log for path ${entry.path}")
-    } else if (targetFileExists) {
+    } else if (copySuccess) {
       completedEntry.asFileStatus(fs)
     } else {
       entry.tempPathAsFileStatus(fs)
@@ -385,11 +401,12 @@ case class LogEntryMetadata(
     path: Path,
     length: Long,
     tempPath: Path,
+    overwrite: Boolean,
     isComplete: Boolean,
     modificationTime: Long = System.currentTimeMillis()) {
 
   def complete(): LogEntryMetadata = {
-    LogEntryMetadata(this.path, this.length, this.tempPath, isComplete = true)
+    LogEntryMetadata(this.path, this.length, this.tempPath, this.overwrite, isComplete = true)
   }
 
   def tempPathAsFileStatus(fs: FileSystem): FileStatus = {

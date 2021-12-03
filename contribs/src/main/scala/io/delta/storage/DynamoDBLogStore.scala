@@ -183,17 +183,20 @@ object DynamoDBLogStore {
   def parseItem(item: java.util.Map[String, AttributeValue] ): LogEntryMetadata = {
     val parentPath = item.get("parentPath").getS
     val filename = item.get("filename").getS
+    val path = new Path(s"$parentPath/$filename")
     val tempPath = new Path(item.get("tempPath").getS)
     val length = item.get("length").getN.toLong
-    val modificationTime = item.get("modificationTime").getN.toLong
+    val overwrite = item.get("overwrite").getS == "true"
     val isComplete = item.get("isComplete").getS == "true"
+    val modificationTime = item.get("modificationTime").getN.toLong
 
     LogEntryMetadata(
-      path = new Path(s"$parentPath/$filename"),
-      tempPath = tempPath,
-      length = length,
-      isComplete = isComplete,
-      modificationTime = modificationTime
+      path,
+      length,
+      tempPath,
+      overwrite,
+      isComplete,
+      modificationTime
     )
   }
 
