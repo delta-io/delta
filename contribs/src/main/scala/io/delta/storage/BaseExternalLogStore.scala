@@ -59,8 +59,10 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
       overwrite: Boolean = false): Unit = {
     val (fs, resolvedPath) = resolved(path)
 
-    // 1. If N.json already exists in the _delta_log, exit early
-    if (fs.exists(resolvedPath) && !overwrite) {
+    logDebug(s"Writing file: $path, $overwrite")
+
+    // 1. Check early to throw
+    if (!overwrite && fs.exists(resolvedPath)) {
       throw new java.nio.file.FileAlreadyExistsException(resolvedPath.toString)
     }
 
@@ -85,33 +87,36 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
       }
     }
 
-    logDebug(s"Writing file: $path, $overwrite")
+    if (!overwrite) {
+      // 3. Create temp file T(N)
+      val tempPath = getTemporaryPath(resolvedPath)
+      val fileLength = writeActions(fs, tempPath, actions)
 
-    // 3. Create temp file T(N)
-    val tempPath = getTemporaryPath(resolvedPath)
-    val fileLength = writeActions(fs, tempPath, actions)
+      // 4. Commit to external cache entry E(N, complete = false)
+      val logEntryMetadata =
+        LogEntryMetadata(resolvedPath, fileLength, tempPath, isComplete = false)
+      try {
+        writeCache(fs, logEntryMetadata, overwrite)
+      } catch {
+        case e: Throwable =>
+          logError(s"${e.getClass.getName}: $e")
+          throw e
+      }
 
-    // 4. Commit to external cache entry E(N, complete = false)
-    val logEntryMetadata = LogEntryMetadata(resolvedPath, fileLength, tempPath, isComplete = false)
-    try {
-      writeCache(fs, logEntryMetadata, overwrite)
-    } catch {
-      case e: Throwable =>
-        logError(s"${e.getClass.getName}: $e")
-        throw e
-    }
+      // At this point, the commit is recoverable and any future errors are not passed to the user
 
-    // At this point, the commit is recoverable and any future errors are not passed to the user
+      try {
+        // 5. Copy T(N) into target N.json
+        copyFile(fs, tempPath, resolvedPath)
 
-    try {
-      // 5. Copy T(N) into target N.json
-      copyFile(fs, tempPath, resolvedPath)
-
-      // 6. Commit to external cache entry E(N, complete = true)
-      writeCache(fs, logEntryMetadata.complete(), overwrite = true)
-    } catch {
-      case e: Throwable =>
-        logWarning(s"${e.getClass.getName}: ignoring recoverable error: $e")
+        // 6. Commit to external cache entry E(N, complete = true)
+        writeCache(fs, logEntryMetadata.complete(), overwrite = true)
+      } catch {
+        case e: Throwable =>
+          logWarning(s"${e.getClass.getName}: ignoring recoverable error: $e")
+      }
+    } else {
+      writeActions(fs, resolvedPath, actions)
     }
 
     // 7. Delete all external cache E(*, complete = false) entries older than 1 day
@@ -164,7 +169,7 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
 
   /**
    * List files starting from `resolvedPath` (inclusive) in the same directory, which merges
-   * the file system list and the db list
+   * the file system list and the DB list.
    */
   protected def listFrom(
       fs: FileSystem,
@@ -185,9 +190,14 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
     }
 
     val listedFromDB = listFromCache(fs, resolvedPath)
-      .toList // TODO remove when productionizing
+      // by definition, any E(N, complete=true) guarantees that N.json exists in the FS
       .filter { entry => !entry.isComplete }
+      // we want to "fix" all E(N, complete=false)
       .map { entry => tryFixTransactionLog(fs, entry, copyFailureAcceptable = true) }
+      // we only want to look at the longest prefix of entries that were just completed (no gaps)
+      .takeWhile(_.isDefined)
+      .map(_.get)
+      .toList // TODO remove when productionizing
 
     // for debug
     listedFromFs.iterator
@@ -294,8 +304,8 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
   /**
    * Best-effort at ensuring consistency on file system according to the external cache.
    *
-   * Tries to copy a LogEntryMetadata's temp file into the target _delta_log file, if it does not
-   * exist already, and then commit to the external cache.
+   * Tries to copy (overwrite=true) a LogEntryMetadata's temp file into the target _delta_log file
+   * and then commit to the external cache.
    *
    * Will retry at most 3 times.
    *
@@ -303,22 +313,25 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
    *                              the temp file wasn't copied into the target _delta_log file
    * @param commitFailureAcceptable whether this function should still successfully return even if
    *                                the external commit didn't succeed
-   * @return the correct FileStatus from which to read the entry's data. If the copy was successful,
-   *         this will be the entry's path (as a FileStatus), else the entry's temp path (as a
-   *         FileStatus)
+   * @return If the copy was successful, returns the FileStatus of the new _delta_log file, else
+   *         None
+   * @throws RuntimeException if `copyFailureAcceptable` is false and the temp file was not copied
+   *                          to the target file
+   * @throws RuntimeException if `commitFailureAcceptable` is false and the external cache commit
+   *                          was not successful
    */
   private def tryFixTransactionLog(
       fs: FileSystem,
       entry: LogEntryMetadata,
       copyFailureAcceptable: Boolean,
-      commitFailureAcceptable: Boolean = true): FileStatus = {
+      commitFailureAcceptable: Boolean = true): Option[FileStatus] = {
     logDebug(s"Try to fix: ${entry.path}")
     val completedEntry = entry.complete()
     var fileCopied = false
 
     for (i <- 0 until 3) {
       try {
-        if (!fileCopied && !fs.exists(entry.path)) {
+        if (!fileCopied) {
           copyFile(fs, entry.tempPath, entry.path)
           fileCopied = true
         }
@@ -326,7 +339,7 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
         // Since overwrite is true, we do not expect any FileAlreadyExistsExceptions
         writeCache(fs, completedEntry, overwrite = true)
 
-        return completedEntry.asFileStatus(fs)
+        return Some(completedEntry.asFileStatus(fs))
       } catch {
         case NonFatal(e) =>
           logWarning(s"${e.getClass.getName}: Ignoring error while fixing. Iteration $i of 3. $e")
@@ -340,9 +353,9 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
       throw new RuntimeException(
         s"Copy failure while trying to fix the transaction log for path ${entry.path}")
     } else if (fileCopied) {
-      completedEntry.asFileStatus(fs)
+      Some(completedEntry.asFileStatus(fs))
     } else {
-      entry.tempPathAsFileStatus(fs)
+      None
     }
   }
 
@@ -383,17 +396,6 @@ case class LogEntryMetadata(
 
   def complete(): LogEntryMetadata = {
     LogEntryMetadata(this.path, this.length, this.tempPath, isComplete = true)
-  }
-
-  def tempPathAsFileStatus(fs: FileSystem): FileStatus = {
-    new CachedFileStatus(
-      length,
-      false,
-      1,
-      fs.getDefaultBlockSize(tempPath),
-      modificationTime,
-      tempPath
-    )
   }
 
   def asFileStatus(fs: FileSystem): FileStatus = {
