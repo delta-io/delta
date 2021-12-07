@@ -343,6 +343,17 @@ object DeltaOperations {
   case class TestOperation(operationName: String = "TEST") extends Operation(operationName) {
     override val parameters: Map[String, Any] = Map.empty
   }
+
+  /** Recorded when restoring the table. */
+  case class Restore(
+      version: Option[Long] = None,
+      timestamp: Option[Long] = None) extends Operation("RESTORE") {
+    override val parameters: Map[String, Any] = Map(
+      "version" -> version,
+      "timestamp" -> timestamp
+    )
+    override def changesData: Boolean = true
+  }
 }
 
 private[delta] object DeltaOperationMetrics {

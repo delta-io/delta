@@ -16,17 +16,18 @@
 
 package io.delta.tables.execution
 
+import java.sql.Timestamp
 import scala.collection.Map
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistoryManager, DeltaLog, PreprocessTableUpdate}
-import org.apache.spark.sql.delta.commands.{DeleteCommand, DeltaGenerateCommand, VacuumCommand}
+import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.commands.{DeltaGenerateCommand, RestoreTableCommand, VacuumCommand}
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import io.delta.tables.DeltaTable
 
-import org.apache.spark.sql.{functions, Column, DataFrame, Dataset}
+import org.apache.spark.sql.{functions, Column, DataFrame}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
+import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.logical._
 
 /**
@@ -72,6 +73,14 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
       retentionHours: Option[Double],
       tableId: Option[TableIdentifier] = None): DataFrame = {
     VacuumCommand.gc(sparkSession, deltaLog, false, retentionHours)
+    sparkSession.emptyDataFrame
+  }
+
+  protected def executeRestore(
+      deltaLog: DeltaLog,
+      version: Option[Long] = None,
+      timestamp: Option[Timestamp] = None): DataFrame = {
+    RestoreTableCommand(deltaLog, version, timestamp).run(sparkSession)
     sparkSession.emptyDataFrame
   }
 

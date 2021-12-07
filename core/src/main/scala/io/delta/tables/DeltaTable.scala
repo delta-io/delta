@@ -16,6 +16,7 @@
 
 package io.delta.tables
 
+import java.sql.Timestamp
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
@@ -471,6 +472,24 @@ class DeltaTable private[tables](
    */
   def upgradeTableProtocol(readerVersion: Int, writerVersion: Int): Unit = {
     deltaLog.upgradeProtocol(Protocol(readerVersion, writerVersion))
+  }
+
+  /**
+   * Restores delta table to specific version.
+   * @param version version to be restored
+   * @since 1.2.0
+   */
+  def restore(version: Long): Unit = {
+    executeRestore(deltaLog, version = Some(version))
+  }
+
+  /**
+   * Restores delta table to the latest commit that happened at or before `timestamp`.
+   * @param timestamp timestamp to be restored
+   * @since 1.2.0
+   */
+  def restore(timestamp: Timestamp): Unit = {
+    executeRestore(deltaLog, timestamp = Option(timestamp))
   }
 }
 
