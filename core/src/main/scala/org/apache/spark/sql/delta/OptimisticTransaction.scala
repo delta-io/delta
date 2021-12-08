@@ -69,7 +69,8 @@ case class CommitStats(
   isolationLevel: String,
   fileSizeHistogram: Option[FileSizeHistogram] = None,
   addFilesHistogram: Option[FileSizeHistogram] = None,
-  removeFilesHistogram: Option[FileSizeHistogram] = None
+  removeFilesHistogram: Option[FileSizeHistogram] = None,
+  txnId: Option[String] = None
 )
 
 /**
@@ -780,7 +781,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       newMetadata = newMetadata,
       numAbsolutePathsInAdd = numAbsolutePaths,
       numDistinctPartitionsInAdd = distinctPartitions.size,
-      isolationLevel = isolationLevel.toString)
+      isolationLevel = isolationLevel.toString,
+      txnId = Some(txnId))
     recordDeltaEvent(deltaLog, "delta.commit.stats", data = stats)
 
     attemptVersion
