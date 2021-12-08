@@ -17,7 +17,18 @@
     - [Protocol Evolution](#protocol-evolution)
     - [Commit Provenance Information](#commit-provenance-information)
 - [Action Reconciliation](#action-reconciliation)
+- [Column Mapping](#column-mapping)
 - [Requirements for Writers](#requirements-for-writers)
+  - [Creation of New Log Entries](#creation-of-new-log-entries)
+  - [Consistency Between Table Metadata and Data Files](#consistency-between-table-metadata-and-data-files)
+  - [Delta Log Entries](#delta-log-entries-1)
+  - [Checkpoints](#checkpoints-1)
+    - [Checkpoint Format](#checkpoint-format)
+  - [Data Files](#data-files-1)
+  - [Append-only Tables](#append-only-tables)
+  - [Column Invariants](#column-invariants)
+  - [Generated Columns](#generated-columns)
+  - [Writer Version Requirements](#writer-version-requirements)
 - [Appendix](#appendix)
   - [Per-file Statistics](#per-file-statistics)
   - [Partition Value Serialization](#partition-value-serialization)
@@ -92,7 +103,7 @@ For example:
 ```
 ./_delta_log/00000000000000000000.json
 ```
-
+Delta files use new-line delimited JSON format, where every action is stored as a single line JSON document.
 A delta file, `n.json`, contains an atomic set of [_actions_](#Actions) that should be applied to the previous table state, `n-1.json`, in order to the construct `n`th snapshot of the table.
 An action changes one aspect of the table's state, for example, adding or removing a file.
 
@@ -217,7 +228,7 @@ The schema of the `add` action is as follows:
 
 Field Name | Data Type | Description
 -|-|-
-path| String | A relative path, from the root of the table, to a file that should be added to the table
+path| String | A relative path to a file from the root of the table or an absolute path to a file that should be added to the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the file path.
 partitionValues| Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization)
 size| Long | The size of this file in bytes
 modificationTime | Long | The time this file was created, as milliseconds since the epoch
@@ -243,9 +254,13 @@ The schema of the `remove` action is as follows:
 
 Field Name | Data Type | Description
 -|-|-
-path | String | An absolute or relative path to a file that should be removed from the table
-deletionTimestamp | Long | The time the deletion occurred, represented as milliseconds since the epoch
+path| String | A relative path to a file from the root of the table or an absolute path to a file that should be removed from the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the file path.
+deletionTimestamp | Option[Long] | The time the deletion occurred, represented as milliseconds since the epoch
 dataChange | Boolean | When `false` the records in the removed file must be contained in one or more `add` file actions in the same version
+extendedFileMetadata | Boolean | When `true` the fields `partitionValues`, `size`, and `tags` are present
+partitionValues| Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization)
+size| Long | The size of this file in bytes
+tags | Map[String, String] | Map containing metadata about this file
 
 The following is an example `remove` action.
 ```
@@ -355,7 +370,51 @@ To achieve the requirements above, related actions from different delta files ne
  - All `add` actions for different paths need to be accumulated as a list. The latest `add` action (from a more recent delta file) observed for a given path wins.
  - All `remove` actions for different paths need to be accumulated as a list. If a `remove` action is received **later** (from a more recent delta file) for the same path as an `add` operation, the corresponding `add` action should be removed from the `add` collection and the file needs to be tracked as part of the `remove` collection.
  - If an `add` action is received **later** (from a more recent delta file) for the same path as a `remove` operation, the corresponding `remove` action should be removed from the `remove` collection and the file needs to be tracked as part of the `add` collection.
-    
+
+# Column Mapping
+Delta can use column mapping to avoid any column naming restrictions, and to support the renaming and dropping of columns without having to rewrite all the data. There are two modes of column mapping, by `name` and by `id`. In both modes, every column - nested or leaf - is assigned a unique _physical_ name, and a unique 32 bit integer as an id. The physical name is stored as part of the column metadata with the key `delta.columnMapping.physicalName`. The column id is stored within the metadata with the key `delta.columnMapping.id`. The column mapping is governed by the table property `delta.columnMapping.mode` and can be one of `none`, `id`, and `name`.
+
+The following is an example for the column definition of a table that leverages column mapping. See the [appendix](#schema-serialization-format) for a more complete schema definition.
+```
+{
+    "name" : "e",
+    "type" : {
+      "type" : "array",
+      "elementType" : {
+        "type" : "struct",
+        "fields" : [ {
+          "name" : "d",
+          "type" : "integer",
+          "nullable" : false,
+          "metadata" : { 
+            "delta.columnMapping.id": 5,
+            "delta.columnMapping.physicalName": "col-a7f4159c-53be-4cb0-b81a-f7e5240cfc49"
+          }
+        } ]
+      },
+      "containsNull" : true
+    },
+    "nullable" : true,
+    "metadata" : { 
+      "delta.columnMapping.id": 4,
+      "delta.columnMapping.physicalName": "col-5f422f40-de70-45b2-88ab-1d5c90e94db1"
+    }
+  }
+```
+
+## Writer Requirements for Column Mapping
+In order to support column mapping, writers must:
+ - Write data files by using the _physical name_ that is chosen for each column. The physical name of the column is static and can be different than the _display name_ of the column, which is changeable.
+ - Write the 32 bit integer column identifier as part of the `field_id` field of the `SchemaElement` struct in the [Parquet Thrift specification](https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift).
+ - Track partition values and column level statistics with the physical name of the column in the transaction log.
+ - Assign a globally unique identifier as the physical name for each new column that is added to the schema. This is especially important for supporting cheap column deletions in `name` mode. In addition, column identifiers need to be assigned to each column. The maximum id that is assigned to a column is tracked as the table property `delta.columnMapping.maxColumnId`. This is an internal table property that cannot be configured by users. This value must increase monotonically as new columns are introduced and committed to the table alongside the introduction of the new columns to the schema.
+
+## Reader Requirements for Column Mapping
+In `none` mode, readers must read the parquet files by using the display names (the `name` field of the column definition) of the columns in the schema.
+
+In `id ` mode, readers must resolve columns by using the `field_id` in the parquet metadata for each file. Partition values and column level statistics must be resolved by their *physical names* for each `add` entry in the transaction log. If a data file does not contain field ids, readers must refuse to read that file or return nulls for each column. For ids that cannot be found in a file, readers must return `null` values for those columns.
+
+In `name` mode, readers must resolve columns in the data files by their physical names. Partition values and column level statistics will also be resolved by their physical names. For columns that are not found in the files, `null`s need to be returned. Column ids are not used in this mode for resolution purposes.  
 
 # Requirements for Writers
 This section documents additional requirements that writers must follow in order to preserve some of the higher level guarantees that Delta provides.
@@ -414,25 +473,34 @@ When the table property `delta.appendOnly` is set to `true`:
   - New log entries may rearrange data (i.e. `add` and `remove` actions where `dataChange=false`).
 
 ## Column Invariants
- - The schema for a given column MAY the metadata `delta.invariants`.
- - This column SHOULD be parsed as a boolean SQL expression.
- - Writers MUST abort any transaction that adds a row to the table, where a present invariant evaluates to `false` or `null`.
+ - The `metadata` for a column in the table schema MAY contain the key `delta.invariants`.
+ - The value of `delta.invariants` SHOULD be parsed as a boolean SQL expression.
+ - Writers MUST abort any transaction that adds a row to the table, where an invariant evaluates to `false` or `null`.
+
+## Generated Columns
+
+ - The `metadata` for a column in the table schema MAY contain the key `delta.generationExpression`.
+ - The value of `delta.generationExpression` SHOULD be parsed as a SQL expression.
+ - Writers MUST enforce that any data writing to the table satisfy the condition `(<value> <=> <generation expression>) IS TRUE`. `<=>` is the NULL-safe equal operator which performs an equality comparison like the `=` operator but returns `TRUE` rather than NULL if both operands are `NULL`
 
 ## Writer Version Requirements
 
 The requirements of the writers according to the protocol versions are summarized in the table below. Each row inherits the requirements from the preceding row.
 
-+------------------+----------------------------------------------+
-|                  | Reader Version 1                             |
-+------------------+----------------------------------------------+
-| Writer Version 2 |  - Support `delta.appendOnly`                |
-|                  |  - Support column invariants                 |
-+------------------+----------------------------------------------+
-| Writer Version 3 |  - Enforce:                                  |
-|                  |    - `delta.checkpoint.writeStatsAsJson`     |
-|                  |    - `delta.checkpoint.writeStatsAsStruct`   |
-|                  |    - `CHECK` constraints                     |
-+------------------+----------------------------------------------+
+<br> | Requirements
+-|-
+Writer Version 2 | - Support [`delta.appendOnly`](#append-only-tables)<br>- Support [Column Invariants](#column-invariants)
+Writer Version 3 | Enforce:<br>- `delta.checkpoint.writeStatsAsJson`<br>- `delta.checkpoint.writeStatsAsStruct`<br>- `CHECK` constraints
+Writer Version 4 | - Support Change Data Feed<br>- Support [Generated Columns](#generated-columns)
+Writer Version 5 | Respect [Column Mapping](#column-mapping)
+
+# Requirements for Readers
+
+The requirements of the readers according to the protocol versions are summarized in the table below. Each row inherits the requirements from the preceding row.
+
+<br> | Requirements
+-|-
+Reader Version 2 | Respect [Column Mapping](#column-mapping)
 
 # Appendix
 
@@ -506,6 +574,7 @@ short| 2-byte signed integer numbers. Range: -32768 to 32767
 byte| 1-byte signed integer number. Range: -128 to 127
 float| 4-byte single-precision floating-point numbers
 double| 8-byte double-precision floating-point numbers
+decimal| signed decimal number with fixed precision (maximum number of digits) and scale (number of digits on right side of dot). The precision and scale can be up to 38.
 boolean| `true` or `false`
 binary| A sequence of binary data.
 date| A calendar date, represented as a year-month-day triple without a timezone.
@@ -677,4 +746,72 @@ For a table with partition columns: "date", "region" of types date and string re
 |    |-- path: string
 |    |-- deletionTimestamp: long
 |    |-- dataChange: boolean
+```
+
+For a table that uses column mapping, whether in `id` or `name` mode, the schema of the `add` column will look as follows.
+
+Schema definition:
+```
+{
+  "type" : "struct",
+  "fields" : [ {
+    "name" : "asset",
+    "type" : "string",
+    "nullable" : true,
+    "metadata" : {
+      "delta.columnMapping.id": 1,
+      "delta.columnMapping.physicalName": "col-b96921f0-2329-4cb3-8d79-184b2bdab23b"
+    }
+  }, {
+    "name" : "quantity",
+    "type" : "double",
+    "nullable" : true,
+    "metadata" : {
+      "delta.columnMapping.id": 2,
+      "delta.columnMapping.physicalName": "col-04ee4877-ee53-4cb9-b1fb-1a4eb74b508c"
+    }
+  }, {
+    "name" : "date",
+    "type" : "date",
+    "nullable" : true,
+    "metadata" : {
+      "delta.columnMapping.id": 3,
+      "delta.columnMapping.physicalName": "col-798f4abc-c63f-444c-9a04-e2cf1ecba115"
+    }
+  }, {
+    "name" : "region",
+    "type" : "string",
+    "nullable" : true,
+    "metadata" : {
+      "delta.columnMapping.id": 4,
+      "delta.columnMapping.physicalName": "col-19034dc3-8e3d-4156-82fc-8e05533c088e"
+    }
+  } ]
+}
+```
+
+Checkpoint schema (just the `add` column):
+```
+|-- add: struct
+|    |-- path: string
+|    |-- partitionValues: map<string,string>
+|    |-- size: long
+|    |-- modificationTime: long
+|    |-- dataChange: boolean
+|    |-- stats: string
+|    |-- tags: map<string,string>
+|    |-- partitionValues_parsed: struct
+|    |    |-- col-798f4abc-c63f-444c-9a04-e2cf1ecba115: date
+|    |    |-- col-19034dc3-8e3d-4156-82fc-8e05533c088e: string
+|    |-- stats_parsed: struct
+|    |    |-- numRecords: long
+|    |    |-- minValues: struct
+|    |    |    |-- col-b96921f0-2329-4cb3-8d79-184b2bdab23b: string
+|    |    |    |-- col-04ee4877-ee53-4cb9-b1fb-1a4eb74b508c: double
+|    |    |-- maxValues: struct
+|    |    |    |-- col-b96921f0-2329-4cb3-8d79-184b2bdab23b: string
+|    |    |    |-- col-04ee4877-ee53-4cb9-b1fb-1a4eb74b508c: double
+|    |    |-- nullCounts: struct
+|    |    |    |-- col-b96921f0-2329-4cb3-8d79-184b2bdab23b: long
+|    |    |    |-- col-04ee4877-ee53-4cb9-b1fb-1a4eb74b508c: long
 ```
