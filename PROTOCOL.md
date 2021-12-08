@@ -176,8 +176,8 @@ description|`String`| User-provided description for this table | optional
 format|[Format Struct](#Format-Specification)| Specification of the encoding for the files stored in the table | required
 schemaString|[Schema Struct](#Schema-Serialization-Format)| Schema of the table | required
 partitionColumns|`Array[String]`| An array containing the names of columns by which the data should be partitioned | required
-createdTime|`Option[Long]`| The time when this metadata action is created, in milliseconds since the Unix epoch | required
-configuration|`Map[String, String]`| A map containing configuration options for the metadata action | optional
+createdTime|`Option[Long]`| The time when this metadata action is created, in milliseconds since the Unix epoch | optional
+configuration|`Map[String, String]`| A map containing configuration options for the metadata action | required
 
 #### Format Specification
 Field Name | Data Type | Description
