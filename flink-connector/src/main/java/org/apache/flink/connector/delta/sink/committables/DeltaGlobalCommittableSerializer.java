@@ -19,7 +19,8 @@
 package org.apache.flink.connector.delta.sink.committables;
 
 import java.io.IOException;
-import java.util.Collections;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.core.io.SimpleVersionedSerializer;
@@ -27,20 +28,28 @@ import org.apache.flink.core.memory.DataInputDeserializer;
 import org.apache.flink.core.memory.DataInputView;
 import org.apache.flink.core.memory.DataOutputSerializer;
 import org.apache.flink.core.memory.DataOutputView;
+import org.apache.flink.streaming.api.functions.sink.filesystem.InProgressFileWriter;
+import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
  * Versioned serializer for {@link DeltaGlobalCommittable}.
  */
 @Internal
 public class DeltaGlobalCommittableSerializer
-        implements SimpleVersionedSerializer<DeltaGlobalCommittable> {
+    implements SimpleVersionedSerializer<DeltaGlobalCommittable> {
 
     /**
      * Magic number value for sanity check whether the provided bytes where not corrupted
      */
     private static final int MAGIC_NUMBER = 0x1e765c80;
 
-    public DeltaGlobalCommittableSerializer() {
+    private final DeltaCommittableSerializer deltaCommittableSerializer;
+
+    public DeltaGlobalCommittableSerializer(
+        SimpleVersionedSerializer<InProgressFileWriter.PendingFileRecoverable>
+            pendingFileSerializer) {
+        checkNotNull(pendingFileSerializer);
+        deltaCommittableSerializer = new DeltaCommittableSerializer(pendingFileSerializer);
     }
 
     @Override
@@ -68,18 +77,29 @@ public class DeltaGlobalCommittableSerializer
     }
 
     private void serializeV1(DeltaGlobalCommittable committable, DataOutputView dataOutputView)
-            throws IOException {
+        throws IOException {
+        dataOutputView.writeInt(committable.getDeltaCommittables().size());
+        for (DeltaCommittable deltaCommittable : committable.getDeltaCommittables()) {
+            deltaCommittableSerializer.serializeV1(deltaCommittable, dataOutputView);
+        }
     }
 
     private DeltaGlobalCommittable deserializeV1(DataInputView dataInputView) throws IOException {
-        return new DeltaGlobalCommittable(Collections.emptyList());
+        int deltaCommittablesSize = dataInputView.readInt();
+        List<DeltaCommittable> deltaCommittables = new ArrayList<>(deltaCommittablesSize);
+        for (int i = 0; i < deltaCommittablesSize; i++) {
+            DeltaCommittable deserializedCommittable =
+                deltaCommittableSerializer.deserializeV1(dataInputView);
+            deltaCommittables.add(deserializedCommittable);
+        }
+        return new DeltaGlobalCommittable(deltaCommittables);
     }
 
     private static void validateMagicNumber(DataInputView in) throws IOException {
         int magicNumber = in.readInt();
         if (magicNumber != MAGIC_NUMBER) {
             throw new IOException(
-                    String.format("Corrupt data: Unexpected magic number %08X", magicNumber));
+                String.format("Corrupt data: Unexpected magic number %08X", magicNumber));
         }
     }
 }

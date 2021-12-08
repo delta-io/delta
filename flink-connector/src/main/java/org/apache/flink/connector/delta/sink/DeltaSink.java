@@ -152,6 +152,14 @@ public class DeltaSink<IN>
      * commits with consecutive identifiers. For this purpose we are using checkpointId that is
      * being "manually" managed in writer's internal logic, added to the committables information
      * and incremented on every precommit action (after generating the committables).
+     * <p>
+     * To restore the last recent checkpoint id we need to get max value of this param within all
+     * the given states. We are interested in max because at this stage if we are given states with
+     * checkpoint ids lower than the max then it means that committables for those checkpoint
+     * intervals have been already generated and checkpointed in the job's state so when creating
+     * new writers we should pass them the most recent value of resolved checkpoint id (the writers
+     * will use this value for generating new set of committables for next incoming checkpoint
+     * interval).
      *
      * @param states restored list of writer's buckets states that include previously generated
      *               appId

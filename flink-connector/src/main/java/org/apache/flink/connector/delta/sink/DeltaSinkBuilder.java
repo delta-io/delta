@@ -150,7 +150,7 @@ public class DeltaSinkBuilder<IN> implements Serializable {
     }
 
     DeltaGlobalCommitter createGlobalCommitter() {
-        return new DeltaGlobalCommitter();
+        return new DeltaGlobalCommitter(serializableConfiguration.conf(), tableBasePath);
     }
 
     Path getTableBasePath() {
@@ -226,7 +226,8 @@ public class DeltaSinkBuilder<IN> implements Serializable {
         throws IOException {
         BucketWriter<IN, String> bucketWriter = createBucketWriter();
 
-        return new DeltaGlobalCommittableSerializer();
+        return new DeltaGlobalCommittableSerializer(
+            bucketWriter.getProperties().getPendingFileRecoverableSerializer());
     }
 
     private DeltaBulkBucketWriter<IN, String> createBucketWriter() throws IOException {

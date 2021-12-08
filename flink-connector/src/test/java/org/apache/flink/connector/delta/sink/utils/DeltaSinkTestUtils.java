@@ -24,11 +24,13 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Random;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+import org.apache.commons.io.FileUtils;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.RestOptions;
 import org.apache.flink.connector.delta.sink.DeltaSink;
@@ -90,6 +92,29 @@ public class DeltaSinkTestUtils {
     }
 
     ///////////////////////////////////////////////////////////////////////////
+    // test delta lake table utils
+    ///////////////////////////////////////////////////////////////////////////
+
+    public static LinkedHashMap<String, String> getEmptyTestPartitionSpec() {
+        return new LinkedHashMap<>();
+    }
+
+    public static final String TEST_DELTA_TABLE_INITIAL_STATE_NP_DIR =
+        "test-data/test-non-partitioned-delta-table-initial-state";
+    public static final String TEST_DELTA_TABLE_INITIAL_STATE_NP_FULL_PATH =
+        DeltaSinkTestUtils.class
+            .getClassLoader()
+            .getResource(TEST_DELTA_TABLE_INITIAL_STATE_NP_DIR)
+            .getPath();
+
+    public static void initTestForNonPartitionedTable(String targetTablePath)
+        throws IOException {
+        FileUtils.copyDirectory(
+            new File(TEST_DELTA_TABLE_INITIAL_STATE_NP_FULL_PATH),
+            new File(targetTablePath));
+    }
+
+    ///////////////////////////////////////////////////////////////////////////
     // test delta pending files utils
     ///////////////////////////////////////////////////////////////////////////
 
@@ -110,11 +135,29 @@ public class DeltaSinkTestUtils {
     static final String TEST_APP_ID = UUID.randomUUID().toString();
     static final long TEST_CHECKPOINT_ID = new Random().nextInt(10);
 
+    public static List<DeltaCommittable> getListOfDeltaCommittables(int size) {
+        return getListOfDeltaCommittables(size, TEST_CHECKPOINT_ID);
+    }
+
+    public static List<DeltaCommittable> getListOfDeltaCommittables(int size, long checkpointId) {
+        List<DeltaCommittable> deltaCommittableList = new ArrayList<>();
+        for (int i = 0; i < size; i++) {
+            deltaCommittableList.add(
+                DeltaSinkTestUtils.getTestDeltaCommittableWithPendingFile(checkpointId)
+            );
+        }
+        return deltaCommittableList;
+    }
+
     public static DeltaCommittable getTestDeltaCommittableWithPendingFile() {
+        return getTestDeltaCommittableWithPendingFile(TEST_CHECKPOINT_ID);
+    }
+
+    public static DeltaCommittable getTestDeltaCommittableWithPendingFile(long checkpointId) {
         return new DeltaCommittable(
             DeltaSinkTestUtils.getTestDeltaPendingFile(),
             TEST_APP_ID,
-            TEST_CHECKPOINT_ID
+            checkpointId
         );
     }
 

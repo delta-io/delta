@@ -19,11 +19,17 @@
 package org.apache.flink.connector.delta.sink;
 
 import java.io.IOException;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.stream.LongStream;
 
 import org.apache.flink.api.common.RuntimeExecutionMode;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.ExecutionOptions;
 import org.apache.flink.connector.delta.sink.utils.DeltaSinkTestUtils;
+import org.apache.flink.connector.delta.sink.utils.TestParquetReader;
 import org.apache.flink.connector.file.sink.BatchExecutionFileSinkITCase;
 import org.apache.flink.runtime.jobgraph.JobGraph;
 import org.apache.flink.runtime.minicluster.MiniCluster;
@@ -32,8 +38,11 @@ import org.apache.flink.streaming.api.graph.StreamGraph;
 import org.junit.Before;
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 import io.delta.standalone.DeltaLog;
+import io.delta.standalone.actions.AddFile;
+import io.delta.standalone.actions.CommitInfo;
 
 /**
  * Tests the functionality of the {@link DeltaSink} in BATCH mode.
@@ -46,6 +55,7 @@ public class DeltaSinkBatchExecutionITCase extends BatchExecutionFileSinkITCase 
     public void setup() {
         try {
             deltaTablePath = TEMPORARY_FOLDER.newFolder().getAbsolutePath();
+            DeltaSinkTestUtils.initTestForNonPartitionedTable(deltaTablePath);
         } catch (IOException e) {
             throw new RuntimeException("Weren't able to setup the test dependencies", e);
         }
@@ -60,6 +70,11 @@ public class DeltaSinkBatchExecutionITCase extends BatchExecutionFileSinkITCase 
     public void runDeltaSinkTest() throws Exception {
         // GIVEN
         DeltaLog deltaLog = DeltaLog.forTable(DeltaSinkTestUtils.getHadoopConf(), deltaTablePath);
+        List<AddFile> initialDeltaFiles = deltaLog.snapshot().getAllFiles();
+        int initialTableRecordsCount = TestParquetReader.readAndValidateAllTableRecords(deltaLog);
+        long initialVersion = deltaLog.snapshot().getVersion();
+        assertEquals(initialDeltaFiles.size(), 2);
+
         JobGraph jobGraph = createJobGraph(deltaTablePath);
 
         // WHEN
@@ -69,9 +84,31 @@ public class DeltaSinkBatchExecutionITCase extends BatchExecutionFileSinkITCase 
         }
 
         // THEN
+        DeltaSinkTestUtils.validateIfPathContainsParquetFilesWithData(deltaTablePath);
         int writtenRecordsCount =
             DeltaSinkTestUtils.validateIfPathContainsParquetFilesWithData(deltaTablePath);
-        assertEquals(NUM_RECORDS, writtenRecordsCount);
+        assertEquals(NUM_RECORDS, writtenRecordsCount - initialTableRecordsCount);
+
+        List<AddFile> finalDeltaFiles = deltaLog.update().getAllFiles();
+        assertTrue(finalDeltaFiles.size() > initialDeltaFiles.size());
+        Iterator<Long> it = LongStream.range(
+            initialVersion + 1, deltaLog.snapshot().getVersion() + 1).iterator();
+        long totalRowsAdded = 0;
+        long totalAddedFiles = 0;
+        while (it.hasNext()) {
+            long currentVersion = it.next();
+            CommitInfo currentCommitInfo = deltaLog.getCommitInfoAt(currentVersion);
+            Optional<Map<String, String>> operationMetrics =
+                currentCommitInfo.getOperationMetrics();
+            assertTrue(operationMetrics.isPresent());
+            totalRowsAdded += Long.parseLong(operationMetrics.get().get("numOutputRows"));
+            totalAddedFiles += Long.parseLong(operationMetrics.get().get("numAddedFiles"));
+
+            assertTrue(Integer.parseInt(operationMetrics.get().get("numOutputBytes")) > 0);
+        }
+
+        assertEquals(finalDeltaFiles.size() - initialDeltaFiles.size(), totalAddedFiles);
+        assertEquals(NUM_RECORDS, totalRowsAdded);
     }
 
     @Override

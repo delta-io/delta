@@ -19,11 +19,14 @@
 package org.apache.flink.streaming.api.functions.sink.filesystem;
 
 import java.io.IOException;
+import java.util.Collections;
 
 import org.apache.flink.core.io.SimpleVersionedSerialization;
 import org.apache.flink.core.io.SimpleVersionedSerializer;
 import org.apache.flink.core.memory.DataInputView;
 import org.apache.flink.core.memory.DataOutputView;
+
+import io.delta.standalone.actions.AddFile;
 
 /**
  * Wrapper class for {@link InProgressFileWriter.PendingFileRecoverable} object.
@@ -92,6 +95,23 @@ public class DeltaPendingFile {
 
     public long getLastUpdateTime() {
         return lastUpdateTime;
+    }
+
+    /**
+     * Converts {@link DeltaPendingFile} object to a {@link AddFile} object
+     *
+     * @return {@link AddFile} object generated from input
+     */
+    public AddFile toAddFile() {
+        long modificationTime = this.getLastUpdateTime();
+        return new AddFile(
+            this.getFileName(),
+            Collections.emptyMap(), // partition support will be added in next PR
+            this.getFileSize(),
+            modificationTime,
+            true, // dataChange
+            null,
+            null);
     }
 
     ///////////////////////////////////////////////////////////////////////////
