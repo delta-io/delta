@@ -164,18 +164,20 @@ Subsequent` metaData` actions completely overwrite the current metadata of the t
 
 There can be at most one metadata action in a given version of the table.
 
+Every metadata action **must** include required fields at a minimum.
+
 The schema of the `metaData` action is as follows:
 
-Field Name | Data Type | Description
--|-|-
-id|`GUID`|Unique identifier for this table
-name|`String`| User-provided identifier for this table
-description|`String`| User-provided description for this table
-format|[Format Struct](#Format-Specification)| Specification of the encoding for the files stored in the table
-schemaString|[Schema Struct](#Schema-Serialization-Format)| Schema of the table
-partitionColumns|`Array[String]`| An array containing the names of columns by which the data should be partitioned
-createdTime|`Option[Long]`| The time when this metadata action is created, in milliseconds since the Unix epoch
-configuration|`Map[String, String]`| A map containing configuration options for the metadata action
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+id|`GUID`|Unique identifier for this table | required
+name|`String`| User-provided identifier for this table | optional
+description|`String`| User-provided description for this table | optional
+format|[Format Struct](#Format-Specification)| Specification of the encoding for the files stored in the table | required
+schemaString|[Schema Struct](#Schema-Serialization-Format)| Schema of the table | required
+partitionColumns|`Array[String]`| An array containing the names of columns by which the data should be partitioned | required
+createdTime|`Option[Long]`| The time when this metadata action is created, in milliseconds since the Unix epoch | optional
+configuration|`Map[String, String]`| A map containing configuration options for the metadata action | required
 
 #### Format Specification
 Field Name | Data Type | Description
