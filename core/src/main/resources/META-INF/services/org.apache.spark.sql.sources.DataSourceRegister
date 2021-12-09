@@ -1,1 +1,5 @@
 org.apache.spark.sql.delta.sources.DeltaDataSource
+org.apache.spark.sql.interface.system.structured.relational.datasource.RelationDBDataSource
+org.apache.spark.sql.interface.system.semistructured.hbase.datasource.HbaseDataSource
+org.apache.spark.sql.interface.system.unstructured.commonFile.datasource.CommonFileFormat
+org.apache.spark.sql.interface.system.unstructured.commonFile.datasource.RemoteFileSource

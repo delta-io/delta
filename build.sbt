@@ -47,6 +47,7 @@ lazy val core = (project in file("core"))
       "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
       "org.apache.spark" %% "spark-core" % sparkVersion % "provided",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion % "provided",
+      "org.apache.spark" %% "spark-streaming" % sparkVersion % "provided",
 
       // spark-sql 3.2.0's parquet-hadoop 1.12.1 dependency no longer includes org.codehaus.jackson
       // as a dependency, so we include it here instead.
@@ -60,6 +61,33 @@ lazy val core = (project in file("core"))
       "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
+
+      // Adding relational database dependencies
+      "mysql" % "mysql-connector-java" % "8.0.24"
+        exclude("com.google.protobuf", "protobuf-java"),
+      "com.google.protobuf" % "protobuf-java" % "2.5.0",
+      "com.oracle.database.jdbc" % "ojdbc8" % "19.11.0.0",
+      "com.microsoft.sqlserver" % "mssql-jdbc" % "9.2.1.jre8",
+
+      // Adding HBase(Phoenix) dependencies
+      "org.apache.phoenix" % "phoenix-core" % "5.1.2"
+        exclude("org.slf4j", "slf4j-log4j12")
+        exclude("io.netty", "netty-all")
+        exclude("com.fasterxml.jackson.core", "*"),
+      "org.apache.phoenix" % "phoenix-hbase-compat-2.2.5" % "5.1.2",
+      "org.apache.hbase" % "hbase-client" % "2.3.0"
+        exclude("org.slf4j", "slf4j-log4j12")
+        exclude("com.fasterxml.jackson.core", "*"),
+
+      // Adding java SSH remote login dependencies
+      "com.sshtools" % "j2ssh-maverick" % "1.5.5",
+
+      // Adding hadoop-auth
+      "org.apache.hadoop" % "hadoop-auth" % "3.2.0"
+        exclude("org.slf4j", "slf4j-log4j12"),
+
+      // Adding paranamer
+      "com.thoughtworks.paranamer" % "paranamer" % "2.8",
 
       // Compiler plugins
       // -- Bump up the genjavadoc version explicitly to 0.18 to work with Scala 2.12

@@ -1,0 +1,509 @@
+/*
+ * Copyright (2021) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.spark.sql.interface.system.structured.relational.dialect
+
+import java.sql.{Connection, Date, Timestamp}
+import java.time.{Instant, LocalDate}
+
+import scala.collection.mutable.ArrayBuilder
+
+import org.apache.commons.lang3.StringUtils
+
+import org.apache.spark.annotation.{DeveloperApi, Since}
+import org.apache.spark.internal.Logging
+import org.apache.spark.sql.AnalysisException
+import org.apache.spark.sql.catalyst.util.{DateFormatter, DateTimeUtils, TimestampFormatter}
+import org.apache.spark.sql.connector.catalog.TableChange
+import org.apache.spark.sql.connector.catalog.TableChange._
+import org.apache.spark.sql.errors.QueryCompilationErrors
+import org.apache.spark.sql.interface.system.structured.relational.util.JdbcUtils
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types._
+
+import org.apache.spark.executor.InputMetrics
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.SpecificInternalRow
+import org.apache.spark.sql.catalyst.util.GenericArrayData
+import org.apache.spark.sql.interface.system.semistructured.hbase.dialect.HBaseDialect
+import org.apache.spark.unsafe.types.UTF8String
+import org.apache.spark.util.NextIterator
+import java.sql.{ResultSet}
+
+/**
+ * :: DeveloperApi ::
+ * A database type definition coupled with the jdbc type needed to send null
+ * values to the database.
+ * @param databaseTypeDefinition The database type definition
+ * @param jdbcNullType The jdbc type (as defined in java.sql.Types) used to
+ *                     send a null value to the database.
+ */
+@DeveloperApi
+case class JdbcType(databaseTypeDefinition : String, jdbcNullType : Int)
+
+/**
+ * :: DeveloperApi ::
+ * Encapsulates everything (extensions, workarounds, quirks) to handle the
+ * SQL dialect of a certain database or jdbc driver.
+ * Lots of databases define types that aren't explicitly supported
+ * by the JDBC spec.  Some JDBC drivers also report inaccurate
+ * information---for instance, BIT(n{@literal >}1) being reported as a BIT type is quite
+ * common, even though BIT in JDBC is meant for single-bit values. Also, there
+ * does not appear to be a standard name for an unbounded string or binary
+ * type; we use BLOB and CLOB by default but override with database-specific
+ * alternatives when these are absent or do not behave correctly.
+ *
+ * Currently, the only thing done by the dialect is type mapping.
+ * `getCatalystType` is used when reading from a JDBC table and `getJDBCType`
+ * is used when writing to a JDBC table.  If `getCatalystType` returns `null`,
+ * the default type handling is used for the given JDBC type.  Similarly,
+ * if `getJDBCType` returns `(null, None)`, the default type handling is used
+ * for the given Catalyst type.
+ */
+@DeveloperApi
+abstract class JdbcDialect extends Serializable with Logging{
+
+  /**
+   * Check if this dialect instance can handle a certain jdbc url.
+   * @param url the jdbc url.
+   * @return True if the dialect can be applied on the given jdbc url.
+   * @throws NullPointerException if the url is null.
+   */
+  def canHandle(url : String): Boolean
+
+  /**
+   * Get the custom datatype mapping for the given jdbc meta information.
+   * @param sqlType The sql type (see java.sql.Types)
+   * @param typeName The sql type name (e.g. "BIGINT UNSIGNED")
+   * @param size The size of the type.
+   * @param md Result metadata associated with this type.
+   * @return The actual DataType (subclasses of [[org.apache.spark.sql.types.DataType]])
+   *         or null if the default type mapping should be used.
+   */
+  def getCatalystType(
+                       sqlType: Int,
+                       typeName: String,
+                       size: Int,
+                       md: MetadataBuilder): Option[DataType] = None
+
+  /**
+   * Retrieve the jdbc / sql type for a given datatype.
+   * @param dt The datatype (e.g. [[org.apache.spark.sql.types.StringType]])
+   * @return The new JdbcType if there is an override for this DataType
+   */
+  def getJDBCType(dt: DataType): Option[JdbcType] = None
+
+  /**
+   * Quotes the identifier. This is used to put quotes around the identifier in case the column
+   * name is a reserved keyword, or in case it contains characters that require quotes (e.g. space).
+   */
+  def quoteIdentifier(colName: String): String = {
+    s""""$colName""""
+  }
+
+  /**
+   * Get the SQL query that should be used to find if the given table exists. Dialects can
+   * override this method to return a query that works best in a particular database.
+   * @param table  The name of the table.
+   * @return The SQL query to use for checking the table.
+   */
+  def getTableExistsQuery(table: String): String = {
+    s"SELECT * FROM $table WHERE 1=0"
+  }
+
+  /**
+   * The SQL query that should be used to discover the schema of a table. It only needs to
+   * ensure that the result set has the same schema as the table, such as by calling
+   * "SELECT * ...". Dialects can override this method to return a query that works best in a
+   * particular database.
+   * @param table The name of the table.
+   * @return The SQL query to use for discovering the schema.
+   */
+  @Since("2.1.0")
+  def getSchemaQuery(table: String): String = {
+    s"SELECT * FROM $table WHERE 1=0"
+  }
+
+  /**
+   * The SQL query that should be used to truncate a table. Dialects can override this method to
+   * return a query that is suitable for a particular database. For PostgreSQL, for instance,
+   * a different query is used to prevent "TRUNCATE" affecting other tables.
+   * @param table The table to truncate
+   * @return The SQL query to use for truncating a table
+   */
+  @Since("2.3.0")
+  def getTruncateQuery(table: String): String = {
+    getTruncateQuery(table, isCascadingTruncateTable)
+  }
+
+  /**
+   * The SQL query that should be used to truncate a table. Dialects can override this method to
+   * return a query that is suitable for a particular database. For PostgreSQL, for instance,
+   * a different query is used to prevent "TRUNCATE" affecting other tables.
+   * @param table The table to truncate
+   * @param cascade Whether or not to cascade the truncation
+   * @return The SQL query to use for truncating a table
+   */
+  @Since("2.4.0")
+  def getTruncateQuery(
+                        table: String,
+                        cascade: Option[Boolean] = isCascadingTruncateTable): String = {
+    s"TRUNCATE TABLE $table"
+  }
+
+  /**
+   * Override connection specific properties to run before a select is made.  This is in place to
+   * allow dialects that need special treatment to optimize behavior.
+   * @param connection The connection object
+   * @param properties The connection properties.  This is passed through from the relation.
+   */
+  def beforeFetch(connection: Connection, properties: Map[String, String]): Unit = {
+  }
+
+  /**
+   * Escape special characters in SQL string literals.
+   * @param value The string to be escaped.
+   * @return Escaped string.
+   */
+  @Since("2.3.0")
+  protected def escapeSql(value: String): String =
+    if (value == null) null else StringUtils.replace(value, "'", "''")
+
+  /**
+   * Converts value to SQL expression.
+   * @param value The value to be converted.
+   * @return Converted value.
+   */
+  @Since("2.3.0")
+  def compileValue(value: Any): Any = value match {
+    case stringValue: String => s"'${escapeSql(stringValue)}'"
+    case timestampValue: Timestamp => "'" + timestampValue + "'"
+    case timestampValue: Instant =>
+      val timestampFormatter = TimestampFormatter.getFractionFormatter(
+        DateTimeUtils.getZoneId(SQLConf.get.sessionLocalTimeZone))
+      s"'${timestampFormatter.format(timestampValue)}'"
+    case dateValue: Date => "'" + dateValue + "'"
+    case dateValue: LocalDate => s"'${DateFormatter().format(dateValue)}'"
+    case arrayValue: Array[Any] => arrayValue.map(compileValue).mkString(", ")
+    case _ => value
+  }
+
+  /**
+   * Return Some[true] iff `TRUNCATE TABLE` causes cascading default.
+   * Some[true] : TRUNCATE TABLE causes cascading.
+   * Some[false] : TRUNCATE TABLE does not cause cascading.
+   * None: The behavior of TRUNCATE TABLE is unknown (default).
+   */
+  def isCascadingTruncateTable(): Option[Boolean] = None
+
+  /**
+   * Rename an existing table.
+   *
+   * @param oldTable The existing table.
+   * @param newTable New name of the table.
+   * @return The SQL statement to use for renaming the table.
+   */
+  def renameTable(oldTable: String, newTable: String): String = {
+    s"ALTER TABLE $oldTable RENAME TO $newTable"
+  }
+
+  /**
+   * Alter an existing table.
+   *
+   * @param tableName The name of the table to be altered.
+   * @param changes Changes to apply to the table.
+   * @return The SQL statements to use for altering the table.
+   */
+  def alterTable(
+                  tableName: String,
+                  changes: Seq[TableChange],
+                  dbMajorVersion: Int): Array[String] = {
+    val updateClause = ArrayBuilder.make[String]
+    for (change <- changes) {
+      change match {
+        case add: AddColumn if add.fieldNames.length == 1 =>
+          val dataType = JdbcUtils.getJdbcType(add.dataType(), this).databaseTypeDefinition
+          val name = add.fieldNames
+          updateClause += getAddColumnQuery(tableName, name(0), dataType)
+        case rename: RenameColumn if rename.fieldNames.length == 1 =>
+          val name = rename.fieldNames
+          updateClause += getRenameColumnQuery(tableName, name(0), rename.newName, dbMajorVersion)
+        case delete: DeleteColumn if delete.fieldNames.length == 1 =>
+          val name = delete.fieldNames
+          updateClause += getDeleteColumnQuery(tableName, name(0))
+        case updateColumnType: UpdateColumnType if updateColumnType.fieldNames.length == 1 =>
+          val name = updateColumnType.fieldNames
+          val dataType = JdbcUtils.getJdbcType(updateColumnType.newDataType(), this)
+            .databaseTypeDefinition
+          updateClause += getUpdateColumnTypeQuery(tableName, name(0), dataType)
+        case updateNull: UpdateColumnNullability if updateNull.fieldNames.length == 1 =>
+          val name = updateNull.fieldNames
+          updateClause += getUpdateColumnNullabilityQuery(tableName, name(0), updateNull.nullable())
+        case _ =>
+          throw QueryCompilationErrors.unsupportedTableChangeInJDBCCatalogError(change)
+      }
+    }
+    updateClause.result()
+  }
+
+  def getAddColumnQuery(tableName: String, columnName: String, dataType: String): String =
+    s"ALTER TABLE $tableName ADD COLUMN ${quoteIdentifier(columnName)} $dataType"
+
+  def getRenameColumnQuery(
+                            tableName: String,
+                            columnName: String,
+                            newName: String,
+                            dbMajorVersion: Int): String =
+    s"ALTER TABLE $tableName RENAME COLUMN ${quoteIdentifier(columnName)} TO" +
+      s" ${quoteIdentifier(newName)}"
+
+  def getDeleteColumnQuery(tableName: String, columnName: String): String =
+    s"ALTER TABLE $tableName DROP COLUMN ${quoteIdentifier(columnName)}"
+
+  def getUpdateColumnTypeQuery(
+                                tableName: String,
+                                columnName: String,
+                                newDataType: String): String =
+    s"ALTER TABLE $tableName ALTER COLUMN ${quoteIdentifier(columnName)} $newDataType"
+
+  def getUpdateColumnNullabilityQuery(
+                                       tableName: String,
+                                       columnName: String,
+                                       isNullable: Boolean): String = {
+    val nullable = if (isNullable) "NULL" else "NOT NULL"
+    s"ALTER TABLE $tableName ALTER COLUMN ${quoteIdentifier(columnName)} SET $nullable"
+  }
+
+  def getTableCommentQuery(table: String, comment: String): String = {
+    s"COMMENT ON TABLE $table IS '$comment'"
+  }
+
+  def getSchemaCommentQuery(schema: String, comment: String): String = {
+    s"COMMENT ON SCHEMA ${quoteIdentifier(schema)} IS '$comment'"
+  }
+
+  def removeSchemaCommentQuery(schema: String): String = {
+    s"COMMENT ON SCHEMA ${quoteIdentifier(schema)} IS NULL"
+  }
+
+  /**
+   * Gets a dialect exception, classifies it and wraps it by `AnalysisException`.
+   * @param message The error message to be placed to the returned exception.
+   * @param e The dialect specific exception.
+   * @return `AnalysisException` or its sub-class.
+   */
+  def classifyException(message: String, e: Throwable): AnalysisException = {
+    new AnalysisException(message, cause = Some(e))
+  }
+
+  def resultSetToSparkInternalRows(
+                                    resultSet: ResultSet,
+                                    schema: StructType,
+                                    inputMetrics: InputMetrics): Iterator[InternalRow] =
+    new NextIterator[InternalRow] {
+    private[this] val rs = resultSet
+    private[this] val getters = makeGetters(schema)
+    private[this] val mutableRow = new SpecificInternalRow(schema.fields.map(x => x.dataType))
+
+    override protected def close(): Unit = {
+      try rs.close() catch {
+        case e: Exception => logWarning("Exception closing resultset", e)
+      }
+    }
+
+    override protected def getNext(): InternalRow = if (rs.next()) {
+      inputMetrics.incRecordsRead(1)
+      var i = 0
+      while (i < getters.length) {
+        getters(i).apply(rs, mutableRow, i)
+        if (rs.wasNull) mutableRow.setNullAt(i)
+        i = i + 1
+      }
+      mutableRow
+    } else {
+      finished = true
+      null.asInstanceOf[InternalRow]
+    }
+  }
+
+  private def makeGetters(schema: StructType) =
+    schema.fields.map(sf => makeGetter(sf.dataType, sf.metadata))
+
+  private def makeGetter(dt: DataType, metadata: Metadata) = dt match {
+    case BooleanType =>
+      (rs: ResultSet, row: InternalRow, pos: Int) =>
+        row.setBoolean(pos, rs.getBoolean(pos + 1))
+
+    case DateType =>
+      (rs: ResultSet, row: InternalRow, pos: Int) =>
+        val dateVal = rs.getDate(pos + 1)
+        if (dateVal != null) {
+          row.setInt(pos, DateTimeUtils.fromJavaDate(dateVal))
+        } else {
+          row.update(pos, null)
+        }
+
+    case DecimalType.Fixed(p, s) =>
+      (rs: ResultSet, row: InternalRow, pos: Int) =>
+        val decimal =
+          nullSafeConvert[java.math.BigDecimal](rs.getBigDecimal(pos + 1), d => Decimal(d, p, s))
+        row.update(pos, decimal)
+
+    case DoubleType =>
+      (rs: ResultSet, row: InternalRow, pos: Int) =>
+        row.setDouble(pos, rs.getDouble(pos + 1))
+
+    case FloatType =>
+      (rs: ResultSet, row: InternalRow, pos: Int) =>
+        row.setFloat(pos, rs.getFloat(pos + 1))
+
+    case IntegerType =>
+      (rs: ResultSet, row: InternalRow, pos: Int) =>
+        row.setInt(pos, rs.getInt(pos + 1))
+
+    case LongType if metadata.contains("binarylong") =>
+      (rs: ResultSet, row: InternalRow, pos: Int) =>
+        val bytes = rs.getBytes(pos + 1)
+        var ans = 0L
+        var j = 0
+        while (j < bytes.length) {
+          ans = 256 * ans + (255 & bytes(j))
+          j = j + 1
+        }
+        row.setLong(pos, ans)
+
+    case LongType =>
+      (rs: ResultSet, row: InternalRow, pos: Int) =>
+        row.setLong(pos, rs.getLong(pos + 1))
+
+    case ShortType =>
+      (rs: ResultSet, row: InternalRow, pos: Int) =>
+        row.setShort(pos, rs.getShort(pos + 1))
+
+    case ByteType =>
+      (rs: ResultSet, row: InternalRow, pos: Int) =>
+        row.setByte(pos, rs.getByte(pos + 1))
+
+    case StringType =>
+      (rs: ResultSet, row: InternalRow, pos: Int) =>
+        row.update(pos, UTF8String.fromString(rs.getString(pos + 1)))
+
+    case TimestampType =>
+      (rs: ResultSet, row: InternalRow, pos: Int) =>
+        val t = rs.getTimestamp(pos + 1)
+        if (t != null) {
+          row.setLong(pos, DateTimeUtils.fromJavaTimestamp(t))
+        } else {
+          row.update(pos, null)
+        }
+
+    case BinaryType =>
+      (rs: ResultSet, row: InternalRow, pos: Int) =>
+        row.update(pos, rs.getBytes(pos + 1))
+
+    case ArrayType(et, _) =>
+      val elementConversion = et match {
+        case TimestampType =>
+          (array: Object) =>
+            array.asInstanceOf[Array[java.sql.Timestamp]].map { timestamp =>
+              nullSafeConvert(timestamp, DateTimeUtils.fromJavaTimestamp)
+            }
+
+        case StringType =>
+          (array: Object) =>
+            array.asInstanceOf[Array[java.lang.Object]]
+              .map(obj => if (obj == null) null else UTF8String.fromString(obj.toString))
+
+        case DateType =>
+          (array: Object) =>
+            array.asInstanceOf[Array[java.sql.Date]].map { date =>
+              nullSafeConvert(date, DateTimeUtils.fromJavaDate)
+            }
+
+        case LongType if metadata.contains("binarylong") =>
+          throw new IllegalArgumentException(s"Unsupported array element " +
+            s"type ${dt.catalogString} based on binary")
+
+        case ArrayType(_, _) =>
+          throw new IllegalArgumentException("Nested arrays unsupported")
+
+        case _ => (array: Object) => array.asInstanceOf[Array[Any]]
+      }
+
+      (rs: ResultSet, row: InternalRow, pos: Int) =>
+        val array = nullSafeConvert[java.sql.Array](
+          input = rs.getArray(pos + 1),
+          array => new GenericArrayData(elementConversion.apply(array.getArray)))
+        row.update(pos, array)
+
+    case _ => throw new IllegalArgumentException(s"Unsupported type ${dt.catalogString}")
+  }
+
+  private def nullSafeConvert[T](input: T, f: T => Any) = if (input == null) null else f(input)
+
+}
+
+@DeveloperApi
+object JdbcDialects {
+
+  /**
+   * Register a dialect for use on all new matching jdbc `org.apache.spark.sql.DataFrame`.
+   * Reading an existing dialect will cause a move-to-front.
+   *
+   * @param dialect The new dialect.
+   */
+  def registerDialect(dialect: JdbcDialect) : Unit = {
+    dialects = dialect :: dialects.filterNot(_ == dialect)
+  }
+
+  /**
+   * Unregister a dialect. Does nothing if the dialect is not registered.
+   *
+   * @param dialect The jdbc dialect.
+   */
+  def unregisterDialect(dialect : JdbcDialect) : Unit = {
+    dialects = dialects.filterNot(_ == dialect)
+  }
+
+  private[this] var dialects = List[JdbcDialect]()
+
+  registerDialect(MySQLDialect)
+  registerDialect(OracleDialect)
+  registerDialect(SqlServerDialect)
+  registerDialect(HBaseDialect)
+
+  /**
+   * Fetch the JdbcDialect class corresponding to a given database url.
+   */
+  def get(url: String): JdbcDialect = {
+    val matchingDialects = dialects.filter(_.canHandle(url))
+    matchingDialects.length match {
+      case 0 => NoopDialect
+      case 1 => matchingDialects.head
+      case _ => new AggregatedDialect(matchingDialects)
+    }
+  }
+}
+
+/**
+ * NOOP dialect object, always returning the neutral element.
+ */
+private object NoopDialect extends JdbcDialect {
+  override def canHandle(url : String): Boolean = true
+}
+
+
+
