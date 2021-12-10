@@ -254,6 +254,9 @@ case class AddFile(
     .getOrElse(TimeUnit.MICROSECONDS.convert(modificationTime, TimeUnit.MILLISECONDS).toString)
     .toLong
 
+  @JsonIgnore
+  lazy val numAutoCompactions: Int = tag(AddFile.Tags.NUM_AUTO_COMPACTIONS).getOrElse("0").toInt
+
   def tag(tag: AddFile.Tags.KeyType): Option[String] =
     Option(tags).getOrElse(Map.empty).get(tag.name)
 
@@ -297,6 +300,17 @@ object AddFile {
 
     /** [[OPTIMIZE_TARGET_SIZE]]: target file size the file was optimized to. */
     object OPTIMIZE_TARGET_SIZE extends AddFile.Tags.KeyType("OPTIMIZE_TARGET_SIZE")
+
+    /**
+     * [[NUM_AUTO_COMPACTIONS]]: The number of times Auto Compaction is applied to the content of
+     * a file.
+     *
+     * Note: 'NUM_AUTO_OPTIMIZES' is used externally since Compaction is one of Optimize
+     * command. By using 'NUM_AUTO_OPTIMIZES', it hides detail and can support other
+     * optimize than Compaction. 'NUM_AUTO_COMPACTIONS' is used internally before current
+     * only Auto Compaction is using it.
+     */
+    object NUM_AUTO_COMPACTIONS extends AddFile.Tags.KeyType("NUM_AUTO_OPTIMIZES")
   }
 
   /** Convert a [[Tags.KeyType]] to a string to be used in the AddMap.tags Map[String, String]. */
