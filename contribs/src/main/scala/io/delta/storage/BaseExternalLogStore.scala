@@ -331,7 +331,7 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
 
     for (i <- 0 until 3) {
       try {
-        if (!fileCopied) {
+        if (!fileCopied) { // TODO: don't overwrite if it already exists, that just ruins the modification time
           copyFile(fs, entry.tempPath, entry.path)
           fileCopied = true
         }

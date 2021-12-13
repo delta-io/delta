@@ -137,6 +137,7 @@ class DynamoDBLogStore(
     }
   }
 
+  // TODO: optimize this to use <= filename instead of <= modificationTime?
   override protected def deleteFromCacheAllOlderThan(
       fs: FileSystem,
       parentPath: Path,
@@ -148,6 +149,7 @@ class DynamoDBLogStore(
       .query(
         new QueryRequest(tableName)
           .withConsistentRead(true)
+          // TODO modification time isn't a key?
           .withKeyConditions(
             Map(
               "parentPath" -> new Condition()
@@ -208,13 +210,15 @@ object DynamoDBLogStore {
     // scalastyle:on classforname
     val auth = authClass.getConstructor().newInstance()
       .asInstanceOf[com.amazonaws.auth.AWSCredentialsProvider];
+    // TODO builder pattern is the suggested way
     val client = new AmazonDynamoDBClient(auth)
+    // TODO default value: Regions.US_EAST_1
     val regionName = sparkConf.get(s"${confPrefix}region", "us-east-1")
     if (regionName != "") {
       client.setRegion(Region.getRegion(Regions.fromName(regionName)))
     }
 
-    scala.util.control.Exception.ignoring(classOf[NoSuchElementException]) {
+    scala.util.control.Exception.ignoring(classOf[NoSuchElementException]) { // TODO why this way?
       client.setEndpoint(sparkConf.get(s"${confPrefix}host"))
     }
 
