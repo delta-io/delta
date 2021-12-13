@@ -91,6 +91,19 @@ public class DeltaSinkTestUtils {
         return rows;
     }
 
+    public static RowType addNewColumnToSchema(RowType schema) {
+        List<RowType.RowField> fields = new ArrayList<>(schema.getFields());
+        fields.add(new RowType.RowField("someNewField", new IntType()));
+        return new RowType(fields);
+    }
+
+    public static RowType dropOneColumnFromSchema(RowType schema) {
+        List<RowType.RowField> fields = new ArrayList<>(
+            schema.getFields().subList(0, schema.getFields().size() - 2)
+        );
+        return new RowType(fields);
+    }
+
     ///////////////////////////////////////////////////////////////////////////
     // test delta lake table utils
     ///////////////////////////////////////////////////////////////////////////

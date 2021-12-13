@@ -42,6 +42,7 @@ import org.apache.flink.streaming.api.functions.sink.filesystem.BucketWriter;
 import org.apache.flink.streaming.api.functions.sink.filesystem.DeltaBulkBucketWriter;
 import org.apache.flink.streaming.api.functions.sink.filesystem.OutputFileConfig;
 import org.apache.flink.streaming.api.functions.sink.filesystem.rollingpolicies.CheckpointRollingPolicy;
+import org.apache.flink.table.types.logical.RowType;
 import org.apache.hadoop.conf.Configuration;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
@@ -75,11 +76,23 @@ public class DeltaSinkBuilder<IN> implements Serializable {
     private final Path tableBasePath;
 
     /**
+     * Flink's logical type to indicate the structure of the events in the stream
+     */
+    private final RowType rowType;
+
+    /**
      * Unique identifier of the current Flink's app. Value from this builder will be read
      * only during the fresh start of the application. For restarts or failure recovery
      * it will be resolved from the snapshoted state.
      */
     private final String appId;
+
+    /**
+     * Indicator whether we should try to update table's schema with stream's schema in case
+     * those will not match. The update is not guaranteed as there will be still some checks
+     * performed whether the updates to the schema are compatible.
+     */
+    private boolean shouldTryUpdateSchema;
 
     /**
      * Serializable wrapper for {@link Configuration} object
@@ -113,7 +126,9 @@ public class DeltaSinkBuilder<IN> implements Serializable {
         Configuration conf,
         ParquetWriterFactory<IN> writerFactory,
         BucketAssigner<IN, String> assigner,
-        CheckpointRollingPolicy<IN, String> policy) {
+        CheckpointRollingPolicy<IN, String> policy,
+        RowType rowType,
+        boolean shouldTryUpdateSchema) {
         this(
             basePath,
             conf,
@@ -122,7 +137,9 @@ public class DeltaSinkBuilder<IN> implements Serializable {
             assigner,
             policy,
             OutputFileConfig.builder().withPartSuffix(".snappy.parquet").build(),
-            generateNewAppId()
+            generateNewAppId(),
+            rowType,
+            shouldTryUpdateSchema
         );
     }
 
@@ -134,7 +151,9 @@ public class DeltaSinkBuilder<IN> implements Serializable {
         BucketAssigner<IN, String> assigner,
         CheckpointRollingPolicy<IN, String> policy,
         OutputFileConfig outputFileConfig,
-        String appId) {
+        String appId,
+        RowType rowType,
+        boolean shouldTryUpdateSchema) {
         this.tableBasePath = checkNotNull(basePath);
         this.serializableConfiguration = new SerializableConfiguration(checkNotNull(conf));
         this.bucketCheckInterval = bucketCheckInterval;
@@ -143,6 +162,38 @@ public class DeltaSinkBuilder<IN> implements Serializable {
         this.rollingPolicy = checkNotNull(policy);
         this.outputFileConfig = checkNotNull(outputFileConfig);
         this.appId = appId;
+        this.rowType = rowType;
+        this.shouldTryUpdateSchema = shouldTryUpdateSchema;
+    }
+
+    public DeltaSinkBuilder<IN> withRowType(RowType rowType) {
+        return new DeltaSinkBuilder<>(
+            tableBasePath,
+            serializableConfiguration.conf(),
+            bucketCheckInterval,
+            writerFactory,
+            bucketAssigner,
+            rollingPolicy,
+            outputFileConfig,
+            appId,
+            rowType,
+            shouldTryUpdateSchema);
+    }
+
+    /**
+     * Sets the sink's option whether in case of any differences between stream's schema and Delta
+     * table's schema we should try to update it during commit to the
+     * {@link io.delta.standalone.DeltaLog}. The update is not guaranteed as there will be some
+     * compatibility checks performed.
+     *
+     * @param shouldTryUpdateSchema whether we should try to update table's schema with stream's
+     *                              schema in case those will not match. See
+     *                              {@link DeltaSinkBuilder#shouldTryUpdateSchema} for details.
+     * @return builder for {@link DeltaSink}
+     */
+    public DeltaSinkBuilder<IN> withShouldTryUpdateSchema(final boolean shouldTryUpdateSchema) {
+        this.shouldTryUpdateSchema = shouldTryUpdateSchema;
+        return this;
     }
 
     DeltaCommitter createCommitter() throws IOException {
@@ -150,7 +201,8 @@ public class DeltaSinkBuilder<IN> implements Serializable {
     }
 
     DeltaGlobalCommitter createGlobalCommitter() {
-        return new DeltaGlobalCommitter(serializableConfiguration.conf(), tableBasePath);
+        return new DeltaGlobalCommitter(
+            serializableConfiguration.conf(), tableBasePath, rowType, shouldTryUpdateSchema);
     }
 
     Path getTableBasePath() {
@@ -247,8 +299,10 @@ public class DeltaSinkBuilder<IN> implements Serializable {
             final Configuration conf,
             ParquetWriterFactory<IN> writerFactory,
             BucketAssigner<IN, String> assigner,
-            CheckpointRollingPolicy<IN, String> policy) {
-            super(basePath, conf, writerFactory, assigner, policy);
+            CheckpointRollingPolicy<IN, String> policy,
+            RowType rowType,
+            boolean shouldTryUpdateSchema) {
+            super(basePath, conf, writerFactory, assigner, policy, rowType, shouldTryUpdateSchema);
         }
     }
 }

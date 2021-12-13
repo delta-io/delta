@@ -32,10 +32,12 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.api.connector.sink.GlobalCommitter;
 import org.apache.flink.connector.delta.sink.Meta;
+import org.apache.flink.connector.delta.sink.SchemaConverter;
 import org.apache.flink.connector.delta.sink.committables.DeltaCommittable;
 import org.apache.flink.connector.delta.sink.committables.DeltaGlobalCommittable;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.streaming.api.functions.sink.filesystem.DeltaPendingFile;
+import org.apache.flink.table.types.logical.RowType;
 import org.apache.hadoop.conf.Configuration;
 
 import io.delta.standalone.DeltaLog;
@@ -43,7 +45,9 @@ import io.delta.standalone.Operation;
 import io.delta.standalone.OptimisticTransaction;
 import io.delta.standalone.actions.Action;
 import io.delta.standalone.actions.AddFile;
+import io.delta.standalone.actions.Metadata;
 import io.delta.standalone.actions.SetTransaction;
+import io.delta.standalone.types.StructType;
 
 /**
  * A {@link GlobalCommitter} implementation for
@@ -84,10 +88,24 @@ public class DeltaGlobalCommitter
      */
     private final Path basePath;
 
+    /**
+     * RowType object from which the Delta's {@link StructType} will be deducted
+     */
+    private final RowType rowType;
+
+    /**
+     * Indicator whether the committer should try to commit unmatching schema
+     */
+    private final boolean shouldTryUpdateSchema;
+
     public DeltaGlobalCommitter(Configuration conf,
-                                Path basePath) {
+                                Path basePath,
+                                RowType rowType,
+                                boolean shouldTryUpdateSchema) {
         this.conf = conf;
         this.basePath = basePath;
+        this.rowType = rowType;
+        this.shouldTryUpdateSchema = shouldTryUpdateSchema;
     }
 
     /**
@@ -195,7 +213,8 @@ public class DeltaGlobalCommitter
                 if (checkpointId > lastCommittedVersion) {
                     doCommit(
                         transaction,
-                        committablesPerCheckpoint.get(checkpointId));
+                        committablesPerCheckpoint.get(checkpointId),
+                        deltaLog.tableExists());
                 }
             }
         }
@@ -213,12 +232,15 @@ public class DeltaGlobalCommitter
      * metadata update along with preparing the final set of metrics and perform the actual commit
      * to the {@link DeltaLog}.
      *
-     * @param transaction  {@link OptimisticTransaction} instance that will be used for committing
-     *                     given checkpoint interval
+     * @param transaction  {@link OptimisticTransaction} instance that will be used for
+     *                     committing given checkpoint interval
      * @param committables list of committables for particular checkpoint interval
+     * @param tableExists  indicator whether table already exists or will be created with the next
+     *                     commit
      */
     private void doCommit(OptimisticTransaction transaction,
-                          List<DeltaCommittable> committables) {
+                          List<DeltaCommittable> committables,
+                          boolean tableExists) {
         String appId = committables.get(0).getAppId();
         long checkpointId = committables.get(0).getCheckpointId();
 
@@ -234,6 +256,8 @@ public class DeltaGlobalCommitter
             numOutputBytes += deltaPendingFile.getFileSize();
         }
 
+        handleMetadataUpdate(tableExists, transaction);
+
         List<Action> actions = prepareActionsForTransaction(appId, checkpointId, addFileActions);
         Map<String, String> operationMetrics = prepareOperationMetrics(
             addFileActions.size(),
@@ -243,6 +267,68 @@ public class DeltaGlobalCommitter
         Operation operation = prepareDeltaLogOperation(operationMetrics);
 
         transaction.commit(actions, operation, ENGINE_INFO);
+    }
+
+    /**
+     * Resolves whether to add the {@link Metadata} object to the transaction.
+     *
+     * <p>During this process:
+     * <ol>
+     *   <li>first we prepare metadata {@link Action} object using provided {@link RowType} (and
+     *       converting it to {@link StructType}) and partition values,
+     *   <li>then we compare the schema from above metadata with the current table's schema,
+     *   <li>resolved metadata object is added to the transaction only when it's the first commit to
+     *       the given Delta table or when the schemas are not matching but the sink was provided
+     *       with option {@link DeltaGlobalCommitter#shouldTryUpdateSchema} set to true (the commit
+     *       may still fail though if the Delta Standalone Writer will determine that the schemas
+     *       are not compatible),
+     *   <li>if the schemas are not matching and {@link DeltaGlobalCommitter#shouldTryUpdateSchema}
+     *       was set to false then we throw an exception
+     *   <li>if the schemas are matching then we do nothing and let the transaction proceed
+     * </ol>
+     * <p>
+     *
+     * @param tableExists indicator whether table already exists or will be created with the next
+     *                    commit
+     * @param transaction DeltaLog's transaction object
+     */
+    private void handleMetadataUpdate(boolean tableExists,
+                                      OptimisticTransaction transaction) {
+        Metadata currentMetadata = transaction.metadata();
+        StructType currentTableSchema = currentMetadata.getSchema();
+        StructType streamSchema = SchemaConverter.toDeltaDataType(rowType);
+        boolean schemasAreMatching = areSchemasEqual(currentTableSchema, streamSchema);
+        if (!tableExists || (!schemasAreMatching && shouldTryUpdateSchema)) {
+            Metadata updatedMetadata = new Metadata
+                .Builder()
+                .id(currentMetadata.getId())
+                .name(currentMetadata.getName())
+                .description(currentMetadata.getDescription())
+                .format(currentMetadata.getFormat())
+                // below line will be changed in the next PR
+                .partitionColumns(currentMetadata.getPartitionColumns())
+                .configuration(currentMetadata.getConfiguration())
+                .schema(streamSchema)
+                .build();
+            transaction.updateMetadata(updatedMetadata);
+        } else if (!schemasAreMatching) {
+            String printableCurrentTableSchema = currentTableSchema == null ? "null"
+                : currentTableSchema.toPrettyJson();
+            String printableCommitSchema = streamSchema.toPrettyJson();
+
+            throw new RuntimeException(
+                "DataStream's schema is different from current table's schema. \n" +
+                    "provided: " + printableCurrentTableSchema + "\n" +
+                    "is different from: " + printableCommitSchema);
+        }
+    }
+
+    private boolean areSchemasEqual(@Nullable StructType first,
+                                    @Nullable StructType second) {
+        if (first == null || second == null) {
+            return false;
+        }
+        return first.toJson().equals(second.toJson());
     }
 
     /**

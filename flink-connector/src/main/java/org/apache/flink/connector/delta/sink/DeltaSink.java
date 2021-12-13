@@ -243,7 +243,9 @@ public class DeltaSink<IN>
             conf,
             writerFactory,
             new BasePathBucketAssigner<>(),
-            OnCheckpointRollingPolicy.build()
+            OnCheckpointRollingPolicy.build(),
+            rowType,
+            false // shouldTryUpdateSchema
         );
     }
 }
