@@ -24,6 +24,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkContext
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
@@ -63,6 +64,7 @@ class DeltaSink(
     if (SchemaUtils.typeExistsRecursively(data.schema)(_.isInstanceOf[NullType])) {
       throw DeltaErrors.streamWriteNullTypeException
     }
+
 
     // If the batch reads the same Delta table as this sink is going to write to, then this
     // write has dependencies. Then make sure that this commit set hasDependencies to true

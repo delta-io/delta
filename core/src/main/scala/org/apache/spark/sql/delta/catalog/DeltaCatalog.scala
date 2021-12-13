@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.catalog
 
 import java.util
 import java.util.Locale
+
 // scalastyle:off import.ordering.noEmptyLine
 
 import scala.collection.JavaConverters._
