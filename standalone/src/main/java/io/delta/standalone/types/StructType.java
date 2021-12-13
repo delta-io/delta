@@ -42,6 +42,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 
 import io.delta.standalone.expressions.Column;
+import io.delta.standalone.internal.util.SchemaUtils;
 
 /**
  * The data type representing a table's schema, consisting of a collection of
@@ -198,5 +199,25 @@ public final class StructType extends DataType {
     @Override
     public int hashCode() {
         return Arrays.hashCode(fields);
+    }
+
+    /**
+     * Whether a new schema can replace this existing schema in a Delta table without rewriting data
+     * files in the table.
+     * <p>
+     * Returns false if the new schema:
+     * <ul>
+     *     <li>Drops any column that is present in the current schema</li>
+     *     <li>Converts nullable=true to nullable=false for any column</li>
+     *     <li>Changes any datatype</li>
+     * </ul>
+     *
+     * @param newSchema  the new schema to update the table with
+     * @return whether the new schema is compatible with this existing schema
+     */
+    public boolean isWriteCompatible(StructType newSchema) {
+        return SchemaUtils.isWriteCompatible(
+                this,
+                newSchema);
     }
 }

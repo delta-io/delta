@@ -21,7 +21,7 @@ import io.delta.standalone.types.{ArrayType, DataType, MapType, StructField, Str
 
 import io.delta.standalone.internal.exception.DeltaErrors
 
-private[internal] object SchemaUtils {
+private[standalone] object SchemaUtils {
 
   /**
    * Verifies that the column names are acceptable by Parquet and henceforth Delta. Parquet doesn't

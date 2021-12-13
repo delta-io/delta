@@ -250,7 +250,7 @@ class SchemaUtilsSuite extends FunSuite {
     )
     test(s"change of datatype should fail write compatibility - $scenario") {
       for (a <- schemas.keys; b <- schemas.keys if a != b) {
-        assert(!isWriteCompatible(schemas(a), schemas(b)),
+        assert(!schemas(a).isWriteCompatible(schemas(b)),
           s"isWriteCompatible should have failed for: ${schemas(a)}, ${schemas(b)}")
       }
     }
@@ -274,12 +274,12 @@ class SchemaUtilsSuite extends FunSuite {
 
     // restricted: nullable=true ==> nullable=false
     test(s"restricted nullability should fail write compatibility - $scenario") {
-      assert(!isWriteCompatible(nullable, nonNullable))
+      assert(!nullable.isWriteCompatible(nonNullable))
     }
 
     // relaxed: nullable=false ==> nullable=true
     test(s"relaxed nullability should not fail write compatibility - $scenario") {
-      assert(isWriteCompatible(nonNullable, nullable))
+      assert(nonNullable.isWriteCompatible(nullable))
     }
   }
 
@@ -304,16 +304,16 @@ class SchemaUtilsSuite extends FunSuite {
       make(struct => struct.add("extra", new StringType(), false)) // nullable = false
 
     test(s"dropping a field should fail write compatibility - $scenario") {
-      assert(!isWriteCompatible(withExtraNullable, withoutExtra))
+      assert(!withExtraNullable.isWriteCompatible(withoutExtra))
     }
     test(s"adding a nullable field should not fail write compatibility - $scenario") {
-      assert(isWriteCompatible(withoutExtra, withExtraNullable))
+      assert(withoutExtra.isWriteCompatible(withExtraNullable))
     }
     test(s"adding a non-nullable field should not fail write compatibility - $scenario") {
-      assert(isWriteCompatible(withoutExtra, withExtraNonNullable))
+      assert(withoutExtra.isWriteCompatible(withExtraNonNullable))
     }
     test(s"case variation of field name should fail write compatibility - $scenario") {
-      assert(!isWriteCompatible(withExtraNullable, withExtraMixedCase))
+      assert(!withExtraNullable.isWriteCompatible(withExtraMixedCase))
     }
 
     testNullability(scenario) { nullable =>

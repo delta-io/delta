@@ -455,7 +455,7 @@ private[internal] class OptimisticTransactionImpl(
 
     if (tableEmpty || allCurrentFilesRemoved) return
 
-    if (!SchemaUtils.isWriteCompatible(existingSchema, newSchema)) {
+    if (!existingSchema.isWriteCompatible(newSchema)) {
       throw DeltaErrors.schemaChangedException(existingSchema, newSchema)
     }
   }
