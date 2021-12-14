@@ -6,7 +6,7 @@ on:
 
 jobs:
   automate-new-pull-requests:
-    if: ${{ !contains('allisonport-db dennyglee scottsand-db tdas zsxwing', github.event.actor.login) }}
+    if: ${{ !contains('dennyglee scottsand-db tdas zsxwing', github.event.actor.login) }}
     runs-on: ubuntu-latest
     steps:
       - uses: alex-page/github-project-automation-plus@v0.8.1
