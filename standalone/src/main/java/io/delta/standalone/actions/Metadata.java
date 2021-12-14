@@ -155,6 +155,15 @@ public final class Metadata implements Action {
     }
 
     /**
+     * @return a new {@link Metadata.Builder} initialized with the same properties as this
+     *         {@link Metadata} instance
+     */
+    public Builder copyBuilder() {
+        return new Builder(id, name, description, format, partitionColumns, configuration,
+                createdTime, schema);
+    }
+
+    /**
      * @return a new {@link Metadata.Builder}
      */
     public static Builder builder() {
@@ -174,6 +183,27 @@ public final class Metadata implements Action {
         @Nonnull private Map<String, String> configuration = Collections.emptyMap();
         @Nonnull private Optional<Long> createdTime = Optional.of(System.currentTimeMillis());
         @Nullable private StructType schema;
+
+        public Builder(){};
+
+        private Builder(
+                @Nonnull String id,
+                @Nullable String name,
+                @Nullable String description,
+                @Nonnull Format format,
+                @Nonnull List<String> partitionColumns,
+                @Nonnull Map<String, String> configuration,
+                @Nonnull Optional<Long> createdTime,
+                @Nullable StructType schema) {
+            this.id = id;
+            this.name = name;
+            this.description = description;
+            this.format = format;
+            this.partitionColumns = partitionColumns;
+            this.configuration = configuration;
+            this.createdTime = createdTime;
+            this.schema = schema;
+        }
 
         public Builder id(@Nonnull String id) {
             this.id = id;
@@ -207,6 +237,11 @@ public final class Metadata implements Action {
 
         public Builder createdTime(Long createdTime) {
             this.createdTime = Optional.of(createdTime);
+            return this;
+        }
+
+        public Builder createdTime(@Nonnull Optional<Long> createdTime) {
+            this.createdTime = createdTime;
             return this;
         }
 

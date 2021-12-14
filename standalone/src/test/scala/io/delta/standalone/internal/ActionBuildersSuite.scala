@@ -62,6 +62,48 @@ class ActionBuildersSuite extends FunSuite {
     assert(metadataFromBuilder == metadataFromConstructor)
   }
 
+  test("Metadata constructor matches Metadata.Builder constructor") {
+    assert(
+      classOf[MetadataJ].getDeclaredConstructors
+        .filter(!_.isSynthetic)
+        .map(_.getParameterCount()).toList.max ==
+      classOf[MetadataJ.Builder].getDeclaredConstructors
+        .filter(!_.isSynthetic)
+        .map(_.getParameterCount()).toList.max,
+      "Metadata and Metadata.Builder's constructors are not the same. Please update them " +
+        "accordingly if you add a new field to Metadata."
+    )
+  }
+
+  test("copyBuilder constructor for Metadata") {
+    val metadata = new MetadataJ(
+      "test_id",
+      "test_name",
+      "test_description",
+      new FormatJ("csv", Collections.emptyMap()),
+      List("id", "name").asJava,
+      Map("test"->"foo").asJava,
+      Optional.empty(),
+      null)
+    assert(metadata == metadata.copyBuilder().build())  // values are copied
+
+    val defaultMetadata = MetadataJ.builder().build()
+    assert(defaultMetadata == defaultMetadata.copyBuilder().build())  // default values are copied
+
+    val overwrittenMetadata = new MetadataJ(
+      "foo",
+      "foo",
+      "foo",
+      new FormatJ("csv", Collections.emptyMap()),
+      List("id", "name").asJava,
+      Map("test"->"foo").asJava,
+      Optional.of(0L),
+      null)
+    assert(overwrittenMetadata == metadata.copyBuilder()  // values can be overwritten
+      .id("foo").name("foo").description("foo").createdTime(0L)
+      .build())
+  }
+
   test("builder action class constructor for AddFile") {
     val addFileFromBuilderDefaults = AddFileJ.builder(
       "/test",

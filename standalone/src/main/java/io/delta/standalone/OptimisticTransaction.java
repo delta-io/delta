@@ -80,6 +80,17 @@ public interface OptimisticTransaction {
      * Records an update to the metadata that should be committed with this transaction.
      *
      * <p>
+     * Use {@link Metadata#copyBuilder()} to build a new {@link Metadata} instance based on the
+     * current table metadata. For example:
+     *
+     * <pre>{@code
+     * Metadata newMetadata = optimisticTransaction.metadata().copyBuilder()
+     *     .schema(newSchema)
+     *     .build();
+     * optimisticTransaction.updateMetadata(newMetadata);
+     * }</pre>
+     *
+     * <p>
      * IMPORTANT: It is the responsibility of the caller to ensure that files currently
      * present in the table are still valid under the new metadata.
      *
