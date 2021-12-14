@@ -968,7 +968,8 @@ trait DescribeDeltaHistorySuiteBase
         StructField("isBlindAppend", BooleanType, nullable = true),
         StructField("operationMetrics",
           MapType(StringType, StringType, valueContainsNull = true), nullable = true),
-        StructField("userMetadata", StringType, nullable = true)))
+        StructField("userMetadata", StringType, nullable = true),
+        StructField("engineInfo", StringType, nullable = true)))
 
       // Test schema from [[io.delta.tables.DeltaTable.history]] api
       val df1 = deltaTable.history(1)

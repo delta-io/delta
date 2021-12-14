@@ -25,7 +25,7 @@ import delta
 
 class PipUtilsTests(unittest.TestCase):
 
-    def setUp(self):
+    def setUp(self) -> None:
         builder = SparkSession.builder \
             .appName("pip-test") \
             .master("local[*]") \
@@ -38,11 +38,20 @@ class PipUtilsTests(unittest.TestCase):
         self.tempPath = tempfile.mkdtemp()
         self.tempFile = os.path.join(self.tempPath, "tempFile")
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         self.spark.stop()
         shutil.rmtree(self.tempPath)
 
-    def test_maven_jar_loaded(self):
+    def test_maven_jar_loaded(self) -> None:
         # Read and write Delta table to check that the maven jars are loaded and Delta works.
         self.spark.range(0, 5).write.format("delta").save(self.tempFile)
         self.spark.read.format("delta").load(self.tempFile)
+
+
+if __name__ == "__main__":
+    try:
+        import xmlrunner
+        testRunner = xmlrunner.XMLTestRunner(output='target/test-reports', verbosity=4)
+    except ImportError:
+        testRunner = None
+    unittest.main(testRunner=testRunner, verbosity=4)

@@ -324,7 +324,7 @@ class DeltaTableBuilder private[tables](
       case CreateTableOptions(ifNotExists) =>
         CreateTableStatement(
           table,
-          StructType(columns),
+          StructType(columns.toSeq),
           partitioning,
           None,
           this.properties,
@@ -339,7 +339,7 @@ class DeltaTableBuilder private[tables](
       case ReplaceTableOptions(orCreate) =>
         ReplaceTableStatement(
           table,
-          StructType(columns),
+          StructType(columns.toSeq),
           partitioning,
           None,
           this.properties,

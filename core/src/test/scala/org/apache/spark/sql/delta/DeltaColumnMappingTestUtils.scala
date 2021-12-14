@@ -183,12 +183,12 @@ trait DeltaColumnMappingTestUtilsBase extends SharedSparkSession {
       val colName = partCol.phy(deltaLog)
       deltaLog.update().allFiles.collect()
         .groupBy(_.partitionValues(colName))
-        .mapValues(_.map(deltaLog.dataPath.toUri.getPath + "/" + _.path))
+        .mapValues(_.map(deltaLog.dataPath.toUri.getPath + "/" + _.path)).toMap
     } else {
       val partColEscaped = s"${ExternalCatalogUtils.escapePathName(partCol)}"
       val dataPath = new File(deltaLog.dataPath.toUri.getPath)
       dataPath.listFiles().filter(_.getName.startsWith(s"$partColEscaped="))
-        .groupBy(_.getName.split("=").last).mapValues(_.map(_.getPath))
+        .groupBy(_.getName.split("=").last).mapValues(_.map(_.getPath)).toMap
     }
   }
 
@@ -206,7 +206,7 @@ trait DeltaColumnMappingTestUtilsBase extends SharedSparkSession {
       val grouped = inputFiles.flatMap { f =>
         allFiles.find(af => f.contains(af.path)).head.partitionValues.map(entry => (f, entry))
       }.groupBy(_._2)
-      grouped.mapValues(_.map(_._1))
+      grouped.mapValues(_.map(_._1)).toMap
     } else {
       inputFiles.groupBy(p => {
         val nameParts = new Path(p).getParent.getName.split("=")

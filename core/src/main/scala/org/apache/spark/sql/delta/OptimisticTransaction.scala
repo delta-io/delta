@@ -254,7 +254,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       "Cannot update the metadata in a transaction that has already written data.")
     assert(newMetadata.isEmpty,
       "Cannot change the metadata more than once in a transaction.")
+    updateMetadataInternal(_metadata)
+  }
 
+  /**
+   * Do the actual checks and works to update the metadata and save it into the `newMetadata`
+   * field, which will be added to the actions to commit in [[prepareCommit]].
+   */
+  protected def updateMetadataInternal(_metadata: Metadata): Unit = {
     var latestMetadata = _metadata
     if (readVersion == -1 || isCreatingNewTable) {
       latestMetadata = withGlobalConfigDefaults(latestMetadata)
@@ -488,8 +495,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
           tags = None)
       }
 
-      val currentTransactionInfo = CurrentTransactionInfo(
-        readPredicates = readPredicates,
+      val currentTransactionInfo = new CurrentTransactionInfo(
+        txnId = txnId,
+        readPredicates = readPredicates.toSeq,
         readFiles = readFiles.toSet,
         readWholeTable = readTheWholeTable,
         readAppIds = readTxn.toSet,
@@ -630,9 +638,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   protected def postCommit(commitVersion: Long): Unit = {
     committed = true
     if (shouldCheckpoint(commitVersion)) {
-      // We checkpoint the version to be committed to so that no two transactions will checkpoint
-      // the same version.
-      deltaLog.checkpoint(deltaLog.getSnapshotAt(commitVersion))
+      try {
+        // We checkpoint the version to be committed to so that no two transactions will checkpoint
+        // the same version.
+        deltaLog.checkpoint(deltaLog.getSnapshotAt(commitVersion))
+      } catch {
+        case e: IllegalStateException =>
+          logWarning("Failed to checkpoint table state.", e)
+      }
     }
   }
 
@@ -835,7 +848,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       spark,
       currentTransactionInfo,
       otherCommitVersion,
-      commitIsolationLevel, logPrefix)
+      commitIsolationLevel)
     conflictChecker.checkConflicts()
   }
 

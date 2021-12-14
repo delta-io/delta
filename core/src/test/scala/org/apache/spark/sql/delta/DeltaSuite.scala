@@ -43,8 +43,7 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
 
 class DeltaSuite extends QueryTest
-  with SharedSparkSession
-  with DeltaColumnMappingTestUtils  with SQLTestUtils
+  with SharedSparkSession  with DeltaColumnMappingTestUtils  with SQLTestUtils
   with DeltaSQLCommandTest {
 
   import testImplicits._
@@ -774,6 +773,33 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("columns with commas as partition columns") {
+    withTempDir { tempDir =>
+      if (tempDir.exists()) {
+        assert(tempDir.delete())
+      }
+
+      val dfw = spark.range(100).select('id, 'id % 4 as "by,4")
+        .write
+        .format("delta")
+        .partitionBy("by,4")
+
+      // if in column mapping mode, we should not expect invalid character errors
+      if (!columnMappingEnabled) {
+        val e = intercept[AnalysisException] {
+          dfw.save(tempDir.toString)
+        }
+        assert(e.getMessage.contains("invalid character(s)"))
+      }
+
+      withSQLConf(DeltaSQLConf.DELTA_PARTITION_COLUMN_CHECK_ENABLED.key -> "false") {
+        dfw.save(tempDir.toString)
+      }
+
+      // Note: although we are able to write, we cannot read the table with Spark 3.2+ with
+      // OSS Delta 1.1.0+ because SPARK-36271 adds a column name check in the read path.
+    }
+  }
 
   test("throw exception when users are trying to write in batch with different partitioning") {
     withTempDir { tempDir =>
@@ -1465,8 +1491,9 @@ class DeltaSuite extends QueryTest
     // assign physical name to new schema
     val newMetadata = if (columnMappingEnabled) {
       DeltaColumnMapping.assignColumnIdAndPhysicalName(
-        snapshot.metadata.copy(schemaString = new StructType().add("data", "bigint").json)
-      )
+        snapshot.metadata.copy(schemaString = new StructType().add("data", "bigint").json),
+        snapshot.metadata,
+        isChangingModeOnExistingTable = false)
     } else {
       snapshot.metadata.copy(schemaString = new StructType().add("data", "bigint").json)
     }

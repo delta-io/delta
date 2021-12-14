@@ -17,11 +17,18 @@
 import java.nio.file.Files
 
 val sparkVersion = "3.2.0"
-scalaVersion := "2.12.14"
+val scala212 = "2.12.14"
+val scala213 = "2.13.5"
+
+scalaVersion := scala212
+
+// crossScalaVersions must be set to Nil on the root project
+crossScalaVersions := Nil
 
 lazy val commonSettings = Seq(
   organization := "io.delta",
-  scalaVersion := "2.12.14",
+  scalaVersion := scala212,
+  crossScalaVersions := Seq(scala212, scala213),
   fork := true
 )
 
@@ -41,8 +48,12 @@ lazy val core = (project in file("core"))
       "org.apache.spark" %% "spark-core" % sparkVersion % "provided",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion % "provided",
 
+      // spark-sql 3.2.0's parquet-hadoop 1.12.1 dependency no longer includes org.codehaus.jackson
+      // as a dependency, so we include it here instead.
+      "org.codehaus.jackson" % "jackson-core-asl" % "1.9.13",
+
       // Test deps
-      "org.scalatest" %% "scalatest" % "3.1.0" % "test",
+      "org.scalatest" %% "scalatest" % "3.2.9" % "test",
       "junit" % "junit" % "4.12" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion % "test" classifier "tests",
@@ -91,7 +102,19 @@ lazy val core = (project in file("core"))
       val dir = baseDirectory.value.getParentFile / "target" / "scala-2.12" / "classes"
       Files.createDirectories(dir.toPath)
     },
-    Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value
+    Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value,
+    // Generate the package object to provide the version information in runtime.
+    Compile / sourceGenerators += Def.task {
+      val file = (Compile / sourceManaged).value / "io" / "delta" / "package.scala"
+      IO.write(file,
+        s"""package io
+           |
+           |package object delta {
+           |  val VERSION = "${version.value}"
+           |}
+           |""".stripMargin)
+      Seq(file)
+    }
   )
 
 lazy val contribs = (project in file("contribs"))
@@ -212,7 +235,15 @@ def getPrevVersion(currentVersion: String): String = {
 
 lazy val mimaSettings = Seq(
   Test / test := ((Test / test) dependsOn mimaReportBinaryIssues).value,
-  mimaPreviousArtifacts := Set("io.delta" %% "delta-core" %  getPrevVersion(version.value)),
+  mimaPreviousArtifacts := {
+    if (CrossVersion.partialVersion(scalaVersion.value) == Some((2, 13))) {
+      // Skip mima check since we don't have a Scala 2.13 release yet.
+      // TODO Update this after releasing 1.1.0.
+      Set.empty
+    } else {
+      Set("io.delta" %% "delta-core" % getPrevVersion(version.value))
+    }
+  },
   mimaBinaryIssueFilters ++= MimaExcludes.ignoredABIProblems
 )
 
@@ -267,7 +298,10 @@ import ReleaseTransformations._
 
 lazy val releaseSettings = Seq(
   publishMavenStyle := true,
-
+  publishArtifact := true,
+  Test / publishArtifact := false,
+  releasePublishArtifactsAction := PgpKeys.publishSigned.value,
+  releaseCrossBuild := true,
   publishTo := {
     val nexus = "https://oss.sonatype.org/"
     if (isSnapshot.value) {
@@ -276,25 +310,7 @@ lazy val releaseSettings = Seq(
       Some("releases"  at nexus + "service/local/staging/deploy/maven2")
     }
   },
-
-  releasePublishArtifactsAction := PgpKeys.publishSigned.value,
-
-  releaseCrossBuild := true,
-
-  releaseProcess := Seq[ReleaseStep](
-    checkSnapshotDependencies,
-    inquireVersions,
-    runTest,
-    setReleaseVersion,
-    commitReleaseVersion,
-    tagRelease,
-    releaseStepCommandAndRemaining("+publishLocalSigned"),
-    setNextVersion,
-    commitNextVersion
-  ),
-
   licenses += ("Apache-2.0", url("http://www.apache.org/licenses/LICENSE-2.0")),
-
   pomExtra :=
     <url>https://delta.io/</url>
       <scm>
@@ -342,6 +358,17 @@ lazy val releaseSettings = Seq(
 
 // Looks like some of release settings should be set for the root project as well.
 publishArtifact := false  // Don't release the root project
-publish := {}
+publish / skip := true
 publishTo := Some("snapshots" at "https://oss.sonatype.org/content/repositories/snapshots")
-releaseCrossBuild := false
+releaseCrossBuild := false  // Don't use sbt-release's cross facility
+releaseProcess := Seq[ReleaseStep](
+  checkSnapshotDependencies,
+  inquireVersions,
+  runTest,
+  setReleaseVersion,
+  commitReleaseVersion,
+  tagRelease,
+  releaseStepCommandAndRemaining("+publishSigned"),
+  setNextVersion,
+  commitNextVersion
+)

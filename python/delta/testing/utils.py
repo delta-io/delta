@@ -27,7 +27,7 @@ class DeltaTestCase(unittest.TestCase):
     """Test class base that sets up a correctly configured SparkSession for querying Delta tables.
     """
 
-    def setUp(self):
+    def setUp(self) -> None:
         self._old_sys_path = list(sys.path)
         class_name = self.__class__.__name__
         self.warehouse_dir = tempfile.mkdtemp()
@@ -49,7 +49,7 @@ class DeltaTestCase(unittest.TestCase):
         self.tempPath = tempfile.mkdtemp()
         self.tempFile = os.path.join(self.tempPath, "tempFile")
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         self.sc.stop()
         shutil.rmtree(self.tempPath)
         if os.path.exists(self.warehouse_dir) and os.path.isdir(self.warehouse_dir):

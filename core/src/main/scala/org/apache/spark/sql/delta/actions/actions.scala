@@ -160,7 +160,7 @@ object Protocol {
       minimumRequired = DeltaColumnMapping.MIN_PROTOCOL_VERSION
     }
 
-    minimumRequired -> featuresUsed
+    minimumRequired -> featuresUsed.toSeq
   }
 
   /** Cast the table property for the protocol version to an integer. */
@@ -460,6 +460,11 @@ trait CommitMarker {
  * Holds provenance information about changes to the table. This [[Action]]
  * is not stored in the checkpoint and has reduced compatibility guarantees.
  * Information stored in it is best effort (i.e. can be falsified by the writer).
+ *
+ * @param isBlindAppend Whether this commit has blindly appended without caring about existing files
+ * @param engineInfo The information for the engine that makes the commit.
+ *                   If a commit is made by Delta Lake 1.1.0 or above, it will be
+ *                   `Apache-Spark/x.y.z Delta-Lake/x.y.z`.
  */
 case class CommitInfo(
     // The commit version should be left unfilled during commit(). When reading a delta file, we can
@@ -478,11 +483,11 @@ case class CommitInfo(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     readVersion: Option[Long],
     isolationLevel: Option[String],
-    /** Whether this commit has blindly appended without caring about existing files */
     isBlindAppend: Option[Boolean],
     operationMetrics: Option[Map[String, String]],
     userMetadata: Option[String],
-    tags: Option[Map[String, String]]) extends Action with CommitMarker {
+    tags: Option[Map[String, String]],
+    engineInfo: Option[String]) extends Action with CommitMarker {
   override def wrap: SingleAction = SingleAction(commitInfo = this)
 
   override def withTimestamp(timestamp: Long): CommitInfo = {
@@ -526,7 +531,7 @@ object NotebookInfo {
 object CommitInfo {
   def empty(version: Option[Long] = None): CommitInfo = {
     CommitInfo(version, null, None, None, null, null, None, None,
-                None, None, None, None, None, None, None)
+      None, None, None, None, None, None, None, None)
   }
 
   def apply(
@@ -540,6 +545,7 @@ object CommitInfo {
       operationMetrics: Option[Map[String, String]],
       userMetadata: Option[String],
       tags: Option[Map[String, String]]): CommitInfo = {
+
     val getUserName = commandContext.get("user").flatMap {
       case "unknown" => None
       case other => Option(other)
@@ -560,7 +566,12 @@ object CommitInfo {
       isBlindAppend,
       operationMetrics,
       userMetadata,
-      tags)
+      tags,
+      getEngineInfo)
+  }
+
+  private def getEngineInfo: Option[String] = {
+    Some(s"Apache-Spark/${org.apache.spark.SPARK_VERSION} Delta-Lake/${io.delta.VERSION}")
   }
 
 }

@@ -21,12 +21,12 @@ import java.util.{Locale, UUID}
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
-import org.apache.spark.sql.delta.schema.SchemaMergingUtils
+import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 
-import org.apache.spark.sql.types.{DataType, Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
+import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.types.{Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
 
-object DeltaColumnMapping
-{
+trait DeltaColumnMappingBase {
   val MIN_WRITER_VERSION = 5
   val MIN_READER_VERSION = 2
   val MIN_PROTOCOL_VERSION = Protocol(MIN_READER_VERSION, MIN_WRITER_VERSION)
@@ -35,6 +35,24 @@ object DeltaColumnMapping
   val COLUMN_MAPPING_METADATA_PREFIX = "delta.columnMapping."
   val COLUMN_MAPPING_METADATA_ID_KEY = COLUMN_MAPPING_METADATA_PREFIX + "id"
   val COLUMN_MAPPING_PHYSICAL_NAME_KEY = COLUMN_MAPPING_METADATA_PREFIX + "physicalName"
+
+  /**
+   * This list of internal columns (and only this list) is allowed to have missing
+   * column mapping metadata such as field id and physical name because
+   * they might not be present in user's table schema.
+   *
+   * These fields, if materialized to parquet, will always be matched by their display name in the
+   * downstream parquet reader even under column mapping modes.
+   *
+   * For future developers who want to utilize additional internal columns without generating
+   * column mapping metadata, please add them here.
+   *
+   * This list is case-insensitive.
+   */
+  protected val DELTA_INTERNAL_COLUMNS: Set[String] = Set.empty
+
+  def isInternalField(field: StructField): Boolean = DELTA_INTERNAL_COLUMNS
+    .contains(field.name.toLowerCase(Locale.ROOT))
 
   def requiresNewProtocol(metadata: Metadata): Boolean =
     metadata.columnMappingMode match {
@@ -46,6 +64,17 @@ object DeltaColumnMapping
   def satisfyColumnMappingProtocol(protocol: Protocol): Boolean =
     protocol.minWriterVersion >= MIN_WRITER_VERSION &&
       protocol.minReaderVersion >= MIN_READER_VERSION
+
+  /**
+   * The only allowed mode change is from NoMapping to NameMapping. Other changes
+   * would require re-writing Parquet files and are not supported right now.
+   */
+  private def allowMappingModeChange(
+      oldMode: DeltaColumnMappingMode,
+      newMode: DeltaColumnMappingMode): Boolean = {
+    if (oldMode == newMode) true
+    else oldMode == NoMapping && newMode == NameMapping
+  }
 
   /**
    * If the table is already on the column mapping protocol, we block:
@@ -61,22 +90,29 @@ object DeltaColumnMapping
     // field in new metadata should have been dropped
     val oldMappingMode = oldMetadata.columnMappingMode
     val newMappingMode = newMetadata.columnMappingMode
-    if (satisfyColumnMappingProtocol(oldProtocol)) {
-      if (oldMappingMode != newMappingMode && !isCreatingNewTable) {
-        // block changing modes on new protocol
-        throw DeltaErrors.changeColumnMappingModeNotSupported
-      }
-    } else {
-      if (oldMappingMode != newMappingMode && !isCreatingNewTable) {
-        // block changing modes on old protocol
-        throw DeltaErrors.setColumnMappingModeOnOldProtocol(oldProtocol)
+
+    val isChangingModeOnExistingTable = oldMappingMode != newMappingMode && !isCreatingNewTable
+    if (isChangingModeOnExistingTable) {
+      if (!allowMappingModeChange(oldMappingMode, newMappingMode)) {
+        throw DeltaErrors.changeColumnMappingModeNotSupported(
+          oldMappingMode.name, newMappingMode.name)
+      } else {
+        // legal mode change, now check if protocol is upgraded before or part of this txn
+        val caseInsensitiveMap = CaseInsensitiveMap(newMetadata.configuration)
+        val newProtocol = new Protocol(
+          minReaderVersion = caseInsensitiveMap
+            .get(Protocol.MIN_READER_VERSION_PROP).map(_.toInt)
+            .getOrElse(oldProtocol.minReaderVersion),
+          minWriterVersion = caseInsensitiveMap
+            .get(Protocol.MIN_WRITER_VERSION_PROP).map(_.toInt)
+            .getOrElse(oldProtocol.minWriterVersion))
+
+        if (!satisfyColumnMappingProtocol(newProtocol)) {
+          throw DeltaErrors.changeColumnMappingModeOnOldProtocol(oldProtocol)
+        }
       }
     }
-    val updatedMetadata = tryFixMetadata(newMetadata, newMappingMode)
-    // Force the generation of the physical schema, which throws an exception if it fails,
-    // e.g., some columns don't have IDs in ID mode
-    updatedMetadata.schema
-    updatedMetadata
+    tryFixMetadata(oldMetadata, newMetadata, isChangingModeOnExistingTable)
   }
 
   def hasColumnId(field: StructField): Boolean =
@@ -97,9 +133,9 @@ object DeltaColumnMapping
         // drop all column mapping related fields
         new MetadataBuilder()
           .withMetadata(field.metadata)
-          .remove(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY)
-          .remove(DeltaColumnMapping.PARQUET_FIELD_ID_METADATA_KEY)
-          .remove(DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
+          .remove(COLUMN_MAPPING_METADATA_ID_KEY)
+          .remove(PARQUET_FIELD_ID_METADATA_KEY)
+          .remove(COLUMN_MAPPING_PHYSICAL_NAME_KEY)
           .build()
 
       case IdMapping =>
@@ -111,7 +147,7 @@ object DeltaColumnMapping
         }
         new MetadataBuilder()
           .withMetadata(field.metadata)
-          .putLong(DeltaColumnMapping.PARQUET_FIELD_ID_METADATA_KEY, getColumnId(field))
+          .putLong(PARQUET_FIELD_ID_METADATA_KEY, getColumnId(field))
           .build()
 
       case NameMapping =>
@@ -120,15 +156,14 @@ object DeltaColumnMapping
         }
         new MetadataBuilder()
           .withMetadata(field.metadata)
-          .remove(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY)
-          .remove(DeltaColumnMapping.PARQUET_FIELD_ID_METADATA_KEY)
+          .remove(COLUMN_MAPPING_METADATA_ID_KEY)
+          .remove(PARQUET_FIELD_ID_METADATA_KEY)
           .build()
 
       case mode =>
         throw DeltaErrors.unknownColumnMappingMode(mode.name)
     }
   }
-
 
   /**
    * Prepares the table schema, to be used by the readers and writers of the table.
@@ -180,13 +215,15 @@ object DeltaColumnMapping
   }
 
   def tryFixMetadata(
-      metadata: Metadata,
-      mappingMode: DeltaColumnMappingMode): Metadata = {
-    mappingMode match {
+      oldMetadata: Metadata,
+      newMetadata: Metadata,
+      isChangingModeOnExistingTable: Boolean): Metadata = {
+    val newMappingMode = DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(newMetadata)
+    newMappingMode match {
       case IdMapping | NameMapping =>
-        assignColumnIdAndPhysicalName(metadata)
+        assignColumnIdAndPhysicalName(newMetadata, oldMetadata, isChangingModeOnExistingTable)
       case NoMapping =>
-        metadata
+        newMetadata
       case mode =>
          throw DeltaErrors.unknownColumnMappingMode(mode.name)
     }
@@ -238,15 +275,21 @@ object DeltaColumnMapping
   /**
    * For each column/field in a Metadata's schema, assign id using the current maximum id
    * as the basis and increment from there, and assign physical name using UUID
-   * @param metadata Metadata whose schema to modify
-   * @return updated metadata
+   * @param newMetadata The new metadata to assign Ids and physical names
+   * @param oldMetadata The old metadata
+   * @param isChangingModeOnExistingTable whether this is part of a commit that changes the
+   *                                      mapping mode on a existing table
+   * @return new metadata with Ids and physical names assigned
    */
-  def assignColumnIdAndPhysicalName(metadata: Metadata): Metadata = {
-    val rawSchema = metadata.schema
-    var maxId = DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(metadata) max
+  def assignColumnIdAndPhysicalName(
+      newMetadata: Metadata,
+      oldMetadata: Metadata,
+      isChangingModeOnExistingTable: Boolean): Metadata = {
+    val rawSchema = newMetadata.schema
+    var maxId = DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(newMetadata) max
                 findMaxColumnId(rawSchema)
     val newSchema =
-      SchemaMergingUtils.transformColumns(rawSchema)((_, field, _) => {
+      SchemaMergingUtils.transformColumns(rawSchema)((path, field, _) => {
         val builder = new MetadataBuilder()
           .withMetadata(field.metadata)
         if (!hasColumnId(field)) {
@@ -254,15 +297,35 @@ object DeltaColumnMapping
           builder.putLong(COLUMN_MAPPING_METADATA_ID_KEY, maxId)
         }
         if (!hasPhysicalName(field)) {
-          builder.putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, generatePhysicalName)
+          val physicalName = if (isChangingModeOnExistingTable) {
+            val fullName = path :+ field.name
+            val existingField =
+              SchemaUtils.findNestedFieldIgnoreCase(
+                oldMetadata.schema, fullName, includeCollections = true)
+            if (existingField.isEmpty) {
+              throw DeltaErrors.schemaChangeDuringMappingModeChangeNotSupported(
+                oldMetadata.schema, newMetadata.schema)
+            } else {
+              // When changing from NoMapping to NameMapping mode, we directly use old display names
+              // as physical names. This is by design: 1) We don't need to rewrite the
+              // existing Parquet files, and 2) display names in no-mapping mode have all the
+              // properties required for physical names: unique, stable and compliant with Parquet
+              // column naming restrictions.
+              existingField.get.name
+            }
+          } else {
+            generatePhysicalName
+          }
+
+          builder.putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, physicalName)
         }
         field.copy(metadata = builder.build())
       })
 
-    metadata.copy(
+    newMetadata.copy(
       schemaString = newSchema.json,
       configuration =
-        metadata.configuration ++ Map(DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> maxId.toString)
+        newMetadata.configuration ++ Map(DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> maxId.toString)
     )
   }
 
@@ -271,14 +334,49 @@ object DeltaColumnMapping
       field.copy(
         metadata = new MetadataBuilder()
           .withMetadata(field.metadata)
-          .remove(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY)
-          .remove(DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
-          .remove(DeltaColumnMapping.PARQUET_FIELD_ID_METADATA_KEY)
+          .remove(COLUMN_MAPPING_METADATA_ID_KEY)
+          .remove(COLUMN_MAPPING_PHYSICAL_NAME_KEY)
+          .remove(PARQUET_FIELD_ID_METADATA_KEY)
           .build()
       )
     }
   }
+
+  /**
+   * Create a physical schema for the given schema using the Delta table schema as a reference.
+   *
+   * @param schema the given logical schema (potentially without any metadata)
+   * @param referenceSchema the schema from the delta log, which has all the metadata
+   * @param columnMappingMode column mapping mode of the delta table, which determines which
+   *                          metadata to fill in
+   */
+  def createPhysicalSchema(
+      schema: StructType,
+      referenceSchema: StructType,
+      columnMappingMode: DeltaColumnMappingMode): StructType = {
+    if (columnMappingMode == NoMapping) {
+      return schema
+    }
+    SchemaMergingUtils.transformColumns(schema) { (path, field, _) =>
+      val fullName = path :+ field.name
+      val inSchema = SchemaUtils
+        .findNestedFieldIgnoreCase(referenceSchema, fullName, includeCollections = true)
+      inSchema.map { refField =>
+        val sparkMetadata = getColumnMappingMetadata(refField, columnMappingMode)
+        field.copy(metadata = sparkMetadata, name = getPhysicalName(refField))
+      }.getOrElse {
+        if (isInternalField(field)) {
+          field
+        } else {
+          throw DeltaErrors.columnNotFound(fullName, referenceSchema)
+        }
+      }
+    }
+  }
+
 }
+
+object DeltaColumnMapping extends DeltaColumnMappingBase
 
 /**
  * A trait for Delta column mapping modes.

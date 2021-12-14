@@ -24,15 +24,13 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaOperations
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.constraints.{Constraint, Constraints, Invariants}
 import org.apache.spark.sql.delta.constraints.Constraints.NotNull
 import org.apache.spark.sql.delta.constraints.Invariants.PersistedExpression
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.delta.util.FileNames
 
-import org.apache.spark.SparkException
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.execution.streaming.MemoryStream
@@ -596,4 +594,167 @@ class InvariantEnforcementSuite extends QueryTest
       "2002-01-01 00:12:00")
   }
 
+
+  // Helper function to test with empty to null conf on and off.
+  private def testEmptyToNull(name: String)(f: => Any): Unit = {
+    // Suppress exceptions output for invariant violations
+    testQuietly(name) {
+      Seq(true, false).foreach { enabled =>
+        withSQLConf(
+          DeltaSQLConf.CONVERT_EMPTY_TO_NULL_FOR_STRING_PARTITION_COL.key -> enabled.toString) {
+          if (enabled) {
+            f
+          } else {
+            intercept[Exception](f)
+          }
+        }
+      }
+    }
+  }
+
+  testEmptyToNull("reject empty string for NOT NULL string partition column - create") {
+    val tblName = "empty_string_test"
+    withTable(tblName) {
+      sql(
+        s"""
+           |CREATE TABLE $tblName (
+           |  c1 INT,
+           |  c2 STRING NOT NULL
+           |) USING delta
+           |PARTITIONED BY (c2)
+           |""".stripMargin)
+      val ex = intercept[InvariantViolationException] (
+        sql(
+          s"""
+             |INSERT INTO $tblName values (1, '')
+             |""".stripMargin)
+      )
+      assert(ex.getMessage.contains("violated"))
+    }
+  }
+
+  testEmptyToNull("reject empty string for NOT NULL string partition column - multiple") {
+    val tblName = "empty_string_test"
+    withTable(tblName) {
+      sql(
+        s"""
+           |CREATE TABLE $tblName (
+           |  c1 INT,
+           |  c2 STRING NOT NULL,
+           |  c3 STRING
+           |) USING delta
+           |PARTITIONED BY (c2, c3)
+           |""".stripMargin)
+      val ex = intercept[InvariantViolationException] (
+        sql(
+          s"""
+             |INSERT INTO $tblName values (1, '', 'a')
+             |""".stripMargin)
+      )
+      assert(ex.getMessage.contains("violated"))
+      sql(
+        s"""
+           |INSERT INTO $tblName values (1, 'a', '')
+           |""".stripMargin)
+      checkAnswer(
+        sql(s"SELECT COUNT(*) from $tblName where c3 IS NULL"),
+        Row(1L)
+      )
+    }
+  }
+
+  testEmptyToNull("reject empty string for NOT NULL string partition column - multiple not null") {
+    val tblName = "empty_string_test"
+    withTable(tblName) {
+      sql(
+        s"""
+           |CREATE TABLE $tblName (
+           |  c1 INT,
+           |  c2 STRING NOT NULL,
+           |  c3 STRING NOT NULL
+           |) USING delta
+           |PARTITIONED BY (c2, c3)
+           |""".stripMargin)
+      val ex1 = intercept[InvariantViolationException] (
+        sql(
+          s"""
+             |INSERT INTO $tblName values (1, '', 'a')
+             |""".stripMargin)
+      )
+      assert(ex1.getMessage.contains("violated"))
+      val ex2 = intercept[InvariantViolationException] (
+        sql(
+          s"""
+             |INSERT INTO $tblName values (1, 'a', '')
+             |""".stripMargin)
+      )
+      assert(ex2.getMessage.contains("violated"))
+      val ex3 = intercept[InvariantViolationException] (
+        sql(
+          s"""
+             |INSERT INTO $tblName values (1, '', '')
+             |""".stripMargin)
+      )
+      assert(ex3.getMessage.contains("violated"))
+    }
+  }
+
+
+  testEmptyToNull("reject empty string in check constraint") {
+    val tblName = "empty_string_test"
+    withTable(tblName) {
+      sql(
+        s"""
+           |CREATE TABLE $tblName (
+           |  c1 INT,
+           |  c2 STRING
+           |) USING delta
+           |PARTITIONED BY (c2);
+           |""".stripMargin)
+      sql(
+        s"""
+           |ALTER TABLE $tblName ADD CONSTRAINT test CHECK (c2 IS NOT NULL)
+           |""".stripMargin)
+      intercept[InvariantViolationException] (
+        sql(
+          s"""
+             |INSERT INTO ${tblName} VALUES (1, "")
+             |""".stripMargin)
+      )
+    }
+  }
+
+  test("streaming with additional project") {
+    withSQLConf(DeltaSQLConf.CONVERT_EMPTY_TO_NULL_FOR_STRING_PARTITION_COL.key -> "true") {
+      val tblName = "test"
+      withTable(tblName) {
+        withTempDir { checkpointDir =>
+          sql(
+            s"""
+               |CREATE TABLE $tblName (
+               |  c1 INT,
+               |  c2 STRING
+               |) USING delta
+               |PARTITIONED BY (c2);
+               |""".stripMargin)
+          sql(
+            s"""
+               |ALTER TABLE $tblName ADD CONSTRAINT cons CHECK (c1 > 0)
+               |""".stripMargin)
+          val path = DeltaLog.forTable(spark, TableIdentifier(tblName)).dataPath.toString
+          val stream = MemoryStream[Int]
+          val q = stream.toDF()
+            .map(_ => Tuple2(1, "a"))
+            .toDF("c1", "c2")
+            .writeStream
+            .option("checkpointLocation", checkpointDir.getCanonicalPath)
+            .format("delta")
+            .start(path)
+          stream.addData(1)
+          q.processAllAvailable()
+          q.stop()
+        }
+      }
+    }
+  }
 }

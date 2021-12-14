@@ -34,8 +34,9 @@ import org.apache.spark.sql.catalyst.expressions.{And, AttributeReference, Expre
 import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform}
-import org.apache.spark.sql.execution.datasources.{FileIndex, HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.StructType
 
 /**
  * Extractor Object for pulling out the table scan of a Delta table. It could be a full scan
@@ -315,6 +316,23 @@ object DeltaTableUtils extends PredicateHelper
     }
   }
 
+
+  /**
+   * Update FileFormat for a plan and return the updated plan
+   *
+   * @param target Target plan to update
+   * @param updatedFileFormat Updated file format
+   * @return Updated logical plan
+   */
+  def replaceFileFormat(
+      target: LogicalPlan,
+      updatedFileFormat: FileFormat): LogicalPlan = {
+    target transform {
+      case l @ LogicalRelation(hfsr: HadoopFsRelation, _, _, _) =>
+        l.copy(
+          relation = hfsr.copy(fileFormat = updatedFileFormat)(hfsr.sparkSession))
+    }
+  }
 
   /**
    * Check if the given path contains time travel syntax with the `@`. If the path genuinely exists,

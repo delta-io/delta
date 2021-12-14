@@ -75,10 +75,9 @@ trait DeltaLogging
       } else {
         Map.empty[TagDefinition, String]
       }
-
       recordProductEvent(
         EVENT_TAHOE,
-        Map(TAG_OP_TYPE -> opType) ++ tableTags ++ tags,
+        Map((TAG_OP_TYPE: TagDefinition) -> opType) ++ tableTags ++ tags,
         blob = json)
     } catch {
       case NonFatal(e) =>
@@ -100,7 +99,7 @@ trait DeltaLogging
       opType: String,
       tags: Map[TagDefinition, String] = Map.empty)(
       thunk: => A): A = {
-    val tableTags = if (deltaLog != null) {
+    val tableTags: Map[TagDefinition, String] = if (deltaLog != null) {
       Map(
         TAG_TAHOE_PATH -> Try(deltaLog.dataPath.toString).getOrElse(null),
         TAG_TAHOE_ID -> Try(deltaLog.snapshot.metadata.id).getOrElse(null))

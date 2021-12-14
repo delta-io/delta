@@ -280,7 +280,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
         throw DeltaErrors.operationNotSupportedException(s"Partitioning by expressions")
     }
 
-    (identityCols, bucketSpec)
+    (identityCols.toSeq, bucketSpec)
   }
 
   /** Performs checks on the parameters provided for table creation for a Delta table. */

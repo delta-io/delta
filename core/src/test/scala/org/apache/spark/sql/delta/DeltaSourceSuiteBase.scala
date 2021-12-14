@@ -19,12 +19,39 @@ package org.apache.spark.sql.delta
 import java.io.File
 
 import org.apache.spark.sql.delta.actions.Format
+import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.streaming.StreamTest
 import org.apache.spark.sql.types.StructType
 
 trait DeltaSourceSuiteBase extends StreamTest {
+
+  /**
+   * Copy metadata for fields in newSchema from currentSchema
+   * @param newSchema new schema
+   * @param currentSchema current schema to reference
+   * @param columnMappingMode mode for column mapping
+   * @return updated new schema
+   */
+  protected def copyOverMetadata(
+      newSchema: StructType,
+      currentSchema: StructType,
+      columnMappingMode: DeltaColumnMappingMode): StructType = {
+    SchemaMergingUtils.transformColumns(newSchema) { (path, field, _) =>
+      val fullName = path :+ field.name
+      val inSchema = SchemaUtils.findNestedFieldIgnoreCase(
+        currentSchema, fullName, includeCollections = true
+      )
+      inSchema.map { refField =>
+        val sparkMetadata = DeltaColumnMapping.getColumnMappingMetadata(refField, columnMappingMode)
+        field.copy(metadata = sparkMetadata)
+      }.getOrElse {
+        field
+      }
+    }
+  }
+
   protected def withMetadata(
       deltaLog: DeltaLog,
       schema: StructType,
@@ -32,10 +59,18 @@ trait DeltaSourceSuiteBase extends StreamTest {
       tableId: Option[String] = None): Unit = {
     val txn = deltaLog.startTransaction()
     val baseMetadata = tableId.map { tId => txn.metadata.copy(id = tId) }.getOrElse(txn.metadata)
-    txn.commit(baseMetadata.copy(
-      schemaString = schema.json,
-      format = Format(format)
-    ) :: Nil, DeltaOperations.ManualUpdate)
+    // We need to fill up the missing id/physical name in column mapping mode
+    // while maintaining existing metadata if there is any
+    val updatedMetadata = copyOverMetadata(
+      schema, baseMetadata.schema,
+      baseMetadata.columnMappingMode)
+    txn.commit(
+      DeltaColumnMapping.assignColumnIdAndPhysicalName(
+        baseMetadata.copy(
+          schemaString = updatedMetadata.json,
+          format = Format(format)),
+        baseMetadata,
+        false) :: Nil, DeltaOperations.ManualUpdate)
   }
 
   object AddToReservoir {

@@ -64,7 +64,6 @@ class Snapshot(
     val minSetTransactionRetentionTimestamp: Option[Long] = None)
   extends StateCache
   with PartitionFiltering
-  with DeltaFileFormat
   with DeltaLogging {
 
   import Snapshot._

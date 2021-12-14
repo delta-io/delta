@@ -95,7 +95,8 @@ trait DocsPath {
     "faqRelativePath",
     "ignoreStreamingUpdatesAndDeletesWarning",
     "concurrentModificationExceptionMsg",
-    "incorrectLogStoreImplementationException"
+    "incorrectLogStoreImplementationException",
+    "columnRenameNotSupported"
   )
 }
 
@@ -1201,9 +1202,9 @@ object DeltaErrors
       s" for field $field and $field2", mode
     )
 
-  def changeColumnMappingModeNotSupported: Throwable = {
-    new ColumnMappingUnsupportedException("Changing column mapping mode using" +
-      s" config ${DeltaConfigs.COLUMN_MAPPING_MODE.key} is not supported.")
+  def changeColumnMappingModeNotSupported(oldMode: String, newMode: String): Throwable = {
+    new ColumnMappingUnsupportedException("Changing column mapping mode from" +
+      s" '$oldMode' to '$newMode' is not supported.")
   }
 
   def writesWithColumnMappingNotSupported: Throwable = {
@@ -1223,11 +1224,11 @@ object DeltaErrors
         s"cannot be set to `${mode.name}` when using CONVERT TO DELTA.")
   }
 
-  def setColumnMappingModeOnOldProtocol(oldProtocol: Protocol): Throwable = {
+  def changeColumnMappingModeOnOldProtocol(oldProtocol: Protocol): Throwable = {
     // scalastyle:off line.size.limit
     new ColumnMappingUnsupportedException(
       s"""
-         |Your current table protocol version does not support the setting of column mapping mode
+         |Your current table protocol version does not support changing column mapping modes
          |using ${DeltaConfigs.COLUMN_MAPPING_MODE.key}.
          |
          |Required Delta protocol version for column mapping:
@@ -1242,11 +1243,37 @@ object DeltaErrors
     // scalastyle:on line.size.limit
   }
 
-  def schemaChangeInColumnMappingProtocolNotSupported(
-      oldSchema: StructType,
-      newSchema: StructType,
-      mappingMode: DeltaColumnMappingMode): Throwable = {
+  def columnRenameNotSupported(spark: SparkSession, protocol: Protocol): Throwable = {
     // scalastyle:off line.size.limit
+    val adviceMsg = if (!DeltaColumnMapping.satisfyColumnMappingProtocol(protocol)) {
+      s"""
+         |Please upgrade your Delta table to reader version 2 and writer version 5 (Refer to table versioning at ${generateDocsLink(spark.sparkContext.getConf, "/versioning.html")})
+         | and change the column mapping mode to name mapping. You can use the following command:
+         |
+         | ALTER TABLE <table_name> SET TBLPROPERTIES (
+         |   'delta.columnMapping.mode' = 'name',
+         |   'delta.minReaderVersion' = '2',
+         |   'delta.minWriterVersion' = '5')
+         |
+      """.stripMargin
+    } else {
+      s"""
+         |Please change the column mapping mode to name mapping mode. You can use the following command:
+         |
+         | ALTER TABLE <table_name> SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
+      """.stripMargin
+    }
+
+    new AnalysisException(
+      s"""
+         |Column rename is not supported for your Delta table. $adviceMsg
+         |""".stripMargin)
+    // scalastyle:on line.size.limit
+  }
+
+  def schemaChangeDuringMappingModeChangeNotSupported(
+      oldSchema: StructType,
+      newSchema: StructType): Throwable =
     new ColumnMappingUnsupportedException(
       s"""
          |Schema change is detected:
@@ -1257,11 +1284,9 @@ object DeltaErrors
          |new schema:
          |${formatSchema(newSchema)}
          |
-         |Schema changes are not allowed in column mapping mode `$mappingMode`.
+         |Schema changes are not allowed during the change of column mapping mode.
          |
          |""".stripMargin)
-    // scalastyle:on line.size.limit
-  }
 
   def foundInvalidCharsInColumnNames(cause: Throwable): Throwable = {
     var adviceMsg = "Please use alias to rename it."

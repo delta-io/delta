@@ -56,10 +56,14 @@ setup(
         "Operating System :: OS Independent",
         "Topic :: Software Development :: Libraries :: Python Modules",
         "Programming Language :: Python :: 3",
+        "Typing :: Typed",
     ],
     keywords='delta.io',
     package_dir={'': 'python'},
     packages=['delta'],
+    package_data={
+        'delta': ['py.typed'],
+    },
     install_requires=[
         'pyspark>=3.2.0,<3.3.0',
         'importlib_metadata>=1.0.0',

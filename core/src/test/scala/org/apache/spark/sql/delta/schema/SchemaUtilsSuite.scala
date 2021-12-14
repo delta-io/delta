@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.schema
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
+import java.util.regex.Pattern
 
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
@@ -43,6 +44,16 @@ class SchemaUtilsSuite extends QueryTest
     val msg = e.getMessage.toLowerCase(Locale.ROOT)
     assert(shouldContain.map(_.toLowerCase(Locale.ROOT)).forall(msg.contains),
       s"Error message '$msg' didn't contain: $shouldContain")
+  }
+
+  private def expectFailurePattern(shouldContainPatterns: String*)(f: => Unit): Unit = {
+    val e = intercept[AnalysisException] {
+      f
+    }
+    val patterns =
+      shouldContainPatterns.map(regex => Pattern.compile(regex, Pattern.CASE_INSENSITIVE))
+    assert(patterns.forall(_.matcher(e.getMessage).find()),
+      s"Error message '${e.getMessage}' didn't contain the patterns: $shouldContainPatterns")
   }
 
   /////////////////////////////
@@ -1046,7 +1057,12 @@ class SchemaUtilsSuite extends QueryTest
       mergeSchemas(base, new StructType()
         .add("struct", new StructType().add("a", DateType)))
     }
-    expectFailure("'struct'", "structType", "MapType") {
+    // StructType's toString is different between Scala 2.12 and 2.13.
+    // - In Scala 2.12, it extends `scala.collection.Seq` which returns
+    //   `StructType(StructField(a,IntegerType,true))`.
+    // - In Scala 2.13, it extends `scala.collection.immutable.Seq` which returns
+    //   `Seq(StructField(a,IntegerType,true))`.
+    expectFailurePattern("'struct'", "StructType|Seq\\(", "MapType") {
       mergeSchemas(base, new StructType()
         .add("struct", MapType(StringType, IntegerType)))
     }
@@ -1062,7 +1078,8 @@ class SchemaUtilsSuite extends QueryTest
       mergeSchemas(base, new StructType()
         .add("array", ArrayType(new StructType().add("b", DecimalType(16, 10)))))
     }
-    expectFailure("'map'", "MapType", "StructType") {
+    // See the above comment about `StructType`
+    expectFailurePattern("'map'", "MapType", "StructType|Seq\\(") {
       mergeSchemas(base, new StructType()
         .add("map", new StructType().add("b", StringType)))
     }
@@ -1405,5 +1422,93 @@ class SchemaUtilsSuite extends QueryTest
     // Dot in the column name should be converted correctly
     assert(SchemaUtils.fieldToColumn(StructField("a.b", IntegerType)).expr ==
       new UnresolvedAttribute("a.b" :: Nil))
+  }
+
+  ////////////////////////////
+  // findNestedFieldIgnoreCase
+  ////////////////////////////
+
+  test("complex schema access") {
+    val st = StringType
+    val it = IntegerType
+    def m(a: DataType, b: DataType): MapType = MapType(a, b)
+    def a(el: DataType): ArrayType = ArrayType(el)
+    def struct(el: DataType): StructType = new StructType().add("f1", el)
+
+    val schema = new StructType()
+      .add("a", it)
+      .add("b", struct(st))
+      .add("c", struct(struct(struct(st))))
+      .add("d", a(it))
+      .add("e", a(a(it)))
+      .add("f", a(a(struct(st))))
+      .add("g", m(m(st, it), m(st, it)))
+      .add("h", m(a(st), a(it)))
+      .add("i", m(a(struct(st)), a(struct(st))))
+      .add("j", m(m(struct(st), struct(it)), m(struct(st), struct(it))))
+      .add("k", m(struct(a(a(struct(a(struct(st)))))),
+                m(m(struct(st), struct(it)), m(struct(st), struct(it)))))
+
+    def find(names: Seq[String]): Option[StructField] =
+      SchemaUtils.findNestedFieldIgnoreCase(schema, names, true)
+
+    val checks = Map(
+      "a" -> it,
+      "b" -> struct(st),
+      "b.f1" -> st,
+      "c.f1.f1.f1" -> st,
+      "d.element" -> it,
+      "e.element.element" -> it,
+      "f.element.element.f1" -> st,
+      "g.key.key" -> st,
+      "g.key.value" -> it,
+      "g.value.key" -> st,
+      "g.value.value" -> it,
+      "h.key.element" -> st,
+      "h.value.element" -> it,
+      "i.key.element.f1" -> st,
+      "i.value.element.f1" -> st,
+      "j.key.key.f1" -> st,
+      "j.key.value.f1" -> it,
+      "j.value.key.f1" -> st,
+      "j.value.value.f1" -> it,
+      "k.key.f1.element.element.f1.element.f1" -> st,
+      "k.value.key.key.f1" -> st,
+      "k.value.key.value.f1" -> it,
+      "k.value.value.key.f1" -> st,
+      "k.value.value.value.f1" -> it
+    )
+
+    checks.foreach { pair =>
+      val (key, t) = pair
+      val path = key.split('.')
+      val f = find(path)
+      assert(f.isDefined, s"cannot find $key")
+      assert(f.get.name == path.last && f.get.dataType == t)
+    }
+
+    val negativeChecks = Seq(
+      "x",
+      "b.f2",
+      "c.f1.f2",
+      "c.f1.f1.f2",
+      "d.f1",
+      "d.element.f1",
+      "e.element.element.f1",
+      "f.element.key.f1",
+      "g.key.element",
+      "g.key.keyy",
+      "g.key.valuee",
+      "h.key.element.f1",
+      "k.key.f1.element.element.f2.element.f1",
+      "k.value.value.f1"
+    )
+
+    negativeChecks.foreach { key =>
+      val path = key.split('.')
+      val f = find(path)
+      assert(f.isEmpty, s"$key should be empty")
+    }
+
   }
 }

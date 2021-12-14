@@ -48,8 +48,8 @@ case class SaveAsTable(tableName: String) extends SaveOperation {
   override def apply(dfw: DataFrameWriter[_]): Unit = dfw.saveAsTable(tableName)
 }
 
-sealed trait SchemaEnforcementSuiteBase
-  extends QueryTest with SharedSparkSession {
+sealed trait SchemaEnforcementSuiteBase extends QueryTest
+    with SharedSparkSession {
   protected def enableAutoMigration(f: => Unit): Unit = {
     withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
       f
