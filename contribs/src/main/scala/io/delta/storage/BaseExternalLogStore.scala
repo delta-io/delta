@@ -339,6 +339,7 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
         // Since overwrite is true, we do not expect any FileAlreadyExistsExceptions
         writeCache(fs, completedEntry, overwrite = true)
 
+        // TODO: this is the wrong lastModifiedTime (it is for T(N) not for N.json)
         return Some(completedEntry.asFileStatus(fs))
       } catch {
         case NonFatal(e) =>

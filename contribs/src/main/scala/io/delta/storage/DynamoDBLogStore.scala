@@ -155,6 +155,7 @@ class DynamoDBLogStore(
               "parentPath" -> new Condition()
                 .withComparisonOperator(ComparisonOperator.EQ)
                 .withAttributeValueList(new AttributeValue(parentPathStr)),
+              // TODO: complete=true
               "modificationTime" -> new Condition()
                 .withComparisonOperator(ComparisonOperator.LE)
                 .withAttributeValueList(new AttributeValue().withN(expirationTime.toString))
