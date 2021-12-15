@@ -21,11 +21,13 @@ import java.util.Collections
 import scala.collection.JavaConverters._
 
 import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.Path
 
 import io.delta.standalone.DeltaLog
 import io.delta.standalone.actions.{Action => ActionJ, AddFile => AddFileJ, CommitInfo, Metadata => MetadataJ, Protocol, SetTransaction => SetTransactionJ}
 import io.delta.standalone.types.{IntegerType, StringType, StructField, StructType}
 
+import io.delta.standalone.internal.actions.{AddFile, Metadata}
 import io.delta.standalone.internal.util.TestUtils._
 
 class OptimisticTransactionSuite
@@ -262,5 +264,49 @@ class OptimisticTransactionSuite
     // change of datatype - not all files are removed (should throw)
     testSchemaChange(schema1, schema2, shouldThrow = true, initialActions = addA :: addB :: Nil,
       commitActions = removeA :: Nil)
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // prepareCommit() relativizes AddFile paths
+  ///////////////////////////////////////////////////////////////////////////
+
+  test("converts absolute path to relative path when in table path") {
+    withTempDir { dir =>
+      val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
+      val txn = log.startTransaction()
+      val addFile = AddFile(dir.getCanonicalPath + "/path/to/file/test.parquet", Map(), 0, 0, true)
+      txn.commit(Metadata() :: addFile :: Nil, op, "test")
+
+      val committedAddFile = log.update().getAllFiles.asScala.head
+      assert(committedAddFile.getPath == "path/to/file/test.parquet")
+    }
+  }
+
+  test("relative path is unchanged") {
+    withTempDir { dir =>
+      val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
+      val txn = log.startTransaction()
+      val addFile = AddFile("path/to/file/test.parquet", Map(), 0, 0, true)
+      txn.commit(Metadata() :: addFile :: Nil, op, "test")
+
+      val committedAddFile = log.update().getAllFiles.asScala.head
+      assert(committedAddFile.getPath == "path/to/file/test.parquet")
+    }
+  }
+
+  test("absolute path is unaltered and made fully qualified when not in table path") {
+    withTempDir { dir =>
+      val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
+      val txn = log.startTransaction()
+      val addFile = AddFile("/absolute/path/to/file/test.parquet", Map(), 0, 0, true)
+      txn.commit(Metadata() :: addFile :: Nil, op, "test")
+
+      val committedAddFile = log.update().getAllFiles.asScala.head
+      val committedPath = new Path(committedAddFile.getPath)
+      // Path is fully qualified
+      assert(committedPath.isAbsolute && !committedPath.isAbsoluteAndSchemeAuthorityNull)
+      // Path is unaltered
+      assert(committedAddFile.getPath === "file:/absolute/path/to/file/test.parquet")
+    }
   }
 }

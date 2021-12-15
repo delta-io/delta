@@ -34,6 +34,12 @@ public interface OptimisticTransaction {
      * Modifies the state of the log by adding a new commit that is based on a read at the table's
      * latest version as of this transaction's instantiation. In the case of a conflict with a
      * concurrent writer this method will throw an exception.
+     * <p>
+     * Note: any {@link io.delta.standalone.actions.AddFile} with an absolute path within the table
+     * path will be updated to have a relative path (based off of the table path). Because of this,
+     * be sure to generate all {@link io.delta.standalone.actions.RemoveFile}s using
+     * {@link io.delta.standalone.actions.AddFile}s read from the Delta Log (do not use the
+     * {@link io.delta.standalone.actions.AddFile}s created pre-commit.)
      *
      * @param <T>  A derived class of {@link Action}. This allows, for example, both a
      *             {@code List<Action>} and a {@code List<AddFile>} to be accepted.

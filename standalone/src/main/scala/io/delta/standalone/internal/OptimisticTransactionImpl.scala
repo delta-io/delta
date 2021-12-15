@@ -22,6 +22,8 @@ import java.util.UUID
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
+import org.apache.hadoop.fs.Path
+
 import io.delta.standalone.{CommitResult, DeltaScan, NAME, Operation, OptimisticTransaction, VERSION}
 import io.delta.standalone.actions.{Action => ActionJ, Metadata => MetadataJ}
 import io.delta.standalone.exceptions.DeltaStandaloneException
@@ -32,6 +34,7 @@ import io.delta.standalone.internal.actions.{Action, AddFile, CommitInfo, FileAc
 import io.delta.standalone.internal.exception.DeltaErrors
 import io.delta.standalone.internal.logging.Logging
 import io.delta.standalone.internal.util.{ConversionUtils, FileNames, SchemaMergingUtils, SchemaUtils}
+import io.delta.standalone.internal.util.DeltaFileOperations
 
 private[internal] class OptimisticTransactionImpl(
     deltaLog: DeltaLogImpl,
@@ -216,8 +219,20 @@ private[internal] class OptimisticTransactionImpl(
     val customCommitInfo = actions.exists(_.isInstanceOf[CommitInfo])
     assert(!customCommitInfo, "Cannot commit a custom CommitInfo in a transaction.")
 
+    // Convert AddFile paths to relative paths if they're in the table path
+    var finalActions = actions.map {
+      case addFile: AddFile =>
+        addFile.copy(path =
+          DeltaFileOperations.tryRelativizePath(
+            deltaLog.fs,
+            deltaLog.getPath,
+            new Path(addFile.path)
+          ).toString)
+      case a: Action => a
+    }
+
     // If the metadata has changed, add that to the set of actions
-    var finalActions = newMetadata.toSeq ++ actions
+    finalActions = newMetadata.toSeq ++ finalActions
 
     val metadataChanges = finalActions.collect { case m: Metadata => m }
     assert(metadataChanges.length <= 1,

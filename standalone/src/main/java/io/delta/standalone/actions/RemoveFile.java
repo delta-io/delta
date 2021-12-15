@@ -28,7 +28,9 @@ import javax.annotation.Nullable;
  * deleted permanently.
  * <p>
  * Users should only instantiate {@link RemoveFile} instances using one of the various
- * {@link AddFile#remove()} methods.
+ * {@link AddFile#remove()} methods. Users should use an {@link AddFile} instance read from the
+ * Delta Log since {@link AddFile} paths may be updated during
+ * {@link io.delta.standalone.OptimisticTransaction#commit}.
  * <p>
  * Note that for protocol compatibility reasons, the fields {@code partitionValues},
  * {@code size}, and {@code tags} are only present when the {@code extendedFileMetadata} flag is
@@ -60,7 +62,10 @@ public class RemoveFile implements FileAction {
      * Users should <b>not</b> construct {@link RemoveFile}s themselves, and should instead use one
      * of the various {@link AddFile#remove()} methods to instantiate the correct {@link RemoveFile}
      * for a given {@link AddFile} instance.
+     *
+     * @deprecated {@link RemoveFile} should be created from {@link AddFile#remove()} instead.
      */
+    @Deprecated
     public RemoveFile(
             @Nonnull String path,
             @Nonnull Optional<Long> deletionTimestamp,
