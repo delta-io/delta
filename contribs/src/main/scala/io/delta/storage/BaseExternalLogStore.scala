@@ -340,6 +340,7 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
         writeCache(fs, completedEntry, overwrite = true)
 
         // TODO: this is the wrong lastModifiedTime (it is for T(N) not for N.json)
+        // TODO: use fs.getFileStatus(entry.path) instead
         return Some(completedEntry.asFileStatus(fs))
       } catch {
         case NonFatal(e) =>
