@@ -104,7 +104,9 @@ class DeltaCatalog extends DelegatingCatalogExtension
     val isByPath = isPathIdentifier(ident)
     if (isByPath && !conf.getConf(DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS)
       && allTableProperties.containsKey("location")
-      && Option(ident.name()) != Option(allTableProperties.get("location"))
+      // The location property can be qualified and different from the path in the identifier, so
+      // we check `endsWith` here.
+      && Option(allTableProperties.get("location")).exists(!_.endsWith(ident.name()))
     ) {
       throw DeltaErrors.ambiguousPathsInCreateTableException(
         ident.name(), allTableProperties.get("location"))
