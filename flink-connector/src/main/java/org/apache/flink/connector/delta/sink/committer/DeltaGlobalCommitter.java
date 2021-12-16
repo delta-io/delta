@@ -19,11 +19,14 @@
 package org.apache.flink.connector.delta.sink.committer;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import javax.annotation.Nullable;
@@ -245,6 +248,7 @@ public class DeltaGlobalCommitter
         long checkpointId = committables.get(0).getCheckpointId();
 
         List<AddFile> addFileActions = new ArrayList<>();
+        Set<String> partitionColumnsSet = null;
         long numOutputRows = 0;
         long numOutputBytes = 0;
         for (DeltaCommittable deltaCommittable : committables) {
@@ -252,11 +256,32 @@ public class DeltaGlobalCommitter
             AddFile action = deltaPendingFile.toAddFile();
             addFileActions.add(action);
 
+            Set<String> currentPartitionCols = deltaPendingFile.getPartitionSpec().keySet();
+            if (partitionColumnsSet == null) {
+                partitionColumnsSet = currentPartitionCols;
+            }
+            boolean isPartitionColumnsMetadataRetained = compareKeysOfLinkedSets(
+                currentPartitionCols,
+                partitionColumnsSet);
+            if (!isPartitionColumnsMetadataRetained) {
+                throw new RuntimeException(
+                    "Partition columns cannot differ for files in the same checkpointId. " +
+                        "checkpointId = " + checkpointId + ", " +
+                        "file = " + deltaPendingFile.getFileName() + ", " +
+                        "partition columns = " +
+                        String.join(",", deltaPendingFile.getPartitionSpec().keySet()) +
+                        " does not comply with partition columns from other committables: " +
+                        String.join(",", partitionColumnsSet)
+                );
+            }
+
             numOutputRows += deltaPendingFile.getRecordCount();
             numOutputBytes += deltaPendingFile.getFileSize();
         }
 
-        handleMetadataUpdate(tableExists, transaction);
+        List<String> partitionColumns = partitionColumnsSet == null
+            ? Collections.emptyList() : new ArrayList<>(partitionColumnsSet);
+        handleMetadataUpdate(tableExists, transaction, partitionColumns);
 
         List<Action> actions = prepareActionsForTransaction(appId, checkpointId, addFileActions);
         Map<String, String> operationMetrics = prepareOperationMetrics(
@@ -264,7 +289,10 @@ public class DeltaGlobalCommitter
             numOutputRows,
             numOutputBytes
         );
-        Operation operation = prepareDeltaLogOperation(operationMetrics);
+        Operation operation = prepareDeltaLogOperation(
+            partitionColumns,
+            operationMetrics
+        );
 
         transaction.commit(actions, operation, ENGINE_INFO);
     }
@@ -288,27 +316,30 @@ public class DeltaGlobalCommitter
      * </ol>
      * <p>
      *
-     * @param tableExists indicator whether table already exists or will be created with the next
-     *                    commit
-     * @param transaction DeltaLog's transaction object
+     * @param tableExists      indicator whether table already exists or will be created with the
+     *                         next commit
+     * @param transaction      DeltaLog's transaction object
+     * @param partitionColumns list of partitions for the current data stream
      */
     private void handleMetadataUpdate(boolean tableExists,
-                                      OptimisticTransaction transaction) {
+                                      OptimisticTransaction transaction,
+                                      List<String> partitionColumns) {
         Metadata currentMetadata = transaction.metadata();
+        if (tableExists && (!partitionColumns.equals(currentMetadata.getPartitionColumns()))) {
+            throw new RuntimeException(
+                "Stream's partition columns are different from table's partitions columns. \n" +
+                    "Columns in data files: " + Arrays.toString(partitionColumns.toArray()) + "\n" +
+                    "Columns in table: " +
+                    Arrays.toString(currentMetadata.getPartitionColumns().toArray()));
+        }
+
         StructType currentTableSchema = currentMetadata.getSchema();
         StructType streamSchema = SchemaConverter.toDeltaDataType(rowType);
         boolean schemasAreMatching = areSchemasEqual(currentTableSchema, streamSchema);
         if (!tableExists || (!schemasAreMatching && shouldTryUpdateSchema)) {
-            Metadata updatedMetadata = new Metadata
-                .Builder()
-                .id(currentMetadata.getId())
-                .name(currentMetadata.getName())
-                .description(currentMetadata.getDescription())
-                .format(currentMetadata.getFormat())
-                // below line will be changed in the next PR
-                .partitionColumns(currentMetadata.getPartitionColumns())
-                .configuration(currentMetadata.getConfiguration())
+            Metadata updatedMetadata = currentMetadata.copyBuilder()
                 .schema(streamSchema)
+                .partitionColumns(partitionColumns)
                 .build();
             transaction.updateMetadata(updatedMetadata);
         } else if (!schemasAreMatching) {
@@ -353,14 +384,21 @@ public class DeltaGlobalCommitter
     /**
      * Prepares {@link Operation} object for current transaction
      *
+     * @param partitionColumns partition columns for data in current transaction
      * @param operationMetrics resolved operation metrics for current transaction
      * @return {@link Operation} object for current transaction
      */
-    private Operation prepareDeltaLogOperation(Map<String, String> operationMetrics) {
+    private Operation prepareDeltaLogOperation(List<String> partitionColumns,
+                                               Map<String, String> operationMetrics) {
         Map<String, String> operationParameters = new HashMap<>();
         try {
             ObjectMapper objectMapper = new ObjectMapper();
             operationParameters.put("mode", objectMapper.writeValueAsString(APPEND_MODE));
+            // we need to perform mapping to JSON object twice for partition columns. First to map
+            // the list to string type and then again to make this string JSON encoded
+            // e.g. java array of ["a", "b"] will be mapped as string "[\"a\",\"c\"]"
+            operationParameters.put("partitionBy", objectMapper.writeValueAsString(
+                objectMapper.writeValueAsString(partitionColumns)));
         } catch (JsonProcessingException e) {
             throw new RuntimeException("Cannot map object to JSON", e);
         }
@@ -414,6 +452,24 @@ public class DeltaGlobalCommitter
         operationMetrics.put(Operation.Metrics.numOutputRows, String.valueOf(numOutputRows));
         operationMetrics.put(Operation.Metrics.numOutputBytes, String.valueOf(numOutputBytes));
         return operationMetrics;
+    }
+
+    /**
+     * Simple method for comparing the order and equality of keys in two linked sets
+     *
+     * @param first  instance of linked set to be compared
+     * @param second instance of linked set to be compared
+     * @return result of the comparison on order and equality of provided sets
+     */
+    private boolean compareKeysOfLinkedSets(Set<String> first, Set<String> second) {
+        Iterator<String> firstIterator = first.iterator();
+        Iterator<String> secondIterator = second.iterator();
+        while (firstIterator.hasNext() && secondIterator.hasNext()) {
+            if (!firstIterator.next().equals(secondIterator.next())) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override

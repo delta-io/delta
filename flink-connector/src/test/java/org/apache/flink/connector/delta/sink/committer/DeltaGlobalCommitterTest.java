@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Random;
 import java.util.UUID;
@@ -64,18 +65,43 @@ public class DeltaGlobalCommitterTest {
         tablePath = new Path(TEMPORARY_FOLDER.newFolder().toURI());
     }
 
+    @Test(expected = RuntimeException.class)
+    public void testWrongPartitionOrderWillFail() throws IOException {
+        //GIVEN
+        DeltaSinkTestUtils.initTestForPartitionedTable(tablePath.getPath());
+        DeltaGlobalCommitter globalCommitter = new DeltaGlobalCommitter(
+            DeltaSinkTestUtils.getHadoopConf(),
+            tablePath,
+            DeltaSinkTestUtils.TEST_ROW_TYPE,
+            false // shouldTryUpdateSchema
+        );
+        // the order of below partition spec is different from the one used when initializing test
+        // table
+        LinkedHashMap<String, String> partitionSpec = new LinkedHashMap<String, String>() {{
+                put("c", "d");
+                put("a", "b");
+            }};
+        List<DeltaCommittable> deltaCommittables =
+            DeltaSinkTestUtils.getListOfDeltaCommittables(3, partitionSpec);
+        List<DeltaGlobalCommittable> globalCommittables =
+            Collections.singletonList(new DeltaGlobalCommittable(deltaCommittables));
+
+        // WHEN
+        globalCommitter.commit(globalCommittables);
+    }
+
     @Test
     public void testCommitTwice() throws Exception {
         //GIVEN
         int numAddedFiles = 3;
-        DeltaSinkTestUtils.initTestForNonPartitionedTable(tablePath.getPath());
+        DeltaSinkTestUtils.initTestForPartitionedTable(tablePath.getPath());
         DeltaLog deltaLog = DeltaLog.forTable(
             DeltaSinkTestUtils.getHadoopConf(), tablePath.getPath());
         assertEquals(deltaLog.snapshot().getVersion(), 0);
         int initialTableFilesCount = deltaLog.snapshot().getAllFiles().size();
 
         List<DeltaCommittable> deltaCommittables = DeltaSinkTestUtils.getListOfDeltaCommittables(
-            numAddedFiles);
+            numAddedFiles, DeltaSinkTestUtils.getTestPartitionSpec());
         List<DeltaGlobalCommittable> globalCommittables =
             Collections.singletonList(new DeltaGlobalCommittable(deltaCommittables));
 
@@ -100,11 +126,12 @@ public class DeltaGlobalCommitterTest {
     @Test
     public void testShouldTryUpdateSchemaSetToTrue() throws IOException {
         //GIVEN
-        DeltaSinkTestUtils.initTestForNonPartitionedTable(tablePath.getPath());
+        DeltaSinkTestUtils.initTestForPartitionedTable(tablePath.getPath());
         DeltaLog deltaLog = DeltaLog.forTable(
             DeltaSinkTestUtils.getHadoopConf(), tablePath.getPath());
 
-        List<DeltaCommittable> deltaCommittables = DeltaSinkTestUtils.getListOfDeltaCommittables(3);
+        List<DeltaCommittable> deltaCommittables = DeltaSinkTestUtils.getListOfDeltaCommittables(
+            3, DeltaSinkTestUtils.getTestPartitionSpec());
         List<DeltaGlobalCommittable> globalCommittables =
             Collections.singletonList(new DeltaGlobalCommittable(deltaCommittables));
 
@@ -135,9 +162,10 @@ public class DeltaGlobalCommitterTest {
     @Test(expected = RuntimeException.class)
     public void testShouldTryUpdateSchemaSetToFalse() throws Exception {
         //GIVEN
-        DeltaSinkTestUtils.initTestForNonPartitionedTable(tablePath.getPath());
+        DeltaSinkTestUtils.initTestForPartitionedTable(tablePath.getPath());
 
-        List<DeltaCommittable> deltaCommittables = DeltaSinkTestUtils.getListOfDeltaCommittables(3);
+        List<DeltaCommittable> deltaCommittables = DeltaSinkTestUtils.getListOfDeltaCommittables(
+            3, DeltaSinkTestUtils.getTestPartitionSpec());
         List<DeltaGlobalCommittable> globalCommittables =
             Collections.singletonList(new DeltaGlobalCommittable(deltaCommittables));
 
@@ -153,9 +181,10 @@ public class DeltaGlobalCommitterTest {
     @Test(expected = RuntimeException.class)
     public void testShouldTryUpdateIncompatibleSchema() throws Exception {
         //GIVEN
-        DeltaSinkTestUtils.initTestForNonPartitionedTable(tablePath.getPath());
+        DeltaSinkTestUtils.initTestForPartitionedTable(tablePath.getPath());
 
-        List<DeltaCommittable> deltaCommittables = DeltaSinkTestUtils.getListOfDeltaCommittables(3);
+        List<DeltaCommittable> deltaCommittables = DeltaSinkTestUtils.getListOfDeltaCommittables(
+            3, DeltaSinkTestUtils.getTestPartitionSpec());
         List<DeltaGlobalCommittable> globalCommittables =
             Collections.singletonList(new DeltaGlobalCommittable(deltaCommittables));
 
@@ -164,6 +193,23 @@ public class DeltaGlobalCommitterTest {
             DeltaSinkTestUtils.dropOneColumnFromSchema(DeltaSinkTestUtils.TEST_ROW_TYPE);
 
         DeltaGlobalCommitter globalCommitter = getTestGlobalCommitter(updatedSchema);
+
+        // WHEN
+        globalCommitter.commit(globalCommittables);
+    }
+
+    @Test(expected = RuntimeException.class)
+    public void testWrongStreamPartitionValues() throws Exception {
+        //GIVEN
+        DeltaSinkTestUtils.initTestForPartitionedTable(tablePath.getPath());
+
+        List<DeltaCommittable> deltaCommittables = DeltaSinkTestUtils.getListOfDeltaCommittables(
+            1, getNonMatchingPartitionSpec());
+        List<DeltaGlobalCommittable> globalCommittables =
+            Collections.singletonList(new DeltaGlobalCommittable(deltaCommittables));
+
+        DeltaGlobalCommitter globalCommitter =
+            getTestGlobalCommitter(DeltaSinkTestUtils.TEST_ROW_TYPE);
 
         // WHEN
         globalCommitter.commit(globalCommittables);
@@ -219,8 +265,7 @@ public class DeltaGlobalCommitterTest {
         assertEquals(-1, deltaLog.snapshot().getVersion());
 
         List<DeltaCommittable> deltaCommittables1FirstTrial =
-            DeltaSinkTestUtils.getListOfDeltaCommittables(
-                numAddedFiles1FirstTrial, 1);
+            DeltaSinkTestUtils.getListOfDeltaCommittables(numAddedFiles1FirstTrial, 1);
         List<DeltaCommittable> deltaCommittables1SecondTrial =
             DeltaSinkTestUtils.getListOfDeltaCommittables(numAddedFiles1SecondTrial, 1);
         List<DeltaCommittable> deltaCommittables2 = DeltaSinkTestUtils.getListOfDeltaCommittables(
@@ -266,16 +311,61 @@ public class DeltaGlobalCommitterTest {
         }
     }
 
+    @Test(expected = RuntimeException.class)
+    public void testCommittablesFromDifferentCheckpointIntervalOneWithIncompatiblePartitions()
+        throws Exception {
+        //GIVEN
+        DeltaSinkTestUtils.initTestForPartitionedTable(tablePath.getPath());
+        int numAddedFiles1 = 3;
+        int numAddedFiles2 = 5;
+        DeltaLog deltaLog = DeltaLog.forTable(
+            DeltaSinkTestUtils.getHadoopConf(), tablePath.getPath());
+        assertEquals(0, deltaLog.snapshot().getVersion());
+        int initialNumberOfFiles = deltaLog.snapshot().getAllFiles().size();
+
+        List<DeltaCommittable> deltaCommittables1 = DeltaSinkTestUtils.getListOfDeltaCommittables(
+            numAddedFiles1, DeltaSinkTestUtils.getTestPartitionSpec(), 1);
+        List<DeltaCommittable> deltaCommittables2 = DeltaSinkTestUtils.getListOfDeltaCommittables(
+            numAddedFiles2, getNonMatchingPartitionSpec(), 2);
+
+        List<DeltaGlobalCommittable> globalCommittables = Arrays.asList(
+            new DeltaGlobalCommittable(deltaCommittables1),
+            new DeltaGlobalCommittable(deltaCommittables2)
+        );
+
+        DeltaGlobalCommitter globalCommitter =
+            getTestGlobalCommitter(DeltaSinkTestUtils.TEST_ROW_TYPE);
+
+        // WHEN
+        try {
+            globalCommitter.commit(globalCommittables);
+        } catch (Exception exc) {
+            // the commit should raise an exception for incompatible committables for the second
+            // checkpoint interval but correct committables for the first checkpoint interval should
+            // have been committed
+            deltaLog.update();
+            assertEquals(1, deltaLog.snapshot().getVersion());
+            assertEquals(
+                initialNumberOfFiles + numAddedFiles1, deltaLog.snapshot().getAllFiles().size());
+            // we rethrow the exception for the test to pass
+            throw exc;
+        }
+    }
+
     @Test
     public void testGlobalCommittableSerializerWithCommittables() throws IOException {
         // GIVEN
+        LinkedHashMap<String, String> partitionSpec = new LinkedHashMap<>();
+        partitionSpec.put("a", "b");
+        partitionSpec.put("c", "d");
+
         List<DeltaCommittable> deltaCommittables = Arrays.asList(
             new DeltaCommittable(
-                DeltaSinkTestUtils.getTestDeltaPendingFile(),
+                DeltaSinkTestUtils.getTestDeltaPendingFile(partitionSpec),
                 TEST_APP_ID,
                 TEST_CHECKPOINT_ID),
             new DeltaCommittable(
-                DeltaSinkTestUtils.getTestDeltaPendingFile(),
+                DeltaSinkTestUtils.getTestDeltaPendingFile(partitionSpec),
                 TEST_APP_ID,
                 TEST_CHECKPOINT_ID + 1)
         );
@@ -288,7 +378,8 @@ public class DeltaGlobalCommitterTest {
         for (int i = 0; i < deserialized.getDeltaCommittables().size(); i++) {
             DeltaSinkTestUtils.validateDeltaCommittablesEquality(
                 globalCommittable.getDeltaCommittables().get(i),
-                deserialized.getDeltaCommittables().get(i)
+                deserialized.getDeltaCommittables().get(i),
+                partitionSpec
             );
         }
     }
@@ -317,6 +408,13 @@ public class DeltaGlobalCommitterTest {
             schema,
             false // shouldTryUpdateSchema
         );
+    }
+
+    private LinkedHashMap<String, String> getNonMatchingPartitionSpec() {
+        LinkedHashMap<String, String> nonMatchingPartitionSpec =
+            DeltaSinkTestUtils.getTestPartitionSpec();
+        nonMatchingPartitionSpec.remove(nonMatchingPartitionSpec.keySet().toArray()[0]);
+        return nonMatchingPartitionSpec;
     }
 
     ///////////////////////////////////////////////////

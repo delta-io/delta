@@ -57,8 +57,11 @@ public class DeltaWriterBucketTest {
         DeltaWriterBucket<RowData> bucketWriter = getBucketWriter(bucketPath);
 
         // WHEN
-        List<DeltaCommittable> deltaCommittables =
-            onCheckpointActions(bucketWriter, bucketPath, false);
+        List<DeltaCommittable> deltaCommittables = onCheckpointActions(
+            bucketWriter,
+            bucketPath,
+            false // doCommit
+        );
 
         // THEN
         assertEquals(0, deltaCommittables.size());
@@ -217,7 +220,10 @@ public class DeltaWriterBucketTest {
     private static List<DeltaCommittable> onCheckpointActions(DeltaWriterBucket<RowData> bucket,
                                                               Path bucketPath,
                                                               boolean doCommit) throws IOException {
-        List<DeltaCommittable> deltaCommittables = bucket.prepareCommit(false, APP_ID, 1);
+        List<DeltaCommittable> deltaCommittables = bucket.prepareCommit(
+            false, // flush
+            APP_ID,
+            1);
         DeltaWriterBucketState bucketState = bucket.snapshotState(APP_ID, 1);
 
         assertEquals(BUCKET_ID, bucketState.getBucketId());
@@ -279,6 +285,8 @@ public class DeltaWriterBucketTest {
         DeltaWriterBucketState bucketState, DeltaWriterBucketState deserialized) {
         assertEquals(bucketState.getBucketId(), deserialized.getBucketId());
         assertEquals(bucketState.getBucketPath(), deserialized.getBucketPath());
+        assertEquals(bucketState.getAppId(), deserialized.getAppId());
+        assertEquals(bucketState.getCheckpointId(), deserialized.getCheckpointId());
     }
 
     private DeltaWriterBucketState serializeAndDeserialize(DeltaWriterBucketState bucketState)

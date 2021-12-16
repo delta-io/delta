@@ -28,12 +28,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Random;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.RestOptions;
 import org.apache.flink.connector.delta.sink.DeltaSink;
+import org.apache.flink.connector.delta.sink.DeltaTablePartitionAssigner;
 import org.apache.flink.connector.delta.sink.committables.DeltaCommittable;
 import org.apache.flink.connector.file.sink.utils.FileSinkTestUtils;
 import org.apache.flink.core.fs.FileSystem;
@@ -91,6 +93,12 @@ public class DeltaSinkTestUtils {
         return rows;
     }
 
+    public static RowData getTestRowDataEvent(String name,
+                                              String surname,
+                                              Integer age) {
+        return CONVERTER.toInternal(Row.of(name, surname, age));
+    }
+
     public static RowType addNewColumnToSchema(RowType schema) {
         List<RowType.RowField> fields = new ArrayList<>(schema.getFields());
         fields.add(new RowType.RowField("someNewField", new IntType()));
@@ -112,12 +120,26 @@ public class DeltaSinkTestUtils {
         return new LinkedHashMap<>();
     }
 
+    public static LinkedHashMap<String, String> getTestPartitionSpec() {
+        return new LinkedHashMap<String, String>() {{
+                put("a", "b");
+                put("c", "d");
+            }};
+    }
+
     public static final String TEST_DELTA_TABLE_INITIAL_STATE_NP_DIR =
         "test-data/test-non-partitioned-delta-table-initial-state";
     public static final String TEST_DELTA_TABLE_INITIAL_STATE_NP_FULL_PATH =
         DeltaSinkTestUtils.class
             .getClassLoader()
             .getResource(TEST_DELTA_TABLE_INITIAL_STATE_NP_DIR)
+            .getPath();
+    public static final String TEST_DELTA_TABLE_INITIAL_STATE_P_DIR =
+        "test-data/test-partitioned-delta-table-initial-state";
+    public static final String TEST_DELTA_TABLE_INITIAL_STATE_P_FULL_PATH =
+        DeltaSinkTestUtils.class
+            .getClassLoader()
+            .getResource(TEST_DELTA_TABLE_INITIAL_STATE_P_DIR)
             .getPath();
 
     public static void initTestForNonPartitionedTable(String targetTablePath)
@@ -127,12 +149,25 @@ public class DeltaSinkTestUtils {
             new File(targetTablePath));
     }
 
+    public static void initTestForPartitionedTable(String targetTablePath)
+        throws IOException {
+        FileUtils.copyDirectory(
+            new File(TEST_DELTA_TABLE_INITIAL_STATE_P_FULL_PATH),
+            new File(targetTablePath));
+    }
+
     ///////////////////////////////////////////////////////////////////////////
     // test delta pending files utils
     ///////////////////////////////////////////////////////////////////////////
 
     public static DeltaPendingFile getTestDeltaPendingFile() {
+        return getTestDeltaPendingFile(new LinkedHashMap<>());
+    }
+
+    public static DeltaPendingFile getTestDeltaPendingFile(
+        LinkedHashMap<String, String> partitionSpec) {
         return new DeltaPendingFile(
+            partitionSpec,
             "file_name-" + UUID.randomUUID(),
             new FileSinkTestUtils.TestPendingFileRecoverable(),
             new Random().nextInt(30000),
@@ -148,27 +183,36 @@ public class DeltaSinkTestUtils {
     static final String TEST_APP_ID = UUID.randomUUID().toString();
     static final long TEST_CHECKPOINT_ID = new Random().nextInt(10);
 
-    public static List<DeltaCommittable> getListOfDeltaCommittables(int size) {
-        return getListOfDeltaCommittables(size, TEST_CHECKPOINT_ID);
+    public static List<DeltaCommittable> getListOfDeltaCommittables(int size, long checkpointId) {
+        return getListOfDeltaCommittables(size, new LinkedHashMap<>(), checkpointId);
     }
 
-    public static List<DeltaCommittable> getListOfDeltaCommittables(int size, long checkpointId) {
+    public static List<DeltaCommittable> getListOfDeltaCommittables(
+        int size, LinkedHashMap<String, String> partitionSpec) {
+        return getListOfDeltaCommittables(size, partitionSpec, TEST_CHECKPOINT_ID);
+    }
+
+    public static List<DeltaCommittable> getListOfDeltaCommittables(
+        int size, LinkedHashMap<String, String> partitionSpec, long checkpointId) {
         List<DeltaCommittable> deltaCommittableList = new ArrayList<>();
         for (int i = 0; i < size; i++) {
             deltaCommittableList.add(
-                DeltaSinkTestUtils.getTestDeltaCommittableWithPendingFile(checkpointId)
+                DeltaSinkTestUtils.getTestDeltaCommittableWithPendingFile(
+                    partitionSpec, checkpointId)
             );
         }
         return deltaCommittableList;
     }
 
-    public static DeltaCommittable getTestDeltaCommittableWithPendingFile() {
-        return getTestDeltaCommittableWithPendingFile(TEST_CHECKPOINT_ID);
+    public static DeltaCommittable getTestDeltaCommittableWithPendingFile(
+        LinkedHashMap<String, String> partitionSpec) {
+        return getTestDeltaCommittableWithPendingFile(partitionSpec, TEST_CHECKPOINT_ID);
     }
 
-    public static DeltaCommittable getTestDeltaCommittableWithPendingFile(long checkpointId) {
+    public static DeltaCommittable getTestDeltaCommittableWithPendingFile(
+        LinkedHashMap<String, String> partitionSpec, long checkpointId) {
         return new DeltaCommittable(
-            DeltaSinkTestUtils.getTestDeltaPendingFile(),
+            DeltaSinkTestUtils.getTestDeltaPendingFile(partitionSpec),
             TEST_APP_ID,
             checkpointId
         );
@@ -176,7 +220,8 @@ public class DeltaSinkTestUtils {
 
     public static void validateDeltaCommittablesEquality(
         DeltaCommittable committable,
-        DeltaCommittable deserialized) {
+        DeltaCommittable deserialized,
+        LinkedHashMap<String, String> expectedPartitionSpec) {
         assertEquals(
             committable.getDeltaPendingFile().getPendingFile(),
             deserialized.getDeltaPendingFile().getPendingFile());
@@ -194,6 +239,9 @@ public class DeltaSinkTestUtils {
         assertEquals(
             committable.getDeltaPendingFile().getLastUpdateTime(),
             deserialized.getDeltaPendingFile().getLastUpdateTime());
+        assertEquals(
+            expectedPartitionSpec,
+            deserialized.getDeltaPendingFile().getPartitionSpec());
     }
 
     ///////////////////////////////////////////////////////////////////////////
@@ -286,12 +334,30 @@ public class DeltaSinkTestUtils {
     // IT case utils
     ///////////////////////////////////////////////////////////////////////////
 
-    public static DeltaSink<RowData> createDeltaSink(String deltaTablePath) {
+    public static DeltaSink<RowData> createDeltaSink(String deltaTablePath,
+                                                     boolean isTablePartitioned) {
+        if (isTablePartitioned) {
+            return DeltaSink
+                .forDeltaFormat(
+                    new Path(deltaTablePath),
+                    DeltaSinkTestUtils.getHadoopConf(),
+                    DeltaSinkTestUtils.TEST_ROW_TYPE,
+                    getTestPartitionAssigner()).build();
+        }
         return DeltaSink
             .forDeltaFormat(
                 new Path(deltaTablePath),
                 DeltaSinkTestUtils.getHadoopConf(),
                 DeltaSinkTestUtils.TEST_ROW_TYPE).build();
+    }
+
+    public static DeltaTablePartitionAssigner<RowData> getTestPartitionAssigner() {
+        DeltaTablePartitionAssigner.DeltaPartitionComputer<RowData> partitionComputer =
+            (element, context) -> new LinkedHashMap<String, String>() {{
+                    put("a", Integer.toString(ThreadLocalRandom.current().nextInt(0, 2)));
+                    put("c", Integer.toString(ThreadLocalRandom.current().nextInt(0, 2)));
+                }};
+        return new DeltaTablePartitionAssigner<>(partitionComputer);
     }
 
     public static MiniCluster getMiniCluster() {

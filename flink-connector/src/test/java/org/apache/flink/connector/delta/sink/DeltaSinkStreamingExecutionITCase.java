@@ -74,14 +74,19 @@ public class DeltaSinkStreamingExecutionITCase extends StreamingExecutionFileSin
     private static final Map<String, CountDownLatch> LATCH_MAP = new ConcurrentHashMap<>();
 
     @Parameterized.Parameters(
-        name = "triggerFailover = {0}"
+        name = "triggerFailover = {0}, isPartitioned = {1}"
     )
     public static Collection<Object[]> params() {
         return Arrays.asList(
-            new Object[]{false},
-            new Object[]{true}
+            new Object[]{false, false},
+            new Object[]{false, true},
+            new Object[]{true, false},
+            new Object[]{true, true}
         );
     }
+
+    @Parameterized.Parameter(1)
+    public Boolean isPartitioned;
 
     private String latchId;
     private String deltaTablePath;
@@ -92,8 +97,11 @@ public class DeltaSinkStreamingExecutionITCase extends StreamingExecutionFileSin
         LATCH_MAP.put(latchId, new CountDownLatch(NUM_SOURCES * 2));
         try {
             deltaTablePath = TEMPORARY_FOLDER.newFolder().getAbsolutePath();
-
-            DeltaSinkTestUtils.initTestForNonPartitionedTable(deltaTablePath);
+            if (isPartitioned) {
+                DeltaSinkTestUtils.initTestForPartitionedTable(deltaTablePath);
+            } else {
+                DeltaSinkTestUtils.initTestForNonPartitionedTable(deltaTablePath);
+            }
         } catch (IOException e) {
             throw new RuntimeException("Weren't able to setup the test dependencies", e);
         }
@@ -127,7 +135,6 @@ public class DeltaSinkStreamingExecutionITCase extends StreamingExecutionFileSin
         }
 
         // THEN
-        DeltaSinkTestUtils.validateIfPathContainsParquetFilesWithData(deltaTablePath);
         int writtenRecordsCount =
             DeltaSinkTestUtils.validateIfPathContainsParquetFilesWithData(deltaTablePath);
         assertEquals(NUM_RECORDS * NUM_SOURCES, writtenRecordsCount - initialTableRecordsCount);
@@ -167,7 +174,7 @@ public class DeltaSinkStreamingExecutionITCase extends StreamingExecutionFileSin
 
         env.addSource(new DeltaStreamingExecutionTestSource(latchId, NUM_RECORDS, triggerFailover))
             .setParallelism(NUM_SOURCES)
-            .sinkTo(DeltaSinkTestUtils.createDeltaSink(deltaTablePath))
+            .sinkTo(DeltaSinkTestUtils.createDeltaSink(deltaTablePath, isPartitioned))
             .setParallelism(NUM_SINKS);
 
         StreamGraph streamGraph = env.getStreamGraph();

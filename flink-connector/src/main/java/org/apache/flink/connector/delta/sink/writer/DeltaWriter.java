@@ -30,6 +30,7 @@ import org.apache.flink.annotation.Internal;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.connector.sink.Sink;
 import org.apache.flink.api.connector.sink.SinkWriter;
+import org.apache.flink.connector.delta.sink.DeltaTablePartitionAssigner;
 import org.apache.flink.connector.delta.sink.committables.DeltaCommittable;
 import org.apache.flink.connector.file.sink.writer.FileWriter;
 import org.apache.flink.core.fs.Path;
@@ -90,7 +91,8 @@ public class DeltaWriter<IN>
      * Unique identifier of the application that will be passed as part of committables' information
      * during {@link DeltaWriter#prepareCommit} method. It's also snapshotted as a part of the
      * writer's state in order to support failure recovery and provide exactly-once delivery
-     * guarantee.
+     * guarantee. This value will be unique to a streaming job as long as it is being restarted
+     * using checkpoint/savepoint information.
      */
     private final String appId;
 
@@ -137,8 +139,12 @@ public class DeltaWriter<IN>
     /**
      * A constructor creating a new empty bucket (DeltaLake table's partitions) manager.
      *
-     * @param basePath              the base path for the table
-     * @param bucketAssigner        The {@link BucketAssigner} provided by the user.
+     * @param basePath              The base path for the table
+     * @param bucketAssigner        The {@link BucketAssigner} provided by the user. It is advised
+     *                              to use {@link DeltaTablePartitionAssigner} however users are
+     *                              allowed to use any custom implementation of bucketAssigner. The
+     *                              only requirement for correctness is to follow DeltaLake's style
+     *                              of table partitioning.
      * @param bucketWriter          The {@link DeltaBulkBucketWriter} to be used when writing data.
      * @param rollingPolicy         The {@link CheckpointRollingPolicy} as specified by the user.
      * @param outputFileConfig      The {@link OutputFileConfig} to configure the options for output
@@ -394,7 +400,9 @@ public class DeltaWriter<IN>
     }
 
     /**
-     * Method for getting current processing time and register timers.
+     * Method for getting current processing time ahd register timers.
+     * <p>
+     * This method could be used e.g. to apply custom rolling file behaviour.
      *
      * @implNote This method behaves in the same way as
      * {@link org.apache.flink.connector.file.sink.writer.FileWriter#onProcessingTime}

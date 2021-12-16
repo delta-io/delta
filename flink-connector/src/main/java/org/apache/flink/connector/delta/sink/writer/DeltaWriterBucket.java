@@ -20,6 +20,7 @@ package org.apache.flink.connector.delta.sink.writer;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -35,6 +36,7 @@ import org.apache.flink.streaming.api.functions.sink.filesystem.DeltaPendingFile
 import org.apache.flink.streaming.api.functions.sink.filesystem.InProgressFileWriter;
 import org.apache.flink.streaming.api.functions.sink.filesystem.OutputFileConfig;
 import org.apache.flink.streaming.api.functions.sink.filesystem.rollingpolicies.CheckpointRollingPolicy;
+import org.apache.flink.table.utils.PartitionPathUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import static org.apache.flink.util.Preconditions.checkNotNull;
@@ -107,6 +109,8 @@ public class DeltaWriterBucket<IN> {
 
     private final List<DeltaPendingFile> pendingFiles = new ArrayList<>();
 
+    private final LinkedHashMap<String, String> partitionSpec;
+
     private long partCounter;
 
     private long inProgressPartRecordCount;
@@ -129,6 +133,7 @@ public class DeltaWriterBucket<IN> {
         this.rollingPolicy = checkNotNull(rollingPolicy);
         this.outputFileConfig = checkNotNull(outputFileConfig);
 
+        this.partitionSpec = PartitionPathUtils.extractPartitionSpecFromPath(this.bucketPath);
         this.uniqueId = UUID.randomUUID().toString();
         this.partCounter = 0;
         this.inProgressPartRecordCount = 0;
@@ -289,6 +294,7 @@ public class DeltaWriterBucket<IN> {
                 deltaInProgressPart.getBulkPartWriter().closeForCommit();
 
             DeltaPendingFile pendingFile = new DeltaPendingFile(
+                partitionSpec,
                 deltaInProgressPart.getFileName(),
                 pendingFileRecoverable,
                 this.inProgressPartRecordCount,

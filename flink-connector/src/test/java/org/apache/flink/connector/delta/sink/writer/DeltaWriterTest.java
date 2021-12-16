@@ -21,8 +21,11 @@ package org.apache.flink.connector.delta.sink.writer;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.PriorityQueue;
 import java.util.Queue;
@@ -30,10 +33,12 @@ import java.util.Queue;
 import org.apache.flink.api.connector.sink.Sink;
 import org.apache.flink.api.connector.sink.SinkWriter;
 import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.connector.delta.sink.DeltaTablePartitionAssigner;
 import org.apache.flink.connector.delta.sink.committables.DeltaCommittable;
 import org.apache.flink.connector.delta.sink.utils.DeltaSinkTestUtils;
 import org.apache.flink.connector.file.sink.writer.FileWriterTest;
 import org.apache.flink.core.fs.Path;
+import org.apache.flink.streaming.api.functions.sink.filesystem.BucketAssigner;
 import org.apache.flink.streaming.api.functions.sink.filesystem.OutputFileConfig;
 import org.apache.flink.streaming.api.functions.sink.filesystem.bucketassigners.BasePathBucketAssigner;
 import org.apache.flink.table.data.RowData;
@@ -41,18 +46,36 @@ import org.apache.flink.util.ExceptionUtils;
 import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 import static org.junit.Assert.assertEquals;
 
 /**
  * Tests for {@link DeltaWriter}.
  * <p>
- * TODO in the next PRs support for partitioned tables will be added and test cases will be extended
  */
+@RunWith(Parameterized.class)
 public class DeltaWriterTest {
 
     @ClassRule
     public static final TemporaryFolder TEMP_FOLDER = new TemporaryFolder();
     private static final String APP_ID = "1";
+
+    @Parameterized.Parameters(
+        name = "isPartitioned = {0}"
+    )
+    public static Collection<Object[]> params() {
+        return Arrays.asList(
+            new Object[]{false},
+            new Object[]{true}
+        );
+    }
+
+    @Parameterized.Parameter(0)
+    public Boolean isPartitioned;
+
+    // counter for the records produced by given test instance
+    private int testRecordsCount = 0;
 
     @Test
     public void testPreCommit() throws Exception {
@@ -68,8 +91,9 @@ public class DeltaWriterTest {
         List<DeltaCommittable> committables = writer.prepareCommit(false);
 
         // THEN
-        assertEquals(1, writer.getActiveBuckets().size());
-        assertEquals(1, committables.size());
+        int elementsCount = isPartitioned ? 2 : 1;
+        assertEquals(elementsCount, writer.getActiveBuckets().size());
+        assertEquals(elementsCount, committables.size());
         assertEquals(writer.getNextCheckpointId(), 2);
     }
 
@@ -81,17 +105,18 @@ public class DeltaWriterTest {
         int rowsCount = 2;
         List<RowData> testRows = DeltaSinkTestUtils.getTestRowData(rowsCount);
         DeltaWriter<RowData> writer = createNewWriter(path);
+        int elementsCount = isPartitioned ? 2 : 1;
 
         // WHEN
         writeData(writer, testRows);
         writer.prepareCommit(false);
         List<DeltaWriterBucketState> states = writer.snapshotState();
-        assertEquals(1, writer.getActiveBuckets().size());
-        assertEquals(1, states.size());
+        assertEquals(elementsCount, writer.getActiveBuckets().size());
+        assertEquals(elementsCount, states.size());
 
         // THEN
         writer = restoreWriter(path, states);
-        assertEquals(1, writer.getActiveBuckets().size());
+        assertEquals(elementsCount, writer.getActiveBuckets().size());
     }
 
     @Test
@@ -119,7 +144,8 @@ public class DeltaWriterTest {
         DeltaWriter<RowData> restoredWriter = restoreWriter(path, mergedState);
 
         // THEN
-        assertEquals(1, restoredWriter.getActiveBuckets().size());
+        int elementsCount = isPartitioned ? 2 : 1;
+        assertEquals(elementsCount, restoredWriter.getActiveBuckets().size());
     }
 
     @Test
@@ -130,12 +156,13 @@ public class DeltaWriterTest {
         int rowsCount = 2;
         List<RowData> testRows = DeltaSinkTestUtils.getTestRowData(rowsCount);
         DeltaWriter<RowData> writer = createNewWriter(path);
+        int elementsCount = isPartitioned ? 2 : 1;
 
         // WHEN
         writeData(writer, testRows);
         writer.prepareCommit(false);
         writer.snapshotState();
-        assertEquals(1, writer.getActiveBuckets().size());
+        assertEquals(elementsCount, writer.getActiveBuckets().size());
 
         // No more records and another call to prepareCommit will make the bucket inactive
         writer.prepareCommit(false);
@@ -186,10 +213,38 @@ public class DeltaWriterTest {
     // Utility Methods
     ///////////////////////////////////////////////////////////////////////////
 
-    private static DeltaWriter<RowData> createNewWriter(Path basePath) throws IOException {
+    /**
+     * Simple partition assigner that assigns data to only two different partitions based on the
+     * information whether the test record count is even or uneven.
+     *
+     * @return test instance of {@link DeltaTablePartitionAssigner}
+     */
+    public DeltaTablePartitionAssigner<RowData> getTestPartitionAssigner() {
+        DeltaTablePartitionAssigner.DeltaPartitionComputer<RowData> partitionComputer =
+            (element, context) -> new LinkedHashMap<String, String>() {{
+                    put("a", Integer.toString(testRecordsCount % 2));
+                }};
+        return new DeltaTablePartitionAssigner<>(partitionComputer);
+    }
+
+    private void writeData(DeltaWriter<RowData> writer,
+                           List<RowData> rows) {
+        rows.forEach(rowData -> {
+            try {
+                writer.write(rowData, new ContextImpl());
+                testRecordsCount += 1;
+            } catch (IOException e) {
+                throw new RuntimeException("Writing failed");
+            }
+        });
+    }
+
+    private DeltaWriter<RowData> createNewWriter(Path basePath) throws IOException {
+        BucketAssigner<RowData, String> bucketAssigner =
+            isPartitioned ? getTestPartitionAssigner() : new BasePathBucketAssigner<>();
         return new DeltaWriter<>(
             basePath,
-            new BasePathBucketAssigner<>(),
+            bucketAssigner,
             DeltaSinkTestUtils.createBucketWriter(basePath),
             DeltaSinkTestUtils.ON_CHECKPOINT_ROLLING_POLICY,
             OutputFileConfig.builder().withPartSuffix(".snappy.parquet").build(),
@@ -205,24 +260,13 @@ public class DeltaWriterTest {
      * not restore writer's nextCheckpointId correctly as in case of
      * {@link org.apache.flink.connector.delta.sink.DeltaSink#createWriter}
      */
-    private static DeltaWriter<RowData> restoreWriter(
+    private DeltaWriter<RowData> restoreWriter(
         Path basePath,
         List<DeltaWriterBucketState> states) throws IOException {
 
         DeltaWriter<RowData> writer = createNewWriter(basePath);
         writer.initializeState(states);
         return writer;
-    }
-
-    private static void writeData(DeltaWriter<RowData> writer,
-                                  List<RowData> rows) {
-        rows.forEach(rowData -> {
-            try {
-                writer.write(rowData, new ContextImpl());
-            } catch (IOException e) {
-                throw new RuntimeException("Writing failed");
-            }
-        });
     }
 
     /**

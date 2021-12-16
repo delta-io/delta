@@ -19,12 +19,14 @@
 package org.apache.flink.streaming.api.functions.sink.filesystem;
 
 import java.io.IOException;
-import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 import org.apache.flink.core.io.SimpleVersionedSerialization;
 import org.apache.flink.core.io.SimpleVersionedSerializer;
 import org.apache.flink.core.memory.DataInputView;
 import org.apache.flink.core.memory.DataOutputView;
+import org.apache.flink.table.utils.PartitionPathUtils;
 
 import io.delta.standalone.actions.AddFile;
 
@@ -55,6 +57,8 @@ import io.delta.standalone.actions.AddFile;
  */
 public class DeltaPendingFile {
 
+    private final LinkedHashMap<String, String> partitionSpec;
+
     private final String fileName;
 
     private final InProgressFileWriter.PendingFileRecoverable pendingFile;
@@ -65,11 +69,13 @@ public class DeltaPendingFile {
 
     private final long lastUpdateTime;
 
-    public DeltaPendingFile(String fileName,
+    public DeltaPendingFile(LinkedHashMap<String, String> partitionSpec,
+                            String fileName,
                             InProgressFileWriter.PendingFileRecoverable pendingFile,
                             long recordCount,
                             long fileSize,
                             long lastUpdateTime) {
+        this.partitionSpec = partitionSpec;
         this.fileName = fileName;
         this.pendingFile = pendingFile;
         this.fileSize = fileSize;
@@ -97,16 +103,23 @@ public class DeltaPendingFile {
         return lastUpdateTime;
     }
 
+    public LinkedHashMap<String, String> getPartitionSpec() {
+        return new LinkedHashMap<>(partitionSpec);
+    }
+
     /**
      * Converts {@link DeltaPendingFile} object to a {@link AddFile} object
      *
      * @return {@link AddFile} object generated from input
      */
     public AddFile toAddFile() {
+        LinkedHashMap<String, String> partitionSpec = this.getPartitionSpec();
         long modificationTime = this.getLastUpdateTime();
+        String filePath = PartitionPathUtils.generatePartitionPath(partitionSpec) +
+            this.getFileName();
         return new AddFile(
-            this.getFileName(),
-            Collections.emptyMap(), // partition support will be added in next PR
+            filePath,
+            partitionSpec,
             this.getFileSize(),
             modificationTime,
             true, // dataChange
@@ -126,6 +139,12 @@ public class DeltaPendingFile {
         assert deltaPendingFile.getFileName() != null;
         assert deltaPendingFile.getPendingFile() != null;
 
+        dataOutputView.writeInt(deltaPendingFile.getPartitionSpec().size());
+        for (Map.Entry<String, String> entry : deltaPendingFile.getPartitionSpec().entrySet()) {
+            dataOutputView.writeUTF(entry.getKey());
+            dataOutputView.writeUTF(entry.getValue());
+        }
+
         dataOutputView.writeUTF(deltaPendingFile.getFileName());
         dataOutputView.writeLong(deltaPendingFile.getRecordCount());
         dataOutputView.writeLong(deltaPendingFile.getFileSize());
@@ -142,6 +161,11 @@ public class DeltaPendingFile {
         DataInputView dataInputView,
         SimpleVersionedSerializer<InProgressFileWriter.PendingFileRecoverable>
             pendingFileSerializer) throws IOException {
+        LinkedHashMap<String, String> partitionSpec = new LinkedHashMap<>();
+        int partitionSpecEntriesCount = dataInputView.readInt();
+        for (int i = 0; i < partitionSpecEntriesCount; i++) {
+            partitionSpec.put(dataInputView.readUTF(), dataInputView.readUTF());
+        }
 
         String pendingFileName = dataInputView.readUTF();
         long pendingFileRecordCount = dataInputView.readLong();
@@ -151,6 +175,7 @@ public class DeltaPendingFile {
             SimpleVersionedSerialization.readVersionAndDeSerialize(
                 pendingFileSerializer, dataInputView);
         return new DeltaPendingFile(
+            partitionSpec,
             pendingFileName,
             pendingFile,
             pendingFileRecordCount,

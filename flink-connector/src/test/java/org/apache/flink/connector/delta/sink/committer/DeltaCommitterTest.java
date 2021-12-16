@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 
 import org.apache.flink.connector.delta.sink.committables.DeltaCommittable;
@@ -87,14 +88,34 @@ public class DeltaCommitterTest {
     @Test
     public void testCommittableWithPendingFileForNonPartitionedTable() throws IOException {
         // GIVEN
+        LinkedHashMap<String, String> partitionSpec = new LinkedHashMap<>();
         DeltaCommittable committable =
-            DeltaSinkTestUtils.getTestDeltaCommittableWithPendingFile();
+            DeltaSinkTestUtils.getTestDeltaCommittableWithPendingFile(partitionSpec);
 
         // WHEN
         DeltaCommittable deserialized = serializeAndDeserialize(committable);
 
         // THEN
-        DeltaSinkTestUtils.validateDeltaCommittablesEquality(committable, deserialized);
+        DeltaSinkTestUtils.validateDeltaCommittablesEquality(
+            committable, deserialized, partitionSpec);
+    }
+
+    @Test
+    public void testCommittableWithPendingFileForPartitionedTable() throws IOException {
+        // GIVEN
+        LinkedHashMap<String, String> partitionSpec = new LinkedHashMap<>();
+        partitionSpec.put("a", "b");
+        partitionSpec.put("c", "d");
+
+        DeltaCommittable committable =
+            DeltaSinkTestUtils.getTestDeltaCommittableWithPendingFile(partitionSpec);
+
+        // WHEN
+        DeltaCommittable deserialized = serializeAndDeserialize(committable);
+
+        // THEN
+        DeltaSinkTestUtils.validateDeltaCommittablesEquality(
+            committable, deserialized, partitionSpec);
     }
 
     ///////////////////////////////////////////////////////////////////////////

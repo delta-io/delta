@@ -66,7 +66,7 @@ public class TestSchemaConverter {
             ));
 
         // WHEN
-        StructType deltaStructType = (StructType) SchemaConverter.toDeltaDataType(flinkRowType);
+        StructType deltaStructType = SchemaConverter.toDeltaDataType(flinkRowType);
 
         // THEN
         StructType expectedDeltaStructType = new StructType(
