@@ -78,6 +78,9 @@ lazy val commonSettings = Seq(
 
 lazy val releaseSettings = Seq(
   publishMavenStyle := true,
+  publishArtifact := true,
+  publishArtifact in Test := false,
+  releasePublishArtifactsAction := PgpKeys.publishSigned.value,
   releaseCrossBuild := true,
   publishTo := {
     val nexus = "https://oss.sonatype.org/"
@@ -87,7 +90,6 @@ lazy val releaseSettings = Seq(
       Some("releases"  at nexus + "service/local/staging/deploy/maven2")
     }
   },
-  releasePublishArtifactsAction := PgpKeys.publishSigned.value,
   licenses += ("Apache-2.0", url("http://www.apache.org/licenses/LICENSE-2.0")),
   pomExtra :=
     <url>https://github.com/delta-io/connectors</url>
@@ -116,30 +118,30 @@ lazy val releaseSettings = Seq(
           <name>Shixiong Zhu</name>
           <url>https://github.com/zsxwing</url>
         </developer>
-      </developers>,
-  releaseProcess := Seq[ReleaseStep](
-    checkSnapshotDependencies,
-    inquireVersions,
-    runTest,
-    setReleaseVersion,
-    commitReleaseVersion,
-    tagRelease,
-    releaseStepCommandAndRemaining("+publishLocalSigned"),
-    setNextVersion,
-    commitNextVersion
-  )
+      </developers>
 )
 
 lazy val skipReleaseSettings = Seq(
   publishArtifact := false,
-  publish := ()
+  skip in publish := true
 )
 
 // Looks some of release settings should be set for the root project as well.
 publishArtifact := false  // Don't release the root project
-publish := {}
+skip in publish := true
 publishTo := Some("snapshots" at "https://oss.sonatype.org/content/repositories/snapshots")
 releaseCrossBuild := false
+releaseProcess := Seq[ReleaseStep](
+  checkSnapshotDependencies,
+  inquireVersions,
+  runTest,
+  setReleaseVersion,
+  commitReleaseVersion,
+  tagRelease,
+  releaseStepCommandAndRemaining("+publishLocalSigned"),
+  setNextVersion,
+  commitNextVersion
+)
 
 lazy val hive = (project in file("hive")) dependsOn(standaloneCosmetic) settings (
   name := "delta-hive",
@@ -411,7 +413,6 @@ lazy val standalone = (project in file("standalone"))
   .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin)
   .settings(
     name := "delta-standalone-original",
-    skip in publish := true,
     commonSettings,
     skipReleaseSettings,
     mimaSettings,
