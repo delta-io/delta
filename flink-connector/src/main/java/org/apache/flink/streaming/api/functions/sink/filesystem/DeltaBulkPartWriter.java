@@ -29,7 +29,7 @@ import org.apache.flink.util.Preconditions;
  * using {@link BulkPartWriter}. This also implements the {@link PartFileInfo}.
  * <p>
  * An instance of this class represents one in-progress files that is currently "opened" by one of
- * the {@link org.apache.flink.connector.delta.sink.writer.DeltaWriterBucket} instance.
+ * the {@link io.delta.flink.sink.internal.writer.DeltaWriterBucket} instance.
  * <p>
  * It's provided as a workaround for getting actual size of in-progress file right before
  * transitioning it to a pending state ("closing").
@@ -50,7 +50,7 @@ import org.apache.flink.util.Preconditions;
  *     <li>Since it's a class member of {@link DeltaInProgressPart} it shares its life span as
  *         well</li>
  *     <li>Instances of this class are being created inside
- *         {@link org.apache.flink.connector.delta.sink.writer.DeltaWriterBucket#rollPartFile}
+ *         {@link io.delta.flink.sink.internal.writer.DeltaWriterBucket#rollPartFile}
  *         method every time a bucket processes the first event or if the previously opened file
  *         met conditions for rolling (e.g. size threshold)</li>
  *     <li>Its life span holds as long as the underlying file stays in an in-progress state (so

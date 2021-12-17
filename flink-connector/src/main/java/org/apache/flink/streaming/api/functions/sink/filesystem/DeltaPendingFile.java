@@ -45,14 +45,14 @@ import io.delta.standalone.actions.AddFile;
  * Lifecycle of instances of this class is as follows:
  * <ol>
  *     <li>Instances of this class are being created inside
- *         {@link org.apache.flink.connector.delta.sink.writer.DeltaWriterBucket#closePartFile}
+ *         {@link io.delta.flink.sink.internal.writer.DeltaWriterBucket#closePartFile}
  *         method every time when any in-progress is called to be closed. This happens either when
  *         some conditions for closing are met or at the end of every checkpoint interval during a
  *         pre-commit phase when we are closing all the open files in all buckets</li>
  *     <li>Its life span holds only until the end of a checkpoint interval</li>
  *     <li>During pre-commit phase (and after closing every in-progress files) every existing
  *         {@link DeltaPendingFile} instance is automatically transformed into a
- *         {@link org.apache.flink.connector.delta.sink.committables.DeltaCommittable} instance</li>
+ *         {@link io.delta.flink.sink.internal.committables.DeltaCommittable} instance</li>
  * </ol>
  */
 public class DeltaPendingFile {
