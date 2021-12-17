@@ -269,7 +269,7 @@ object Checkpoints extends DeltaLogging {
     // log store and decide whether to use rename.
     val useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath, hadoopConf)
 
-    val checkpointSize = spark.sparkContext.longAccumulator("checkpointSize")
+    val checkpointRowCount = spark.sparkContext.longAccumulator("checkpointRowCount")
     val numOfFiles = spark.sparkContext.longAccumulator("numOfFiles")
     // Use the string in the closure as Path is not Serializable.
     val path = checkpointFileSingular(snapshot.path, snapshot.version).toString
@@ -319,7 +319,7 @@ object Checkpoints extends DeltaLogging {
                 new TaskAttemptID("", 0, TaskType.REDUCE, 0, 0)))
 
             iter.foreach { row =>
-              checkpointSize.add(1)
+              checkpointRowCount.add(1)
               writer.write(row)
             }
             // Note: `writer.close()` is not put in a `finally` clause because we don't want to
@@ -377,10 +377,10 @@ object Checkpoints extends DeltaLogging {
     }
 
     // Attempting to write empty checkpoint
-    if (checkpointSize.value == 0) {
+    if (checkpointRowCount.value == 0) {
       logWarning(DeltaErrors.EmptyCheckpointErrorMessage)
     }
-    CheckpointMetaData(snapshot.version, checkpointSize.value, None)
+    CheckpointMetaData(snapshot.version, checkpointRowCount.value, None)
   }
 
   // scalastyle:off line.size.limit
