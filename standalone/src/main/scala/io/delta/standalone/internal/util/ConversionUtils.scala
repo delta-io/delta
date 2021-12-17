@@ -97,7 +97,7 @@ private[internal] object ConversionUtils {
       internal.dataChange,
       internal.extendedFileMetadata,
       nullableMapAsJava(internal.partitionValues),
-      internal.size,
+      toJavaLongOptional(internal.size),
       nullableMapAsJava(internal.tags))
   }
 
@@ -243,7 +243,7 @@ private[internal] object ConversionUtils {
       if (external.isExtendedFileMetadata && external.getPartitionValues != null) {
         external.getPartitionValues.asScala.toMap
       } else null,
-      if (external.isExtendedFileMetadata) external.getSize else 0,
+      external.getSize,
       if (external.isExtendedFileMetadata && external.getTags != null) {
         external.getTags.asScala.toMap
       } else null

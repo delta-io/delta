@@ -39,7 +39,7 @@ import javax.annotation.Nullable;
  *
  * @see  <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#add-file-and-remove-file">Delta Transaction Log Protocol: Add File and Remove File</a>
  */
-public class RemoveFile implements FileAction {
+public final class RemoveFile implements FileAction {
     @Nonnull
     private final String path;
 
@@ -53,7 +53,8 @@ public class RemoveFile implements FileAction {
     @Nullable
     private final Map<String, String> partitionValues;
 
-    private final long size;
+    @Nonnull
+    private final Optional<Long> size;
 
     @Nullable
     private final Map<String, String> tags;
@@ -72,7 +73,8 @@ public class RemoveFile implements FileAction {
             boolean dataChange,
             boolean extendedFileMetadata,
             @Nullable Map<String, String> partitionValues,
-            long size,
+            @Nonnull
+            Optional<Long> size,
             @Nullable Map<String, String> tags) {
         this.path = path;
         this.deletionTimestamp = deletionTimestamp;
@@ -132,7 +134,7 @@ public class RemoveFile implements FileAction {
     /**
      * @return the size of this file in bytes
      */
-    public long getSize() {
+    public Optional<Long> getSize() {
         return size;
     }
 

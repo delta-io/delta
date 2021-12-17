@@ -174,7 +174,7 @@ public final class Metadata implements Action {
      * Builder class for {@link Metadata}. Enables construction of {@link Metadata}s with default
      * values.
      */
-    public static class Builder {
+    public static final class Builder {
         @Nonnull private String id = java.util.UUID.randomUUID().toString();
         @Nullable private String name;
         @Nullable private String description;

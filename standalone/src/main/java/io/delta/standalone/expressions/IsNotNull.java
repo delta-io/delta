@@ -5,7 +5,7 @@ import io.delta.standalone.data.RowRecord;
 /**
  * Evaluates if {@code expr} is not null for {@code new IsNotNull(expr)}.
  */
-public class IsNotNull extends UnaryExpression implements Predicate {
+public final class IsNotNull extends UnaryExpression implements Predicate {
     public IsNotNull(Expression child) {
         super(child);
     }

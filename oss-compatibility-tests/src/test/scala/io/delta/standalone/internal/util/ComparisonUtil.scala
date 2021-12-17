@@ -147,7 +147,7 @@ trait ComparisonUtil {
     assert(standalone.isDataChange == oss.dataChange)
     assert(standalone.isExtendedFileMetadata == oss.extendedFileMetadata)
     compareNullableMaps(standalone.getPartitionValues, oss.partitionValues)
-    assert(standalone.getSize == oss.size)
+    assert(standalone.getSize.orElse(0L) == oss.size)
     compareNullableMaps(standalone.getTags, oss.tags)
   }
 

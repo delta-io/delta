@@ -30,14 +30,9 @@ import java.util.Objects;
  *
  * @see  <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#protocol-evolution">Delta Transaction Log Protocol: Protocol Evolution</a>
  */
-public class Protocol implements Action {
+public final class Protocol implements Action {
     private final int minReaderVersion;
     private final int minWriterVersion;
-
-    public Protocol() {
-        this.minReaderVersion = Action.readerVersion;
-        this.minWriterVersion = Action.writerVersion;
-    }
 
     public Protocol(int minReaderVersion, int minWriterVersion) {
         this.minReaderVersion = minReaderVersion;

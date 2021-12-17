@@ -8,7 +8,7 @@ import io.delta.standalone.internal.exception.DeltaErrors;
  * <p>
  * Requires the child expression evaluates to a boolean.
  */
-public class Not extends UnaryExpression implements Predicate {
+public final class Not extends UnaryExpression implements Predicate {
     public Not(Expression child) {
         super(child);
         if (!(child.dataType() instanceof BooleanType)) {

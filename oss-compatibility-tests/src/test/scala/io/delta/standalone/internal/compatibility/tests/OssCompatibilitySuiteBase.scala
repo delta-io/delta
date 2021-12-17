@@ -65,7 +65,7 @@ trait OssCompatibilitySuiteBase extends QueryTest with SharedSparkSession {
       testName: String,
       conflicts: Boolean,
       setup: Seq[StandaloneActions.Action] =
-        Seq(StandaloneActions.Metadata.builder().build(), new StandaloneActions.Protocol()),
+        Seq(StandaloneActions.Metadata.builder().build(), new StandaloneActions.Protocol(1, 2)),
       reads: Seq[StandaloneOptTxn => Unit],
       concurrentOSSWrites: Seq[OSSActions.Action],
       actions: Seq[StandaloneActions.Action],

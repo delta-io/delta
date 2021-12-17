@@ -261,7 +261,7 @@ abstract class DeltaLogSuiteBase extends FunSuite {
         true, // dataChange
         false, // extendedFileMetadata
         null, // partitionValues
-        0L, // size
+        java.util.Optional.of(0L), // size
         null // null
       )
 

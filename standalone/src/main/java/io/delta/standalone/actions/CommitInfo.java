@@ -276,7 +276,7 @@ public class CommitInfo implements Action {
      * Builder class for {@link CommitInfo}. Enables construction of {@link CommitInfo}s with
      * default values.
      */
-    public static class Builder {
+    public static final class Builder {
         @Nonnull private Optional<Long> version = Optional.empty();
         @Nullable private Timestamp timestamp;
         @Nonnull private Optional<String> userId = Optional.empty();

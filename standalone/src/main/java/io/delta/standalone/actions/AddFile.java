@@ -102,7 +102,7 @@ public final class AddFile implements FileAction {
     @Nonnull
     public RemoveFile remove(long deletionTimestamp, boolean dataChange) {
         return new RemoveFile(path, Optional.of(deletionTimestamp), dataChange, true,
-            partitionValues, size, tags);
+            partitionValues, Optional.of(size), tags);
     }
 
     /**
@@ -200,7 +200,7 @@ public final class AddFile implements FileAction {
      * Builder class for {@link AddFile}. Enables construction of {@link AddFile}s with default
      * values.
      */
-    public static class Builder {
+    public static final class Builder {
         // required AddFile fields
         private final String path;
         private final Map<String, String> partitionValues;

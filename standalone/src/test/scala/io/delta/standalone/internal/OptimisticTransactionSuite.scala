@@ -131,8 +131,8 @@ class OptimisticTransactionSuite
     "upgrade / upgrade",
     conflicts = true,
     reads = Seq(t => t.metadata),
-    concurrentWrites = Seq(new Protocol()),
-    actions = Seq(new Protocol()))
+    concurrentWrites = Seq(new Protocol(1, 2)),
+    actions = Seq(new Protocol(1, 2)))
 
   check(
     "taint whole table",

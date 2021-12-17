@@ -19,7 +19,7 @@ package io.delta.standalone;
 /**
  * Wrapper around the result of {@link OptimisticTransaction#commit}.
  */
-public class CommitResult {
+public final class CommitResult {
     private final long version;
 
     public CommitResult(long version) {

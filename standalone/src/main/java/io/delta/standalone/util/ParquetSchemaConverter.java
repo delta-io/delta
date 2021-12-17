@@ -61,7 +61,7 @@ public final class ParquetSchemaConverter {
      * @return {@code schema} as a Parquet {@link MessageType}
      * @throws IllegalArgumentException if a {@code StructField} name contains invalid character(s)
      */
-    public static MessageType sparkToParquet(StructType schema) {
+    public static MessageType deltaToParquet(StructType schema) {
         return new SparkToParquetSchemaConverter(
                 writeLegacyParquetFormatDefault,
                 outputTimestampTypeDefault).convert(schema);
@@ -80,7 +80,7 @@ public final class ParquetSchemaConverter {
      * @return {@code schema} as a Parquet {@link MessageType}
      * @throws IllegalArgumentException if a {@code StructField} name contains invalid character(s)
      */
-    public static MessageType sparkToParquet(StructType schema, Boolean writeLegacyParquetFormat) {
+    public static MessageType deltaToParquet(StructType schema, Boolean writeLegacyParquetFormat) {
         return new SparkToParquetSchemaConverter(
                 writeLegacyParquetFormat,
                 outputTimestampTypeDefault).convert(schema);
@@ -96,7 +96,7 @@ public final class ParquetSchemaConverter {
      * @return {@code schema} as a Parquet {@link MessageType}
      * @throws IllegalArgumentException if a {@code StructField} name contains invalid character(s)
      */
-    public static MessageType sparkToParquet(
+    public static MessageType deltaToParquet(
             StructType schema,
             ParquetOutputTimestampType outputTimestampType) {
         return new SparkToParquetSchemaConverter(
@@ -118,7 +118,7 @@ public final class ParquetSchemaConverter {
      * @return {@code schema} as a Parquet {@link MessageType}
      * @throws IllegalArgumentException if a {@code StructField} name contains invalid character(s)
      */
-    public static MessageType sparkToParquet(
+    public static MessageType deltaToParquet(
             StructType schema,
             Boolean writeLegacyParquetFormat,
             ParquetOutputTimestampType outputTimestampType) {

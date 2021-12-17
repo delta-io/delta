@@ -57,7 +57,7 @@ trait OptimisticTransactionSuiteBase extends FunSuite {
   protected def check(
       name: String,
       conflicts: Boolean,
-      setup: Seq[ActionJ] = Seq(MetadataJ.builder().build(), new ProtocolJ()),
+      setup: Seq[ActionJ] = Seq(MetadataJ.builder().build(), new ProtocolJ(1, 2)),
       reads: Seq[OptimisticTransaction => Unit],
       concurrentWrites: Seq[ActionJ],
       actions: Seq[ActionJ],

@@ -26,7 +26,7 @@ import io.delta.standalone.actions.Action;
  * {@link VersionLog} is the representation of all actions (changes) to the Delta Table
  * at a specific table version.
  */
-public class VersionLog {
+public final class VersionLog {
     private final long version;
 
     @Nonnull

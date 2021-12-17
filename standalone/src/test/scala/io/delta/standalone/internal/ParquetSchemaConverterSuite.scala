@@ -33,7 +33,7 @@ class ParquetSchemaConverterSuite extends FunSuite {
       ParquetSchemaConverter.ParquetOutputTimestampType.INT96): Unit = {
 
     test(s"sql => parquet: $testName") {
-      val actual = ParquetSchemaConverter.sparkToParquet(
+      val actual = ParquetSchemaConverter.deltaToParquet(
         sqlSchema,
         writeLegacyParquetFormat,
         outputTimestampType)

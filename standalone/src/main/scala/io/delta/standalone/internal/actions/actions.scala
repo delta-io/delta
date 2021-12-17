@@ -147,7 +147,8 @@ private[internal] case class RemoveFile(
     dataChange: Boolean = true,
     extendedFileMetadata: Boolean = false,
     partitionValues: Map[String, String] = null,
-    size: Long = 0,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    size: Option[Long] = None,
     tags: Map[String, String] = null) extends FileAction {
   override def wrap: SingleAction = SingleAction(remove = this)
 
@@ -419,7 +420,8 @@ private[internal] case class Parquet4sRemoveFileWrapper(
     dataChangeOpt: Option[Boolean] = Some(true),
     extendedFileMetadataOpt: Option[Boolean] = Some(false),
     partitionValues: Map[String, String] = null,
-    size: Option[Long] = Some(0),
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    size: Option[Long] = None,
     tags: Map[String, String] = null) extends Parquet4sWrapper[RemoveFile] {
 
   override def unwrap: RemoveFile = RemoveFile(
@@ -428,10 +430,7 @@ private[internal] case class Parquet4sRemoveFileWrapper(
     dataChangeOpt.contains(true),
     extendedFileMetadataOpt.contains(true),
     partitionValues,
-    size match {
-      case Some(x) => x;
-      case _ => 0
-    },
+    size,
     tags
   )
 }
