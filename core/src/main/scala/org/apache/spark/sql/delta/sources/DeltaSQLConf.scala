@@ -93,6 +93,15 @@ trait DeltaSQLConfBase {
       .checkValue(n => n > 0, "Delta snapshot partition number must be positive.")
       .createOptional
 
+  val DELTA_SNAPSHOT_LOADING_MAX_RETRIES =
+    buildConf("snapshotLoading.maxRetries")
+      .internal()
+      .doc("How many times to retry when failing to load a snapshot. Each retry will try to use " +
+        "a different checkpoint in order to skip potential corrupt checkpoints.")
+      .intConf
+      .checkValue(n => n >= 0, "must not be negative.")
+      .createWithDefault(2)
+
   val DELTA_PARTITION_COLUMN_CHECK_ENABLED =
     buildConf("partitionColumnValidity.enabled")
       .internal()
