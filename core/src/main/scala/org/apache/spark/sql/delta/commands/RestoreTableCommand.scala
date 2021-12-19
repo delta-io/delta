@@ -135,7 +135,6 @@ case class RestoreTableCommand(
       }
     } match {
       case Success(Some(tsMicroseconds)) => new Timestamp(tsMicroseconds / 1000)
-      case Success(None) => throw timestampInvalid(Literal("null"))
       case _ => throw timestampInvalid(Literal(timestamp.get))
     }
   }
