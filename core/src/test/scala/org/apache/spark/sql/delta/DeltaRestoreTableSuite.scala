@@ -19,16 +19,14 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.sql.Timestamp
 import scala.language.implicitConversions
-
 import io.delta.implicits.DeltaDataFrameWriter
 import io.delta.tables.DeltaTable.{forPath => DeltaTableForPath}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SQLTestUtils, SharedSparkSession}
-import org.apache.spark.sql.{DataFrame, QueryTest, SaveMode}
+import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, SaveMode}
 
 trait DeltaRestoreTableSuiteBase extends QueryTest
   with SharedSparkSession
@@ -41,43 +39,26 @@ trait DeltaRestoreTableSuiteBase extends QueryTest
     .withColumnRenamed("id", "new_id")
   private lazy val allDatasets = Seq(versionZeroData, versionOneData)
 
-  test("basic case - Scala restore table using version - Non-partitioned") {
-    withMultiVersionedDeltaTable(allDatasets) { deltaPath =>
+  for((tableType, partition) <- Seq("partitioned" -> Some("seq"), "non-partitioned" -> None)) {
 
-      DeltaTableForPath(deltaPath).restore(0)
+    test(s"basic case - Scala restore table using version - $tableType") {
+      withMultiVersionedDeltaTable(allDatasets, partition) { deltaPath =>
 
-      testRestoredTable(deltaPath)
+        DeltaTableForPath(deltaPath).restoreToVersion(0)
+
+        testRestoredTable(deltaPath)
+      }
     }
-  }
 
-  test("basic case - Scala restore table using version - Partitioned") {
-    withMultiVersionedDeltaTable(allDatasets, Some("seq")) { deltaPath =>
+    test(s"basic case - Scala restore table using timestamp - $tableType") {
+      withMultiVersionedDeltaTable(allDatasets, partition) { deltaPath =>
+        val zeroVersionTs = new Timestamp(
+          DeltaLog.forTable(spark, deltaPath).getSnapshotAt(0).timestamp)
 
-      DeltaTableForPath(deltaPath).restore(0)
+        DeltaTableForPath(deltaPath).restoreToTimestamp(zeroVersionTs.toString)
 
-      testRestoredTable(deltaPath)
-    }
-  }
-
-  test("basic case - Scala restore table using timestamp - Non-partitioned") {
-    withMultiVersionedDeltaTable(allDatasets) { deltaPath =>
-      val zeroVersionTs = new Timestamp(
-        DeltaLog.forTable(spark, deltaPath).getSnapshotAt(0).timestamp)
-
-      DeltaTableForPath(deltaPath).restore(zeroVersionTs)
-
-      testRestoredTable(deltaPath)
-    }
-  }
-
-  test("basic case - Scala restore table using timestamp - Partitioned") {
-    withMultiVersionedDeltaTable(allDatasets, Some("seq")) { deltaPath =>
-      val zeroVersionTs = new Timestamp(
-        DeltaLog.forTable(spark, deltaPath).getSnapshotAt(0).timestamp)
-
-      DeltaTableForPath(deltaPath).restore(zeroVersionTs)
-
-      testRestoredTable(deltaPath)
+        testRestoredTable(deltaPath)
+      }
     }
   }
 
@@ -89,32 +70,32 @@ trait DeltaRestoreTableSuiteBase extends QueryTest
       val file = DeltaLog.forTable(spark, deltaPath).getSnapshotAt(0).allFiles.map(_.path).head()
       FileUtils.deleteQuietly(new File(new Path(deltaPath, file).toUri.toString))
 
-      val ex = intercept[IllegalArgumentException](DeltaTableForPath(deltaPath).restore(0))
+      val ex = intercept[IllegalArgumentException](DeltaTableForPath(deltaPath).restoreToVersion(0))
       assert(ex.getMessage.contains(file), s"Error message doesn't contain missed file $file."
         + s"Error message:\n ${ex.getMessage}")
     }
   }
 
-  test("basic case - Scala restore failed if any data file is missed" +
-      " and spark.sql.files.ignoreMissingFiles=true") {
-    withSQLConf(SQLConf.IGNORE_MISSING_FILES.key -> "true") {
-      withMultiVersionedDeltaTable(allDatasets) { deltaPath =>
-        import testImplicits._
-        // Remove one data files from table
-        val file = DeltaLog.forTable(spark, deltaPath).getSnapshotAt(0).allFiles.map(_.path).head()
-        FileUtils.deleteQuietly(new File(new Path(deltaPath, file).toUri.toString))
+  test("basic case - Scala restore failed to restore incorrect version") {
+    withMultiVersionedDeltaTable(allDatasets) { deltaPath =>
+      val lastVersion = DeltaLog.forTable(spark, deltaPath).update().version.toString
+      val ex = intercept[IllegalArgumentException](DeltaTableForPath(deltaPath)
+        .restoreToVersion(Long.MaxValue))
 
-        DeltaTableForPath(deltaPath).restore(0)
-
-        testRestoredTable(deltaPath, validateData = false)
-      }
+      assert(
+        ex.getMessage.contains(Long.MaxValue.toString) && ex.getMessage.contains(lastVersion),
+        s"Error doesn't contain version to restore or last version. Error:\n ${ex.getMessage}")
     }
   }
 
-  test("basic case - Scala restore failed to restore incorrect version") {
+  test("basic case - Scala restore failed to restore incorrect timestamp format") {
     withMultiVersionedDeltaTable(allDatasets) { deltaPath =>
 
-      intercept[IllegalArgumentException](DeltaTableForPath(deltaPath).restore(Long.MaxValue))
+      val ex = intercept[AnalysisException](DeltaTableForPath(deltaPath)
+        .restoreToTimestamp("9999/99/99"))
+      assert(
+        ex.getMessage.contains("9999/99/99"),
+        s"Error message doesn't contain incorrect timestamp. Error message:\n ${ex.getMessage}")
     }
   }
 

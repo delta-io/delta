@@ -479,16 +479,19 @@ class DeltaTable private[tables](
    * @param version version to be restored
    * @since 1.2.0
    */
-  def restore(version: Long): Unit = {
+  def restoreToVersion(version: Long): Unit = {
     executeRestore(deltaLog, version = Some(version))
   }
 
   /**
    * Restores delta table to the latest commit that happened at or before `timestamp`.
-   * @param timestamp timestamp to be restored
+   * `timestamp` string must be in a format that can be cast to a timestamp, such as
+   * `yyyy-MM-dd` or `yyyy-MM-dd HH:mm:ss.SSSS`.(for possible formats see description
+   * of method org.apache.spark.sql.catalyst.util.DateTimeUtils.parseTimestampString
+   * @param timestamp string presentation of timestamp to be restored
    * @since 1.2.0
    */
-  def restore(timestamp: Timestamp): Unit = {
+  def restoreToTimestamp(timestamp: String): Unit = {
     executeRestore(deltaLog, timestamp = Option(timestamp))
   }
 }

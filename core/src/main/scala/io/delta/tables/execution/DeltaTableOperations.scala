@@ -79,7 +79,7 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
   protected def executeRestore(
       deltaLog: DeltaLog,
       version: Option[Long] = None,
-      timestamp: Option[Timestamp] = None): DataFrame = {
+      timestamp: Option[String] = None): DataFrame = {
     RestoreTableCommand(deltaLog, version, timestamp).run(sparkSession)
     sparkSession.emptyDataFrame
   }

@@ -502,13 +502,6 @@ trait DeltaSQLConfBase {
           |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
-
-  val DELTA_RESTORE_PARALLELISM =
-    buildConf("restore.parallelism")
-      .doc("Number of parallel spark tasks used for data restoring." +
-        " Small value may causes OOM while restoring huge table.")
-      .intConf
-      .createWithDefault(1)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

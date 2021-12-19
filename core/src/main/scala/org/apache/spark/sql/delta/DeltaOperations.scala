@@ -347,7 +347,7 @@ object DeltaOperations {
   /** Recorded when restoring the table. */
   case class Restore(
       version: Option[Long] = None,
-      timestamp: Option[Long] = None) extends Operation("RESTORE") {
+      timestamp: Option[String] = None) extends Operation("RESTORE") {
     override val parameters: Map[String, Any] = Map(
       "version" -> version,
       "timestamp" -> timestamp

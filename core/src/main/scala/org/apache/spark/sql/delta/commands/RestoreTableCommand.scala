@@ -16,36 +16,43 @@
 
 package org.apache.spark.sql.delta.commands
 
-import java.sql.Timestamp
+import org.apache.spark.sql.catalyst.expressions.Literal
+import org.apache.spark.sql.catalyst.util.DateTimeUtils
+import org.apache.spark.sql.delta.DeltaErrors.timestampInvalid
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
-import org.apache.spark.sql.delta.sources.DeltaSQLConf._
 import org.apache.spark.sql.delta.util.DeltaFileOperations.absolutePath
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
-import org.apache.spark.sql.{Dataset, Row, SparkSession}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.IGNORE_MISSING_FILES
+import org.apache.spark.sql.{Dataset, Row, SparkSession}
+import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.SerializableConfiguration
+
+import java.sql.Timestamp
+import scala.collection.JavaConverters._
+import scala.util.{Success, Try}
 
 /**
  * Perform restore of delta table to a specified version or timestamp
  *
  * Algorithm:
- *  1) Read the latest snapshot of the table.
- *  2) Read snapshot for version or timestamp to restore
- *  3) Compute files available in snapshot for restoring (files were removed by some commit)
- *  but missed in the latest. Add these files into commit as AddFile action.
- *  4) Compute files available in the latest snapshot (files were added after version to restore)
- *  but missed in the snapshot to restore. Add these files into commit as RemoveFile action.
- *  5) If SQLConf.IGNORE_MISSING_FILES option is false (default value) check availability of AddFile
- *  in file system.
- *  6) Commit metadata, Protocol, all RemoveFile and AddFile actions
- *  into delta log using `commitLarge`.
- *  7) If table was modified in parallel then ignore restore and raise exception.
+ * 1) Read the latest snapshot of the table.
+ * 2) Read snapshot for version or timestamp to restore
+ * 3) Compute files available in snapshot for restoring (files were removed by some commit)
+ * but missed in the latest. Add these files into commit as AddFile action.
+ * 4) Compute files available in the latest snapshot (files were added after version to restore)
+ * but missed in the snapshot to restore. Add these files into commit as RemoveFile action.
+ * 5) If SQLConf.IGNORE_MISSING_FILES option is false (default value) check availability of AddFile
+ * in file system.
+ * 6) Commit metadata, Protocol, all RemoveFile and AddFile actions
+ * into delta log using `commitLarge` (commit will be failed in case of parallel transaction)
+ * 7) If table was modified in parallel then ignore restore and raise exception.
  */
 case class RestoreTableCommand(
   deltaLog: DeltaLog,
   version: Option[Long],
-  timestamp: Option[Timestamp]
+  timestamp: Option[String]
 ) extends LeafRunnableCommand with DeltaCommand {
 
   override def run(spark: SparkSession): Seq[Row] = {
@@ -53,76 +60,85 @@ case class RestoreTableCommand(
 
       require(version.isEmpty ^ timestamp.isEmpty,
         "Either the version or timestamp should be provided for restore")
-      val parallelism = restoreParallelism(spark)
-      val latestSnapshot = deltaLog.update()
-      val versionToRestore = version.getOrElse(
+
+      val versionToRestore = version.getOrElse {
         deltaLog
           .history
-          .getActiveCommitAtTime(timestamp.get, canReturnLastCommit = true)
+          .getActiveCommitAtTime(parseStringToTs(timestamp), canReturnLastCommit = true)
           .version
-      )
-
-      require(versionToRestore < latestSnapshot.version,
-        s"Version to restore ($versionToRestore) should be less then " +
-        s"last available version (${latestSnapshot.version})")
-
-      val snapshotToRestore = deltaLog.getSnapshotAt(versionToRestore)
-      val latestSnapshotFiles = latestSnapshot.allFiles
-      val snapshotToRestoreFiles = snapshotToRestore.allFiles
-
-      import spark.implicits._
-      import collection.JavaConverters._
-
-      val filesToAdd = snapshotToRestoreFiles
-        .join(
-          latestSnapshotFiles,
-          snapshotToRestoreFiles("path") ===  latestSnapshotFiles("path"),
-          "left_anti")
-        .as[AddFile]
-        .map(_.copy(dataChange = true))
-        .repartition(parallelism)
-        .cache() // To avoid Dataset recompute for each partition of toLocalIterator()
-
-      checkSnapshotFilesAvailability(deltaLog, filesToAdd, versionToRestore)
-
-      val filesToRemove = latestSnapshotFiles
-        .join(
-          snapshotToRestoreFiles,
-          latestSnapshotFiles("path") ===  snapshotToRestoreFiles("path"),
-          "left_anti")
-        .as[AddFile]
-        .map(_.removeWithTimestamp())
-        .repartition(parallelism)
-        .cache() // To avoid Dataset recompute for each partition of toLocalIterator()
-
-      // Commit files, metrics, protocol and metadata to delta log
-      deltaLog.withNewTransaction { txn =>
-
-        val metrics = computeMetrics(filesToAdd, filesToRemove, snapshotToRestore)
-        val addActions = filesToAdd.toLocalIterator().asScala
-        val removeActions = filesToRemove.toLocalIterator().asScala
-
-        txn.updateMetadata(snapshotToRestore.metadata)
-
-        commitLarge(
-          spark,
-          txn,
-          addActions ++ removeActions,
-          DeltaOperations.Restore(version, timestamp.map(_.getTime)),
-          Map.empty,
-          metrics)
       }
-      filesToAdd.unpersist()
-      filesToRemove.unpersist()
+
+      val latestVersion = deltaLog.update().version
+
+      require(versionToRestore < latestVersion, s"Version to restore ($versionToRestore)" +
+        s"should be less then last available version ($latestVersion)")
+
+      deltaLog.withNewTransaction { txn =>
+        val latestSnapshot = txn.snapshot
+        val snapshotToRestore = deltaLog.getSnapshotAt(versionToRestore)
+        val latestSnapshotFiles = latestSnapshot.allFiles
+        val snapshotToRestoreFiles = snapshotToRestore.allFiles
+
+        import spark.implicits._
+
+        val filesToAdd = snapshotToRestoreFiles
+          .join(
+            latestSnapshotFiles,
+            snapshotToRestoreFiles("path") === latestSnapshotFiles("path"),
+            "left_anti")
+          .as[AddFile]
+          .map(_.copy(dataChange = true))
+          .cache() // To avoid Dataset recompute for each partition of toLocalIterator()
+
+        val filesToRemove = latestSnapshotFiles
+          .join(
+            snapshotToRestoreFiles,
+            latestSnapshotFiles("path") === snapshotToRestoreFiles("path"),
+            "left_anti")
+          .as[AddFile]
+          .map(_.removeWithTimestamp())
+          .cache() // To avoid Dataset recompute for each partition of toLocalIterator()
+
+        try {
+          checkSnapshotFilesAvailability(deltaLog, filesToAdd, versionToRestore)
+
+          // Commit files, metrics, protocol and metadata to delta log
+          val metrics = computeMetrics(filesToAdd, filesToRemove, snapshotToRestore)
+          val addActions = filesToAdd.toLocalIterator().asScala
+          val removeActions = filesToRemove.toLocalIterator().asScala
+
+          txn.updateMetadata(snapshotToRestore.metadata)
+
+          commitLarge(
+            spark,
+            txn,
+            addActions ++ removeActions,
+            DeltaOperations.Restore(version, timestamp),
+            Map.empty,
+            metrics)
+        } finally {
+          filesToAdd.unpersist()
+          filesToRemove.unpersist()
+        }
+      }
 
       Seq.empty[Row]
     }
   }
 
-  private def restoreParallelism(spark: SparkSession): Int = spark
-    .sessionState
-    .conf
-    .getConf(DELTA_RESTORE_PARALLELISM)
+  private def parseStringToTs(timestamp: Option[String]): Timestamp = {
+    Try {
+      timestamp.flatMap { tsStr =>
+        val tz = DateTimeUtils.getZoneId(SQLConf.get.sessionLocalTimeZone)
+        val utfStr = UTF8String.fromString(tsStr)
+        DateTimeUtils.stringToTimestamp(utfStr, tz)
+      }
+    } match {
+      case Success(Some(tsMicroseconds)) => new Timestamp(tsMicroseconds / 1000)
+      case Success(None) => throw timestampInvalid(Literal("null"))
+      case _ => throw timestampInvalid(Literal(timestamp.get))
+    }
+  }
 
   private def computeMetrics(
     toAdd: Dataset[AddFile],
@@ -152,7 +168,9 @@ case class RestoreTableCommand(
    * is still possible if spark.sql.files.ignoreMissingFiles is set to true
    */
   private def checkSnapshotFilesAvailability(
-      deltaLog: DeltaLog, files: Dataset[AddFile], version: Long): Unit = {
+    deltaLog: DeltaLog,
+    files: Dataset[AddFile],
+    version: Long): Unit = {
 
     implicit val spark: SparkSession = files.sparkSession
     val ignore = spark
@@ -167,7 +185,6 @@ case class RestoreTableCommand(
 
       import spark.implicits._
       val missedFiles = files
-        .repartition(restoreParallelism(spark))
         .mapPartitions { files =>
           val fs = path.getFileSystem(hadoopConf.value.value)
           val pathStr = path.toUri.getPath
