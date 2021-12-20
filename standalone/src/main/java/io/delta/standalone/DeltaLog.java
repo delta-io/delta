@@ -94,7 +94,9 @@ public interface DeltaLog {
     Path getPath();
 
     /**
-     * Get all actions starting from {@code startVersion} (inclusive).
+     * Get all actions starting from {@code startVersion} (inclusive) in increasing order of
+     * committed version.
+     * <p>
      * If {@code startVersion} doesn't exist, return an empty {@code Iterator}.
      *
      * @param startVersion the table version to begin retrieving actions from (inclusive)

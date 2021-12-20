@@ -22,6 +22,7 @@ import java.sql.Timestamp
 import java.util.UUID
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable.ListBuffer
 
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
@@ -381,13 +382,20 @@ abstract class DeltaLogSuiteBase extends FunSuite {
         assert(versionLogs.length == 3 - startVersion,
           s"getChanges($startVersion) skipped some versions")
 
+        val versionsInOrder = new ListBuffer[Long]()
+
         for (versionLog <- versionLogs) {
           val version = versionLog.getVersion
           val actions = versionLog.getActions.asScala.map(_.getClass.getSimpleName)
           val expectedActions = versionToActionsMap(version)
           assert(expectedActions == actions,
             s"getChanges($startVersion) had incorrect actions at version $version.")
+
+          versionsInOrder += version
         }
+
+        // ensure that versions are seen in increasing order
+        assert(versionsInOrder.toList == (startVersion to 2).map(_.toLong).toList)
       }
 
       // standard cases
