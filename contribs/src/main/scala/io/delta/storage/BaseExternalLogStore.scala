@@ -335,6 +335,7 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
           copyFile(fs, entry.tempPath, entry.path)
           fileCopied = true
         }
+        // TODO catch FileAlreadyExistsException and still commit to DBB
 
         // Since overwrite is true, we do not expect any FileAlreadyExistsExceptions
         writeCache(fs, completedEntry, overwrite = true)
