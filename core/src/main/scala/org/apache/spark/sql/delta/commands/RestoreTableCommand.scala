@@ -88,7 +88,9 @@ case class RestoreTableCommand(
             "left_anti")
           .as[AddFile]
           .map(_.copy(dataChange = true))
-          .cache() // To avoid Dataset recompute for each partition of toLocalIterator()
+          // To avoid recompute of Dataset with wide transformation by toLocalIterator and
+          // checkSnapshotFilesAvailability method with spark.sql.files.ignoreMissingFiles=false
+          .cache()
 
         val filesToRemove = latestSnapshotFiles
           .join(
@@ -97,7 +99,8 @@ case class RestoreTableCommand(
             "left_anti")
           .as[AddFile]
           .map(_.removeWithTimestamp())
-          .cache() // To avoid Dataset recompute for each partition of toLocalIterator()
+          // To avoid recompute of Dataset with wide transformation by toLocalIterator
+          .cache()
 
         try {
           checkSnapshotFilesAvailability(deltaLog, filesToAdd, versionToRestore)
