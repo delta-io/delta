@@ -99,7 +99,15 @@ private[internal] class OptimisticTransactionImpl(
       actionsJ: java.lang.Iterable[T],
       op: Operation,
       engineInfo: String): CommitResult = {
-    val actions = actionsJ.asScala.map(ConversionUtils.convertActionJ).toSeq
+
+    actionsJ.asScala.collect { case m: MetadataJ => m }.foreach { m =>
+      updateMetadata(m)
+    }
+
+    val actions = actionsJ.asScala
+      .map(ConversionUtils.convertActionJ)
+      .filter(!_.isInstanceOf[Metadata])
+      .toSeq
 
     // Try to commit at the next version.
     var preparedActions = prepareCommit(actions)
@@ -164,30 +172,39 @@ private[internal] class OptimisticTransactionImpl(
     scan
   }
 
+  /**
+   * All [[Metadata]] actions must go through this function, and be added to the committed actions
+   * via `newMetadata` (they shouldn't ever be passed into `prepareCommit`.)
+   * This function enforces:
+   * - At most one unique [[Metadata]] is committed in a single transaction.
+   * - If this is the first commit, the committed metadata configuration includes global Delta
+   *   configuration defaults.
+   * - Checks for unenforceable NOT NULL constraints in the table schema.
+   * - Checks for column name duplication.
+   * - Verifies column names are parquet compatible.
+   * - Enforces that protocol versions are not part of the table properties.
+   */
   override def updateMetadata(metadataJ: MetadataJ): Unit = {
-    assert(newMetadata.isEmpty,
-      "Cannot change the metadata more than once in a transaction.")
 
     var latestMetadata = ConversionUtils.convertMetadataJ(metadataJ)
+
+    // this Metadata instance was previously added
+    if (newMetadata.contains(latestMetadata)) {
+      return
+    }
+
+    assert(newMetadata.isEmpty,
+      "Cannot change the metadata more than once in a transaction.")
 
     if (readVersion == -1 || isCreatingNewTable) {
       latestMetadata = withGlobalConfigDefaults(latestMetadata)
       isCreatingNewTable = true
-      newProtocol = Some(Protocol())
     }
 
     if (snapshot.metadataScala.schemaString != latestMetadata.schemaString) {
       SchemaUtils.checkUnenforceableNotNullConstraints(latestMetadata.schema)
     }
 
-    // Remove the protocol version properties
-    val noProtocolVersionConfig = latestMetadata.configuration.filter {
-      case (Protocol.MIN_READER_VERSION_PROP, _) => false
-      case (Protocol.MIN_WRITER_VERSION_PROP, _) => false
-      case _ => true
-    }
-
-    latestMetadata = latestMetadata.copy(configuration = noProtocolVersionConfig)
     verifyNewMetadata(latestMetadata)
 
     logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $latestMetadata")
@@ -231,19 +248,12 @@ private[internal] class OptimisticTransactionImpl(
       case a: Action => a
     }
 
-    // If the metadata has changed, add that to the set of actions
-    finalActions = newMetadata.toSeq ++ finalActions
-
-    val metadataChanges = finalActions.collect { case m: Metadata => m }
-    assert(metadataChanges.length <= 1,
-      "Cannot change the metadata more than once in a transaction.")
-
-    metadataChanges.foreach { m =>
-      verifyNewMetadata(m)
+    newMetadata.foreach { m =>
       verifySchemaCompatibility(snapshot.metadataScala.schema, m.schema, actions)
     }
 
-    finalActions = newProtocol.toSeq ++ finalActions
+    // If the metadata has changed, add that to the set of actions
+    finalActions = newMetadata.toSeq ++ finalActions
 
     if (snapshot.version == -1) {
       deltaLog.ensureLogDirectoryExist()

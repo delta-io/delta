@@ -164,7 +164,7 @@ class OptimisticTransactionLegacySuite extends FunSuite {
     }
   }
 
-  test("commits shouldn't have more than one Metadata") {
+  test("commits shouldn't have more than one unique Metadata") {
     withTempDir { dir =>
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
       val txn = log.startTransaction()
@@ -172,6 +172,32 @@ class OptimisticTransactionLegacySuite extends FunSuite {
         txn.commit(Metadata() :: Metadata() :: Nil, manualUpdate, engineInfo)
       }
       assert(e.getMessage.contains("Cannot change the metadata more than once in a transaction."))
+    }
+  }
+
+  test("can't commit a second different Metadata if used updateMetadata") {
+    withTempDir { dir =>
+      val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
+      val txn = log.startTransaction()
+      txn.updateMetadata(ConversionUtils.convertMetadata(Metadata()))
+      val e = intercept[AssertionError] {
+        txn.commit(Metadata() :: Nil, manualUpdate, engineInfo)
+      }
+      assert(e.getMessage.contains("Cannot change the metadata more than once in a transaction."))
+    }
+  }
+
+  test("can commit the same Metadata as used for updateMetadata ") {
+    withTempDir { dir =>
+      val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
+      val txn = log.startTransaction()
+      val metadata = ConversionUtils.convertMetadata(Metadata())
+      txn.updateMetadata(metadata)
+      val result = txn.commit(
+        (metadata.copyBuilder().build() :: Nil).asJava,
+        manualUpdate,
+        engineInfo)
+      assert(result.getVersion == 0)
     }
   }
 
@@ -285,7 +311,7 @@ class OptimisticTransactionLegacySuite extends FunSuite {
     }
   }
 
-  test("updateMetadata removes Protocol properties from metadata config") {
+  test("updateMetadata fails for metadata with Protocol configuration properties") {
     // Note: These Protocol properties are not currently exposed to the user. However, they
     //       might be in the future, and nothing is stopping the user now from seeing these
     //       properties in Delta OSS and adding them to the config map here.
@@ -296,12 +322,12 @@ class OptimisticTransactionLegacySuite extends FunSuite {
         Protocol.MIN_READER_VERSION_PROP -> "1",
         Protocol.MIN_WRITER_VERSION_PROP -> "2"
       ))
-      txn.updateMetadata(ConversionUtils.convertMetadata(metadata))
-      txn.commit(Iterable().asJava, manualUpdate, engineInfo)
 
-      val writtenConfig = log.update().getMetadata.getConfiguration
-      assert(!writtenConfig.containsKey(Protocol.MIN_READER_VERSION_PROP))
-      assert(!writtenConfig.containsKey(Protocol.MIN_WRITER_VERSION_PROP))
+      val e = intercept[AssertionError] {
+        txn.updateMetadata(ConversionUtils.convertMetadata(metadata))
+      }
+      assert(e.getMessage.contains(s"Should not have the protocol version " +
+        s"(${Protocol.MIN_READER_VERSION_PROP}) as part of table properties"))
     }
   }
 
