@@ -392,6 +392,16 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED =
+      buildConf("checkpoint.exceptionThrowing.enabled")
+        .internal()
+      .doc("Throw an error if checkpoint is failed. This flag is intentionally used for " +
+          "testing purpose to catch the checkpoint issues proactively. In production, we " +
+          "should not set this flag to be true because successful commit should return " +
+          "success to client regardless of the checkpoint result without throwing.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME =
     buildConf("resolveMergeUpdateStructsByName.enabled")
       .internal()

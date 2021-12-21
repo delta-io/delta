@@ -163,7 +163,10 @@ trait Checkpoints extends DeltaLogging {
             )
           )
           logWarning(s"Error when writing checkpoint synchronously", e)
-          if (Utils.isTesting) {
+          val throwError = Utils.isTesting ||
+            spark.sessionState.conf.getConf(
+              DeltaSQLConf.DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED)
+          if (throwError) {
             throw e
           }
       }
