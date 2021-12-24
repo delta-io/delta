@@ -78,8 +78,8 @@ public class DeltaGlobalCommitterTest {
         // the order of below partition spec is different from the one used when initializing test
         // table
         LinkedHashMap<String, String> partitionSpec = new LinkedHashMap<String, String>() {{
-                put("c", "d");
-                put("a", "b");
+                put("col2", "val2");
+                put("col1", "val1");
             }};
         List<DeltaCommittable> deltaCommittables =
             DeltaSinkTestUtils.getListOfDeltaCommittables(3, partitionSpec);
@@ -356,8 +356,8 @@ public class DeltaGlobalCommitterTest {
     public void testGlobalCommittableSerializerWithCommittables() throws IOException {
         // GIVEN
         LinkedHashMap<String, String> partitionSpec = new LinkedHashMap<>();
-        partitionSpec.put("a", "b");
-        partitionSpec.put("c", "d");
+        partitionSpec.put("col1", "val1");
+        partitionSpec.put("col2", "val2");
 
         List<DeltaCommittable> deltaCommittables = Arrays.asList(
             new DeltaCommittable(

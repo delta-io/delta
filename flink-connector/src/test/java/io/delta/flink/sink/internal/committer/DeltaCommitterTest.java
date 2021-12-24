@@ -104,8 +104,8 @@ public class DeltaCommitterTest {
     public void testCommittableWithPendingFileForPartitionedTable() throws IOException {
         // GIVEN
         LinkedHashMap<String, String> partitionSpec = new LinkedHashMap<>();
-        partitionSpec.put("a", "b");
-        partitionSpec.put("c", "d");
+        partitionSpec.put("col1", "val1");
+        partitionSpec.put("col2", "val2");
 
         DeltaCommittable committable =
             DeltaSinkTestUtils.getTestDeltaCommittableWithPendingFile(partitionSpec);

@@ -18,7 +18,6 @@
 
 package io.delta.flink.sink.internal.writer;
 
-import org.apache.flink.annotation.Internal;
 import org.apache.flink.core.fs.Path;
 
 /**
@@ -50,7 +49,6 @@ import org.apache.flink.core.fs.Path;
  *         to {@link io.delta.flink.sink.DeltaSink#createWriter}</li>
  * </ol>
  */
-@Internal
 public class DeltaWriterBucketState {
 
     private final String bucketId;

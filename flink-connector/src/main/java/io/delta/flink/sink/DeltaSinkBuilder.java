@@ -166,20 +166,6 @@ public class DeltaSinkBuilder<IN> implements Serializable {
         this.shouldTryUpdateSchema = shouldTryUpdateSchema;
     }
 
-    public DeltaSinkBuilder<IN> withRowType(RowType rowType) {
-        return new DeltaSinkBuilder<>(
-            tableBasePath,
-            serializableConfiguration.conf(),
-            bucketCheckInterval,
-            writerFactory,
-            bucketAssigner,
-            rollingPolicy,
-            outputFileConfig,
-            appId,
-            rowType,
-            shouldTryUpdateSchema);
-    }
-
     /**
      * Sets the sink's option whether in case of any differences between stream's schema and Delta
      * table's schema we should try to update it during commit to the

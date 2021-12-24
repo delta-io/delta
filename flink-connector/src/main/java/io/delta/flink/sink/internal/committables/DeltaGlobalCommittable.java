@@ -20,7 +20,6 @@ package io.delta.flink.sink.internal.committables;
 
 import java.util.List;
 
-import org.apache.flink.annotation.Internal;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
@@ -54,7 +53,6 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  *         no longer recovered and exist only in the previously snapshotted states.</li>
  * </ol>
  */
-@Internal
 public class DeltaGlobalCommittable {
 
     private final List<DeltaCommittable> deltaCommittables;

@@ -107,7 +107,6 @@ public class TestSchemaConverter {
                     new StructField("f01", new io.delta.standalone.types.StringType()),
                     new StructField("f02", new io.delta.standalone.types.IntegerType()),
                 }))
-
             });
 
         assertEquals(expectedDeltaStructType, deltaStructType);

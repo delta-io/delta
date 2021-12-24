@@ -27,7 +27,6 @@ import java.util.UUID;
 import javax.annotation.Nullable;
 
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
-import org.apache.flink.annotation.Internal;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.streaming.api.functions.sink.filesystem.DeltaBulkBucketWriter;
 import org.apache.flink.streaming.api.functions.sink.filesystem.DeltaBulkPartWriter;
@@ -90,7 +89,6 @@ import static org.apache.flink.util.Preconditions.checkState;
  *
  * @param <IN> The type of input elements.
  */
-@Internal
 public class DeltaWriterBucket<IN> {
 
     private static final Logger LOG = LoggerFactory.getLogger(DeltaWriterBucket.class);

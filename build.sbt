@@ -629,7 +629,6 @@ lazy val flinkConnector = (project in file("flink-connector"))
   .settings (
     name := "flink-connector",
     commonSettings,
-    publishArtifact := scalaBinaryVersion.value == "2.12",
     publishArtifact in Test := false,
     crossPaths := false,
     libraryDependencies ++= Seq(
@@ -639,6 +638,7 @@ lazy val flinkConnector = (project in file("flink-connector"))
       "org.apache.flink" % "flink-connector-files" % flinkVersion % "test" classifier "tests",
       "org.apache.flink" %% "flink-table-runtime-blink" % flinkVersion % "test",
       "org.apache.flink" % "flink-connector-test-utils" % flinkVersion % "test",
+      "org.apache.flink" %% "flink-clients" % flinkVersion % "test",
       "com.github.sbt" % "junit-interface" % "0.12" % Test
     ),
     // generating source java class with version number to be passed during commit to the DeltaLog as engine info
@@ -656,4 +656,4 @@ lazy val flinkConnector = (project in file("flink-connector"))
     }
   )
   .settings(skipReleaseSettings)
-  .dependsOn(standalone)
+  .dependsOn(standaloneCosmetic % "provided")

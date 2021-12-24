@@ -20,7 +20,6 @@ package io.delta.flink.sink.internal.committables;
 
 import java.io.IOException;
 
-import org.apache.flink.annotation.Internal;
 import org.apache.flink.core.io.SimpleVersionedSerializer;
 import org.apache.flink.core.memory.DataInputDeserializer;
 import org.apache.flink.core.memory.DataInputView;
@@ -33,7 +32,6 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 /**
  * Versioned serializer for {@link DeltaCommittable}.
  */
-@Internal
 public class DeltaCommittableSerializer
     implements SimpleVersionedSerializer<DeltaCommittable> {
 

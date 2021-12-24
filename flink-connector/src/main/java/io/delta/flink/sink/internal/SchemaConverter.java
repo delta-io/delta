@@ -108,7 +108,7 @@ public class SchemaConverter {
                 return toDeltaDataType((RowType) flinkType);
             default:
                 throw new UnsupportedOperationException(
-                    "Cannot convert unknown type to Flink: " + flinkType);
+                    "Type not supported: " + flinkType);
         }
     }
 }

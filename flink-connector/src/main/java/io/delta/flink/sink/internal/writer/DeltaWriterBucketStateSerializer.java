@@ -20,7 +20,6 @@ package io.delta.flink.sink.internal.writer;
 
 import java.io.IOException;
 
-import org.apache.flink.annotation.Internal;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.core.io.SimpleVersionedSerialization;
 import org.apache.flink.core.io.SimpleVersionedSerializer;
@@ -33,7 +32,6 @@ import org.apache.flink.streaming.api.functions.sink.filesystem.bucketassigners.
 /**
  * Versioned serializer for {@link DeltaWriterBucketState}.
  */
-@Internal
 public class DeltaWriterBucketStateSerializer
     implements SimpleVersionedSerializer<DeltaWriterBucketState> {
 

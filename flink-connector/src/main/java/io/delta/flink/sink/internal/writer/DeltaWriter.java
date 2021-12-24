@@ -28,7 +28,6 @@ import javax.annotation.Nullable;
 
 import io.delta.flink.sink.DeltaTablePartitionAssigner;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
-import org.apache.flink.annotation.Internal;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.connector.sink.Sink;
 import org.apache.flink.api.connector.sink.SinkWriter;
@@ -70,7 +69,6 @@ import static org.apache.flink.util.Preconditions.checkState;
  *
  * @param <IN> The type of input elements.
  */
-@Internal
 public class DeltaWriter<IN>
     implements SinkWriter<IN, DeltaCommittable, DeltaWriterBucketState>,
     Sink.ProcessingTimeService.ProcessingTimeCallback {

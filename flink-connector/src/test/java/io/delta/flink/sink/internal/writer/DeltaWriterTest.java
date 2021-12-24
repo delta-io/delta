@@ -222,7 +222,7 @@ public class DeltaWriterTest {
     public DeltaTablePartitionAssigner<RowData> getTestPartitionAssigner() {
         DeltaTablePartitionAssigner.DeltaPartitionComputer<RowData> partitionComputer =
             (element, context) -> new LinkedHashMap<String, String>() {{
-                    put("a", Integer.toString(testRecordsCount % 2));
+                    put("col1", Integer.toString(testRecordsCount % 2));
                 }};
         return new DeltaTablePartitionAssigner<>(partitionComputer);
     }
