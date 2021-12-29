@@ -124,6 +124,10 @@ lazy val contribs = (project in file("contribs"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
+    libraryDependencies ++= Seq(
+      // Adding object storage dependencies
+      "org.javaswift" % "joss" % "0.10.2"
+    ),
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
       listPythonFiles(baseDirectory.value.getParentFile / "python"),
 
