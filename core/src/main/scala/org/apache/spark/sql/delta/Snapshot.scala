@@ -35,7 +35,7 @@ import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.expressions.UserDefinedFunction
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.util.{SerializableConfiguration, Utils}
 
 /**
@@ -232,6 +232,10 @@ class Snapshot(
 
   /** Returns the data schema of the table, the schema of the columns written out to file. */
   def dataSchema: StructType = metadata.dataSchema
+
+  def hiddenPartitioningColumns: Seq[StructField] = {
+    metadata.partitionSchema.fields.filter(GeneratedColumn.isGeneratedColumn(protocol, _))
+  }
 
   /** Number of columns to collect stats on for data skipping */
   lazy val numIndexedCols: Int = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(metadata)

@@ -29,7 +29,9 @@ import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, QueryTest, R
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.DateTimeUtils.{getZoneId, stringToDate, stringToTimestamp, toJavaDate, toJavaTimestamp}
 import org.apache.spark.sql.catalyst.util.quietly
+import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.streaming.MemoryStream
+import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.{StreamingQueryException, Trigger}
 import org.apache.spark.sql.test.SharedSparkSession
@@ -1578,6 +1580,122 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
             )
           )
         }
+      }
+    }
+  }
+
+  private def checkPartitioningAnswer(query: Dataset[Row], expectedFilesScanned: Int,
+      expectedAnswer: Seq[Row]) = {
+    query.explain()
+    val fileScans = query.queryExecution.executedPlan.collect {
+      case f: FileSourceScanExec => f
+    }
+
+    // Force the query to read files and generate metrics
+    query.queryExecution.executedPlan.execute().count()
+
+    // Verify number of files read
+    assert(fileScans.size == 1)
+    val numFilesAferPartitionSkipping = fileScans.head.metrics.get("numFiles")
+    assert(numFilesAferPartitionSkipping.nonEmpty)
+    assert(numFilesAferPartitionSkipping.get.value == expectedFilesScanned)
+    checkAnswer(query, expectedAnswer)
+  }
+
+  test("hidden partitioning") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withTableName("hidden_partitioning") { table =>
+        createTable(table, Some(path), "part bigint, id bigint", Map("part" -> "id"), Seq("part"))
+        spark.range(3)
+          .write
+          .format("delta")
+          .mode("append")
+          .save(path)
+        
+        // Read only one partition
+        var query = spark.read.format("delta").load(path).where("id = 1")
+        checkPartitioningAnswer(query, 1, Seq(Row(1, 1)))
+        
+        query = spark.read.format("delta").load(path).where("id <= 1")
+        checkPartitioningAnswer(query, 2, Seq(Row(0, 0), Row(1, 1)))
+
+        query = spark.read.format("delta").load(path).where("id >= 1")
+        checkPartitioningAnswer(query, 2, Seq(Row(1, 1), Row(2, 2)))
+      }
+    }
+  }
+
+  test("hidden partitioning nested column") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withTableName("hidden_partitioning") { table =>
+        createTable(table, Some(path), "part bigint, nested struct<id: bigint>", Map("part" -> "nested.id"), Seq("part"))
+        spark.range(3)
+          .select(struct(col("id")).alias("nested"))
+          .write
+          .format("delta")
+          .mode("append")
+          .save(path)
+        
+        // Read only one partition
+        var query = spark.read.format("delta").load(path).where("nested.id = 1")
+        checkPartitioningAnswer(query, 1, Seq(Row(1, Row(1))))
+        
+        query = spark.read.format("delta").load(path).where("nested.id <= 1")
+        checkPartitioningAnswer(query, 2, Seq(Row(0, Row(0)), Row(1, Row(1))))
+
+        query = spark.read.format("delta").load(path).where("nested.id >= 1")
+        checkPartitioningAnswer(query, 2, Seq(Row(1, Row(1)), Row(2, Row(2))))
+      }
+    }
+  }
+
+  test("hidden partitioning cast") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withTableName("hidden_partitioning") { table =>
+        createTable(table, Some(path), "part int, id bigint", Map("part" -> "cast(id as int)"), Seq("part"))
+        spark.range(3)
+          .write
+          .format("delta")
+          .mode("append")
+          .save(path)
+        
+        // Read only one partition
+        var query = spark.read.format("delta").load(path).where("id = 1")
+        checkPartitioningAnswer(query, 1, Seq(Row(1, 1)))
+        
+        query = spark.read.format("delta").load(path).where("id <= 1")
+        checkPartitioningAnswer(query, 2, Seq(Row(0, 0), Row(1, 1)))
+
+        query = spark.read.format("delta").load(path).where("id >= 1")
+        checkPartitioningAnswer(query, 2, Seq(Row(1, 1), Row(2, 2)))
+      }
+    }
+  }
+
+  test("hidden partitioning nested column cast") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withTableName("hidden_partitioning") { table =>
+        createTable(table, Some(path), "part int, nested struct<id: bigint>", Map("part" -> "cast(nested.id as int)"), Seq("part"))
+        spark.range(3)
+          .select(struct(col("id")).alias("nested"))
+          .write
+          .format("delta")
+          .mode("append")
+          .save(path)
+        
+        // Read only one partition
+        var query = spark.read.format("delta").load(path).where("nested.id = 1")
+        checkPartitioningAnswer(query, 1, Seq(Row(1, Row(1))))
+        
+        query = spark.read.format("delta").load(path).where("nested.id <= 1")
+        checkPartitioningAnswer(query, 2, Seq(Row(0, Row(0)), Row(1, Row(1))))
+
+        query = spark.read.format("delta").load(path).where("nested.id >= 1")
+        checkPartitioningAnswer(query, 2, Seq(Row(1, Row(1)), Row(2, Row(2))))
       }
     }
   }

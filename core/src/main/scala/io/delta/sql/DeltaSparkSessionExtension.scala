@@ -93,5 +93,8 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
     extensions.injectOptimizerRule { session =>
       new ActiveOptimisticTransactionRule(session)
     }
+    extensions.injectOptimizerRule { session =>
+      new HiddenPartitioningRule(session)
+    }
   }
 }
