@@ -1612,11 +1612,11 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
           .format("delta")
           .mode("append")
           .save(path)
-        
+
         // Read only one partition
         var query = spark.read.format("delta").load(path).where("id = 1")
         checkPartitioningAnswer(query, 1, Seq(Row(1, 1)))
-        
+
         query = spark.read.format("delta").load(path).where("id <= 1")
         checkPartitioningAnswer(query, 2, Seq(Row(0, 0), Row(1, 1)))
 
@@ -1630,18 +1630,19 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath
       withTableName("hidden_partitioning") { table =>
-        createTable(table, Some(path), "part bigint, nested struct<id: bigint>", Map("part" -> "nested.id"), Seq("part"))
+        createTable(table, Some(path), "part bigint, nested struct<id: bigint>",
+          Map("part" -> "nested.id"), Seq("part"))
         spark.range(3)
           .select(struct(col("id")).alias("nested"))
           .write
           .format("delta")
           .mode("append")
           .save(path)
-        
+
         // Read only one partition
         var query = spark.read.format("delta").load(path).where("nested.id = 1")
         checkPartitioningAnswer(query, 1, Seq(Row(1, Row(1))))
-        
+
         query = spark.read.format("delta").load(path).where("nested.id <= 1")
         checkPartitioningAnswer(query, 2, Seq(Row(0, Row(0)), Row(1, Row(1))))
 
@@ -1655,17 +1656,18 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath
       withTableName("hidden_partitioning") { table =>
-        createTable(table, Some(path), "part int, id bigint", Map("part" -> "cast(id as int)"), Seq("part"))
+        createTable(table, Some(path), "part int, id bigint",
+          Map("part" -> "cast(id as int)"), Seq("part"))
         spark.range(3)
           .write
           .format("delta")
           .mode("append")
           .save(path)
-        
+
         // Read only one partition
         var query = spark.read.format("delta").load(path).where("id = 1")
         checkPartitioningAnswer(query, 1, Seq(Row(1, 1)))
-        
+
         query = spark.read.format("delta").load(path).where("id <= 1")
         checkPartitioningAnswer(query, 2, Seq(Row(0, 0), Row(1, 1)))
 
@@ -1679,18 +1681,19 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath
       withTableName("hidden_partitioning") { table =>
-        createTable(table, Some(path), "part int, nested struct<id: bigint>", Map("part" -> "cast(nested.id as int)"), Seq("part"))
+        createTable(table, Some(path), "part int, nested struct<id: bigint>",
+          Map("part" -> "cast(nested.id as int)"), Seq("part"))
         spark.range(3)
           .select(struct(col("id")).alias("nested"))
           .write
           .format("delta")
           .mode("append")
           .save(path)
-        
+
         // Read only one partition
         var query = spark.read.format("delta").load(path).where("nested.id = 1")
         checkPartitioningAnswer(query, 1, Seq(Row(1, Row(1))))
-        
+
         query = spark.read.format("delta").load(path).where("nested.id <= 1")
         checkPartitioningAnswer(query, 2, Seq(Row(0, Row(0)), Row(1, Row(1))))
 
