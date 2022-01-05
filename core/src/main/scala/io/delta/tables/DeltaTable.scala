@@ -40,8 +40,8 @@ import org.apache.spark.sql.types.StructType
  * @since 0.3.0
  */
 class DeltaTable private[tables](
-    @transient private val _df: Dataset[Row],
-    @transient private val table: DeltaTableV2)
+                                  @transient private val _df: Dataset[Row],
+                                  @transient private val table: DeltaTableV2)
   extends DeltaTableOperations with Serializable {
 
   protected def deltaLog: DeltaLog = {
@@ -97,6 +97,10 @@ class DeltaTable private[tables](
    */
   def vacuum(retentionHours: Double): DataFrame = {
     executeVacuum(deltaLog, Some(retentionHours), table.getTableIdentifierIfExists)
+  }
+
+  def optimize(): DataFrame = {
+    executeOptimize(deltaLog, table.getTableIdentifierIfExists)
   }
 
   /**
@@ -505,9 +509,9 @@ object DeltaTable {
    * @since 0.4.0
    */
   def convertToDelta(
-      spark: SparkSession,
-      identifier: String,
-      partitionSchema: StructType): DeltaTable = {
+                      spark: SparkSession,
+                      identifier: String,
+                      partitionSchema: StructType): DeltaTable = {
     val tableId: TableIdentifier = spark.sessionState.sqlParser.parseTableIdentifier(identifier)
     DeltaConvert.executeConvert(spark, tableId, Some(partitionSchema), None)
   }
@@ -532,9 +536,9 @@ object DeltaTable {
    * @since 0.4.0
    */
   def convertToDelta(
-      spark: SparkSession,
-      identifier: String,
-      partitionSchema: String): DeltaTable = {
+                      spark: SparkSession,
+                      identifier: String,
+                      partitionSchema: String): DeltaTable = {
     val tableId: TableIdentifier = spark.sessionState.sqlParser.parseTableIdentifier(identifier)
     DeltaConvert.executeConvert(spark, tableId, Some(StructType.fromDDL(partitionSchema)), None)
   }
@@ -557,8 +561,8 @@ object DeltaTable {
    * @since 0.4.0
    */
   def convertToDelta(
-      spark: SparkSession,
-      identifier: String): DeltaTable = {
+                      spark: SparkSession,
+                      identifier: String): DeltaTable = {
     val tableId: TableIdentifier = spark.sessionState.sqlParser.parseTableIdentifier(identifier)
     DeltaConvert.executeConvert(spark, tableId, None, None)
   }
