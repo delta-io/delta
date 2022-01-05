@@ -297,9 +297,11 @@ trait DeltaCommand extends DeltaLogging {
       if (txn.readVersion < 0) {
         deltaLog.createLogDirectory()
       }
+      val fsWriteStartNano = System.nanoTime()
+      val jsonActions = allActions.map(_.json)
       deltaLog.store.write(
         deltaFile(deltaLog.logPath, attemptVersion),
-        allActions.map(_.json),
+        jsonActions,
         overwrite = false,
         deltaLog.newDeltaHadoopConf())
 
@@ -310,12 +312,16 @@ trait DeltaCommand extends DeltaLogging {
 
       updateAndCheckpoint(spark, deltaLog, commitSize, attemptVersion)
       val postCommitSnapshot = deltaLog.snapshot
+      val postCommitReconstructionTime = System.nanoTime()
       var stats = CommitStats(
         startVersion = txn.readVersion,
         commitVersion = attemptVersion,
         readVersion = postCommitSnapshot.version,
         txnDurationMs = NANOSECONDS.toMillis(commitTime - txn.txnStartTimeNs),
         commitDurationMs = NANOSECONDS.toMillis(commitTime - commitStartNano),
+        fsWriteDurationMs = NANOSECONDS.toMillis(commitTime - fsWriteStartNano),
+        stateReconstructionDurationMs =
+          NANOSECONDS.toMillis(postCommitReconstructionTime - commitTime),
         numAdd = numAddFiles,
         numRemove = numRemoveFiles,
         bytesNew = bytesNew,
@@ -324,6 +330,10 @@ trait DeltaCommand extends DeltaLogging {
         numCdcFiles = 0,
         cdcBytesNew = 0,
         protocol = postCommitSnapshot.protocol,
+        commitSizeBytes = jsonActions.map(_.size).sum,
+        checkpointSizeBytes = postCommitSnapshot.checkpointSizeInBytes(),
+        totalCommitsSizeSinceLastCheckpoint = 0L,
+        checkpointAttempt = true,
         info = Option(commitInfo).map(_.copy(readVersion = None, isolationLevel = None)).orNull,
         newMetadata = Some(metadata),
         numAbsolutePathsInAdd = numAbsolutePaths,

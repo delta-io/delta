@@ -260,6 +260,8 @@ class Snapshot(
     DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT, logSegment.checkpoint)
   }
 
+  def deltaFileSizeInBytes(): Long = deltaFileIndexOpt.map(_.sizeInBytes).getOrElse(0L)
+  def checkpointSizeInBytes(): Long = checkpointFileIndexOpt.map(_.sizeInBytes).getOrElse(0L)
 
   protected lazy val fileIndices: Seq[DeltaLogFileIndex] = {
     checkpointFileIndexOpt.toSeq ++ deltaFileIndexOpt.toSeq
