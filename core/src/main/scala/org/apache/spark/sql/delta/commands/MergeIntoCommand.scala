@@ -209,8 +209,9 @@ case class MergeIntoCommand(
     migratedSchema: Option[StructType]) extends LeafRunnableCommand
   with DeltaCommand with PredicateHelper with AnalysisHelper with ImplicitMetadataOperation {
 
-  import SQLMetrics._
   import MergeIntoCommand._
+
+  import SQLMetrics._
 
   override val canMergeSchema: Boolean = conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE)
   override val canOverwriteSchema: Boolean = false
