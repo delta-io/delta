@@ -241,10 +241,11 @@ case class AddFile(
   def removeWithTimestamp(
       timestamp: Long = System.currentTimeMillis(),
       dataChange: Boolean = true): RemoveFile = {
+    var newTags = tags
     // scalastyle:off
     RemoveFile(
       path, Some(timestamp), dataChange,
-      extendedFileMetadata = Some(true), partitionValues, Some(size), tags)
+      extendedFileMetadata = Some(true), partitionValues, Some(size), newTags)
     // scalastyle:on
   }
 
@@ -361,6 +362,12 @@ case class RemoveFile(
    */
   def copyWithTag(tag: String, value: String): RemoveFile = copy(
     tags = Option(tags).getOrElse(Map.empty) + (tag -> value), extendedFileMetadata = Some(true))
+
+  /**
+   * Create a copy without the tag.
+   */
+  def copyWithoutTag(tag: String): RemoveFile =
+    copy(tags = Option(tags).getOrElse(Map.empty) - tag)
 
 }
 // scalastyle:on
