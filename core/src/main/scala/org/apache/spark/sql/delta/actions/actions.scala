@@ -244,7 +244,7 @@ case class AddFile(
     // scalastyle:off
     RemoveFile(
       path, Some(timestamp), dataChange,
-      extendedFileMetadata = true, partitionValues, size, tags)
+      extendedFileMetadata = Some(true), partitionValues, Some(size), tags)
     // scalastyle:on
   }
 
@@ -325,6 +325,9 @@ object AddFile {
  * are only present when the extendedFileMetadata flag is true. New writers should generally be
  * setting this flag, but old writers (and FSCK) won't, so readers must check this flag before
  * attempting to consume those values.
+ *
+ * Since old tables would not have `extendedFileMetadata` and `size` field, we should make them
+ * nullable by setting their type Option.
  */
 // scalastyle:off
 case class RemoveFile(
@@ -332,9 +335,10 @@ case class RemoveFile(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     deletionTimestamp: Option[Long],
     dataChange: Boolean = true,
-    extendedFileMetadata: Boolean = false,
+    extendedFileMetadata: Option[Boolean] = Some(false),
     partitionValues: Map[String, String] = null,
-    size: Long = 0,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    size: Option[Long] = Some(0L),
     tags: Map[String, String] = null) extends FileAction {
   override def wrap: SingleAction = SingleAction(remove = this)
 
@@ -345,7 +349,7 @@ case class RemoveFile(
    * Return tag value if extendedFileMetadata is true and the tag present.
    */
   def getTag(tagName: String): Option[String] = {
-    if (!extendedFileMetadata || tags == null) {
+    if (!extendedFileMetadata.getOrElse(false) || tags == null) {
       None
     } else {
       tags.get(tagName)
@@ -355,8 +359,8 @@ case class RemoveFile(
   /**
    * Create a copy with the new tag.
    */
-  def copyWithTag(tag: String, value: String): RemoveFile =
-    copy(tags = Option(tags).getOrElse(Map.empty) + (tag -> value), extendedFileMetadata = true)
+  def copyWithTag(tag: String, value: String): RemoveFile = copy(
+    tags = Option(tags).getOrElse(Map.empty) + (tag -> value), extendedFileMetadata = Some(true))
 
 }
 // scalastyle:on

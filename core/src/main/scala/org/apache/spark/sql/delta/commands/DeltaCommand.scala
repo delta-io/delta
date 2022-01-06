@@ -289,7 +289,7 @@ trait DeltaCommand extends DeltaLogging {
             addFilesHistogram.foreach(_.insert(a.size))
           case r: RemoveFile =>
             numRemoveFiles += 1
-            removeFilesHistogram.foreach(_.insert(r.size))
+            removeFilesHistogram.foreach(_.insert(r.size.getOrElse(0L)))
           case _ =>
         }
         action
