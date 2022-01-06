@@ -17,22 +17,23 @@
 package org.apache.spark.sql.delta.stats
 
 // scalastyle:off import.ordering.noEmptyLine
+import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
-import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.TestsStatistics
+import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 import org.scalatest.exceptions.TestFailedException
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.{IntegerType, StringType, StructType}
 
 class StatsCollectionSuite
   extends QueryTest
-  with SharedSparkSession
-  with DeltaColumnMappingTestUtils
+  with SharedSparkSession  with DeltaColumnMappingTestUtils
   with TestsStatistics {
 
   import testImplicits._
@@ -284,6 +285,123 @@ class StatsCollectionSuite
           Row(null, Row(null, null), Row(null, null)),
           Row(null, Row(null, null), Row(null, null)),
           Row(3, Row(0, 10), Row(4, 30))))
+      }
+    }
+  }
+
+  test("Truncate max string") {
+    // scalastyle:off nonascii
+    val prefixLen = 6
+    // � is the max unicode character with value \ufffd
+    val inputToExpected = Seq(
+      (s"abcd", s"abcd"),
+      (s"abcdef", s"abcdef"),
+      (s"abcde�", s"abcde�"),
+      (s"abcd�abcd", s"abcd�a�"),
+      (s"�abcd", s"�abcd"),
+      (s"abcdef�", s"abcdef��"),
+      (s"abcdef-abcdef�", s"abcdef�"),
+      (s"abcdef�abcdef", s"abcdef��"),
+      (s"abcdef��abcdef", s"abcdef���"),
+      (s"abcdef�abcdef�abcdef�abcdef", s"abcdef��")
+    )
+    inputToExpected.foreach {
+      case (input, expected) =>
+        val actual = StatisticsCollection.truncateMaxStringAgg(prefixLen)(input)
+        assert(actual == expected, s"input:$input, actual:$actual, expected:$expected")
+    }
+    // scalastyle:off nonascii
+  }
+
+  test("delta stats missing on some expected columns") {
+    val numIndexedColumns = 3
+    withSQLConf(
+      "spark.databricks.delta.properties.defaults.dataSkippingNumIndexedCols"
+        -> numIndexedColumns.toString) {
+
+      def verify(
+          df: DataFrame,
+          missingColsExpected: Int,
+          additionalColsExpected: Int,
+          dir: java.io.File): Any = {
+        val usageRecords = Log4jUsageLogger.track {
+          df.write.mode("append").format("delta").save(dir.getAbsolutePath)
+        }.filter(_.metric == "tahoeEvent")
+
+        val statRecords = usageRecords.filter(
+          _.tags.get("opType") === Some("delta.stats.mismatch"))
+
+        val expected = Map(
+          "numIndexedCols" -> numIndexedColumns,
+          "numMissingColumns" -> missingColsExpected,
+          "numAdditionalColumns" -> additionalColsExpected
+        )
+        statRecords.foreach(x => assert(x.blob === JsonUtils.toJson(expected)))
+      }
+
+      withTempDir { dir =>
+        val data = spark.range(10).toDF("a")
+          .withColumn("b", 'a % 2)
+          .withColumn("c", 'a % 3)
+          .withColumn("d", 'a % 4)
+          .withColumn("e", 'a % 5)
+
+        data.write.partitionBy("b").format("delta").save(dir.getAbsolutePath)
+
+        // case-1: nothing is missing because dataframe schema is identical to the table
+        val df1 = data
+        verify(df1, missingColsExpected = 0, additionalColsExpected = 0, dir)
+
+        // case-2: dataframe schema has less columns than the dataSkippingNumIndexedCols
+        val df2 = spark.range(10).toDF("a")
+          .withColumn("b", 'a % 2)
+        verify(df2, missingColsExpected = 2, additionalColsExpected = 0, dir)
+
+        // case-3: dataframe schema lacks columns that are supposed to be part of the stats schema
+        // but collects stats on one additional column which is not required.
+        val df3 = spark.range(10).toDF("a")
+          .withColumn("b", 'a % 2)
+          .withColumn("d", 'a % 3)
+          .withColumn("e", 'a % 4)
+        verify(df3, missingColsExpected = 1, additionalColsExpected = 1, dir)
+      }
+
+      withTempDir { dir =>
+        // case-4: Structured data with some columns missing and some additional columns on which we
+        // collect stats
+        val structureData = Seq(
+          Row(Row("James ", "", "Smith"), "36636", "M", 3100)
+        )
+
+        val structureDataSchema = new StructType()
+          .add("name", new StructType()
+            .add("firstname", StringType)
+            .add("middlename", StringType)
+            .add("lastname", StringType))
+          .add("id", StringType)
+          .add("gender", StringType)
+          .add("salary", IntegerType)
+
+        val data = spark.createDataFrame(
+          spark.sparkContext.parallelize(structureData), structureDataSchema)
+
+        data.write.partitionBy("id").format("delta").save(dir.getAbsolutePath)
+
+        val structureDfData = Seq(
+          Row(3100, "M", Row("James ", "", "Smith"), "36636")
+        )
+        val structureDfSchema = new StructType()
+          .add("salary", IntegerType)
+          .add("gender", StringType)
+          .add("name", new StructType()
+            .add("firstname", StringType)
+            .add("middlename", StringType)
+            .add("lastname", StringType))
+          .add("id", StringType)
+
+        val df = spark.createDataFrame(
+          spark.sparkContext.parallelize(structureDfData), structureDfSchema)
+        verify(df, missingColsExpected = 2, additionalColsExpected = 2, dir)
       }
     }
   }

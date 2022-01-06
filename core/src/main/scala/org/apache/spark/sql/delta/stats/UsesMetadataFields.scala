@@ -16,13 +16,8 @@
 
 package org.apache.spark.sql.delta.stats
 
-import org.apache.spark.sql.delta.{CheckpointV2, DeltaColumnMapping, DeltaConfigs, NoMapping}
-import org.apache.spark.sql.delta.actions.Metadata
-
 import org.apache.spark.sql.Column
 import org.apache.spark.sql.functions.col
-import org.apache.spark.sql.types.{DataType, StructField, StructType}
-
 
 /**
  * A mixin trait for all interfaces that would like to use information stored in Delta's transaction
@@ -40,8 +35,7 @@ trait UsesMetadataFields {
 }
 
 /**
- * A mixin trait that provides access to fields in the transaction log based on the availability
- * of v2 stats or v1 stats.
+ * A mixin trait that provides access to the stats fields in the transaction log.
  */
 trait ReadsMetadataFields extends UsesMetadataFields {
   /** Returns a Column that references the stats field data skipping should use */

@@ -31,8 +31,8 @@ import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
 
-abstract class EvolvabilitySuiteBase extends QueryTest
-    with SharedSparkSession with SQLTestUtils {
+abstract class EvolvabilitySuiteBase extends QueryTest with SharedSparkSession
+    with SQLTestUtils {
   import testImplicits._
 
   protected def testEvolvability(tablePath: String): Unit = {

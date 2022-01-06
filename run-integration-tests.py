@@ -128,6 +128,7 @@ def run_pip_installation_tests(root_dir, version, use_testpypi, extra_maven_repo
 def clear_artifact_cache():
     print("Clearing Delta artifacts from ivy2 and mvn cache")
     delete_if_exists(os.path.expanduser("~/.ivy2/cache/io.delta"))
+    delete_if_exists(os.path.expanduser("~/.ivy2/local/io.delta"))
     delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
 
 

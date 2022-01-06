@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta.stats
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.mutable.ArrayBuffer
 
-import com.databricks.sql.acl.CheckPermissions
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog}
 import org.apache.spark.sql.delta.DeltaOperations.ComputeStats
 import org.apache.spark.sql.delta.actions.AddFile
@@ -110,17 +109,6 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
     val stringPrefix =
       spark.sessionState.conf.getConf(DeltaSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH)
 
-    import functions.udf
-    val truncateMaxStringAgg = udf((x: String) => {
-      if (x == null || x.length < stringPrefix) {
-        x
-      } else {
-        // scalastyle:off
-        x.substring(0, stringPrefix) + "\ufffd"
-        // scalastyle:on
-      }
-    })
-
     struct(
       count("*") as NUM_RECORDS,
       collectStats(MIN, statCollectionSchema) {
@@ -137,7 +125,8 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
       collectStats(MAX, statCollectionSchema) {
         // Truncate and pad string max values as necessary
         case (c, f) if f.dataType == StringType =>
-          truncateMaxStringAgg(max(c))
+          val udfTruncateMax = udf(StatisticsCollection.truncateMaxStringAgg(stringPrefix)_)
+          udfTruncateMax(max(c))
 
         // Collect all numeric max values
         case (c, f) if f.dataType.isInstanceOf[NumericType] ||
@@ -280,5 +269,19 @@ object StatisticsCollection extends DeltaCommand {
       add.copy(dataChange = false, stats = r.getString(1))
     }
     txn.commit(newAddFiles, ComputeStats(predicates.map(_.sql)))
+  }
+
+  def truncateMaxStringAgg(prefixLen: Int)(x: String): String = {
+    if (x == null || x.length <= prefixLen) {
+      x
+    } else {
+      // Grab the prefix. We want to append `\ufffd` as a tie-breaker, but that is only safe
+      // if the character we truncated was smaller. Keep extending the prefix until that
+      // condition holds, or we run off the end of the string.
+      // scalastyle:off nonascii
+      val tieBreaker = '\ufffd'
+      x.take(prefixLen) + x.substring(prefixLen).takeWhile(_ >= tieBreaker) + tieBreaker
+      // scalastyle:off nonascii
+    }
   }
 }

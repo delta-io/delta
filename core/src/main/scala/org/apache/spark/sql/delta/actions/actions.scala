@@ -241,10 +241,11 @@ case class AddFile(
   def removeWithTimestamp(
       timestamp: Long = System.currentTimeMillis(),
       dataChange: Boolean = true): RemoveFile = {
+    var newTags = tags
     // scalastyle:off
     RemoveFile(
       path, Some(timestamp), dataChange,
-      extendedFileMetadata = true, partitionValues, size, tags)
+      extendedFileMetadata = Some(true), partitionValues, Some(size), newTags)
     // scalastyle:on
   }
 
@@ -253,6 +254,9 @@ case class AddFile(
     // From modification time in milliseconds to microseconds.
     .getOrElse(TimeUnit.MICROSECONDS.convert(modificationTime, TimeUnit.MILLISECONDS).toString)
     .toLong
+
+  @JsonIgnore
+  lazy val numAutoCompactions: Int = tag(AddFile.Tags.NUM_AUTO_COMPACTIONS).getOrElse("0").toInt
 
   def tag(tag: AddFile.Tags.KeyType): Option[String] =
     Option(tags).getOrElse(Map.empty).get(tag.name)
@@ -297,6 +301,17 @@ object AddFile {
 
     /** [[OPTIMIZE_TARGET_SIZE]]: target file size the file was optimized to. */
     object OPTIMIZE_TARGET_SIZE extends AddFile.Tags.KeyType("OPTIMIZE_TARGET_SIZE")
+
+    /**
+     * [[NUM_AUTO_COMPACTIONS]]: The number of times Auto Compaction is applied to the content of
+     * a file.
+     *
+     * Note: 'NUM_AUTO_OPTIMIZES' is used externally since Compaction is one of Optimize
+     * command. By using 'NUM_AUTO_OPTIMIZES', it hides detail and can support other
+     * optimize than Compaction. 'NUM_AUTO_COMPACTIONS' is used internally before current
+     * only Auto Compaction is using it.
+     */
+    object NUM_AUTO_COMPACTIONS extends AddFile.Tags.KeyType("NUM_AUTO_OPTIMIZES")
   }
 
   /** Convert a [[Tags.KeyType]] to a string to be used in the AddMap.tags Map[String, String]. */
@@ -311,6 +326,9 @@ object AddFile {
  * are only present when the extendedFileMetadata flag is true. New writers should generally be
  * setting this flag, but old writers (and FSCK) won't, so readers must check this flag before
  * attempting to consume those values.
+ *
+ * Since old tables would not have `extendedFileMetadata` and `size` field, we should make them
+ * nullable by setting their type Option.
  */
 // scalastyle:off
 case class RemoveFile(
@@ -318,9 +336,10 @@ case class RemoveFile(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     deletionTimestamp: Option[Long],
     dataChange: Boolean = true,
-    extendedFileMetadata: Boolean = false,
+    extendedFileMetadata: Option[Boolean] = Some(false),
     partitionValues: Map[String, String] = null,
-    size: Long = 0,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    size: Option[Long] = Some(0L),
     tags: Map[String, String] = null) extends FileAction {
   override def wrap: SingleAction = SingleAction(remove = this)
 
@@ -331,7 +350,7 @@ case class RemoveFile(
    * Return tag value if extendedFileMetadata is true and the tag present.
    */
   def getTag(tagName: String): Option[String] = {
-    if (!extendedFileMetadata || tags == null) {
+    if (!extendedFileMetadata.getOrElse(false) || tags == null) {
       None
     } else {
       tags.get(tagName)
@@ -341,8 +360,14 @@ case class RemoveFile(
   /**
    * Create a copy with the new tag.
    */
-  def copyWithTag(tag: String, value: String): RemoveFile =
-    copy(tags = Option(tags).getOrElse(Map.empty) + (tag -> value), extendedFileMetadata = true)
+  def copyWithTag(tag: String, value: String): RemoveFile = copy(
+    tags = Option(tags).getOrElse(Map.empty) + (tag -> value), extendedFileMetadata = Some(true))
+
+  /**
+   * Create a copy without the tag.
+   */
+  def copyWithoutTag(tag: String): RemoveFile =
+    copy(tags = Option(tags).getOrElse(Map.empty) - tag)
 
 }
 // scalastyle:on

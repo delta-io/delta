@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.catalog
 
 import java.util
 import java.util.Locale
+
 // scalastyle:off import.ordering.noEmptyLine
 
 import scala.collection.JavaConverters._
@@ -43,6 +44,7 @@ import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.TableChange._
 import org.apache.spark.sql.connector.expressions.{BucketTransform, FieldReference, IdentityTransform, Transform}
 import org.apache.spark.sql.connector.write.{LogicalWriteInfo, V1Write, WriteBuilder}
+import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.execution.datasources.{DataSource, PartitioningUtils}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
 import org.apache.spark.sql.internal.SQLConf
@@ -102,7 +104,9 @@ class DeltaCatalog extends DelegatingCatalogExtension
     val isByPath = isPathIdentifier(ident)
     if (isByPath && !conf.getConf(DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS)
       && allTableProperties.containsKey("location")
-      && Option(ident.name()) != Option(allTableProperties.get("location"))
+      // The location property can be qualified and different from the path in the identifier, so
+      // we check `endsWith` here.
+      && Option(allTableProperties.get("location")).exists(!_.endsWith(ident.name()))
     ) {
       throw DeltaErrors.ambiguousPathsInCreateTableException(
         ident.name(), allTableProperties.get("location"))

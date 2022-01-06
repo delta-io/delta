@@ -52,13 +52,8 @@ class DeltaStatisticsTracker(
     rootPath: Path,
     hadoopConf: Configuration) extends WriteTaskStatsTracker {
 
-  // Still used by Photon.
-  private var currentFilePath: String = _
-
   private[this] val submittedFiles = mutable.HashMap[String, InternalRow]()
 
-  /** Were the statistic computed by DeltaStatisticsTracker or by Photon? */
-  private var statsComputedByPhoton: Boolean = false
 
   // For example, when strings are involved, statsColExpr might look like
   // struct(
@@ -127,37 +122,28 @@ class DeltaStatisticsTracker(
   override def closeFile(filePath: String): Unit = {
     // We assume file names are unique
     val fileName = new Path(filePath).getName
-    if (statsComputedByPhoton) {
-      assert(results.contains(fileName), s"No Photon stats provided for file: $filePath")
-    } else {
       assert(!results.contains(fileName), s"Stats already recorded for file: $filePath")
       // this is statsColExpr's output (json string)
       val jsonStats = getStats(submittedFiles(filePath)).getString(0)
       results += ((fileName, jsonStats))
       submittedFiles.remove(filePath)
-    }
   }
 
   override def newPartition(partitionValues: InternalRow): Unit = { }
 
   override def newFile(newFilePath: String): Unit = {
-    currentFilePath = newFilePath
     submittedFiles.getOrElseUpdate(newFilePath, {
       // `buffer` is a row that will start off by holding the initial values for the agg expressions
       // (see the initializeStats: Projection), will then be updated in place every time a new row
       // is processed (see updateStats: Projection), and will finally serve as an input for
       // computing the per-file result of statsColExpr (see getStats: Projection)
       val buffer = new SpecificInternalRow(aggBufferAttrs.map(_.dataType))
-      if (!statsComputedByPhoton) {
-        initializeStats.target(buffer).apply(EmptyRow)
-      } else {
+
         buffer
-      }
     })
   }
 
   override def newRow(filePath: String, currentRow: InternalRow): Unit = {
-    assert(!statsComputedByPhoton, "Using newRow() while the stats should be provided by Photon")
     val aggBuffer = submittedFiles(filePath)
     extendedRow.update(0, aggBuffer)
     extendedRow.update(1, currentRow)
@@ -186,102 +172,6 @@ class DeltaStatisticsTracker(
       }
     }
   }
-
-  /**
-   * Creates a unique custom ID for `structField` in `statsColExpr` that matches the format of the
-   * names created through `flattenStructCols()`. This allows us to match the nested stats schema
-   * used by Spark with flattened schema produced by Photon. All nested children of `structField`
-   * are of `GetStructField` type, while the last child will be an `AttributeReference`
-   * which has access to the `exprId`.
-   */
-  private def createCustomExprId(structField: GetStructField): String = {
-    val structName = s".${structField.name.getOrElse(
-      if (structField.resolved) structField.childSchema(structField.ordinal).name
-      else s"_${structField.ordinal}")}"
-    val childName = structField.child match {
-      case c: AttributeReference => c.exprId.toString + "." + c.name
-      case c: GetStructField => createCustomExprId(c)
-    }
-    childName + structName
-  }
-
-  /**
-   * Rewritten version of `statsColExpr` that uses the aggregates computed by Photon, instead of
-   * computing them using Spark. Aggregates are replaced by bound reference into the InternalRow
-   * returned by Photon. See `NativeDataWriter.DeltaStatistics` to see how the indexes for each
-   * aggregate into the row are computed.
-   */
-  private lazy val photonStatsColExpr: Projection = {
-    val dataColsSeq: AttributeSeq = dataCols
-
-    val flattenedCols = mutable.ArrayBuffer[(String, DataType)]()
-    for (col <- dataCols) {
-      col.dataType match {
-        case structCol: StructType =>
-          flattenedCols ++= flattenStructCols(structCol, col.exprId.toString + "." + col.name)
-        case _ =>
-          flattenedCols.append((col.exprId.toString, col.dataType))
-      }
-    }
-
-    val minMaxIndex = mutable.Map[String, Int]()
-    val nullCntIndex = mutable.Map[String, Int]()
-    var idx: Int = 1
-    for ((customExprId, dt) <- flattenedCols) {
-      if (dt == StringType || dt == DateType ||
-          dt == TimestampType || dt.isInstanceOf[NumericType]) {
-        minMaxIndex(customExprId) = idx
-        idx += 2
-      }
-      nullCntIndex(customExprId) = idx
-      idx += 1
-    }
-
-    val photonResultExpr = statsColExpr.transform {
-      case ae : AggregateExpression =>
-        val photonStatsColumnIndex = ae.aggregateFunction match {
-          case Count(Seq(Literal(1, IntegerType))) =>
-            // Number of records.
-            0
-
-          case Min(a: AttributeReference) if contains(dataColsSeq, a.exprId) =>
-            // Minimum value.
-            minMaxIndex(a.exprId.toString)
-
-          case Max(a: AttributeReference) if contains(dataColsSeq, a.exprId) =>
-            // Maximum value.
-            minMaxIndex(a.exprId.toString) + 1
-
-          case Min(a: GetStructField) =>
-            // Minimum value.
-            minMaxIndex(createCustomExprId(a))
-
-          case Max(a: GetStructField) =>
-            // Maximum value.
-            minMaxIndex(createCustomExprId(a)) + 1
-
-          case Sum(CaseWhen(
-                Seq((IsNull(a: GetStructField), Literal(1, IntegerType))),
-                Some(Literal(0, IntegerType))), _) =>
-            // Number of null values.
-            nullCntIndex(createCustomExprId(a))
-
-          case Sum(CaseWhen(
-                Seq((IsNull(a: AttributeReference), Literal(1, IntegerType))),
-                Some(Literal(0, IntegerType))), _)
-              if contains(dataColsSeq, a.exprId) =>
-            // Number of null values.
-            nullCntIndex(a.exprId.toString)
-
-          case _ =>
-            throw new IllegalArgumentException(
-              s"Photon did not compute the aggregate ${ae.aggregateFunction}.")
-        }
-        BoundReference(photonStatsColumnIndex, ae.dataType, ae.nullable)
-    }
-    UnsafeProjection.create(photonResultExpr)
-  }
-
 
 
   private def contains(attrSeq: AttributeSeq, exprId: ExprId): Boolean = {

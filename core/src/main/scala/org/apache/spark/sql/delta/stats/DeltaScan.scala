@@ -17,11 +17,16 @@
 package org.apache.spark.sql.delta.stats
 
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.stats.DeltaDataSkippingType.DeltaDataSkippingType
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 
 import org.apache.spark.sql.catalyst.expressions._
 
 /**
+ * DataSize describes following attributes for data that consists of a list of input files
+ * @param bytesCompressed total size of the data
+ * @param rows number of rows in the data
+ * @param files number of input files
  * Note: Please don't add any new constructor to this class. `jackson-module-scala` always picks up
  * the first constructor returned by `Class.getConstructors` but the order of the constructors list
  * is non-deterministic. (SC-13343)
@@ -30,14 +35,31 @@ case class DataSize(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     bytesCompressed: Option[Long] = None,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
-    rows: Option[Long] = None)
+    rows: Option[Long] = None,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    files: Option[Long] = None)
 
 object DataSize {
   def apply(a: ArrayAccumulator): DataSize = {
     DataSize(
       Option(a.value(0)).filterNot(_ == -1),
-      Option(a.value(1)).filterNot(_ == -1))
+      Option(a.value(1)).filterNot(_ == -1),
+      Option(a.value(2)).filterNot(_ == -1))
   }
+}
+
+object DeltaDataSkippingType extends Enumeration {
+  type DeltaDataSkippingType = Value
+  // V1: code path in DataSkippingReader.scala, which needs StateReconstruction
+  // V2: code path in DataSkippingReaderV2.scala, which does NOT need StateReconstruction
+  // noSkipping: no skipping and get all files from the Delta table
+  // partitionFiltering: filtering and skipping based on partition columns
+  // dataSkipping: filtering and skipping based on stats columns
+  // limit: skipping based on limit clause in DataSkippingReader.scala
+  // filteredLimit: skipping based on limit clause and partition columns in DataSkippingReader.scala
+  val noSkippingV1, noSkippingV2, partitionFilteringOnlyV1, partitionFilteringOnlyV2,
+    dataSkippingOnlyV1, dataSkippingOnlyV2, dataSkippingAndPartitionFilteringV1,
+    dataSkippingAndPartitionFilteringV2, limit, filteredLimit = Value
 }
 
 /**
@@ -56,6 +78,8 @@ case class DeltaScan(
     val partitionFilters: ExpressionSet,
     val dataFilters: ExpressionSet,
     val unusedFilters: ExpressionSet,
-    val projection: AttributeSet) {
+    val projection: AttributeSet,
+    val scanDurationMs: Long,
+    val dataSkippingType: DeltaDataSkippingType) {
   def allFilters: ExpressionSet = partitionFilters ++ dataFilters ++ unusedFilters
 }

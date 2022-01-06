@@ -83,6 +83,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_CONVERT_ICEBERG_USE_NATIVE_PARTITION_VALUES =
+    buildConf("convert.iceberg.useNativePartitionValues")
+      .doc(
+        """ When enabled, obtain the partition values from Iceberg table's metadata, instead
+          | of inferring from file paths.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_SNAPSHOT_PARTITIONS =
     buildConf("snapshotPartitions")
       .internal()
@@ -90,6 +99,15 @@ trait DeltaSQLConfBase {
       .intConf
       .checkValue(n => n > 0, "Delta snapshot partition number must be positive.")
       .createOptional
+
+  val DELTA_SNAPSHOT_LOADING_MAX_RETRIES =
+    buildConf("snapshotLoading.maxRetries")
+      .internal()
+      .doc("How many times to retry when failing to load a snapshot. Each retry will try to use " +
+        "a different checkpoint in order to skip potential corrupt checkpoints.")
+      .intConf
+      .checkValue(n => n >= 0, "must not be negative.")
+      .createWithDefault(2)
 
   val DELTA_PARTITION_COLUMN_CHECK_ENABLED =
     buildConf("partitionColumnValidity.enabled")
@@ -380,6 +398,16 @@ trait DeltaSQLConfBase {
       .doc("Whether the checksum file can be written.")
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED =
+      buildConf("checkpoint.exceptionThrowing.enabled")
+        .internal()
+      .doc("Throw an error if checkpoint is failed. This flag is intentionally used for " +
+          "testing purpose to catch the checkpoint issues proactively. In production, we " +
+          "should not set this flag to be true because successful commit should return " +
+          "success to client regardless of the checkpoint result without throwing.")
+      .booleanConf
+      .createWithDefault(false)
 
   val DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME =
     buildConf("resolveMergeUpdateStructsByName.enabled")

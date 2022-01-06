@@ -95,7 +95,8 @@ trait DocsPath {
     "faqRelativePath",
     "ignoreStreamingUpdatesAndDeletesWarning",
     "concurrentModificationExceptionMsg",
-    "incorrectLogStoreImplementationException"
+    "incorrectLogStoreImplementationException",
+    "columnRenameNotSupported"
   )
 }
 
@@ -974,29 +975,53 @@ object DeltaErrors
     new AnalysisException("Cannot describe the history of a view.")
   }
 
-  def copyIntoEncryptionOnlyS3(scheme: String): Throwable = {
+  def copyIntoEncryptionNotAllowedOn(scheme: String): Throwable = {
+    // TODO: add `wasbs` once supported
     new IllegalArgumentException(
-      s"Invalid scheme $scheme. COPY INTO source encryption is only supported for S3 paths.")
+      s"Invalid scheme $scheme. " +
+        s"COPY INTO source encryption currently only supports s3/s3n/s3a/abfss.")
   }
 
   def copyIntoEncryptionSseCRequired(): Throwable = {
     new IllegalArgumentException(
-      s"Invalid encryption type. COPY INTO source encryption must specify 'type' = 'SSE-C'.")
+      s"Invalid encryption type. COPY INTO source encryption must specify 'TYPE' = 'AWS_SSE_C'.")
   }
 
   def copyIntoEncryptionMasterKeyRequired(): Throwable = {
     new IllegalArgumentException(
-      s"Invalid encryption arguments. COPY INTO source encryption must specify a masterKey.")
+      s"Invalid encryption arguments. COPY INTO source encryption must specify a MASTER_KEY.")
   }
 
-  def copyIntoCredentialsOnlyS3(scheme: String): Throwable = {
-    new IllegalArgumentException(
-      s"Invalid scheme $scheme. COPY INTO source credentials are only supported for S3 paths.")
+  def copyIntoCredentialsNotAllowedOn(scheme: String): Throwable = {
+     new IllegalArgumentException(
+      s"Invalid scheme $scheme. " +
+        s"COPY INTO source encryption currently only supports s3/s3n/s3a/wasbs/abfss.")
   }
 
-  def copyIntoCredentialsAllRequired(cause: Throwable): Throwable = {
+  def copyIntoCredentialsAllRequiredForS3(cause: Throwable): Throwable = {
     new IllegalArgumentException(
-      "COPY INTO credentials must include awsKeyId, awsSecretKey, and awsSessionToken.", cause)
+      "COPY INTO credentials must include AWS_ACCESS_KEY, AWS_SECRET_KEY, and AWS_SESSION_TOKEN.",
+      cause)
+  }
+
+  def copyIntoEncryptionRequiredForAzure(key: String, value: Option[String] = None): Throwable = {
+    new IllegalArgumentException(
+      if (value.nonEmpty) {
+        s"Invalid encryption option $key. " +
+          s"COPY INTO source encryption must specify '$key' = '${value.get}'."
+      } else {
+        s"COPY INTO source encryption must specify '$key'."
+      }
+    )
+  }
+
+  def copyIntoEncryptionNotSupportedForAzure: Throwable = {
+    new IllegalArgumentException(
+      "COPY INTO encryption only supports ADLS Gen2, or abfss:// file scheme")
+  }
+
+  def copyIntoCredentialsRequiredForAzure(key: String): Throwable = {
+    new IllegalArgumentException(s"COPY INTO source credentials must specify '$key'.")
   }
 
   def postCommitHookFailedException(
@@ -1238,6 +1263,34 @@ object DeltaErrors
          |
          |Please upgrade your table's protocol version using ALTER TABLE SET TBLPROPERTIES and try again.
          |
+         |""".stripMargin)
+    // scalastyle:on line.size.limit
+  }
+
+  def columnRenameNotSupported(spark: SparkSession, protocol: Protocol): Throwable = {
+    // scalastyle:off line.size.limit
+    val adviceMsg = if (!DeltaColumnMapping.satisfyColumnMappingProtocol(protocol)) {
+      s"""
+         |Please upgrade your Delta table to reader version 2 and writer version 5 (Refer to table versioning at ${generateDocsLink(spark.sparkContext.getConf, "/versioning.html")})
+         | and change the column mapping mode to name mapping. You can use the following command:
+         |
+         | ALTER TABLE <table_name> SET TBLPROPERTIES (
+         |   'delta.columnMapping.mode' = 'name',
+         |   'delta.minReaderVersion' = '2',
+         |   'delta.minWriterVersion' = '5')
+         |
+      """.stripMargin
+    } else {
+      s"""
+         |Please change the column mapping mode to name mapping mode. You can use the following command:
+         |
+         | ALTER TABLE <table_name> SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
+      """.stripMargin
+    }
+
+    new AnalysisException(
+      s"""
+         |Column rename is not supported for your Delta table. $adviceMsg
          |""".stripMargin)
     // scalastyle:on line.size.limit
   }

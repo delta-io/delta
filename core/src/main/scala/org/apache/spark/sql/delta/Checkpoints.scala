@@ -41,6 +41,7 @@ import org.apache.spark.sql.functions.{col, struct, when}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
+import org.apache.spark.util.Utils
 
 /**
  * Records information about a checkpoint.
@@ -129,21 +130,46 @@ trait Checkpoints extends DeltaLogging {
 
   /**
    * Creates a checkpoint using snapshotToCheckpoint. By default it uses the current log version.
+   * Note that this function captures and logs all exceptions, since the checkpoint shouldn't fail
+   * the overall commit operation.
    */
   def checkpoint(snapshotToCheckpoint: Snapshot): Unit =
     recordDeltaOperation(this, "delta.checkpoint") {
-      if (snapshotToCheckpoint.version < 0) {
-        throw DeltaErrors.checkpointNonExistTable(dataPath)
-      }
-      val checkpointMetaData = writeCheckpointFiles(snapshotToCheckpoint)
-      val json = JsonUtils.toJson(checkpointMetaData)
-      store.write(
-        LAST_CHECKPOINT,
-        Iterator(json),
-        overwrite = true,
-        newDeltaHadoopConf())
+      try {
+        if (snapshotToCheckpoint.version < 0) {
+          throw DeltaErrors.checkpointNonExistTable(dataPath)
+        }
+        val checkpointMetaData = writeCheckpointFiles(snapshotToCheckpoint)
+        val json = JsonUtils.toJson(checkpointMetaData)
+        store.write(
+          LAST_CHECKPOINT,
+          Iterator(json),
+          overwrite = true,
+          newDeltaHadoopConf())
 
-      doLogCleanup()
+        doLogCleanup()
+      } catch {
+        // Catch all non-fatal exceptions, since the checkpoint is written after the commit
+        // has completed. From the perspective of the user, the commit completed successfully.
+        // However, throw if this is in a testing environment - that way any breaking changes
+        // can be caught in unit tests.
+        case NonFatal(e) =>
+          recordDeltaEvent(
+            snapshotToCheckpoint.deltaLog,
+            "delta.checkpoint.sync.error",
+            data = Map(
+              "exception" -> e.getMessage(),
+              "stackTrace" -> e.getStackTrace()
+            )
+          )
+          logWarning(s"Error when writing checkpoint synchronously", e)
+          val throwError = Utils.isTesting ||
+            spark.sessionState.conf.getConf(
+              DeltaSQLConf.DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED)
+          if (throwError) {
+            throw e
+          }
+      }
     }
 
   protected def writeCheckpointFiles(snapshotToCheckpoint: Snapshot): CheckpointMetaData = {
@@ -197,7 +223,9 @@ trait Checkpoints extends DeltaLogging {
       val checkpoints = store.listFrom(
             checkpointPrefix(logPath, math.max(0, cur - 1000)),
             hadoopConf)
-          .filter { file => isCheckpointFile(file.getPath) }
+          // Checkpoint files of 0 size are invalid but Spark will ignore them silently when reading
+          // such files, hence we drop them so that we never pick up such checkpoints.
+          .filter { file => isCheckpointFile(file.getPath) && file.getLen != 0 }
           .map{ file => CheckpointInstance(file.getPath) }
           .takeWhile(tv => (cur == 0 || tv.version <= cur) && tv.isEarlierThan(cv))
           .toArray
@@ -246,7 +274,7 @@ object Checkpoints extends DeltaLogging {
     // log store and decide whether to use rename.
     val useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath, hadoopConf)
 
-    val checkpointSize = spark.sparkContext.longAccumulator("checkpointSize")
+    val checkpointRowCount = spark.sparkContext.longAccumulator("checkpointRowCount")
     val numOfFiles = spark.sparkContext.longAccumulator("numOfFiles")
     // Use the string in the closure as Path is not Serializable.
     val path = checkpointFileSingular(snapshot.path, snapshot.version).toString
@@ -296,7 +324,7 @@ object Checkpoints extends DeltaLogging {
                 new TaskAttemptID("", 0, TaskType.REDUCE, 0, 0)))
 
             iter.foreach { row =>
-              checkpointSize.add(1)
+              checkpointRowCount.add(1)
               writer.write(row)
             }
             // Note: `writer.close()` is not put in a `finally` clause because we don't want to
@@ -354,10 +382,10 @@ object Checkpoints extends DeltaLogging {
     }
 
     // Attempting to write empty checkpoint
-    if (checkpointSize.value == 0) {
+    if (checkpointRowCount.value == 0) {
       logWarning(DeltaErrors.EmptyCheckpointErrorMessage)
     }
-    CheckpointMetaData(snapshot.version, checkpointSize.value, None)
+    CheckpointMetaData(snapshot.version, checkpointRowCount.value, None)
   }
 
   // scalastyle:off line.size.limit

@@ -24,8 +24,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.{ThreadUtils, Utils}
 
 trait DeltaWithNewTransactionSuiteBase extends QueryTest
-  with SharedSparkSession
-  with DeltaSQLCommandTest {
+  with SharedSparkSession  with DeltaSQLCommandTest {
 
   /**
    * Test whether `withNewTransaction` captures all delta read made within it and correctly

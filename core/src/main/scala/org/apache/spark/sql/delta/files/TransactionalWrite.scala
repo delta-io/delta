@@ -37,7 +37,7 @@ import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.datasources.{BasicWriteJobStatsTracker, FileFormatWriter, WriteJobStatsTracker}
 import org.apache.spark.sql.functions.to_json
-import org.apache.spark.sql.types.{ArrayType, MapType, MetadataBuilder, StringType, StructType}
+import org.apache.spark.sql.types.{StringType, StructType}
 import org.apache.spark.util.SerializableConfiguration
 
 /**
@@ -323,6 +323,6 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         _.recordedStats(new Path(new URI(a.path)).getName)).getOrElse(a.stats))
     }
 
-    resultFiles // committer.addedStatuses.toSeq
+    resultFiles
   }
 }

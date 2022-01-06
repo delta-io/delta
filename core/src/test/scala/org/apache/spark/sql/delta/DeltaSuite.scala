@@ -43,8 +43,7 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
 
 class DeltaSuite extends QueryTest
-  with SharedSparkSession
-  with DeltaColumnMappingTestUtils  with SQLTestUtils
+  with SharedSparkSession  with DeltaColumnMappingTestUtils  with SQLTestUtils
   with DeltaSQLCommandTest {
 
   import testImplicits._
@@ -1393,9 +1392,13 @@ class DeltaSuite extends QueryTest
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath + "/table"
       spark.range(10).write.format("parquet").save(path)
-      sql(s"CONVERT TO DELTA parquet.`$path`")
+      convertToDelta(s"parquet.`$path`")
 
-      assert(spark.conf.get(DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION) === Some(0))
+      // In column mapping (name mode), we perform convertToDelta with a CONVERT and an ALTER,
+      // so the version has been updated
+      val commitVersion = if (columnMappingEnabled) 1 else 0
+      assert(spark.conf.get(DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION) ===
+        Some(commitVersion))
     }
   }
 

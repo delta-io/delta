@@ -320,6 +320,7 @@ class DeltaTableBuilder private[tables](
       colNames.map(name => DeltaTableUtils.parseColToTransform(name))
     }.getOrElse(Seq.empty[Transform])
 
+
     val stmt = builderOption match {
       case CreateTableOptions(ifNotExists) =>
         CreateTableStatement(
