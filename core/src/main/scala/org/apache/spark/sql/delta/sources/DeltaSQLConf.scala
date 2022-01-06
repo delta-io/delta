@@ -500,6 +500,13 @@ trait DeltaSQLConfBase {
           |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
+
+  val DATA_SKIPPING_STRING_PREFIX_LENGTH =
+    SQLConf.buildConf("spark.databricks.io.skipping.stringPrefixLength")
+      .internal()
+      .doc("For string columns, how long prefix to store in the data skipping index.")
+      .intConf
+      .createWithDefault(32)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

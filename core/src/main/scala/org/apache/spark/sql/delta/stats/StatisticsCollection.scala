@@ -19,11 +19,13 @@ package org.apache.spark.sql.delta.stats
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.mutable.ArrayBuffer
 
+import com.databricks.sql.acl.CheckPermissions
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog}
 import org.apache.spark.sql.delta.DeltaOperations.ComputeStats
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.commands.DeltaCommand
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
@@ -105,8 +107,8 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
    * The types we keep stats on must be consistent with DataSkippingReader.ComparableLiteral.
    */
   lazy val statsCollector: Column = {
-    val stringPrefix = 32
-      // spark.sessionState.conf.getConf(DatabricksSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH)
+    val stringPrefix =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH)
 
     import functions.udf
     val truncateMaxStringAgg = udf((x: String) => {
