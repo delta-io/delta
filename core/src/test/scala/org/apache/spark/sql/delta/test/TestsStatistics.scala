@@ -32,7 +32,7 @@ trait TestsStatistics { self: SQLTestUtils =>
   protected var getStatsDf: (DeltaLog, Seq[Column]) => DataFrame = _
 
   /**
-   * Runs the given test code with DataSkippingReaderV2 enabled and disabled.
+   * Creates the correct `getStatsDf` to be used by the `testFun` and executes the `testFun`.
    */
   protected def statsTest(testName: String, testTags: org.scalatest.Tag*)(testFun: => Any): Unit = {
     import testImplicits._
