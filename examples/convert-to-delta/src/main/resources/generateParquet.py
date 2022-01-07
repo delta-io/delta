@@ -9,7 +9,7 @@ To generate example data:
 3. Run the script: `python3 generateParquet.py`
 """
 
-table_path = "~/connectors/examples/standalone-example-convert-to-delta/src/main/resources/external/sales"
+table_path = "~/connectors/examples/convert-to-delta/src/main/resources/external/sales"
 spark = pyspark.sql.SparkSession.builder.appName("test").getOrCreate()
 
 columns = ["year", "month", "day", "sale_id", "customer", "total_cost"]

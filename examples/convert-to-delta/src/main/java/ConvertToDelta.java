@@ -1,4 +1,19 @@
-package io.delta.standalone.example;
+/*
+ * Copyright (2021) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package example;
 
 import java.io.File;
 import java.io.IOException;
@@ -33,9 +48,13 @@ import org.apache.hadoop.fs.Path;
  *
  * To generate your own parquet files for the example, see resources/generateParquet.py
  *
- * To run this example:
- * - cd connectors/examples/standalone-example-convert-to-delta
- * - mvn package exec:java -Dexec.cleanupDaemonThreads=false -Dexec.mainClass=io.delta.standalone.example.ConvertToDelta
+ * To run with Maven:
+ * - cd connectors/examples/convert-to-delta
+ * - mvn package exec:java -Dexec.cleanupDaemonThreads=false -Dexec.mainClass=example.ConvertToDelta
+ *
+ * To run with SBT:
+ * - cd connectors/examples
+ * - build/sbt "convertToDelta/runMain example.ConvertToDelta"
  *
  * Find the converted table in: target/classes/$targetTable
  */
