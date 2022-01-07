@@ -180,7 +180,7 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
       i += 1
       fields += newField
     }
-    (StructType(fields), accCnt)
+    (StructType(fields.toSeq), accCnt)
   }
 
   /**

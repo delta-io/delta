@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, DeltaTableUtils
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, SingleAction}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.DeltaDataSkippingType.DeltaDataSkippingType
 import org.apache.spark.sql.delta.util.StateCache
 import org.apache.hadoop.fs.Path
 
@@ -826,6 +827,11 @@ trait DataSkippingReader
     files.toSeq -> Seq(DataSize(totalSize), DataSize(partitionSize), DataSize(scanSize))
   }
 
+  private def getCorrectDataSkippingType(
+      dataSkippingType: DeltaDataSkippingType): DeltaDataSkippingType = {
+    dataSkippingType
+  }
+
   /**
    * Gathers files that should be included in a scan based on the given predicates.
    * Statistics about the amount of data that will be read are gathered and returned.
@@ -847,8 +853,6 @@ trait DataSkippingReader
           bytesCompressed = Some(sizeInBytes),
           rows = None,
           files = Some(numOfFiles))
-        val dataSkippingType =
-            DeltaDataSkippingType.noSkippingV1
 
         return DeltaScan(
           version = version,
@@ -861,7 +865,7 @@ trait DataSkippingReader
           dataFilters = ExpressionSet(Nil),
           unusedFilters = ExpressionSet(Nil),
           scanDurationMs = System.currentTimeMillis() - startTime,
-          dataSkippingType = dataSkippingType
+          dataSkippingType = getCorrectDataSkippingType(DeltaDataSkippingType.noSkippingV1)
         )
       }
     }
@@ -879,8 +883,6 @@ trait DataSkippingReader
       // When there are only partition filters we can scan allFiles
       // rather than withStats and thus we skip data skipping information.
       val (files, scanSize) = filterOnPartitions(partitionFilters, keepNumRecords)
-      val dataSkippingType =
-          DeltaDataSkippingType.partitionFilteringOnlyV1
 
       DeltaScan(
         version = version,
@@ -893,7 +895,8 @@ trait DataSkippingReader
         dataFilters = ExpressionSet(Nil),
         unusedFilters = ExpressionSet(subqueryFilters),
         scanDurationMs = System.currentTimeMillis() - startTime,
-        dataSkippingType = dataSkippingType
+        dataSkippingType =
+          getCorrectDataSkippingType(DeltaDataSkippingType.partitionFilteringOnlyV1)
       )
     } else recordDeltaOperation(deltaLog, "delta.skipping.data") {
       val finalPartitionFilters = constructPartitionFilters(partitionFilters)
@@ -915,12 +918,11 @@ trait DataSkippingReader
         getDataSkippedFiles(finalPartitionFilters, finalSkippingFilters, keepNumRecords)
       }
 
-      val dataSkippingType =
-          if (partitionFilters.isEmpty) {
-            DeltaDataSkippingType.dataSkippingOnlyV1
-          } else {
-            DeltaDataSkippingType.dataSkippingAndPartitionFilteringV1
-          }
+      val dataSkippingType = if (partitionFilters.isEmpty) {
+        DeltaDataSkippingType.dataSkippingOnlyV1
+      } else {
+        DeltaDataSkippingType.dataSkippingAndPartitionFilteringV1
+      }
 
       DeltaScan(
         version = version,
@@ -933,7 +935,7 @@ trait DataSkippingReader
         dataFilters = ExpressionSet(skippingFilters.map(_._1)),
         unusedFilters = ExpressionSet(unusedFilters.map(_._1) ++ subqueryFilters),
         scanDurationMs = System.currentTimeMillis() - startTime,
-        dataSkippingType = dataSkippingType
+        dataSkippingType = getCorrectDataSkippingType(dataSkippingType)
       )
     }
   }
@@ -1008,7 +1010,7 @@ trait DataSkippingReader
     }
 
     val rowSize = if (rowsUnknown) None else Some(rowsToScan)
-    ScanAfterLimit(filesAfterLimit, Some(bytesToScan), rowSize)
+    ScanAfterLimit(filesAfterLimit.toSeq, Some(bytesToScan), rowSize)
   }
 
   /**

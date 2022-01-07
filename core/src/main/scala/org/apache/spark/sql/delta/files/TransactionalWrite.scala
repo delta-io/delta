@@ -323,6 +323,6 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         _.recordedStats(new Path(new URI(a.path)).getName)).getOrElse(a.stats))
     }
 
-    resultFiles
+    resultFiles.toSeq
   }
 }
