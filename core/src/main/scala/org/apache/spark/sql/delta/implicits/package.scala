@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql
+package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.types.{ArrayType, MapType, StructField, StructType}
 
-package object delta {
+package object implicits {
 
   implicit class RichStructType(structType: StructType) {
 

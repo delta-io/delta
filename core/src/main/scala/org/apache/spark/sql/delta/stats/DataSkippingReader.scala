@@ -561,8 +561,12 @@ trait DataSkippingReader
    * @param statType One of the fields declared by trait `UsesMetadataFields`
    * @param pathToColumn The components of the nested column name to get stats for.
    */
-  final protected def getStatsColumnOpt(statType: String, pathToColumn: Seq[String] = Nil)
-      : Option[Column] = {
+  final protected def getStatsColumnOpt(
+      statType: String,
+      pathToColumn: Seq[String] = Nil) : Option[Column] = {
+
+    import org.apache.spark.sql.delta.implicits._
+
     // If the requested stats type doesn't even exist, just return None right away. This can
     // legitimately happen if we have no stats at all, or if column stats are disabled (in which
     // case only the NUM_RECORDS stat type is available).
