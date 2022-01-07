@@ -521,6 +521,16 @@ trait DeltaSQLConfBase {
           |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
+
+  val INTERNAL_UDF_OPTIMIZATION_ENABLED =
+    buildConf("internalUdfOptimization.enabled")
+      .internal()
+      .doc(
+        """If true, create udfs used by Delta internally from templates to reduce lock contention
+          |caused by Scala Reflection.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

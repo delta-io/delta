@@ -99,7 +99,7 @@ class Snapshot(
         new SerializableConfiguration(deltaLog.newDeltaHadoopConf()))
       var wrapPath = false
 
-      val canonicalizePath = udf((filePath: String) =>
+      val canonicalizePath = DeltaUDF.stringStringUdf((filePath: String) =>
           Snapshot.canonicalizePath(filePath, hadoopConf.value.value)
       )
       val canonicalizedActions = loadActions
@@ -364,7 +364,7 @@ object Snapshot extends DeltaLogging {
    * the previous states will contain empty strings as the file name.
    */
   private def assertLogBelongsToTable(logBasePath: URI): UserDefinedFunction = {
-    udf((filePath: String) => {
+    DeltaUDF.stringStringUdf((filePath: String) => {
       if (filePath.isEmpty || new Path(new URI(filePath)).getParent == new Path(logBasePath)) {
         filePath
       } else {
