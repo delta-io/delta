@@ -245,11 +245,11 @@ trait DeltaVacuumSuiteBase extends QueryTest
         CheckFiles(Seq("file1.txt", "abc", "abc/file2.txt")),
         AdvanceClock(2000), // tombstone should expire
         GC(dryRun = false, Seq(reservoirDir.toString)),
-        CheckFiles(Seq("file1.txt", "abc")),
-        CheckFiles(Seq("abc/file2.txt"), exist = false),
-        GC(dryRun = false, Seq(reservoirDir.toString)), // Second gc should clear empty directory
         CheckFiles(Seq("file1.txt")),
-        CheckFiles(Seq("abc"), exist = false),
+        // abc should be deleted because it become empty after the minor gc deleted file2.txt
+        CheckFiles(Seq("abc", "abc/file2.txt"), exist = false),
+        GC(dryRun = false, Seq(reservoirDir.toString)), // nothing should be deleted
+        CheckFiles(Seq("file1.txt")),
 
         // Make sure that files outside the reservoir are not affected
         CreateFile(externalFile, commitToActionLog = true),
