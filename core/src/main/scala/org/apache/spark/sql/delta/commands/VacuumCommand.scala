@@ -157,7 +157,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
                 }
                 validFileOpt.toSeq.flatMap { f =>
                   // paths are relative so provide '/' as the basePath.
-                  allValidFiles(f, isBloomFiltered).flatMap { file =>
+                  Seq(f).flatMap { file =>
                     val dirs = getAllSubdirs("/", file, fs)
                     dirs ++ Iterator(file)
                   }
@@ -348,11 +348,6 @@ trait VacuumCommandImpl extends DeltaCommand {
   protected def stringToPath(path: String): Path = new Path(new URI(path))
 
   protected def pathToString(path: Path): String = path.toUri.toString
-
-  /**
-   * This is used to create the list of files we want to retain during GC.
-   */
-  protected def allValidFiles(file: String, isBloomFiltered: Boolean): Seq[String] = Seq(file)
 }
 
 case class DeltaVacuumStats(
