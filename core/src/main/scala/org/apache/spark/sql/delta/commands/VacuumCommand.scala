@@ -123,7 +123,6 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       val hadoopConf = spark.sparkContext.broadcast(
         new SerializableConfiguration(deltaHadoopConf))
       val basePath = fs.makeQualified(path).toString
-      var isBloomFiltered = false
       val parallelDeleteEnabled =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_PARALLEL_DELETE_ENABLED)
       val parallelDeletePartitions =
@@ -158,7 +157,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
                 validFileOpt.toSeq.flatMap { f =>
                   // paths are relative so provide '/' as the basePath.
                   Seq(f).flatMap { file =>
-                    val dirs = getAllSubdirs("/", file, fs)
+                    val dirs = getAllSubdirs("/", file)
                     dirs ++ Iterator(file)
                   }
                 }
@@ -206,7 +205,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
               if (fileStatus.isDir) {
                 Iterator.single(relativize(fileStatus.getPath, fs, reservoirBase, isDir = true))
               } else {
-                val dirs = getAllSubdirs(basePath, fileStatus.path, fs)
+                val dirs = getAllSubdirs(basePath, fileStatus.path)
                 val dirsWithSlash = dirs.map { p =>
                   relativize(new Path(p), fs, reservoirBase, isDir = true)
                 }
@@ -242,19 +241,11 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
 
           return diff.map(f => stringToPath(f).toString).toDF("path")
         }
-        logVacuumStart(
-          spark,
-          deltaLog,
-          path,
-          diff,
-          retentionMillis,
-          deltaLog.tombstoneRetentionMillis)
-
+        logVacuumStart(path)
         val filesDeleted = try {
           delete(diff, spark, basePath, hadoopConf, parallelDeleteEnabled,
             parallelDeletePartitions)
         } catch { case t: Throwable =>
-          logVacuumEnd(deltaLog, spark, path)
           throw t
         }
         val stats = DeltaVacuumStats(
@@ -265,7 +256,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           dirsPresentBeforeDelete = dirCounts,
           objectsDeleted = filesDeleted)
         recordDeltaEvent(deltaLog, "delta.gc.stats", data = stats)
-        logVacuumEnd(deltaLog, spark, path, Some(filesDeleted), Some(dirCounts))
+        logVacuumEnd(Some(filesDeleted), Some(dirCounts))
 
         spark.createDataset(Seq(basePath)).toDF("path")
       } finally {
@@ -277,20 +268,11 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
 
 trait VacuumCommandImpl extends DeltaCommand {
 
-  protected def logVacuumStart(
-      spark: SparkSession,
-      deltaLog: DeltaLog,
-      path: Path,
-      diff: Dataset[String],
-      specifiedRetentionMillis: Option[Long],
-      defaultRetentionMillis: Long): Unit = {
+  protected def logVacuumStart(path: Path): Unit = {
     logInfo(s"Deleting untracked files and empty directories in $path")
   }
 
   protected def logVacuumEnd(
-      deltaLog: DeltaLog,
-      spark: SparkSession,
-      path: Path,
       filesDeleted: Option[Long] = None,
       dirCounts: Option[Long] = None): Unit = {
     if (filesDeleted.nonEmpty) {
@@ -315,7 +297,7 @@ trait VacuumCommandImpl extends DeltaCommand {
    * Wrapper function for DeltaFileOperations.getAllSubDirectories
    * returns all subdirectories that `file` has with respect to `base`.
    */
-  protected def getAllSubdirs(base: String, file: String, fs: FileSystem): Iterator[String] = {
+  protected def getAllSubdirs(base: String, file: String): Iterator[String] = {
     DeltaFileOperations.getAllSubDirectories(base, file)._1
   }
 
