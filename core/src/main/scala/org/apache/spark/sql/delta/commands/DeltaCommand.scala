@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
+
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
@@ -232,12 +233,7 @@ trait DeltaCommand extends DeltaLogging {
 
     logInfo(s"Committed delta #$attemptVersion to ${deltaLog.logPath}. Wrote $commitSize actions.")
 
-    try {
-      deltaLog.checkpoint(currentSnapshot)
-    } catch {
-      case e: IllegalStateException =>
-        logWarning("Failed to checkpoint table state.", e)
-    }
+    deltaLog.checkpoint(currentSnapshot)
   }
 
   /**

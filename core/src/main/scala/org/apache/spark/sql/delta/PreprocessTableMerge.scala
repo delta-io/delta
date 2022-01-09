@@ -177,6 +177,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         }
       }
 
+
       val targetColNames = m.resolvedActions.map(_.targetColNameParts.head)
       if (targetColNames.distinct.size < targetColNames.size) {
         throw new AnalysisException(s"Duplicate column names in INSERT clause")
