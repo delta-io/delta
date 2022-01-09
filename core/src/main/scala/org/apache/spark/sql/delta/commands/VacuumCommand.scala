@@ -131,6 +131,9 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
         .getOrElse(spark.sessionState.conf.numShufflePartitions)
       val relativizeIgnoreError =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR)
+      val fileListingParallelism =
+        spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_FILE_LISTING_PARALLELISM)
+
 
       val validFiles = snapshot.stateDS
         .mapPartitions { actions =>
@@ -168,14 +171,13 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
         }.toDF("path")
 
       val partitionColumns = snapshot.metadata.partitionSchema.fieldNames
-      val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
 
       val allFilesAndDirs = DeltaFileOperations.recursiveListDirs(
           spark,
           Seq(basePath),
           hadoopConf,
           hiddenFileNameFilter = DeltaTableUtils.isHiddenDirectory(partitionColumns, _),
-          fileListingParallelism = Option(parallelism)
+          fileListingParallelism = Option(fileListingParallelism)
         )
         .groupByKey(x => x.path)
         .mapGroups { (k, v) =>

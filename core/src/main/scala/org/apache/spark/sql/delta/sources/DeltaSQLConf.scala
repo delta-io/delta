@@ -253,6 +253,13 @@ trait DeltaSQLConfBase {
       .checkValue(_ > 0, "parallelDelete.parallelism must be positive")
       .createOptional
 
+  val DELTA_VACUUM_FILE_LISTING_PARALLELISM =
+    buildConf("vacuum.fileListing.parallelism")
+      .doc("Sets the number of partitions to use for file listing")
+      .intConf
+      .checkValue(_ > 0, "fileListing.parallelism must be positive")
+      .createWithDefault(200)
+
   val DELTA_SCHEMA_AUTO_MIGRATE =
     buildConf("schema.autoMerge.enabled")
       .doc("If true, enables schema merging on appends and on overwrites.")
