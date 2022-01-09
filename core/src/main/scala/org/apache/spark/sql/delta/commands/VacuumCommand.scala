@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta.commands.VacuumCommand.logInfo
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.DeltaFileOperations.tryDeleteNonRecursive
+import org.apache.spark.sql.functions.col
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.{FileSystem, Path}
 
@@ -152,7 +153,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
 
       // minor GC
       val toCleanFiles = allTrackedFiles.select("toClean")
-        .where('toClean isNotNull)
+        .where(col("toClean").isNotNull)
         .as[String]
         .map { relativePath =>
           assert(!stringToPath(relativePath).isAbsolute,
@@ -177,7 +178,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       val partitionColumns = snapshot.metadata.partitionSchema.fieldNames
       val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
 
-      val validFiles = allTrackedFiles.select($"toKeep" as "path").where('path isNotNull)
+      val validFiles = allTrackedFiles.select($"toKeep" as "path")
+        .where(col("path").isNotNull)
       val allFilesAndDirs = DeltaFileOperations.recursiveListDirs(
           spark,
           Seq(basePath),
