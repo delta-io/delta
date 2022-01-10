@@ -338,6 +338,7 @@ trait DeltaCommand extends DeltaLogging {
         newMetadata = Some(metadata),
         numAbsolutePathsInAdd = numAbsolutePaths,
         numDistinctPartitionsInAdd = -1, // not tracking distinct partitions as of now
+        numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
         isolationLevel = Serializable.toString)
 
       recordDeltaEvent(deltaLog, "delta.commit.stats", data = stats)
