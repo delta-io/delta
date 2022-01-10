@@ -769,7 +769,7 @@ class DeltaTableTests(DeltaTestCase):
         failed = False
         try:
             dt.upgradeTableProtocol(1, 2)
-        except:
+        except BaseException:
             failed = True
         self.assertTrue(failed, "The upgrade should have failed, because downgrades aren't allowed")
 
