@@ -144,6 +144,7 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
   lazy val statsSchema: StructType = {
     // We invoke the analyzer here to actually figure out what the schema of
     // statistics column should be.
+    {
       val s = Dataset.ofRows(spark, LocalRelation(dataSchema.toAttributes))
         .select(statsCollector)
         .schema
@@ -154,6 +155,7 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
       // We cannot write null types to Parquet, therefore we need to filter them out. minValues
       // and maxValues can be null when we cannot collect stats on any of the data columns
       StructType(s.filterNot(_.dataType.isInstanceOf[NullType])).asNullable
+    }
   }
 
   /**

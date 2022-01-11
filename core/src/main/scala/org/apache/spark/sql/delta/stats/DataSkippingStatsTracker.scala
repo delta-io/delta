@@ -22,7 +22,6 @@ import org.apache.spark.sql.delta.JoinedProjection
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 
-import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate._
@@ -52,8 +51,7 @@ class DeltaStatisticsTracker(
     rootPath: Path,
     hadoopConf: Configuration) extends WriteTaskStatsTracker {
 
-  private[this] val submittedFiles = mutable.HashMap[String, InternalRow]()
-
+  protected[this] val submittedFiles = mutable.HashMap[String, InternalRow]()
 
   // For example, when strings are involved, statsColExpr might look like
   // struct(
@@ -77,10 +75,10 @@ class DeltaStatisticsTracker(
   }
 
   // The fields of aggBuffer - see below
-  private val aggBufferAttrs: Seq[Attribute] = aggregates.flatMap(_.aggBufferAttributes)
+  protected val aggBufferAttrs: Seq[Attribute] = aggregates.flatMap(_.aggBufferAttributes)
 
   // This projection initializes aggBuffer with the neutral values for the agg fcns e.g. 0 for sum
-  private val initializeStats: MutableProjection = GenerateMutableProjection.generate(
+  protected val initializeStats: MutableProjection = GenerateMutableProjection.generate(
     expressions = aggregates.flatMap(_.initialValues),
     inputSchema = Seq.empty,
     useSubexprElimination = false
@@ -116,17 +114,18 @@ class DeltaStatisticsTracker(
   private val extendedRow: GenericInternalRow = new GenericInternalRow(2)
 
   // file path to corresponding stats encoded as json
-  private val results = new collection.mutable.HashMap[String, String]
+  protected val results = new collection.mutable.HashMap[String, String]
 
   // called once per file, executes the getStats projection
   override def closeFile(filePath: String): Unit = {
     // We assume file names are unique
     val fileName = new Path(filePath).getName
-      assert(!results.contains(fileName), s"Stats already recorded for file: $filePath")
-      // this is statsColExpr's output (json string)
-      val jsonStats = getStats(submittedFiles(filePath)).getString(0)
-      results += ((fileName, jsonStats))
-      submittedFiles.remove(filePath)
+
+    assert(!results.contains(fileName), s"Stats already recorded for file: $filePath")
+    // this is statsColExpr's output (json string)
+    val jsonStats = getStats(submittedFiles(filePath)).getString(0)
+    results += ((fileName, jsonStats))
+    submittedFiles.remove(filePath)
   }
 
   override def newPartition(partitionValues: InternalRow): Unit = { }
@@ -138,8 +137,7 @@ class DeltaStatisticsTracker(
       // is processed (see updateStats: Projection), and will finally serve as an input for
       // computing the per-file result of statsColExpr (see getStats: Projection)
       val buffer = new SpecificInternalRow(aggBufferAttrs.map(_.dataType))
-
-        buffer
+      buffer
     })
   }
 
@@ -171,11 +169,6 @@ class DeltaStatisticsTracker(
           Array((customExprId + "." + f.name, f.dataType))
       }
     }
-  }
-
-
-  private def contains(attrSeq: AttributeSeq, exprId: ExprId): Boolean = {
-    attrSeq.indexOf(exprId) >= 0
   }
 }
 

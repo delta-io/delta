@@ -20,6 +20,10 @@ import org.apache.spark.sql.types.{ArrayType, MapType, StructField, StructType}
 
 package object implicits {
 
+  /**
+   * This implicit class is used to provide helpful methods used throughout the code that are not
+   * provided by Spark-Catalyst's StructType.
+   */
   implicit class RichStructType(structType: StructType) {
 
     /**

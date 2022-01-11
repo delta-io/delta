@@ -93,7 +93,6 @@ class StatsCollectionSuite
         {
           StatisticsCollection.recompute(spark, deltaLog)
         }
-
         checkAnswer(
           spark.read.format("delta").load(tempDir.getCanonicalPath),
           df
@@ -148,7 +147,6 @@ class StatsCollectionSuite
         {
           StatisticsCollection.recompute(spark, deltaLog)
         }
-
         checkAnswer(
           spark.read.format("delta").load(tempDir.getCanonicalPath),
           df
@@ -177,7 +175,6 @@ class StatsCollectionSuite
         {
           StatisticsCollection.recompute(spark, deltaLog, Seq(('a > 1).expr, ('a < 4).expr))
         }
-
         checkAnswer(
           spark.read.format("delta").load(tempDir.getCanonicalPath),
           df

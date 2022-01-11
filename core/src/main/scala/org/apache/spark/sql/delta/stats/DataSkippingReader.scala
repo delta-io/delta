@@ -21,7 +21,6 @@ import java.lang
 
 import scala.collection.mutable.ArrayBuffer
 
-// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, DeltaTableUtils, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, SingleAction}
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -562,10 +561,8 @@ trait DataSkippingReader
    * @param statType One of the fields declared by trait `UsesMetadataFields`
    * @param pathToColumn The components of the nested column name to get stats for.
    */
-  final protected def getStatsColumnOpt(
-      statType: String,
-      pathToColumn: Seq[String] = Nil) : Option[Column] = {
-
+  final protected def getStatsColumnOpt(statType: String, pathToColumn: Seq[String] = Nil)
+  : Option[Column] = {
     import org.apache.spark.sql.delta.implicits._
 
     // If the requested stats type doesn't even exist, just return None right away. This can
