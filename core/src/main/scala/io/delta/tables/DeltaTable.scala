@@ -16,6 +16,8 @@
 
 package io.delta.tables
 
+import java.sql.Timestamp
+
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
@@ -458,6 +460,35 @@ class DeltaTable private[tables](
   def merge(source: DataFrame, condition: Column): DeltaMergeBuilder = {
     DeltaMergeBuilder(this, source, condition)
   }
+
+  /**
+   * Restore the DeltaTable to an older version of the table specified by version number.
+   *
+   * An example would be
+   * {{{ io.delta.tables.DeltaTable.restoreToVersion(7) }}}
+   *
+   * @since 1.2.0
+   */
+  def restoreToVersion(version: Long): DataFrame = {
+
+    executeRestore(deltaLog, Some(version), None)
+  }
+
+  /**
+   * Restore the DeltaTable to an older version of the table specified by a timestamp.
+   *
+   * Timestamp can be of the format yyyy-MM-dd or yyyy-MM-dd HH:mm:ss
+   *
+   * An example would be
+   * {{{ io.delta.tables.DeltaTable.restoreToTimestamp("2019-01-01") }}}
+   *
+   * @since 1.2.0
+   */
+  def restoreToTimestamp(timestamp: String): DataFrame = {
+
+    executeRestore(deltaLog, None, Some(timestamp))
+  }
+
 
   /**
    * Updates the protocol version of the table to leverage new features. Upgrading the reader

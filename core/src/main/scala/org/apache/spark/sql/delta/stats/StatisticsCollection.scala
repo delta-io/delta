@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.stats
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, DeltaUDF}
 import org.apache.spark.sql.delta.DeltaOperations.ComputeStats
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.commands.DeltaCommand
@@ -110,7 +110,7 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
       spark.sessionState.conf.getConf(DeltaSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH)
 
     struct(
-      count("*") as NUM_RECORDS,
+      count(new Column("*")) as NUM_RECORDS,
       collectStats(MIN, statCollectionSchema) {
         // Truncate string min values as necessary
         case (c, f) if f.dataType == StringType =>
@@ -125,7 +125,8 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
       collectStats(MAX, statCollectionSchema) {
         // Truncate and pad string max values as necessary
         case (c, f) if f.dataType == StringType =>
-          val udfTruncateMax = udf(StatisticsCollection.truncateMaxStringAgg(stringPrefix)_)
+          val udfTruncateMax =
+            DeltaUDF.stringStringUdf(StatisticsCollection.truncateMaxStringAgg(stringPrefix)_)
           udfTruncateMax(max(c))
 
         // Collect all numeric max values

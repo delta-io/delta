@@ -347,21 +347,15 @@ case class RemoveFile(
   val delTimestamp: Long = deletionTimestamp.getOrElse(0L)
 
   /**
-   * Return tag value if extendedFileMetadata is true and the tag present.
+   * Return tag value if tags is not null and the tag present.
    */
-  def getTag(tagName: String): Option[String] = {
-    if (!extendedFileMetadata.getOrElse(false) || tags == null) {
-      None
-    } else {
-      tags.get(tagName)
-    }
-  }
+  def getTag(tagName: String): Option[String] = Option(tags).getOrElse(Map.empty).get(tagName)
 
   /**
-   * Create a copy with the new tag.
+   * Create a copy with the new tag. `extendedFileMetadata` is copied unchanged.
    */
   def copyWithTag(tag: String, value: String): RemoveFile = copy(
-    tags = Option(tags).getOrElse(Map.empty) + (tag -> value), extendedFileMetadata = Some(true))
+    tags = Option(tags).getOrElse(Map.empty) + (tag -> value))
 
   /**
    * Create a copy without the tag.
@@ -379,6 +373,7 @@ case class RemoveFile(
  */
 case class AddCDCFile(
     path: String,
+    @JsonInclude(JsonInclude.Include.ALWAYS)
     partitionValues: Map[String, String],
     size: Long,
     tags: Map[String, String] = null) extends FileAction {
@@ -512,7 +507,8 @@ case class CommitInfo(
     operationMetrics: Option[Map[String, String]],
     userMetadata: Option[String],
     tags: Option[Map[String, String]],
-    engineInfo: Option[String]) extends Action with CommitMarker {
+    engineInfo: Option[String],
+    txnId: Option[String]) extends Action with CommitMarker {
   override def wrap: SingleAction = SingleAction(commitInfo = this)
 
   override def withTimestamp(timestamp: Long): CommitInfo = {
@@ -556,9 +552,10 @@ object NotebookInfo {
 object CommitInfo {
   def empty(version: Option[Long] = None): CommitInfo = {
     CommitInfo(version, null, None, None, null, null, None, None,
-      None, None, None, None, None, None, None, None)
+      None, None, None, None, None, None, None, None, None)
   }
 
+  // scalastyle:off argcount
   def apply(
       time: Long,
       operation: String,
@@ -569,7 +566,8 @@ object CommitInfo {
       isBlindAppend: Option[Boolean],
       operationMetrics: Option[Map[String, String]],
       userMetadata: Option[String],
-      tags: Option[Map[String, String]]): CommitInfo = {
+      tags: Option[Map[String, String]],
+      txnId: Option[String]): CommitInfo = {
 
     val getUserName = commandContext.get("user").flatMap {
       case "unknown" => None
@@ -592,8 +590,10 @@ object CommitInfo {
       operationMetrics,
       userMetadata,
       tags,
-      getEngineInfo)
+      getEngineInfo,
+      txnId)
   }
+  // scalastyle:on argcount
 
   private def getEngineInfo: Option[String] = {
     Some(s"Apache-Spark/${org.apache.spark.SPARK_VERSION} Delta-Lake/${io.delta.VERSION}")

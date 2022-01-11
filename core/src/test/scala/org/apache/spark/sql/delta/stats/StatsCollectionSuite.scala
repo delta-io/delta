@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta.stats
 
-// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.sources.DeltaSQLConf

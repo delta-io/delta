@@ -268,7 +268,8 @@ trait DeltaCommand extends DeltaLogging {
         isBlindAppend = Some(false),
         Some(metrics),
         userMetadata = txn.getUserMetadata(op),
-        tags = None)
+        tags = None,
+        txnId = Some(txn.txnId))
 
       val extraActions = Seq(commitInfo, metadata)
       // We don't expect commits to have more than 2 billion actions
@@ -338,7 +339,9 @@ trait DeltaCommand extends DeltaLogging {
         newMetadata = Some(metadata),
         numAbsolutePathsInAdd = numAbsolutePaths,
         numDistinctPartitionsInAdd = -1, // not tracking distinct partitions as of now
-        isolationLevel = Serializable.toString)
+        numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
+        isolationLevel = Serializable.toString,
+        txnId = Some(txn.txnId))
 
       recordDeltaEvent(deltaLog, "delta.commit.stats", data = stats)
 

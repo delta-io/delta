@@ -49,7 +49,9 @@ trait TestsStatistics { self: SQLTestUtils =>
     }
   }
 
-  // A util to match a physical file scan node.
+  /**
+   * A util to match a physical file scan node.
+   */
   object FileScanExecNode {
     def unapply(plan: SparkPlan): Option[FileSourceScanExec] = plan match {
       case f: FileSourceScanExec => Some(f)

@@ -326,6 +326,16 @@ object DeltaOperations {
       "predicate" -> JsonUtils.toJson(predicate))
   }
 
+  /** Recorded when restoring a Delta table to an older version. */
+  case class Restore(
+      version: Option[Long],
+      timestamp: Option[String]) extends Operation("RESTORE") {
+    override val parameters: Map[String, Any] = Map(
+      "version" -> version,
+      "timestamp" -> timestamp)
+    override def changesData: Boolean = true
+  }
+
 
   private def structFieldToMap(colPath: Seq[String], field: StructField): Map[String, Any] = {
     Map(

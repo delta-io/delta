@@ -562,7 +562,7 @@ trait DataSkippingReader
    * @param pathToColumn The components of the nested column name to get stats for.
    */
   final protected def getStatsColumnOpt(statType: String, pathToColumn: Seq[String] = Nil)
-  : Option[Column] = {
+      : Option[Column] = {
     import org.apache.spark.sql.delta.implicits._
 
     // If the requested stats type doesn't even exist, just return None right away. This can
@@ -850,7 +850,6 @@ trait DataSkippingReader
           bytesCompressed = Some(sizeInBytes),
           rows = None,
           files = Some(numOfFiles))
-
         return DeltaScan(
           version = version,
           files = getAllFiles(keepNumRecords),
@@ -880,7 +879,6 @@ trait DataSkippingReader
       // When there are only partition filters we can scan allFiles
       // rather than withStats and thus we skip data skipping information.
       val (files, scanSize) = filterOnPartitions(partitionFilters, keepNumRecords)
-
       DeltaScan(
         version = version,
         files = files,

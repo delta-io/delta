@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DataSkippingReader
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
+import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.util.StateCache
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
@@ -65,7 +66,7 @@ class Snapshot(
     val minSetTransactionRetentionTimestamp: Option[Long] = None)
   extends StateCache
   with PartitionFiltering
-  with org.apache.spark.sql.delta.stats.StatisticsCollection
+  with StatisticsCollection
   with DataSkippingReader
   with DeltaLogging {
 
@@ -104,7 +105,7 @@ class Snapshot(
         new SerializableConfiguration(deltaLog.newDeltaHadoopConf()))
       var wrapPath = false
 
-      val canonicalizePath = udf((filePath: String) =>
+      val canonicalizePath = DeltaUDF.stringStringUdf((filePath: String) =>
           Snapshot.canonicalizePath(filePath, hadoopConf.value.value)
       )
       val canonicalizedActions = loadActions
@@ -369,7 +370,7 @@ object Snapshot extends DeltaLogging {
    * the previous states will contain empty strings as the file name.
    */
   private def assertLogBelongsToTable(logBasePath: URI): UserDefinedFunction = {
-    udf((filePath: String) => {
+    DeltaUDF.stringStringUdf((filePath: String) => {
       if (filePath.isEmpty || new Path(new URI(filePath)).getParent == new Path(logBasePath)) {
         filePath
       } else {

@@ -78,7 +78,7 @@ abstract class TahoeFileIndex(
       case (partitionValues, files) =>
         val rowValues: Array[Any] = partitionSchema.map { p =>
           val colName = DeltaColumnMapping.getPhysicalName(p)
-          Cast(Literal(partitionValues(colName)), p.dataType, Option(timeZone)).eval()
+          Cast(Literal(partitionValues.get(colName).orNull), p.dataType, Option(timeZone)).eval()
         }.toArray
 
 
