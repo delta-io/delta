@@ -379,6 +379,7 @@ case class RemoveFile(
  */
 case class AddCDCFile(
     path: String,
+    @JsonInclude(JsonInclude.Include.ALWAYS)
     partitionValues: Map[String, String],
     size: Long,
     tags: Map[String, String] = null) extends FileAction {

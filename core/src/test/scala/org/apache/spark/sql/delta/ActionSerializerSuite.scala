@@ -206,6 +206,12 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
       """"size":11,"tags":{"key1":"value1"},"dataChange":false}}""".stripMargin)
 
   testActionSerDe(
+    "AddCDCFile (without null value in partitionValues) - json serialization/deserialization",
+    AddCDCFile("part=p1/f1", partitionValues = Map("x" -> null), size = 10),
+    expectedJson = """{"cdc":{"path":"part=p1/f1","partitionValues":{"x":null},""" +
+      """"size":10,"dataChange":false}}""".stripMargin)
+
+  testActionSerDe(
     "Metadata (with all defaults) - json serialization/deserialization",
     Metadata(createdTime = Some(2222)),
     expectedJson = """{"metaData":{"id":"testId","format":{"provider":"parquet",""" +
