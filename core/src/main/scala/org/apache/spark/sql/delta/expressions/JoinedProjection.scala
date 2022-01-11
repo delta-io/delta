@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta
+package org.apache.spark.sql.delta.expressions
 
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeMap, BoundReference, Expression, GetStructField}
 import org.apache.spark.sql.types.StructType

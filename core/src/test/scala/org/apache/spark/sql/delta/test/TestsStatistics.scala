@@ -24,7 +24,7 @@ import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.test.SQLTestUtils
 
 /**
- * Provides utilities for testing DataSkippingReader.
+ * Provides utilities for testing StatisticsCollection.
  */
 trait TestsStatistics { self: SQLTestUtils =>
 
