@@ -512,7 +512,8 @@ case class CommitInfo(
     operationMetrics: Option[Map[String, String]],
     userMetadata: Option[String],
     tags: Option[Map[String, String]],
-    engineInfo: Option[String]) extends Action with CommitMarker {
+    engineInfo: Option[String],
+    txnId: Option[String]) extends Action with CommitMarker {
   override def wrap: SingleAction = SingleAction(commitInfo = this)
 
   override def withTimestamp(timestamp: Long): CommitInfo = {
@@ -556,9 +557,10 @@ object NotebookInfo {
 object CommitInfo {
   def empty(version: Option[Long] = None): CommitInfo = {
     CommitInfo(version, null, None, None, null, null, None, None,
-      None, None, None, None, None, None, None, None)
+      None, None, None, None, None, None, None, None, None)
   }
 
+  // scalastyle:off argcount
   def apply(
       time: Long,
       operation: String,
@@ -569,7 +571,8 @@ object CommitInfo {
       isBlindAppend: Option[Boolean],
       operationMetrics: Option[Map[String, String]],
       userMetadata: Option[String],
-      tags: Option[Map[String, String]]): CommitInfo = {
+      tags: Option[Map[String, String]],
+      txnId: Option[String]): CommitInfo = {
 
     val getUserName = commandContext.get("user").flatMap {
       case "unknown" => None
@@ -592,8 +595,10 @@ object CommitInfo {
       operationMetrics,
       userMetadata,
       tags,
-      getEngineInfo)
+      getEngineInfo,
+      txnId)
   }
+  // scalastyle:on argcount
 
   private def getEngineInfo: Option[String] = {
     Some(s"Apache-Spark/${org.apache.spark.SPARK_VERSION} Delta-Lake/${io.delta.VERSION}")

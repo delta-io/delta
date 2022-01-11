@@ -141,7 +141,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
       isBlindAppend = Some(true),
       operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
       userMetadata = Some("123"),
-      tags = None).copy(engineInfo = None)
+      tags = None,
+      txnId = None).copy(engineInfo = None)
 
     // json of commit info actions without tag or engineInfo field
     val json1 =
@@ -240,7 +241,9 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
       isBlindAppend = Some(true),
       operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
       userMetadata = Some("123"),
-      tags = Some(Map("k1" -> "v1"))).copy(engineInfo = None)
+      tags = Some(Map("k1" -> "v1")),
+      txnId = Some("123")
+    ).copy(engineInfo = None)
 
     testActionSerDe(
       "CommitInfo (without operationParameters) - json serialization/deserialization",
@@ -249,7 +252,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
         """"operationParameters":{},"clusterId":"23","readVersion":23,""" +
         """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
         """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
-        """"tags":{"k1":"v1"}}}""".stripMargin)
+        """"tags":{"k1":"v1"},"txnId":"123"}}""".stripMargin)
 
     test("CommitInfo (with operationParameters) - json serialization/deserialization") {
       val operation = DeltaOperations.Convert(
@@ -265,7 +268,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
           """"collectStats":false,"catalogTable":"t1"},"clusterId":"23","readVersion":23,""" +
           """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
           """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
-          """"tags":{"k1":"v1"}}}""".stripMargin
+          """"tags":{"k1":"v1"},"txnId":"123"}}""".stripMargin
       assert(commitInfo1.json == expectedCommitInfoJson1)
       val newCommitInfo1 = Action.fromJson(expectedCommitInfoJson1).asInstanceOf[CommitInfo]
       // TODO: operationParameters serialization/deserialization is broken as it uses a custom
@@ -281,7 +284,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
         """"operationParameters":{},"clusterId":"23","readVersion":23,""" +
         """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
         """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
-        """"tags":{"k1":"v1"},"engineInfo":"Apache-Spark/3.1.1 Delta-Lake/10.1.0"}}""".stripMargin)
+        """"tags":{"k1":"v1"},"engineInfo":"Apache-Spark/3.1.1 Delta-Lake/10.1.0",""" +
+        """"txnId":"123"}}""".stripMargin)
   }
 
   private def roundTripCompare(name: String, actions: Action*) = {

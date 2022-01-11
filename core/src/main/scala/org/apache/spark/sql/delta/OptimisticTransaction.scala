@@ -175,8 +175,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
 
   protected def spark = SparkSession.active
 
-  protected val txnId = UUID.randomUUID().toString
-
   /** Tracks the appIds that have been seen by this transaction. */
   protected val readTxn = new ArrayBuffer[String]
 
@@ -238,6 +236,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
 
   /** Start time of txn in nanoseconds */
   def txnStartTimeNs: Long = txnStartNano
+
+  /** Unique identifier for the transaction */
+  val txnId = UUID.randomUUID().toString
 
   /** The end to end execution time of this transaction. */
   def txnExecutionTimeMs: Option[Long] = if (commitEndNano == -1) {
@@ -503,7 +504,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
           Some(isBlindAppend),
           getOperationMetrics(op),
           getUserMetadata(op),
-          tags = None)
+          tags = None,
+          txnId = Some(txnId))
       }
 
       val currentTransactionInfo = new CurrentTransactionInfo(
