@@ -1427,6 +1427,15 @@ object DeltaErrors
     new io.delta.exceptions.ConcurrentTransactionException(message)
   }
 
+  def restoreMissedDataFilesError(missedFiles: Array[String], version: Long): Throwable =
+    new IllegalArgumentException(
+      s"""Not all files from version $version are available in file system.
+         | Missed files (top 100 files): ${missedFiles.mkString(",")}.
+         | Please use more recent version or timestamp for restoring.
+         | To disable check update option ${SQLConf.IGNORE_MISSING_FILES.key}"""
+        .stripMargin
+    )
+
 }
 
 /** The basic class for all Tahoe commit conflict exceptions. */
