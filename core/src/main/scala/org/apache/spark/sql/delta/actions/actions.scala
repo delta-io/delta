@@ -347,21 +347,15 @@ case class RemoveFile(
   val delTimestamp: Long = deletionTimestamp.getOrElse(0L)
 
   /**
-   * Return tag value if extendedFileMetadata is true and the tag present.
+   * Return tag value if tags is not null and the tag present.
    */
-  def getTag(tagName: String): Option[String] = {
-    if (!extendedFileMetadata.getOrElse(false) || tags == null) {
-      None
-    } else {
-      tags.get(tagName)
-    }
-  }
+  def getTag(tagName: String): Option[String] = Option(tags).getOrElse(Map.empty).get(tagName)
 
   /**
-   * Create a copy with the new tag.
+   * Create a copy with the new tag. `extendedFileMetadata` is copied unchanged.
    */
   def copyWithTag(tag: String, value: String): RemoveFile = copy(
-    tags = Option(tags).getOrElse(Map.empty) + (tag -> value), extendedFileMetadata = Some(true))
+    tags = Option(tags).getOrElse(Map.empty) + (tag -> value))
 
   /**
    * Create a copy without the tag.
