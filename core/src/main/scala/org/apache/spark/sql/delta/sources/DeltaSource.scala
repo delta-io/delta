@@ -498,7 +498,7 @@ case class DeltaSource(
           case a: AddFile =>
             a.size
           case r: RemoveFile =>
-            r.size
+            r.size.getOrElse(0L)
           case cdc: AddCDCFile =>
             cdc.size
         }

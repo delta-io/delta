@@ -99,13 +99,22 @@ class Snapshot(
         new SerializableConfiguration(deltaLog.newDeltaHadoopConf()))
       var wrapPath = false
 
-      loadActions.mapPartitions { actions =>
-        val hdpConf = hadoopConf.value.value
-        actions.flatMap(canonicalizePath(_, hdpConf, wrapPath))
-      }
-        .withColumn("file", assertLogBelongsToTable(localLogPath)(input_file_name()))
-        .repartition(getNumPartitions, coalesce($"add.path", $"remove.path"))
-        .sortWithinPartitions("file")
+      val canonicalizePath = DeltaUDF.stringStringUdf((filePath: String) =>
+          Snapshot.canonicalizePath(filePath, hadoopConf.value.value)
+      )
+      val canonicalizedActions = loadActions
+        .withColumn(
+          "add",
+          when(
+            col("add").isNotNull,
+            col("add").withField("path", canonicalizePath(col("add.path")))))
+        .withColumn(
+          "remove",
+          when(
+            col("remove").isNotNull,
+            col("remove").withField("path", canonicalizePath(col("remove.path")))))
+
+      repartitionAndSortActionsByVersion(canonicalizedActions)
         .as[SingleAction]
         .mapPartitions { iter =>
           val state = new InMemoryLogReplay(
@@ -115,6 +124,16 @@ class Snapshot(
           state.append(0, iter.map(_.unwrap))
           state.checkpoint.map(_.wrap)
         }
+  }
+
+  /** Helper method to repartition and sort actions by version for the In-Memory log replay */
+  protected def repartitionAndSortActionsByVersion(actions: DataFrame): DataFrame = {
+    val implicits = spark.implicits
+    import implicits._
+    actions
+      .withColumn("file", assertLogBelongsToTable(path.toUri)(input_file_name()))
+      .repartition(getNumPartitions, coalesce($"add.path", $"remove.path"))
+      .sortWithinPartitions("file")
   }
 
   def redactedPath: String =
@@ -260,6 +279,8 @@ class Snapshot(
     DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT, logSegment.checkpoint)
   }
 
+  def deltaFileSizeInBytes(): Long = deltaFileIndexOpt.map(_.sizeInBytes).getOrElse(0L)
+  def checkpointSizeInBytes(): Long = checkpointFileIndexOpt.map(_.sizeInBytes).getOrElse(0L)
 
   protected lazy val fileIndices: Seq[DeltaLogFileIndex] = {
     checkpointFileIndexOpt.toSeq ++ deltaFileIndexOpt.toSeq
@@ -282,13 +303,13 @@ class Snapshot(
   /**
    * Loads the file indices into a Dataset that can be used for LogReplay.
    */
-  protected def loadActions: Dataset[SingleAction] = {
-    val dfs = fileIndices.map { index => Dataset[SingleAction](spark, indexToRelation(index)) }
-    dfs.reduceOption(_.union(_)).getOrElse(emptyActions)
+  protected def loadActions: DataFrame = {
+    val dfs = fileIndices.map { index => Dataset.ofRows(spark, indexToRelation(index)) }
+    dfs.reduceOption(_.union(_)).getOrElse(emptyDF)
   }
 
-  protected def emptyActions: Dataset[SingleAction] =
-    spark.createDataFrame(spark.sparkContext.emptyRDD[Row], logSchema).as[SingleAction]
+  protected def emptyDF: DataFrame =
+    spark.createDataFrame(spark.sparkContext.emptyRDD[Row], logSchema)
 
 
   override def logInfo(msg: => String): Unit = {
@@ -323,20 +344,6 @@ object Snapshot extends DeltaLogging {
 
   private val defaultNumSnapshotPartitions: Int = 50
 
-  private def canonicalizePath(
-      action: SingleAction,
-      hdpConf: Configuration,
-      wrapPath: Boolean): Option[SingleAction] = {
-    action.unwrap match {
-      case add: AddFile =>
-        Some(add.copy(path = canonicalizePath(add.path, hdpConf)).wrap)
-      case rm: RemoveFile =>
-        Some(rm.copy(path = canonicalizePath(rm.path, hdpConf)).wrap)
-      case other if other == null => None
-      case other => Some(other.wrap)
-    }
-  }
-
 
   /** Canonicalize the paths for Actions */
   private[delta] def canonicalizePath(path: String, hadoopConf: Configuration): String = {
@@ -357,7 +364,7 @@ object Snapshot extends DeltaLogging {
    * the previous states will contain empty strings as the file name.
    */
   private def assertLogBelongsToTable(logBasePath: URI): UserDefinedFunction = {
-    udf((filePath: String) => {
+    DeltaUDF.stringStringUdf((filePath: String) => {
       if (filePath.isEmpty || new Path(new URI(filePath)).getParent == new Path(logBasePath)) {
         filePath
       } else {
@@ -428,8 +435,8 @@ class InitialSnapshot(
       SparkSession.active.sessionState.conf, Map.empty))
   )
 
-  override def stateDS: Dataset[SingleAction] = emptyActions
-  override def stateDF: DataFrame = emptyActions.toDF
+  override def stateDS: Dataset[SingleAction] = emptyDF.as[SingleAction]
+  override def stateDF: DataFrame = emptyDF
   override protected lazy val computedState: Snapshot.State = initialState
   private def initialState: Snapshot.State = {
     val protocol = Protocol.forNewTable(spark, metadata)

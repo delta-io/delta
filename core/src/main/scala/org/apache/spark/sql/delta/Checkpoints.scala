@@ -163,7 +163,10 @@ trait Checkpoints extends DeltaLogging {
             )
           )
           logWarning(s"Error when writing checkpoint synchronously", e)
-          if (Utils.isTesting) {
+          val throwError = Utils.isTesting ||
+            spark.sessionState.conf.getConf(
+              DeltaSQLConf.DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED)
+          if (throwError) {
             throw e
           }
       }
@@ -220,7 +223,9 @@ trait Checkpoints extends DeltaLogging {
       val checkpoints = store.listFrom(
             checkpointPrefix(logPath, math.max(0, cur - 1000)),
             hadoopConf)
-          .filter { file => isCheckpointFile(file.getPath) }
+          // Checkpoint files of 0 size are invalid but Spark will ignore them silently when reading
+          // such files, hence we drop them so that we never pick up such checkpoints.
+          .filter { file => isCheckpointFile(file.getPath) && file.getLen != 0 }
           .map{ file => CheckpointInstance(file.getPath) }
           .takeWhile(tv => (cur == 0 || tv.version <= cur) && tv.isEarlierThan(cv))
           .toArray
@@ -269,7 +274,7 @@ object Checkpoints extends DeltaLogging {
     // log store and decide whether to use rename.
     val useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath, hadoopConf)
 
-    val checkpointSize = spark.sparkContext.longAccumulator("checkpointSize")
+    val checkpointRowCount = spark.sparkContext.longAccumulator("checkpointRowCount")
     val numOfFiles = spark.sparkContext.longAccumulator("numOfFiles")
     // Use the string in the closure as Path is not Serializable.
     val path = checkpointFileSingular(snapshot.path, snapshot.version).toString
@@ -319,7 +324,7 @@ object Checkpoints extends DeltaLogging {
                 new TaskAttemptID("", 0, TaskType.REDUCE, 0, 0)))
 
             iter.foreach { row =>
-              checkpointSize.add(1)
+              checkpointRowCount.add(1)
               writer.write(row)
             }
             // Note: `writer.close()` is not put in a `finally` clause because we don't want to
@@ -377,10 +382,10 @@ object Checkpoints extends DeltaLogging {
     }
 
     // Attempting to write empty checkpoint
-    if (checkpointSize.value == 0) {
+    if (checkpointRowCount.value == 0) {
       logWarning(DeltaErrors.EmptyCheckpointErrorMessage)
     }
-    CheckpointMetaData(snapshot.version, checkpointSize.value, None)
+    CheckpointMetaData(snapshot.version, checkpointRowCount.value, None)
   }
 
   // scalastyle:off line.size.limit
