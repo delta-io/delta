@@ -754,6 +754,23 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
     }
   }
 
+  test("ADD COLUMNS - adding after an Array<MapType> column") {
+    val df = Seq((1, "a"), (2, "b")).toDF("v1", "v2")
+      .withColumn("v3", array(map(col("v1"), col("v2"))))
+    withDeltaTable(df) { tableName =>
+
+      sql(s"ALTER TABLE $tableName ADD COLUMNS (v4 string AFTER V3)")
+
+      val deltaLog = getDeltaLog(tableName)
+      assertEqual(deltaLog.snapshot.schema, new StructType()
+        .add("v1", IntegerType)
+        .add("v2", StringType)
+        .add("v3", ArrayType(
+          MapType(IntegerType, StringType)))
+        .add("v4", StringType))
+    }
+  }
+
   ///////////////////////////////
   // CHANGE COLUMN
   ///////////////////////////////
