@@ -56,12 +56,12 @@ class OptimizeGeneratedColumnSuite extends OptimizeGeneratedColumnSuiteBase {
             // Run two queries that should not conflict with each other if we generate the partition
             // filter correctly.
             val f1 = threadPool.submit(() => {
-              spark.read.load(path).where("eventTime = '2021-01-01 00:00:00'")
+              spark.read.format("delta").load(path).where("eventTime = '2021-01-01 00:00:00'")
                 .write.mode("append").format("delta").save(path)
               true
             })
             val f2 = threadPool.submit(() => {
-              spark.read.load(path).where("eventTime = '2021-01-02 00:00:00'")
+              spark.read.format("delta").load(path).where("eventTime = '2021-01-02 00:00:00'")
                 .write.mode("append").format("delta").save(path)
               true
             })
