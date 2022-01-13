@@ -503,7 +503,7 @@ lazy val standalone = (project in file("standalone"))
      */
     javacOptions in (JavaUnidoc, unidoc) := Seq(
       "-public",
-      "-windowtitle", "Delta Standalone Reader " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
+      "-windowtitle", "Delta Standalone " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
       "-noqualifier", "java.lang",
       "-tag", "implNote:a:Implementation Note:",
       "-Xdoclint:all"
