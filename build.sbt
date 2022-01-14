@@ -25,9 +25,13 @@ concurrentRestrictions in Global := {
   Tags.limitAll(1) :: Nil
 }
 
-parallelExecution in ThisBuild := false
-scalastyleConfig in ThisBuild := baseDirectory.value / "scalastyle-config.xml"
-crossScalaVersions in ThisBuild := Seq("2.12.8", "2.11.12")
+inThisBuild(
+  Seq(
+    parallelExecution := false,
+    crossScalaVersions := Seq("2.12.8", "2.11.12")
+  )
+)
+
 
 lazy val compileScalastyle = taskKey[Unit]("compileScalastyle")
 lazy val testScalastyle = taskKey[Unit]("testScalastyle")
@@ -53,7 +57,7 @@ lazy val commonSettings = Seq(
   javacOptions ++= Seq("-source", "1.8", "-target", "1.8", "-Xlint:unchecked"),
   scalacOptions ++= Seq("-target:jvm-1.8", "-Ywarn-unused-import"),
   // Configurations to speed up tests and reduce memory footprint
-  javaOptions in Test ++= Seq(
+  Test / javaOptions ++= Seq(
     "-Dspark.ui.enabled=false",
     "-Dspark.ui.showConsoleProgress=false",
     "-Dspark.databricks.delta.snapshotPartitions=2",
@@ -62,24 +66,24 @@ lazy val commonSettings = Seq(
     "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
     "-Xmx1024m"
   ),
-  compileScalastyle := scalastyle.in(Compile).toTask("").value,
-  (compile in Compile) := ((compile in Compile) dependsOn compileScalastyle).value,
-  testScalastyle := scalastyle.in(Test).toTask("").value,
-  (test in Test) := ((test in Test) dependsOn testScalastyle).value,
+  compileScalastyle := (Compile / scalastyle).toTask("").value,
+  (Compile / compile ) := ((Compile / compile) dependsOn compileScalastyle).value,
+  testScalastyle := (Test / scalastyle).toTask("").value,
+  (Test / test) := ((Test / test) dependsOn testScalastyle).value,
 
   // Can be run explicitly via: build/sbt $module/checkstyle
   // Will automatically be run during compilation (e.g. build/sbt compile)
   // and during tests (e.g. build/sbt test)
   checkstyleConfigLocation := CheckstyleConfigLocation.File("dev/checkstyle.xml"),
   checkstyleSeverityLevel := Some(CheckstyleSeverityLevel.Error),
-  (checkstyle in Compile) := (checkstyle in Compile).triggeredBy(compile in Compile).value,
-  (checkstyle in Test) := (checkstyle in Test).triggeredBy(compile in Test).value
+  (Compile / checkstyle) := (Compile / checkstyle).triggeredBy(Compile / compile).value,
+  (Test / checkstyle) := (Test / checkstyle).triggeredBy(Test / compile).value
 )
 
 lazy val releaseSettings = Seq(
   publishMavenStyle := true,
   publishArtifact := true,
-  publishArtifact in Test := false,
+  Test / publishArtifact := false,
   releasePublishArtifactsAction := PgpKeys.publishSigned.value,
   releaseCrossBuild := true,
   publishTo := {
@@ -123,12 +127,12 @@ lazy val releaseSettings = Seq(
 
 lazy val skipReleaseSettings = Seq(
   publishArtifact := false,
-  skip in publish := true
+  publish / skip := true
 )
 
 // Looks some of release settings should be set for the root project as well.
 publishArtifact := false  // Don't release the root project
-skip in publish := true
+publish / skip := true
 publishTo := Some("snapshots" at "https://oss.sonatype.org/content/repositories/snapshots")
 releaseCrossBuild := false
 releaseProcess := Seq[ReleaseStep](
@@ -160,22 +164,22 @@ lazy val hive = (project in file("hive")) dependsOn(standaloneCosmetic) settings
 
 lazy val hiveAssembly = (project in file("hive-assembly")) dependsOn(hive) settings(
   name := "hive-assembly",
-  unmanagedJars in Compile += (assembly in hive).value,
+  Compile / unmanagedJars += (hive / assembly).value,
   commonSettings,
   skipReleaseSettings,
 
-  logLevel in assembly := Level.Info,
-  assemblyJarName in assembly := s"${name.value}-assembly_${scalaBinaryVersion.value}-${version.value}.jar",
-  test in assembly := {},
+  assembly / logLevel := Level.Info,
+  assembly / assemblyJarName := s"${name.value}-assembly_${scalaBinaryVersion.value}-${version.value}.jar",
+  assembly / test := {},
   // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
-  packageBin in Compile := assembly.value
+  Compile / packageBin := assembly.value
 )
 
 lazy val hiveTest = (project in file("hive-test")) settings (
   name := "hive-test",
   // Make the project use the assembly jar to ensure we are testing the assembly jar that users will
   // use in real environment.
-  unmanagedJars in Compile += (packageBin in(hiveAssembly, Compile, packageBin)).value,
+  Compile / unmanagedJars += (hiveAssembly / Compile / packageBin / packageBin).value,
   commonSettings,
   skipReleaseSettings,
   libraryDependencies ++= Seq(
@@ -209,7 +213,7 @@ lazy val hiveMR = (project in file("hive-mr")) dependsOn(hiveTest % "test->test"
   name := "hive-mr",
   commonSettings,
   skipReleaseSettings,
-  unmanagedResourceDirectories in Test += file("golden-tables/src/test/resources"),
+  Test / unmanagedResourceDirectories += file("golden-tables/src/test/resources"),
   libraryDependencies ++= Seq(
     "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided",
     "org.apache.hive" % "hive-exec" % hiveVersion % "provided" excludeAll(
@@ -236,7 +240,7 @@ lazy val hiveTez = (project in file("hive-tez")) dependsOn(hiveTest % "test->tes
   name := "hive-tez",
   commonSettings,
   skipReleaseSettings,
-  unmanagedResourceDirectories in Test += file("golden-tables/src/test/resources"),
+  Test / unmanagedResourceDirectories += file("golden-tables/src/test/resources"),
   libraryDependencies ++= Seq(
     "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided" excludeAll (
       ExclusionRule(organization = "com.google.protobuf")
@@ -284,10 +288,10 @@ lazy val hive2MR = (project in file("hive2-mr")) settings (
   name := "hive2-mr",
   commonSettings,
   skipReleaseSettings,
-  unmanagedResourceDirectories in Test += file("golden-tables/src/test/resources"),
-  unmanagedJars in Compile ++= Seq(
-    (packageBin in(hiveAssembly, Compile, packageBin)).value,
-    (packageBin in(hiveTest, Test, packageBin)).value
+  Test / unmanagedResourceDirectories += file("golden-tables/src/test/resources"),
+  Compile / unmanagedJars ++= Seq(
+    (hiveAssembly / Compile / packageBin / packageBin).value,
+    (hiveTest / Test / packageBin / packageBin).value
   ),
   libraryDependencies ++= Seq(
     "org.apache.hadoop" % "hadoop-client" % hadoopVersionForHive2 % "provided",
@@ -315,10 +319,10 @@ lazy val hive2Tez = (project in file("hive2-tez")) settings (
   name := "hive2-tez",
   commonSettings,
   skipReleaseSettings,
-  unmanagedResourceDirectories in Test += file("golden-tables/src/test/resources"),
-  unmanagedJars in Compile ++= Seq(
-    (packageBin in(hiveAssembly, Compile, packageBin)).value,
-    (packageBin in(hiveTest, Test, packageBin)).value
+  Test / unmanagedResourceDirectories += file("golden-tables/src/test/resources"),
+  Compile / unmanagedJars ++= Seq(
+    (hiveAssembly / Compile / packageBin / packageBin).value,
+    (hiveTest / Test / packageBin / packageBin).value
   ),
   libraryDependencies ++= Seq(
     "org.apache.hadoop" % "hadoop-client" % hadoopVersionForHive2 % "provided" excludeAll (
@@ -388,7 +392,7 @@ lazy val standaloneCosmetic = project
     commonSettings,
     releaseSettings,
     exportJars := true,
-    packageBin in Compile := (assembly in standalone).value,
+    Compile / packageBin := (standalone / assembly).value,
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided",
       "org.apache.parquet" % "parquet-hadoop" % parquetHadoopVersion % "provided",
@@ -416,7 +420,7 @@ lazy val standalone = (project in file("standalone"))
     commonSettings,
     skipReleaseSettings,
     mimaSettings,
-    unmanagedResourceDirectories in Test += file("golden-tables/src/test/resources"),
+    Test / unmanagedResourceDirectories += file("golden-tables/src/test/resources"),
     // When updating any dependency here, we should also review `pomPostProcess` in project
     // `standaloneCosmetic` and update it accordingly.
     libraryDependencies ++= Seq(
@@ -439,8 +443,8 @@ lazy val standalone = (project in file("standalone"))
       // -- Bump up the genjavadoc version explicitly to 0.18 to work with Scala 2.12
       compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.18" cross CrossVersion.full)
     ),
-    sourceGenerators in Compile += Def.task {
-      val file = (sourceManaged in Compile).value / "io" / "delta" / "standalone" / "package.scala"
+    Compile /sourceGenerators += Def.task {
+      val file = (Compile / sourceManaged).value / "io" / "delta" / "standalone" / "package.scala"
       IO.write(file,
         s"""package io.delta
           |
@@ -468,48 +472,48 @@ lazy val standalone = (project in file("standalone"))
      * Build with `build/sbt standalone/assembly` command.
      * e.g. connectors/standalone/target/scala-2.12/delta-standalone-original-shaded_2.12-0.2.1-SNAPSHOT.jar
      */
-    logLevel in assembly := Level.Info,
-    test in assembly := {},
-    assemblyJarName in assembly := s"${name.value}-shaded_${scalaBinaryVersion.value}-${version.value}.jar",
+    assembly / logLevel := Level.Info,
+    assembly / test := {},
+    assembly / assemblyJarName := s"${name.value}-shaded_${scalaBinaryVersion.value}-${version.value}.jar",
     // we exclude jars first, and then we shade what is remaining
-    assemblyExcludedJars in assembly := {
-      val cp = (fullClasspath in assembly).value
+    assembly / assemblyExcludedJars := {
+      val cp = (assembly / fullClasspath).value
       val allowedPrefixes = Set("META_INF", "io", "json4s", "jackson", "paranamer")
       cp.filter { f =>
         !allowedPrefixes.exists(prefix => f.data.getName.startsWith(prefix))
       }
     },
-    assemblyShadeRules in assembly := Seq(
+    assembly / assemblyShadeRules := Seq(
       ShadeRule.rename("com.fasterxml.jackson.**" -> "shadedelta.@0").inAll,
       ShadeRule.rename("com.thoughtworks.paranamer.**" -> "shadedelta.@0").inAll,
       ShadeRule.rename("org.json4s.**" -> "shadedelta.@0").inAll
     ),
-    assemblyMergeStrategy in assembly := {
+    assembly / assemblyMergeStrategy := {
       // Discard `module-info.class` to fix the `different file contents found` error.
       // TODO Upgrade SBT to 1.5 which will do this automatically
       case "module-info.class" => MergeStrategy.discard
       case x =>
-        val oldStrategy = (assemblyMergeStrategy in assembly).value
+        val oldStrategy = (assembly / assemblyMergeStrategy).value
         oldStrategy(x)
     },
-    artifact in assembly := {
-      val art = (artifact in assembly).value
+    assembly / artifact := {
+      val art = (assembly / artifact).value
       art.withClassifier(Some("assembly"))
     },
-    addArtifact(artifact in assembly, assembly),
+    addArtifact(assembly / artifact, assembly),
     /**
      * Unidoc settings
      * Generate javadoc with `unidoc` command, outputs to `standalone/target/javaunidoc`
      */
-    javacOptions in (JavaUnidoc, unidoc) := Seq(
+    JavaUnidoc / unidoc / javacOptions := Seq(
       "-public",
       "-windowtitle", "Delta Standalone " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
       "-noqualifier", "java.lang",
       "-tag", "implNote:a:Implementation Note:",
       "-Xdoclint:all"
     ),
-    unidocAllSources in(JavaUnidoc, unidoc) := {
-      (unidocAllSources in(JavaUnidoc, unidoc)).value
+    JavaUnidoc / unidoc /  unidocAllSources := {
+      (JavaUnidoc / unidoc / unidocAllSources).value
         // ignore any internal Scala code
         .map(_.filterNot(_.getName.contains("$")))
         .map(_.filterNot(_.getCanonicalPath.contains("/internal/")))
@@ -519,7 +523,7 @@ lazy val standalone = (project in file("standalone"))
         .map(_.filterNot(_.getCanonicalPath.contains("/flink-connector/")))
     },
     // Ensure unidoc is run with tests. Must be cleaned before test for unidoc to be generated.
-    (test in Test) := ((test in Test) dependsOn unidoc.in(Compile)).value
+    (Test / test) := ((Test / test) dependsOn (Compile / unidoc)).value
   )
 
 /*
@@ -559,7 +563,7 @@ def getPrevVersion(currentVersion: String): String = {
 }
 
 lazy val mimaSettings = Seq(
-  (test in Test) := ((test in Test) dependsOn mimaReportBinaryIssues).value,
+  (Test / test) := ((Test / test) dependsOn mimaReportBinaryIssues).value,
   mimaPreviousArtifacts := Set("io.delta" %% "delta-standalone" %  getPrevVersion(version.value)),
   mimaBinaryIssueFilters ++= StandaloneMimaExcludes.ignoredABIProblems
 )
@@ -604,7 +608,7 @@ lazy val sqlDeltaImport = (project in file("sql-delta-import"))
     name := "sql-delta-import",
     commonSettings,
     publishArtifact := scalaBinaryVersion.value == "2.12",
-    publishArtifact in Test := false,
+    Test / publishArtifact := false,
     libraryDependencies ++= Seq(
       // We config this project to skip the publish step when running
       // `build/sbt "++ 2.11.12 publishLocal"` because it doesn't support Scala 2.11. However,
@@ -629,7 +633,7 @@ lazy val flinkConnector = (project in file("flink-connector"))
   .settings (
     name := "flink-connector",
     commonSettings,
-    publishArtifact in Test := false,
+    Test / publishArtifact := false,
     crossPaths := false,
     libraryDependencies ++= Seq(
       "org.apache.flink" %% "flink-parquet" % flinkVersion % "provided",
@@ -643,8 +647,8 @@ lazy val flinkConnector = (project in file("flink-connector"))
     ),
     // generating source java class with version number to be passed during commit to the DeltaLog as engine info
     // (part of transaction's metadata)
-    sourceGenerators in Compile += Def.task {
-      val file = (sourceManaged in Compile).value / "meta" / "Meta.java"
+    Compile / sourceGenerators += Def.task {
+      val file = (Compile / sourceManaged).value / "meta" / "Meta.java"
       IO.write(file,
         s"""package io.delta.flink.sink.internal;
            |
