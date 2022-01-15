@@ -975,6 +975,10 @@ object DeltaErrors
     new AnalysisException("Cannot describe the history of a view.")
   }
 
+  def copyIntoValidationRequireDeltaTableExists: Throwable = {
+    new AnalysisException("COPY INTO validation failed. Target table does not exist.")
+  }
+
   def copyIntoEncryptionNotAllowedOn(scheme: String): Throwable = {
     // TODO: add `wasbs` once supported
     new IllegalArgumentException(
