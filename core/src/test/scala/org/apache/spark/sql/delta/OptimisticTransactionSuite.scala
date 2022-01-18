@@ -321,7 +321,7 @@ class OptimisticTransactionSuite
       val isolationLevels = log.history.getHistory(Some(10)).map(_.isolationLevel)
       assert(isolationLevels.size == 2)
       assert(isolationLevels(0).exists(_.contains("Serializable")))
-      assert(isolationLevels(1) == Some(SnapshotIsolation.toString))
+      assert(isolationLevels(0).exists(_.contains("Serializable")))
     }
   }
 
