@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, GeneratedColumn}
+import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, GeneratedColumn}
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -53,7 +53,7 @@ class ProtocolDowngradeException(oldProtocol: Protocol, newProtocol: Protocol)
 object Action {
   /** The maximum version of the protocol that this version of Delta understands. */
   val readerVersion = 2
-  val writerVersion = 5
+  val writerVersion = 6
   val protocolVersion: Protocol = Protocol(readerVersion, writerVersion)
 
   def fromJson(json: String): Action = {
@@ -154,6 +154,15 @@ object Protocol {
       minimumRequired = Protocol(0, minWriterVersion = 4)
       featuresUsed.append("Change data feed")
       throw DeltaErrors.cdcNotAllowedInThisVersion()
+    }
+
+    if (ColumnWithDefaultExprUtils.hasIdentityColumn(metadata.schema)) {
+      minimumRequired = Protocol(
+        minReaderVersion = 0,
+        minWriterVersion = ColumnWithDefaultExprUtils.IDENTITY_MIN_WRITER_VERSION
+      )
+      featuresUsed.append("Using IDENTITY Columns")
+      throw DeltaErrors.identityColumnNotSupported()
     }
 
     if (DeltaColumnMapping.requiresNewProtocol(metadata)) {

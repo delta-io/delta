@@ -368,7 +368,7 @@ class DeltaLog private(
       // append them to the end of `dataSchema`.
       dataSchema =
         DeltaColumnMapping.dropColumnMappingMetadata(
-          GeneratedColumn.removeGenerationExpressions(snapshot.metadata.schema)),
+          ColumnWithDefaultExprUtils.removeDefaultExpressions(snapshot.metadata.schema)),
       bucketSpec = None,
       snapshot.deltaLog.fileFormat(snapshot.metadata),
       snapshot.metadata.format.options)(spark)
@@ -406,7 +406,7 @@ class DeltaLog private(
       // locations. Otherwise, for any partition columns not in `dataSchema`, Spark would just
       // append them to the end of `dataSchema`
       dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        GeneratedColumn.removeGenerationExpressions(
+        ColumnWithDefaultExprUtils.removeDefaultExpressions(
           SchemaUtils.dropNullTypeColumns(snapshotToUse.metadata.schema))),
       bucketSpec = bucketSpec,
       fileFormat(snapshotToUse.metadata),

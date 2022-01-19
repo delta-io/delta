@@ -22,7 +22,7 @@ import java.sql.Timestamp
 
 import scala.util.matching.Regex
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTimeTravelSpec, GeneratedColumn, StartingVersion, StartingVersionLatest}
+import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaErrors, DeltaLog, DeltaOptions, DeltaTimeTravelSpec, GeneratedColumn, StartingVersion, StartingVersionLatest}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -84,7 +84,7 @@ trait DeltaSourceBase extends Source
     with DeltaLogging { self: DeltaSource =>
 
   override val schema: StructType =
-    GeneratedColumn.removeGenerationExpressions(deltaLog.snapshot.metadata.schema)
+    ColumnWithDefaultExprUtils.removeDefaultExpressions(deltaLog.snapshot.metadata.schema)
 
   protected var lastOffsetForTriggerAvailableNow: DeltaSourceOffset = _
 

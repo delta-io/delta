@@ -330,15 +330,23 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       // metadata.
       latestMetadata
     } else {
-      // This is not a new table. The new schema may be merged from the existing schema.
-      if (GeneratedColumn.satisfyGeneratedColumnProtocol(protocolBeforeUpdate)) {
-        // The protocol matches so this is a valid generated column table. Do nothing.
+      // This is not a new table. The new schema may be merged from the existing schema. We
+      // decide whether we should keep the Generated or IDENTITY columns by checking whether the
+      // protocol satisfies the requirements.
+      val (keepGeneratedColumns, keepIdentityColumns) =
+        ColumnWithDefaultExprUtils.satisfyProtocol(protocolBeforeUpdate)
+      if (keepIdentityColumns) {
+        // If a protocol satisfies IDENTITY column requirement, it must also satisfies Generated
+        // column requirement because IDENTITY columns are introduced after Generated columns. In
+        // this case we do nothing here.
+        assert(keepGeneratedColumns)
         latestMetadata
       } else {
         // As the protocol doesn't match, this table is created by an old version that doesn't
-        // support generated columns. We should remove the generation expressions to fix the
-        // schema to avoid bumping the writer version incorrectly.
-        val newSchema = GeneratedColumn.removeGenerationExpressions(latestMetadata.schema)
+        // support generated columns or identity columns. We should remove the generation
+        // expressions to fix the schema to avoid bumping the writer version incorrectly.
+        val newSchema = ColumnWithDefaultExprUtils.removeDefaultExpressions(latestMetadata
+          .schema, keepGeneratedColumns)
         if (newSchema ne latestMetadata.schema) {
           latestMetadata.copy(schemaString = newSchema.json)
         } else {

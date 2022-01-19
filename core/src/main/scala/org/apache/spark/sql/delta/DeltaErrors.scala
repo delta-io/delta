@@ -1440,6 +1440,20 @@ object DeltaErrors
         .stripMargin
     )
 
+
+  def identityColumnNotSupported(): Throwable = {
+    new AnalysisException("IDENTITY column is not supported")
+  }
+
+  def identityColumnInconsistentMetadata(
+      colName: String,
+      hasStart: Boolean,
+      hasStep: Boolean,
+      hasInsert: Boolean): Throwable = {
+    new AnalysisException(s"Inconsistent IDENTITY metadata for column $colName " +
+      s"detected: $hasStart, $hasStep, $hasInsert")
+  }
+
 }
 
 /** The basic class for all Tahoe commit conflict exceptions. */
