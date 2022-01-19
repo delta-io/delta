@@ -16,6 +16,7 @@
 import os
 import shutil
 import threading
+import time
 
 from pyspark import SparkContext
 from pyspark.sql import Column, DataFrame, SparkSession, SQLContext, functions
@@ -75,6 +76,7 @@ spark = SparkSession \
     .config("spark.delta.logStore.class", "io.delta.storage.DynamoDBLogStore") \
     .getOrCreate()
 
+spark.sparkContext.setLogLevel('WARN')
 
 # Apache Spark 2.4.x has a known issue (SPARK-25003) that requires explicit activation
 # of the extension and cloning of the session. This will unnecessary in Apache Spark 3.x.
@@ -94,12 +96,15 @@ n = 32
 concurrency = 8
 
 pool = ThreadPool(concurrency)
+start_t = time.time()
 pool.map(write_tx, range(n))
 
 actual = spark.read.format("delta").load(table_path).count()
 print("number of rows:", actual)
 assert actual == n
 
+t = time.time() - start_t
+print(f"{n / t:.02f} tx / sec")
 # cleanup
 if table_path.startswith("/"):
     shutil.rmtree(table_path)

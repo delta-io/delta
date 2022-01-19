@@ -30,8 +30,10 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.storage.HadoopFileSystemLogStore
 
-abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
-  extends HadoopFileSystemLogStore(sparkConf, hadoopConf)
+abstract class BaseExternalLogStore(
+    sparkConf: SparkConf,
+    hadoopConf: Configuration
+) extends HadoopFileSystemLogStore(sparkConf, hadoopConf)
     with DeltaLogging {
 
   /**
@@ -51,7 +53,7 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
    * @param src path to source file
    * @param dst path to destination file
    */
-  private def copyFile(fs: FileSystem, src: Path, dst: Path) {
+  private def copyFile(fs: FileSystem, src: Path, dst: Path): Unit = {
     logDebug(s"copy file: $src -> $dst")
     val input_stream = fs.open(src)
     val output_stream = fs.create(dst, true)
@@ -70,22 +72,10 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
     FileNames.isDeltaFile(path) && FileNames.deltaVersion(path) == 0L
   }
 
-  /**
-   * Merge two iterators of [[FileStatus]] into a single iterator ordered by file path name.
-   * In case both iterators have [[FileStatus]]s for the same file path, keep the one from
-   * `iterWithPrecedence` and discard that from `iter`.
-   */
-  private def mergeFileIterators(
-    iter: Iterator[FileStatus],
-    iterWithPrecedence: Iterator[FileStatus]
-  ): Iterator[FileStatus] = {
-    val result = (iter.map(f => (f.getPath, f)).toMap
-      ++ iterWithPrecedence.map(f => (f.getPath, f))).values.toSeq
-      .sortBy(_.getPath.getName)
-    result.iterator
-  }
-
-  private def resolved(path: Path): (FileSystem, Path) = {
+  private def resolvePath(
+      path: Path,
+      hadoopConf: Configuration
+  ): (FileSystem, Path) = {
     val fs = path.getFileSystem(getHadoopConfiguration)
     val resolvedPath = stripUserInfo(fs.makeQualified(path))
     (fs, resolvedPath)
@@ -108,21 +98,36 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
   /**
    * Method for assuring consistency on filesystem according to the external cache.
    * Method tries to rewrite TransactionLog entry from temporary path if it does not exists.
-   * Method returns completed [[LogEntryMetadata]]
+   * Method returns completed [[LogEntry]]
    */
 
-   private def tryFixTransactionLog(fs: FileSystem, entry: LogEntryMetadata): LogEntryMetadata = {
-    logDebug(s"Try to fix: ${entry.path}")
-    val tempPath = entry.tempPath.get
-    try {
-      copyFile(fs, tempPath, entry.path)
-      val completedEntry = entry.complete()
-      writeCache(fs, completedEntry, overwrite = true)
-      completedEntry
-    } catch {
-      case e: FileNotFoundException =>
-        logWarning(s"ignoring $e while fixing (already done?)")
-        entry
+  private def fixDeltaLog(fs: FileSystem, entry: LogEntry): Unit = {
+    if (entry.complete) {
+      return
+    }
+    var retry = 0;
+    var copied = false;
+
+    while (true) {
+      logDebug(
+        s"${if (retry > 0) "re" else ""}trying to fix: ${entry.fileName}"
+      )
+      try {
+        if (!copied && !fs.exists(entry.absoluteJsonPath)) {
+          onFixDeltaLogCopyTempFile()
+          copyFile(fs, entry.absoluteTempPath, entry.absoluteJsonPath());
+          copied = true;
+        }
+        onFixDeltaLogPutDbEntry();
+        putDbEntry(entry.asComplete(), overwrite = true);
+        logDebug(s"fixed ${entry.fileName}")
+        return
+      } catch {
+        case e: Throwable =>
+          logError(s"${e.getClass.getName}: $e")
+          if (retry >= 3) throw e
+      }
+      retry += 1;
     }
   }
 
@@ -136,148 +141,169 @@ abstract class BaseExternalLogStore(sparkConf: SparkConf, hadoopConf: Configurat
   /**
    * Generate temporary path for TransactionLog.
    */
-  protected def getTemporaryPath(path: Path): Path = {
+  protected def createTemporaryPath(path: Path): String = {
     val uuid = java.util.UUID.randomUUID().toString
-    new Path(s"${path.getParent}/.temp/${path.getName}.$uuid")
+    s".tmp/${path.getName}.$uuid" // Q: remove path.getName part?
+  }
+  override def listFrom(path: Path): Iterator[FileStatus] = {
+    listFrom(path, getHadoopConfiguration)
   }
 
-  /**
-   * List files starting from `resolvedPath` (inclusive) in the same directory, which merges
-   * the file system list and the db list
-   */
-  protected def listFrom(
-    fs: FileSystem,
-    resolvedPath: Path,
-    useCache: Boolean = true): Iterator[FileStatus] = {
+  override def listFrom(
+      path: Path,
+      hadoopConf: Configuration
+  ): Iterator[FileStatus] = {
+    logDebug(s"listFrom path: ${path}")
+    val (fs, resolvedPath) = resolvePath(path, hadoopConf)
+    var entry = getLatestDbEntry(resolvedPath.getParent)
+    entry.foreach(fixDeltaLog(fs, _))
+
     val parentPath = resolvedPath.getParent
     if (!fs.exists(parentPath)) {
       throw new FileNotFoundException(s"No such file or directory: $parentPath")
     }
 
-    val listedFromFs =
-      fs.listStatus(parentPath)
-        .filter(path => !path.getPath.getName.endsWith(".temp"))
-        .filter(path => path.getPath.getName >= resolvedPath.getName)
-
-    if (!useCache) {
-      return listedFromFs.iterator
-    }
-
-    val listedFromDB = listFromCache(fs, resolvedPath)
-      .toList
-      .map(entry => if (!entry.isComplete) tryFixTransactionLog(fs, entry) else entry)
-      .map(entry => entry.asFileStatus(fs))
-
-    // for debug
-    listedFromFs.iterator
-      .map(entry => s"fs item: ${entry.getPath}")
-      .foreach(x => logDebug(x))
-
-    listedFromDB.iterator
-      .map(entry => s"db item: ${entry.getPath}")
-      .foreach(x => logDebug(x))
-    // end debug
-
-    mergeFileIterators(listedFromDB.iterator, listedFromFs.iterator)
+    super.listFrom(path, hadoopConf)
   }
 
   /**
    * Write file with actions under a specific path.
    */
-  protected def writeActions(fs: FileSystem,
-    path: Path,
-    actions: Iterator[String]): Long = {
+  protected def writeActions(
+      fs: FileSystem,
+      path: Path,
+      actions: Iterator[String]
+  ): Unit = {
     logDebug(s"writeActions to: $path")
-    val stream = new CountingOutputStream(fs.create(path, true))
+    val stream = fs.create(path, true)
     actions.map(_ + "\n").map(_.getBytes(UTF_8)).foreach(stream.write)
     stream.close()
-    stream.getCount
   }
 
-
-  /**
-   * List files starting from `resolvedPath` (inclusive) in the same directory.
-   */
-  override def listFrom(path: Path): Iterator[FileStatus] = {
-    logDebug(s"listFrom path: ${path}")
-    val (fs, resolvedPath) = resolved(path)
-    listFrom(fs, resolvedPath)
+  def write(
+      path: Path,
+      actions: Iterator[String],
+      overwrite: Boolean = false
+  ): Unit = {
+    write(path, actions, overwrite, getHadoopConfiguration)
   }
 
-  override def write(path: Path,
-    actions: Iterator[String],
-    overwrite: Boolean = false): Unit = {
-    val (fs, resolvedPath) = resolved(path)
+  override def write(
+      path: Path,
+      actions: Iterator[String],
+      overwrite: Boolean,
+      hadoopConf: Configuration
+  ): Unit = {
+    val (fs, resolvedPath) = resolvePath(path, hadoopConf)
 
-    logDebug(s"write path: ${path}, ${overwrite}")
+    if (overwrite) {
+      return writeActions(fs, path, actions);
+    };
 
-    val tempPath = getTemporaryPath(resolvedPath)
-    val actionsSeq = actions.toSeq
-    val fileLength = writeActions(fs, tempPath, actionsSeq.iterator)
+    val parentPath = resolvedPath.getParent
+    assert(FileNames.isDeltaFile(path))
+    val version = FileNames.deltaVersion(path)
 
-    val logEntryMetadata =
-      LogEntryMetadata(resolvedPath, fileLength, Some(tempPath))
-
-    try {
-      writeCache(fs, logEntryMetadata, overwrite)
-    } catch {
-      case e: Throwable =>
-        logError(s"${e.getClass.getName}: $e")
-        throw e
+    if (version > 0) {
+      val prevVersion = version - 1
+      val prevPath = FileNames.deltaFile(parentPath, prevVersion)
+      getDbEntry(prevPath) match {
+        case Some(entry) => fixDeltaLog(fs, entry)
+        case None =>
+          if (!fs.exists(prevPath)) {
+            throw new java.nio.file.FileSystemException(
+              s"previous commit ${prevPath} doesn't exist"
+            )
+          }
+          // previous commit exists in fs but not in dynamodb
+      }
+    } else {
+      getDbEntry(path) match {
+        case Some(entry) =>
+          if (entry.complete && !fs.exists(path)) {
+            throw new java.nio.file.FileSystemException(
+              s"Old entries for ${parentPath} still exist in the database"
+            )
+          }
+        case None => ;
+      }
     }
+
+    val tempPath = createTemporaryPath(resolvedPath)
+
+    val entry =
+      LogEntry(
+        resolvedPath.getParent,
+        resolvedPath.getName,
+        tempPath,
+        false,
+        None
+      )
+
+    logDebug(s"write: writing to temporary file ${tempPath}")
+    writeActions(fs, entry.absoluteTempPath(), actions);
+
+    // commit to dynamodb E(N, false) and exclude commitTime
+    logDebug(s"write incomplete entry to dynamodb ${entry}")
+    putDbEntry(entry, overwrite = false)
+
     try {
-      writeActions(fs, resolvedPath, actionsSeq.iterator)
-      writeCache(fs, logEntryMetadata.complete(), overwrite = true)
+      onWriteCopyTempFile();
+      copyFile(fs, entry.absoluteTempPath(), resolvedPath)
+      // Commit (with overwrite=true) to DynamoDB entry E(N, true)
+      // with commitTime attribute in epoch seconds
+      onWritePutDbEntry();
+      putDbEntry(entry.asComplete(), overwrite = true)
     } catch {
       case e: Throwable =>
         logWarning(s"${e.getClass.getName}: ignoring recoverable error: $e")
     }
   }
 
+  protected def onWriteCopyTempFile(): Unit = {}
+  protected def onWritePutDbEntry(): Unit = {}
+  protected def onFixDeltaLogCopyTempFile(): Unit = {}
+  protected def onFixDeltaLogPutDbEntry(): Unit = {}
+
   /*
-   * Write cache in exclusive way.
+   * Write to db in exclusive way.
    * Method should throw @java.nio.file.FileAlreadyExistsException if path exists in cache.
    */
-  protected def writeCache(
-    fs: FileSystem,
-    logEntry: LogEntryMetadata,
-    overwrite: Boolean = false): Unit
+  protected def putDbEntry(
+      logEntry: LogEntry,
+      overwrite: Boolean = false
+  ): Unit
 
-  protected def listFromCache(fs: FileSystem, resolvedPath: Path): Iterator[LogEntryMetadata]
+  protected def getDbEntry(
+      absoluteJsonPath: Path
+  ): Option[LogEntry]
+
+  protected def getLatestDbEntry(
+      tablePath: Path
+  ): Option[LogEntry]
 
   override def isPartialWriteVisible(path: Path): Boolean = false
 }
 
-class CachedFileStatus(
-  length: Long,
-  isdir: Boolean,
-  block_replication: Int,
-  blocksize: Long,
-  modification_time: Long,
-  path: Path
-) extends FileStatus(length, isdir, block_replication, blocksize, modification_time, path)
-
 /**
  * The file metadata to be stored in the external db
  */
-case class LogEntryMetadata(path: Path,
-  length: Long,
-  tempPath: Option[Path] = None,
-  isComplete: Boolean = false,
-  modificationTime: Long = System.currentTimeMillis()
+case class LogEntry(
+    tablePath: Path, // Q: should it be path to delta_log or parent one?
+    fileName: String,
+    tempPath: String,
+    complete: Boolean,
+    commitTime: Option[Long]
 ) {
-  def complete(): LogEntryMetadata = {
-    LogEntryMetadata(this.path, this.length, this.tempPath, true)
-  }
-
-  def asFileStatus(fs: FileSystem): FileStatus = {
-    new CachedFileStatus(
-      length,
-      false,
-      1,
-      fs.getDefaultBlockSize(path),
-      modificationTime,
-      path
+  def asComplete(): LogEntry = {
+    LogEntry(
+      tablePath,
+      fileName,
+      tempPath,
+      true,
+      Some(System.currentTimeMillis() / 1000)
     )
   }
+  def absoluteJsonPath(): Path = new Path(tablePath, fileName)
+  def absoluteTempPath(): Path = new Path(tablePath, tempPath)
 }
