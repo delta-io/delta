@@ -436,6 +436,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case c => c.getClass
     }
 
+    // Whether this is an ALTER TABLE ALTER COLUMN SYNC IDENTITY command.
+    var syncIdentity = false
     val columnUpdates = new mutable.HashMap[Seq[String], (StructField, Option[ColumnPosition])]()
 
     grouped.foreach {
@@ -514,6 +516,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
             val (oldField, pos) = getColumn(field)
             columnUpdates(field) = oldField.copy(name = rename.newName()) -> pos
 
+
           case other =>
             throw new UnsupportedOperationException("Unrecognized column change " +
               s"${other.getClass}. You may be running an out of date Delta Lake version.")
@@ -550,7 +553,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
         fieldNames.dropRight(1),
         fieldNames.last,
         newField,
-        newPositionOpt).run(spark)
+        newPositionOpt,
+        syncIdentity = syncIdentity).run(spark)
     }
 
     loadTable(ident)
