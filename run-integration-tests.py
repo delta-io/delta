@@ -57,7 +57,7 @@ def run_scala_integration_tests(root_dir, version, test_name, extra_maven_repo, 
                 raise
 
 
-def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo):
+def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo, extra_packages, conf):
     print("\n\n##### Running Python tests on version %s #####" % str(version))
     clear_artifact_cache()
     test_dir = path.join(root_dir, path.join("examples", "python"))
@@ -71,21 +71,27 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo)
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
     package = "io.delta:delta-core_2.12:" + version
+    if extra_packages:
+        package += "," + extra_packages
+    repo = extra_maven_repo if extra_maven_repo else ""
+    conf_args = []
+    if conf:
+        for i in conf:
+            conf_args.extend(["--conf", i])
 
-    if extra_maven_repo:
-        repo = extra_maven_repo
-    else:
-        repo = ""
     for test_file in test_files:
         if test_name is not None and test_name not in test_file:
             print("\nSkipping Python tests in %s\n=====================" % test_file)
             continue
-
+        if "dynamodb_logstore.py" in test_file and not os.environ.get("DELTA_TABLE_PATH"):
+            print("""\nSkipping Python tests in %s due to the missing env variable `DELTA_TABLE_PATH`
+            \n=====================""" % test_file)
+            continue
         try:
             cmd = ["spark-submit",
                    "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
                    "--packages", package,
-                   "--repositories", repo, test_file]
+                   "--repositories", repo] + conf_args + [test_file]
             print("\nRunning Python tests in %s\n=============" % test_file)
             print("Command: %s" % str(cmd))
             run_cmd(cmd, stream_output=True)
@@ -237,6 +243,17 @@ if __name__ == "__main__":
         default=False,
         action="store_true",
         help="Use testpypi for testing pip installation")
+    parser.add_argument(
+        "--packages",
+        required=False,
+        default=None,
+        help="Additional packages required for some tests")
+    parser.add_argument(
+        "--conf",
+        required=False,
+        default=None,
+        nargs="+",
+        help="All possible `--conf` values passed to `spark-submit`")
 
     args = parser.parse_args()
 
@@ -256,7 +273,7 @@ if __name__ == "__main__":
                                     args.scala_version)
 
     if run_python:
-        run_python_integration_tests(root_dir, args.version, args.test, args.maven_repo)
+        run_python_integration_tests(root_dir, args.version, args.test, args.maven_repo, args.packages, args.conf)
 
     if run_pip:
         run_pip_installation_tests(root_dir, args.version, args.use_testpypi, args.maven_repo)
