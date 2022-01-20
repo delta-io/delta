@@ -166,6 +166,8 @@ object DeltaTableUtils extends PredicateHelper
     // scalastyle:off deltahadoopconfiguration
     val fs = path.getFileSystem(spark.sessionState.newHadoopConfWithOptions(options))
     // scalastyle:on deltahadoopconfiguration
+
+
     var currentPath = path
     while (currentPath != null && currentPath.getName != "_delta_log" &&
         currentPath.getName != "_samples") {
