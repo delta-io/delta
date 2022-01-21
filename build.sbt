@@ -653,7 +653,8 @@ lazy val flinkConnector = (project in file("flink-connector"))
         s"""package io.delta.flink.sink.internal;
            |
            |public final class Meta {
-           |  public static final String VERSION = "${version.value}";
+           |  public static final String FLINK_VERSION = "${flinkVersion}";
+           |  public static final String CONNECTOR_VERSION = "${version.value}";
            |}
            |""".stripMargin)
       Seq(file)

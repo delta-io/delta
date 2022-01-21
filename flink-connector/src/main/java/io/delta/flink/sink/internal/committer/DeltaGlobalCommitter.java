@@ -79,7 +79,8 @@ public class DeltaGlobalCommitter
     implements GlobalCommitter<DeltaCommittable, DeltaGlobalCommittable> {
 
     private static final String APPEND_MODE = "Append";
-    private static final String ENGINE_INFO = "flink-delta-connector/" + Meta.VERSION;
+    private static final String ENGINE_INFO = "flink-engine/" + Meta.FLINK_VERSION +
+        " flink-delta-connector/" + Meta.CONNECTOR_VERSION;
 
     /**
      * Hadoop configuration that is passed to {@link DeltaLog} instance when creating it

@@ -25,6 +25,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.regex.Pattern;
 
 import io.delta.flink.sink.internal.SchemaConverter;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
@@ -44,6 +45,7 @@ import static org.junit.Assert.assertTrue;
 import io.delta.standalone.DeltaLog;
 import io.delta.standalone.Snapshot;
 import io.delta.standalone.actions.AddFile;
+import io.delta.standalone.actions.CommitInfo;
 import io.delta.standalone.data.CloseableIterator;
 
 /**
@@ -124,6 +126,17 @@ public class DeltaGlobalCommitterTestParametrized {
         // THEN
         validateCurrentSnapshotState(deltaCommittables.size());
         validateCurrentTableFiles(deltaLog.update());
+        validateEngineInfo(deltaLog);
+    }
+
+    private void validateEngineInfo(DeltaLog deltaLog){
+        CommitInfo commitInfo = deltaLog.getCommitInfoAt(deltaLog.snapshot().getVersion());
+        String engineInfo = commitInfo.getEngineInfo().orElse("");
+
+        // pattern to match for instance: "flink-engine/1.14.0-flink-delta-connector/0.3.0"
+        String expectedEngineInfoPattern =
+            "flink-engine/[0-9]+\\.[0-9]+\\.[0-9]+-flink-delta-connector/[0-9]+\\.[0-9]+\\.[0-9]+";
+        assertTrue(Pattern.compile(expectedEngineInfoPattern).matcher(engineInfo).find());
     }
 
     private void validateCurrentSnapshotState(int numFilesAdded) {
