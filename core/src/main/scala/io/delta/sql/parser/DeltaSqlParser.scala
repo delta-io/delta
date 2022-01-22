@@ -156,6 +156,29 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       ctx.RUN != null)
   }
 
+  /**
+   * Create a [[OptimizeTableCommand]] logical plan. Example SQL:
+   * {{{
+   *    OPTIMIZE '/path/to/delta/table';
+   *    OPTIMIZE delta.db.deltaTable;
+   *    OPTIMIZE delta.db.deltaTable WHERE partCol = 25;
+   * }}}
+   */
+  override def visitOptimizeTable(ctx: OptimizeTableContext): AnyRef = withOrigin(ctx) {
+    if (ctx.path == null && ctx.table == null) {
+      throw new ParseException("OPTIMIZE command requires a file path or table name.", ctx)
+    }
+    OptimizeTableCommand(
+      Option(ctx.path).map(string),
+      Option(ctx.table).map(visitTableIdentifier),
+      Option(ctx.partitionPredicate).map(partitionPredicate => {
+        // Extract the raw expression text which will be parsed later
+        partitionPredicate.getStart.getInputStream.getText(new Interval(
+          partitionPredicate.getStart.getStartIndex,
+          partitionPredicate.getStop.getStopIndex))
+      }))
+  }
+
   override def visitDescribeDeltaDetail(
       ctx: DescribeDeltaDetailContext): LogicalPlan = withOrigin(ctx) {
     DescribeDeltaDetailCommand(
@@ -225,7 +248,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   // space. This produces some strange spacing (e.g. `structCol . arr [ 0 ]`), but right now we
   // think that's preferable to the additional complexity involved in trying to produce cleaner
   // output.
-  private def buildCheckConstraintText(tokens: Seq[CheckExprTokenContext]): String = {
+  private def buildCheckConstraintText(tokens: Seq[ExprTokenContext]): String = {
     tokens.map(_.getText).mkString(" ")
   }
 
@@ -237,7 +260,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       createUnresolvedTable(ctx.table.identifier.asScala.map(_.getText).toSeq,
         "ALTER TABLE ... ADD CONSTRAINT"),
       ctx.name.getText,
-      buildCheckConstraintText(checkConstraint.checkExprToken().asScala.toSeq))
+      buildCheckConstraintText(checkConstraint.exprToken().asScala.toSeq))
   }
 
   override def visitDropTableConstraint(

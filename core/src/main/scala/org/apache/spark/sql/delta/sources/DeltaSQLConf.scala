@@ -531,6 +531,38 @@ trait DeltaSQLConfBase {
           |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_OPTIMIZE_MIN_FILE_SIZE =
+    buildConf("optimize.minFileSize")
+        .internal()
+        .doc(
+          """Files which are smaller than this threshold (in bytes) will be grouped together
+             | and rewritten as larger files by the OPTIMIZE command.
+             |""".stripMargin)
+        .longConf
+        .checkValue(_ >= 0, "minFileSize has to be positive")
+        .createWithDefault(1024 * 1024 * 1024)
+
+  val DELTA_OPTIMIZE_MAX_FILE_SIZE =
+    buildConf("optimize.maxFileSize")
+        .internal()
+        .doc("Target file size produced by the OPTIMIZE command.")
+        .longConf
+        .checkValue(_ >= 0, "maxFileSize has to be positive")
+        .createWithDefault(1024 * 1024 * 1024)
+
+  val DELTA_OPTIMIZE_MAX_THREADS =
+    buildConf("optimize.maxThreads")
+        .internal()
+        .doc(
+          """
+            |Maximum number of parallel jobs allowed in OPTIMIZE command. Increasing the maximum
+            | parallel jobs allows the OPTIMIZE command to run faster, but increases the job
+            | management on the Spark driver side.
+            |""".stripMargin)
+        .intConf
+        .checkValue(_ > 0, "'optimize.maxThreads' must be positive.")
+        .createWithDefault(15)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

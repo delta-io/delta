@@ -393,7 +393,12 @@ trait DeltaCommand extends DeltaLogging {
       tableIdentifier: Option[TableIdentifier],
       operationName: String): DeltaLog = {
     val tablePath = tableIdentifier.map { ti =>
-      new Path(spark.sessionState.catalog.getTableMetadata(ti).location)
+      DeltaTableIdentifier(spark, ti) match {
+        case Some(id) if id.path.nonEmpty =>
+          new Path(id.path.get)
+        case _ =>
+          new Path(spark.sessionState.catalog.getTableMetadata(ti).location)
+      }
     }.orElse(path.map(new Path(_))).getOrElse {
       throw DeltaErrors.missingTableIdentifierException(operationName)
     }
