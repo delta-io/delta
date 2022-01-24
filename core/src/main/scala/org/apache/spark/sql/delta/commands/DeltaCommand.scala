@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit.NANOSECONDS
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{CommitStats, DeltaErrors, DeltaLog, DeltaOperations, OptimisticTransaction, Serializable}
+import org.apache.spark.sql.delta.{CommitStats, DeltaErrors, DeltaLog, DeltaOperations, DeltaTableIdentifier, OptimisticTransaction, Serializable}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -373,5 +373,36 @@ trait DeltaCommand extends DeltaLogging {
           data = Map("exception" -> Utils.exceptionString(e), "operation" -> op.name))
         throw e
     }
+  }
+
+  /**
+   * Utility method to return the [[DeltaLog]] of an existing Delta table referred
+   * by either the given [[path]] or [[tableIdentifier].
+   *
+   * @param spark [[SparkSession]] reference to use.
+   * @param path Table location. Expects a non-empty [[tableIdentifier]] or [[path]].
+   * @param tableIdentifier Table identifier. Expects a non-empty [[tableIdentifier]] or [[path]].
+   * @param operationName Operation that is getting the DeltaLog, used in error messages.
+   * @return DeltaLog of the table
+   * @throws AnalysisException If either no Delta table exists at the given path/identifier or
+   *                           there is neither [[path]] nor [[tableIdentifier]] is provided.
+   */
+  protected def getDeltaLog(
+      spark: SparkSession,
+      path: Option[String],
+      tableIdentifier: Option[TableIdentifier],
+      operationName: String): DeltaLog = {
+    val tablePath = tableIdentifier.map { ti =>
+      new Path(spark.sessionState.catalog.getTableMetadata(ti).location)
+    }.orElse(path.map(new Path(_))).getOrElse {
+      throw DeltaErrors.missingTableIdentifierException(operationName)
+    }
+    val deltaLog = DeltaLog.forTable(spark, tablePath)
+    if (deltaLog.snapshot.version < 0) {
+      throw DeltaErrors.notADeltaTableException(
+        operationName,
+        DeltaTableIdentifier(path, tableIdentifier))
+    }
+    deltaLog
   }
 }
