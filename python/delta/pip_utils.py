@@ -13,11 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+from typing import List
+
 from pyspark.sql import SparkSession
 
 
 def configure_spark_with_delta_pip(
-    spark_session_builder: SparkSession.Builder
+    spark_session_builder: SparkSession.Builder,
+    extra_packages: List[str] = None
 ) -> SparkSession.Builder:
     """
     Utility function to configure a SparkSession builder such that the generated SparkSession
@@ -37,6 +40,7 @@ def configure_spark_with_delta_pip(
 
     :param spark_session_builder: SparkSession.Builder object being used to configure and
                                   create a SparkSession.
+    :param extra_packages: Allow for spark session to include other packages other than delta.
     :return: Updated SparkSession.Builder object
 
     .. versionadded:: 1.0
@@ -65,4 +69,8 @@ See the online documentation for the correct usage of this function.
     scala_version = "2.12"
     maven_artifact = f"io.delta:delta-core_{scala_version}:{delta_version}"
 
-    return spark_session_builder.config("spark.jars.packages", maven_artifact)
+    extra_packages = extra_packages or []
+    all_artifacts = extra_packages + [maven_artifact]
+    packages_str = ",".join(all_artifacts)
+
+    return spark_session_builder.config("spark.jars.packages", packages_str)

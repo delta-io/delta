@@ -18,6 +18,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from typing import List
 
 from pyspark.sql import SparkSession
 import delta
@@ -31,8 +32,8 @@ class PipUtilsTests(unittest.TestCase):
             .master("local[*]") \
             .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
             .config(
-                "spark.sql.catalog.spark_catalog",
-                "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+            "spark.sql.catalog.spark_catalog",
+            "org.apache.spark.sql.delta.catalog.DeltaCatalog")
 
         self.spark = delta.configure_spark_with_delta_pip(builder).getOrCreate()
         self.tempPath = tempfile.mkdtemp()
@@ -48,9 +49,36 @@ class PipUtilsTests(unittest.TestCase):
         self.spark.read.format("delta").load(self.tempFile)
 
 
+class PipUtilsCustomJarsTests(unittest.TestCase):
+
+    def setUp(self) -> None:
+        builder = SparkSession.builder \
+            .appName("pip-test") \
+            .master("local[*]") \
+            .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+            .config(
+            "spark.sql.catalog.spark_catalog",
+            "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+
+        import importlib_metadata
+        scala_version = "2.12"
+        delta_version = importlib_metadata.version("delta_spark")
+        maven_artifact = f"io.delta:delta-core_{scala_version}:{delta_version}"
+        self.spark = delta.configure_spark_with_delta_pip(builder, [maven_artifact]).getOrCreate()
+
+    def tearDown(self) -> None:
+        self.spark.stop()
+
+    def test_maven_jar_loaded(self) -> None:
+        # Read and write Delta table to check that the maven jars are loaded and Delta works.
+        packages: List[str] = self.spark.conf.get("spark.jars.packages").split(",")
+        assert len(packages) == 2, "There should only be 2 packages"
+
+
 if __name__ == "__main__":
     try:
         import xmlrunner
+
         testRunner = xmlrunner.XMLTestRunner(output='target/test-reports', verbosity=4)
     except ImportError:
         testRunner = None
