@@ -20,6 +20,7 @@ package io.delta.flink.sink.internal.committables;
 
 import java.util.List;
 
+import io.delta.flink.sink.internal.logging.Logging;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
@@ -53,11 +54,18 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  *         no longer recovered and exist only in the previously snapshotted states.</li>
  * </ol>
  */
-public class DeltaGlobalCommittable {
+public class DeltaGlobalCommittable implements Logging {
 
     private final List<DeltaCommittable> deltaCommittables;
 
     public DeltaGlobalCommittable(List<DeltaCommittable> deltaCommittables) {
+        for (DeltaCommittable committable : deltaCommittables) {
+            logInfo("Creating global committable object with committable for: " +
+                "appId=" + committable.getAppId() +
+                " checkpointId=" + committable.getCheckpointId() +
+                " deltaPendingFile=" + committable.getDeltaPendingFile()
+            );
+        }
         this.deltaCommittables = checkNotNull(deltaCommittables);
     }
 

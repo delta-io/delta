@@ -21,6 +21,7 @@ package org.apache.flink.streaming.api.functions.sink.filesystem;
 import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.apache.flink.core.io.SimpleVersionedSerialization;
 import org.apache.flink.core.io.SimpleVersionedSerializer;
@@ -181,5 +182,19 @@ public class DeltaPendingFile {
             pendingFileRecordCount,
             pendingFileSize,
             lastUpdateTime);
+    }
+
+    @Override
+    public String toString() {
+        String partitionSpecString = partitionSpec.keySet().stream()
+            .map(key -> key + "=" + partitionSpec.get(key))
+            .collect(Collectors.joining(", ", "{", "}"));
+        return "DeltaPendingFile(" +
+            "fileName=" + fileName +
+            " lastUpdateTime=" + lastUpdateTime +
+            " fileSize=" + fileSize +
+            " recordCount=" + recordCount +
+            " partitionSpec=" + partitionSpecString +
+            ")";
     }
 }

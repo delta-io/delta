@@ -37,6 +37,7 @@ import io.delta.flink.sink.internal.Meta;
 import io.delta.flink.sink.internal.SchemaConverter;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
 import io.delta.flink.sink.internal.committables.DeltaGlobalCommittable;
+import io.delta.flink.sink.internal.logging.Logging;
 import org.apache.flink.api.connector.sink.GlobalCommitter;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.streaming.api.functions.sink.filesystem.DeltaPendingFile;
@@ -76,7 +77,7 @@ import io.delta.standalone.types.StructType;
  * </ol>
  */
 public class DeltaGlobalCommitter
-    implements GlobalCommitter<DeltaCommittable, DeltaGlobalCommittable> {
+    implements GlobalCommitter<DeltaCommittable, DeltaGlobalCommittable>, Logging {
 
     private static final String APPEND_MODE = "Append";
     private static final String ENGINE_INFO = "flink-engine/" + Meta.FLINK_VERSION +
@@ -219,6 +220,10 @@ public class DeltaGlobalCommitter
                         transaction,
                         committablesPerCheckpoint.get(checkpointId),
                         deltaLog.tableExists());
+                } else {
+                    logInfo(String.format(
+                        "Skipping already committed transaction (appId='%s', checkpointId='%s')",
+                        appId, checkpointId));
                 }
             }
         }
@@ -252,6 +257,16 @@ public class DeltaGlobalCommitter
         Set<String> partitionColumnsSet = null;
         long numOutputRows = 0;
         long numOutputBytes = 0;
+
+        StringBuilder logFiles = new StringBuilder();
+        for (DeltaCommittable deltaCommittable : committables) {
+            logFiles.append(" deltaPendingFile=").append(deltaCommittable.getDeltaPendingFile());
+        }
+        logInfo("Files to be committed to the Delta table: " +
+            "appId=" + appId +
+            " checkpointId=" + checkpointId +
+            " files:" + logFiles
+        );
         for (DeltaCommittable deltaCommittable : committables) {
             DeltaPendingFile deltaPendingFile = deltaCommittable.getDeltaPendingFile();
             AddFile action = deltaPendingFile.toAddFile();
@@ -295,7 +310,13 @@ public class DeltaGlobalCommitter
             operationMetrics
         );
 
+        logInfo(String.format(
+            "Attempting to commit transaction (appId='%s', checkpointId='%s')",
+            appId, checkpointId));
         transaction.commit(actions, operation, ENGINE_INFO);
+        logInfo(String.format(
+            "Successfully committed transaction (appId='%s', checkpointId='%s')",
+            appId, checkpointId));
     }
 
     /**
