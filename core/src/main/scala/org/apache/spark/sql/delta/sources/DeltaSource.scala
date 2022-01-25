@@ -284,12 +284,16 @@ case class DeltaSource(
     initialState.iterator()
   }
 
-  protected def iteratorLast[T](iter: Iterator[T]): Option[T] = {
-    var last: Option[T] = None
-    while (iter.hasNext) {
-      last = Some(iter.next())
+  protected def iteratorLast[T](iter: ClosableIterator[T]): Option[T] = {
+    try {
+      var last: Option[T] = None
+      while (iter.hasNext) {
+        last = Some(iter.next())
+      }
+      last
+    } finally {
+      iter.close()
     }
-    last
   }
 
   private def getStartingOffset(
