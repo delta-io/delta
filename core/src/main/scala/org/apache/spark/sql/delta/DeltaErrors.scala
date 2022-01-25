@@ -975,29 +975,57 @@ object DeltaErrors
     new AnalysisException("Cannot describe the history of a view.")
   }
 
-  def copyIntoEncryptionOnlyS3(scheme: String): Throwable = {
+  def copyIntoValidationRequireDeltaTableExists: Throwable = {
+    new AnalysisException("COPY INTO validation failed. Target table does not exist.")
+  }
+
+  def copyIntoEncryptionNotAllowedOn(scheme: String): Throwable = {
+    // TODO: add `wasbs` once supported
     new IllegalArgumentException(
-      s"Invalid scheme $scheme. COPY INTO source encryption is only supported for S3 paths.")
+      s"Invalid scheme $scheme. " +
+        s"COPY INTO source encryption currently only supports s3/s3n/s3a/abfss.")
   }
 
   def copyIntoEncryptionSseCRequired(): Throwable = {
     new IllegalArgumentException(
-      s"Invalid encryption type. COPY INTO source encryption must specify 'type' = 'SSE-C'.")
+      s"Invalid encryption type. COPY INTO source encryption must specify 'TYPE' = 'AWS_SSE_C'.")
   }
 
   def copyIntoEncryptionMasterKeyRequired(): Throwable = {
     new IllegalArgumentException(
-      s"Invalid encryption arguments. COPY INTO source encryption must specify a masterKey.")
+      s"Invalid encryption arguments. COPY INTO source encryption must specify a MASTER_KEY.")
   }
 
-  def copyIntoCredentialsOnlyS3(scheme: String): Throwable = {
-    new IllegalArgumentException(
-      s"Invalid scheme $scheme. COPY INTO source credentials are only supported for S3 paths.")
+  def copyIntoCredentialsNotAllowedOn(scheme: String): Throwable = {
+     new IllegalArgumentException(
+      s"Invalid scheme $scheme. " +
+        s"COPY INTO source encryption currently only supports s3/s3n/s3a/wasbs/abfss.")
   }
 
-  def copyIntoCredentialsAllRequired(cause: Throwable): Throwable = {
+  def copyIntoCredentialsAllRequiredForS3(cause: Throwable): Throwable = {
     new IllegalArgumentException(
-      "COPY INTO credentials must include awsKeyId, awsSecretKey, and awsSessionToken.", cause)
+      "COPY INTO credentials must include AWS_ACCESS_KEY, AWS_SECRET_KEY, and AWS_SESSION_TOKEN.",
+      cause)
+  }
+
+  def copyIntoEncryptionRequiredForAzure(key: String, value: Option[String] = None): Throwable = {
+    new IllegalArgumentException(
+      if (value.nonEmpty) {
+        s"Invalid encryption option $key. " +
+          s"COPY INTO source encryption must specify '$key' = '${value.get}'."
+      } else {
+        s"COPY INTO source encryption must specify '$key'."
+      }
+    )
+  }
+
+  def copyIntoEncryptionNotSupportedForAzure: Throwable = {
+    new IllegalArgumentException(
+      "COPY INTO encryption only supports ADLS Gen2, or abfss:// file scheme")
+  }
+
+  def copyIntoCredentialsRequiredForAzure(key: String): Throwable = {
+    new IllegalArgumentException(s"COPY INTO source credentials must specify '$key'.")
   }
 
   def postCommitHookFailedException(
@@ -1402,6 +1430,15 @@ object DeltaErrors
       conflictingCommit)
     new io.delta.exceptions.ConcurrentTransactionException(message)
   }
+
+  def restoreMissedDataFilesError(missedFiles: Array[String], version: Long): Throwable =
+    new IllegalArgumentException(
+      s"""Not all files from version $version are available in file system.
+         | Missed files (top 100 files): ${missedFiles.mkString(",")}.
+         | Please use more recent version or timestamp for restoring.
+         | To disable check update option ${SQLConf.IGNORE_MISSING_FILES.key}"""
+        .stripMargin
+    )
 
 }
 

@@ -505,7 +505,7 @@ object SchemaUtils {
         case (Seq(), ArrayType(s: StructType, _)) =>
           find(colTail, s, stack :+ thisCol)
         case (Seq(), ArrayType(_, _)) =>
-          (Seq(0), 0)
+          (Nil, 0)
         case (_, ArrayType(_, _)) =>
           throw new AnalysisException(
             s"""An ArrayType was found. In order to access elements of an ArrayType, specify

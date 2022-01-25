@@ -50,6 +50,8 @@ case class CommitStats(
   readVersion: Long,
   txnDurationMs: Long,
   commitDurationMs: Long,
+  fsWriteDurationMs: Long,
+  stateReconstructionDurationMs: Long,
   numAdd: Int,
   numRemove: Int,
   bytesNew: Long,
@@ -62,14 +64,23 @@ case class CommitStats(
   cdcBytesNew: Long,
   /** The protocol as of version `readVersion`. */
   protocol: Protocol,
+  /** The size of the newly committed (usually json) file */
+  commitSizeBytes: Long,
+  /** The size of the checkpoint committed, if present */
+  checkpointSizeBytes: Long,
+  totalCommitsSizeSinceLastCheckpoint: Long,
+  /** Will we attempt a checkpoint after this commit is completed */
+  checkpointAttempt: Boolean,
   info: CommitInfo,
   newMetadata: Option[Metadata],
   numAbsolutePathsInAdd: Int,
   numDistinctPartitionsInAdd: Int,
+  numPartitionColumnsInTable: Int,
   isolationLevel: String,
   fileSizeHistogram: Option[FileSizeHistogram] = None,
   addFilesHistogram: Option[FileSizeHistogram] = None,
-  removeFilesHistogram: Option[FileSizeHistogram] = None
+  removeFilesHistogram: Option[FileSizeHistogram] = None,
+  txnId: Option[String] = None
 )
 
 /**
@@ -164,8 +175,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
 
   protected def spark = SparkSession.active
 
-  protected val txnId = UUID.randomUUID().toString
-
   /** Tracks the appIds that have been seen by this transaction. */
   protected val readTxn = new ArrayBuffer[String]
 
@@ -227,6 +236,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
 
   /** Start time of txn in nanoseconds */
   def txnStartTimeNs: Long = txnStartNano
+
+  /** Unique identifier for the transaction */
+  val txnId = UUID.randomUUID().toString
 
   /** The end to end execution time of this transaction. */
   def txnExecutionTimeMs: Option[Long] = if (commitEndNano == -1) {
@@ -476,15 +488,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       val preparedActions = prepareCommit(actions, op)
 
       // Find the isolation level to use for this commit
-      val noDataChanged = actions.collect { case f: FileAction => f.dataChange }.forall(_ == false)
-      val isolationLevelToUse = if (noDataChanged) {
-        // If no data has changed (i.e. its is only being rearranged), then SnapshotIsolation
-        // provides Serializable guarantee. Hence, allow reduced conflict detection by using
-        // SnapshotIsolation of what the table isolation level is.
-        SnapshotIsolation
-      } else {
-        Serializable
-      }
+      val isolationLevelToUse = getIsolationLevelToUse(preparedActions)
 
       if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED)) {
         val isBlindAppend = {
@@ -504,7 +508,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
           Some(isBlindAppend),
           getOperationMetrics(op),
           getUserMetadata(op),
-          tags = None)
+          tags = None,
+          txnId = Some(txnId))
       }
 
       val currentTransactionInfo = new CurrentTransactionInfo(
@@ -528,12 +533,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       }
 
       commitAttemptStartTime = clock.getTimeMillis()
-      val (commitVersion, updatedCurrentTransactionInfo) = doCommitRetryIteratively(
-        snapshot.version + 1,
-        currentTransactionInfo,
-        isolationLevelToUse)
+      val (commitVersion, updatedCurrentTransactionInfo, needsCheckpoint) =
+        doCommitRetryIteratively(snapshot.version + 1, currentTransactionInfo, isolationLevelToUse)
       logInfo(s"Committed delta #$commitVersion to ${deltaLog.logPath}")
-      postCommit(commitVersion)
+      postCommit(commitVersion, needsCheckpoint)
       (commitVersion, updatedCurrentTransactionInfo.actions)
     } catch {
       case e: DeltaConcurrentModificationException =>
@@ -639,6 +642,27 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
     finalActions
   }
 
+  // Returns the isolation level to use for committing the transaction
+  protected def getIsolationLevelToUse(preparedActions: Seq[Action]): IsolationLevel = {
+    val noDataChanged = preparedActions
+      .collectFirst { case f: FileAction if f.dataChange => f }
+      .isEmpty
+    val hasOnlyFileActions = preparedActions.forall(_.isInstanceOf[FileAction])
+    val isolationLevelToUse = if (noDataChanged && hasOnlyFileActions) {
+      // If no data has changed (i.e. its is only being rearranged), then SnapshotIsolation
+      // provides Serializable guarantee. Hence, allow reduced conflict detection by using
+      // SnapshotIsolation of what the table isolation level is.
+      SnapshotIsolation
+    } else {
+      getDefaultIsolationLevel()
+    }
+    isolationLevelToUse
+  }
+
+  protected def getDefaultIsolationLevel(): IsolationLevel = {
+    Serializable
+  }
+
   /**
    * Returns true if we should checkpoint the version that has just been committed.
    */
@@ -647,17 +671,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   }
 
   /** Perform post-commit operations */
-  protected def postCommit(commitVersion: Long): Unit = {
+  protected def postCommit(commitVersion: Long, needsCheckpoint: Boolean): Unit = {
     committed = true
-    if (shouldCheckpoint(commitVersion)) {
-      try {
-        // We checkpoint the version to be committed to so that no two transactions will checkpoint
-        // the same version.
-        deltaLog.checkpoint(deltaLog.getSnapshotAt(commitVersion))
-      } catch {
-        case e: IllegalStateException =>
-          logWarning("Failed to checkpoint table state.", e)
-      }
+    if (needsCheckpoint) {
+      // We checkpoint the version to be committed to so that no two transactions will checkpoint
+      // the same version.
+      deltaLog.checkpoint(deltaLog.getSnapshotAt(commitVersion))
     }
   }
 
@@ -678,22 +697,25 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
    * Commit the txn represented by `currentTransactionInfo` using `attemptVersion` version number.
    * If there are any conflicts that are found, we will retry a fixed number of times.
    *
-   * @return the real version that was committed
+   * @return the real version that was committed, txn info, and if a checkpoint should be made.
    */
   protected def doCommitRetryIteratively(
       attemptVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo,
-      isolationLevel: IsolationLevel): (Long, CurrentTransactionInfo) = lockCommitIfEnabled {
+      isolationLevel: IsolationLevel
+  ): (Long, CurrentTransactionInfo, Boolean) = lockCommitIfEnabled {
 
     var tryCommit = true
     var commitVersion = attemptVersion
     var updatedCurrentTransactionInfo = currentTransactionInfo
     var attemptNumber = 0
+    var needsCheckpoint = false
     recordDeltaOperation(deltaLog, "delta.commit.allAttempts") {
       while (tryCommit) {
         try {
           if (attemptNumber == 0) {
-            doCommit(commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel)
+            needsCheckpoint =
+              doCommit(commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel)
           } else if (attemptNumber > spark.conf.get(DeltaSQLConf.DELTA_MAX_RETRY_COMMIT_ATTEMPTS)) {
             val totalCommitAttemptTime = clock.getTimeMillis() - commitAttemptStartTime
             throw DeltaErrors.maxCommitRetriesExceededException(
@@ -707,14 +729,15 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
               commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel)
             commitVersion = newCommitVersion
             updatedCurrentTransactionInfo = newCurrentTransactionInfo
-            doCommit(commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel)
+            needsCheckpoint =
+              doCommit(commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel)
           }
           tryCommit = false
         } catch {
           case _: FileAlreadyExistsException => attemptNumber += 1
         }
       }
-      (commitVersion, updatedCurrentTransactionInfo)
+      (commitVersion, updatedCurrentTransactionInfo, needsCheckpoint)
     }
   }
 
@@ -722,13 +745,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
    * Commit `actions` using `attemptVersion` version number. Throws a FileAlreadyExistsException
    * if any conflicts are detected.
    *
-   * @return the real version that was committed.
+   * @return if a checkpoint should be made once this commit is written
    */
   protected def doCommit(
       attemptVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo,
       attemptNumber: Int,
-      isolationLevel: IsolationLevel): Long = {
+      isolationLevel: IsolationLevel): Boolean = {
     val actions = currentTransactionInfo.finalActionsToCommit
     logInfo(
       s"Attempting to commit version $attemptVersion with ${actions.size} actions with " +
@@ -747,9 +770,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
         "commitAttemptNumber" -> attemptNumber))
     }
 
+    val fsWriteStartNano = System.nanoTime()
+    val jsonActions = actions.map(_.json)
     deltaLog.store.write(
       deltaFile(deltaLog.logPath, attemptVersion),
-      actions.map(_.json).toIterator,
+      jsonActions.toIterator,
       overwrite = false,
       deltaLog.newDeltaHadoopConf())
 
@@ -759,6 +784,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
 
     commitEndNano = System.nanoTime()
     val postCommitSnapshot = deltaLog.update()
+    val postCommitReconstructionTime = System.nanoTime()
 
     if (postCommitSnapshot.version < attemptVersion) {
       recordDeltaEvent(deltaLog, "delta.commit.inconsistentList", data = Map(
@@ -779,12 +805,16 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
         distinctPartitions += a.partitionValues
         a
     }
+    val needsCheckpoint = shouldCheckpoint(attemptVersion)
     val stats = CommitStats(
       startVersion = snapshot.version,
       commitVersion = attemptVersion,
       readVersion = postCommitSnapshot.version,
       txnDurationMs = NANOSECONDS.toMillis(commitEndNano - txnStartNano),
       commitDurationMs = NANOSECONDS.toMillis(commitEndNano - commitStartNano),
+      fsWriteDurationMs = NANOSECONDS.toMillis(commitEndNano - fsWriteStartNano),
+      stateReconstructionDurationMs =
+        NANOSECONDS.toMillis(postCommitReconstructionTime - commitEndNano),
       numAdd = adds.size,
       numRemove = actions.collect { case r: RemoveFile => r }.size,
       bytesNew = adds.filter(_.dataChange).map(_.size).sum,
@@ -793,14 +823,20 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       numCdcFiles = 0,
       cdcBytesNew = 0,
       protocol = postCommitSnapshot.protocol,
+      commitSizeBytes = jsonActions.map(_.size).sum,
+      checkpointSizeBytes = postCommitSnapshot.checkpointSizeInBytes(),
+      totalCommitsSizeSinceLastCheckpoint = postCommitSnapshot.deltaFileSizeInBytes(),
+      checkpointAttempt = needsCheckpoint,
       info = Option(commitInfo).map(_.copy(readVersion = None, isolationLevel = None)).orNull,
       newMetadata = newMetadata,
       numAbsolutePathsInAdd = numAbsolutePaths,
       numDistinctPartitionsInAdd = distinctPartitions.size,
-      isolationLevel = isolationLevel.toString)
+      numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
+      isolationLevel = isolationLevel.toString,
+      txnId = Some(txnId))
     recordDeltaEvent(deltaLog, "delta.commit.stats", data = stats)
 
-    attemptVersion
+    needsCheckpoint
   }
 
   /**

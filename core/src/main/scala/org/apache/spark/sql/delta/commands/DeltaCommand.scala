@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
+
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
@@ -232,12 +233,7 @@ trait DeltaCommand extends DeltaLogging {
 
     logInfo(s"Committed delta #$attemptVersion to ${deltaLog.logPath}. Wrote $commitSize actions.")
 
-    try {
-      deltaLog.checkpoint(currentSnapshot)
-    } catch {
-      case e: IllegalStateException =>
-        logWarning("Failed to checkpoint table state.", e)
-    }
+    deltaLog.checkpoint(currentSnapshot)
   }
 
   /**
@@ -272,7 +268,8 @@ trait DeltaCommand extends DeltaLogging {
         isBlindAppend = Some(false),
         Some(metrics),
         userMetadata = txn.getUserMetadata(op),
-        tags = None)
+        tags = None,
+        txnId = Some(txn.txnId))
 
       val extraActions = Seq(commitInfo, metadata)
       // We don't expect commits to have more than 2 billion actions
@@ -293,7 +290,7 @@ trait DeltaCommand extends DeltaLogging {
             addFilesHistogram.foreach(_.insert(a.size))
           case r: RemoveFile =>
             numRemoveFiles += 1
-            removeFilesHistogram.foreach(_.insert(r.size))
+            removeFilesHistogram.foreach(_.insert(r.size.getOrElse(0L)))
           case _ =>
         }
         action
@@ -301,9 +298,11 @@ trait DeltaCommand extends DeltaLogging {
       if (txn.readVersion < 0) {
         deltaLog.createLogDirectory()
       }
+      val fsWriteStartNano = System.nanoTime()
+      val jsonActions = allActions.map(_.json)
       deltaLog.store.write(
         deltaFile(deltaLog.logPath, attemptVersion),
-        allActions.map(_.json),
+        jsonActions,
         overwrite = false,
         deltaLog.newDeltaHadoopConf())
 
@@ -314,12 +313,16 @@ trait DeltaCommand extends DeltaLogging {
 
       updateAndCheckpoint(spark, deltaLog, commitSize, attemptVersion)
       val postCommitSnapshot = deltaLog.snapshot
+      val postCommitReconstructionTime = System.nanoTime()
       var stats = CommitStats(
         startVersion = txn.readVersion,
         commitVersion = attemptVersion,
         readVersion = postCommitSnapshot.version,
         txnDurationMs = NANOSECONDS.toMillis(commitTime - txn.txnStartTimeNs),
         commitDurationMs = NANOSECONDS.toMillis(commitTime - commitStartNano),
+        fsWriteDurationMs = NANOSECONDS.toMillis(commitTime - fsWriteStartNano),
+        stateReconstructionDurationMs =
+          NANOSECONDS.toMillis(postCommitReconstructionTime - commitTime),
         numAdd = numAddFiles,
         numRemove = numRemoveFiles,
         bytesNew = bytesNew,
@@ -328,11 +331,17 @@ trait DeltaCommand extends DeltaLogging {
         numCdcFiles = 0,
         cdcBytesNew = 0,
         protocol = postCommitSnapshot.protocol,
+        commitSizeBytes = jsonActions.map(_.size).sum,
+        checkpointSizeBytes = postCommitSnapshot.checkpointSizeInBytes(),
+        totalCommitsSizeSinceLastCheckpoint = 0L,
+        checkpointAttempt = true,
         info = Option(commitInfo).map(_.copy(readVersion = None, isolationLevel = None)).orNull,
         newMetadata = Some(metadata),
         numAbsolutePathsInAdd = numAbsolutePaths,
         numDistinctPartitionsInAdd = -1, // not tracking distinct partitions as of now
-        isolationLevel = Serializable.toString)
+        numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
+        isolationLevel = Serializable.toString,
+        txnId = Some(txn.txnId))
 
       recordDeltaEvent(deltaLog, "delta.commit.stats", data = stats)
 
