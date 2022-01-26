@@ -986,46 +986,32 @@ object DeltaErrors
         s"COPY INTO source encryption currently only supports s3/s3n/s3a/abfss.")
   }
 
-  def copyIntoEncryptionSseCRequired(): Throwable = {
-    new IllegalArgumentException(
-      s"Invalid encryption type. COPY INTO source encryption must specify 'TYPE' = 'AWS_SSE_C'.")
-  }
-
-  def copyIntoEncryptionMasterKeyRequired(): Throwable = {
-    new IllegalArgumentException(
-      s"Invalid encryption arguments. COPY INTO source encryption must specify a MASTER_KEY.")
-  }
-
   def copyIntoCredentialsNotAllowedOn(scheme: String): Throwable = {
      new IllegalArgumentException(
       s"Invalid scheme $scheme. " +
         s"COPY INTO source encryption currently only supports s3/s3n/s3a/wasbs/abfss.")
   }
 
-  def copyIntoCredentialsAllRequiredForS3(cause: Throwable): Throwable = {
+  def copyIntoEncryptionRequired(
+      requiredKey: String, expectedValue: Option[String] = None): Throwable = {
     new IllegalArgumentException(
-      "COPY INTO credentials must include AWS_ACCESS_KEY, AWS_SECRET_KEY, and AWS_SESSION_TOKEN.",
-      cause)
-  }
-
-  def copyIntoEncryptionRequiredForAzure(key: String, value: Option[String] = None): Throwable = {
-    new IllegalArgumentException(
-      if (value.nonEmpty) {
-        s"Invalid encryption option $key. " +
-          s"COPY INTO source encryption must specify '$key' = '${value.get}'."
+      if (expectedValue.nonEmpty) {
+        s"Invalid encryption option $requiredKey. " +
+          s"COPY INTO source encryption must specify '$requiredKey' = '${expectedValue.get}'."
       } else {
-        s"COPY INTO source encryption must specify '$key'."
+        s"COPY INTO source encryption must specify '$requiredKey'."
       }
     )
+  }
+
+  def copyIntoCredentialsRequired(keys: String*): Throwable = {
+    new IllegalArgumentException(s"COPY INTO source credentials must " +
+      s"specify ${keys.mkString(", ")}.")
   }
 
   def copyIntoEncryptionNotSupportedForAzure: Throwable = {
     new IllegalArgumentException(
       "COPY INTO encryption only supports ADLS Gen2, or abfss:// file scheme")
-  }
-
-  def copyIntoCredentialsRequiredForAzure(key: String): Throwable = {
-    new IllegalArgumentException(s"COPY INTO source credentials must specify '$key'.")
   }
 
   def postCommitHookFailedException(
