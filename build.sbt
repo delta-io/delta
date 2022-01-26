@@ -28,10 +28,13 @@ concurrentRestrictions in Global := {
 inThisBuild(
   Seq(
     parallelExecution := false,
-    crossScalaVersions := Seq("2.12.8", "2.11.12")
   )
 )
 
+// crossScalaVersions must be set to Nil on the root project
+crossScalaVersions := Nil
+val scala212 = "2.12.8"
+val scala211 = "2.11.12"
 
 lazy val compileScalastyle = taskKey[Unit]("compileScalastyle")
 lazy val testScalastyle = taskKey[Unit]("testScalastyle")
@@ -52,7 +55,8 @@ val tezVersionForHive2 = "0.8.4"
 
 lazy val commonSettings = Seq(
   organization := "io.delta",
-  scalaVersion := "2.12.8",
+  scalaVersion := scala212,
+  crossScalaVersions := Seq(scala212, scala211),
   fork := true,
   javacOptions ++= Seq("-source", "1.8", "-target", "1.8", "-Xlint:unchecked"),
   scalacOptions ++= Seq("-target:jvm-1.8", "-Ywarn-unused-import"),
