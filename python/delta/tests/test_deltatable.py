@@ -125,6 +125,20 @@ class DeltaTableTests(DeltaTestCase):
         with self.assertRaises(TypeError):
             dt.update(set=1)  # type: ignore[call-overload]
 
+    def test_explain(self) -> None:
+        self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
+        source = self.spark.createDataFrame([('a', -1), ('b', 0), ('e', -5), ('f', -6)], ["k", "v"])
+        dt = DeltaTable.forPath(self.spark, self.tempFile)
+        err = None
+        try:
+            dt.merge(source, "key = k") \
+                .whenMatchedUpdate(set={"value": "v + 0"}) \
+                .whenNotMatchedInsert(values={"key": "k", "value": "v + 0"}) \
+                .explain()
+        except Exception as e:
+            err = e
+        self.assertTrue(err is None)
+
     def test_merge(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
         source = self.spark.createDataFrame([('a', -1), ('b', 0), ('e', -5), ('f', -6)], ["k", "v"])

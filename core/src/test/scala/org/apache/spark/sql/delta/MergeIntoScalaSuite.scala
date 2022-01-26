@@ -74,8 +74,6 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
       assert(explainOutput != null)
       assert(explainOutput.contains("Execute MergeIntoCommand"))
       assert(explainOutput.contains("+- MergeIntoCommand Project"))
-      assert(explainOutput.contains("StructType(StructField(key1,IntegerType,true), " +
-        "StructField(value1,IntegerType,true))"))
       assert(explainOutput.contains("Insert [actions:"))
       assert(explainOutput.contains("Update [actions:"))
     }

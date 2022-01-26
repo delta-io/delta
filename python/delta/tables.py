@@ -821,6 +821,15 @@ class DeltaMergeBuilder(object):
         """
         self._jbuilder.execute()
 
+    @since(1.2)  # type: ignore[arg-type]
+    def explain(self) -> None:
+        """
+        Explain the merge operation based on the built matched and not matched actions.
+
+        See :py:class:`~delta.tables.DeltaMergeBuilder` for complete usage details.
+        """
+        self._jbuilder.explain()
+
     def __getMatchedBuilder(
         self, condition: OptionalExpressionOrColumn = None
     ) -> "JavaObject":
