@@ -31,8 +31,11 @@ object StandaloneMimaExcludes {
     ProblemFilters.exclude[ReversedMissingMethodProblem]("io.delta.standalone.DeltaLog.getChanges"),
     ProblemFilters.exclude[ReversedMissingMethodProblem]("io.delta.standalone.DeltaLog.startTransaction"),
     ProblemFilters.exclude[ReversedMissingMethodProblem]("io.delta.standalone.Snapshot.scan"),
-    ProblemFilters.exclude[ReversedMissingMethodProblem]("io.delta.standalone.DeltaLog.tableExists")
+    ProblemFilters.exclude[ReversedMissingMethodProblem]("io.delta.standalone.DeltaLog.tableExists"),
 
-    // scalastyle:on line.size.limit
+    // Ignore missing shaded attributes
+    ProblemFilters.exclude[Problem]("shadedelta.*")
+
+  // scalastyle:on line.size.limit
   )
 }
