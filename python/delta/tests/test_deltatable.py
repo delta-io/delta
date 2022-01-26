@@ -791,6 +791,40 @@ class DeltaTableTests(DeltaTestCase):
         with self.assertRaisesRegex(ValueError, "writerVersion"):
             dt.upgradeTableProtocol(1, {})  # type: ignore[arg-type]
 
+    def test_restoreToVersion(self) -> None:
+        self.__writeDeltaTable([('a', 1), ('b', 2)])
+        self.__overwriteDeltaTable([('a', 3), ('b', 2)],
+                                   schema=["key_new", "value_new"],
+                                   overwriteSchema='true')
+
+        overwritten = DeltaTable.forPath(self.spark, self.tempFile).toDF()
+        self.__checkAnswer(overwritten, [Row(key_new='a', value_new=3), Row(key_new='b', value_new=2)])
+
+        DeltaTable.forPath(self.spark, self.tempFile).restoreToVersion(0)
+        restored = DeltaTable.forPath(self.spark, self.tempFile).toDF()
+
+        self.__checkAnswer(restored, [Row(key='a', value=1), Row(key='b', value=2)])
+
+    def test_restoreToTimestamp(self) -> None:
+        self.__writeDeltaTable([('a', 1), ('b', 2)])
+        timestampToRestore = DeltaTable.forPath(self.spark, self.tempFile) \
+            .history() \
+            .head() \
+            .timestamp \
+            .strftime('%Y-%m-%d %H:%M:%S.%f')
+
+        self.__overwriteDeltaTable([('a', 3), ('b', 2)],
+                                   schema=["key_new", "value_new"],
+                                   overwriteSchema='true')
+
+        overwritten = DeltaTable.forPath(self.spark, self.tempFile).toDF()
+        self.__checkAnswer(overwritten, [Row(key_new='a', value_new=3), Row(key_new='b', value_new=2)])
+
+        DeltaTable.forPath(self.spark, self.tempFile).restoreToTimestamp(timestampToRestore)
+
+        restored = DeltaTable.forPath(self.spark, self.tempFile).toDF()
+        self.__checkAnswer(restored, [Row(key='a', value=1), Row(key='b', value=2)])
+
     def __checkAnswer(self, df: DataFrame,
                       expectedAnswer: List[Any],
                       schema: Union[StructType, List[str]] = ["key", "value"]) -> None:
@@ -818,9 +852,14 @@ class DeltaTableTests(DeltaTestCase):
         df = self.spark.createDataFrame(datalist, ["key", "value"])
         df.write.format("delta").saveAsTable(tblName)
 
-    def __overwriteDeltaTable(self, datalist: List[Tuple[Any, Any]]) -> None:
-        df = self.spark.createDataFrame(datalist, ["key", "value"])
-        df.write.format("delta").mode("overwrite").save(self.tempFile)
+    def __overwriteDeltaTable(self, datalist: List[Tuple[Any, Any]],
+                              schema: Union[StructType, List[str]] = ["key", "value"],
+                              overwriteSchema: str = 'false') -> None:
+        df = self.spark.createDataFrame(datalist, schema)
+        df.write.format("delta") \
+            .option('overwriteSchema', overwriteSchema) \
+            .mode("overwrite") \
+            .save(self.tempFile)
 
     def __createFile(self, fileName: str, content: Any) -> None:
         with open(os.path.join(self.tempFile, fileName), 'w') as f:

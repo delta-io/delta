@@ -537,6 +537,46 @@ class DeltaTable(object):
                              type(writerVersion))
         jdt.upgradeTableProtocol(readerVersion, writerVersion)
 
+    @since(1.2)  # type: ignore[arg-type]
+    def restoreToVersion(self, version: int) -> DataFrame:
+        """
+        Restore the DeltaTable to an older version of the table specified by version number.
+
+        Example::
+
+            deltaTable.restoreToVersion(1)
+
+        :param version: target version of restored table
+        :return: Dataframe with metrics of restore operation.
+        :rtype: pyspark.sql.DataFrame
+        """
+
+        return DataFrame(
+            self._jdt.restoreToVersion(version),
+            self._spark._wrapped  # type: ignore[attr-defined]
+        )
+
+    @since(1.2)  # type: ignore[arg-type]
+    def restoreToTimestamp(self, timestamp: str) -> DataFrame:
+        """
+        Restore the DeltaTable to an older version of the table specified by a timestamp.
+        Timestamp can be of the format yyyy-MM-dd or yyyy-MM-dd HH:mm:ss
+
+        Example::
+
+            deltaTable.restoreToTimestamp('2021-01-01')
+            deltaTable.restoreToTimestamp('2021-01-01 01:01:01')
+
+        :param timestamp: target timestamp of restored table
+        :return: Dataframe with metrics of restore operation.
+        :rtype: pyspark.sql.DataFrame
+        """
+
+        return DataFrame(
+            self._jdt.restoreToTimestamp(timestamp),
+            self._spark._wrapped  # type: ignore[attr-defined]
+        )
+
     @staticmethod
     def _dict_to_jmap(
         sparkSession: SparkSession,
