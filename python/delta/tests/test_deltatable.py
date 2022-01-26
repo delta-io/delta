@@ -798,7 +798,8 @@ class DeltaTableTests(DeltaTestCase):
                                    overwriteSchema='true')
 
         overwritten = DeltaTable.forPath(self.spark, self.tempFile).toDF()
-        self.__checkAnswer(overwritten, [Row(key_new='a', value_new=3), Row(key_new='b', value_new=2)])
+        self.__checkAnswer(overwritten,
+                           [Row(key_new='a', value_new=3), Row(key_new='b', value_new=2)])
 
         DeltaTable.forPath(self.spark, self.tempFile).restoreToVersion(0)
         restored = DeltaTable.forPath(self.spark, self.tempFile).toDF()
@@ -818,7 +819,8 @@ class DeltaTableTests(DeltaTestCase):
                                    overwriteSchema='true')
 
         overwritten = DeltaTable.forPath(self.spark, self.tempFile).toDF()
-        self.__checkAnswer(overwritten, [Row(key_new='a', value_new=3), Row(key_new='b', value_new=2)])
+        self.__checkAnswer(overwritten,
+                           [Row(key_new='a', value_new=3), Row(key_new='b', value_new=2)])
 
         DeltaTable.forPath(self.spark, self.tempFile).restoreToTimestamp(timestampToRestore)
 
