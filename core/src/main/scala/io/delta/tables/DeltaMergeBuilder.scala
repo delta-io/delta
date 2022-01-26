@@ -31,6 +31,8 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, NamedExpression}
 import org.apache.spark.sql.catalyst.plans.logical._
+import org.apache.spark.sql.execution.ExplainMode
+import org.apache.spark.sql.execution.command.ExplainCommand
 import org.apache.spark.sql.functions.expr
 import org.apache.spark.sql.internal.SQLConf
 
@@ -200,12 +202,38 @@ class DeltaMergeBuilder private(
   }
 
   /**
+   * Explain the merge operation based on the built matched and not matched actions.
+   *
+   * @since 1.2.0
+   */
+  def explain(): Unit = {
+    val sparkSession = targetTable.toDF.sparkSession
+    val mergeIntoCommand = getMergeIntoCommand(sparkSession)
+
+    // only simple is needed to describe the merge into command
+    val explain = ExplainCommand(mergeIntoCommand, mode = ExplainMode.fromString("simple"))
+    val plan = SparkSession.active.sessionState.executePlan(explain).executedPlan.executeCollect()
+      .map(_.getString(0))
+      .mkString("\n")
+
+    // scalastyle:off println
+    println(plan)
+    // scalastyle:on println
+  }
+
+  /**
    * Execute the merge operation based on the built matched and not matched actions.
    *
    * @since 0.3.0
    */
   def execute(): Unit = improveUnsupportedOpError {
     val sparkSession = targetTable.toDF.sparkSession
+    val mergeIntoCommand = getMergeIntoCommand(sparkSession)
+    sparkSession.sessionState.analyzer.checkAnalysis(mergeIntoCommand)
+    mergeIntoCommand.run(sparkSession)
+  }
+
+  private def getMergeIntoCommand(sparkSession: SparkSession): MergeIntoCommand = {
     // Note: We are explicitly resolving DeltaMergeInto plan rather than going to through the
     // Analyzer using `Dataset.ofRows()` because the Analyzer incorrectly resolves all
     // references in the DeltaMergeInto using both source and target child plans, even before
@@ -215,8 +243,8 @@ class DeltaMergeBuilder private(
     // MergeIntoTable instead, which blocked by the different issue with MergeIntoTable as explained
     // in the function `mergePlan` and https://issues.apache.org/jira/browse/SPARK-34962.
     val resolvedMergeInto =
-      DeltaMergeInto.resolveReferencesAndSchema(mergePlan, sparkSession.sessionState.conf)(
-        tryResolveReferences(sparkSession) _)
+    DeltaMergeInto.resolveReferencesAndSchema(mergePlan, sparkSession.sessionState.conf)(
+      tryResolveReferences(sparkSession) _)
     if (!resolvedMergeInto.resolved) {
       throw DeltaErrors.analysisException("Failed to resolve\n", plan = Some(resolvedMergeInto))
     }
@@ -224,11 +252,8 @@ class DeltaMergeBuilder private(
       target = DeltaViewHelper.stripTempViewForMerge(resolvedMergeInto.target, SQLConf.get)
     )
     // Preprocess the actions and verify
-    val mergeIntoCommand =
-      PreprocessTableMerge(sparkSession.sessionState.conf)(strippedMergeInto)
+    PreprocessTableMerge(sparkSession.sessionState.conf)(strippedMergeInto)
         .asInstanceOf[MergeIntoCommand]
-    sparkSession.sessionState.analyzer.checkAnalysis(mergeIntoCommand)
-    mergeIntoCommand.run(sparkSession)
   }
 
   /**

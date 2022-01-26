@@ -28,6 +28,8 @@ import org.apache.spark.sql.catalyst.plans.logical.Join
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
 
+import java.io.ByteArrayOutputStream
+
 class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
   with DeltaTestUtilsForTempViews {
 
@@ -50,6 +52,32 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
           Row(2, 20) ::     // No change
           Row(3, 30) ::     // Insert
           Nil)
+    }
+  }
+
+  test("basic scala explain") {
+    withTable("source") {
+      append(Seq((1, 10), (2, 20)).toDF("key1", "value1"), Nil)  // target
+      val source = Seq((1, 100), (3, 30)).toDF("key2", "value2")  // source
+
+      val builder = io.delta.tables.DeltaTable.forPath(spark, tempPath)
+        .merge(source, "key1 = key2")
+        .whenMatched().updateExpr(Map("key1" -> "key2", "value1" -> "value2"))
+        .whenNotMatched().insertExpr(Map("key1" -> "key2", "value1" -> "value2"))
+
+      val out = new ByteArrayOutputStream()
+      Console.withOut(out) {
+        builder.explain()
+      }
+
+      val explainOutput = out.toString("utf-8")
+      assert(explainOutput != null)
+      assert(explainOutput.contains("Execute MergeIntoCommand"))
+      assert(explainOutput.contains("+- MergeIntoCommand Project"))
+      assert(explainOutput.contains("StructType(StructField(key1,IntegerType,true), " +
+        "StructField(value1,IntegerType,true))"))
+      assert(explainOutput.contains("Insert [actions:"))
+      assert(explainOutput.contains("Update [actions:"))
     }
   }
 
