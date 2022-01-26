@@ -304,7 +304,7 @@ class DeltaDataReaderSuite extends FunSuite {
     }
   }
 
-  ignore("data reader can read partition values") {
+  test("data reader can read partition values") {
     withLogForGoldenTable("data-reader-partition-values") { log =>
       val snapshot = log.update()
       val partitionColumns = snapshot.getMetadata.getPartitionColumns.asScala.toSet

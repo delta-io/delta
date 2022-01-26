@@ -206,7 +206,7 @@ abstract class DeltaLogSuiteBase extends FunSuite {
   }
 
   test("handle corrupted '_last_checkpoint' file") {
-    withLogImplForGoldenTable("corrupted-last-checkpoint") { log1 =>
+    withLogImplForWritableGoldenTable("corrupted-last-checkpoint") { log1 =>
       assert(log1.lastCheckpoint.isDefined)
 
       val lastCheckpoint = log1.lastCheckpoint.get

@@ -213,7 +213,6 @@ lazy val hiveMR = (project in file("hive-mr")) dependsOn(hiveTest % "test->test"
   name := "hive-mr",
   commonSettings,
   skipReleaseSettings,
-  Test / unmanagedResourceDirectories += file("golden-tables/src/test/resources"),
   libraryDependencies ++= Seq(
     "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided",
     "org.apache.hive" % "hive-exec" % hiveVersion % "provided" excludeAll(
@@ -240,7 +239,6 @@ lazy val hiveTez = (project in file("hive-tez")) dependsOn(hiveTest % "test->tes
   name := "hive-tez",
   commonSettings,
   skipReleaseSettings,
-  Test / unmanagedResourceDirectories += file("golden-tables/src/test/resources"),
   libraryDependencies ++= Seq(
     "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided" excludeAll (
       ExclusionRule(organization = "com.google.protobuf")
@@ -288,7 +286,6 @@ lazy val hive2MR = (project in file("hive2-mr")) settings (
   name := "hive2-mr",
   commonSettings,
   skipReleaseSettings,
-  Test / unmanagedResourceDirectories += file("golden-tables/src/test/resources"),
   Compile / unmanagedJars ++= Seq(
     (hiveAssembly / Compile / packageBin / packageBin).value,
     (hiveTest / Test / packageBin / packageBin).value
@@ -319,7 +316,6 @@ lazy val hive2Tez = (project in file("hive2-tez")) settings (
   name := "hive2-tez",
   commonSettings,
   skipReleaseSettings,
-  Test / unmanagedResourceDirectories += file("golden-tables/src/test/resources"),
   Compile / unmanagedJars ++= Seq(
     (hiveAssembly / Compile / packageBin / packageBin).value,
     (hiveTest / Test / packageBin / packageBin).value
@@ -420,7 +416,6 @@ lazy val standalone = (project in file("standalone"))
     commonSettings,
     skipReleaseSettings,
     mimaSettings,
-    Test / unmanagedResourceDirectories += file("golden-tables/src/test/resources"),
     // When updating any dependency here, we should also review `pomPostProcess` in project
     // `standaloneCosmetic` and update it accordingly.
     libraryDependencies ++= Seq(

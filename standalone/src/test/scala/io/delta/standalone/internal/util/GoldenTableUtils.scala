@@ -18,11 +18,13 @@ package io.delta.standalone.internal.util
 
 import java.io.File
 
+import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 
 import io.delta.standalone.DeltaLog
 
 import io.delta.standalone.internal.DeltaLogImpl
+import io.delta.standalone.internal.util.TestUtils._
 
 object GoldenTableUtils {
 
@@ -32,11 +34,11 @@ object GoldenTableUtils {
    * If this is causing a `java.lang.NullPointerException` while debugging in IntelliJ, you
    * probably just need to SBT test that specific test first.
    */
-  val goldenTable = new File(getClass.getResource("/golden").toURI)
+  val goldenTable = new File("../golden-tables/src/test/resources/golden").getCanonicalFile
 
   /**
    * Create a [[DeltaLog]] (with Java interface) for the given golden table and execute the test
-   * function.
+   * function. The caller SHOULD NOT modify the table.
    *
    * @param name The name of the golden table to load.
    * @param testFunc The test to execute which takes the [[DeltaLog]] as input arg.
@@ -48,7 +50,23 @@ object GoldenTableUtils {
   }
 
   /**
-   * Create a [[DeltaLogImpl]] for the given golden table and execute the test function.
+   * Create a [[DeltaLog]] (with Java interface) for the given golden table and execute the test
+   * function. The table will be put on a temp location and it can be modified.
+   *
+   * @param name The name of the golden table to load.
+   * @param testFunc The test to execute which takes the [[DeltaLog]] as input arg.
+   */
+  def withLogForWritableGoldenTable(name: String)(testFunc: DeltaLog => Unit): Unit =
+    withTempDir { tempDir =>
+      val tablePath = new File(goldenTable, name)
+      FileUtils.copyDirectory(tablePath, tempDir)
+      val log = DeltaLog.forTable(new Configuration(), tempDir.getCanonicalPath)
+      testFunc(log)
+    }
+
+  /**
+   * Create a [[DeltaLogImpl]] for the given golden table and execute the test function. The caller
+   * SHOULD NOT modify the table.
    *
    * This should only be used when `private[internal]` methods and variables (which [[DeltaLog]]
    * doesn't expose but [[DeltaLogImpl]] does) are needed by the test function.
@@ -61,6 +79,24 @@ object GoldenTableUtils {
     val log = DeltaLogImpl.forTable(new Configuration(), tablePath)
     testFunc(log)
   }
+
+  /**
+   * Create a [[DeltaLogImpl]] for the given golden table and execute the test function. The table
+   * will be put on a temp location and it can be modified.
+   *
+   * This should only be used when `private[internal]` methods and variables (which [[DeltaLog]]
+   * doesn't expose but [[DeltaLogImpl]] does) are needed by the test function.
+   *
+   * @param name The name of the golden table to load.
+   * @param testFunc The test to execute which takes the [[DeltaLogImpl]] as input arg.
+   */
+  def withLogImplForWritableGoldenTable(name: String)(testFunc: DeltaLogImpl => Unit): Unit =
+    withTempDir { tempDir =>
+      val tablePath = new File(goldenTable, name)
+      FileUtils.copyDirectory(tablePath, tempDir)
+      val log = DeltaLogImpl.forTable(new Configuration(), tempDir.getCanonicalPath)
+      testFunc(log)
+    }
 
   /**
    * Create the full table path for the given golden table and execute the test function.

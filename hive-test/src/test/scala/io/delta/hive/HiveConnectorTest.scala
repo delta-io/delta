@@ -17,17 +17,21 @@
 package io.delta.hive
 
 import java.io.File
+import java.nio.file.Files
+import java.util.UUID
 
 import io.delta.hive.test.HiveTest
 import io.delta.hive.util.JavaUtils
+import org.apache.commons.io.FileUtils
 import org.scalatest.BeforeAndAfterEach
 
 abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
 
-  val hiveGoldenTable = new File(getClass.getResource("/golden/hive").toURI)
+  val hiveGoldenTable = new File("../golden-tables/src/test/resources/golden/hive").getCanonicalFile
 
   /**
-   * Create the full table path for the given golden table and execute the test function.
+   * Create the full table path for the given golden table and execute the test function. The caller
+   * SHOULD NOT modify the table.
    *
    * @param name The name of the golden table to load.
    * @param testFunc The test to execute which takes the full table path as input arg.
@@ -35,6 +39,24 @@ abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
   def withHiveGoldenTable(name: String)(testFunc: String => Unit): Unit = {
     val tablePath = new File(hiveGoldenTable, name).getCanonicalPath
     testFunc(tablePath)
+  }
+
+  /**
+   * Create the full table path for the given golden table and execute the test function. The table
+   * will be put on a temp location and it can be modified.
+   *
+   * @param name The name of the golden table to load.
+   * @param testFunc The test to execute which takes the full table path as input arg.
+   */
+  def withWritableHiveGoldenTable(name: String)(testFunc: String => Unit): Unit = {
+    val tempDir = Files.createTempDirectory(UUID.randomUUID().toString).toFile
+    try {
+      val tablePath = new File(hiveGoldenTable, name)
+      FileUtils.copyDirectory(tablePath, tempDir)
+      testFunc(tempDir.getCanonicalPath)
+    } finally {
+      FileUtils.deleteDirectory(tempDir)
+    }
   }
 
   test("should not allow to create a non external Delta table") {
@@ -351,7 +373,7 @@ abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
 
   test("should not touch files not needed when querying a partitioned table") {
     withTable("deltaPartitionTbl") {
-      withHiveGoldenTable("deltatbl-touch-files-needed-for-partitioned") { tablePath =>
+      withWritableHiveGoldenTable("deltatbl-touch-files-needed-for-partitioned") { tablePath =>
         val testData = (0 until 10).map(x => (x, s"foo${x % 2}"))
 
         runQuery(
@@ -512,7 +534,7 @@ abstract class HiveConnectorTest extends HiveTest with BeforeAndAfterEach {
 
   test("fail the query when the path is deleted after the table is created") {
     withTable("deltaTbl") {
-      withHiveGoldenTable("deltatbl-deleted-path") { tablePath =>
+      withWritableHiveGoldenTable("deltatbl-deleted-path") { tablePath =>
         val testData = (0 until 10).map(x => (x, s"foo${x % 2}"))
 
         runQuery(
