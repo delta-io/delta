@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta
+package org.apache.spark.sql.delta.commands
 
 import java.sql.Timestamp
 
@@ -23,12 +23,12 @@ import scala.util.{Success, Try}
 
 import org.apache.spark.sql.delta.DeltaErrors.timestampInvalid
 import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
-import org.apache.spark.sql.delta.commands.DeltaCommand
 import org.apache.spark.sql.delta.util.DeltaFileOperations.absolutePath
 
 import org.apache.spark.sql.{Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, Snapshot}
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.IGNORE_MISSING_FILES
@@ -91,9 +91,6 @@ case class RestoreTableCommand(
             "left_anti")
           .as[AddFile]
           .map(_.copy(dataChange = true))
-          // To avoid recompute of Dataset with wide transformation by toLocalIterator and
-          // checkSnapshotFilesAvailability method with spark.sql.files.ignoreMissingFiles=false
-          .cache()
 
         val filesToRemove = latestSnapshotFiles
           .join(
@@ -102,8 +99,6 @@ case class RestoreTableCommand(
             "left_anti")
           .as[AddFile]
           .map(_.removeWithTimestamp())
-          // To avoid recompute of Dataset with wide transformation by toLocalIterator
-          .cache()
 
         try {
           checkSnapshotFilesAvailability(deltaLog, filesToAdd, versionToRestore)
@@ -124,7 +119,6 @@ case class RestoreTableCommand(
             metrics)
         } finally {
           filesToAdd.unpersist()
-          filesToRemove.unpersist()
         }
       }
 
@@ -184,6 +178,8 @@ case class RestoreTableCommand(
       .getConf(IGNORE_MISSING_FILES)
 
     if (!ignore) {
+      // To avoid recompute of files Dataset in calling method
+      files.cache()
       val path = deltaLog.dataPath
       val hadoopConf = spark.sparkContext.broadcast(
         new SerializableConfiguration(deltaLog.newDeltaHadoopConf()))
