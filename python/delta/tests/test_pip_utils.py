@@ -76,7 +76,6 @@ class PipUtilsCustomJarsTests(unittest.TestCase):
 if __name__ == "__main__":
     try:
         import xmlrunner
-
         testRunner = xmlrunner.XMLTestRunner(output='target/test-reports', verbosity=4)
     except ImportError:
         testRunner = None
