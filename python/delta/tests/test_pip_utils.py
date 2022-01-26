@@ -31,9 +31,8 @@ class PipUtilsTests(unittest.TestCase):
             .appName("pip-test") \
             .master("local[*]") \
             .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
-            .config(
-            "spark.sql.catalog.spark_catalog",
-            "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+            .config("spark.sql.catalog.spark_catalog",
+                    "org.apache.spark.sql.delta.catalog.DeltaCatalog")
 
         self.spark = delta.configure_spark_with_delta_pip(builder).getOrCreate()
         self.tempPath = tempfile.mkdtemp()
@@ -56,9 +55,8 @@ class PipUtilsCustomJarsTests(unittest.TestCase):
             .appName("pip-test") \
             .master("local[*]") \
             .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
-            .config(
-            "spark.sql.catalog.spark_catalog",
-            "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+            .config("spark.sql.catalog.spark_catalog",
+                    "org.apache.spark.sql.delta.catalog.DeltaCatalog")
 
         import importlib_metadata
         scala_version = "2.12"
