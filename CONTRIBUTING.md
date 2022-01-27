@@ -18,7 +18,7 @@ Specifically, if the goal is to add a new extension, please read the extension p
 Small patches and bug fixes don't need prior communication.
 
 # Coding style
-We generally follow the Apache Spark Scala Style Guide.
+We generally follow the [Apache Spark Scala Style Guide](https://spark.apache.org/contributing.html).
 
 # Sign your work
 The sign-off is a simple line at the end of the explanation for the patch. Your signature certifies that you wrote the patch or otherwise have the right to pass it on as an open-source patch. The rules are pretty simple: if you can certify the below (from developercertificate.org):
@@ -66,8 +66,8 @@ By making a contribution to this project, I certify that:
 Then you just add a line to every git commit message:
 
 ```
-Signed-off-by: Joe Smith <joe.smith@email.com>
+Signed-off-by: Jane Smith <joe.smith@email.com>
 Use your real name (sorry, no pseudonyms or anonymous contributions.)
 ```
 
-If you set your `user.name` and `user.email` git configs, you can sign your commit automatically with git commit -s.
+If you set your `user.name` and `user.email` git configs, you can sign your commit automatically with `git commit -s`.
