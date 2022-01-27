@@ -66,7 +66,7 @@ By making a contribution to this project, I certify that:
 Then you just add a line to every git commit message:
 
 ```
-Signed-off-by: Jane Smith <joe.smith@email.com>
+Signed-off-by: Jane Smith <jane.smith@email.com>
 Use your real name (sorry, no pseudonyms or anonymous contributions.)
 ```
 
