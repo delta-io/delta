@@ -62,20 +62,39 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
 
       val builder = io.delta.tables.DeltaTable.forPath(spark, tempPath)
         .merge(source, "key1 = key2")
-        .whenMatched().updateExpr(Map("key1" -> "key2", "value1" -> "value2"))
+        .whenMatched("true").delete()
+        .whenMatched().updateExpr(Map("key1" -> "key2", "value1" -> "value1"))
         .whenNotMatched().insertExpr(Map("key1" -> "key2", "value1" -> "value2"))
 
       val out = new ByteArrayOutputStream()
       Console.withOut(out) {
         builder.explain()
       }
+      val findTillRegex = "(.*?)(?=(Update|Delete|Insert|$|\n))"
+      val deleteClause = (f"Delete$findTillRegex").r
+      val updateClause = (f"Update$findTillRegex").r
+      val insertClause = (f"Insert$findTillRegex").r
 
       val explainOutput = out.toString("utf-8")
       assert(explainOutput != null)
       assert(explainOutput.contains("Execute MergeIntoCommand"))
       assert(explainOutput.contains("+- MergeIntoCommand Project"))
-      assert(explainOutput.contains("Insert [actions:"))
-      assert(explainOutput.contains("Update [actions:"))
+
+      val deleteSection = deleteClause.findFirstIn(explainOutput)
+      // just validate that the delete clause appears in the explain
+      assert(deleteSection.nonEmpty)
+
+      val updateSection = updateClause.findFirstIn(explainOutput)
+      assert(updateSection.nonEmpty)
+      // there may be reference numbers next to the rhs but we ignore them
+      assert(updateSection.get.contains("`key1` = key2"))
+      assert(updateSection.get.contains("`value1` = value1"))
+
+      val insertSection = insertClause.findFirstIn(explainOutput)
+      assert(insertSection.nonEmpty)
+      // there may be reference numbers next to the rhs but we ignore them
+      assert(insertSection.get.contains("`key1` = key2"))
+      assert(insertSection.get.contains("`value1` = value2"))
     }
   }
 
