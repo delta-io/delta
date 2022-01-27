@@ -8,14 +8,14 @@ Delta Lake is supported by a wide set of developers from over 50 organizations a
 For more information, please refer to the [founding technical charter](https://delta-io-beta.netlify.app/pdfs/delta-charter.pdf).
 
 # Communication
-Before starting work on a major feature, please reach out to us via GitHub, Slack, email, etc. We will make sure no one else is already working on it and ask you to open a GitHub issue.
-A "major feature" is defined as any change that is > 100 LOC altered (not including tests), or changes any user-facing behavior.
-We will use the GitHub issue to discuss the feature and come to agreement.
-This is to prevent your time being wasted, as well as ours.
-The GitHub review process for major features is also important so that organizations with commit access can come to agreement on design.
-If it is appropriate to write a design document, the document must be hosted either in the GitHub tracking issue, or linked to from the issue and hosted in a world-readable location.
-Specifically, if the goal is to add a new extension, please read the extension policy.
-Small patches and bug fixes don't need prior communication.
+- Before starting work on a major feature, please reach out to us via [GitHub](https://github.com/delta-io/delta/issues), [Slack](https://dbricks.co/delta-users-slack), [email](https://groups.google.com/g/delta-users), etc. We will make sure no one else is already working on it and ask you to open a GitHub issue.
+- A "major feature" is defined as any change that is > 100 LOC altered (not including tests), or changes any user-facing behavior.
+- We will use the GitHub issue to discuss the feature and come to agreement.
+- This is to prevent your time being wasted, as well as ours.
+- The GitHub review process for major features is also important so that organizations with commit access can come to agreement on design.
+- If it is appropriate to write a design document, the document must be hosted either in the GitHub tracking issue, or linked to from the issue and hosted in a world-readable location. Examples of design documents include [sample 1](https://docs.google.com/document/d/16S7xoAmXpSax7W1OWYYHo5nZ71t5NvrQ-F79pZF6yb8), [sample 2](https://docs.google.com/document/d/1MJhmW_H7doGWY2oty-I78vciziPzBy_nzuuB-Wv5XQ8), and [sample 3](https://docs.google.com/document/d/19CU4eJuBXOwW7FC58uSqyCbcLTsgvQ5P1zoPOPgUSpI).
+- Specifically, if the goal is to add a new extension, please read the extension policy.
+- Small patches and bug fixes don't need prior communication.
 
 # Coding style
 We generally follow the [Apache Spark Scala Style Guide](https://spark.apache.org/contributing.html).
