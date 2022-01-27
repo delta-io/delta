@@ -45,36 +45,6 @@ trait OptimizeGeneratedColumnSuiteBase extends GeneratedColumnTest {
     }.getOrElse(Nil)
   }
 
-  protected def createTable(
-      tableName: String,
-      normalColDDL: Seq[String],
-      generatedPartColDDL: Seq[String],
-      location: Option[String] = None): Unit = {
-    val generatedPartCol = generatedPartColDDL.map(_.split(" ")(0))
-
-    val tableBuilder = DeltaTable.create(spark).tableName(tableName)
-
-    normalColDDL
-      .map(_.split(" "))
-      .foreach { normalCol =>
-        tableBuilder.addColumn(normalCol(0), normalCol(1))
-      }
-
-   generatedPartColDDL.flatMap(regex.findFirstMatchIn(_))
-      .foreach { m =>
-        tableBuilder.addColumn(
-          DeltaTable.columnBuilder(m.group("col_name"))
-            .dataType(m.group("data_type"))
-            .generatedAlwaysAs(m.group("generated_as"))
-            .build())
-      }
-
-    tableBuilder.partitionedBy(generatedPartCol: _*)
-    location.foreach(tableBuilder.location)
-
-    tableBuilder.execute()
-  }
-
   protected def insertInto(path: String, df: DataFrame) = {
     df.write.format("delta").mode("append").save(path)
   }
@@ -91,16 +61,22 @@ trait OptimizeGeneratedColumnSuiteBase extends GeneratedColumnTest {
    *                        value is the partition filters we should generate.
    */
   private def testOptimizablePartitionExpression(
-      normalColDDL: String,
-      generatedPartColDDL: Seq[String],
+      schemaString: String,
+      generatedColumns: Map[String, String],
       expectedPartitionExpr: OptimizablePartitionExpression,
       auxiliaryTestName: Option[String] = None,
       filterTestCases: Seq[(String, Seq[String])]): Unit = {
     test(expectedPartitionExpr.toString + auxiliaryTestName.getOrElse("")) {
-      val normalCol = normalColDDL.split(" ")(0)
+      val normalCol = schemaString.split(" ")(0)
 
       withTableName("optimizable_partition_expression") { table =>
-        createTable(table, Seq(normalColDDL), generatedPartColDDL)
+        createTable(
+          table,
+          None,
+          schemaString,
+          generatedColumns,
+          generatedColumns.keys.toSeq
+        )
 
         val metadata = DeltaLog.forTable(spark, TableIdentifier(table)).snapshot.metadata
         assert(metadata.optimizablePartitionExpressions(normalCol.toLowerCase(Locale.ROOT)) ==
@@ -124,8 +100,8 @@ trait OptimizeGeneratedColumnSuiteBase extends GeneratedColumnTest {
   }
 
   testOptimizablePartitionExpression(
-    normalColDDL = "eventTime TIMESTAMP",
-    generatedPartColDDL = "date DATE GENERATED ALWAYS AS ( CAST(eventTime AS DATE) )" :: Nil,
+    "eventTime TIMESTAMP, date DATE",
+    Map("date" -> "CAST(eventTime AS DATE)"),
     expectedPartitionExpr = DatePartitionExpr("date"),
     auxiliaryTestName = Option(" from cast(timestamp)"),
     filterTestCases = Seq(
@@ -172,8 +148,8 @@ trait OptimizeGeneratedColumnSuiteBase extends GeneratedColumnTest {
   )
 
   testOptimizablePartitionExpression(
-    normalColDDL = "eventDate DATE",
-    generatedPartColDDL = "date DATE GENERATED ALWAYS AS ( CAST(eventDate AS DATE) )" :: Nil,
+    "eventDate DATE, date DATE",
+    Map("date" -> "CAST(eventDate AS DATE)"),
     expectedPartitionExpr = DatePartitionExpr("date"),
     auxiliaryTestName = Option(" from cast(date)"),
     filterTestCases = Seq(
@@ -220,12 +196,12 @@ trait OptimizeGeneratedColumnSuiteBase extends GeneratedColumnTest {
   )
 
   testOptimizablePartitionExpression(
-    normalColDDL = "eventTime TIMESTAMP",
-    generatedPartColDDL = Seq(
-      "year INT GENERATED ALWAYS AS (YEAR(eventTime))",
-      "month INT GENERATED ALWAYS AS (MONTH(eventTime))",
-      "day INT GENERATED ALWAYS AS (DAY(eventTime))",
-      "hour INT GENERATED ALWAYS AS (HOUR(eventTime))"
+    "eventTime TIMESTAMP, year INT, month INT, day INT, hour INT",
+    Map(
+      "year" -> "YEAR(eventTime)",
+      "month" -> "MONTH(eventTime)",
+      "day" -> "DAY(eventTime)",
+      "hour" -> "HOUR(eventTime)"
     ),
     expectedPartitionExpr = YearMonthDayHourPartitionExpr("year", "month", "day", "hour"),
     filterTestCases = Seq(
@@ -405,11 +381,11 @@ trait OptimizeGeneratedColumnSuiteBase extends GeneratedColumnTest {
   )
 
   testOptimizablePartitionExpression(
-    normalColDDL = "eventTime TIMESTAMP",
-    generatedPartColDDL = Seq(
-      "year INT GENERATED ALWAYS AS (YEAR(eventTime))",
-      "month INT GENERATED ALWAYS AS (MONTH(eventTime))",
-      "day INT GENERATED ALWAYS AS (DAY(eventTime))"
+    "eventTime TIMESTAMP, year INT, month INT, day INT",
+    Map(
+      "year" -> "YEAR(eventTime)",
+      "month" -> "MONTH(eventTime)",
+      "day" -> "DAY(eventTime)"
     ),
     expectedPartitionExpr = YearMonthDayPartitionExpr("year", "month", "day"),
     filterTestCases = Seq(
@@ -523,12 +499,12 @@ trait OptimizeGeneratedColumnSuiteBase extends GeneratedColumnTest {
   )
 
   testOptimizablePartitionExpression(
-    normalColDDL = "eventTime TIMESTAMP",
-    generatedPartColDDL = Seq(
-      // Use different cases to verify we can recognize the same column using different cases in
-      // generation expressions.
-      "year INT GENERATED ALWAYS AS (YEAR(EVENTTIME))",
-      "month INT GENERATED ALWAYS AS (MONTH(eventtime))"
+    "eventTime TIMESTAMP, year INT, month INT",
+    // Use different cases to verify we can recognize the same column using different cases in
+    // generation expressions.
+    Map(
+      "year" -> "YEAR(EVENTTIME)",
+      "month" -> "MONTH(eventTime)"
     ),
     expectedPartitionExpr = YearMonthPartitionExpr("year", "month"),
     filterTestCases = Seq(
@@ -589,8 +565,8 @@ trait OptimizeGeneratedColumnSuiteBase extends GeneratedColumnTest {
   )
 
   testOptimizablePartitionExpression(
-    normalColDDL = "eventTime TIMESTAMP",
-    generatedPartColDDL = "year INT GENERATED ALWAYS AS (YEAR(eventTime))" :: Nil,
+    "eventTime TIMESTAMP, year INT",
+    Map("year" -> "YEAR(eventTime)"),
     expectedPartitionExpr = YearPartitionExpr("year"),
     filterTestCases = Seq(
       "eventTime < '2021-01-01 18:00:00'" ->
@@ -612,12 +588,12 @@ trait OptimizeGeneratedColumnSuiteBase extends GeneratedColumnTest {
     )
   )
 
-  Seq(("year INT GENERATED ALWAYS AS (YEAR(eventDate))", " from year(date)"),
-    ("year INT GENERATED ALWAYS AS (YEAR(CAST(eventDate AS DATE)))", " from year(cast(date))"))
-    .foreach { case (partColDDL, auxTestName) =>
+  Seq(("YEAR(eventDate)", " from year(date)"),
+    ("YEAR(CAST(eventDate AS DATE))", " from year(cast(date))"))
+    .foreach { case (partCol, auxTestName) =>
       testOptimizablePartitionExpression(
-        normalColDDL = "eventDate DATE",
-        generatedPartColDDL = partColDDL :: Nil,
+        "eventDate DATE, year INT",
+        Map("year" -> partCol),
         expectedPartitionExpr = YearPartitionExpr("year"),
         auxiliaryTestName = Option(auxTestName),
         filterTestCases = Seq(
@@ -642,8 +618,8 @@ trait OptimizeGeneratedColumnSuiteBase extends GeneratedColumnTest {
     }
 
   testOptimizablePartitionExpression(
-    normalColDDL = "str STRING",
-    generatedPartColDDL = "substr STRING GENERATED ALWAYS AS (SUBSTRING(str, 2, 3))" :: Nil,
+    "str STRING, substr STRING",
+    Map("substr" -> "SUBSTRING(str, 2, 3)"),
     expectedPartitionExpr = SubstringPartitionExpr("substr", 2, 3),
     filterTestCases = Seq(
       "str < 'foo'" -> Nil,
@@ -656,8 +632,8 @@ trait OptimizeGeneratedColumnSuiteBase extends GeneratedColumnTest {
   )
 
   testOptimizablePartitionExpression(
-    normalColDDL = "str STRING",
-    generatedPartColDDL = "substr STRING GENERATED ALWAYS AS (SUBSTRING(str, 0, 3))" :: Nil,
+    "str STRING, substr STRING",
+    Map("substr" -> "SUBSTRING(str, 0, 3)"),
     expectedPartitionExpr = SubstringPartitionExpr("substr", 0, 3),
     filterTestCases = Seq(
       "str < 'foo'" -> Seq("((substr IS NULL) OR (substr <= substring('foo', 0, 3)))"),
@@ -670,8 +646,8 @@ trait OptimizeGeneratedColumnSuiteBase extends GeneratedColumnTest {
   )
 
   testOptimizablePartitionExpression(
-    normalColDDL = "str STRING",
-    generatedPartColDDL = "substr STRING GENERATED ALWAYS AS (SUBSTRING(str, 1, 3))" :: Nil,
+    "str STRING, substr STRING",
+    Map("substr" -> "SUBSTRING(str, 1, 3)"),
     expectedPartitionExpr = SubstringPartitionExpr("substr", 1, 3),
     filterTestCases = Seq(
       "str < 'foo'" -> Seq("((substr IS NULL) OR (substr <= substring('foo', 1, 3)))"),
@@ -686,11 +662,15 @@ trait OptimizeGeneratedColumnSuiteBase extends GeneratedColumnTest {
   test("end-to-end optimizable partition expression") {
     withTempDir { tempDir =>
       withTableName("optimizable_partition_expression") { table =>
+
         createTable(
           table,
-          "c1 INT" :: "c2 TIMESTAMP" :: Nil,
-          "c3 DATE GENERATED ALWAYS AS ( CAST(c2 AS DATE) )":: Nil,
-          Some(tempDir.getCanonicalPath))
+          Some(tempDir.getCanonicalPath),
+          "c1 INT, c2 TIMESTAMP, c3 DATE",
+          Map("c3" -> "CAST(c2 AS DATE)"),
+          Seq("c3")
+        )
+
           Seq(
             Tuple2(1, "2020-12-31 11:00:00"),
             Tuple2(2, "2021-01-01 12:00:00"),
@@ -754,9 +734,11 @@ trait OptimizeGeneratedColumnSuiteBase extends GeneratedColumnTest {
       withTableName("optimizable_partition_expression") { table =>
         createTable(
           table,
-          "c1 STRING" :: Nil,
-          "c2 STRING GENERATED ALWAYS AS (SUBSTRING(c1, 1, 4))":: Nil,
-          Some(tempDir.getCanonicalPath))
+          Some(tempDir.getCanonicalPath),
+          "c1 STRING, c2 STRING",
+          Map("c2" -> "SUBSTRING(c1, 1, 4)"),
+          Seq("c2")
+        )
         insertInto(
           tempDir.getCanonicalPath,
           Seq(Tuple1("")).toDF("c1")
@@ -780,9 +762,11 @@ trait OptimizeGeneratedColumnSuiteBase extends GeneratedColumnTest {
       withTableName("multibyte_characters") { table =>
         createTable(
           table,
-          "c1 STRING" :: Nil,
-          "c2 STRING GENERATED ALWAYS AS (SUBSTRING(c1, 1, 2))" :: Nil,
-          Some(tempDir.getCanonicalPath))
+          Some(tempDir.getCanonicalPath),
+          "c1 STRING, c2 STRING",
+          Map("c2" -> "SUBSTRING(c1, 1, 2)"),
+          Seq("c2")
+        )
         // scalastyle:off nonascii
         insertInto(
           tempDir.getCanonicalPath,
@@ -800,9 +784,8 @@ trait OptimizeGeneratedColumnSuiteBase extends GeneratedColumnTest {
   }
 
   testOptimizablePartitionExpression(
-    normalColDDL = "eventTime TIMESTAMP",
-    generatedPartColDDL =
-      "month STRING GENERATED ALWAYS AS ((DATE_FORMAT(eventTime, 'yyyy-MM')))" :: Nil,
+    "eventTime TIMESTAMP, month STRING",
+    Map("month" -> "DATE_FORMAT(eventTime, 'yyyy-MM')"),
     expectedPartitionExpr = DateFormatPartitionExpr("month", "yyyy-MM"),
     auxiliaryTestName = Option(" from timestamp"),
     filterTestCases = Seq(
@@ -841,9 +824,8 @@ trait OptimizeGeneratedColumnSuiteBase extends GeneratedColumnTest {
   )
 
   testOptimizablePartitionExpression(
-    normalColDDL = "eventDate DATE",
-    generatedPartColDDL =
-      "month STRING GENERATED ALWAYS AS ((DATE_FORMAT(eventDate, 'yyyy-MM')))" :: Nil,
+    "eventDate DATE, month STRING",
+    Map("month" -> "DATE_FORMAT(eventDate, 'yyyy-MM')"),
     expectedPartitionExpr = DateFormatPartitionExpr("month", "yyyy-MM"),
     auxiliaryTestName = Option(" from cast(date)"),
     filterTestCases = Seq(
@@ -882,9 +864,8 @@ trait OptimizeGeneratedColumnSuiteBase extends GeneratedColumnTest {
   )
 
   testOptimizablePartitionExpression(
-    normalColDDL = "eventTime TIMESTAMP",
-    generatedPartColDDL =
-      "hour STRING GENERATED ALWAYS AS ((DATE_FORMAT(eventTime, 'yyyy-MM-dd-HH')))" :: Nil,
+    "eventTime TIMESTAMP, hour STRING",
+    Map("hour" -> "(DATE_FORMAT(eventTime, 'yyyy-MM-dd-HH'))"),
     expectedPartitionExpr = DateFormatPartitionExpr("hour", "yyyy-MM-dd-HH"),
     filterTestCases = Seq(
       "eventTime < '2021-06-28 18:00:00'" ->
@@ -926,12 +907,15 @@ trait OptimizeGeneratedColumnSuiteBase extends GeneratedColumnTest {
       withTableName("optimizable_partition_expression") { table =>
         createTable(
           table,
-          "c1 TIMESTAMP" :: Nil,
-          Seq(
-            "c2 INT GENERATED ALWAYS AS (YEAR(c1))",
-            "c3 INT GENERATED ALWAYS AS (MONTH(c1))",
-            "c4 INT GENERATED ALWAYS AS (DAY(c1))"),
-          Some(tempDir.getCanonicalPath))
+          Some(tempDir.getCanonicalPath),
+          "c1 TIMESTAMP, c2 INT, c3 INT, c4 INT",
+          Map(
+            "c2" -> "YEAR(c1)",
+            "c3" -> "MONTH(c1)",
+            "c4" -> "DAY(c1)"
+          ),
+          Seq("c2", "c3", "c4")
+        )
         insertInto(
           tempDir.getCanonicalPath,
           Seq(Tuple1("12345-07-15 18:00:00"))
@@ -956,9 +940,11 @@ trait OptimizeGeneratedColumnSuiteBase extends GeneratedColumnTest {
       withTableName("optimizable_partition_expression") { table =>
         createTable(
           table,
-          "c1 TIMESTAMP" :: Nil,
-          "c2 STRING GENERATED ALWAYS AS (DATE_FORMAT(c1, 'yyyy-MM'))" :: Nil,
-          Some(tempDir.getCanonicalPath))
+          Some(tempDir.getCanonicalPath),
+          "c1 TIMESTAMP, c2 STRING",
+          Map("c2" -> "DATE_FORMAT(c1, 'yyyy-MM')"),
+          Seq("c2")
+        )
         insertInto(
           tempDir.getCanonicalPath,
           Seq(Tuple1("12345-07-15 18:00:00"))
@@ -983,9 +969,11 @@ trait OptimizeGeneratedColumnSuiteBase extends GeneratedColumnTest {
       withTableName("optimizable_partition_expression") { table =>
         createTable(
           table,
-          "c1 TIMESTAMP" :: Nil,
-          "c2 STRING GENERATED ALWAYS AS (DATE_FORMAT(c1, 'yyyy-MM-dd-HH'))" :: Nil,
-          Some(tempDir.getCanonicalPath))
+          Some(tempDir.getCanonicalPath),
+          "c1 TIMESTAMP, c2 STRING",
+          Map("c2" -> "DATE_FORMAT(c1, 'yyyy-MM-dd-HH')"),
+          Seq("c2")
+        )
         insertInto(
           tempDir.getCanonicalPath,
           Seq(Tuple1("12345-07-15 18:00:00"))
@@ -1014,9 +1002,11 @@ trait OptimizeGeneratedColumnSuiteBase extends GeneratedColumnTest {
       withTableName("optimizable_partition_expression") { table =>
         createTable(
           table,
-          "c1 TIMESTAMP" :: Nil,
-          "c2 STRING GENERATED ALWAYS AS (DATE_FORMAT(c1, 'yyyy-MM'))" :: Nil,
-          Some(tempDir.getCanonicalPath))
+          Some(tempDir.getCanonicalPath),
+          "c1 TIMESTAMP, c2 STRING",
+          Map("c2" -> "DATE_FORMAT(c1, 'yyyy-MM')"),
+          Seq("c2")
+        )
 
         // write in LEGACY
         withSQLConf(

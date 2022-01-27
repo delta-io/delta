@@ -32,9 +32,11 @@ class OptimizeGeneratedColumnSuite extends OptimizeGeneratedColumnSuiteBase {
       withTableName("avoid_conflicts") { table =>
         createTable(
           table,
-          "eventTime TIMESTAMP" :: Nil,
-          "date DATE GENERATED ALWAYS AS ( CAST(eventTime AS DATE) )" :: Nil,
-          Some(path))
+          Some(path),
+          "eventTime TIMESTAMP, date DATE",
+          Map("date" -> "CAST(eventTime AS DATE)"),
+          Seq("date")
+        )
         insertInto(
           path,
           Seq(Tuple1("2021-01-01 00:00:00"), Tuple1("2021-01-02 00:00:00"))
