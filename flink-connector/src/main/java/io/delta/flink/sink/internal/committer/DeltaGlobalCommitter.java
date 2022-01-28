@@ -101,16 +101,16 @@ public class DeltaGlobalCommitter
     /**
      * Indicator whether the committer should try to commit unmatching schema
      */
-    private final boolean shouldTryUpdateSchema;
+    private final boolean mergeSchema;
 
     public DeltaGlobalCommitter(Configuration conf,
                                 Path basePath,
                                 RowType rowType,
-                                boolean shouldTryUpdateSchema) {
+                                boolean mergeSchema) {
         this.conf = conf;
         this.basePath = basePath;
         this.rowType = rowType;
-        this.shouldTryUpdateSchema = shouldTryUpdateSchema;
+        this.mergeSchema = mergeSchema;
     }
 
     /**
@@ -329,10 +329,10 @@ public class DeltaGlobalCommitter
      *   <li>then we compare the schema from above metadata with the current table's schema,
      *   <li>resolved metadata object is added to the transaction only when it's the first commit to
      *       the given Delta table or when the schemas are not matching but the sink was provided
-     *       with option {@link DeltaGlobalCommitter#shouldTryUpdateSchema} set to true (the commit
+     *       with option {@link DeltaGlobalCommitter#mergeSchema} set to true (the commit
      *       may still fail though if the Delta Standalone Writer will determine that the schemas
      *       are not compatible),
-     *   <li>if the schemas are not matching and {@link DeltaGlobalCommitter#shouldTryUpdateSchema}
+     *   <li>if the schemas are not matching and {@link DeltaGlobalCommitter#mergeSchema}
      *       was set to false then we throw an exception
      *   <li>if the schemas are matching then we do nothing and let the transaction proceed
      * </ol>
@@ -358,7 +358,7 @@ public class DeltaGlobalCommitter
         StructType currentTableSchema = currentMetadata.getSchema();
         StructType streamSchema = SchemaConverter.toDeltaDataType(rowType);
         boolean schemasAreMatching = areSchemasEqual(currentTableSchema, streamSchema);
-        if (!tableExists || (!schemasAreMatching && shouldTryUpdateSchema)) {
+        if (!tableExists || (!schemasAreMatching && mergeSchema)) {
             Metadata updatedMetadata = currentMetadata.copyBuilder()
                 .schema(streamSchema)
                 .partitionColumns(partitionColumns)

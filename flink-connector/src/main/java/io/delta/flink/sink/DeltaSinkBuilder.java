@@ -92,7 +92,7 @@ public class DeltaSinkBuilder<IN> implements Serializable {
      * those will not match. The update is not guaranteed as there will be still some checks
      * performed whether the updates to the schema are compatible.
      */
-    private boolean shouldTryUpdateSchema;
+    private boolean mergeSchema;
 
     /**
      * Serializable wrapper for {@link Configuration} object
@@ -128,7 +128,7 @@ public class DeltaSinkBuilder<IN> implements Serializable {
         BucketAssigner<IN, String> assigner,
         CheckpointRollingPolicy<IN, String> policy,
         RowType rowType,
-        boolean shouldTryUpdateSchema) {
+        boolean mergeSchema) {
         this(
             basePath,
             conf,
@@ -139,7 +139,7 @@ public class DeltaSinkBuilder<IN> implements Serializable {
             OutputFileConfig.builder().withPartSuffix(".snappy.parquet").build(),
             generateNewAppId(),
             rowType,
-            shouldTryUpdateSchema
+            mergeSchema
         );
     }
 
@@ -153,7 +153,7 @@ public class DeltaSinkBuilder<IN> implements Serializable {
         OutputFileConfig outputFileConfig,
         String appId,
         RowType rowType,
-        boolean shouldTryUpdateSchema) {
+        boolean mergeSchema) {
         this.tableBasePath = checkNotNull(basePath);
         this.serializableConfiguration = new SerializableConfiguration(checkNotNull(conf));
         this.bucketCheckInterval = bucketCheckInterval;
@@ -163,7 +163,7 @@ public class DeltaSinkBuilder<IN> implements Serializable {
         this.outputFileConfig = checkNotNull(outputFileConfig);
         this.appId = appId;
         this.rowType = rowType;
-        this.shouldTryUpdateSchema = shouldTryUpdateSchema;
+        this.mergeSchema = mergeSchema;
     }
 
     /**
@@ -172,13 +172,13 @@ public class DeltaSinkBuilder<IN> implements Serializable {
      * {@link io.delta.standalone.DeltaLog}. The update is not guaranteed as there will be some
      * compatibility checks performed.
      *
-     * @param shouldTryUpdateSchema whether we should try to update table's schema with stream's
+     * @param mergeSchema whether we should try to update table's schema with stream's
      *                              schema in case those will not match. See
-     *                              {@link DeltaSinkBuilder#shouldTryUpdateSchema} for details.
+     *                              {@link DeltaSinkBuilder#mergeSchema} for details.
      * @return builder for {@link DeltaSink}
      */
-    public DeltaSinkBuilder<IN> withShouldTryUpdateSchema(final boolean shouldTryUpdateSchema) {
-        this.shouldTryUpdateSchema = shouldTryUpdateSchema;
+    public DeltaSinkBuilder<IN> withMergeSchema(final boolean mergeSchema) {
+        this.mergeSchema = mergeSchema;
         return this;
     }
 
@@ -188,7 +188,7 @@ public class DeltaSinkBuilder<IN> implements Serializable {
 
     DeltaGlobalCommitter createGlobalCommitter() {
         return new DeltaGlobalCommitter(
-            serializableConfiguration.conf(), tableBasePath, rowType, shouldTryUpdateSchema);
+            serializableConfiguration.conf(), tableBasePath, rowType, mergeSchema);
     }
 
     Path getTableBasePath() {
@@ -287,8 +287,8 @@ public class DeltaSinkBuilder<IN> implements Serializable {
             BucketAssigner<IN, String> assigner,
             CheckpointRollingPolicy<IN, String> policy,
             RowType rowType,
-            boolean shouldTryUpdateSchema) {
-            super(basePath, conf, writerFactory, assigner, policy, rowType, shouldTryUpdateSchema);
+            boolean mergeSchema) {
+            super(basePath, conf, writerFactory, assigner, policy, rowType, mergeSchema);
         }
     }
 }

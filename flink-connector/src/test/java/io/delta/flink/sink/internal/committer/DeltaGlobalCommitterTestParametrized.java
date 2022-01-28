@@ -58,13 +58,13 @@ public class DeltaGlobalCommitterTestParametrized {
     public static final TemporaryFolder TEMPORARY_FOLDER = new TemporaryFolder();
 
     @Parameterized.Parameters(
-        name = "shouldTryUpdateSchema = {0}, " +
+        name = "mergeSchema = {0}, " +
         "initializeTableBeforeCommit = {1}, " +
         "partitionSpec = {2}, "
     )
     public static Collection<Object[]> params() {
         return Arrays.asList(
-            // shouldTryUpdateSchema, initializeTableBeforeCommit, partitionSpec
+            // mergeSchema, initializeTableBeforeCommit, partitionSpec
             new Object[]{false, false, DeltaSinkTestUtils.getEmptyTestPartitionSpec()},
             new Object[]{false, false, DeltaSinkTestUtils.getTestPartitionSpec()},
             new Object[]{false, true, DeltaSinkTestUtils.getEmptyTestPartitionSpec()},
@@ -77,7 +77,7 @@ public class DeltaGlobalCommitterTestParametrized {
     }
 
     @Parameterized.Parameter(0)
-    public boolean shouldTryUpdateSchema;
+    public boolean mergeSchema;
 
     @Parameterized.Parameter(1)
     public boolean initializeTableBeforeCommit;
@@ -102,7 +102,7 @@ public class DeltaGlobalCommitterTestParametrized {
             }
         }
         deltaLog = DeltaLog.forTable(DeltaSinkTestUtils.getHadoopConf(), tablePath.getPath());
-        rowTypeToCommit = shouldTryUpdateSchema ?
+        rowTypeToCommit = mergeSchema ?
             DeltaSinkTestUtils.addNewColumnToSchema(DeltaSinkTestUtils.TEST_ROW_TYPE) :
             DeltaSinkTestUtils.TEST_ROW_TYPE;
     }
@@ -114,7 +114,7 @@ public class DeltaGlobalCommitterTestParametrized {
             DeltaSinkTestUtils.getHadoopConf(),
             tablePath,
             rowTypeToCommit,
-            shouldTryUpdateSchema);
+            mergeSchema);
         List<DeltaCommittable> deltaCommittables =
             DeltaSinkTestUtils.getListOfDeltaCommittables(3, partitionSpec);
         List<DeltaGlobalCommittable> globalCommittables =

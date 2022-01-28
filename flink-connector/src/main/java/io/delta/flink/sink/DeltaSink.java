@@ -250,7 +250,7 @@ public class DeltaSink<IN>
             new BasePathBucketAssigner<>(),
             OnCheckpointRollingPolicy.build(),
             rowType,
-            false // shouldTryUpdateSchema
+            false // mergeSchema
         );
     }
 }

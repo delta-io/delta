@@ -73,7 +73,7 @@ public class DeltaGlobalCommitterTest {
             DeltaSinkTestUtils.getHadoopConf(),
             tablePath,
             DeltaSinkTestUtils.TEST_ROW_TYPE,
-            false // shouldTryUpdateSchema
+            false // mergeSchema
         );
         // the order of below partition spec is different from the one used when initializing test
         // table
@@ -124,7 +124,7 @@ public class DeltaGlobalCommitterTest {
     }
 
     @Test
-    public void testShouldTryUpdateSchemaSetToTrue() throws IOException {
+    public void testMergeSchemaSetToTrue() throws IOException {
         //GIVEN
         DeltaSinkTestUtils.initTestForPartitionedTable(tablePath.getPath());
         DeltaLog deltaLog = DeltaLog.forTable(
@@ -143,7 +143,7 @@ public class DeltaGlobalCommitterTest {
             DeltaSinkTestUtils.getHadoopConf(),
             tablePath,
             updatedSchema,
-            true // shouldTryUpdateSchema
+            true // mergeSchema
         );
 
         // WHEN
@@ -160,7 +160,7 @@ public class DeltaGlobalCommitterTest {
     }
 
     @Test(expected = RuntimeException.class)
-    public void testShouldTryUpdateSchemaSetToFalse() throws Exception {
+    public void testMergeSchemaSetToFalse() throws Exception {
         //GIVEN
         DeltaSinkTestUtils.initTestForPartitionedTable(tablePath.getPath());
 
@@ -179,7 +179,7 @@ public class DeltaGlobalCommitterTest {
     }
 
     @Test(expected = RuntimeException.class)
-    public void testShouldTryUpdateIncompatibleSchema() throws Exception {
+    public void testMergeIncompatibleSchema() throws Exception {
         //GIVEN
         DeltaSinkTestUtils.initTestForPartitionedTable(tablePath.getPath());
 
@@ -406,7 +406,7 @@ public class DeltaGlobalCommitterTest {
             DeltaSinkTestUtils.getHadoopConf(),
             tablePath,
             schema,
-            false // shouldTryUpdateSchema
+            false // mergeSchema
         );
     }
 
