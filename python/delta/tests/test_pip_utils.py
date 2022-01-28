@@ -61,16 +61,27 @@ class PipUtilsCustomJarsTests(unittest.TestCase):
         import importlib_metadata
         scala_version = "2.12"
         delta_version = importlib_metadata.version("delta_spark")
-        maven_artifact = f"io.delta:delta-core_{scala_version}:{delta_version}"
-        self.spark = delta.configure_spark_with_delta_pip(builder, [maven_artifact]).getOrCreate()
+        maven_artifacts = [f"io.delta:delta-core_{scala_version}:{delta_version}"]
+        # configure extra packages
+        self.spark = delta.configure_spark_with_delta_pip(builder, maven_artifacts).getOrCreate()
+
+        self.tempPath = tempfile.mkdtemp()
+        self.tempFile = os.path.join(self.tempPath, "tempFile")
 
     def tearDown(self) -> None:
         self.spark.stop()
+        shutil.rmtree(self.tempPath)
 
     def test_maven_jar_loaded(self) -> None:
         # Read and write Delta table to check that the maven jars are loaded and Delta works.
         packages: List[str] = self.spark.conf.get("spark.jars.packages").split(",")
-        assert len(packages) == 2, "There should only be 2 packages"
+
+        # Check `spark.jars.packages` contains `extra_packages`
+        self.assertTrue(len(packages) == 2, "There should only be 2 packages")
+
+        # Read and write Delta table to check that the maven jars are loaded and Delta works.
+        self.spark.range(0, 5).write.format("delta").save(self.tempFile)
+        self.spark.read.format("delta").load(self.tempFile)
 
 
 if __name__ == "__main__":

@@ -38,9 +38,17 @@ def configure_spark_with_delta_pip(
 
         spark = configure_spark_with_delta_pip(builder).getOrCreate()
 
+    3. If you would like to add more packages, use the `extra_packages` parameter.
+
+        builder = SparkSession.builder \
+            .master("local[*]") \
+            .appName("test")
+        my_packages = ["org.apache.spark:spark-sql-kafka-0-10_2.12:x.y.z"]
+        spark = configure_spark_with_delta_pip(builder, extra_packages=my_packages).getOrCreate()
+
     :param spark_session_builder: SparkSession.Builder object being used to configure and
                                   create a SparkSession.
-    :param extra_packages: Allow for spark session to include other packages other than delta.
+    :param extra_packages: Set other packages to add to Spark session besides Delta Lake.
     :return: Updated SparkSession.Builder object
 
     .. versionadded:: 1.0
@@ -70,7 +78,7 @@ See the online documentation for the correct usage of this function.
     maven_artifact = f"io.delta:delta-core_{scala_version}:{delta_version}"
 
     extra_packages = extra_packages if extra_packages is not None else []
-    all_artifacts = extra_packages + [maven_artifact]
+    all_artifacts = [maven_artifact] + extra_packages
     packages_str = ",".join(all_artifacts)
 
     return spark_session_builder.config("spark.jars.packages", packages_str)
