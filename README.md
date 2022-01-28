@@ -8,52 +8,25 @@ We are building connectors to bring [Delta Lake](https://delta.io) to popular bi
 # Introduction
 
 This is the repository for Delta Lake Connectors. It includes
-- a native library for reading and writing Delta Lake metadata.
-- connectors to popular big-data engines (e.g., [Apache Hive](https://hive.apache.org/), [Presto](https://prestodb.io/)) and to common reporting tools like [Microsoft Power BI](https://powerbi.microsoft.com/).
+- [Delta Standalone](https://docs.delta.io/latest/delta-standalone.html): a native library for reading and writing Delta Lake metadata.
+- Connectors to popular big-data engines (e.g., [Apache Hive](https://hive.apache.org/), [Presto](https://prestodb.io/)) and to common reporting tools like [Microsoft Power BI](https://powerbi.microsoft.com/).
 
 Please refer to the main [Delta Lake](https://github.com/delta-io/delta) repository if you want to learn more about the Delta Lake project.
 
-# Building
+# Delta Standalone
 
-The project is compiled using [SBT](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.html). It has the following subprojects.
-
-## Delta Standalone
 Delta Standalone, formerly known as the Delta Standalone Reader (DSR), is a JVM library to read **and write** Delta Lake tables. Unlike https://github.com/delta-io/delta, this project doesn't use Spark to read or write tables and it has only a few transitive dependencies. It can be used by any application that cannot use a Spark cluster.
 - To compile the project, run `build/sbt standalone/compile`
 - To test the project, run `build/sbt standalone/test`
 - To publish the JAR, run `build/sbt standaloneCosmetic/publishM2`
 
-### How to use it
-You can add the Delta Standalone library as a dependency using your favorite build tool.
+See [Delta Standalone](https://docs.delta.io/latest/delta-standalone.html) for detailed documentation.
 
-#### Maven
-Scala 2.12:
-```xml
-<dependency>
-  <groupId>io.delta</groupId>
-  <artifactId>delta-standalone_2.12</artifactId>
-  <version>0.2.0</version>
-</dependency>
-```
 
-Scala 2.11:
-```xml
-<dependency>
-  <groupId>io.delta</groupId>
-  <artifactId>delta-standalone_2.11</artifactId>
-  <version>0.2.0</version>
-</dependency>
-```
-
-#### SBT
-```
-libraryDependencies += "io.delta" %% "delta-standalone" % "0.2.0"
-```
-
-[TODO UPDATE] See [Delta Standalone Reader](https://github.com/delta-io/connectors/wiki/Delta-Standalone-Reader) for more details.
+# Connectors
 
 ## Hive connector
-This project is a library to make Hive read Delta Lake tables. The project provides a uber JAR `delta-hive-assembly_<scala_version>-0.2.0.jar` to use in Hive. You can use either Scala 2.11 or 2.12. The released JARs are available in the [releases](https://github.com/delta-io/connectors/releases) page. Please download the uber JAR for the corresponding Scala version you would like to use.
+This project is a library to make Hive read Delta Lake tables. The project provides a uber JAR `delta-hive-assembly_<scala_version>-0.3.0.jar` to use in Hive. You can use either Scala 2.11 or 2.12. The released JARs are available in the [releases](https://github.com/delta-io/connectors/releases) page. Please download the uber JAR for the corresponding Scala version you would like to use.
 
 You can also use the following instructions to build it as well.
 
@@ -62,21 +35,22 @@ You can also use the following instructions to build it as well.
 Please skip this section if you have downloaded the connector JARs.
 
 - To compile the project, run `build/sbt hive/compile`
-- To test the project, run `build/sbt hive/test`
-- To generate the uber JAR that contains all libraries needed for Hive, run `build/sbt hive/assembly`
+- To run Hive 3 tests, run `build/sbt hiveMR/test hiveTez/test`
+- To run Hive 2 tests, run `build/sbt hive2MR/test hive2Tez/test`
+- To generate the uber JAR that contains all libraries needed for Hive, run `build/sbt hiveAssembly/assembly`
 
 The above commands will generate the following JAR:
 
 ```
-hive/target/scala-2.12/delta-hive-assembly_2.12-0.2.0.jar
+hive/target/scala-2.12/delta-hive-assembly_2.12-0.3.0.jar
 ```
 
 This uber JAR includes the Hive connector and all its dependencies. They need to be put in Hive’s classpath.
 
-Note: if you would like to build using Scala 2.11, you can run the SBT command `build/sbt "++ 2.11.12 hive/assembly"` to generate the following JAR:
+Note: if you would like to build using Scala 2.11, you can run the SBT command `build/sbt "++ 2.11.12 hiveAssembly/assembly"` to generate the following JAR:
 
 ```
-hive/target/scala-2.11/delta-hive-assembly_2.11-0.2.0.jar
+hive/target/scala-2.11/delta-hive-assembly_2.11-0.3.0.jar
 ```
 
 ### Setting up Hive
@@ -171,7 +145,7 @@ The connector supports MapReduce and Tez. It doesn't support Spark execution eng
 
 ## sql-delta-import
 
-[sql-delta-import](/sql-delta-import/readme.md) allows for importing data from a JDBC source into a Delta Lake table
+[sql-delta-import](/sql-delta-import/readme.md) allows for importing data from a JDBC source into a Delta Lake table.
 
 ## Power BI connector
 The connector for [Microsoft Power BI](https://powerbi.microsoft.com/) is basically just a custom Power Query function that allows you to read a Delta Lake table from any file-based [data source supported by Microsoft Power BI](https://docs.microsoft.com/en-us/power-bi/connect-data/desktop-data-sources). Details can be found in the dedicated [README.md](/powerbi/README.md).
