@@ -73,7 +73,6 @@ class PipUtilsCustomJarsTests(unittest.TestCase):
         shutil.rmtree(self.tempPath)
 
     def test_maven_jar_loaded(self) -> None:
-        # Read and write Delta table to check that the maven jars are loaded and Delta works.
         packages: List[str] = self.spark.conf.get("spark.jars.packages").split(",")
 
         # Check `spark.jars.packages` contains `extra_packages`
