@@ -120,11 +120,11 @@ abstract class BaseExternalLogStore(
         }
         onFixDeltaLogPutDbEntry();
         putDbEntry(entry.asComplete(), overwrite = true);
-        logDebug(s"fixed ${entry.fileName}")
+        logInfo(s"fixed ${entry.fileName}")
         return
       } catch {
         case e: Throwable =>
-          logError(s"${e.getClass.getName}: $e")
+          logInfo(s"${e.getClass.getName}: $e")
           if (retry >= 3) throw e
       }
       retry += 1;
@@ -256,7 +256,7 @@ abstract class BaseExternalLogStore(
       putDbEntry(entry.asComplete(), overwrite = true)
     } catch {
       case e: Throwable =>
-        logWarning(s"${e.getClass.getName}: ignoring recoverable error: $e")
+        logInfo(s"${e.getClass.getName}: ignoring recoverable error: $e")
     }
   }
 

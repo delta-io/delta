@@ -81,11 +81,11 @@ class DynamoDBLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
       overwrite: Boolean = false
   ): Unit = {
     try {
-      logInfo(s"putItem $entry, overwrite: $overwrite")
+      logDebug(s"putItem $entry, overwrite: $overwrite")
       client.putItem(entry.asPutItemRequest(tableName, overwrite))
     } catch {
       case e: ConditionalCheckFailedException =>
-        logError(e.toString)
+        logDebug(e.toString)
         throw new java.nio.file.FileAlreadyExistsException(
           entry.absoluteJsonPath.toString
         )
