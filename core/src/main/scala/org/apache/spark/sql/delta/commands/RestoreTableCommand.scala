@@ -21,10 +21,10 @@ import java.sql.Timestamp
 import scala.collection.JavaConverters._
 import scala.util.{Success, Try}
 
+import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.sql.delta.DeltaErrors.timestampInvalid
 import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
 import org.apache.spark.sql.delta.util.DeltaFileOperations.absolutePath
-
 import org.apache.spark.sql.{Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
@@ -36,6 +36,8 @@ import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.SerializableConfiguration
 
 /**
+ * :: DeveloperAPI ::
+ *
  * Perform restore of delta table to a specified version or timestamp
  *
  * Algorithm:
@@ -52,6 +54,8 @@ import org.apache.spark.util.SerializableConfiguration
  * 7) If table was modified in parallel then ignore restore and raise exception.
  *
  */
+
+@DeveloperApi
 case class RestoreTableCommand(
   deltaLog: DeltaLog,
   version: Option[Long],
@@ -100,38 +104,39 @@ case class RestoreTableCommand(
           .as[AddFile]
           .map(_.removeWithTimestamp())
 
-        val notIgnoreMissingFiles = !spark
+        val ignoreMissingFiles = spark
           .sessionState
           .conf
           .getConf(IGNORE_MISSING_FILES)
 
-        try {
-          if (notIgnoreMissingFiles) {
-            filesToAdd.cache() // To avoid recompute in commitLarge
-            checkSnapshotFilesAvailability(deltaLog, filesToAdd, versionToRestore)
-          }
-
-          // Commit files, metrics, protocol and metadata to delta log
-          val metrics = computeMetrics(filesToAdd, filesToRemove, snapshotToRestore)
-          val addActions = filesToAdd.toLocalIterator().asScala
-          val removeActions = filesToRemove.toLocalIterator().asScala
-
-          txn.updateMetadata(snapshotToRestore.metadata)
-
-          commitLarge(
-            spark,
-            txn,
-            addActions ++ removeActions,
-            DeltaOperations.Restore(version, timestamp),
-            Map.empty,
-            metrics)
-        } finally {
-          if (notIgnoreMissingFiles) filesToAdd.unpersist()
+        if (!ignoreMissingFiles) {
+          checkSnapshotFilesAvailability(deltaLog, filesToAdd, versionToRestore)
         }
-      }
 
+        val metrics = withDescription("metrics") {
+          computeMetrics(filesToAdd, filesToRemove, snapshotToRestore) }
+        val addActions = withDescription("add actions") {
+          filesToAdd.toLocalIterator().asScala }
+        val removeActions = withDescription("remove actions") {
+          filesToRemove.toLocalIterator().asScala }
+
+        txn.updateMetadata(snapshotToRestore.metadata)
+        // Commit files, metrics, protocol and metadata to delta log
+        commitLarge(
+          spark,
+          txn,
+          addActions ++ removeActions,
+          DeltaOperations.Restore(version, timestamp),
+          Map.empty,
+          metrics)
+      }
       Seq.empty[Row]
     }
+  }
+
+  private def withDescription[T](action: String)(f: => T): T = withStatusCode("Delta:",
+    s"RestoreTableCommand: $action  (table path ${deltaLog.dataPath})") {
+    f
   }
 
   private def parseStringToTs(timestamp: Option[String]): Timestamp = {
@@ -177,27 +182,27 @@ case class RestoreTableCommand(
   private def checkSnapshotFilesAvailability(
     deltaLog: DeltaLog,
     files: Dataset[AddFile],
-    version: Long): Unit = {
+    version: Long): Unit = withDescription("missing files validation") {
 
-    implicit val spark: SparkSession = files.sparkSession
+      implicit val spark: SparkSession = files.sparkSession
 
-    val path = deltaLog.dataPath
-    val hadoopConf = spark.sparkContext.broadcast(
-      new SerializableConfiguration(deltaLog.newDeltaHadoopConf()))
+      val path = deltaLog.dataPath
+      val hadoopConf = spark.sparkContext.broadcast(
+        new SerializableConfiguration(deltaLog.newDeltaHadoopConf()))
 
-    import spark.implicits._
+      import spark.implicits._
 
-    val missedFiles = files
-      .mapPartitions { files =>
-        val fs = path.getFileSystem(hadoopConf.value.value)
-        val pathStr = path.toUri.getPath
-        files.filterNot(f => fs.exists(absolutePath(pathStr, f.path)))
+      val missedFiles = files
+        .mapPartitions { files =>
+          val fs = path.getFileSystem(hadoopConf.value.value)
+          val pathStr = path.toUri.getPath
+          files.filterNot(f => fs.exists(absolutePath(pathStr, f.path)))
+        }
+        .map(_.path)
+        .head(100)
+
+      if (missedFiles.nonEmpty) {
+        throw DeltaErrors.restoreMissedDataFilesError(missedFiles, version)
       }
-      .map(_.path)
-      .head(100)
-
-    if (missedFiles.nonEmpty) {
-      throw DeltaErrors.restoreMissedDataFilesError(missedFiles, version)
-    }
   }
 }
