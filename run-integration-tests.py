@@ -57,7 +57,7 @@ def run_scala_integration_tests(root_dir, version, test_name, extra_maven_repo, 
                 raise
 
 
-def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo, extra_packages, conf):
+def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo, extra_packages, jars, conf):
     print("\n\n##### Running Python tests on version %s #####" % str(version))
     clear_artifact_cache()
     test_dir = path.join(root_dir, path.join("examples", "python"))
@@ -73,6 +73,9 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
     package = "io.delta:delta-core_2.12:" + version
     if extra_packages:
         package += "," + extra_packages
+
+    jars = jars and ["--jars", jars] or []
+
     repo = extra_maven_repo if extra_maven_repo else ""
     conf_args = []
     if conf:
@@ -91,6 +94,7 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
             cmd = ["spark-submit",
                    "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
                    "--packages", package,
+                   *jars,
                    "--repositories", repo] + conf_args + [test_file]
             print("\nRunning Python tests in %s\n=============" % test_file)
             print("Command: %s" % str(cmd))
@@ -249,6 +253,11 @@ if __name__ == "__main__":
         default=None,
         help="Additional packages required for some tests")
     parser.add_argument(
+        "--jars",
+        required=False,
+        default=None,
+        help="Additional jars required for some tests")
+    parser.add_argument(
         "--conf",
         required=False,
         default=None,
@@ -273,7 +282,9 @@ if __name__ == "__main__":
                                     args.scala_version)
 
     if run_python:
-        run_python_integration_tests(root_dir, args.version, args.test, args.maven_repo, args.packages, args.conf)
+        run_python_integration_tests(
+            root_dir, args.version, args.test, args.maven_repo, args.packages, args.jars, args.conf
+        )
 
     if run_pip:
         run_pip_installation_tests(root_dir, args.version, args.use_testpypi, args.maven_repo)
