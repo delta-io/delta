@@ -470,8 +470,7 @@ class DeltaTable private[tables](
    * @since 1.2.0
    */
   def restoreToVersion(version: Long): DataFrame = {
-
-    executeRestore(deltaLog, Some(version), None)
+    executeRestore(table, Some(version), None)
   }
 
   /**
@@ -485,8 +484,7 @@ class DeltaTable private[tables](
    * @since 1.2.0
    */
   def restoreToTimestamp(timestamp: String): DataFrame = {
-
-    executeRestore(deltaLog, None, Some(timestamp))
+    executeRestore(table, None, Some(timestamp))
   }
 
 

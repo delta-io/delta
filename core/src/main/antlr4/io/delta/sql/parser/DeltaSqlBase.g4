@@ -80,6 +80,8 @@ statement
         (LIMIT limit=INTEGER_VALUE)?                                    #describeDeltaHistory
     | CONVERT TO DELTA table=qualifiedName
         (PARTITIONED BY '(' colTypeList ')')?                           #convert
+    | RESTORE TABLE? table=qualifiedName TO?
+            clause=temporalClause                                       #restore
     | ALTER TABLE table=qualifiedName ADD CONSTRAINT name=identifier
       constraint                                                        #addTableConstraint
     | ALTER TABLE table=qualifiedName
@@ -87,6 +89,11 @@ statement
     | OPTIMIZE (path=STRING | table=qualifiedName)
         (WHERE partitionPredicate = exprToken)?                    #optimizeTable
     | .*?                                                               #passThrough
+    ;
+
+temporalClause
+    : FOR? (SYSTEM_VERSION | VERSION) AS OF version=(INTEGER_VALUE | STRING)
+    | FOR? (SYSTEM_TIME | TIMESTAMP) AS OF timestamp=STRING
     ;
 
 qualifiedName
@@ -142,11 +149,13 @@ nonReserved
     | CONVERT | TO | DELTA | PARTITIONED | BY
     | DESC | DESCRIBE | LIMIT | DETAIL
     | GENERATE | FOR | TABLE | CHECK | EXISTS | OPTIMIZE
+    | RESTORE | AS | OF
     ;
 
 // Define how the keywords above should appear in a user's SQL statement.
 ADD: 'ADD';
 ALTER: 'ALTER';
+AS: 'AS';
 BY: 'BY';
 CHECK: 'CHECK';
 COMMENT: 'COMMENT';
@@ -167,15 +176,21 @@ LIMIT: 'LIMIT';
 MINUS: '-';
 NOT: 'NOT' | '!';
 NULL: 'NULL';
+OF: 'OF';
 OPTIMIZE: 'OPTIMIZE';
 FOR: 'FOR';
 TABLE: 'TABLE';
 PARTITIONED: 'PARTITIONED';
+RESTORE: 'RESTORE';
 RETAIN: 'RETAIN';
 RUN: 'RUN';
+SYSTEM_TIME: 'SYSTEM_TIME';
+SYSTEM_VERSION: 'SYSTEM_VERSION';
 TO: 'TO';
+TIMESTAMP: 'TIMESTAMP';
 VACUUM: 'VACUUM';
 WHERE: 'WHERE';
+VERSION: 'VERSION';
 
 // Multi-character operator tokens need to be defined even though we don't explicitly reference
 // them so that they can be recognized as single tokens when parsing. If we split them up and

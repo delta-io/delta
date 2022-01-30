@@ -19,8 +19,10 @@ package org.apache.spark.sql.delta
 import scala.collection.JavaConverters._
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.catalyst.TimeTravel
 import org.apache.spark.sql.delta.DeltaErrors.{TemporallyUnstableInputException, TimestampEarlierThanCommitRetentionException}
 import org.apache.spark.sql.delta.catalog.{DeltaCatalog, DeltaTableV2}
+import org.apache.spark.sql.delta.commands.RestoreTableCommand
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -95,6 +97,50 @@ class DeltaAnalysis(session: SparkSession)
         index.partitionFilters.reduce(And),
         DeltaTableUtils.replaceFileIndex(l, index.copy(partitionFilters = Nil)))
 
+
+    case restoreStatement @ RestoreTableStatement(target) =>
+      EliminateSubqueryAliases(target) match {
+        // Pass the traveled table if a previous version is to be cloned
+        case tt @ TimeTravel(DataSourceV2Relation(tbl: DeltaTableV2, _, _, _, _), _, _, _)
+            if tt.expressions.forall(_.resolved) =>
+          val ttSpec = DeltaTimeTravelSpec(tt.timestamp, tt.version, tt.creationSource)
+          val traveledTable = tbl.copy(timeTravelOpt = Some(ttSpec))
+          val tblIdent = tbl.catalogTable match {
+            case Some(existingCatalog) => existingCatalog.identifier
+            case None => TableIdentifier(tbl.path.toString, Some("delta"))
+          }
+          // restoring to same version as latest should be a no-op.
+          val sourceSnapshot = try {
+            traveledTable.snapshot
+          } catch {
+            case v: VersionNotFoundException =>
+              throw DeltaErrors.restoreVersionNotExistException(v.userVersion, v.earliest, v.latest)
+            case tEarlier: TimestampEarlierThanCommitRetentionException =>
+              throw DeltaErrors.restoreTimestampBeforeEarliestException(
+                tEarlier.userTimestamp.toString,
+                tEarlier.commitTs.toString
+              )
+            case tUnstable: TemporallyUnstableInputException =>
+              throw DeltaErrors.restoreTimestampGreaterThanLatestException(
+                tUnstable.userTimestamp.toString,
+                tUnstable.commitTs.toString
+              )
+          }
+          if (sourceSnapshot.version == traveledTable.deltaLog.snapshot.version) {
+            return LocalRelation(restoreStatement.output)
+          }
+
+          RestoreTableCommand(traveledTable, tblIdent)
+
+        case u: UnresolvedRelation =>
+          u.failAnalysis(s"Table not found: ${u.multipartIdentifier.quoted}")
+
+        case TimeTravel(u: UnresolvedRelation, _, _, _) =>
+          u.failAnalysis(s"Table not found: ${u.multipartIdentifier.quoted}")
+
+        case _ =>
+          throw DeltaErrors.notADeltaTableException("RESTORE")
+      }
 
     // This rule falls back to V1 nodes, since we don't have a V2 reader for Delta right now
     case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, options) =>

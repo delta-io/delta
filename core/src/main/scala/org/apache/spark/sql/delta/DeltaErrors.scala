@@ -920,6 +920,23 @@ object DeltaErrors
     )
   }
 
+  def restoreTimestampGreaterThanLatestException(
+      userTimestamp: String,
+      latestTimestamp: String): Throwable = {
+    new AnalysisException(
+      s"Cannot restore table to timestamp ($userTimestamp) as it is after the latest version " +
+        s"available. Please use a timestamp before ($latestTimestamp)"
+    )
+  }
+
+  def restoreTimestampBeforeEarliestException(
+      userTimestamp: String,
+      earliestTimestamp: String): Throwable = {
+    new AnalysisException(
+      s"Cannot restore table to timestamp ($userTimestamp) as it is before the earliest version " +
+        s"available. Please use a timestamp after ($earliestTimestamp)"
+    )
+  }
 
   def timeTravelNotSupportedException: Throwable = {
     new AnalysisException("Cannot time travel views, subqueries or streams.")

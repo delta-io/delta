@@ -42,6 +42,9 @@ import java.util.Locale
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.catalyst.TimeTravel
+
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands._
 import io.delta.sql.parser.DeltaSqlBaseParser._
 import io.delta.tables.execution.VacuumTableCommand
@@ -51,12 +54,12 @@ import org.antlr.v4.runtime.misc.{Interval, ParseCancellationException}
 import org.antlr.v4.runtime.tree._
 
 import org.apache.spark.sql.AnalysisException
-import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
-import org.apache.spark.sql.catalyst.analysis.UnresolvedTable
+import org.apache.spark.sql.catalyst.analysis.{UnresolvedRelation, UnresolvedTable}
 import org.apache.spark.sql.catalyst.parser.{ParseErrorListener, ParseException, ParserInterface}
 import org.apache.spark.sql.catalyst.parser.ParserUtils.{string, withOrigin}
-import org.apache.spark.sql.catalyst.plans.logical.{AlterTableAddConstraint, AlterTableDropConstraint, LogicalPlan}
+import org.apache.spark.sql.catalyst.plans.logical.{AlterTableAddConstraint, AlterTableDropConstraint, LogicalPlan, RestoreTableStatement}
 import org.apache.spark.sql.catalyst.trees.Origin
 import org.apache.spark.sql.types._
 
@@ -206,6 +209,24 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       visitTableIdentifier(ctx.table),
       Option(ctx.colTypeList).map(colTypeList => StructType(visitColTypeList(colTypeList))),
       None)
+  }
+
+  override def visitRestore(ctx: RestoreContext): LogicalPlan = withOrigin(ctx) {
+    val tableRelation = UnresolvedRelation(visitTableIdentifier(ctx.table))
+    val timeTravelTableRelation = maybeTimeTravelChild(ctx.clause, tableRelation)
+    RestoreTableStatement(timeTravelTableRelation.asInstanceOf[TimeTravel])
+  }
+
+  /**
+   * Time travel the table to the given version or timestamp.
+   */
+  private def maybeTimeTravelChild(ctx: TemporalClauseContext, child: LogicalPlan): LogicalPlan = {
+    if (ctx == null) return child
+    TimeTravel(
+      child,
+      Option(ctx.timestamp).map(token => Literal(token.getText.replaceAll("^'|'$", ""))),
+      Option(ctx.version).map(_.getText.toLong),
+      Some("sql"))
   }
 
   override def visitSingleStatement(ctx: SingleStatementContext): LogicalPlan = withOrigin(ctx) {

@@ -23,9 +23,11 @@ import scala.util.{Success, Try}
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.util.DeltaFileOperations.absolutePath
 
 import org.apache.spark.sql.{Dataset, Row, SparkSession}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
@@ -52,14 +54,14 @@ import org.apache.spark.util.SerializableConfiguration
  *
  */
 case class RestoreTableCommand(
-  deltaLog: DeltaLog,
-  version: Option[Long],
-  timestamp: Option[String]
-) extends LeafRunnableCommand with DeltaCommand {
+    sourceTable: DeltaTableV2,
+    targetIdent: TableIdentifier) extends LeafRunnableCommand with DeltaCommand {
 
   override def run(spark: SparkSession): Seq[Row] = {
+    val deltaLog = sourceTable.deltaLog
+    val version = sourceTable.timeTravelOpt.get.version
+    val timestamp = getTimestamp()
     recordDeltaOperation(deltaLog, "delta.restore") {
-
       require(version.isEmpty ^ timestamp.isEmpty,
         "Either the version or timestamp should be provided for restore")
 
@@ -136,7 +138,7 @@ case class RestoreTableCommand(
 
   private def withDescription[T](action: String)(f: => T): T =
     withStatusCode("DELTA",
-      s"RestoreTableCommand: compute $action  (table path ${deltaLog.dataPath})") {
+      s"RestoreTableCommand: compute $action  (table path ${sourceTable.deltaLog.dataPath})") {
     f
   }
 
@@ -204,6 +206,15 @@ case class RestoreTableCommand(
 
     if (missedFiles.nonEmpty) {
       throw DeltaErrors.restoreMissedDataFilesError(missedFiles, version)
+    }
+  }
+
+  /** If available get the timestamp referring to a snapshot in the source table timeline */
+  private def getTimestamp(): Option[String] = {
+    if (sourceTable.timeTravelOpt.get.timestamp.isDefined) {
+      Some(sourceTable.timeTravelOpt.get.getTimestamp(conf).toString)
+    } else {
+      None
     }
   }
 }
