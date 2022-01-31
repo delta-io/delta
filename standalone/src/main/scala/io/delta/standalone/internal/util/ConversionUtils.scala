@@ -285,7 +285,7 @@ private[internal] object ConversionUtils {
       external.getDescription,
       convertFormatJ(external.getFormat),
       if (external.getSchema == null) null else external.getSchema.toJson,
-      external.getPartitionColumns.asScala,
+      external.getPartitionColumns.asScala.toSeq,
       if (external.getConfiguration == null) null else external.getConfiguration.asScala.toMap,
       external.getCreatedTime
     )

@@ -170,7 +170,7 @@ abstract class DeltaLogSuiteBase extends FunSuite {
         val metadata = if (i == 1) Metadata() :: Nil else Nil
         val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
         val delete: Seq[Action] = if (i > 1) {
-          RemoveFile(i - 1 toString, Some(System.currentTimeMillis()), true) :: Nil
+          RemoveFile((i - 1).toString, Some(System.currentTimeMillis()), true) :: Nil
         } else {
           Nil
         }
@@ -186,7 +186,7 @@ abstract class DeltaLogSuiteBase extends FunSuite {
       (6 to 15).foreach { i =>
         val txn = log1.startTransaction()
         val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
-        val delete = RemoveFile(i - 1 toString, Some(System.currentTimeMillis()), true) :: Nil
+        val delete = RemoveFile((i - 1).toString, Some(System.currentTimeMillis()), true) :: Nil
 
         val filesToCommit = (delete ++ file).map(ConversionUtils.convertAction)
 

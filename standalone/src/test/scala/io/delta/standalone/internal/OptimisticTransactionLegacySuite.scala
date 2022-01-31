@@ -124,7 +124,7 @@ class OptimisticTransactionLegacySuite extends FunSuite {
         val txn = log.startTransaction()
         val file = AddFile(i.toString, Map.empty, 1, 1, dataChange = true) :: Nil
         val delete: Seq[Action] = if (i > 1) {
-          RemoveFile(i - 1 toString, Some(System.currentTimeMillis()), true) :: Nil
+          RemoveFile((i - 1).toString, Some(System.currentTimeMillis()), true) :: Nil
         } else {
           Nil
         }
@@ -679,7 +679,7 @@ class OptimisticTransactionLegacySuite extends FunSuite {
         setDataChangeFalse(addA_P1.remove :: addB_P1.remove :: addC_P1 :: Nil),
         manualUpdate, engineInfo)
 
-      assert(log.update().getAllFiles.asScala.map(_.getPath) == C_P1 :: E_P3 :: Nil)
+      assert(log.update().getAllFiles.asScala.map(_.getPath).sorted == C_P1 :: E_P3 :: Nil)
     }
   }
 

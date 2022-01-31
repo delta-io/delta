@@ -22,9 +22,9 @@ import org.rogach.scallop.{ScallopConf, ScallopOption}
 /**
  * Spark app that wraps functionality of JDBCImport and exposes configuration as command line args
  */
-object ImportRunner extends App {
+object ImportRunner {
 
-  override def main(args: Array[String]): Unit = {
+   def main(args: Array[String]): Unit = {
     val config = new ImportRunnerConfig(args)
 
     implicit val spark = SparkSession

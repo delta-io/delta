@@ -118,7 +118,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       val txn = log.startTransaction()
       val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
       val delete: Seq[Action] = if (i > 1) {
-        RemoveFile(i - 1 toString, Some(System.currentTimeMillis()), true) :: Nil
+        RemoveFile((i - 1).toString, Some(System.currentTimeMillis()), true) :: Nil
       } else {
         Nil
       }
@@ -355,20 +355,22 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     assert(new File(log.logPath.toUri).mkdirs())
 
     val commitInfoFile = CommitInfo(
-      Some(0),
-      new Timestamp(1540415658000L),
-      Some("user_0"),
-      Some("username_0"),
-      "WRITE",
-      Map("test" -> "\"test\""),
-      Some(JobInfo("job_id_0", "job_name_0", "run_id_0", "job_owner_0", "trigger_type_0")),
-      Some(NotebookInfo("notebook_id_0")),
-      Some("cluster_id_0"),
-      Some(-1),
-      Some("default"),
-      Some(true),
-      Some(Map("test" -> "test")),
-      Some("foo")
+      version = Some(0L),
+      timestamp = new Timestamp(1540415658000L),
+      userId = Some("user_0"),
+      userName = Some("username_0"),
+      operation = "WRITE",
+      operationParameters = Map("test" -> "\"test\""),
+      job = Some(JobInfo("job_id_0", "job_name_0", "run_id_0", "job_owner_0", "trigger_type_0")),
+      notebook = Some(NotebookInfo("notebook_id_0")),
+      clusterId = Some("cluster_id_0"),
+      readVersion = Some(-1L),
+      isolationLevel = Some("default"),
+      isBlindAppend = Some(true),
+      operationMetrics = Some(Map("test" -> "test")),
+      userMetadata = Some("foo"),
+      tags = Some(Map("test" -> "test")),
+      engineInfo = Some("OSS")
     )
 
     val addFile = AddFile("abc", Map.empty, 1, 1, true)

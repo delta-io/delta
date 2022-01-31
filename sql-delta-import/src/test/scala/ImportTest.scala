@@ -16,15 +16,26 @@
 
 package io.delta.connectors.spark.jdbc
 
+import java.io.File
+import java.nio.file.Files
 import java.sql.{Connection, DriverManager}
+import java.util.UUID
 
+import org.apache.commons.io.FileUtils
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.DataTypes
 import org.scalatest.BeforeAndAfterAll
-import org.scalatest.funsuite.AnyFunSuite
+import org.scalatest.FunSuite
 
-class ImportTest extends AnyFunSuite with BeforeAndAfterAll {
+class ImportTest extends FunSuite with BeforeAndAfterAll {
+
+  def withTempDir(f: File => Unit): Unit = {
+    val dir = Files.createTempDirectory(UUID.randomUUID().toString).toFile
+    try f(dir) finally {
+      FileUtils.deleteDirectory(dir)
+    }
+  }
 
   private def initDataSource (conn: Connection) = {
     conn.prepareStatement("create schema test").executeUpdate()
@@ -73,65 +84,69 @@ class ImportTest extends AnyFunSuite with BeforeAndAfterAll {
   val chunks = 2
 
   test("import data into a delta table") {
-    spark.sql("DROP TABLE IF EXISTS tbl")
-    spark.sql("""
-      CREATE TABLE tbl (id INT, status INT, title STRING)
-      USING DELTA
-      LOCATION "spark-warehouse/tbl"
-    """)
+    withTempDir { tempDir =>
+      spark.sql("DROP TABLE IF EXISTS tbl")
+      spark.sql(s"""
+        CREATE TABLE tbl (id INT, status INT, title STRING)
+        USING DELTA
+        LOCATION "${tempDir.getCanonicalPath}/tbl"
+      """)
 
 
-    JDBCImport(url, ImportConfig("test.tbl", "tbl", "id", chunks)).run()
+      JDBCImport(url, ImportConfig("test.tbl", "tbl", "id", chunks)).run()
 
-    // since we imported data without any optimizations number of
-    // read partitions should equal number of chunks used during import
-    assert(spark.table("tbl").rdd.getNumPartitions == chunks)
+      // since we imported data without any optimizations number of
+      // read partitions should equal number of chunks used during import
+      assert(spark.table("tbl").rdd.getNumPartitions == chunks)
 
-    val imported = spark.sql("select * from tbl")
-      .collect()
-      .sortBy(a => a.getAs[Int]("id"))
+      val imported = spark.sql("select * from tbl")
+        .collect()
+        .sortBy(a => a.getAs[Int]("id"))
 
-    assert(imported.length == 4)
-    assert(imported.map(a => a.getAs[Int]("id")).toSeq == Seq(1, 3, 5, 7))
-    assert(imported.map(a => a.getAs[Int]("status")).toSeq == Seq(2, 4, 6, 8))
-    assert(imported.map(a => a.getAs[String]("title")).toSeq ==
-      Seq("lorem ipsum", "lorem", "ipsum", "Lorem Ipsum"))
+      assert(imported.length == 4)
+      assert(imported.map(a => a.getAs[Int]("id")).toSeq == Seq(1, 3, 5, 7))
+      assert(imported.map(a => a.getAs[Int]("status")).toSeq == Seq(2, 4, 6, 8))
+      assert(imported.map(a => a.getAs[String]("title")).toSeq ==
+        Seq("lorem ipsum", "lorem", "ipsum", "Lorem Ipsum"))
+    }
   }
 
   test("transform data before importing it into a delta table") {
-    spark.sql("DROP TABLE IF EXISTS tbl2")
-    spark.sql("""
-      CREATE TABLE tbl2 (id INT, status INT, ts STRING, title STRING)
-      USING DELTA
-      LOCATION "spark-warehouse/tbl2"
-    """)
+    withTempDir { tempDir =>
+      spark.sql("DROP TABLE IF EXISTS tbl2")
+      spark.sql(s"""
+        CREATE TABLE tbl2 (id INT, status INT, ts STRING, title STRING)
+        USING DELTA
+        LOCATION "${tempDir.getCanonicalPath}/tbl2"
+      """)
 
-    val timeStampsToStrings : DataFrame => DataFrame = source => {
-      val tsCols = source.schema.fields.filter(_.dataType == DataTypes.TimestampType).map(_.name)
-      tsCols.foldLeft(source)((df, name) =>
-        df.withColumn(name, from_unixtime(unix_timestamp(col(name)), "yy-MM-dd HH:mm")))
+      val timeStampsToStrings : DataFrame => DataFrame = source => {
+        val tsCols = source.schema.fields.filter(_.dataType == DataTypes.TimestampType).map(_.name)
+        tsCols.foldLeft(source)((df, name) =>
+          df.withColumn(name, from_unixtime(unix_timestamp(col(name)), "yy-MM-dd HH:mm")))
+      }
+
+      val transforms = new DataTransforms(Seq(
+        a => a.withColumn("title", upper(col("title"))),
+        timeStampsToStrings
+      ))
+
+      JDBCImport(
+        jdbcUrl = url,
+        importConfig = ImportConfig("test.tbl", "tbl2", "id", 2),
+        dataTransforms = transforms).run()
+
+      val imported = spark.sql("select * from tbl2")
+        .collect()
+        .sortBy(a => a.getAs[Int]("id"))
+
+      assert(imported.length == 4)
+      assert(imported.map(a => a.getAs[String]("title")).toSeq ==
+        Seq("LOREM IPSUM", "LOREM", "IPSUM", "LOREM IPSUM"))
+
+      assert(imported.map(a => a.getAs[String]("ts")).toSeq ==
+        Seq("21-02-01 01:02", "21-04-03 03:04", "21-06-05 05:06", "21-08-07 07:08"))
     }
-
-    val transforms = new DataTransforms(Seq(
-      a => a.withColumn("title", upper(col("title"))),
-      timeStampsToStrings
-    ))
-
-    JDBCImport(
-      jdbcUrl = url,
-      importConfig = ImportConfig("test.tbl", "tbl2", "id", 2),
-      dataTransforms = transforms).run()
-
-    val imported = spark.sql("select * from tbl2")
-      .collect()
-      .sortBy(a => a.getAs[Int]("id"))
-
-    assert(imported.length == 4)
-    assert(imported.map(a => a.getAs[String]("title")).toSeq ==
-      Seq("LOREM IPSUM", "LOREM", "IPSUM", "LOREM IPSUM"))
-
-    assert(imported.map(a => a.getAs[String]("ts")).toSeq ==
-      Seq("21-02-01 01:02", "21-04-03 03:04", "21-06-05 05:06", "21-08-07 07:08"))
   }
 
 }

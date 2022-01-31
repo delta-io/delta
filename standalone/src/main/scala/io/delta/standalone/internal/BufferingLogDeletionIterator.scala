@@ -111,7 +111,7 @@ class BufferingLogDeletionIterator(
    */
   private def flushBuffer(): Unit = {
     if (maybeDeleteFiles.lastOption.exists(shouldDeleteFile)) {
-      filesToDelete.enqueue(maybeDeleteFiles: _*)
+      filesToDelete ++= maybeDeleteFiles
     }
     maybeDeleteFiles.clear()
   }

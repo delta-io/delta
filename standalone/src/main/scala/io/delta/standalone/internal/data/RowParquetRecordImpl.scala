@@ -289,7 +289,7 @@ private[internal] case class RowParquetRecordImpl(
         configuration: ValueCodecConfiguration): Seq[T] = {
       value match {
         case listRecord: ListParquetRecord =>
-          listRecord.map(elementCodec.decode(_, codecConf))
+          listRecord.map(elementCodec.decode(_, codecConf)).toSeq
         case binaryValue: BinaryValue if classTag.runtimeClass == classOf[Byte] =>
           binaryValue.value.getBytes.asInstanceOf[Seq[T]]
         case _ => throw new RuntimeException(s"Unknown list decode type $value")

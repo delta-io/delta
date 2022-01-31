@@ -282,7 +282,11 @@ class DeltaDataReaderSuite extends FunSuite {
     withLogForGoldenTable("data-reader-primitives") { log =>
       val recordIter = log.snapshot().open()
       assertThrows[ClassCastException] {
-        val row = recordIter.next()
+        var row = recordIter.next()
+        while (row.isNullAt("as_big_decimal")) {
+          // Skip null values as we don't do type check for null values.
+          row = recordIter.next()
+        }
         row.getString("as_big_decimal")
       }
     }

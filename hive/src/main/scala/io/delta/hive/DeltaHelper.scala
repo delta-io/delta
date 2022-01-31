@@ -78,7 +78,7 @@ object DeltaHelper {
     val files = prunePartitions(
         job.get(TableScanDesc.FILTER_EXPR_CONF_STR),
         partitionColumnWithIndex.map(_._1),
-        snapshotToUse.getAllFiles.asScala
+        snapshotToUse.getAllFiles.asScala.toSeq
       ).map { addF =>
         // Drop unused potential huge fields
         val f = AddFile.builder(
@@ -111,7 +111,7 @@ object DeltaHelper {
   }
 
   def getPartitionCols(hadoopConf: Configuration, rootPath: Path): Seq[String] = {
-    loadDeltaLatestSnapshot(hadoopConf, rootPath).getMetadata.getPartitionColumns.asScala
+    loadDeltaLatestSnapshot(hadoopConf, rootPath).getMetadata.getPartitionColumns.asScala.toSeq
   }
 
   def loadDeltaLatestSnapshot(hadoopConf: Configuration, rootPath: Path): Snapshot = {

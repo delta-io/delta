@@ -127,7 +127,7 @@ class OSSCompatibilitySuite extends OssCompatibilitySuiteBase with ComparisonUti
         assert(ossLog.snapshot.allFiles.count() == ss.addFiles.size)
 
         compareAddFiles(
-          standaloneLog.update().getAllFiles.asScala, ossLog.update().allFiles.collect())
+          standaloneLog.update().getAllFiles.asScala.toSeq, ossLog.update().allFiles.collect())
         compareAddFiles(scanFiles, ossLog.update().allFiles.collect())
       }
 

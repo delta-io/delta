@@ -19,6 +19,7 @@ package io.delta.standalone.internal
 import java.net.URI
 
 import scala.collection.JavaConverters._
+import scala.collection.parallel.immutable.ParVector
 
 import com.github.mjakubowski84.parquet4s.ParquetReader
 import org.apache.hadoop.conf.Configuration
@@ -167,7 +168,7 @@ private[internal] class SnapshotImpl(
   }
 
   private def loadInMemory(paths: Seq[Path]): Seq[SingleAction] = {
-    paths.map(_.toString).sortWith(_ < _).par.flatMap { path =>
+    new ParVector(paths.map(_.toString).sortWith(_ < _).toVector).par.flatMap { path =>
       if (path.endsWith("json")) {
         import io.delta.standalone.internal.util.Implicits._
         deltaLog.store

@@ -101,7 +101,7 @@ trait HiveTest extends FunSuite with BeforeAndAfterAll {
     }
     val result = new java.util.ArrayList[String]()
     if (driver.getResults(result)) {
-      result.asScala
+      result.asScala.toSeq
     } else {
       Nil
     }
