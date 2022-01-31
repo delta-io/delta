@@ -21,7 +21,6 @@ import java.sql.Timestamp
 import scala.collection.JavaConverters._
 import scala.util.{Success, Try}
 
-import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.sql.delta.DeltaErrors.timestampInvalid
 import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
 import org.apache.spark.sql.delta.util.DeltaFileOperations.absolutePath
@@ -36,7 +35,6 @@ import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.SerializableConfiguration
 
 /**
- * :: DeveloperAPI ::
  *
  * Perform restore of delta table to a specified version or timestamp
  *
@@ -55,7 +53,6 @@ import org.apache.spark.util.SerializableConfiguration
  *
  */
 
-@DeveloperApi
 case class RestoreTableCommand(
   deltaLog: DeltaLog,
   version: Option[Long],
@@ -114,11 +111,14 @@ case class RestoreTableCommand(
         }
 
         val metrics = withDescription("metrics") {
-          computeMetrics(filesToAdd, filesToRemove, snapshotToRestore) }
+          computeMetrics(filesToAdd, filesToRemove, snapshotToRestore)
+        }
         val addActions = withDescription("add actions") {
-          filesToAdd.toLocalIterator().asScala }
+          filesToAdd.toLocalIterator().asScala
+        }
         val removeActions = withDescription("remove actions") {
-          filesToRemove.toLocalIterator().asScala }
+          filesToRemove.toLocalIterator().asScala
+        }
 
         txn.updateMetadata(snapshotToRestore.metadata)
         // Commit files, metrics, protocol and metadata to delta log
@@ -134,8 +134,8 @@ case class RestoreTableCommand(
     }
   }
 
-  private def withDescription[T](action: String)(f: => T): T = withStatusCode("Delta:",
-    s"RestoreTableCommand: $action  (table path ${deltaLog.dataPath})") {
+  private def withDescription[T](action: String)(f: => T): T = withStatusCode("DELTA",
+    s"RestoreTableCommand: compute $action  (table path ${deltaLog.dataPath})") {
     f
   }
 
