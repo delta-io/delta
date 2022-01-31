@@ -86,10 +86,6 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
         if test_name is not None and test_name not in test_file:
             print("\nSkipping Python tests in %s\n=====================" % test_file)
             continue
-        if "dynamodb_logstore.py" in test_file and not os.environ.get("DELTA_TABLE_PATH"):
-            print("""\nSkipping Python tests in %s due to the missing env variable `DELTA_TABLE_PATH`
-            \n=====================""" % test_file)
-            continue
         try:
             cmd = ["spark-submit",
                    "--driver-class-path=%s" % extra_class_path,  # for less verbose logging

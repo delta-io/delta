@@ -14,6 +14,7 @@
 # limitations under the License.
 #
 import os
+import sys
 import threading
 
 from pyspark import SparkContext
@@ -39,7 +40,7 @@ run this script in root dir of repository
 """
 
 # conf
-delta_table_path = os.environ.get("DELTA_TABLE_PATH").rstrip("/")
+delta_table_path = os.environ.get("DELTA_TABLE_PATH")
 concurrent_writers = int(os.environ.get("DELTA_CONCURRENT_WRITERS", 2))
 concurrent_readers = int(os.environ.get("DELTA_CONCURRENT_READERS", 2))
 num_rows = int(os.environ.get("DELTA_NUM_ROWS", 32))
@@ -48,6 +49,23 @@ delta_storage = os.environ.get("DELTA_STORAGE", "io.delta.storage.DynamoDBLogSto
 dynamo_table_name = os.environ.get("DELTA_DYNAMO_TABLE", "delta_log_test")
 dynamo_region = os.environ.get("DELTA_DYNAMO_REGION", "us-west-2")
 dynamo_error_rates = os.environ.get("DELTA_DYNAMO_ERROR_RATES", "")
+
+if delta_table_path is None:
+    print(f"\nSkipping Python test {os.path.basename(__file__)} due to the missing env variable "
+    f"`DELTA_TABLE_PATH`\n=====================")
+    sys.exit(0)
+
+test_log = f"""
+--- LOG ---\n
+delta table path: {delta_table_path}
+concurrent writers: {concurrent_writers}
+concurrent readers: {concurrent_readers}
+number of rows: {num_rows}
+delta storage: {delta_storage}
+dynamo table name: {dynamo_table_name}
+=====================
+"""
+print(test_log)
 
 spark = SparkSession \
     .builder \
