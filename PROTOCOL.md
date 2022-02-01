@@ -95,7 +95,8 @@ This directory format is only used to follow existing conventions and is not req
 Actual partition values for a file must be read from the transaction log.
 
 ### Delta Log Entries
-Delta files are stored as JSON in a directory at the root of the table named `_delta_log`, and together make up the log of all changes that have occurred to a table.
+Delta files are stored as JSON in a directory at the root of the table named `_delta_log`, and together with checkpoints make up the log of all changes that have occurred to a table.
+
 Delta files are the unit of atomicity for a table, and are named using the next available version number, zero-padded to 20 digits.
 
 For example:
@@ -112,7 +113,8 @@ Checkpoints are also stored in the `_delta_log` directory, and can be created fo
 
 A checkpoint contains the complete replay of all actions up until this version, with invalid actions removed.
 Invalid actions are those that have been canceled out by a subsequent ones (for example removing a file that has been added), using the [rules for reconciliation](#Action-Reconciliation)
-Checkpoints allow readers to short-cut the cost of reading the log up-to a given point in order to reconstruct a snapshot.
+Checkpoints allow readers to short-cut the cost of reading the log up-to a given point in order to reconstruct a snapshot, and allow older JSON Delta log entries to be deleted after a period of time.
+
 
 By default, the reference implementation creates a checkpoint every 10 commits.
 
