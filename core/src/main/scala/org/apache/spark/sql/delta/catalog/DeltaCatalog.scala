@@ -243,6 +243,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
         ident, schema, partitions, properties, TableCreationModes.CreateOrReplace)
     } else {
         try super.dropTable(ident) catch {
+          case _: NoSuchDatabaseException => // this is fine
           case _: NoSuchTableException => // this is fine
         }
         BestEffortStagedTable(
