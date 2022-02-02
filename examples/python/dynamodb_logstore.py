@@ -30,10 +30,10 @@ create required dynamodb table with:
 
 $ aws --region us-west-2 dynamodb create-table \
     --table-name delta_log_test \
-    --attribute-definitions AttributeName=parentPath,AttributeType=S \
-                            AttributeName=filename,AttributeType=S \
-    --key-schema AttributeName=parentPath,KeyType=HASH \
-                AttributeName=filename,KeyType=RANGE \
+    --attribute-definitions AttributeName=tablePath,AttributeType=S \
+                            AttributeName=fileName,AttributeType=S \
+    --key-schema AttributeName=tablePath,KeyType=HASH \
+                AttributeName=fileName,KeyType=RANGE \
     --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5
 
 run this script in root dir of repository

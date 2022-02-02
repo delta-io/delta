@@ -71,7 +71,7 @@ class DynamoDBLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
   import DynamoDBLogStore._
 
   private val tableName =
-    sparkConf.get(s"${confPrefix}tableName", "delta_log_ng")
+    sparkConf.get(s"${confPrefix}tableName", "delta_log")
 
   private val client: AmazonDynamoDBClient =
     DynamoDBLogStore.getClient(sparkConf)

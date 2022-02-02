@@ -28,7 +28,6 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path, RawLocalFileSystem}
 
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
@@ -76,11 +75,8 @@ abstract class LogStoreSuiteBase extends QueryTest
     val tempDir = Utils.createTempDir()
     val store = createLogStore(spark)
 
-    val deltas = Seq(0, 1).map(i => FileNames.deltaFile(new Path(tempDir.toURI()), i))
-
-    info(s"writing ${deltas.head}");
+    val deltas = Seq(0, 1).map(i => new File(tempDir, i.toString)).map(_.toURI).map(new Path(_))
     store.write(deltas.head, Iterator("zero", "none"), overwrite = false, sessionHadoopConf)
-    info(s"writing ${deltas(1)}");
     store.write(deltas(1), Iterator("one"), overwrite = false, sessionHadoopConf)
 
     assert(store.read(deltas.head, sessionHadoopConf) == Seq("zero", "none"))
@@ -95,7 +91,7 @@ abstract class LogStoreSuiteBase extends QueryTest
     val tempDir = Utils.createTempDir()
     val store = createLogStore(spark)
 
-    val deltas = Seq(0, 1).map(i => FileNames.deltaFile(new Path(tempDir.toURI()), i))
+    val deltas = Seq(0, 1).map(i => new File(tempDir, i.toString)).map(_.toURI).map(new Path(_))
     store.write(deltas.head, Iterator("zero"), overwrite = false, sessionHadoopConf)
     store.write(deltas(1), Iterator("one"), overwrite = false, sessionHadoopConf)
 
@@ -106,30 +102,24 @@ abstract class LogStoreSuiteBase extends QueryTest
 
   test("listFrom") {
     val tempDir = Utils.createTempDir()
-    val tempPath = new Path(tempDir.toURI)
     val store = createLogStore(spark)
 
-    def toDelta(n: Int): Path = FileNames.deltaFile(tempPath, n)
-
-    val deltas = Seq(0, 1, 2, 3, 4).map(toDelta)
-
-    // let's call write with overwrite = true to skip additional checks
-    // done by some implementations (like DynamoDBLogStore)
-    store.write(deltas(1), Iterator("zero"), overwrite = true, sessionHadoopConf)
-    store.write(deltas(2), Iterator("one"), overwrite = true, sessionHadoopConf)
-    store.write(deltas(3), Iterator("two"), overwrite = true, sessionHadoopConf)
-
+    val deltas =
+      Seq(0, 1, 2, 3, 4).map(i => new File(tempDir, i.toString)).map(_.toURI).map(new Path(_))
+    store.write(deltas(1), Iterator("zero"), overwrite = false, sessionHadoopConf)
+    store.write(deltas(2), Iterator("one"), overwrite = false, sessionHadoopConf)
+    store.write(deltas(3), Iterator("two"), overwrite = false, sessionHadoopConf)
 
     assert(
       store.listFrom(deltas.head, sessionHadoopConf)
-        .map(_.getPath).toArray === Seq(1, 2, 3).map(toDelta))
+        .map(_.getPath.getName).toArray === Seq(1, 2, 3).map(_.toString))
     assert(
       store.listFrom(deltas(1), sessionHadoopConf)
-        .map(_.getPath).toArray === Seq(1, 2, 3).map(toDelta))
+        .map(_.getPath.getName).toArray === Seq(1, 2, 3).map(_.toString))
     assert(store.listFrom(deltas(2), sessionHadoopConf)
-      .map(_.getPath).toArray === Seq(2, 3).map(toDelta))
+      .map(_.getPath.getName).toArray === Seq(2, 3).map(_.toString))
     assert(store.listFrom(deltas(3), sessionHadoopConf)
-      .map(_.getPath).toArray === Seq(3).map(toDelta))
+      .map(_.getPath.getName).toArray === Seq(3).map(_.toString))
     assert(store.listFrom(deltas(4), sessionHadoopConf).map(_.getPath.getName).toArray === Nil)
   }
 
@@ -193,7 +183,7 @@ abstract class LogStoreSuiteBase extends QueryTest
   test("readAsIterator should be lazy") {
     withTempDir { tempDir =>
       val store = createLogStore(spark)
-      val testFile = new File(tempDir, "00000000000000000000.json").getCanonicalPath
+      val testFile = new File(tempDir, "readAsIterator").getCanonicalPath
       store.write(new Path(testFile), Iterator("foo", "bar"), overwrite = false, sessionHadoopConf)
 
       withSQLConf(

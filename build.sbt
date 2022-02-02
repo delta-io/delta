@@ -1,4 +1,4 @@
- /*
+/*
  * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -287,7 +287,7 @@ def ignoreUndocumentedPackages(packages: Seq[Seq[java.io.File]]): Seq[Seq[java.i
 }
 
 lazy val unidocSettings = Seq(
-  
+
   // Configure Scala unidoc
   ScalaUnidoc / unidoc / scalacOptions ++= Seq(
     "-skip-packages", "org:com:io.delta.sql:io.delta.tables.execution",

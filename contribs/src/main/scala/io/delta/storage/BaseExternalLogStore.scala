@@ -37,17 +37,6 @@ abstract class BaseExternalLogStore(
     with DeltaLogging {
 
   /**
-   * Delete file from filesystem.
-   * @param fs reference to [[FileSystem]]
-   * @param path path to delete
-   * @return Boolean true if delete is successful else false
-   */
-  private def deleteFile(fs: FileSystem, path: Path): Boolean = {
-    logDebug(s"delete file: $path")
-    fs.delete(path, false)
-  }
-
-  /**
    * Copies file within filesystem
    * @param fs reference to [[FileSystem]]
    * @param src path to source file
@@ -59,17 +48,10 @@ abstract class BaseExternalLogStore(
     val output_stream = fs.create(dst, true)
     try {
       IOUtils.copy(input_stream, output_stream)
-    } finally {
       output_stream.close()
+    } finally {
       input_stream.close()
     }
-  }
-
-  /**
-   * Check if the path is an initial version of a Delta log.
-   */
-  private def isInitialVersion(path: Path): Boolean = {
-    FileNames.isDeltaFile(path) && FileNames.deltaVersion(path) == 0L
   }
 
   private def resolvePath(
@@ -200,33 +182,35 @@ abstract class BaseExternalLogStore(
       return writeActions(fs, path, actions);
     };
 
-    val parentPath = resolvedPath.getParent
-    assert(FileNames.isDeltaFile(path))
-    val version = FileNames.deltaVersion(path)
+    if (FileNames.isDeltaFile(path)) {
+      val parentPath = resolvedPath.getParent
+      val version = FileNames.deltaVersion(path)
 
-    if (version > 0) {
-      val prevVersion = version - 1
-      val prevPath = FileNames.deltaFile(parentPath, prevVersion)
-      getDbEntry(prevPath) match {
-        case Some(entry) => fixDeltaLog(fs, entry)
-        case None =>
-          if (!fs.exists(prevPath)) {
-            throw new java.nio.file.FileSystemException(
-              s"previous commit ${prevPath} doesn't exist"
-            )
-          }
+      if (version > 0) {
+        val prevVersion = version - 1
+        val prevPath = FileNames.deltaFile(parentPath, prevVersion)
+        getDbEntry(prevPath) match {
+          case Some(entry) => fixDeltaLog(fs, entry)
+          case None =>
+            if (!fs.exists(prevPath)) {
+              throw new java.nio.file.FileSystemException(
+                s"previous commit ${prevPath} doesn't exist"
+              )
+            }
           // previous commit exists in fs but not in dynamodb
+        }
+      } else {
+        getDbEntry(path) match {
+          case Some(entry) =>
+            if (entry.complete && !fs.exists(path)) {
+              throw new java.nio.file.FileSystemException(
+                s"Old entries for ${parentPath} still exist in the database"
+              )
+            }
+          case None => ;
+        }
       }
-    } else {
-      getDbEntry(path) match {
-        case Some(entry) =>
-          if (entry.complete && !fs.exists(path)) {
-            throw new java.nio.file.FileSystemException(
-              s"Old entries for ${parentPath} still exist in the database"
-            )
-          }
-        case None => ;
-      }
+
     }
 
     val tempPath = createTemporaryPath(resolvedPath)

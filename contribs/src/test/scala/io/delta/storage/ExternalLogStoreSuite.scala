@@ -161,23 +161,6 @@ class MemoryLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
       }
     }
   }
-
-  /**
-   * Check path exists on filesystem or in cache
-   * @param fs reference to [[FileSystem]]
-   * @param resolvedPath path to check
-   * @return Boolean true if file exists else false
-   */
-  // private def exists(
-  //   fs: FileSystem,
-  //   resolvedPath: Path
-  // ): Boolean = {
-  //   // Ignore the cache for the first file of a Delta log
-  //   listFrom(fs, resolvedPath)
-  //     .take(1)
-  //     .exists(_.getPath.getName == resolvedPath.getName)
-  // }
-
 }
 
 object MemoryLogStore {
