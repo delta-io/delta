@@ -17,6 +17,7 @@
 package io.delta.storage
 import org.apache.spark.SparkConf
 import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs._
 
 class FailingDynamoDBLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
     extends DynamoDBLogStore(sparkConf, hadoopConf) {
@@ -36,17 +37,29 @@ class FailingDynamoDBLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
 
   private val rng: java.util.Random = new java.util.Random()
 
-  override def onWriteCopyTempFile(): Unit = injectError("write_copy_temp_file")
+  override def writeCopyTempFile(fs: FileSystem, src: Path, dst: Path): Unit = {
+    injectError("write_copy_temp_file")
+    super.writeCopyTempFile(fs, src, dst)
+  }
 
-  override def onWritePutDbEntry(): Unit = injectError("write_put_db_entry")
+  override protected def writePutCompleteDbEntry(entry: LogEntry): Unit = {
+    injectError("write_put_db_entry")
+    super.writePutCompleteDbEntry(entry)
+  }
 
-  override def onFixDeltaLogCopyTempFile(): Unit = injectError(
-    "fix_delta_log_copy_temp_file"
-  )
+  override def fixDeltaLogCopyTempFile(
+      fs: FileSystem,
+      src: Path,
+      dst: Path
+  ): Unit = {
+    injectError("fix_delta_log_copy_temp_file")
+    super.fixDeltaLogCopyTempFile(fs, src, dst)
+  }
 
-  override def onFixDeltaLogPutDbEntry(): Unit = injectError(
-    "fix_delta_log_copy_temp_file"
-  )
+  override def fixDeltaLogPutCompleteDbEntry(entry: LogEntry): Unit = {
+    injectError("fix_delta_log_put_db_entry")
+    super.fixDeltaLogPutCompleteDbEntry(entry)
+  }
 
   private def injectError(name: String): Unit = {
     assert(

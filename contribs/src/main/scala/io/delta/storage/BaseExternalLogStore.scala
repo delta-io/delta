@@ -96,12 +96,10 @@ abstract class BaseExternalLogStore(
       )
       try {
         if (!copied && !fs.exists(entry.absoluteJsonPath)) {
-          onFixDeltaLogCopyTempFile()
-          copyFile(fs, entry.absoluteTempPath, entry.absoluteJsonPath());
+          fixDeltaLogCopyTempFile(fs, entry.absoluteTempPath, entry.absoluteJsonPath);
           copied = true;
         }
-        onFixDeltaLogPutDbEntry();
-        putDbEntry(entry.asComplete(), overwrite = true);
+        fixDeltaLogPutCompleteDbEntry(entry);
         logInfo(s"fixed ${entry.fileName}")
         return
       } catch {
@@ -111,6 +109,14 @@ abstract class BaseExternalLogStore(
       }
       retry += 1;
     }
+  }
+
+  protected def fixDeltaLogCopyTempFile(fs: FileSystem, src: Path, dst: Path): Unit = {
+    copyFile(fs, src, dst);
+  }
+
+  protected def fixDeltaLogPutCompleteDbEntry(entry: LogEntry): Unit = {
+    putDbEntry(entry.asComplete(), overwrite = true);
   }
 
   /**
@@ -240,22 +246,23 @@ abstract class BaseExternalLogStore(
     putDbEntry(entry, overwrite = false)
 
     try {
-      onWriteCopyTempFile();
-      copyFile(fs, entry.absoluteTempPath(), resolvedPath)
+      writeCopyTempFile(fs, entry.absoluteTempPath(), resolvedPath)
       // Commit (with overwrite=true) to DynamoDB entry E(N, true)
       // with commitTime attribute in epoch seconds
-      onWritePutDbEntry();
-      putDbEntry(entry.asComplete(), overwrite = true)
+      writePutCompleteDbEntry(entry)
     } catch {
       case e: Throwable =>
         logInfo(s"${e.getClass.getName}: ignoring recoverable error: $e")
     }
   }
 
-  protected def onWriteCopyTempFile(): Unit = {}
-  protected def onWritePutDbEntry(): Unit = {}
-  protected def onFixDeltaLogCopyTempFile(): Unit = {}
-  protected def onFixDeltaLogPutDbEntry(): Unit = {}
+  protected def writeCopyTempFile(fs: FileSystem, src: Path, dst: Path) = {
+    copyFile(fs, src, dst)
+  }
+
+  protected def writePutCompleteDbEntry(entry: LogEntry): Unit = {
+    putDbEntry(entry.asComplete(), overwrite = true)
+  }
 
   /*
    * Write to db in exclusive way.
