@@ -44,7 +44,7 @@ class ExternalLogStoreSuite extends LogStoreSuiteBase {
   test("single write") {
     withTempDir { tempDir =>
       val store = createLogStore(spark)
-      val path = FileNames.deltaFile(new Path(tempDir.toURI), 0)
+      val path = FileNames.deltaFile(new Path(new Path(tempDir.toURI), "_delta_log"), 0)
       store.write(path, Iterator("foo", "bar"), false)
       val entry = MemoryLogStore.hashMap.get(path);
       assert(entry != null)
@@ -55,7 +55,7 @@ class ExternalLogStoreSuite extends LogStoreSuiteBase {
   test("double write") {
     withTempDir { tempDir =>
       val store = createLogStore(spark)
-      val path = FileNames.deltaFile(new Path(tempDir.toURI), 0)
+      val path = FileNames.deltaFile(new Path(new Path(tempDir.toURI), "_delta_log"), 0)
       store.write(path, Iterator("foo", "bar"), false)
       assert(MemoryLogStore.hashMap.containsKey(path))
       assertThrows[java.nio.file.FileSystemException] {
@@ -67,7 +67,7 @@ class ExternalLogStoreSuite extends LogStoreSuiteBase {
   test("overwrite") {
     withTempDir { tempDir =>
       val store = createLogStore(spark)
-      val path = FileNames.deltaFile(new Path(tempDir.toURI), 0)
+      val path = FileNames.deltaFile(new Path(new Path(tempDir.toURI), "_delta_log"), 0)
       store.write(path, Iterator("foo", "bar"), false)
       assert(MemoryLogStore.hashMap.containsKey(path))
       store.write(path, Iterator("foo", "bar"), true)
@@ -84,7 +84,7 @@ class ExternalLogStoreSuite extends LogStoreSuiteBase {
       withTempDir { tempDir =>
         val store = createLogStore(spark)
         val path = FileNames.deltaFile(
-          new Path(s"failing:${tempDir.getCanonicalPath}"),
+          new Path(new Path(s"failing:${tempDir.getCanonicalPath}"), "_delta_log"),
           0
         )
         store.write(path, Iterator("foo", "bar"), false)
@@ -137,7 +137,7 @@ class MemoryLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
       .map(r => r._2)
   }
 
-  override protected def getDbEntry(path: Path): Option[LogEntry] = {
+  override protected def getDbEntry(tablePath: Path, path: Path): Option[LogEntry] = {
     hashMap.asScala.get(path)
   }
 

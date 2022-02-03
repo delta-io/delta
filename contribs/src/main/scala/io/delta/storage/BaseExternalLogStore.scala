@@ -125,8 +125,19 @@ abstract class BaseExternalLogStore(
    */
   protected def createTemporaryPath(path: Path): String = {
     val uuid = java.util.UUID.randomUUID().toString
-    s".tmp/${path.getName}.$uuid" // Q: remove path.getName part?
+    s".tmp/${path.getName}.$uuid"
   }
+
+  protected def getTablePath(path: Path): Path = {
+    var tablePath = path.getParent;
+    if (tablePath.getName == "_delta_log") {
+      // we do this conditionally as tests in LogStoreSuiet do not
+      // create _delta_log directory
+      tablePath = tablePath.getParent
+    }
+    return tablePath
+  }
+
   override def listFrom(path: Path): Iterator[FileStatus] = {
     listFrom(path, getHadoopConfiguration)
   }
@@ -137,13 +148,9 @@ abstract class BaseExternalLogStore(
   ): Iterator[FileStatus] = {
     logDebug(s"listFrom path: ${path}")
     val (fs, resolvedPath) = resolvePath(path, hadoopConf)
-    var entry = getLatestDbEntry(resolvedPath.getParent)
+    val tablePath = getTablePath(resolvedPath)
+    var entry = getLatestDbEntry(tablePath)
     entry.foreach(fixDeltaLog(fs, _))
-
-    val parentPath = resolvedPath.getParent
-    if (!fs.exists(parentPath)) {
-      throw new FileNotFoundException(s"No such file or directory: $parentPath")
-    }
 
     super.listFrom(path, hadoopConf)
   }
@@ -182,14 +189,15 @@ abstract class BaseExternalLogStore(
       return writeActions(fs, path, actions);
     };
 
+    val tablePath = getTablePath(resolvedPath)
+
     if (FileNames.isDeltaFile(path)) {
-      val parentPath = resolvedPath.getParent
       val version = FileNames.deltaVersion(path)
 
       if (version > 0) {
         val prevVersion = version - 1
-        val prevPath = FileNames.deltaFile(parentPath, prevVersion)
-        getDbEntry(prevPath) match {
+        val prevPath = FileNames.deltaFile(tablePath, prevVersion)
+        getDbEntry(tablePath, prevPath) match {
           case Some(entry) => fixDeltaLog(fs, entry)
           case None =>
             if (!fs.exists(prevPath)) {
@@ -200,11 +208,11 @@ abstract class BaseExternalLogStore(
           // previous commit exists in fs but not in dynamodb
         }
       } else {
-        getDbEntry(path) match {
+        getDbEntry(tablePath, path) match {
           case Some(entry) =>
             if (entry.complete && !fs.exists(path)) {
               throw new java.nio.file.FileSystemException(
-                s"Old entries for ${parentPath} still exist in the database"
+                s"Old entries for ${tablePath} still exist in the database"
               )
             }
           case None => ;
@@ -217,7 +225,7 @@ abstract class BaseExternalLogStore(
 
     val entry =
       LogEntry(
-        resolvedPath.getParent,
+        tablePath,
         resolvedPath.getName,
         tempPath,
         false,
@@ -259,6 +267,7 @@ abstract class BaseExternalLogStore(
   ): Unit
 
   protected def getDbEntry(
+      absoluteTablePath: Path,
       absoluteJsonPath: Path
   ): Option[LogEntry]
 
@@ -273,7 +282,7 @@ abstract class BaseExternalLogStore(
  * The file metadata to be stored in the external db
  */
 case class LogEntry(
-    tablePath: Path, // Q: should it be path to delta_log or parent one?
+    tablePath: Path,
     fileName: String,
     tempPath: String,
     complete: Boolean,
@@ -288,6 +297,6 @@ case class LogEntry(
       Some(System.currentTimeMillis() / 1000)
     )
   }
-  def absoluteJsonPath(): Path = new Path(tablePath, fileName)
+  def absoluteJsonPath(): Path = new Path(new Path(tablePath, "_delta_log"), fileName)
   def absoluteTempPath(): Path = new Path(tablePath, tempPath)
 }

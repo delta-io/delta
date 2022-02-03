@@ -93,6 +93,7 @@ class DynamoDBLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
   }
 
   override protected def getDbEntry(
+      absoluteTablePath: Path,
       absoluteJsonPath: Path
   ): Option[LogEntry] = {
     Option(
@@ -101,7 +102,7 @@ class DynamoDBLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
           new GetItemRequest(
             tableName,
             Map(
-              "tablePath" -> new AttributeValue(absoluteJsonPath.getParent.toString),
+              "tablePath" -> new AttributeValue(absoluteTablePath.toString),
               "fileName" -> new AttributeValue(absoluteJsonPath.getName)
             ).asJava
           )
