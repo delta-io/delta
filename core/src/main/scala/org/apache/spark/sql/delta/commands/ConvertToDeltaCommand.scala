@@ -106,10 +106,10 @@ abstract class ConvertToDeltaCommandBase(
 
     // TODO: Leverage the analyzer for all this work
     if (isCatalogTable(spark.sessionState.analyzer, tableIdentifier)) {
-      val ident = Identifier.of(
-        tableIdentifier.database.map(Array(_))
-          .getOrElse(spark.sessionState.catalogManager.currentNamespace),
-        tableIdentifier.table)
+      val namespace =
+          tableIdentifier.database.map(Array(_))
+            .getOrElse(spark.sessionState.catalogManager.currentNamespace)
+      val ident = Identifier.of(namespace, tableIdentifier.table)
       v2SessionCatalog.loadTable(ident) match {
         case v1: V1Table if v1.catalogTable.tableType == CatalogTableType.VIEW =>
           throw DeltaErrors.operationNotSupportedException(

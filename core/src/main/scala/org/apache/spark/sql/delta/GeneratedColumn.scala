@@ -87,7 +87,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
    * generation expressions. Use the other `isGeneratedColumn` to check whether it's a generated
    * column instead.
    */
-  private def isGeneratedColumn(field: StructField): Boolean = {
+  private[delta] def isGeneratedColumn(field: StructField): Boolean = {
     field.metadata.contains(GENERATION_EXPRESSION_METADATA_KEY)
   }
 
@@ -155,31 +155,6 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
   def getGenerationExpression(field: StructField): Option[Expression] = {
     getGenerationExpressionStr(field.metadata).map { exprStr =>
       parseGenerationExpression(SparkSession.active, exprStr)
-    }
-  }
-
-  /**
-   * Remove generation expressions from the schema. We use this to remove generation expression
-   * metadata when reading a Delta table to avoid propagating generation expressions downstream.
-   */
-  def removeGenerationExpressions(schema: StructType): StructType = {
-    var updated = false
-    val updatedSchema = schema.map { field =>
-      if (isGeneratedColumn(field)) {
-        updated = true
-        val newMetadata = new MetadataBuilder()
-          .withMetadata(field.metadata)
-          .remove(GENERATION_EXPRESSION_METADATA_KEY)
-          .build()
-        field.copy(metadata = newMetadata)
-      } else {
-        field
-      }
-    }
-    if (updated) {
-      StructType(updatedSchema)
-    } else {
-      schema
     }
   }
 

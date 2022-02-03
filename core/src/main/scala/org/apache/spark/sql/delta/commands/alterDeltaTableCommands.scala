@@ -250,7 +250,8 @@ case class AlterTableChangeColumnDeltaCommand(
     columnPath: Seq[String],
     columnName: String,
     newColumn: StructField,
-    colPosition: Option[ColumnPosition])
+    colPosition: Option[ColumnPosition],
+    syncIdentity: Boolean)
   extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -269,15 +270,16 @@ case class AlterTableChangeColumnDeltaCommand(
           val oldColumn = struct(columnName)
           verifyColumnChange(sparkSession, struct(columnName), resolver, txn)
 
-          // Take the name, comment, nullability and data type from newField
-          // It's crucial to keep the old column's metadata, which may contain column mapping
-          // metadata.
-          val newField = newColumn.getComment().map(oldColumn.withComment).getOrElse(oldColumn)
-            .copy(
-              name = newColumn.name,
-              dataType =
-                SchemaUtils.changeDataType(oldColumn.dataType, newColumn.dataType, resolver),
-              nullable = newColumn.nullable)
+          val newField =
+            // Take the name, comment, nullability and data type from newField
+            // It's crucial to keep the old column's metadata, which may contain column mapping
+            // metadata.
+            newColumn.getComment().map(oldColumn.withComment).getOrElse(oldColumn)
+              .copy(
+                name = newColumn.name,
+                dataType =
+                  SchemaUtils.changeDataType(oldColumn.dataType, newColumn.dataType, resolver),
+                nullable = newColumn.nullable)
 
           // Replace existing field with new field
           val newFieldList = fields.map { field =>

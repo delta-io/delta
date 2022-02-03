@@ -850,14 +850,15 @@ abstract class UpdateSuiteBase
           where = "key >= 1 and value < 3",
           set = "value = key + value, key = key + 1"
         )
-        checkAnswer(spark.read.format("delta").table("v"), expectedResult)
+        var result = expectedResult
+        checkAnswer(spark.read.format("delta").table("v"), result)
       }
     }
   }
 
   testComplexTempViews("nontrivial projection")(
     text = "SELECT value as key, key as value FROM tab",
-    expectedResult = Seq(Row(3, 0), Row(3, 3))
+    expectedResult = Seq(Row(3, 3), Row(3, 4))
   )
 
   testComplexTempViews("view with too many internal aliases")(

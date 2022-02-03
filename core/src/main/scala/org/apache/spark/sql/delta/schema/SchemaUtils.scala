@@ -34,7 +34,7 @@ import org.apache.spark.sql.catalyst.analysis.{Resolver, TypeCoercion, Unresolve
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.catalog.Identifier
-import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
+import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
@@ -505,7 +505,7 @@ object SchemaUtils {
         case (Seq(), ArrayType(s: StructType, _)) =>
           find(colTail, s, stack :+ thisCol)
         case (Seq(), ArrayType(_, _)) =>
-          (Seq(0), 0)
+          (Nil, 0)
         case (_, ArrayType(_, _)) =>
           throw new AnalysisException(
             s"""An ArrayType was found. In order to access elements of an ArrayType, specify
@@ -887,7 +887,12 @@ object SchemaUtils {
    * columns have these characters.
    */
   def checkFieldNames(names: Seq[String]): Unit = {
-    names.foreach(ParquetSchemaConverter.checkFieldName)
+    names.foreach { name =>
+      // ,;{}()\n\t= and space are special characters in Delta schema
+      if (name.matches(".*[ ,;{}()\n\t=].*")) {
+        throw QueryCompilationErrors.columnNameContainsInvalidCharactersError(name)
+      }
+    }
     // The method checkFieldNames doesn't have a valid regex to search for '\n'. That should be
     // fixed in Apache Spark, and we can remove this additional check here.
     names.find(_.contains("\n")).foreach(col => throw DeltaErrors.invalidColumnName(col))

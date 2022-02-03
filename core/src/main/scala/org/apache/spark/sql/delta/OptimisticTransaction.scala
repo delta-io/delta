@@ -333,15 +333,23 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       // metadata.
       latestMetadata
     } else {
-      // This is not a new table. The new schema may be merged from the existing schema.
-      if (GeneratedColumn.satisfyGeneratedColumnProtocol(protocolBeforeUpdate)) {
-        // The protocol matches so this is a valid generated column table. Do nothing.
+      // This is not a new table. The new schema may be merged from the existing schema. We
+      // decide whether we should keep the Generated or IDENTITY columns by checking whether the
+      // protocol satisfies the requirements.
+      val (keepGeneratedColumns, keepIdentityColumns) =
+        ColumnWithDefaultExprUtils.satisfyProtocol(protocolBeforeUpdate)
+      if (keepIdentityColumns) {
+        // If a protocol satisfies IDENTITY column requirement, it must also satisfies Generated
+        // column requirement because IDENTITY columns are introduced after Generated columns. In
+        // this case we do nothing here.
+        assert(keepGeneratedColumns)
         latestMetadata
       } else {
         // As the protocol doesn't match, this table is created by an old version that doesn't
-        // support generated columns. We should remove the generation expressions to fix the
-        // schema to avoid bumping the writer version incorrectly.
-        val newSchema = GeneratedColumn.removeGenerationExpressions(latestMetadata.schema)
+        // support generated columns or identity columns. We should remove the generation
+        // expressions to fix the schema to avoid bumping the writer version incorrectly.
+        val newSchema = ColumnWithDefaultExprUtils.removeDefaultExpressions(latestMetadata
+          .schema, keepGeneratedColumns)
         if (newSchema ne latestMetadata.schema) {
           latestMetadata.copy(schemaString = newSchema.json)
         } else {
@@ -479,15 +487,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       val preparedActions = prepareCommit(actions, op)
 
       // Find the isolation level to use for this commit
-      val noDataChanged = actions.collect { case f: FileAction => f.dataChange }.forall(_ == false)
-      val isolationLevelToUse = if (noDataChanged) {
-        // If no data has changed (i.e. its is only being rearranged), then SnapshotIsolation
-        // provides Serializable guarantee. Hence, allow reduced conflict detection by using
-        // SnapshotIsolation of what the table isolation level is.
-        SnapshotIsolation
-      } else {
-        Serializable
-      }
+      val isolationLevelToUse = getIsolationLevelToUse(preparedActions)
 
       if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED)) {
         val isBlindAppend = {
@@ -639,6 +639,27 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
     if (removes.exists(_.dataChange)) deltaLog.assertRemovable()
 
     finalActions
+  }
+
+  // Returns the isolation level to use for committing the transaction
+  protected def getIsolationLevelToUse(preparedActions: Seq[Action]): IsolationLevel = {
+    val noDataChanged = preparedActions
+      .collectFirst { case f: FileAction if f.dataChange => f }
+      .isEmpty
+    val hasOnlyFileActions = preparedActions.forall(_.isInstanceOf[FileAction])
+    val isolationLevelToUse = if (noDataChanged && hasOnlyFileActions) {
+      // If no data has changed (i.e. its is only being rearranged), then SnapshotIsolation
+      // provides Serializable guarantee. Hence, allow reduced conflict detection by using
+      // SnapshotIsolation of what the table isolation level is.
+      SnapshotIsolation
+    } else {
+      getDefaultIsolationLevel()
+    }
+    isolationLevelToUse
+  }
+
+  protected def getDefaultIsolationLevel(): IsolationLevel = {
+    Serializable
   }
 
   /**

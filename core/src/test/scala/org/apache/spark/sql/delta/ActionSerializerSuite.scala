@@ -171,23 +171,23 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
   testActionSerDe(
     "AddFile (without tags) - json serialization/deserialization",
     AddFile("x=2/f1", partitionValues = Map("x" -> "2"),
-      size = 10, modificationTime = 1, dataChange = true, stats = "{rowCount: 2}"),
+      size = 10, modificationTime = 1, dataChange = true, stats = "{\"rowCount\": 2}"),
     expectedJson = """{"add":{"path":"x=2/f1","partitionValues":{"x":"2"},"size":10,""" +
-      """"modificationTime":1,"dataChange":true,"stats":"{rowCount: 2}"}}""".stripMargin)
+      """"modificationTime":1,"dataChange":true,"stats":"{\"rowCount\": 2}"}}""".stripMargin)
 
   testActionSerDe(
     "AddFile (with tags) - json serialization/deserialization",
     AddFile("part=p1/f1", partitionValues = Map("x" -> "2"), size = 10, modificationTime = 1,
-      dataChange = true, stats = "{rowCount: 2}", tags = Map("TAG1" -> "23")),
+      dataChange = true, stats = "{\"rowCount\": 2}", tags = Map("TAG1" -> "23")),
     expectedJson = """{"add":{"path":"part=p1/f1","partitionValues":{"x":"2"},"size":10""" +
-      ""","modificationTime":1,"dataChange":true,"stats":"{rowCount: 2}",""" +
+      ""","modificationTime":1,"dataChange":true,"stats":"{\"rowCount\": 2}",""" +
       """"tags":{"TAG1":"23"}}}"""
   )
 
   testActionSerDe(
     "RemoveFile (without tags) - json serialization/deserialization",
     AddFile("part=p1/f1", partitionValues = Map("x" -> "2"), size = 10, modificationTime = 1,
-      dataChange = true, stats = "{rowCount: 2}").removeWithTimestamp(timestamp = 11),
+      dataChange = true, stats = "{\"rowCount\": 2}").removeWithTimestamp(timestamp = 11),
     expectedJson = """{"remove":{"path":"part=p1/f1","deletionTimestamp":11,"dataChange":true,""" +
       """"extendedFileMetadata":true,"partitionValues":{"x":"2"},"size":10}}""".stripMargin)
 

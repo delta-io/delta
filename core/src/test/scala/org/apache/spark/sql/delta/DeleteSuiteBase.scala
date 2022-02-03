@@ -504,14 +504,17 @@ abstract class DeleteSuiteBase extends QueryTest
           "v",
           "key >= 1 and value < 3"
         )
-        checkAnswer(spark.read.format("delta").table("v"), expectResult)
+        var result = expectResult
+        checkAnswer(
+          spark.read.format("delta").table("v"),
+          result)
       }
     }
   }
 
   testComplexTempViews("nontrivial projection")(
     text = "SELECT value as key, key as value FROM tab",
-    expectResult = Seq(Row(3, 0))
+    expectResult = Nil
   )
 
   testComplexTempViews("view with too many internal aliases")(
