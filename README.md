@@ -128,6 +128,9 @@ No. The connector **must** be used with Apache Hive. It doesn't work in other sy
 #### If I create a table using the connector in Hive, can I query it in Apache Spark or Presto?
 No. The table created by this connector in Hive cannot be read in any other systems right now. We recommend to create different tables in different systems but point to the same path. Although you need to use different table names to query the same Delta table, the underlying data will be shared by all of systems.
 
+#### If a table in the Hive Metastore is created by other systems such as Apache Spark or Presto, can I use this connector to query it in Hive?
+No. If a table in the Hive Metastore is created by other systems such as Apache Spark or Presto, Hive cannot find the correct connector to read it. You can follow our instruction to [create a new table](#create-a-hive-table) with a different table name but point to the same path in Hive. Although it's a different table name, the underlying data will be shared by all of systems. We recommend to create different tables in different systems but point to the same path.
+
 #### Can I write to a Delta table using this connector?
 No. The connector doesn't support writing to a Delta table.
 
