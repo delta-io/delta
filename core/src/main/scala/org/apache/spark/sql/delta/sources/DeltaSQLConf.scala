@@ -531,6 +531,15 @@ trait DeltaSQLConfBase {
           |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
+
+  val GENERATED_COLUMN_PARTITION_FILTER_OPTIMIZATION_ENABLED =
+    buildConf("generatedColumn.partitionFilterOptimization.enabled")
+      .internal()
+      .doc(
+      "Whether to extract partition filters automatically from data filters for a partition" +
+        " generated column if possible")
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

@@ -90,7 +90,9 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
     extensions.injectPostHocResolutionRule { session =>
       new PreprocessTableDelete(session.sessionState.conf)
     }
-    extensions.injectOptimizerRule { session =>
+    // needs to be in own optimization batch otherwise other optimizer rules will reduce the
+    // generated column partition filters
+    extensions.injectPreCBORule { session =>
       new ActiveOptimisticTransactionRule(session)
     }
   }
