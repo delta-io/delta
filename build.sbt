@@ -33,6 +33,7 @@ lazy val commonSettings = Seq(
 )
 
 lazy val core = (project in file("core"))
+  .dependsOn(storage)
   .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin, Antlr4Plugin)
   .settings (
     name := "delta-core",
@@ -156,6 +157,19 @@ lazy val contribs = (project in file("contribs"))
       Files.createDirectories(dir.toPath)
     },
     Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value
+  )
+
+// TODO javastyle tests
+// TODO unidoc
+lazy val storage = (project in file("storage"))
+  .settings (
+    name := "delta-storage",
+    commonSettings,
+    mimaSettings,
+    releaseSettings,
+    libraryDependencies ++= Seq(
+      "org.apache.hadoop" % "hadoop-client-api" % "3.3.1" % "provided"
+    )
   )
 
 /**
