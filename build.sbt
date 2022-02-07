@@ -167,7 +167,7 @@ lazy val storage = (project in file("storage"))
     commonSettings,
     releaseSettings,
     libraryDependencies ++= Seq(
-      // User can provide any version >= 3.1.0 (released in 2018). We don't use any new fancy APIs.
+      // User can provide any 2.x or 3.x version. We don't use any new fancy APIs.
       "org.apache.hadoop" % "hadoop-client-api" % "3.1.0" % "provided"
     )
   )
