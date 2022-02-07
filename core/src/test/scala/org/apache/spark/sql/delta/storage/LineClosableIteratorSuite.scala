@@ -16,45 +16,47 @@
 
 package org.apache.spark.sql.delta.storage
 
-import java.io.StringReader
+import java.io.{Reader, StringReader}
 
 import org.apache.spark.SparkFunSuite
 
-class LineClosableIteratorSuite extends SparkFunSuite {
+abstract class LineClosableIteratorSuiteBase extends SparkFunSuite {
+  
+  protected def createIter(_reader: Reader): ClosableIterator[String]
 
   test("empty") {
-    var iter = new LineClosableIterator(new StringReader(""))
+    var iter = createIter(new StringReader(""))
     assert(!iter.hasNext)
     intercept[NoSuchElementException] { iter.next() }
 
-    iter = new LineClosableIterator(new StringReader(""))
+    iter = createIter(new StringReader(""))
     intercept[NoSuchElementException] { iter.next() }
 
-    iter = new LineClosableIterator(new StringReader(""))
+    iter = createIter(new StringReader(""))
     iter.close()
     intercept[IllegalStateException] { iter.hasNext }
     intercept[IllegalStateException] { iter.next() }
   }
 
   test("one elem") {
-    var iter = new LineClosableIterator(new StringReader("foo"))
+    var iter = createIter(new StringReader("foo"))
     assert(iter.hasNext)
     assert(iter.next() == "foo")
     assert(!iter.hasNext)
     intercept[NoSuchElementException] { iter.next() }
 
-    iter = new LineClosableIterator(new StringReader("foo"))
+    iter = createIter(new StringReader("foo"))
     assert(iter.next() == "foo")
     intercept[NoSuchElementException] { iter.next() }
 
-    iter = new LineClosableIterator(new StringReader("foo"))
+    iter = createIter(new StringReader("foo"))
     iter.close()
     intercept[IllegalStateException] { iter.hasNext }
     intercept[IllegalStateException] { iter.next() }
   }
 
   test("two elems") {
-    var iter = new LineClosableIterator(new StringReader("foo\nbar"))
+    var iter = createIter(new StringReader("foo\nbar"))
     assert(iter.hasNext)
     assert(iter.next() == "foo")
     assert(iter.hasNext)
@@ -62,18 +64,18 @@ class LineClosableIteratorSuite extends SparkFunSuite {
     assert(!iter.hasNext)
     intercept[NoSuchElementException] { iter.next() }
 
-    iter = new LineClosableIterator(new StringReader("foo\nbar"))
+    iter = createIter(new StringReader("foo\nbar"))
     assert(iter.next() == "foo")
     assert(iter.next() == "bar")
     intercept[NoSuchElementException] { iter.next() }
 
-    iter = new LineClosableIterator(new StringReader("foo\nbar"))
+    iter = createIter(new StringReader("foo\nbar"))
     assert(iter.next() == "foo")
     iter.close()
     intercept[IllegalStateException] { iter.hasNext }
     intercept[IllegalStateException] { iter.next() }
 
-    iter = new LineClosableIterator(new StringReader("foo\nbar"))
+    iter = createIter(new StringReader("foo\nbar"))
     assert(iter.hasNext) // Cache `nextValue`
     iter.close()
     // We should throw `IllegalStateException` even if there is a cached `nextValue`.
@@ -89,7 +91,7 @@ class LineClosableIteratorSuite extends SparkFunSuite {
         closed = true
       }
     }
-    val iter = new LineClosableIterator(reader)
+    val iter = createIter(reader)
     assert(iter.toList == "foo" :: Nil)
     assert(closed)
   }
@@ -102,7 +104,7 @@ class LineClosableIteratorSuite extends SparkFunSuite {
         closed = true
       }
     }
-    val iter = new LineClosableIterator(reader)
+    val iter = createIter(reader)
     iter.close()
     assert(closed)
   }
@@ -115,9 +117,32 @@ class LineClosableIteratorSuite extends SparkFunSuite {
         closed += 1
       }
     }
-    val iter = new LineClosableIterator(reader)
+    val iter = createIter(reader)
     assert(iter.toList == "foo" :: Nil)
     iter.close()
     assert(closed == 1)
   }
+}
+
+class InternalLineClosableIteratorSuite extends LineClosableIteratorSuiteBase {
+  override protected def createIter(_reader: Reader): ClosableIterator[String] = {
+    new LineClosableIterator(_reader)
+  }
+}
+
+class PublicLineClosableIteratorSuite extends LineClosableIteratorSuiteBase {
+  override protected def createIter(_reader: Reader): ClosableIterator[String] = {
+    val impl = new io.delta.storage.LineCloseableIterator(_reader)
+    new LineClosableIteratorAdaptor(impl)
+  }
+}
+
+private class LineClosableIteratorAdaptor(
+    impl: io.delta.storage.LineCloseableIterator) extends ClosableIterator[String] {
+
+  override def hasNext(): Boolean = impl.hasNext
+
+  override def next(): String = impl.next()
+
+  override def close(): Unit = impl.close()
 }
