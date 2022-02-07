@@ -21,6 +21,15 @@ import org.apache.spark.sql.types.StructType
 
 /**
  * Helper class for generating a joined projection.
+ *
+ *
+ * This class is used to instantiate a "Joined Row" - a wrapper that makes two rows appear to be a
+ * single concatenated row, by using nested access. It is primarily used during statistics
+ * collection to update a buffer of per-column aggregates (i.e. the left-hand side row) with stats
+ * from the latest row processed (i.e. the right-hand side row).
+ *
+ * Implementation Note: If we instead stored `leftRow` and `rightRow` we would have to perform size
+ * checks on `leftRow` during every access, which is slow.
  */
 object JoinedProjection {
   /**
@@ -66,6 +75,9 @@ object JoinedProjection {
     }
   }
 
+  /**
+   * Helper method to create a nested struct field with efficient value extraction.
+   */
   private def createMapping(
       index: Int,
       nullable: Boolean,
