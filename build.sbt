@@ -165,7 +165,6 @@ lazy val storage = (project in file("storage"))
   .settings (
     name := "delta-storage",
     commonSettings,
-    mimaSettings,
     releaseSettings,
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client-api" % "3.3.1" % "provided"
