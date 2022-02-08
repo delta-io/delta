@@ -16,6 +16,8 @@
 
 package io.delta.storage;
 
+import org.apache.spark.annotation.DeveloperApi;
+
 import java.io.Closeable;
 import java.util.Iterator;
 
@@ -27,4 +29,5 @@ import java.util.Iterator;
  *
  * @since 1.0.0
  */
+@DeveloperApi
 public interface CloseableIterator<T> extends Iterator<T>, Closeable {}
