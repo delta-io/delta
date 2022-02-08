@@ -663,12 +663,15 @@ def flinkScalaVersion(scalaBinaryVersion: String): String = {
 
 val flinkVersion = "1.12.0"
 lazy val flinkConnector = (project in file("flink-connector"))
+  .dependsOn(standaloneCosmetic % "provided")
+  .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin)
   .settings (
     name := "flink-connector",
     scalaVersion := "2.12.8",
     commonSettings,
     publishArtifact := scalaBinaryVersion.value != "2.13",
     Test / publishArtifact := false,
+    skipReleaseSettings, // TODO remove when releasing
     crossPaths := false,
     libraryDependencies ++= Seq(
       "org.apache.flink" % ("flink-parquet_" + flinkScalaVersion(scalaBinaryVersion.value)) % flinkVersion % "provided",
@@ -678,7 +681,11 @@ lazy val flinkConnector = (project in file("flink-connector"))
       "org.apache.flink" % ("flink-table-runtime-blink_" + flinkScalaVersion(scalaBinaryVersion.value)) % flinkVersion % "test",
       "org.apache.flink" % "flink-connector-test-utils" % flinkVersion % "test",
       "org.apache.flink" % ("flink-clients_" + flinkScalaVersion(scalaBinaryVersion.value)) % flinkVersion % "test",
-      "com.github.sbt" % "junit-interface" % "0.12" % Test
+      "com.github.sbt" % "junit-interface" % "0.12" % Test,
+
+      // Compiler plugins
+      // -- Bump up the genjavadoc version explicitly to 0.18 to work with Scala 2.12
+      compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.18" cross CrossVersion.full)
     ),
     // generating source java class with version number to be passed during commit to the DeltaLog as engine info
     // (part of transaction's metadata)
@@ -693,7 +700,29 @@ lazy val flinkConnector = (project in file("flink-connector"))
            |}
            |""".stripMargin)
       Seq(file)
-    }
+    },
+    /**
+     * Unidoc settings
+     * Generate javadoc with `unidoc` command, outputs to `flink-connector/target/javaunidoc`
+     * e.g. build/sbt flinkConnector/unidoc
+     */
+    JavaUnidoc / unidoc / javacOptions := Seq(
+      "-public",
+      "-windowtitle", "Flink Connector" + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
+      "-noqualifier", "java.lang",
+      // TODO: any other tags you used in the flink connector?
+      "-tag", "implNote:a:Implementation Note:",
+      "-Xdoclint:all"
+    ),
+    JavaUnidoc / unidoc /  unidocAllSources := {
+      (JavaUnidoc / unidoc / unidocAllSources).value
+        // include only relevant flink-connector classes
+        .map(_.filter(_.getCanonicalPath.contains("/flink-connector/")))
+        // exclude internal classes
+        // .map(_.filterNot(_.getCanonicalPath.contains("/internal/")))
+        // exclude flink package
+        // .map(_.filterNot(_.getCanonicalPath.contains("org/apache/flink/")))
+    },
+    // Ensure unidoc is run with tests. Must be cleaned before test for unidoc to be generated.
+    (Test / test) := ((Test / test) dependsOn (Compile / unidoc)).value
   )
-  .settings(skipReleaseSettings)
-  .dependsOn(standaloneCosmetic % "provided")

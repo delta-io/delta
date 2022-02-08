@@ -24,7 +24,6 @@ import java.util.Optional;
 
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
 import io.delta.flink.sink.internal.committables.DeltaGlobalCommittable;
-import io.delta.flink.sink.internal.committer.DeltaGlobalCommitter;
 import io.delta.flink.sink.internal.logging.Logging;
 import io.delta.flink.sink.internal.writer.DeltaWriter;
 import io.delta.flink.sink.internal.writer.DeltaWriterBucketState;
@@ -58,10 +57,10 @@ import io.delta.standalone.DeltaLog;
  * {@link org.apache.flink.connector.file.sink.FileSink}.
  * <p>
  * Next during the checkpoint phase files are "closed" (renamed) by the independent instances of
- * {@link io.delta.flink.sink.internal.committer.DeltaCommitter} that behave very similar
+ * {@code io.delta.flink.sink.internal.committer.DeltaCommitter} that behave very similar
  * to {@link org.apache.flink.connector.file.sink.committer.FileCommitter}.
  * When all the parallel committers are done, then all the files are committed at once by
- * single-parallelism {@link io.delta.flink.sink.internal.committer.DeltaGlobalCommitter}.
+ * single-parallelism {@code io.delta.flink.sink.internal.committer.DeltaGlobalCommitter}.
  * <p>
  * This {@link DeltaSink} sources many specific implementations from the
  * {@link org.apache.flink.connector.file.sink.FileSink} so for most of the low level behaviour one
@@ -71,8 +70,8 @@ import io.delta.standalone.DeltaLog;
  *  <li>extending committable information with files metadata (name, size, rows, last update
  *      timestamp)</li>
  *  <li>providing DeltaLake-specific behaviour which is mostly contained in the
- *      {@link DeltaGlobalCommitter} implementing the commit to the {@link DeltaLog} at the final
- *      stage of each checkpoint.</li>
+ *      {@code io.delta.flink.sink.internal.committer.DeltaGlobalCommitter} implementing the commit
+ *      to the {@link DeltaLog} at the final stage of each checkpoint.</li>
  * </ul>
  *
  * @param <IN> Type of the elements in the input of the sink that are also the elements to be
