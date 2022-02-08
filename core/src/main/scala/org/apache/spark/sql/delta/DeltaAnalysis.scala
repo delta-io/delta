@@ -285,7 +285,8 @@ class DeltaAnalysis(session: SparkSession)
   private def getCastFunction: CastFunction = {
     val timeZone = conf.sessionLocalTimeZone
     conf.storeAssignmentPolicy match {
-      case SQLConf.StoreAssignmentPolicy.LEGACY => Cast(_, _, Option(timeZone))
+      case SQLConf.StoreAssignmentPolicy.LEGACY =>
+        Cast(_, _, Option(timeZone), ansiEnabled = false)
       case SQLConf.StoreAssignmentPolicy.ANSI => AnsiCast(_, _, Option(timeZone))
       case SQLConf.StoreAssignmentPolicy.STRICT => UpCast(_, _)
     }

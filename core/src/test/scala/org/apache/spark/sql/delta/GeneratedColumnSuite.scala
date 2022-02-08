@@ -661,7 +661,9 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
       createTable(table, None, "c1 SMALLINT, c2 SMALLINT",
         Map("c2" -> "CAST(HASH(c1 + 32767s) AS SMALLINT)"), Nil)
       val tableSchema = spark.table(table).schema
-      Seq(32767.toShort).toDF("c1").write.format("delta").mode("append").saveAsTable(table)
+      withSQLConf(SQLConf.ANSI_ENABLED.key -> "false") {
+        Seq(32767.toShort).toDF("c1").write.format("delta").mode("append").saveAsTable(table)
+      }
       assert(tableSchema == spark.table(table).schema)
       // Insert an INT to `c1` should fail rather than changing the `c1` type to INT
       val e = intercept[AnalysisException] {

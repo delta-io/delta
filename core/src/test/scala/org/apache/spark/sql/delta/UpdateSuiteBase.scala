@@ -264,7 +264,7 @@ abstract class UpdateSuiteBase
       append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"), partitions)
 
       checkUpdate(condition = Some("key >= 1"),
-        setClauses = "value = key + cast(value as String), key = key + '1'",
+        setClauses = "value = key + cast(value as double), key = cast(key as double) + 1",
         expectedResults = Row(0, 3) :: Row(2, 5) :: Row(3, 4) :: Row(2, 2) :: Nil)
     }
   }
@@ -275,7 +275,7 @@ abstract class UpdateSuiteBase
       append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"), partitions)
 
       checkUpdate(condition = Some("key >= 1"),
-        setClauses = "value = key, key = null + '1'",
+        setClauses = "value = key, key = null + 1D",
         expectedResults = Row(0, 3) :: Row(null, 1) :: Row(null, 1) :: Row(null, 2) :: Nil)
     }
   }

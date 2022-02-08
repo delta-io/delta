@@ -64,7 +64,7 @@ case class DeltaTimeTravelSpec(
       // scalastyle:on throwerror
     }
     val strict = conf.getConf(DeltaSQLConf.DELTA_TIME_TRAVEL_STRICT_TIMESTAMP_PARSING)
-    val castResult = Cast(evaluable, TimestampType, Option(timeZone)).eval()
+    val castResult = Cast(evaluable, TimestampType, Option(timeZone), ansiEnabled = false).eval()
     if (strict && castResult == null) {
       throw DeltaErrors.timestampInvalid(evaluable)
     }

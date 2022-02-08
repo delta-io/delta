@@ -701,8 +701,9 @@ object ConvertToDeltaCommand {
         // Check if the partition value can be casted to the provided type
         if (!conf.getConf(DeltaSQLConf.DELTA_CONVERT_PARTITION_VALUES_IGNORE_CAST_FAILURE)) {
           partValues.literals.zip(partitionFields).foreach { case (literal, field) =>
-            if (literal.eval() != null && Cast(literal, field.dataType, tz).eval() == null) {
-              val partitionValue = Cast(literal, StringType, tz).eval()
+            if (literal.eval() != null &&
+                Cast(literal, field.dataType, tz, ansiEnabled = false).eval() == null) {
+              val partitionValue = Cast(literal, StringType, tz, ansiEnabled = false).eval()
               val partitionValueStr = Option(partitionValue).map(_.toString).orNull
               throw DeltaErrors.castPartitionValueException(partitionValueStr, field.dataType)
             }
@@ -711,7 +712,7 @@ object ConvertToDeltaCommand {
 
         val values = partValues
           .literals
-          .map(l => Cast(l, StringType, tz).eval())
+          .map(l => Cast(l, StringType, tz, ansiEnabled = false).eval())
           .map(Option(_).map(_.toString).orNull)
 
         partitionColNames.zip(partValues.columnNames).foreach { case (expected, parsed) =>
