@@ -37,15 +37,16 @@ import org.apache.spark.util.SerializableConfiguration
 case class DeltaFileStatistics(stats: Map[String, String]) extends WriteTaskStats
 
 /**
- * [[WriteTaskStatsTracker]] that collects the statistics defined by [[StatisticsCollection]]
- * for files that are being written into a delta table.
+ * A per-task (i.e. one instance per executor) [[WriteTaskStatsTracker]] that collects the
+ * statistics defined by [[StatisticsCollection]] for files that are being written into a delta
+ * table.
  *
  * @param dataCols Resolved data (i.e. non-partitionBy) columns of the dataframe to be written.
  * @param statsColExpr Resolved expression for computing all the statistics that we want to gather.
  * @param rootPath The Reservoir's root path.
  * @param hadoopConf Hadoop Config for being able to instantiate a [[FileSystem]].
  */
-class DeltaStatisticsTracker(
+class DeltaTaskStatisticsTracker(
     dataCols: Seq[Attribute],
     statsColExpr: Expression,
     rootPath: Path,
@@ -174,7 +175,7 @@ class DeltaStatisticsTracker(
 
 /**
  * Serializable factory class that holds together all required parameters for being able to
- * instantiate a [[DeltaStatisticsTracker]] on an executor.
+ * instantiate a [[DeltaTaskStatisticsTracker]] on an executor.
  *
  * @param hadoopConf The Hadoop configuration object to use on an executor.
  * @param path Root Reservoir path
@@ -194,7 +195,7 @@ class DeltaJobStatisticsTracker(
   override def newTaskInstance(): WriteTaskStatsTracker = {
     val rootPath = new Path(rootUri)
     val hadoopConf = srlHadoopConf.value
-    new DeltaStatisticsTracker(dataCols, statsColExpr, rootPath, hadoopConf)
+    new DeltaTaskStatisticsTracker(dataCols, statsColExpr, rootPath, hadoopConf)
   }
 
   override def processStats(stats: Seq[WriteTaskStats], jobCommitTime: Long): Unit = {
