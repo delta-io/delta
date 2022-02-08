@@ -20,7 +20,9 @@ package io.delta.flink.sink.internal.committables;
 
 import java.util.List;
 
-import io.delta.flink.sink.internal.logging.Logging;
+import io.delta.flink.sink.committables.AbstractDeltaCommittable;
+import io.delta.flink.sink.committables.AbstractDeltaGlobalCommittable;
+import io.delta.flink.sink.logging.Logging;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
@@ -54,19 +56,21 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  *         no longer recovered and exist only in the previously snapshotted states.</li>
  * </ol>
  */
-public class DeltaGlobalCommittable implements Logging {
+public class DeltaGlobalCommittable implements AbstractDeltaGlobalCommittable, Logging {
 
     private final List<DeltaCommittable> deltaCommittables;
 
-    public DeltaGlobalCommittable(List<DeltaCommittable> deltaCommittables) {
-        for (DeltaCommittable committable : deltaCommittables) {
+    public DeltaGlobalCommittable(List<AbstractDeltaCommittable> deltaCommittables) {
+        List<DeltaCommittable> committablesImpl =
+            (List<DeltaCommittable>) (List<?>) deltaCommittables;
+        for (DeltaCommittable committable : committablesImpl) {
             logInfo("Creating global committable object with committable for: " +
                 "appId=" + committable.getAppId() +
                 " checkpointId=" + committable.getCheckpointId() +
                 " deltaPendingFile=" + committable.getDeltaPendingFile()
             );
         }
-        this.deltaCommittables = checkNotNull(deltaCommittables);
+        this.deltaCommittables = (List<DeltaCommittable>) (List<?>) checkNotNull(deltaCommittables);
     }
 
     public List<DeltaCommittable> getDeltaCommittables() {

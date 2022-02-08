@@ -22,14 +22,13 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Objects;
 import java.util.regex.Pattern;
 
+import io.delta.flink.sink.committables.AbstractDeltaGlobalCommittable;
 import io.delta.flink.sink.internal.SchemaConverter;
-import io.delta.flink.sink.internal.committables.DeltaCommittable;
-import io.delta.flink.sink.internal.committables.DeltaGlobalCommittable;
 import io.delta.flink.sink.utils.DeltaSinkTestUtils;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.table.types.logical.RowType;
@@ -115,16 +114,15 @@ public class DeltaGlobalCommitterTestParametrized {
             tablePath,
             rowTypeToCommit,
             mergeSchema);
-        List<DeltaCommittable> deltaCommittables =
-            DeltaSinkTestUtils.getListOfDeltaCommittables(3, partitionSpec);
-        List<DeltaGlobalCommittable> globalCommittables =
-            Collections.singletonList(new DeltaGlobalCommittable(deltaCommittables));
+        int numAddedFiles = 3;
+        List<AbstractDeltaGlobalCommittable> globalCommittables =
+                DeltaSinkTestUtils.getListOfDeltaGlobalCommittables(numAddedFiles, partitionSpec);
 
         // WHEN
         globalCommitter.commit(globalCommittables);
 
         // THEN
-        validateCurrentSnapshotState(deltaCommittables.size());
+        validateCurrentSnapshotState(numAddedFiles);
         validateCurrentTableFiles(deltaLog.update());
         validateEngineInfo(deltaLog);
     }
@@ -149,7 +147,7 @@ public class DeltaGlobalCommitterTestParametrized {
         Snapshot snapshot = deltaLog.update();
         assertEquals(snapshot.getVersion(), expectedTableVersionAfterUpdate);
         assertEquals(snapshot.getAllFiles().size(), numFilesAdded + initialTableFilesCount);
-        assertEquals(deltaLog.snapshot().getMetadata().getSchema().toJson(),
+        assertEquals(Objects.requireNonNull(deltaLog.snapshot().getMetadata().getSchema()).toJson(),
             SchemaConverter.toDeltaDataType(rowTypeToCommit).toJson());
         assertEquals(snapshot.getMetadata().getPartitionColumns(), partitionColumns);
     }

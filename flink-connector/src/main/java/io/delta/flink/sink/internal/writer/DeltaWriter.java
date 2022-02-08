@@ -27,8 +27,10 @@ import java.util.Map;
 import javax.annotation.Nullable;
 
 import io.delta.flink.sink.DeltaTablePartitionAssigner;
-import io.delta.flink.sink.internal.committables.DeltaCommittable;
-import io.delta.flink.sink.internal.logging.Logging;
+import io.delta.flink.sink.committables.AbstractDeltaCommittable;
+import io.delta.flink.sink.logging.Logging;
+import io.delta.flink.sink.writer.AbstractDeltaWriter;
+import io.delta.flink.sink.writer.AbstractDeltaWriterBucketState;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.connector.sink.Sink;
 import org.apache.flink.api.connector.sink.SinkWriter;
@@ -69,8 +71,8 @@ import static org.apache.flink.util.Preconditions.checkState;
  * @param <IN> The type of input elements.
  */
 public class DeltaWriter<IN>
-    implements SinkWriter<IN, DeltaCommittable, DeltaWriterBucketState>,
-    Sink.ProcessingTimeService.ProcessingTimeCallback, Logging {
+    implements AbstractDeltaWriter<IN>, Sink.ProcessingTimeService.ProcessingTimeCallback, Logging {
+
 
     /**
      * Value used as a bucket id for noop bucket states. It will be used to snapshot and indicate
@@ -205,10 +207,10 @@ public class DeltaWriter<IN>
      * the same application id within all app restarts / recreation writers' states from snapshot.
      */
     @Override
-    public List<DeltaWriterBucketState> snapshotState() {
+    public List<AbstractDeltaWriterBucketState> snapshotState() {
         checkState(bucketWriter != null, "sink has not been initialized");
 
-        List<DeltaWriterBucketState> states = new ArrayList<>();
+        List<AbstractDeltaWriterBucketState> states = new ArrayList<>();
         for (DeltaWriterBucket<IN> bucket : activeBuckets.values()) {
             states.add(bucket.snapshotState(appId, nextCheckpointId));
         }
@@ -269,8 +271,8 @@ public class DeltaWriter<IN>
      * also increments the {@link DeltaWriter#nextCheckpointId} counter.
      */
     @Override
-    public List<DeltaCommittable> prepareCommit(boolean flush) throws IOException {
-        List<DeltaCommittable> committables = new ArrayList<>();
+    public List<AbstractDeltaCommittable> prepareCommit(boolean flush) throws IOException {
+        List<AbstractDeltaCommittable> committables = new ArrayList<>();
 
         // Every time before we prepare commit, we first check and remove the inactive
         // buckets. Checking the activeness right before pre-committing avoid re-creating

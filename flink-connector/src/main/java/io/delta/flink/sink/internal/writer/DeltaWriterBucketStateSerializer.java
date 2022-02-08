@@ -20,6 +20,7 @@ package io.delta.flink.sink.internal.writer;
 
 import java.io.IOException;
 
+import io.delta.flink.sink.writer.AbstractDeltaWriterBucketState;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.core.io.SimpleVersionedSerialization;
 import org.apache.flink.core.io.SimpleVersionedSerializer;
@@ -33,7 +34,7 @@ import org.apache.flink.streaming.api.functions.sink.filesystem.bucketassigners.
  * Versioned serializer for {@link DeltaWriterBucketState}.
  */
 public class DeltaWriterBucketStateSerializer
-    implements SimpleVersionedSerializer<DeltaWriterBucketState> {
+    implements SimpleVersionedSerializer<AbstractDeltaWriterBucketState> {
 
     /**
      * Magic number value for sanity check whether the provided bytes where not corrupted
@@ -46,7 +47,7 @@ public class DeltaWriterBucketStateSerializer
     }
 
     @Override
-    public byte[] serialize(DeltaWriterBucketState state) throws IOException {
+    public byte[] serialize(AbstractDeltaWriterBucketState state) throws IOException {
         DataOutputSerializer out = new DataOutputSerializer(256);
         out.writeInt(MAGIC_NUMBER);
         serializeV1(state, out);
@@ -64,13 +65,14 @@ public class DeltaWriterBucketStateSerializer
         throw new IOException("Unrecognized version or corrupt state: " + version);
     }
 
-    private void serializeV1(DeltaWriterBucketState state, DataOutputView dataOutputView)
+    private void serializeV1(AbstractDeltaWriterBucketState state, DataOutputView dataOutputView)
         throws IOException {
+        DeltaWriterBucketState stateInternal = (DeltaWriterBucketState) state;
         SimpleVersionedSerialization.writeVersionAndSerialize(
-            SimpleVersionedStringSerializer.INSTANCE, state.getBucketId(), dataOutputView);
-        dataOutputView.writeUTF(state.getBucketPath().toString());
-        dataOutputView.writeUTF(state.getAppId());
-        dataOutputView.writeLong(state.getCheckpointId());
+            SimpleVersionedStringSerializer.INSTANCE, stateInternal.getBucketId(), dataOutputView);
+        dataOutputView.writeUTF(stateInternal.getBucketPath().toString());
+        dataOutputView.writeUTF(stateInternal.getAppId());
+        dataOutputView.writeLong(stateInternal.getCheckpointId());
     }
 
     private DeltaWriterBucketState deserializeV1(DataInputView in) throws IOException {

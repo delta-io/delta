@@ -22,18 +22,16 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Random;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
 import io.delta.flink.sink.DeltaSink;
 import io.delta.flink.sink.DeltaTablePartitionAssigner;
+import io.delta.flink.sink.committables.AbstractDeltaCommittable;
+import io.delta.flink.sink.committables.AbstractDeltaGlobalCommittable;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
+import io.delta.flink.sink.internal.committables.DeltaGlobalCommittable;
 import org.apache.commons.io.FileUtils;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.RestOptions;
@@ -179,13 +177,14 @@ public class DeltaSinkTestUtils {
     static final String TEST_APP_ID = UUID.randomUUID().toString();
     static final long TEST_CHECKPOINT_ID = new Random().nextInt(10);
 
-    public static List<DeltaCommittable> getListOfDeltaCommittables(int size, long checkpointId) {
-        return getListOfDeltaCommittables(size, new LinkedHashMap<>(), checkpointId);
+
+    public static List<AbstractDeltaCommittable> committablesToAbstractCommittables(
+            List<DeltaCommittable> committables) {
+        return (List<AbstractDeltaCommittable>) (List<?>) committables;
     }
 
-    public static List<DeltaCommittable> getListOfDeltaCommittables(
-        int size, LinkedHashMap<String, String> partitionSpec) {
-        return getListOfDeltaCommittables(size, partitionSpec, TEST_CHECKPOINT_ID);
+    public static List<DeltaCommittable> getListOfDeltaCommittables(int size, long checkpointId) {
+        return getListOfDeltaCommittables(size, new LinkedHashMap<>(), checkpointId);
     }
 
     public static List<DeltaCommittable> getListOfDeltaCommittables(
@@ -198,6 +197,20 @@ public class DeltaSinkTestUtils {
             );
         }
         return deltaCommittableList;
+    }
+
+    public static List<AbstractDeltaGlobalCommittable> getListOfDeltaGlobalCommittables(
+            List<DeltaCommittable> committables) {
+        return Collections.singletonList(
+                new DeltaGlobalCommittable(committablesToAbstractCommittables(committables)));
+    }
+
+    public static List<AbstractDeltaGlobalCommittable> getListOfDeltaGlobalCommittables(
+            int size, LinkedHashMap<String, String> partitionSpec) {
+        List<AbstractDeltaCommittable> committables =
+                committablesToAbstractCommittables(getListOfDeltaCommittables(
+                        size, partitionSpec, TEST_CHECKPOINT_ID));
+        return Collections.singletonList(new DeltaGlobalCommittable(committables));
     }
 
     public static DeltaCommittable getTestDeltaCommittableWithPendingFile(

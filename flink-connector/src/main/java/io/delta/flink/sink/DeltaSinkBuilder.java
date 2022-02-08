@@ -22,15 +22,18 @@ import java.io.IOException;
 import java.io.Serializable;
 import java.util.UUID;
 
-import io.delta.flink.sink.internal.committables.DeltaCommittable;
+import io.delta.flink.sink.committables.AbstractDeltaCommittable;
+import io.delta.flink.sink.committables.AbstractDeltaGlobalCommittable;
 import io.delta.flink.sink.internal.committables.DeltaCommittableSerializer;
-import io.delta.flink.sink.internal.committables.DeltaGlobalCommittable;
 import io.delta.flink.sink.internal.committables.DeltaGlobalCommittableSerializer;
 import io.delta.flink.sink.internal.committer.DeltaCommitter;
 import io.delta.flink.sink.internal.committer.DeltaGlobalCommitter;
 import io.delta.flink.sink.internal.writer.DeltaWriter;
-import io.delta.flink.sink.internal.writer.DeltaWriterBucketState;
 import io.delta.flink.sink.internal.writer.DeltaWriterBucketStateSerializer;
+import io.delta.flink.sink.writer.AbstractDeltaWriter;
+import io.delta.flink.sink.writer.AbstractDeltaWriterBucketState;
+import org.apache.flink.api.connector.sink.Committer;
+import org.apache.flink.api.connector.sink.GlobalCommitter;
 import org.apache.flink.api.connector.sink.Sink;
 import org.apache.flink.core.fs.FileSystem;
 import org.apache.flink.core.fs.Path;
@@ -117,9 +120,9 @@ public class DeltaSinkBuilder<IN> implements Serializable {
 
     private BucketAssigner<IN, String> bucketAssigner;
 
-    private CheckpointRollingPolicy<IN, String> rollingPolicy;
+    private final CheckpointRollingPolicy<IN, String> rollingPolicy;
 
-    private OutputFileConfig outputFileConfig;
+    private final OutputFileConfig outputFileConfig;
 
     protected DeltaSinkBuilder(
         Path basePath,
@@ -173,8 +176,8 @@ public class DeltaSinkBuilder<IN> implements Serializable {
      * compatibility checks performed.
      *
      * @param mergeSchema whether we should try to update table's schema with stream's
-     *                              schema in case those will not match. See
-     *                              {@link DeltaSinkBuilder#mergeSchema} for details.
+     *                    schema in case those will not match. See
+     *                    {@link DeltaSinkBuilder#mergeSchema} for details.
      * @return builder for {@link DeltaSink}
      */
     public DeltaSinkBuilder<IN> withMergeSchema(final boolean mergeSchema) {
@@ -182,11 +185,12 @@ public class DeltaSinkBuilder<IN> implements Serializable {
         return this;
     }
 
-    DeltaCommitter createCommitter() throws IOException {
+    Committer<AbstractDeltaCommittable> createCommitter() throws IOException {
         return new DeltaCommitter(createBucketWriter());
     }
 
-    DeltaGlobalCommitter createGlobalCommitter() {
+    GlobalCommitter<AbstractDeltaCommittable, AbstractDeltaGlobalCommittable>
+        createGlobalCommitter() {
         return new DeltaGlobalCommitter(
             serializableConfiguration.conf(), tableBasePath, rowType, mergeSchema);
     }
@@ -207,19 +211,14 @@ public class DeltaSinkBuilder<IN> implements Serializable {
     // FileSink-specific methods
     ///////////////////////////////////////////////////////////////////////////
 
+    /**
+     * Sets bucket assigner responsible for mapping events to its partitions.
+     *
+     * @param assigner bucket assigner instance for this sink
+     * @return builder for {@link DeltaSink}
+     */
     public DeltaSinkBuilder<IN> withBucketAssigner(BucketAssigner<IN, String> assigner) {
         this.bucketAssigner = checkNotNull(assigner);
-        return this;
-    }
-
-    public DeltaSinkBuilder<IN> withRollingPolicy(
-        CheckpointRollingPolicy<IN, String> rollingPolicy) {
-        this.rollingPolicy = checkNotNull(rollingPolicy);
-        return this;
-    }
-
-    public DeltaSinkBuilder<IN> withOutputFileConfig(final OutputFileConfig outputFileConfig) {
-        this.outputFileConfig = outputFileConfig;
         return this;
     }
 
@@ -232,10 +231,10 @@ public class DeltaSinkBuilder<IN> implements Serializable {
         return new DeltaSink<>(this);
     }
 
-    DeltaWriter<IN> createWriter(Sink.InitContext context,
-                                 String appId,
-                                 long nextCheckpointId) throws IOException {
-        return new DeltaWriter<>(
+    AbstractDeltaWriter<IN> createWriter(Sink.InitContext context,
+                                         String appId,
+                                         long nextCheckpointId) throws IOException {
+        return new DeltaWriter<IN>(
             tableBasePath,
             bucketAssigner,
             createBucketWriter(),
@@ -247,25 +246,27 @@ public class DeltaSinkBuilder<IN> implements Serializable {
             nextCheckpointId);
     }
 
-    SimpleVersionedSerializer<DeltaWriterBucketState> getWriterStateSerializer()
+    SimpleVersionedSerializer<AbstractDeltaWriterBucketState> getWriterStateSerializer()
         throws IOException {
         return new DeltaWriterBucketStateSerializer();
     }
 
-    SimpleVersionedSerializer<DeltaCommittable> getCommittableSerializer()
+    SimpleVersionedSerializer<AbstractDeltaCommittable> getCommittableSerializer()
         throws IOException {
         BucketWriter<IN, String> bucketWriter = createBucketWriter();
 
-        return new DeltaCommittableSerializer(
-            bucketWriter.getProperties().getPendingFileRecoverableSerializer());
+        return (SimpleVersionedSerializer<AbstractDeltaCommittable>) (SimpleVersionedSerializer<?>)
+            new DeltaCommittableSerializer(
+                bucketWriter.getProperties().getPendingFileRecoverableSerializer());
     }
 
-    SimpleVersionedSerializer<DeltaGlobalCommittable> getGlobalCommittableSerializer()
+    SimpleVersionedSerializer<AbstractDeltaGlobalCommittable> getGlobalCommittableSerializer()
         throws IOException {
         BucketWriter<IN, String> bucketWriter = createBucketWriter();
 
-        return new DeltaGlobalCommittableSerializer(
-            bucketWriter.getProperties().getPendingFileRecoverableSerializer());
+        return (SimpleVersionedSerializer<AbstractDeltaGlobalCommittable>)
+                   (SimpleVersionedSerializer<?>) new DeltaGlobalCommittableSerializer(
+                       bucketWriter.getProperties().getPendingFileRecoverableSerializer());
     }
 
     private DeltaBulkBucketWriter<IN, String> createBucketWriter() throws IOException {

@@ -88,7 +88,8 @@ public class DeltaWriterTest {
 
         // WHEN
         writeData(writer, testRows);
-        List<DeltaCommittable> committables = writer.prepareCommit(false);
+        List<DeltaCommittable> committables =
+                (List<DeltaCommittable>) (List<?>) writer.prepareCommit(false);
 
         // THEN
         int elementsCount = isPartitioned ? 2 : 1;
@@ -110,7 +111,8 @@ public class DeltaWriterTest {
         // WHEN
         writeData(writer, testRows);
         writer.prepareCommit(false);
-        List<DeltaWriterBucketState> states = writer.snapshotState();
+        List<DeltaWriterBucketState> states =
+                (List<DeltaWriterBucketState>) (List<?>) writer.snapshotState();
         assertEquals(elementsCount, writer.getActiveBuckets().size());
         assertEquals(elementsCount, states.size());
 
@@ -132,11 +134,13 @@ public class DeltaWriterTest {
         // WHEN
         writeData(firstWriter, testRows);
         firstWriter.prepareCommit(false);
-        List<DeltaWriterBucketState> firstState = firstWriter.snapshotState();
+        List<DeltaWriterBucketState> firstState =
+                (List<DeltaWriterBucketState>) (List<?>)  firstWriter.snapshotState();
 
         writeData(secondWriter, testRows);
         secondWriter.prepareCommit(false);
-        List<DeltaWriterBucketState> secondState = secondWriter.snapshotState();
+        List<DeltaWriterBucketState> secondState =
+                (List<DeltaWriterBucketState>) (List<?>)  secondWriter.snapshotState();
 
         List<DeltaWriterBucketState> mergedState = new ArrayList<>();
         mergedState.addAll(firstState);

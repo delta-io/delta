@@ -23,6 +23,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import io.delta.flink.sink.internal.committables.DeltaCommittable;
 import org.apache.flink.core.io.SimpleVersionedSerialization;
 import org.apache.flink.core.io.SimpleVersionedSerializer;
 import org.apache.flink.core.memory.DataInputView;
@@ -53,7 +54,7 @@ import io.delta.standalone.actions.AddFile;
  *     <li>Its life span holds only until the end of a checkpoint interval</li>
  *     <li>During pre-commit phase (and after closing every in-progress files) every existing
  *         {@link DeltaPendingFile} instance is automatically transformed into a
- *         {@link io.delta.flink.sink.internal.committables.DeltaCommittable} instance</li>
+ *         {@link DeltaCommittable} instance</li>
  * </ol>
  */
 public class DeltaPendingFile {

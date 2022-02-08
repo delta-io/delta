@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import io.delta.flink.sink.committables.AbstractDeltaCommittable;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
 import io.delta.flink.sink.internal.committer.DeltaCommitter;
 import io.delta.flink.sink.utils.DeltaSinkTestUtils;
@@ -220,10 +221,11 @@ public class DeltaWriterBucketTest {
     private static List<DeltaCommittable> onCheckpointActions(DeltaWriterBucket<RowData> bucket,
                                                               Path bucketPath,
                                                               boolean doCommit) throws IOException {
-        List<DeltaCommittable> deltaCommittables = bucket.prepareCommit(
-            false, // flush
-            APP_ID,
-            1);
+        List<AbstractDeltaCommittable> deltaCommittables =
+                (List<AbstractDeltaCommittable>) (List<?>) bucket.prepareCommit(
+                        false, // flush
+                        APP_ID,
+                        1);
         DeltaWriterBucketState bucketState = bucket.snapshotState(APP_ID, 1);
 
         assertEquals(BUCKET_ID, bucketState.getBucketId());
@@ -233,7 +235,7 @@ public class DeltaWriterBucketTest {
             new DeltaCommitter(
                 DeltaSinkTestUtils.createBucketWriter(bucketPath)).commit(deltaCommittables);
         }
-        return deltaCommittables;
+        return (List<DeltaCommittable>) (List<?>) deltaCommittables;
     }
 
     private static void writeData(DeltaWriterBucket<RowData> bucket,

@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
+import io.delta.flink.sink.committables.AbstractDeltaCommittable;
 import org.apache.flink.core.io.SimpleVersionedSerializer;
 import org.apache.flink.core.memory.DataInputDeserializer;
 import org.apache.flink.core.memory.DataInputView;
@@ -90,7 +91,8 @@ public class DeltaGlobalCommittableSerializer
                 deltaCommittableSerializer.deserializeV1(dataInputView);
             deltaCommittables.add(deserializedCommittable);
         }
-        return new DeltaGlobalCommittable(deltaCommittables);
+        return new DeltaGlobalCommittable(
+            (List<AbstractDeltaCommittable>) (List<?>) deltaCommittables);
     }
 
     private static void validateMagicNumber(DataInputView in) throws IOException {
