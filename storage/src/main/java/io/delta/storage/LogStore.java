@@ -87,19 +87,20 @@ public abstract class LogStore {
    * :: DeveloperApi ::
    *
    * Write the given `actions` to the given `path` with or without overwrite as indicated.
-   * Implementation must throw [[java.nio.file.FileAlreadyExistsException]] exception if the file
+   * Implementation must throw {@link java.nio.file.FileAlreadyExistsException} exception if the file
    * already exists and overwrite = false. Furthermore, if isPartialWriteVisible returns false,
    * implementation must ensure that the entire file is made visible atomically, that is,
    * it should not generate partial files.
    *
    * @throws IOException if there's an issue resolving the FileSystem
+   * @throws FileAlreadyExistsException if the file already exists and overwrite is false
    * @since 1.0.0
    */
   public abstract void write(
       Path path,
       Iterator<String> actions,
       Boolean overwrite,
-      Configuration hadoopConf) throws FileAlreadyExistsException;
+      Configuration hadoopConf) throws IOException;
 
   /**
    * :: DeveloperApi ::

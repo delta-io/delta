@@ -17,9 +17,29 @@
 
 package io.delta.storage.internal;
 
+import scala.util.control.ControlThrowable;
+
 import java.io.IOException;
 
 public class DeltaErrors {
+
+    /**
+     * Returns true if the provided Throwable is to be considered non-fatal, or false if it is to be
+     * considered fatal
+     */
+    public static boolean isNonFatal(Throwable t) {
+        // VirtualMachineError includes OutOfMemoryError and other fatal errors
+        if (t instanceof VirtualMachineError ||
+            t instanceof ThreadDeath ||
+            t instanceof InterruptedException ||
+            t instanceof LinkageError ||
+            t instanceof ControlThrowable) {
+            return false;
+        }
+
+        return true;
+    }
+
     public static IOException incorrectLogStoreImplementationException(Throwable cause) {
         return new IOException(
             "The error typically occurs when the default LogStore implementation, that\n" +
