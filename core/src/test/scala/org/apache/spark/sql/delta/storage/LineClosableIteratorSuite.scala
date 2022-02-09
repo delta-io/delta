@@ -21,7 +21,7 @@ import java.io.{Reader, StringReader}
 import org.apache.spark.SparkFunSuite
 
 abstract class LineClosableIteratorSuiteBase extends SparkFunSuite {
-  
+
   protected def createIter(_reader: Reader): ClosableIterator[String]
 
   test("empty") {
