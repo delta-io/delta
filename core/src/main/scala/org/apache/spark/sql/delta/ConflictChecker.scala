@@ -93,6 +93,7 @@ private[delta] class ConflictChecker(
     winningCommitVersion: Long,
     isolationLevel: IsolationLevel) extends DeltaLogging {
 
+  protected val startTimeMs = System.currentTimeMillis()
   protected val timingStats = mutable.HashMap[String, Long]()
   protected val deltaLog = initialCurrentTransactionInfo.readSnapshot.deltaLog
 
@@ -111,7 +112,7 @@ private[delta] class ConflictChecker(
     checkForDeletedFilesAgainstCurrentTxnReadFiles()
     checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
     checkForUpdatedApplicationTransactionIdsThatCurrentTxnDependsOn()
-    reportMetrics()
+    logMetrics()
     currentTransactionInfo
   }
 
@@ -283,9 +284,11 @@ private[delta] class ConflictChecker(
     ret
   }
 
-  protected def reportMetrics(): Unit = {
+  protected def logMetrics(): Unit = {
+    val totalTimeTakenMs = System.currentTimeMillis() - startTimeMs
     val timingStr = timingStats.keys.toSeq.sorted.map(k => s"$k=${timingStats(k)}").mkString(",")
-    logInfo(s"[$logPrefix] Timing stats against $winningCommitVersion [$timingStr]")
+    logInfo(s"[$logPrefix] Timing stats against $winningCommitVersion " +
+      s"[$timingStr, totalTimeTakenMs: $totalTimeTakenMs]")
   }
 
   protected lazy val logPrefix: String = {
