@@ -529,6 +529,12 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  /**
+   * This conf has a special prefix `spark.databricks.io` because this is the conf value already
+   * used by Databricks' data skipping implementation. There's no benefit to making OSS users,
+   * some of whom are Databricks customers, have to keep track of two different conf values for the
+   * same data skipping parameter.
+   */
   val DATA_SKIPPING_STRING_PREFIX_LENGTH =
     SQLConf.buildConf("spark.databricks.io.skipping.stringPrefixLength")
       .internal()
