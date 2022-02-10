@@ -81,6 +81,10 @@ case class FilterMetric(numFiles: Long, predicates: Seq[QueryPredicateReport])
  *  |    |    |-- a: struct (nullable = false)
  *  |    |    |    |-- b: struct (nullable = false)
  *  |    |    |    |    |-- c: long (nullable = true)
+ *  |    |-- nullCount: struct (nullable = false)
+ *  |    |    |-- a: struct (nullable = false)
+ *  |    |    |    |-- b: struct (nullable = false)
+ *  |    |    |    |    |-- c: long (nullable = true)
  *  }}}
  */
 trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
@@ -273,6 +277,11 @@ object StatisticsCollection extends DeltaCommand {
     txn.commit(newAddFiles, ComputeStats(predicates.map(_.sql)))
   }
 
+  /**
+   * Helper method to truncate the input string `x` to the given `prefixLen` length, while also
+   * appending the unicode max character to the end of the truncated string. This ensures that any
+   * value in this column is less than or equal to the max.
+   */
   def truncateMaxStringAgg(prefixLen: Int)(x: String): String = {
     if (x == null || x.length <= prefixLen) {
       x
