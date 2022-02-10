@@ -24,7 +24,7 @@ import scala.util.{Failure, Success, Try}
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -168,6 +168,11 @@ object DeltaTableUtils extends PredicateHelper
     // scalastyle:on deltahadoopconfiguration
 
 
+    findDeltaTableRoot(fs, path)
+  }
+
+  /** Finds the root of a Delta table given a path if it exists. */
+  def findDeltaTableRoot(fs: FileSystem, path: Path): Option[Path] = {
     var currentPath = path
     while (currentPath != null && currentPath.getName != "_delta_log" &&
         currentPath.getName != "_samples") {

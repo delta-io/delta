@@ -95,7 +95,8 @@ This directory format is only used to follow existing conventions and is not req
 Actual partition values for a file must be read from the transaction log.
 
 ### Delta Log Entries
-Delta files are stored as JSON in a directory at the root of the table named `_delta_log`, and together make up the log of all changes that have occurred to a table.
+Delta files are stored as JSON in a directory at the root of the table named `_delta_log`, and together with checkpoints make up the log of all changes that have occurred to a table.
+
 Delta files are the unit of atomicity for a table, and are named using the next available version number, zero-padded to 20 digits.
 
 For example:
@@ -112,7 +113,8 @@ Checkpoints are also stored in the `_delta_log` directory, and can be created fo
 
 A checkpoint contains the complete replay of all actions up until this version, with invalid actions removed.
 Invalid actions are those that have been canceled out by a subsequent ones (for example removing a file that has been added), using the [rules for reconciliation](#Action-Reconciliation)
-Checkpoints allow readers to short-cut the cost of reading the log up-to a given point in order to reconstruct a snapshot.
+Checkpoints allow readers to short-cut the cost of reading the log up-to a given point in order to reconstruct a snapshot, and allow older JSON Delta log entries to be deleted after a period of time.
+
 
 By default, the reference implementation creates a checkpoint every 10 commits.
 
@@ -483,6 +485,26 @@ When the table property `delta.appendOnly` is set to `true`:
  - The value of `delta.generationExpression` SHOULD be parsed as a SQL expression.
  - Writers MUST enforce that any data writing to the table satisfy the condition `(<value> <=> <generation expression>) IS TRUE`. `<=>` is the NULL-safe equal operator which performs an equality comparison like the `=` operator but returns `TRUE` rather than NULL if both operands are `NULL`
 
+## Identity Columns
+
+Delta supports defining Identity columns on Delta tables. Delta will generate unique values for Identity columns when users do not explicitly provide values for them when writing to such tables . The `metadata` for a column in the table schema MAY contain the following keys for Identity column properties
+- `delta.identity.start`: Starting value for the Identity column. This is a long type value. It should not be changed after table creation.
+- `delta.identity.step`: Increment to the next Identity value. This is a long type value. It cannot be set to 0. It should not be changed after table creation.
+- `delta.identity.highWaterMark`: The highest value generated for the Identity column. This is a long type value. When `delta.identity.step` is positive (negative), this should be the largest (smallest) value in the column.
+- `delta.identity.allowExplicitInsert`: True if this column allows explicitly inserted values. This is a boolean type value. It should not be changed after table creation.
+
+When `delta.identity.allowExplicitInsert` is true, writers should meet the following requirements:
+- Users should be allowed to provide their own values for Identity columns.
+
+When `delta.identity.allowExplicitInsert` is false, writers should meet the following requirements:
+- Users should not be allowed to provide their own values for Identity columns.
+- Delta should generate values that satisfy the following requirements
+  - The new value does not already exist in the column.
+  - The new value should satisfy `value = start + k * step` where k is a non-negative integer.
+  - The new value should be higher than `delta.identity.highWaterMark`. When `delta.identity.step` is positive (negative), the new value should be the greater (smaller) than `delta.identity.highWaterMark`.
+- Overflow when calculating generated Identity values should be detected and such writes should not be allowed.
+- `delta.identity.highWaterMark` should be updated to the new highest value when the write operation commits.
+
 ## Writer Version Requirements
 
 The requirements of the writers according to the protocol versions are summarized in the table below. Each row inherits the requirements from the preceding row.
@@ -493,6 +515,7 @@ Writer Version 2 | - Support [`delta.appendOnly`](#append-only-tables)<br>- Supp
 Writer Version 3 | Enforce:<br>- `delta.checkpoint.writeStatsAsJson`<br>- `delta.checkpoint.writeStatsAsStruct`<br>- `CHECK` constraints
 Writer Version 4 | - Support Change Data Feed<br>- Support [Generated Columns](#generated-columns)
 Writer Version 5 | Respect [Column Mapping](#column-mapping)
+Writer Version 6 | Support [Identity Columns](#identity-columns)
 
 # Requirements for Readers
 

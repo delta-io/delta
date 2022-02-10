@@ -1199,22 +1199,23 @@ object DeltaErrors
 
   def duplicatedColumnId(
       mode: DeltaColumnMappingMode,
-      field: String,
-      field2: String): Throwable = {
+      id: Long,
+      schema: StructType): Throwable = {
     ColumnMappingException(
-      s"Duplicated column IDs found in column mapping mode `${mode.name}`" +
-      s" for field $field and $field2", mode
+      s"Found duplicated column id `$id` in column mapping mode `${mode.name}` \n" +
+      s"schema: \n ${schema.prettyJson}", mode
     )
   }
 
   def duplicatedPhysicalName(
       mode: DeltaColumnMappingMode,
-      field: String,
-      field2: String): Throwable =
+      physicalName: String,
+      schema: StructType): Throwable = {
     ColumnMappingException(
-      s"Duplicated physical names found in column mapping mode `${mode.name}`" +
-      s" for field $field and $field2", mode
+      s"Found duplicated physical name `$physicalName` in column mapping mode `${mode.name}` \n\t" +
+      s"schema: \n ${schema.prettyJson}", mode
     )
+  }
 
   def changeColumnMappingModeNotSupported(oldMode: String, newMode: String): Throwable = {
     new ColumnMappingUnsupportedException("Changing column mapping mode from" +

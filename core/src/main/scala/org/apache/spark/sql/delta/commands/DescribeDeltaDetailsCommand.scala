@@ -28,7 +28,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, ScalaReflection, TableIdentifier}
 import org.apache.spark.sql.catalyst.ScalaReflection.Schema
-import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
+import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchTableException}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -123,7 +123,7 @@ case class DescribeDeltaDetailCommand(
               new Path(metadata.location) -> Some(metadata)
             } catch {
               // Better error message if the user tried to DESCRIBE DETAIL a temp view.
-              case _: NoSuchTableException
+              case _: NoSuchTableException | _: NoSuchDatabaseException
                   if spark.sessionState.catalog.getTempView(i.table).isDefined =>
                 throw DeltaErrors.viewInDescribeDetailException(i)
             }
