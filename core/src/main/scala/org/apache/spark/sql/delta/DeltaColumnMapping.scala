@@ -23,8 +23,9 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 
+import org.apache.spark.sql.catalyst.analysis.Resolver
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
-import org.apache.spark.sql.types.{Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
+import org.apache.spark.sql.types.{ArrayType, DataType, MapType, Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
 
 trait DeltaColumnMappingBase {
   val MIN_WRITER_VERSION = 5
@@ -244,32 +245,31 @@ trait DeltaColumnMappingBase {
       schema: StructType,
       mode: DeltaColumnMappingMode): Unit = {
     // physical name/column id -> full field path
-    val columnIds = mutable.Map[Int, String]()
-    val physicalNames = mutable.Map[String, String]()
+    val columnIds = mutable.Set[Int]()
+    val physicalNames = mutable.Set[String]()
 
-    SchemaMergingUtils.transformColumns(schema) ( (parentPath, field, _) => {
-      val curFullPath = (parentPath :+ field.name).mkString(".")
-      if (!hasColumnId(field)) {
-        throw DeltaErrors.missingColumnId(IdMapping, field.name)
-      }
+    // use id mapping to keep all column mapping metadata
+    // this method checks for missing physical name & column id already
+    val physicalSchema = createPhysicalSchema(schema, schema, IdMapping)
+
+    SchemaMergingUtils.transformColumns(physicalSchema) ((parentPhysicalPath, field, _) => {
+      // field.name is now physical name
+      val curFullPhysicalPath = (parentPhysicalPath :+ field.name).mkString(".")
       val columnId = getColumnId(field)
       if (columnIds.contains(columnId)) {
-        throw DeltaErrors.duplicatedColumnId(mode, curFullPath, columnIds(columnId))
+        throw DeltaErrors.duplicatedColumnId(mode, columnId, schema)
       }
-      columnIds.update(columnId, curFullPath)
+      columnIds.add(columnId)
 
-      if (!hasPhysicalName(field)) {
-        throw DeltaErrors.missingPhysicalName(IdMapping, field.name)
+      // We should check duplication by full physical name path, because nested fields
+      // such as `a.b.c` shouldn't conflict with `x.y.c` due to same column name.
+      if (physicalNames.contains(curFullPhysicalPath)) {
+        throw DeltaErrors.duplicatedPhysicalName(mode, curFullPhysicalPath, schema)
       }
-      val physicalName = getPhysicalName(field)
-      if (physicalNames.contains(physicalName)) {
-        throw DeltaErrors.duplicatedPhysicalName(mode, curFullPath, physicalNames(physicalName))
-      }
-      physicalNames.update(physicalName, curFullPath)
+      physicalNames.add(curFullPhysicalPath)
 
       field
     })
-
   }
 
   /**
