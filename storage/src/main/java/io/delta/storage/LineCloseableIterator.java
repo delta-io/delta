@@ -16,11 +16,10 @@
 
 package io.delta.storage;
 
-import org.apache.commons.io.IOUtils;
-
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.Reader;
+import java.io.UncheckedIOException;
 import java.util.NoSuchElementException;
 
 /**
@@ -28,7 +27,7 @@ import java.util.NoSuchElementException;
  * a trimmed line.
  */
 public class LineCloseableIterator implements CloseableIterator<String> {
-    private BufferedReader reader;
+    final private BufferedReader reader;
 
     // Whether `nextValue` is valid. If it's invalid, we should try to read the next line.
     private boolean gotNext = false;
@@ -43,41 +42,33 @@ public class LineCloseableIterator implements CloseableIterator<String> {
     private boolean finished = false;
 
     public LineCloseableIterator(Reader reader) {
-        this.reader = IOUtils.toBufferedReader(reader);
+        this.reader = reader instanceof BufferedReader ? (BufferedReader) reader : new BufferedReader(reader);
     }
 
     @Override
     public boolean hasNext() {
-        if (!finished) {
-            // Check whether we have closed the reader before reading. Even if `nextValue` is valid, we
-            // still don't return `nextValue` after a reader is closed. Otherwise, it would be confusing.
-            if (closed) {
-                throw new IllegalStateException("Iterator is closed");
-            }
-            if (!gotNext) {
-                String nextLine = null;
-                try {
-                    nextLine = reader.readLine();
-                } catch (IOException e) {
-                    // swallow the IOException. we will close the reader and return `false`.
-                    e.printStackTrace();
+        try {
+            if (!finished) {
+                // Check whether we have closed the reader before reading. Even if `nextValue` is valid, we
+                // still don't return `nextValue` after a reader is closed. Otherwise, it would be confusing.
+                if (closed) {
+                    throw new IllegalStateException("Iterator is closed");
                 }
-
-                if (nextLine == null) {
-                    finished = true;
-                    try {
+                if (!gotNext) {
+                    String nextLine = reader.readLine();
+                    if (nextLine == null) {
+                        finished = true;
                         close();
-                    } catch (IOException e) {
-                        // swallow the IOException
-                        e.printStackTrace();
+                    } else {
+                        nextValue = nextLine.trim();
                     }
-                } else {
-                    nextValue = nextLine.trim();
+                    gotNext = true;
                 }
-                gotNext = true;
             }
+            return !finished;
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
         }
-        return !finished;
     }
 
     @Override
