@@ -166,7 +166,7 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
     }
   }
 
-  test("the checkpoint file for version 0 should be cleaned") {
+  ignore("the checkpoint file for version 0 should be cleaned") {
     withTempDir { tempDir =>
       val clock = new ManualClock(System.currentTimeMillis())
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
