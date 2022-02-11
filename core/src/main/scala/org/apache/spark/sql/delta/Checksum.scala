@@ -25,6 +25,7 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
@@ -48,7 +49,8 @@ case class VersionChecksum(
     numMetadata: Long,
     numProtocol: Long,
     protocol: Protocol,
-    metadata: Metadata)
+    metadata: Metadata,
+    histogramOpt: Option[FileSizeHistogram])
 
 /**
  * Record the state of the table as a checksum file along with a commit.
@@ -72,7 +74,8 @@ trait RecordChecksum extends DeltaLogging {
       numMetadata = snapshot.numOfMetadata,
       numProtocol = snapshot.numOfProtocol,
       protocol = snapshot.protocol,
-      metadata = snapshot.metadata)
+      metadata = snapshot.metadata,
+      histogramOpt = snapshot.fileSizeHistogram)
     try {
       recordDeltaOperation(deltaLog, "delta.checksum.write") {
         val stream = writer.createAtomic(
