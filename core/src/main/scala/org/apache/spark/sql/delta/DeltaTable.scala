@@ -136,7 +136,11 @@ object DeltaTableUtils extends PredicateHelper
   private def dbExistsAndAssumePath(
       catalog: SessionCatalog,
       ident: TableIdentifier): (Boolean, Boolean) = {
-    Try(ident.database.forall(catalog.databaseExists)) match {
+    def databaseExists = {
+          ident.database.forall(catalog.databaseExists)
+    }
+
+    Try(databaseExists) match {
       // DB exists, check table exists only if path is not valid
       case Success(true) => (true, false)
       // DB does not exist, check table exists only if path does not exist
