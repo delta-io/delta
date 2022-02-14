@@ -33,11 +33,12 @@ import org.apache.hadoop.fs.CreateFlag;
  * The {@link LogStore} implementation for HDFS, which uses Hadoop {@link FileContext} API's to
  * provide the necessary atomic and durability guarantees:
  * <ol>
- *     <li> Atomic visibility of files: `FileContext.rename` is used write files which is atomic for HDFS. </li>
- *     <li> Consistent file listing: HDFS file listing is consistent. </li>
+ *     <li>Atomic visibility of files: `FileContext.rename` is used write files which is atomic for HDFS.</li>
+ *     <li>Consistent file listing: HDFS file listing is consistent.</li>
  * </ol>
  */
 public class HDFSLogStore extends HadoopFileSystemLogStore {
+
     public static final String NO_ABSTRACT_FILE_SYSTEM_EXCEPTION_MESSAGE = "No AbstractFileSystem";
 
     public HDFSLogStore(Configuration hadoopConf) {
@@ -107,7 +108,7 @@ public class HDFSLogStore extends HadoopFileSystemLogStore {
         } catch (IOException e) {
             if (e.getMessage().contains(NO_ABSTRACT_FILE_SYSTEM_EXCEPTION_MESSAGE)) {
                 final IOException newException = DeltaErrors.incorrectLogStoreImplementationException(e);
-                // TODO: logError(newException.getMessage, newException.getCause)
+                // TODO: logError(newException.getMessage(), newException.getCause())
                 throw newException;
             } else {
                 throw e;
@@ -161,7 +162,7 @@ public class HDFSLogStore extends HadoopFileSystemLogStore {
             final Path checksumFile = new Path(path.getParent(), String.format(".%s.crc", path.getName()));
             if (fc.util().exists(checksumFile)) {
                 // checksum file exists, deleting it
-                fc.delete(checksumFile, true); // recursive=false
+                fc.delete(checksumFile, true); // recursive=true
             }
         } catch (Exception e) {
             if (!DeltaErrors.isNonFatal(e)) {

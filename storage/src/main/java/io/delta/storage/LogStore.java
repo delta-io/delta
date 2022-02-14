@@ -27,31 +27,30 @@ import java.util.Iterator;
 /**
  * :: DeveloperApi ::
  *
- * <p></p>
- *
+ * <p>
  * General interface for all critical file system operations required to read and write the
  * Delta logs. The correctness is predicated on the atomicity and durability guarantees of
  * the implementation of this interface. Specifically,
- *
+ * </p>
  * <ol>
- *     <li> Atomic visibility of files: If isPartialWriteVisible is false, any file written through
- *          this store must be made visible atomically. In other words, this should not generate
- *          partial files. </li>
+ *     <li>Atomic visibility of files: If isPartialWriteVisible is false, any file written through
+ *         this store must be made visible atomically. In other words, this should not generate
+ *         partial files.</li>
  *
- *    <li> Mutual exclusion: Only one writer must be able to create (or rename) a file at the final
- *         destination. </li>
+ *    <li>Mutual exclusion: Only one writer must be able to create (or rename) a file at the final
+ *         destination.</li>
  *
- *    <li> Consistent listing: Once a file has been written in a directory, all future listings for
- *    that directory must return that file. </li>
+ *    <li>Consistent listing: Once a file has been written in a directory, all future listings for
+ *    that directory must return that file.</li>
  * </ol>
- *
+ * <p>
  * All subclasses of this interface is required to have a constructor that takes Configuration
  * as a single parameter. This constructor is used to dynamically create the LogStore.
- *
- * <p></p>
- *
+ * </p>
+ * <p>
  * LogStore and its implementations are not meant for direct access but for configuration based
  * on storage system. See [[https://docs.delta.io/latest/delta-storage.html]] for details.
+ * </p>
  *
  * @since 1.0.0
  */

@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 package io.delta.storage;
 
 import java.io.*;
