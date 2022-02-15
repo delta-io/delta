@@ -166,7 +166,7 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
     }
   }
 
-  ignore("the checkpoint file for version 0 should be cleaned") {
+  test("the checkpoint file for version 0 should be cleaned") {
     withTempDir { tempDir =>
       val clock = new ManualClock(System.currentTimeMillis())
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
@@ -181,6 +181,12 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
       // Create a new checkpoint so that the previous version can be deleted
       log.startTransaction().commit(AddFile("1", Map.empty, 1, 1, true) :: Nil, testOp)
       log.checkpoint()
+
+      // despite our clock time being set in the future, this doesn't change the FileStatus
+      // lastModified time. this can cause some flakiness during log cleanup. setting it fixes that.
+      getLogFiles(logPath)
+        .filterNot(f => initialFiles.contains(f))
+        .foreach(f => f.setLastModified(clock.getTimeMillis()))
 
       log.cleanUpExpiredLogs()
       val afterCleanup = getLogFiles(logPath)
