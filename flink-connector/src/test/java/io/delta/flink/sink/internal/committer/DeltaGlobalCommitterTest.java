@@ -28,7 +28,6 @@ import java.util.Random;
 import java.util.UUID;
 import java.util.stream.Stream;
 
-import io.delta.flink.sink.committables.AbstractDeltaGlobalCommittable;
 import io.delta.flink.sink.internal.SchemaConverter;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
 import io.delta.flink.sink.internal.committables.DeltaGlobalCommittable;
@@ -83,7 +82,7 @@ public class DeltaGlobalCommitterTest {
                 put("col1", "val1");
             }};
 
-        List<AbstractDeltaGlobalCommittable> globalCommittables =
+        List<DeltaGlobalCommittable> globalCommittables =
             DeltaSinkTestUtils.getListOfDeltaGlobalCommittables(3, partitionSpec);
 
         // WHEN
@@ -100,7 +99,7 @@ public class DeltaGlobalCommitterTest {
         assertEquals(deltaLog.snapshot().getVersion(), 0);
         int initialTableFilesCount = deltaLog.snapshot().getAllFiles().size();
 
-        List<AbstractDeltaGlobalCommittable> globalCommittables =
+        List<DeltaGlobalCommittable> globalCommittables =
             DeltaSinkTestUtils.getListOfDeltaGlobalCommittables(
                 numAddedFiles, DeltaSinkTestUtils.getTestPartitionSpec());
         DeltaGlobalCommitter globalCommitter =
@@ -127,7 +126,7 @@ public class DeltaGlobalCommitterTest {
         DeltaSinkTestUtils.initTestForPartitionedTable(tablePath.getPath());
         DeltaLog deltaLog = DeltaLog.forTable(
             DeltaSinkTestUtils.getHadoopConf(), tablePath.getPath());
-        List<AbstractDeltaGlobalCommittable> globalCommittables =
+        List<DeltaGlobalCommittable> globalCommittables =
             DeltaSinkTestUtils.getListOfDeltaGlobalCommittables(
                 3, DeltaSinkTestUtils.getTestPartitionSpec());
 
@@ -159,7 +158,7 @@ public class DeltaGlobalCommitterTest {
     public void testMergeSchemaSetToFalse() throws Exception {
         //GIVEN
         DeltaSinkTestUtils.initTestForPartitionedTable(tablePath.getPath());
-        List<AbstractDeltaGlobalCommittable> globalCommittables =
+        List<DeltaGlobalCommittable> globalCommittables =
             DeltaSinkTestUtils.getListOfDeltaGlobalCommittables(
                 3, DeltaSinkTestUtils.getTestPartitionSpec());
 
@@ -176,7 +175,7 @@ public class DeltaGlobalCommitterTest {
     public void testMergeIncompatibleSchema() throws Exception {
         //GIVEN
         DeltaSinkTestUtils.initTestForPartitionedTable(tablePath.getPath());
-        List<AbstractDeltaGlobalCommittable> globalCommittables =
+        List<DeltaGlobalCommittable> globalCommittables =
             DeltaSinkTestUtils.getListOfDeltaGlobalCommittables(
                 3, DeltaSinkTestUtils.getTestPartitionSpec());
 
@@ -194,7 +193,7 @@ public class DeltaGlobalCommitterTest {
     public void testWrongStreamPartitionValues() throws Exception {
         //GIVEN
         DeltaSinkTestUtils.initTestForPartitionedTable(tablePath.getPath());
-        List<AbstractDeltaGlobalCommittable> globalCommittables =
+        List<DeltaGlobalCommittable> globalCommittables =
             DeltaSinkTestUtils.getListOfDeltaGlobalCommittables(
                 1, getNonMatchingPartitionSpec());
 
@@ -221,7 +220,7 @@ public class DeltaGlobalCommitterTest {
             numAddedFiles2, 2);
         deltaCommittables.addAll(DeltaSinkTestUtils.getListOfDeltaCommittables(
             numAddedFiles1, 1));
-        List<AbstractDeltaGlobalCommittable> globalCommittables =
+        List<DeltaGlobalCommittable> globalCommittables =
             DeltaSinkTestUtils.getListOfDeltaGlobalCommittables(deltaCommittables);
 
         DeltaGlobalCommitter globalCommitter =
@@ -264,9 +263,9 @@ public class DeltaGlobalCommitterTest {
         deltaCommittablesCombined.addAll(deltaCommittables1SecondTrial);
         deltaCommittablesCombined.addAll(deltaCommittables2);
 
-        List<AbstractDeltaGlobalCommittable> globalCommittables1FirstTrial =
+        List<DeltaGlobalCommittable> globalCommittables1FirstTrial =
             DeltaSinkTestUtils.getListOfDeltaGlobalCommittables(deltaCommittables1FirstTrial);
-        List<AbstractDeltaGlobalCommittable> globalCommittablesCombined =
+        List<DeltaGlobalCommittable> globalCommittablesCombined =
             DeltaSinkTestUtils.getListOfDeltaGlobalCommittables(deltaCommittablesCombined);
 
         DeltaGlobalCommitter globalCommitter =
@@ -318,7 +317,7 @@ public class DeltaGlobalCommitterTest {
         List<DeltaCommittable> deltaCommittables2 = DeltaSinkTestUtils.getListOfDeltaCommittables(
             numAddedFiles2, getNonMatchingPartitionSpec(), 2);
 
-        List<AbstractDeltaGlobalCommittable> globalCommittables = Arrays.asList(
+        List<DeltaGlobalCommittable> globalCommittables = Arrays.asList(
             new DeltaGlobalCommittable(
                 DeltaSinkTestUtils.committablesToAbstractCommittables(deltaCommittables1)),
             new DeltaGlobalCommittable(

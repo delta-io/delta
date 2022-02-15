@@ -28,8 +28,6 @@ import java.util.stream.Collectors;
 
 import io.delta.flink.sink.DeltaSink;
 import io.delta.flink.sink.DeltaTablePartitionAssigner;
-import io.delta.flink.sink.committables.AbstractDeltaCommittable;
-import io.delta.flink.sink.committables.AbstractDeltaGlobalCommittable;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
 import io.delta.flink.sink.internal.committables.DeltaGlobalCommittable;
 import org.apache.commons.io.FileUtils;
@@ -178,9 +176,9 @@ public class DeltaSinkTestUtils {
     static final long TEST_CHECKPOINT_ID = new Random().nextInt(10);
 
 
-    public static List<AbstractDeltaCommittable> committablesToAbstractCommittables(
+    public static List<DeltaCommittable> committablesToAbstractCommittables(
             List<DeltaCommittable> committables) {
-        return (List<AbstractDeltaCommittable>) (List<?>) committables;
+        return committables;
     }
 
     public static List<DeltaCommittable> getListOfDeltaCommittables(int size, long checkpointId) {
@@ -199,15 +197,15 @@ public class DeltaSinkTestUtils {
         return deltaCommittableList;
     }
 
-    public static List<AbstractDeltaGlobalCommittable> getListOfDeltaGlobalCommittables(
+    public static List<DeltaGlobalCommittable> getListOfDeltaGlobalCommittables(
             List<DeltaCommittable> committables) {
         return Collections.singletonList(
                 new DeltaGlobalCommittable(committablesToAbstractCommittables(committables)));
     }
 
-    public static List<AbstractDeltaGlobalCommittable> getListOfDeltaGlobalCommittables(
+    public static List<DeltaGlobalCommittable> getListOfDeltaGlobalCommittables(
             int size, LinkedHashMap<String, String> partitionSpec) {
-        List<AbstractDeltaCommittable> committables =
+        List<DeltaCommittable> committables =
                 committablesToAbstractCommittables(getListOfDeltaCommittables(
                         size, partitionSpec, TEST_CHECKPOINT_ID));
         return Collections.singletonList(new DeltaGlobalCommittable(committables));

@@ -692,9 +692,9 @@ lazy val flinkConnector = (project in file("flink-connector"))
     Compile / sourceGenerators += Def.task {
       val file = (Compile / sourceManaged).value / "meta" / "Meta.java"
       IO.write(file,
-        s"""package io.delta.flink.sink.internal;
+        s"""package io.delta.flink.sink.internal.committer;
            |
-           |public final class Meta {
+           |final class Meta {
            |  public static final String FLINK_VERSION = "${flinkVersion}";
            |  public static final String CONNECTOR_VERSION = "${version.value}";
            |}

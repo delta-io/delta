@@ -25,7 +25,6 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 
-import io.delta.flink.sink.committables.AbstractDeltaCommittable;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
 import io.delta.flink.sink.internal.committables.DeltaCommittableSerializer;
 import io.delta.flink.sink.utils.DeltaSinkTestUtils;
@@ -54,7 +53,7 @@ public class DeltaCommitterTest {
         // WHEN
         DeltaCommittable deltaCommittable =
             new DeltaCommittable(DeltaSinkTestUtils.getTestDeltaPendingFile(), "1", 1);
-        List<AbstractDeltaCommittable> toRetry = deltaCommitter.commit(
+        List<DeltaCommittable> toRetry = deltaCommitter.commit(
                 DeltaSinkTestUtils.committablesToAbstractCommittables(
                         Collections.singletonList(deltaCommittable)));
 
@@ -76,7 +75,7 @@ public class DeltaCommitterTest {
             new DeltaCommittable(DeltaSinkTestUtils.getTestDeltaPendingFile(), "1", 1),
             new DeltaCommittable(DeltaSinkTestUtils.getTestDeltaPendingFile(), "1", 1)
         );
-        List<AbstractDeltaCommittable> toRetry = deltaCommitter.commit(
+        List<DeltaCommittable> toRetry = deltaCommitter.commit(
                 DeltaSinkTestUtils.committablesToAbstractCommittables(committables));
 
         // THEN

@@ -27,8 +27,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.regex.Pattern;
 
-import io.delta.flink.sink.committables.AbstractDeltaGlobalCommittable;
 import io.delta.flink.sink.internal.SchemaConverter;
+import io.delta.flink.sink.internal.committables.DeltaGlobalCommittable;
 import io.delta.flink.sink.utils.DeltaSinkTestUtils;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.table.types.logical.RowType;
@@ -115,7 +115,7 @@ public class DeltaGlobalCommitterTestParametrized {
             rowTypeToCommit,
             mergeSchema);
         int numAddedFiles = 3;
-        List<AbstractDeltaGlobalCommittable> globalCommittables =
+        List<DeltaGlobalCommittable> globalCommittables =
                 DeltaSinkTestUtils.getListOfDeltaGlobalCommittables(numAddedFiles, partitionSpec);
 
         // WHEN

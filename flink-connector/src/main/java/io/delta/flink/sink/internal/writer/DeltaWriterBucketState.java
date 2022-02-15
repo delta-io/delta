@@ -18,7 +18,6 @@
 
 package io.delta.flink.sink.internal.writer;
 
-import io.delta.flink.sink.writer.AbstractDeltaWriterBucketState;
 import org.apache.flink.core.fs.Path;
 
 /**
@@ -50,7 +49,7 @@ import org.apache.flink.core.fs.Path;
  *         to {@link io.delta.flink.sink.DeltaSink#createWriter}</li>
  * </ol>
  */
-public class DeltaWriterBucketState implements AbstractDeltaWriterBucketState {
+public class DeltaWriterBucketState {
 
     private final String bucketId;
 

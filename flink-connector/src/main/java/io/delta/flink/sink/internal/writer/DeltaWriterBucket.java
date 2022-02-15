@@ -27,7 +27,7 @@ import java.util.UUID;
 import javax.annotation.Nullable;
 
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
-import io.delta.flink.sink.logging.Logging;
+import io.delta.flink.sink.internal.logging.Logging;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.streaming.api.functions.sink.filesystem.DeltaBulkBucketWriter;
 import org.apache.flink.streaming.api.functions.sink.filesystem.DeltaBulkPartWriter;
