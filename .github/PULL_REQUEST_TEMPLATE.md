@@ -6,29 +6,29 @@ Thanks for sending a pull request!  Here are some tips for you:
   4. Please write your PR title to summarize what this PR proposes.
   5. If possible, provide a concise example to reproduce the issue for a faster review.
 -->
-## Related Issue (required)(#related-issue)
+## [Related Issue (required)](#related-issue)
 
 <!-- Link related issue 
 For instance, 
   [#ISSUE NUMBER] Your PR title
 -->
 
-## Description (required)(#description)
+## [Description (required)](#description)
 
 <!-- Describe what this PR changes. For instance,
   1. If you propose a new API, clarify the use case for a new API.
   2. If you fix a bug, you can clarify why it is a bug.
 -->
 
-## Review Procedure (required)(#review-procedure)
+## [Review Procedure (required)](#review-procedure)
 
-<!-- Explain how to review this PR. -->
+<!-- Explain how to review this PR and also leave notes for reviewer. -->
 
-## Related PR (optional)
+## [Related PR (optional)](#related-pr)
 
 <!-- Link related PR -->
 
-### Pre-Review Checklist for the PR Author (required)(#pre-review-checklist)
+### [Pre-Review Checklist for the PR Author (required)](#pre-review-checklist)
 
 - [ ] Read [commit-guidelines](https://github.com/delta-io/delta/blob/master/CONTRIBUTING.md)
 - [ ] Assign PR to reviewer
