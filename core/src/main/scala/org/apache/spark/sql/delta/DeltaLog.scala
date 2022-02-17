@@ -137,7 +137,10 @@ class DeltaLog private(
    * Tombstones before this timestamp will be dropped from the state and the files can be
    * garbage collected.
    */
-  def minFileRetentionTimestamp: Long = clock.getTimeMillis() - tombstoneRetentionMillis
+  def minFileRetentionTimestamp: Long = {
+    // TODO (Fred): Get rid of this FrameProfiler record once SC-94033 is addressed
+    clock.getTimeMillis() - tombstoneRetentionMillis
+  }
 
   /**
    * Checks whether this table only accepts appends. If so it will throw an error in operations that

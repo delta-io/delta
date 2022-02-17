@@ -114,7 +114,6 @@ trait SnapshotManagement { self: DeltaLog =>
   protected def getLogSegmentForVersion(
       startCheckpoint: Option[Long],
       versionToLoad: Option[Long] = None): LogSegment = {
-
     // List from the starting checkpoint. If a checkpoint doesn't exist, this will still return
     // deltaVersion=0.
     val newFiles = listDeltaAndCheckpointFiles(startCheckpoint.getOrElse(0L), versionToLoad)
