@@ -130,7 +130,8 @@ public abstract class LogStore {
    *
    * Whether a partial write is visible for the underlying file system of `path`.
    *
+   * @throws IOException if there's an issue resolving the FileSystem
    * @since 1.0.0
    */
-  public abstract Boolean isPartialWriteVisible(Path path, Configuration hadoopConf);
+  public abstract Boolean isPartialWriteVisible(Path path, Configuration hadoopConf) throws IOException;
 }

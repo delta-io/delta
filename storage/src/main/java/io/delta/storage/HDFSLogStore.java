@@ -22,7 +22,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.util.EnumSet;
 import java.util.Iterator;
-import java.util.UUID;
 
 import io.delta.storage.internal.LogStoreErrors;
 import org.apache.hadoop.conf.Configuration;
@@ -74,26 +73,6 @@ public class HDFSLogStore extends HadoopFileSystemLogStore {
     }
 
     /**
-     * @throws UnsupportedFileSystemException if the file system from the default configuration is
-     *                                        not supported
-     */
-    protected FileContext getFileContext(
-            Path path,
-            Configuration hadoopConf) throws UnsupportedFileSystemException {
-        return FileContext.getFileContext(path.toUri(), hadoopConf);
-    }
-
-    /**
-     * Create a temporary path (to be used as a copy) for the input {@code path}
-     */
-    protected Path createTempPath(Path path) {
-        return new Path(
-            path.getParent(),
-            String.format(".%s.%s.tmp", path.getName(), UUID.randomUUID())
-        );
-    }
-
-    /**
      * @throws IOException if this HDFSLogStore is used to write into a Delta table on a non-HDFS
      *                     storage system.
      * @throws FileAlreadyExistsException if {@code overwrite} is false and the file at {@code path}
@@ -106,7 +85,7 @@ public class HDFSLogStore extends HadoopFileSystemLogStore {
             Configuration hadoopConf) throws IOException {
         final FileContext fc;
         try {
-            fc = getFileContext(path, hadoopConf);
+            fc = FileContext.getFileContext(path.toUri(), hadoopConf);
         } catch (IOException e) {
             if (e.getMessage().contains(NO_ABSTRACT_FILE_SYSTEM_EXCEPTION_MESSAGE)) {
                 final IOException newException = LogStoreErrors.incorrectLogStoreImplementationException(e);

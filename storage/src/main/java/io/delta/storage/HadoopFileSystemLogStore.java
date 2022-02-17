@@ -21,6 +21,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Iterator;
+import java.util.UUID;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
@@ -63,5 +64,15 @@ public abstract class HadoopFileSystemLogStore extends LogStore {
     @Override
     public Path resolvePathOnPhysicalStorage(Path path, Configuration hadoopConf) throws IOException {
         return path.getFileSystem(hadoopConf).makeQualified(path);
+    }
+
+    /**
+     * Create a temporary path (to be used as a copy) for the input {@code path}
+     */
+    protected Path createTempPath(Path path) {
+        return new Path(
+            path.getParent(),
+            String.format(".%s.%s.tmp", path.getName(), UUID.randomUUID())
+        );
     }
 }
