@@ -117,6 +117,8 @@ trait OptimizeMetricsSuiteBase extends QueryTest
       // Second Optimize
       val res = spark.sql(s"OPTIMIZE $tblName")
       val actMetrics: OptimizeMetrics = res.select($"metrics.*").as[OptimizeMetrics].head()
+      var preserveInsertionOrder = false
+
       val expMetrics = OptimizeMetrics(
         numFilesAdded = 0,
         numFilesRemoved = 0,
@@ -127,7 +129,7 @@ trait OptimizeMetricsSuiteBase extends QueryTest
         numBatches = 0,
         totalConsideredFiles = 1,
         totalFilesSkipped = 1,
-        preserveInsertionOrder = false)
+        preserveInsertionOrder = preserveInsertionOrder)
 
       assert(actMetrics === expMetrics)
     }

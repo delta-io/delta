@@ -21,6 +21,8 @@ import java.io.File
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.Path
+import org.scalatest.concurrent.TimeLimits.failAfter
+import org.scalatest.time.SpanSugar._
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.catalog.ExternalCatalogUtils
@@ -271,6 +273,40 @@ trait OptimizeCompactionSuiteBase extends QueryTest
 
       // version is incremented
       assert(deltaLogAfter.snapshot.version === versionBefore + 1)
+    }
+  }
+
+  test("optimize - multiple jobs start executing at once ") {
+    // The idea here is to make sure multiple optimize jobs execute concurrently. We can
+    // block the writes of one batch with a countdown latch that will unblock only
+    // after the second batch also tries to write.
+
+    val numPartitions = 2
+    withTempDir { tempDir =>
+      spark.range(100)
+          .withColumn("pCol", 'id % numPartitions)
+          .repartition(10)
+          .write
+          .format("delta")
+          .partitionBy("pCol")
+          .save(tempDir.getAbsolutePath)
+
+      // We have two partitions so we would have two tasks. We can make sure we have two batches
+      withSQLConf(
+        ("fs.AbstractFileSystem.block.impl",
+            classOf[BlockWritesAbstractFileSystem].getCanonicalName),
+        ("fs.block.impl", classOf[BlockWritesLocalFileSystem].getCanonicalName)) {
+
+        val path = s"block://${tempDir.getAbsolutePath}"
+        val deltaLog = DeltaLog.forTable(spark, path)
+        require(deltaLog.snapshot.numOfFiles === 20) // 10 files in each partition
+        // block the first write until the second batch can attempt to write.
+        BlockWritesLocalFileSystem.blockUntilConcurrentWrites(numPartitions)
+        failAfter(60.seconds) {
+          sql(s"OPTIMIZE '$path'")
+        }
+        assert(deltaLog.snapshot.numOfFiles === numPartitions) // 1 file per partition
+      }
     }
   }
 
