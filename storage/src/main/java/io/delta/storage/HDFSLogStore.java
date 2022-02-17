@@ -24,10 +24,12 @@ import java.util.EnumSet;
 import java.util.Iterator;
 import java.util.UUID;
 
-import io.delta.storage.internal.DeltaErrors;
+import io.delta.storage.internal.LogStoreErrors;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.*;
 import org.apache.hadoop.fs.CreateFlag;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * The {@link LogStore} implementation for HDFS, which uses Hadoop {@link FileContext} API's to
@@ -38,7 +40,7 @@ import org.apache.hadoop.fs.CreateFlag;
  * </ol>
  */
 public class HDFSLogStore extends HadoopFileSystemLogStore {
-
+    private static final Logger LOG = LoggerFactory.getLogger(HDFSLogStore.class);
     public static final String NO_ABSTRACT_FILE_SYSTEM_EXCEPTION_MESSAGE = "No AbstractFileSystem";
 
     public HDFSLogStore(Configuration hadoopConf) {
@@ -107,8 +109,8 @@ public class HDFSLogStore extends HadoopFileSystemLogStore {
             fc = getFileContext(path, hadoopConf);
         } catch (IOException e) {
             if (e.getMessage().contains(NO_ABSTRACT_FILE_SYSTEM_EXCEPTION_MESSAGE)) {
-                final IOException newException = DeltaErrors.incorrectLogStoreImplementationException(e);
-                // TODO: logError(newException.getMessage(), newException.getCause())
+                final IOException newException = LogStoreErrors.incorrectLogStoreImplementationException(e);
+                LOG.error(newException.getMessage(), newException.getCause());
                 throw newException;
             } else {
                 throw e;
@@ -164,8 +166,8 @@ public class HDFSLogStore extends HadoopFileSystemLogStore {
                 // checksum file exists, deleting it
                 fc.delete(checksumFile, true); // recursive=true
             }
-        } catch (Exception e) {
-            if (!DeltaErrors.isNonFatal(e)) {
+        } catch (Throwable e) {
+            if (!LogStoreErrors.isNonFatal(e)) {
                 throw e;
             }
             // else, ignore - we are removing crc file as "best-effort"

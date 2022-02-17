@@ -21,7 +21,7 @@ import scala.util.control.ControlThrowable;
 
 import java.io.IOException;
 
-public class DeltaErrors {
+public class LogStoreErrors {
 
     /**
      * Returns true if the provided Throwable is to be considered non-fatal, or false if it is to be
