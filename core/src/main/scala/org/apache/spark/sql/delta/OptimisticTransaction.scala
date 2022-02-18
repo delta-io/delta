@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta
 
 import java.nio.file.FileAlreadyExistsException
-import java.util.{ConcurrentModificationException, Locale, UUID}
+import java.util.{ConcurrentModificationException, UUID}
 import java.util.concurrent.TimeUnit.NANOSECONDS
 
 import scala.collection.mutable
@@ -34,7 +34,7 @@ import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
 
-import org.apache.spark.sql.{AnalysisException, SparkSession}
+import org.apache.spark.sql.{AnalysisException, Column, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.util.{Clock, Utils}
@@ -246,6 +246,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   } else {
     Some(NANOSECONDS.toMillis((commitEndNano - txnStartNano)))
   }
+
+  /** Gets the stats collector for the table at the snapshot this transaction has. */
+  def statsCollector: Column = snapshot.statsCollector
 
   /**
    * Returns the metadata for this transaction. The metadata refers to the metadata of the snapshot

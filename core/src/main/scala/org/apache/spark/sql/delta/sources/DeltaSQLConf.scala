@@ -51,6 +51,13 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createOptional
 
+  val DELTA_COLLECT_STATS =
+    buildConf("stats.collect")
+      .internal()
+      .doc("When true, statistics are collected while writing files into a Delta table.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_USER_METADATA =
     buildConf("commitInfo.userMetadata")
       .doc("Arbitrary user-defined metadata to include in CommitInfo. Requires commitInfo.enabled.")
@@ -521,6 +528,19 @@ trait DeltaSQLConfBase {
           |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
+
+  /**
+   * This conf has a special prefix `spark.databricks.io` because this is the conf value already
+   * used by Databricks' data skipping implementation. There's no benefit to making OSS users,
+   * some of whom are Databricks customers, have to keep track of two different conf values for the
+   * same data skipping parameter.
+   */
+  val DATA_SKIPPING_STRING_PREFIX_LENGTH =
+    SQLConf.buildConf("spark.databricks.io.skipping.stringPrefixLength")
+      .internal()
+      .doc("For string columns, how long prefix to store in the data skipping index.")
+      .intConf
+      .createWithDefault(32)
 
   val INTERNAL_UDF_OPTIMIZATION_ENABLED =
     buildConf("internalUdfOptimization.enabled")

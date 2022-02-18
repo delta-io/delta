@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.actions.Action.logSchema
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
+import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.util.StateCache
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
@@ -64,6 +65,7 @@ class Snapshot(
     val minSetTransactionRetentionTimestamp: Option[Long] = None)
   extends StateCache
   with PartitionFiltering
+  with StatisticsCollection
   with DeltaLogging {
 
   import Snapshot._
@@ -71,6 +73,7 @@ class Snapshot(
   import SingleAction._
 
   protected def spark = SparkSession.active
+
 
 
   protected def getNumPartitions: Int = {

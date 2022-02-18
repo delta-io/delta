@@ -320,6 +320,12 @@ object DeltaOperations {
     }
   }
 
+  /** Recorded when recomputing stats on the table. */
+  case class ComputeStats(predicate: Seq[String]) extends Operation("COMPUTE STATS") {
+    override val parameters: Map[String, Any] = Map(
+      "predicate" -> JsonUtils.toJson(predicate))
+  }
+
   /** Recorded when restoring a Delta table to an older version. */
   case class Restore(
       version: Option[Long],
