@@ -1187,10 +1187,9 @@ object DeltaErrors
    * We have plans to support more column mapping modes, but they are not implemented yet,
    * so we error for now to be forward compatible with tables created in the future.
    */
-  def unknownColumnMappingMode(mode: String): Throwable =
-    new ColumnMappingUnsupportedException(s"The column mapping mode `$mode` is not" +
-      s" supported. Supported modes in this version are: `none` and `id`." +
-      s" Please upgrade Delta to access this table.")
+  def unsupportedColumnMappingMode(mode: String): Throwable =
+    new ColumnMappingUnsupportedException(s"The column mapping mode `$mode` is " +
+      s"not supported for this Delta version. Please upgrade if you want to use this mode.")
 
   def missingColumnId(mode: DeltaColumnMappingMode, field: String): Throwable = {
     ColumnMappingException(s"Missing column ID in column mapping mode `${mode.name}`" +
@@ -1224,11 +1223,6 @@ object DeltaErrors
   def changeColumnMappingModeNotSupported(oldMode: String, newMode: String): Throwable = {
     new ColumnMappingUnsupportedException("Changing column mapping mode from" +
       s" '$oldMode' to '$newMode' is not supported.")
-  }
-
-  def writesWithColumnMappingNotSupported: Throwable = {
-    new ColumnMappingUnsupportedException("Writing data with column mapping mode is not " +
-      "supported.")
   }
 
   def generateManifestWithColumnMappingNotSupported: Throwable = {

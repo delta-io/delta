@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 
 import org.apache.spark.sql.catalyst.analysis.Resolver
+import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.types.{ArrayType, DataType, MapType, Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
 
@@ -51,6 +52,9 @@ trait DeltaColumnMappingBase {
    * This list is case-insensitive.
    */
   protected val DELTA_INTERNAL_COLUMNS: Set[String] = Set.empty
+
+  val supportedModes: Set[DeltaColumnMappingMode] =
+    Set(NoMapping, NameMapping)
 
   def isInternalField(field: StructField): Boolean = DELTA_INTERNAL_COLUMNS
     .contains(field.name.toLowerCase(Locale.ROOT))
@@ -91,6 +95,10 @@ trait DeltaColumnMappingBase {
     // field in new metadata should have been dropped
     val oldMappingMode = oldMetadata.columnMappingMode
     val newMappingMode = newMetadata.columnMappingMode
+
+    if (!supportedModes.contains(newMappingMode)) {
+      throw DeltaErrors.unsupportedColumnMappingMode(newMappingMode.name)
+    }
 
     val isChangingModeOnExistingTable = oldMappingMode != newMappingMode && !isCreatingNewTable
     if (isChangingModeOnExistingTable) {
@@ -162,7 +170,7 @@ trait DeltaColumnMappingBase {
           .build()
 
       case mode =>
-        throw DeltaErrors.unknownColumnMappingMode(mode.name)
+        throw DeltaErrors.unsupportedColumnMappingMode(mode.name)
     }
   }
 
@@ -226,7 +234,7 @@ trait DeltaColumnMappingBase {
       case NoMapping =>
         newMetadata
       case mode =>
-         throw DeltaErrors.unknownColumnMappingMode(mode.name)
+         throw DeltaErrors.unsupportedColumnMappingMode(mode.name)
     }
   }
 
@@ -250,7 +258,7 @@ trait DeltaColumnMappingBase {
 
     // use id mapping to keep all column mapping metadata
     // this method checks for missing physical name & column id already
-    val physicalSchema = createPhysicalSchema(schema, schema, IdMapping)
+    val physicalSchema = transformToPhysicalSchema(schema, schema, IdMapping)
 
     SchemaMergingUtils.transformColumns(physicalSchema) ((parentPhysicalPath, field, _) => {
       // field.name is now physical name
@@ -357,6 +365,29 @@ trait DeltaColumnMappingBase {
     if (columnMappingMode == NoMapping) {
       return schema
     }
+
+    // createPhysicalSchema is the narrow-waist for both read/write code path
+    // so we could check for mode support here
+    if (!supportedModes.contains(columnMappingMode)) {
+      throw DeltaErrors.unsupportedColumnMappingMode(columnMappingMode.name)
+    }
+
+    // perform the name conversion
+    transformToPhysicalSchema(schema, referenceSchema, columnMappingMode)
+  }
+
+  /**
+   * Convert input schema to physical schema given a reference schema with metadata
+   * @param schema the given logical schema (potentially without any metadata)
+   * @param referenceSchema the schema from the delta log, which has all the metadata
+   * @param columnMappingMode column mapping mode of the delta table, which determines which
+   *                          metadata to fill in
+   * @return
+   */
+  private[sql] def transformToPhysicalSchema(
+      schema: StructType,
+      referenceSchema: StructType,
+      columnMappingMode: DeltaColumnMappingMode): StructType = {
     SchemaMergingUtils.transformColumns(schema) { (path, field, _) =>
       val fullName = path :+ field.name
       val inSchema = SchemaUtils
@@ -371,6 +402,28 @@ trait DeltaColumnMappingBase {
           throw DeltaErrors.columnNotFound(fullName, referenceSchema)
         }
       }
+    }
+  }
+
+  /**
+   * Create a list of physical attributes for the given attributes using the table schema as a
+   * reference.
+   *
+   * @param output the list of attributes (potentially without any metadata)
+   * @param referenceSchema   the table schema with all the metadata
+   * @param columnMappingMode column mapping mode of the delta table, which determines which
+   *                          metadata to fill in
+   */
+  def createPhysicalAttributes(
+      output: Seq[Attribute],
+      referenceSchema: StructType,
+      columnMappingMode: DeltaColumnMappingMode): Seq[Attribute] = {
+    // Assign correct column mapping info to columns according to the schema
+    val struct = createPhysicalSchema(output.toStructType, referenceSchema, columnMappingMode)
+    output.zip(struct).map { case (attr, field) =>
+      attr.withDataType(field.dataType) // for recursive column names and metadata
+        .withMetadata(field.metadata)
+        .withName(field.name)
     }
   }
 
@@ -423,7 +476,7 @@ object DeltaColumnMappingMode {
       case NoMapping.name => NoMapping
       case IdMapping.name => IdMapping
       case NameMapping.name => NameMapping
-      case mode => throw DeltaErrors.unknownColumnMappingMode(mode)
+      case mode => throw DeltaErrors.unsupportedColumnMappingMode(mode)
     }
   }
 }
