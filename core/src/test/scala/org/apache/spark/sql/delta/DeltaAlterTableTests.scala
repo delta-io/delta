@@ -579,24 +579,39 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
     }
   }
 
-  ddlTest("ADD COLUMNS - an invalid column name") {
-    withDeltaTable(Seq((1, "a"), (2, "b")).toDF("v1", "v2")) { tableName =>
-      val ex = intercept[AnalysisException] {
+  ddlTest("ADD COLUMNS - column name with spaces") {
+    if (!columnMappingEnabled) {
+      withDeltaTable(Seq((1, "a"), (2, "b")).toDF("v1", "v2")) { tableName =>
+        val ex = intercept[AnalysisException] {
+          sql(s"ALTER TABLE $tableName ADD COLUMNS (`a column name with spaces` long)")
+        }
+        assert(ex.getMessage.contains("invalid character(s)"))
+      }
+    } else {
+      // column mapping mode supports arbitrary column names
+      withDeltaTable(Seq((1, "a"), (2, "b")).toDF("v1", "v2")) { tableName =>
         sql(s"ALTER TABLE $tableName ADD COLUMNS (`a column name with spaces` long)")
       }
-      assert(ex.getMessage.contains("invalid character(s)"))
     }
   }
 
-  ddlTest("ADD COLUMNS - an invalid column name (nested)") {
-    val df = Seq((1, "a"), (2, "b")).toDF("v1", "v2")
-      .withColumn("struct", struct("v1", "v2"))
-    withDeltaTable(df) { tableName =>
-
-      val ex = intercept[AnalysisException] {
+  ddlTest("ADD COLUMNS - column name with spaces (nested)") {
+    if (!columnMappingEnabled) {
+      val df = Seq((1, "a"), (2, "b")).toDF("v1", "v2")
+        .withColumn("struct", struct("v1", "v2"))
+      withDeltaTable(df) { tableName =>
+        val ex = intercept[AnalysisException] {
+          sql(s"ALTER TABLE $tableName ADD COLUMNS (struct.`a column name with spaces` long)")
+        }
+        assert(ex.getMessage.contains("invalid character(s)"))
+      }
+    } else {
+      // column mapping mode supports arbitrary column names
+      val df = Seq((1, "a"), (2, "b")).toDF("v1", "v2")
+        .withColumn("struct", struct("v1", "v2"))
+      withDeltaTable(df) { tableName =>
         sql(s"ALTER TABLE $tableName ADD COLUMNS (struct.`a column name with spaces` long)")
       }
-      assert(ex.getMessage.contains("invalid character(s)"))
     }
   }
 
