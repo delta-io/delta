@@ -975,6 +975,10 @@ object DeltaErrors
     new AnalysisException("Cannot describe the history of a view.")
   }
 
+  def viewNotSupported(operationName: String): Throwable = {
+    new AnalysisException(s"Operation $operationName can not be performed on a view")
+  }
+
   def copyIntoValidationRequireDeltaTableExists: Throwable = {
     new AnalysisException("COPY INTO validation failed. Target table does not exist.")
   }

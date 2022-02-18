@@ -35,6 +35,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Analyzer, EliminateSubqueryAliases, NoSuchTableException, UnresolvedAttribute, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.catalog.CatalogTableType
 import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -392,16 +393,28 @@ trait DeltaCommand extends DeltaLogging {
       path: Option[String],
       tableIdentifier: Option[TableIdentifier],
       operationName: String): DeltaLog = {
-    val tablePath = tableIdentifier.map { ti =>
-      DeltaTableIdentifier(spark, ti) match {
-        case Some(id) if id.path.nonEmpty =>
-          new Path(id.path.get)
-        case _ =>
-          new Path(spark.sessionState.catalog.getTableMetadata(ti).location)
+    val tablePath =
+      if (path.nonEmpty) {
+        new Path(path.get)
+      } else if (tableIdentifier.nonEmpty) {
+        val sessionCatalog = spark.sessionState.catalog
+        lazy val metadata = sessionCatalog.getTableMetadata(tableIdentifier.get)
+
+        DeltaTableIdentifier(spark, tableIdentifier.get) match {
+          case Some(id) if id.path.nonEmpty =>
+            new Path(id.path.get)
+          case Some(id) if id.table.nonEmpty =>
+            new Path(metadata.location)
+          case _ =>
+            if (metadata.tableType == CatalogTableType.VIEW) {
+              throw DeltaErrors.viewNotSupported(operationName)
+            }
+            throw DeltaErrors.notADeltaTableException(operationName)
+        }
+      } else {
+        throw DeltaErrors.missingTableIdentifierException(operationName)
       }
-    }.orElse(path.map(new Path(_))).getOrElse {
-      throw DeltaErrors.missingTableIdentifierException(operationName)
-    }
+
     val deltaLog = DeltaLog.forTable(spark, tablePath)
     if (deltaLog.snapshot.version < 0) {
       throw DeltaErrors.notADeltaTableException(

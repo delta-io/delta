@@ -157,11 +157,17 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   }
 
   /**
-   * Create a [[OptimizeTableCommand]] logical plan. Example SQL:
+   * Create a [[OptimizeTableCommand]] logical plan.
+   * Syntax:
+   * {{{
+   *    OPTIMIZE <table-identifier> [WHERE predicate-using-partition-columns]
+   * }}}
+   * Examples:
    * {{{
    *    OPTIMIZE '/path/to/delta/table';
-   *    OPTIMIZE delta.db.deltaTable;
-   *    OPTIMIZE delta.db.deltaTable WHERE partCol = 25;
+   *    OPTIMIZE delta_table_name;
+   *    OPTIMIZE delta.`/path/to/delta/table`;
+   *    OPTIMIZE delta_table_name WHERE partCol = 25;
    * }}}
    */
   override def visitOptimizeTable(ctx: OptimizeTableContext): AnyRef = withOrigin(ctx) {
@@ -171,12 +177,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     OptimizeTableCommand(
       Option(ctx.path).map(string),
       Option(ctx.table).map(visitTableIdentifier),
-      Option(ctx.partitionPredicate).map(partitionPredicate => {
-        // Extract the raw expression text which will be parsed later
-        partitionPredicate.getStart.getInputStream.getText(new Interval(
-          partitionPredicate.getStart.getStartIndex,
-          partitionPredicate.getStop.getStopIndex))
-      }))
+      Option(ctx.partitionPredicate).map(extractRawText(_)))
   }
 
   override def visitDescribeDeltaDetail(
@@ -250,6 +251,13 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   // output.
   private def buildCheckConstraintText(tokens: Seq[ExprTokenContext]): String = {
     tokens.map(_.getText).mkString(" ")
+  }
+
+  private def extractRawText(exprContext: ExprTokenContext): String = {
+    // Extract the raw expression which will be parsed later
+    exprContext.getStart.getInputStream.getText(new Interval(
+      exprContext.getStart.getStartIndex,
+      exprContext.getStop.getStopIndex))
   }
 
   override def visitAddTableConstraint(
