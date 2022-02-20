@@ -424,6 +424,14 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_CHECKPOINT_MAX_ACTIONS_PER_FILE =
+    buildConf("checkpoint.maxActionsPerFile")
+      .internal()
+      .doc("Maximum number of actions to add to a checkpoint file before splitting it up. " +
+        "This can speed up writing and reading checkpoints by adding parallelization.")
+      .intConf
+      .createOptional
+
   val DELTA_WRITE_CHECKSUM_ENABLED =
     buildConf("writeChecksumFile.enabled")
       .doc("Whether the checksum file can be written.")

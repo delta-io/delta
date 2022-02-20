@@ -41,7 +41,7 @@ import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Cast, ElementAt, Literal}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
-import org.apache.spark.sql.functions.{col, struct, when}
+import org.apache.spark.sql.functions.{col, count, struct, when}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
@@ -302,18 +302,36 @@ object Checkpoints extends DeltaLogging {
     // log store and decide whether to use rename.
     val useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath, hadoopConf)
 
-    val checkpointRowCount = spark.sparkContext.longAccumulator("checkpointRowCount")
-    val numOfFiles = spark.sparkContext.longAccumulator("numOfFiles")
+    val sessionConf = spark.sessionState.conf
+    val maxActionsPerFile = sessionConf.getConf(DeltaSQLConf.DELTA_CHECKPOINT_MAX_ACTIONS_PER_FILE)
+
+    val res = snapshot.stateDF
+      .groupBy()
+      .agg(count("*").alias("rowCount"), count("add").alias("numOfFiles"))
+      .collect()
+      .head
+
+    val checkpointRowCount = res.getLong(0)
+    val numOfFiles = res.getLong(1)
+
+    val checkpointPaths = maxActionsPerFile.map { maxActions =>
+      val numCheckpointFiles = (checkpointRowCount - 1) / maxActions + 1
+      checkpointFileWithParts(snapshot.path, snapshot.version, numCheckpointFiles.toInt)
+    }.getOrElse {
+      checkpointFileSingular(snapshot.path, snapshot.version) :: Nil
+    }
+
+    val numPartsOption = if (maxActionsPerFile.isDefined) {
+      Some(checkpointPaths.length)
+    } else {
+      None
+    }
+
     // Use the string in the closure as Path is not Serializable.
-    val path = checkpointFileSingular(snapshot.path, snapshot.version).toString
+    val paths = checkpointPaths.map(_.toString)
     val base = snapshot.stateDS
-      .repartition(1)
-      .map { action =>
-        if (action.add != null) {
-          numOfFiles.add(1)
-        }
-        action
-      }.drop("commitInfo", "cdc")
+      .repartition(paths.length)
+      .drop("commitInfo", "cdc")
 
     val chk = buildCheckpoint(base, snapshot)
     val schema = chk.schema.asNullable
@@ -327,11 +345,12 @@ object Checkpoints extends DeltaLogging {
 
     val checkpointSizeInBytes = spark.sparkContext.longAccumulator("checkpointSizeInBytes")
 
-    val writtenPath = chk
+    val writtenPaths = chk
       .queryExecution // This is a hack to get spark to write directly to a file.
       .executedPlan
       .execute()
-      .mapPartitions { iter =>
+      .mapPartitionsWithIndex { case (index, iter) =>
+        val path = paths(index)
         val writtenPath =
           if (useRename) {
             val p = new Path(path)
@@ -354,7 +373,6 @@ object Checkpoints extends DeltaLogging {
                 new TaskAttemptID("", 0, TaskType.REDUCE, 0, 0)))
 
             iter.foreach { row =>
-              checkpointRowCount.add(1)
               writer.write(row)
             }
             // Note: `writer.close()` is not put in a `finally` clause because we don't want to
@@ -388,38 +406,40 @@ object Checkpoints extends DeltaLogging {
           writeAction()
         }
         Iterator(writtenPath)
-      }.collect().head
+      }.collect()
 
     if (useRename) {
-      val src = new Path(writtenPath)
-      val dest = new Path(path)
-      val fs = dest.getFileSystem(hadoopConf)
-      var renameDone = false
-      try {
-        if (fs.rename(src, dest)) {
-          renameDone = true
-        } else {
-          // There should be only one writer writing the checkpoint file, so there must be
-          // something wrong here.
-          throw DeltaErrors.failOnCheckpoint(src, dest)
-        }
-      } finally {
-        if (!renameDone) {
-          fs.delete(src, false)
+      writtenPaths.zipWithIndex.foreach { case (writtenPath, index) =>
+        val src = new Path(writtenPath)
+        val dest = new Path(paths(index))
+        val fs = dest.getFileSystem(hadoopConf)
+        var renameDone = false
+        try {
+          if (fs.rename(src, dest)) {
+            renameDone = true
+          } else {
+            // There should be only one writer writing the checkpoint file, so there must be
+            // something wrong here.
+            throw DeltaErrors.failOnCheckpoint(src, dest)
+          }
+        } finally {
+          if (!renameDone) {
+            fs.delete(src, false)
+          }
         }
       }
     }
 
-    if (numOfFiles.value != snapshot.numOfFiles) {
+    if (numOfFiles != snapshot.numOfFiles) {
       throw new IllegalStateException(
         "State of the checkpoint doesn't match that of the snapshot.")
     }
 
     // Attempting to write empty checkpoint
-    if (checkpointRowCount.value == 0) {
+    if (checkpointRowCount == 0) {
       logWarning(DeltaErrors.EmptyCheckpointErrorMessage)
     }
-    CheckpointMetaData(snapshot.version, checkpointRowCount.value, None,
+    CheckpointMetaData(snapshot.version, checkpointRowCount.value, numPartsOption,
       Some(checkpointSizeInBytes.value), Some(snapshot.numOfFiles))
   }
 
