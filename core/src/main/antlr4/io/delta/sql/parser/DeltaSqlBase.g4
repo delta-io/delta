@@ -84,6 +84,8 @@ statement
       constraint                                                        #addTableConstraint
     | ALTER TABLE table=qualifiedName
         DROP CONSTRAINT (IF EXISTS)? name=identifier                    #dropTableConstraint
+    | OPTIMIZE (path=STRING | table=qualifiedName)
+        (WHERE partitionPredicate = exprToken)?                    #optimizeTable
     | .*?                                                               #passThrough
     ;
 
@@ -124,12 +126,12 @@ number
     ;
 
 constraint
-    : CHECK '(' checkExprToken+ ')'                                 #checkConstraint
+    : CHECK '(' exprToken+ ')'                                 #checkConstraint
     ;
 
 // We don't have an expression rule in our grammar here, so we just grab the tokens and defer
 // parsing them to later.
-checkExprToken
+exprToken
     :  .+?
     ;
 
@@ -139,7 +141,7 @@ nonReserved
     : VACUUM | RETAIN | HOURS | DRY | RUN
     | CONVERT | TO | DELTA | PARTITIONED | BY
     | DESC | DESCRIBE | LIMIT | DETAIL
-    | GENERATE | FOR | TABLE | CHECK | EXISTS
+    | GENERATE | FOR | TABLE | CHECK | EXISTS | OPTIMIZE
     ;
 
 // Define how the keywords above should appear in a user's SQL statement.
@@ -165,6 +167,7 @@ LIMIT: 'LIMIT';
 MINUS: '-';
 NOT: 'NOT' | '!';
 NULL: 'NULL';
+OPTIMIZE: 'OPTIMIZE';
 FOR: 'FOR';
 TABLE: 'TABLE';
 PARTITIONED: 'PARTITIONED';
@@ -172,6 +175,7 @@ RETAIN: 'RETAIN';
 RUN: 'RUN';
 TO: 'TO';
 VACUUM: 'VACUUM';
+WHERE: 'WHERE';
 
 // Multi-character operator tokens need to be defined even though we don't explicitly reference
 // them so that they can be recognized as single tokens when parsing. If we split them up and

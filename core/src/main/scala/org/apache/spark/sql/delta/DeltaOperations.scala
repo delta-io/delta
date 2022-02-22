@@ -336,6 +336,17 @@ object DeltaOperations {
     override def changesData: Boolean = true
   }
 
+  val OPTIMIZE_OPERATION_NAME = "OPTIMIZE"
+
+  /** Recorded when optimizing the table. */
+  case class Optimize(
+      predicate: Seq[String]
+  ) extends Operation(OPTIMIZE_OPERATION_NAME) {
+    override val parameters: Map[String, Any] = Map(
+      "predicate" -> JsonUtils.toJson(predicate)
+      )
+  }
+
 
   private def structFieldToMap(colPath: Seq[String], field: StructField): Map[String, Any] = {
     Map(
