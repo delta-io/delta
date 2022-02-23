@@ -122,7 +122,11 @@ class DeltaLogSuite extends QueryTest
 
     (1 to 5).foreach { i =>
       val txn = log1.startTransaction()
-      val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
+      val file = if (i > 1) {
+        AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
+      } else {
+        Metadata(configuration = Map(DeltaConfigs.CHECKPOINT_INTERVAL.key -> "10")) :: Nil
+      }
       val delete: Seq[Action] = if (i > 1) {
         RemoveFile(i - 1 toString, Some(System.currentTimeMillis()), true) :: Nil
       } else {
@@ -415,12 +419,13 @@ class DeltaLogSuite extends QueryTest
           val e = intercept[IllegalStateException] {
             DeltaLog.forTable(spark, tempDir).update()
           }
-          assert(e.getMessage === DeltaErrors.actionNotFoundException(action, 10).getMessage)
+          assert(e.getMessage ===
+            DeltaErrors.actionNotFoundException(action, checkpointInterval).getMessage)
         }
 
         // Disable state reconstruction validation and try again
         withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "false") {
-          assert(DeltaLog.forTable(spark, tempDir).update().version === 10)
+          assert(DeltaLog.forTable(spark, tempDir).update().version === checkpointInterval)
         }
       }
     }
