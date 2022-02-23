@@ -309,6 +309,9 @@ class DeltaLogSuite extends QueryTest
 
   test("error - versions not contiguous") {
     withTempDir { dir =>
+      val staleLog = DeltaLog.forTable(spark, dir)
+      DeltaLog.clearCache()
+
       val log = DeltaLog.forTable(spark, dir)
       assert(new File(log.logPath.toUri).mkdirs())
 
@@ -324,9 +327,8 @@ class DeltaLogSuite extends QueryTest
 
       new File(new Path(log.logPath, "00000000000000000001.json").toUri).delete()
 
-      DeltaLog.clearCache()
       val ex = intercept[IllegalStateException] {
-        DeltaLog.forTable(spark, dir)
+        staleLog.update()
       }
       assert(ex.getMessage === "Versions (Vector(0, 2)) are not contiguous.")
     }
@@ -366,7 +368,11 @@ class DeltaLogSuite extends QueryTest
     testQuietly(s"state reconstruction from checkpoint with missing $action should fail") {
       withTempDir { tempDir =>
         import testImplicits._
+        val staleLog = DeltaLog.forTable(spark, tempDir)
+        DeltaLog.clearCache()
+
         val log = DeltaLog.forTable(spark, tempDir)
+        assert (staleLog != log)
         val checkpointInterval = log.checkpointInterval
         // Create a checkpoint regularly
         for (f <- 0 to checkpointInterval) {
@@ -412,12 +418,10 @@ class DeltaLogSuite extends QueryTest
           }
         }
 
-        DeltaLog.clearCache()
-
         // Verify if the state reconstruction from the checkpoint fails.
         withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "true") {
           val e = intercept[IllegalStateException] {
-            DeltaLog.forTable(spark, tempDir).update()
+            staleLog.update()
           }
           assert(e.getMessage ===
             DeltaErrors.actionNotFoundException(action, checkpointInterval).getMessage)
@@ -425,7 +429,7 @@ class DeltaLogSuite extends QueryTest
 
         // Disable state reconstruction validation and try again
         withSQLConf(DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key -> "false") {
-          assert(DeltaLog.forTable(spark, tempDir).update().version === checkpointInterval)
+          assert(staleLog.update().version === checkpointInterval)
         }
       }
     }

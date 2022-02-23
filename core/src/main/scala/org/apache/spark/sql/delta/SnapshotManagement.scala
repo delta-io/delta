@@ -205,7 +205,7 @@ trait SnapshotManagement { self: DeltaLog =>
   protected def getSnapshotAtInit: Snapshot = {
     try {
       val segment = getLogSegmentFrom(lastCheckpoint)
-      val startCheckpoint = segment.checkpointVersion
+      val startCheckpoint = segment.checkpointVersionOpt
         .map(v => s" starting from checkpoint $v.").getOrElse(".")
       logInfo(s"Loading version ${segment.version}$startCheckpoint")
       val snapshot = createSnapshot(segment, minFileRetentionTimestamp)
@@ -324,7 +324,7 @@ trait SnapshotManagement { self: DeltaLog =>
           version = snapshotVersion,
           deltas = deltas,
           checkpoint = Nil,
-          checkpointVersion = None,
+          checkpointVersionOpt = None,
           lastCommitTimestamp = deltas.last.getModificationTime))
     }
   }
@@ -348,7 +348,7 @@ trait SnapshotManagement { self: DeltaLog =>
       try {
         return snapshotCreator(segment)
       } catch {
-        case e: SparkException if attempt < numRetries && segment.checkpointVersion.nonEmpty =>
+        case e: SparkException if attempt < numRetries && segment.checkpointVersionOpt.nonEmpty =>
           if (firstError == null) {
             firstError = e
           }
@@ -356,7 +356,7 @@ trait SnapshotManagement { self: DeltaLog =>
             s"Trying a different checkpoint.", e)
           segment = getLogSegmentWithMaxExclusiveCheckpointVersion(
             segment.version,
-            segment.checkpointVersion.get).getOrElse {
+            segment.checkpointVersionOpt.get).getOrElse {
               // Throw the first error if we cannot find an equivalent `LogSegment`.
               throw firstError
             }
@@ -413,7 +413,7 @@ trait SnapshotManagement { self: DeltaLog =>
    * Try to update ActionLog. If another thread is updating ActionLog, then this method returns
    * at once and return the current snapshot. The return snapshot may be stale.
    */
-  private def tryUpdate(isAsync: Boolean = false): Snapshot = {
+  private def tryUpdate(isAsync: Boolean): Snapshot = {
     if (deltaLogLock.tryLock()) {
       try {
         updateInternal(isAsync)
@@ -432,14 +432,14 @@ trait SnapshotManagement { self: DeltaLog =>
   protected def updateInternal(isAsync: Boolean): Snapshot =
     recordDeltaOperation(this, "delta.log.update", Map(TAG_ASYNC -> isAsync.toString)) {
       try {
-        val segment = getLogSegmentForVersion(currentSnapshot.logSegment.checkpointVersion)
+        val segment = getLogSegmentForVersion(currentSnapshot.logSegment.checkpointVersionOpt)
         if (segment == currentSnapshot.logSegment) {
           // Exit early if there is no new file
           lastUpdateTimestamp = clock.getTimeMillis()
           return currentSnapshot
         }
 
-        val startingFrom = segment.checkpointVersion
+        val startingFrom = segment.checkpointVersionOpt
           .map(v => s" starting from checkpoint version $v.").getOrElse(".")
         logInfo(s"Loading version ${segment.version}$startingFrom")
 
@@ -541,7 +541,7 @@ object SnapshotManagement {
  * @param version The Snapshot version to generate
  * @param deltas The delta commit files (.json) to read
  * @param checkpoint The checkpoint file to read
- * @param checkpointVersion The checkpoint version used to start replay
+ * @param checkpointVersionOpt The checkpoint version used to start replay
  * @param lastCommitTimestamp The "unadjusted" timestamp of the last commit within this segment. By
  *                            unadjusted, we mean that the commit timestamps may not necessarily be
  *                            monotonically increasing for the commits within this segment.
@@ -551,7 +551,7 @@ case class LogSegment(
     version: Long,
     deltas: Seq[FileStatus],
     checkpoint: Seq[FileStatus],
-    checkpointVersion: Option[Long],
+    checkpointVersionOpt: Option[Long],
     lastCommitTimestamp: Long) {
 
   override def hashCode(): Int = logPath.hashCode() * 31 + (lastCommitTimestamp % 10000).toInt
@@ -577,6 +577,6 @@ object LogSegment {
     version = -1L,
     deltas = Nil,
     checkpoint = Nil,
-    checkpointVersion = None,
+    checkpointVersionOpt = None,
     lastCommitTimestamp = -1L)
 }
