@@ -54,37 +54,3 @@ case class ZOrderStats(
   numOutputCubes: Long,
   mergedNumCubes: Option[Long] = None
 )
-
-/**
- * Aggregated usage logs stats for OPTIMIZE ZORDERBY command.
- *
- * Some of the fields (strategyName/inputCubeFiles/inputOtherFiles/inputNumCubes/mergedFiles/
- * numOutputCubes/mergedNumCubes) are redundant in [[ZOrderStatsForUsageLogs]] as well as
- * [[ZOrderStatsForUsageLogs.optimizeStats.zOrderStats]]. The fields are kept in
- * [[ZOrderStatsForUsageLogs]] for backward compatibility.
- */
-case class ZOrderStatsForUsageLogs(
-    strategyName: String,
-    inputCubeFiles: ZOrderFileStats,
-    inputOtherFiles: ZOrderFileStats,
-    inputNumCubes: Long,
-    mergedFiles: ZOrderFileStats,
-    numOutputCubes: Long,
-    mergedNumCubes: Option[Long] = None,
-    optimizeStats: OptimizeStats,
-    executeTimeTakenMs: Long,
-    curve: String)
-
-object ZOrderStatsForUsageLogs {
-  def apply(
-      optimizeStats: OptimizeStats,
-      executeTimeTakenMs: Long,
-      curve: String): ZOrderStatsForUsageLogs = {
-    require(optimizeStats.zOrderStats.nonEmpty)
-    val zOrderStats = optimizeStats.zOrderStats.get
-    ZOrderStatsForUsageLogs(zOrderStats.strategyName, zOrderStats.inputCubeFiles,
-      zOrderStats.inputOtherFiles, zOrderStats.inputNumCubes, zOrderStats.mergedFiles,
-      zOrderStats.numOutputCubes, zOrderStats.mergedNumCubes, optimizeStats,
-      executeTimeTakenMs, curve)
-  }
-}
