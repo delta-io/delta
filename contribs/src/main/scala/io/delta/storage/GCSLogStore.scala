@@ -20,7 +20,6 @@ import java.io.{IOException, _}
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.FileAlreadyExistsException
 
-import org.apache.spark.sql.delta.storage.HadoopFileSystemLogStore
 import com.google.common.base.Throwables
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs._
@@ -55,7 +54,8 @@ import org.apache.spark.sql.delta.util.DeltaFileOperations
  */
 @Unstable
 class GCSLogStore(sparkConf: SparkConf, initHadoopConf: Configuration)
-  extends HadoopFileSystemLogStore(sparkConf, initHadoopConf) with Logging {
+  extends org.apache.spark.sql.delta.storage.HadoopFileSystemLogStore(sparkConf, initHadoopConf)
+  with Logging {
 
   val preconditionFailedExceptionMessage = "412 Precondition Failed"
 

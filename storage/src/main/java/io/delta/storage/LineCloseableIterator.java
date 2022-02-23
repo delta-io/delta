@@ -27,7 +27,7 @@ import java.util.NoSuchElementException;
  * a trimmed line.
  */
 public class LineCloseableIterator implements CloseableIterator<String> {
-    final private BufferedReader reader;
+    private final BufferedReader reader;
 
     // Whether `nextValue` is valid. If it's invalid, we should try to read the next line.
     private boolean gotNext = false;
@@ -42,15 +42,17 @@ public class LineCloseableIterator implements CloseableIterator<String> {
     private boolean finished = false;
 
     public LineCloseableIterator(Reader reader) {
-        this.reader = reader instanceof BufferedReader ? (BufferedReader) reader : new BufferedReader(reader);
+        this.reader =
+            reader instanceof BufferedReader ? (BufferedReader) reader : new BufferedReader(reader);
     }
 
     @Override
     public boolean hasNext() {
         try {
             if (!finished) {
-                // Check whether we have closed the reader before reading. Even if `nextValue` is valid, we
-                // still don't return `nextValue` after a reader is closed. Otherwise, it would be confusing.
+                // Check whether we have closed the reader before reading. Even if `nextValue` is
+                // valid, we still don't return `nextValue` after a reader is closed. Otherwise, it
+                // would be confusing.
                 if (closed) {
                     throw new IllegalStateException("Iterator is closed");
                 }

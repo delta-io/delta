@@ -350,68 +350,35 @@ object TrackingRenameFileSystem {
   @volatile var numOfRename = 0
 }
 
-class CustomPublicLogStore(initHadoopConf: Configuration)
-  extends io.delta.storage.LogStore(initHadoopConf) {
+////////////////////////////////////////////////////////////////////
+// Public LogStore (Java) suite tests from delta-storage artifact //
+////////////////////////////////////////////////////////////////////
 
-  private val logStoreInternal = new HDFSLogStore(SparkEnv.get.conf, initHadoopConf)
+abstract class PublicLogStoreSuite extends LogStoreSuiteBase {
 
-  override def read(
-      path: Path,
-      hadoopConf: Configuration): io.delta.storage.CloseableIterator[String] = {
-    val iter = logStoreInternal.readAsIterator(path, hadoopConf)
-    new io.delta.storage.CloseableIterator[String] {
-      override def close(): Unit = iter.close
-      override def hasNext: Boolean = iter.hasNext
-      override def next(): String = iter.next
-    }
-  }
-
-  override def write(
-      path: Path,
-      actions: java.util.Iterator[String],
-      overwrite: java.lang.Boolean,
-      hadoopConf: Configuration): Unit = {
-    logStoreInternal.write(path, actions.asScala, overwrite, hadoopConf)
-  }
-
-  override def listFrom(
-      path: Path,
-      hadoopConf: Configuration): java.util.Iterator[FileStatus] = {
-    logStoreInternal.listFrom(path, hadoopConf).asJava
-  }
-
-  override def resolvePathOnPhysicalStorage(
-      path: Path,
-      hadoopConf: Configuration): Path = {
-    logStoreInternal.resolvePathOnPhysicalStorage(path, hadoopConf)
-  }
-
-  override def isPartialWriteVisible(path: Path, hadoopConf: Configuration): java.lang.Boolean = {
-    logStoreInternal.isPartialWriteVisible(path, hadoopConf)
-  }
-
-}
-
-class CustomPublicLogStoreSuite extends LogStoreSuiteBase {
-
-  private val customLogStoreClassName: String = classOf[CustomPublicLogStore].getName
+  protected val publicLogStoreClassName: String
 
   // The actual type of LogStore created will be LogStoreAdaptor.
   override val logStoreClassName: String = classOf[LogStoreAdaptor].getName
 
   protected override def sparkConf = {
-    super.sparkConf.set(logStoreClassConfKey, customLogStoreClassName)
+    super.sparkConf.set(logStoreClassConfKey, publicLogStoreClassName)
   }
 
   protected override def testInitFromSparkConf(): Unit = {
     test("instantiation through SparkConf") {
-      assert(spark.sparkContext.getConf.get(logStoreClassConfKey) == customLogStoreClassName)
+      assert(spark.sparkContext.getConf.get(logStoreClassConfKey) == publicLogStoreClassName)
       assert(LogStore(spark.sparkContext).getClass.getName == logStoreClassName)
       assert(LogStore(spark.sparkContext).asInstanceOf[LogStoreAdaptor]
-        .logStoreImpl.getClass.getName == customLogStoreClassName)
+        .logStoreImpl.getClass.getName == publicLogStoreClassName)
 
     }
   }
 
   protected def shouldUseRenameToWriteCheckpoint: Boolean = true
+}
+
+class PublicHDFSLogStoreSuite extends PublicLogStoreSuite {
+  override protected val publicLogStoreClassName: String =
+    classOf[io.delta.storage.HDFSLogStore].getName
 }
