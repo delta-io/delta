@@ -164,7 +164,8 @@ object OptimisticTransaction {
  *
  * This trait is not thread-safe.
  */
-trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReporting
+trait OptimisticTransactionImpl extends TransactionalWrite
+  with SQLMetricsReporting
   with DeltaLogging {
 
   import org.apache.spark.sql.delta.util.FileNames._
