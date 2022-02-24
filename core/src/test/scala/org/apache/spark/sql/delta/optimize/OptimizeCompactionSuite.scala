@@ -85,6 +85,23 @@ trait OptimizeCompactionSuiteBase extends QueryTest
     }
   }
 
+  test("optimize command via DeltaTable") {
+    withTempDir { tempDir =>
+      appendToDeltaTable(Seq(1, 2, 3).toDF(), tempDir.toString, partitionColumns = None)
+      appendToDeltaTable(Seq(4, 5, 6).toDF(), tempDir.toString, partitionColumns = None)
+
+      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+      val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tempDir.getPath)
+      val deltaLog = DeltaLog.forTable(spark, tempDir)
+      val versionBeforeOptimize = deltaLog.snapshot.version
+      deltaTable.optimize()
+      deltaLog.update()
+      assert(deltaLog.snapshot.version === versionBeforeOptimize + 1)
+      checkDatasetUnorderly(data.toDF().as[Int], 1, 2, 3, 4, 5, 6)
+    }
+  }
+
   test("optimize command: predicate on non-partition column") {
     withTempDir { tempDir =>
       val path = new File(tempDir, "testTable").getCanonicalPath
@@ -97,6 +114,24 @@ trait OptimizeCompactionSuiteBase extends QueryTest
       val e = intercept[AnalysisException] {
         // Should fail when predicate is on a non-partition column
         spark.sql(s"OPTIMIZE '$path' WHERE value < 4")
+      }
+      assert(e.getMessage.contains("Predicate references non-partition column 'value'. " +
+                                       "Only the partition columns may be referenced: [id]"))
+    }
+  }
+
+  test("optimize command via DeltaTable: predicate on non-partition column") {
+    withTempDir { tempDir =>
+      val path = new File(tempDir, "testTable").getCanonicalPath
+      val partitionColumns = Some(Seq("id"))
+      appendToDeltaTable(
+        Seq(1, 2, 3).toDF("value").withColumn("id", 'value % 2),
+        path,
+        partitionColumns)
+
+      val e = intercept[AnalysisException] {
+        // Should fail when predicate is on a non-partition column
+        io.delta.tables.DeltaTable.forPath(spark, path).optimize("value < 4")
       }
       assert(e.getMessage.contains("Predicate references non-partition column 'value'. " +
                                        "Only the partition columns may be referenced: [id]"))
@@ -185,6 +220,53 @@ trait OptimizeCompactionSuiteBase extends QueryTest
       // File counts in partitions that are not part of the OPTIMIZE should remain the same
       assert(fileListAfter.count(_.partitionValues === Map(id -> "1")) ===
                  fileListAfter.count(_.partitionValues === Map(id -> "1")))
+
+      // version is incremented
+      assert(deltaLogAfter.snapshot.version === versionBefore + 1)
+
+      // data should remain the same after the OPTIMIZE
+      checkDatasetUnorderly(
+        spark.read.format("delta").load(path).select("value").as[Long],
+        (1L to 6L): _*)
+    }
+  }
+
+
+  test("optimize command via DeltaTable: on partitioned table - selected partitions") {
+    withTempDir { tempDir =>
+      val path = new File(tempDir, "testTable").getCanonicalPath
+      val partitionColumns = Some(Seq("id"))
+      appendToDeltaTable(
+        Seq(1, 2, 3).toDF("value").withColumn("id", 'value % 2),
+        path,
+        partitionColumns)
+
+      appendToDeltaTable(
+        Seq(4, 5, 6).toDF("value").withColumn("id", 'value % 2),
+        path,
+        partitionColumns)
+
+      val deltaLogBefore = DeltaLog.forTable(spark, path)
+      val txnBefore = deltaLogBefore.startTransaction();
+      val fileListBefore = txnBefore.filterFiles()
+
+      assert(fileListBefore.length >= 3)
+      assert(fileListBefore.count(_.partitionValues === Map("id" -> "0")) > 1)
+
+      val versionBefore = deltaLogBefore.snapshot.version
+      io.delta.tables.DeltaTable.forPath(spark, path).optimize("id = 0")
+
+      val deltaLogAfter = DeltaLog.forTable(spark, path)
+      val txnAfter = deltaLogBefore.startTransaction();
+      val fileListAfter = txnAfter.filterFiles()
+
+      assert(fileListBefore.length > fileListAfter.length)
+      // Optimized partition should contain only one file
+      assert(fileListAfter.count(_.partitionValues === Map("id" -> "0")) === 1)
+
+      // File counts in partitions that are not part of the OPTIMIZE should remain the same
+      assert(fileListAfter.count(_.partitionValues === Map("id" -> "1")) ===
+                 fileListAfter.count(_.partitionValues === Map("id" -> "1")))
 
       // version is incremented
       assert(deltaLogAfter.snapshot.version === versionBefore + 1)

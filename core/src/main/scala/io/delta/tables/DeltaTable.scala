@@ -182,6 +182,37 @@ class DeltaTable private[tables](
     executeDelete(None)
   }
 
+  /**
+   * Optimize data in the table that match the given `condition`.
+   *
+   * @param condition Boolean SQL expression
+   *
+   * @since 1.2.0
+   */
+  def optimize(condition: String): Unit = {
+    optimize(functions.expr(condition))
+  }
+
+  /**
+   * Optimize data in the table that match the given `condition`.
+   *
+   * @param condition Boolean SQL expression
+   *
+   * @since 1.2.0
+   */
+  def optimize(condition: Column): Unit = {
+    executeOptimize(Some(condition.expr))
+  }
+
+  /**
+   * Optimize data in the table.
+   *
+   * @since 1.2.0
+   */
+  def optimize(): Unit = {
+    executeOptimize(None)
+  }
+
 
   /**
    * Update rows in the table based on the rules defined by `set`.
