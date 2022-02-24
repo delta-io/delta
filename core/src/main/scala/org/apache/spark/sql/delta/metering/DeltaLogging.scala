@@ -109,7 +109,14 @@ trait DeltaLogging
     recordOperation(
       new OpType(opType, ""),
       extraTags = tableTags ++ tags) {
+        recordFrameProfile("Delta", opType) {
           thunk
+        }
     }
+  }
+
+  protected def recordFrameProfile[T](group: String, name: String)(thunk: => T): T = {
+    // future work to capture runtime information ...
+    thunk
   }
 }

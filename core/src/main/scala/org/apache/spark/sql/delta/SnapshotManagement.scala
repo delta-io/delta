@@ -114,87 +114,90 @@ trait SnapshotManagement { self: DeltaLog =>
   protected def getLogSegmentForVersion(
       startCheckpoint: Option[Long],
       versionToLoad: Option[Long] = None): LogSegment = {
-    // List from the starting checkpoint. If a checkpoint doesn't exist, this will still return
-    // deltaVersion=0.
-    val newFiles = listDeltaAndCheckpointFiles(startCheckpoint.getOrElse(0L), versionToLoad)
-    if (newFiles.isEmpty && startCheckpoint.isEmpty) {
-      throw DeltaErrors.emptyDirectoryException(logPath.toString)
-    } else if (newFiles.isEmpty) {
-      // The directory may be deleted and recreated and we may have stale state in our DeltaLog
-      // singleton, so try listing from the first version
-      return getLogSegmentForVersion(None, versionToLoad)
-    }
-    val (checkpoints, deltas) = newFiles.partition(f => isCheckpointFile(f.getPath))
+    recordFrameProfile("Delta", "SnapshotManagement.getLogSegmentForVersion") {
+      // List from the starting checkpoint. If a checkpoint doesn't exist, this will still return
+      // deltaVersion=0.
+      val newFiles = listDeltaAndCheckpointFiles(startCheckpoint.getOrElse(0L), versionToLoad)
+      if (newFiles.isEmpty && startCheckpoint.isEmpty) {
+        throw DeltaErrors.emptyDirectoryException(logPath.toString)
+      } else if (newFiles.isEmpty) {
+        // The directory may be deleted and recreated and we may have stale state in our DeltaLog
+        // singleton, so try listing from the first version
+        return getLogSegmentForVersion(None, versionToLoad)
+      }
+      val (checkpoints, deltas) = newFiles.partition(f => isCheckpointFile(f.getPath))
 
-    // Find the latest checkpoint in the listing that is not older than the versionToLoad
-    val lastChkpoint = versionToLoad.map(CheckpointInstance(_, None))
-      .getOrElse(CheckpointInstance.MaxValue)
-    val checkpointFiles = checkpoints.map(f => CheckpointInstance(f.getPath))
-    val newCheckpoint = getLatestCompleteCheckpointFromList(checkpointFiles, lastChkpoint)
-    val newCheckpointVersion = newCheckpoint.map(_.version).getOrElse {
-      // If we do not have any checkpoint, pass new checkpoint version as -1 so that first
-      // delta version can be 0.
-      if (startCheckpoint.isDefined) {
-        // `startCheckpoint` was given but no checkpoint found on delta log. This means that the
-        // last checkpoint we thought should exist (the `_last_checkpoint` file) no longer exists.
-        // Try to look up another valid checkpoint and create `LogSegment` from it.
-        recordDeltaEvent(this, "delta.checkpoint.error.partial")
-        val alternativeLogSegment = getLogSegmentWithMaxExclusiveCheckpointVersion(
-          snapshotVersion = versionToLoad.getOrElse(deltaVersion(deltas.last.getPath)),
-          startCheckpoint.get)
-        return alternativeLogSegment.getOrElse {
-          throw DeltaErrors.missingPartFilesException(
-            startCheckpoint.get, new FileNotFoundException(
-              s"Checkpoint file to load version: ${startCheckpoint.get} is missing."))
+      // Find the latest checkpoint in the listing that is not older than the versionToLoad
+      val lastChkpoint = versionToLoad.map(CheckpointInstance(_, None))
+        .getOrElse(CheckpointInstance.MaxValue)
+      val checkpointFiles = checkpoints.map(f => CheckpointInstance(f.getPath))
+      val newCheckpoint = getLatestCompleteCheckpointFromList(checkpointFiles, lastChkpoint)
+      val newCheckpointVersion = newCheckpoint.map(_.version).getOrElse {
+        // If we do not have any checkpoint, pass new checkpoint version as -1 so that first
+        // delta version can be 0.
+        if (startCheckpoint.isDefined) {
+          // `startCheckpoint` was given but no checkpoint found on delta log. This means that the
+          // last checkpoint we thought should exist (the `_last_checkpoint` file) no longer exists.
+          // Try to look up another valid checkpoint and create `LogSegment` from it.
+          recordDeltaEvent(this, "delta.checkpoint.error.partial")
+          val alternativeLogSegment = getLogSegmentWithMaxExclusiveCheckpointVersion(
+            snapshotVersion = versionToLoad.getOrElse(deltaVersion(deltas.last.getPath)),
+            startCheckpoint.get)
+          return alternativeLogSegment.getOrElse {
+            throw DeltaErrors.missingPartFilesException(
+              startCheckpoint.get, new FileNotFoundException(
+                s"Checkpoint file to load version: ${startCheckpoint.get} is missing."))
+          }
         }
+        -1L
       }
-      -1L
-    }
 
-    // If there is a new checkpoint, start new lineage there. If `newCheckpointVersion` is -1,
-    // it will list all existing delta files.
-    val deltasAfterCheckpoint = deltas.filter { file =>
-      deltaVersion(file.getPath) > newCheckpointVersion
-    }
-
-    val deltaVersions = deltasAfterCheckpoint.map(f => deltaVersion(f.getPath))
-    // We may just be getting a checkpoint file after the filtering
-    if (deltaVersions.nonEmpty) {
-      if (deltaVersions.head != newCheckpointVersion + 1) {
-        throw DeltaErrors.logFileNotFoundException(
-          deltaFile(logPath, newCheckpointVersion + 1), deltaVersions.last, metadata)
+      // If there is a new checkpoint, start new lineage there. If `newCheckpointVersion` is -1,
+      // it will list all existing delta files.
+      val deltasAfterCheckpoint = deltas.filter { file =>
+        deltaVersion(file.getPath) > newCheckpointVersion
       }
-      verifyDeltaVersions(spark, deltaVersions, Some(newCheckpointVersion + 1), versionToLoad)
-    }
 
-    val newVersion = deltaVersions.lastOption.getOrElse(newCheckpoint.get.version)
-    val newCheckpointFiles: Seq[FileStatus] = newCheckpoint.map { newCheckpoint =>
-      val newCheckpointPaths = newCheckpoint.getCorrespondingFiles(logPath).toSet
-      val newCheckpointFileArray = checkpoints.filter(f => newCheckpointPaths.contains(f.getPath))
-      assert(newCheckpointFileArray.length == newCheckpointPaths.size,
-        "Failed in getting the file information for:\n" +
-          newCheckpointPaths.mkString(" -", "\n -", "") + "\n" +
-          "among\n" + checkpoints.map(_.getPath).mkString(" -", "\n -", ""))
-      newCheckpointFileArray.toSeq
-    }.getOrElse(Nil)
+      val deltaVersions = deltasAfterCheckpoint.map(f => deltaVersion(f.getPath))
+      // We may just be getting a checkpoint file after the filtering
+      if (deltaVersions.nonEmpty) {
+        if (deltaVersions.head != newCheckpointVersion + 1) {
+          throw DeltaErrors.logFileNotFoundException(
+            deltaFile(logPath, newCheckpointVersion + 1), deltaVersions.last, metadata)
+        }
+        verifyDeltaVersions(spark, deltaVersions, Some(newCheckpointVersion + 1), versionToLoad)
+      }
 
-    // In the case where `deltasAfterCheckpoint` is empty, `deltas` should still not be empty,
-    // they may just be before the checkpoint version unless we have a bug in log cleanup.
-    if (deltas.isEmpty) {
-      throw new IllegalStateException(s"Could not find any delta files for version $newVersion")
-    }
-    if (versionToLoad.exists(_ != newVersion)) {
-      throw new IllegalStateException(s"Trying to load a non-existent version ${versionToLoad.get}")
-    }
-    val lastCommitTimestamp = deltas.last.getModificationTime
+      val newVersion = deltaVersions.lastOption.getOrElse(newCheckpoint.get.version)
+      val newCheckpointFiles: Seq[FileStatus] = newCheckpoint.map { newCheckpoint =>
+        val newCheckpointPaths = newCheckpoint.getCorrespondingFiles(logPath).toSet
+        val newCheckpointFileArray = checkpoints.filter(f => newCheckpointPaths.contains(f.getPath))
+        assert(newCheckpointFileArray.length == newCheckpointPaths.size,
+          "Failed in getting the file information for:\n" +
+            newCheckpointPaths.mkString(" -", "\n -", "") + "\n" +
+            "among\n" + checkpoints.map(_.getPath).mkString(" -", "\n -", ""))
+        newCheckpointFileArray.toSeq
+      }.getOrElse(Nil)
 
-    LogSegment(
-      logPath,
-      newVersion,
-      deltasAfterCheckpoint,
-      newCheckpointFiles,
-      newCheckpoint.map(_.version),
-      lastCommitTimestamp)
+      // In the case where `deltasAfterCheckpoint` is empty, `deltas` should still not be empty,
+      // they may just be before the checkpoint version unless we have a bug in log cleanup.
+      if (deltas.isEmpty) {
+        throw new IllegalStateException(s"Could not find any delta files for version $newVersion")
+      }
+      if (versionToLoad.exists(_ != newVersion)) {
+        throw new IllegalStateException(
+          s"Trying to load a non-existent version ${versionToLoad.get}")
+      }
+      val lastCommitTimestamp = deltas.last.getModificationTime
+
+      LogSegment(
+        logPath,
+        newVersion,
+        deltasAfterCheckpoint,
+        newCheckpointFiles,
+        newCheckpoint.map(_.version),
+        lastCommitTimestamp)
+    }
   }
 
   /**
@@ -203,21 +206,23 @@ trait SnapshotManagement { self: DeltaLog =>
    * directory doesn't exist, this method will return an `InitialSnapshot`.
    */
   protected def getSnapshotAtInit: Snapshot = {
-    try {
-      val segment = getLogSegmentFrom(lastCheckpoint)
-      val startCheckpoint = segment.checkpointVersionOpt
-        .map(v => s" starting from checkpoint $v.").getOrElse(".")
-      logInfo(s"Loading version ${segment.version}$startCheckpoint")
-      val snapshot = createSnapshot(segment, minFileRetentionTimestamp)
+    recordFrameProfile("Delta", "SnapshotManagement.getSnapshotAtInit") {
+      try {
+        val segment = getLogSegmentFrom(lastCheckpoint)
+        val startCheckpoint = segment.checkpointVersionOpt
+          .map(v => s" starting from checkpoint $v.").getOrElse(".")
+        logInfo(s"Loading version ${segment.version}$startCheckpoint")
+        val snapshot = createSnapshot(segment, minFileRetentionTimestamp)
 
-      lastUpdateTimestamp = clock.getTimeMillis()
-      logInfo(s"Returning initial snapshot $snapshot")
-      snapshot
-    } catch {
-      case e: FileNotFoundException =>
-        logInfo(s"Creating initial snapshot without metadata, because the directory is empty")
-        // The log directory may not exist
-        new InitialSnapshot(logPath, this)
+        lastUpdateTimestamp = clock.getTimeMillis()
+        logInfo(s"Returning initial snapshot $snapshot")
+        snapshot
+      } catch {
+        case e: FileNotFoundException =>
+          logInfo(s"Creating initial snapshot without metadata, because the directory is empty")
+          // The log directory may not exist
+          new InitialSnapshot(logPath, this)
+      }
     }
   }
 
@@ -390,9 +395,11 @@ trait SnapshotManagement { self: DeltaLog =>
   def update(stalenessAcceptable: Boolean = false): Snapshot = {
     val doAsync = stalenessAcceptable && !isSnapshotStale
     if (!doAsync) {
+      recordFrameProfile("Delta", "SnapshotManagement.update") {
         lockInterruptibly {
           updateInternal(isAsync = false)
         }
+      }
     } else {
       if (asyncUpdateTask == null || asyncUpdateTask.isCompleted) {
         val jobGroup = spark.sparkContext.getLocalProperty(SparkContext.SPARK_JOB_GROUP_ID)

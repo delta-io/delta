@@ -90,6 +90,7 @@ class Snapshot(
   // We partition by path as it is likely the bulk of the data is add/remove.
   // Non-path based actions will be collocated to a single partition.
   private def stateReconstruction: Dataset[SingleAction] = {
+    recordFrameProfile("Delta", "snapshot.stateReconstruction") {
       val implicits = spark.implicits
       import implicits._
 
@@ -127,6 +128,7 @@ class Snapshot(
           state.append(0, iter.map(_.unwrap))
           state.checkpoint.map(_.wrap)
         }
+    }
   }
 
   /** Helper method to repartition and sort actions by version for the In-Memory log replay */
@@ -188,6 +190,8 @@ class Snapshot(
    */
   protected lazy val computedState: State = {
     withStatusCode("DELTA", s"Compute snapshot for version: $version") {
+      recordFrameProfile("Delta", "snapshot.computedState") {
+        val startTime = System.nanoTime()
         val aggregations =
           aggregationsToComputeState.map { case (alias, agg) => agg.as(alias) }.toSeq
         val _computedState = stateDF.select(aggregations: _*).as[State](stateEncoder).first()
@@ -218,6 +222,7 @@ class Snapshot(
           _computedState
         }
       }
+    }
   }
 
   def protocol: Protocol = computedState.protocol

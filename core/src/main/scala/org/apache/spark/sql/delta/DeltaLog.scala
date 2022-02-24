@@ -139,7 +139,9 @@ class DeltaLog private(
    */
   def minFileRetentionTimestamp: Long = {
     // TODO (Fred): Get rid of this FrameProfiler record once SC-94033 is addressed
-    clock.getTimeMillis() - tombstoneRetentionMillis
+    recordFrameProfile("Delta", "DeltaLog.minFileRetentionTimestamp") {
+      clock.getTimeMillis() - tombstoneRetentionMillis
+    }
   }
 
   /**

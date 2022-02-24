@@ -344,7 +344,7 @@ class DeltaAnalysis(session: SparkSession)
 }
 
 /** Matchers for dealing with a Delta table. */
-object DeltaRelation {
+object DeltaRelation extends DeltaLogging {
   def unapply(plan: LogicalPlan): Option[LogicalRelation] = plan match {
     case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, options) =>
       Some(fromV2Relation(d, dsv2, options))
@@ -356,6 +356,7 @@ object DeltaRelation {
       d: DeltaTableV2,
       v2Relation: DataSourceV2Relation,
       options: CaseInsensitiveStringMap): LogicalRelation = {
+    recordFrameProfile("DeltaAnalysis", "fromV2Relation") {
       val relation = d.withOptions(options.asScala.toMap).toBaseRelation
       var output = v2Relation.output
 
@@ -365,6 +366,7 @@ object DeltaRelation {
         None
       }
       LogicalRelation(relation, output, catalogTable, isStreaming = false)
+    }
   }
 }
 

@@ -185,6 +185,7 @@ trait Checkpoints extends DeltaLogging {
 
   /** Loads the checkpoint metadata from the _last_checkpoint file. */
   private def loadMetadataFromFile(tries: Int): Option[CheckpointMetaData] = {
+    recordFrameProfile("Delta", "Checkpoints.loadMetadataFromFile") {
       try {
         val checkpointMetadataJson = store.read(LAST_CHECKPOINT, newDeltaHadoopConf())
         val checkpointMetadata =
@@ -206,6 +207,7 @@ trait Checkpoints extends DeltaLogging {
           val verifiedCheckpoint = findLastCompleteCheckpoint(CheckpointInstance(-1L, None))
           verifiedCheckpoint.map(manuallyLoadCheckpoint)
       }
+    }
   }
 
   /** Loads the given checkpoint manually to come up with the CheckpointMetaData */

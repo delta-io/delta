@@ -146,6 +146,7 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
 
   /** Returns schema of the statistics collected. */
   lazy val statsSchema: StructType = {
+    recordFrameProfile("Delta", "StatisticsCollection.statsSchema") {
       // We invoke the analyzer here to actually figure out what the schema of
       // statistics column should be.
       {
@@ -160,6 +161,7 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
         // and maxValues can be null when we cannot collect stats on any of the data columns
         StructType(s.filterNot(_.dataType.isInstanceOf[NullType])).asNullable
       }
+    }
   }
 
   /**
