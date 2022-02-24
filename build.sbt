@@ -34,6 +34,7 @@ lazy val commonSettings = Seq(
 
 lazy val core = (project in file("core"))
   .dependsOn(storage)
+  .dependsOn(storageDynamodb % "test->compile") // delta-core tests depend on storageDynamodb
   .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin, Antlr4Plugin)
   .settings (
     name := "delta-core",
@@ -161,6 +162,7 @@ lazy val contribs = (project in file("contribs"))
 
 // TODO javastyle tests
 // TODO unidoc
+// TODO(scott): figure out a better way to include tests in this project
 lazy val storage = (project in file("storage"))
   .settings (
     name := "delta-storage",
@@ -170,6 +172,18 @@ lazy val storage = (project in file("storage"))
       // User can provide any 2.x or 3.x version. We don't use any new fancy APIs. Watch out for
       // versions with known vulnerabilities.
       "org.apache.hadoop" % "hadoop-common" % "3.3.1"
+    )
+  )
+
+// TODO(scott): figure out a better way to include tests in this project
+lazy val storageDynamodb = (project in file("storage-dynamodb"))
+  .dependsOn(storage)
+  .settings (
+    name := "delta-storage-dynamodb",
+    commonSettings,
+    releaseSettings,
+    libraryDependencies ++= Seq(
+      "com.amazonaws" % "aws-java-sdk" % "1.7.4"
     )
   )
 
