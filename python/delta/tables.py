@@ -58,7 +58,9 @@ class DeltaTable(object):
         """
         return DataFrame(
             self._jdt.toDF(),
-            self._spark._wrapped  # type: ignore[attr-defined]
+            # Simple trick to avoid warnings from Spark 3.3.0. `_wrapped`
+            # in SparkSession is removed in Spark 3.3.0, see also SPARK-38121.
+            getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
         )
 
     @since(0.4)  # type: ignore[arg-type]
@@ -240,12 +242,12 @@ class DeltaTable(object):
         if retentionHours is None:
             return DataFrame(
                 jdt.vacuum(),
-                self._spark._wrapped  # type: ignore[attr-defined]
+                getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
             )
         else:
             return DataFrame(
                 jdt.vacuum(float(retentionHours)),
-                self._spark._wrapped  # type: ignore[attr-defined]
+                getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
             )
 
     @since(0.4)  # type: ignore[arg-type]
@@ -268,12 +270,12 @@ class DeltaTable(object):
         if limit is None:
             return DataFrame(
                 jdt.history(),
-                self._spark._wrapped  # type: ignore[attr-defined]
+                getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
             )
         else:
             return DataFrame(
                 jdt.history(limit),
-                self._spark._wrapped  # type: ignore[attr-defined]
+                getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
             )
 
     @classmethod
@@ -553,7 +555,7 @@ class DeltaTable(object):
 
         return DataFrame(
             self._jdt.restoreToVersion(version),
-            self._spark._wrapped  # type: ignore[attr-defined]
+            getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
         )
 
     @since(1.2)  # type: ignore[arg-type]
@@ -574,7 +576,7 @@ class DeltaTable(object):
 
         return DataFrame(
             self._jdt.restoreToTimestamp(timestamp),
-            self._spark._wrapped  # type: ignore[attr-defined]
+            getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
         )
 
     @staticmethod
