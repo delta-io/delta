@@ -66,7 +66,12 @@ case class OptimizeTableCommand(
     // Parse the predicate expression into Catalyst expression and verify only simple filters
     // on partition columns are present
     val partitionPredicates = partitionPredicate.map(predicate => {
-      parsePredicates(sparkSession, predicate)
+      val predicates = parsePredicates(sparkSession, predicate)
+      verifyPartitionPredicates(
+        sparkSession,
+        deltaLog.snapshot.metadata.partitionColumns,
+        predicates)
+      predicates
     }).getOrElse(Seq(Literal.TrueLiteral))
 
     new OptimizeExecutor(sparkSession, deltaLog, partitionPredicates)
@@ -87,11 +92,6 @@ class OptimizeExecutor(
     deltaLog: DeltaLog,
     partitionPredicate: Seq[Expression])
   extends DeltaCommand with SQLMetricsReporting with Serializable {
-
-  verifyPartitionPredicates(
-    sparkSession,
-    deltaLog.snapshot.metadata.partitionColumns,
-    partitionPredicate)
 
   /** Timestamp to use in [[FileAction]] */
   private val operationTimestamp = new SystemClock().getTimeMillis()

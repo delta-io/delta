@@ -183,25 +183,28 @@ class DeltaTable private[tables](
   }
 
   /**
-   * Optimize data in the table that match the given `condition`.
+   * Optimize data in the table that match the given `condition`. The condition must only
+   * container filters on partition columns, otherwise an `AnalysisException` is thrown.
    *
    * @param condition Boolean SQL expression
    *
    * @since 1.2.0
    */
   def optimize(condition: String): Unit = {
-    optimize(functions.expr(condition))
+    val tableId = table.tableIdentifier.getOrElse(s"delta.`${deltaLog.dataPath.toString}`")
+    executeOptimize(tableId, Some(condition))
   }
 
   /**
-   * Optimize data in the table that match the given `condition`.
+   * Optimize data in the table that match the given `condition`. The condition must only
+   * container filters on partition columns, otherwise an `AnalysisException` is thrown.
    *
    * @param condition Boolean SQL expression
    *
    * @since 1.2.0
    */
   def optimize(condition: Column): Unit = {
-    executeOptimize(Some(condition.expr))
+    optimize(condition.expr.sql)
   }
 
   /**
@@ -210,7 +213,8 @@ class DeltaTable private[tables](
    * @since 1.2.0
    */
   def optimize(): Unit = {
-    executeOptimize(None)
+    val tableId = table.tableIdentifier.getOrElse(s"delta.`${deltaLog.dataPath.toString}`")
+    executeOptimize(tableId, None)
   }
 
 
