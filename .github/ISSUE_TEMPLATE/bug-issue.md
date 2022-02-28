@@ -8,7 +8,7 @@ labels: 'type:bug'
 ## Bug
 **Please attach [Bug] to the title for bug reports**
 
-### Describe your environment/System Information
+### Environment information
 
 * Data Lake Version: _____
 * JVM version: _____
