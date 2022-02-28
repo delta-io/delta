@@ -1,7 +1,8 @@
 ---
 name: Feature Request
 about: Use this template for raising a feature request
-labels: 'type:feature'
+labels: 'type:enhancement'
+title: '[Feature Request]'
 
 ---
 
@@ -33,4 +34,3 @@ labels: 'type:feature'
 ### Future Work
 
 * TODO(you): How will this feature affect future work.
-

@@ -2,6 +2,7 @@
 name: Bug Issue
 about: Use this template for reporting a bug
 labels: 'type:bug'
+title: '[BUG]'
 
 ---
 
@@ -10,8 +11,10 @@ labels: 'type:bug'
 
 ### Describe your environment/System Information
 
-* Data Lake Version: _____
-* JVM version: _____
+* Data Lake Version:
+* Delta version:
+* Spark Version:
+* Scala Version:
 
 ### Describe the problem
 
@@ -36,5 +39,4 @@ labels: 'type:bug'
 
 #### Relevant Code/Logs:
 
-* TODO(you): code here to reproduce the problem. Include any logs or source code that would be helpful to diagnose the problem. If including tracebacks, please include the full traceback. Large logs and files should be attached. 
-
+* TODO(you): code here to reproduce the problem. Include any logs or source code that would be helpful to diagnose the problem. If including tracebacks, please include the full traceback. Large logs and files should be attached.

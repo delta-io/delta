@@ -5,22 +5,23 @@ Thanks for sending a pull request!  Here are some tips for you:
   3. Be sure to keep the PR description updated to reflect all changes.
   4. Please write your PR title to summarize what this PR proposes.
   5. If possible, provide a concise example to reproduce the issue for a faster review.
+  6. If applicable, include corresponding issue number in the PR title and link it in the body.
 -->
-## Related Issue <a href="#related-issue" id="related-issue">(required)</a>
+## Related Issue
 
-<!-- Link related issue 
-For instance, 
+<!-- Link related issue
+For instance,
   [#ISSUE NUMBER] Your PR title
 -->
 
-## Description <a href="#description" id="description">(required)</a>
+## Description (required)
 
 <!-- Describe what this PR changes. For instance,
   1. If you propose a new API, clarify the use case for a new API.
   2. If you fix a bug, you can clarify why it is a bug.
 -->
 
-## Review Procedure <a href="#review-procedure" id="review-procedure">(required)</a>
+## Review Procedure (required)
 
 <!-- Explain how to review this PR and also leave notes for reviewer. -->
 
@@ -28,16 +29,16 @@ For instance,
 
 <!-- Link related PR -->
 
-## Pre-Review Checklist for the PR Author <a href="#pre-review-checklist" id="pre-review-checklist">(required)</a>
+## Pre-Review Checklist for the PR Author (required)
 
 - [ ] Read [commit-guidelines](https://github.com/delta-io/delta/blob/master/CONTRIBUTING.md)
 - [ ] Assign PR to reviewer
 - [ ] Target branch set correctly. Default: `master`
-- [ ] Fill out all the required sections 
-    - [ ] [Related Issue](#related-issue)
-    - [ ] [Description](#description)
-    - [ ] [Review Procedure ](#review-procedure)
-    - [ ] [Pre-Review Checklist for the PR Author](#pre-review-checklist)
+- [ ] Fill out all the required sections
+    - [ ] Related Issue
+    - [ ] Description
+    - [ ] Review Procedure
+    - [ ] Pre-Review Checklist for the PR Author
 
 
 ## Checklist for the PR Reviewer (required)
@@ -55,5 +56,4 @@ For instance,
 
 **PR Author should check the checkboxes below before merging.**
 
-- [ ] All open points are addressed and tracked via issues
-- [ ] Close the issue if this PR resolves the issue (e.g. close #〇〇)
+- If this PR resolves an issue be sure to include "Resolves #XXX" to correctly link and close the issue upon merging.
