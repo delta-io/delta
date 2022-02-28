@@ -21,7 +21,7 @@ labels: 'type:bug'
 2. _____
 3. _____
 
-#### Observed Results:
+#### Observed results:
 
 * What happened?  This could be a description, log output, etc.
 
