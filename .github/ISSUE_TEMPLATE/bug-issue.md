@@ -25,7 +25,7 @@ labels: 'type:bug'
 
 * What happened?  This could be a description, log output, etc.
 
-#### Expected Results:
+#### Expected results:
 
 * What did you expect to happen?
 
