@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.DataSkippingReader
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.util.StateCache
@@ -66,6 +67,7 @@ class Snapshot(
   extends StateCache
   with PartitionFiltering
   with StatisticsCollection
+  with DataSkippingReader
   with DeltaLogging {
 
   import Snapshot._
@@ -75,6 +77,8 @@ class Snapshot(
   protected def spark = SparkSession.active
 
 
+  // Snapshot to scan by the DeltaScanGenerator for metadata query optimizations
+  override val snapshotToScan: Snapshot = this
 
   protected def getNumPartitions: Int = {
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS)

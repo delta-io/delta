@@ -17,6 +17,7 @@
 package io.delta.sql
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.stats.PrepareDeltaScan
 import io.delta.sql.parser.DeltaSqlParser
 
 import org.apache.spark.sql.SparkSessionExtensions
@@ -91,7 +92,7 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
       new PreprocessTableDelete(session.sessionState.conf)
     }
     extensions.injectOptimizerRule { session =>
-      new ActiveOptimisticTransactionRule(session)
+      new PrepareDeltaScan(session)
     }
   }
 }
