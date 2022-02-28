@@ -29,7 +29,7 @@ labels: 'type:bug'
 
 * What did you expect to happen?
 
-#### [Contributing](https://github.com/delta-io/delta/blob/master/CONTRIBUTING.md):
+### [Contributing](https://github.com/delta-io/delta/blob/master/CONTRIBUTING.md):
 
 - Do you want to contribute a PR? (yes/no):
 - Briefly describe your candidate solution(if contributing):
