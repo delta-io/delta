@@ -11,7 +11,7 @@ labels: 'type:feature'
 
 ### Overview
 
-* TODO(you): Provide an overview of feature requests here.
+* TODO(you): Provide a high-level description of the feature request.
 
 ### System Information
 
