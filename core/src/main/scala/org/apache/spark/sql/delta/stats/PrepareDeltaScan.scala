@@ -70,7 +70,6 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
    * (if any), or the latest snapshot of the given log.
    */
   protected def getDeltaScanGenerator(index: TahoeLogFileIndex): DeltaScanGenerator = {
-    import PrepareDeltaScanBase._
     // The first case means that we've fixed the table snapshot for time travel
     if (index.isTimeTravelQuery) return index.getSnapshot
     val scanGenerator = OptimisticTransaction.getActive().map(_.getDeltaScanGenerator(index))
@@ -85,11 +84,13 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
         }
         snapshot
       }
-    if (onGetDeltaScanGeneratorCallback != null) onGetDeltaScanGeneratorCallback(scanGenerator)
     scanGenerator
   }
 
-  def getPreparedIndex(
+  /**
+   * Helper method to generate a [[PreparedDeltaFileIndex]]
+   */
+  protected def getPreparedIndex(
       preparedScan: DeltaScan,
       fileIndex: TahoeLogFileIndex): PreparedDeltaFileIndex = {
     assert(fileIndex.partitionFilters.isEmpty,
@@ -167,9 +168,9 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
     DeltaTableUtils.replaceFileIndex(scan, preparedIndex)
   }
 
-  override def apply(plan: LogicalPlan): LogicalPlan = {
+  override def apply(_plan: LogicalPlan): LogicalPlan = {
+    var plan = _plan
     if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)) {
-      var metadataOptimizedPlan = plan
 
       // Should not be applied to subqueries to avoid duplicate delta jobs.
       val isSubquery = plan.isInstanceOf[Subquery] || plan.isInstanceOf[SupportsSubquery]
@@ -177,10 +178,10 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       // through a V1 fallback and only that later planning takes place within the transaction.
       val isDataSourceV2 = plan.isInstanceOf[V2WriteCommand]
       if (isSubquery || isDataSourceV2) {
-        return metadataOptimizedPlan
+        return plan
       }
 
-      prepareDeltaScan(metadataOptimizedPlan)
+      prepareDeltaScan(plan)
     } else {
       // If this query is running inside an active transaction and is touching the same table
       // as the transaction, then mark that the entire table as tainted to be safe.
@@ -197,6 +198,9 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
     }
   }
 
+  /**
+   * This is an extractor object. See https://docs.scala-lang.org/tour/extractor-objects.html.
+   */
   object DeltaTableScan {
 
     /**
@@ -210,15 +214,12 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
     private type DeltaTableScanType =
       (Seq[Attribute], Seq[Expression], TahoeLogFileIndex, Option[Int], LogicalRelation)
 
+    /**
+     * This is an extractor method (basically, the opposite of a constructor) which takes in an
+     * object `plan` and tries to give back the arguments as a [[DeltaTableScanType]].
+     */
     def unapply(plan: LogicalPlan): Option[DeltaTableScanType] = {
-      val limitPushdownEnabled = spark.conf.get(DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_ENABLED)
       plan match {
-        case LocalLimit(IntegerLiteral(limit),
-          PhysicalOperation(project, filters, delta @ DeltaTable(fileIndex: TahoeLogFileIndex)))
-            if limitPushdownEnabled && containsPartitionFiltersOnly(filters, fileIndex) =>
-          val projects = AttributeSet(project).toSeq
-          Some((projects, filters, fileIndex, Some(limit), delta))
-
         case PhysicalOperation(
             project,
             filters,
@@ -245,29 +246,6 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
 class PrepareDeltaScan(protected val spark: SparkSession)
   extends PrepareDeltaScanBase
 
-object PrepareDeltaScanBase {
-
-  /**
-   * Optional callback function that is called after `getDeltaScanGenerator` is called
-   * by the PrepareDeltaScan rule. This is primarily used for testing purposes.
-   */
-  @volatile private var onGetDeltaScanGeneratorCallback: DeltaScanGenerator => Unit = _
-
-  /**
-   * Run a thunk of code with the given callback function injected into the PrepareDeltaScan rule.
-   * The callback function is called after `getDeltaScanGenerator` is called
-   * by the PrepareDeltaScan rule. This is primarily used for testing purposes.
-   */
-  private[delta] def withCallbackOnGetDeltaScanGenerator[T](
-      callback: DeltaScanGenerator => Unit)(thunk: => T): T = {
-    try {
-      onGetDeltaScanGeneratorCallback = callback
-      thunk
-    } finally {
-      onGetDeltaScanGeneratorCallback = null
-    }
-  }
-}
 
 /**
  * A [[TahoeFileIndex]] that uses a prepared scan to return the list of relevant files.

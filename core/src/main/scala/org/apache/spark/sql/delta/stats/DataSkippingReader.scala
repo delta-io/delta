@@ -24,6 +24,10 @@ import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
 import org.apache.spark.sql.functions.from_json
 import org.apache.spark.sql.types.StringType
 
+/**
+ * Adds the ability to use statistics to filter the set of files based on predicates
+ * to a [[org.apache.spark.sql.delta.Snapshot]] of a given Delta table.
+ */
 trait DataSkippingReader
   extends DeltaScanGenerator
     with StatisticsCollection
