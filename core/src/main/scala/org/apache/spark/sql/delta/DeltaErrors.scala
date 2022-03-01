@@ -979,10 +979,6 @@ object DeltaErrors
     new AnalysisException(s"Operation $operationName can not be performed on a view")
   }
 
-  def copyIntoValidationRequireDeltaTableExists: Throwable = {
-    new AnalysisException("COPY INTO validation failed. Target table does not exist.")
-  }
-
   def copyIntoEncryptionNotAllowedOn(scheme: String): Throwable = {
     // TODO: add `wasbs` once supported
     new IllegalArgumentException(
