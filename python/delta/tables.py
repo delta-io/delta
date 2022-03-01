@@ -553,6 +553,7 @@ class DeltaTable(object):
         :rtype: pyspark.sql.DataFrame
         """
 
+        DeltaTable._verify_type_int(version, "version")
         return DataFrame(
             self._jdt.restoreToVersion(version),
             getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
@@ -574,10 +575,21 @@ class DeltaTable(object):
         :rtype: pyspark.sql.DataFrame
         """
 
+        DeltaTable._verify_type_str(timestamp, "timestamp")
         return DataFrame(
             self._jdt.restoreToTimestamp(timestamp),
             getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
         )
+
+    @staticmethod  # type: ignore[arg-type]
+    def _verify_type_str(variable: str, name: str) -> None:
+        if not isinstance(variable, str) or variable is None:
+            raise ValueError("%s needs to be a string but got '%s'." % (name, type(variable)))
+
+    @staticmethod  # type: ignore[arg-type]
+    def _verify_type_int(variable: int, name: str) -> None:
+        if not isinstance(variable, int) or variable is None:
+            raise ValueError("%s needs to be an int but got '%s'." % (name, type(variable)))
 
     @staticmethod
     def _dict_to_jmap(

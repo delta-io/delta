@@ -16,7 +16,7 @@
 
 import unittest
 import os
-from typing import List, Set, Dict, Optional, Any, Union, Tuple
+from typing import List, Set, Dict, Optional, Any, Callable, Union, Tuple
 
 from pyspark.sql import DataFrame, Row
 from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
@@ -827,6 +827,29 @@ class DeltaTableTests(DeltaTestCase):
         restored = DeltaTable.forPath(self.spark, self.tempFile).toDF()
         self.__checkAnswer(restored, [Row(key='a', value=1), Row(key='b', value=2)])
 
+        # we cannot test the actual working of restore to timestamp here but we can make sure
+        # that the api is being called at least
+        def runRestore() -> None:
+            DeltaTable.forPath(self.spark, self.tempFile).restoreToTimestamp('05/04/1999')
+        self.__intercept(runRestore, "The provided timestamp ('05/04/1999') "
+                                     "cannot be converted to a valid timestamp")
+
+    def test_restore_invalid_inputs(self) -> None:
+        df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
+        df.write.format("delta").save(self.tempFile)
+
+        dt = DeltaTable.forPath(self.spark, self.tempFile)
+
+        def runRestoreToTimestamp() -> None:
+            dt.restoreToTimestamp(12342323232)  # type: ignore[arg-type]
+        self.__intercept(runRestoreToTimestamp,
+                         "timestamp needs to be a string but got '<class 'int'>'")
+
+        def runRestoreToVersion() -> None:
+            dt.restoreToVersion("0")  # type: ignore[arg-type]
+        self.__intercept(runRestoreToVersion,
+                         "version needs to be an int but got '<class 'str'>'")
+
     def __checkAnswer(self, df: DataFrame,
                       expectedAnswer: List[Any],
                       schema: Union[StructType, List[str]] = ["key", "value"]) -> None:
@@ -869,6 +892,15 @@ class DeltaTableTests(DeltaTestCase):
 
     def __checkFileExists(self, fileName: str) -> bool:
         return os.path.exists(os.path.join(self.tempFile, fileName))
+
+    def __intercept(self, func: Callable[[], None], exceptionMsg: str) -> None:
+        seenTheRightException = False
+        try:
+            func()
+        except Exception as e:
+            if exceptionMsg in str(e):
+                seenTheRightException = True
+        assert seenTheRightException, ("Did not catch expected Exception:" + exceptionMsg)
 
 
 if __name__ == "__main__":
