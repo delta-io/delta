@@ -457,72 +457,73 @@ class DeltaColumnMappingSuite extends QueryTest
   }
 
   test("create table under id mode should be blocked") {
-    val mode = "id"
+    withTable("t1") {
+      val mode = "id"
+      assert(intercept[ColumnMappingUnsupportedException] {
+        createTableWithSQLAPI(
+          "t1",
+          Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode),
+          withColumnIds = true,
+          randomIds = true)
+      }.getMessage.contains("not supported for"))
 
-    assert(intercept[ColumnMappingUnsupportedException] {
-      createTableWithSQLAPI(
-        "t1",
-        Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode),
-        withColumnIds = true,
-        randomIds = true)
-    }.getMessage.contains("not supported for"))
+      assert(intercept[ColumnMappingUnsupportedException] {
+        createTableWithDataFrameAPI(
+          "t1",
+          Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode),
+          withColumnIds = true,
+          randomIds = true)
+      }.getMessage.contains("not supported for"))
 
-    assert(intercept[ColumnMappingUnsupportedException] {
-      createTableWithDataFrameAPI(
-        "t1",
-        Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode),
-        withColumnIds = true,
-        randomIds = true)
-    }.getMessage.contains("not supported for"))
+      assert(intercept[ColumnMappingUnsupportedException] {
+        createTableWithSQLCreateOrReplaceAPI(
+          "t1",
+          Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode),
+          withColumnIds = true,
+          randomIds = true)
+      }.getMessage.contains("not supported for"))
 
-    assert(intercept[ColumnMappingUnsupportedException] {
-      createTableWithSQLCreateOrReplaceAPI(
-        "t1",
-        Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode),
-        withColumnIds = true,
-        randomIds = true)
-    }.getMessage.contains("not supported for"))
-
-    assert(intercept[ColumnMappingUnsupportedException] {
-      createTableWithDataFrameWriterV2API(
-        "t1",
-        Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode),
-        withColumnIds = true,
-        randomIds = true)
-    }.getMessage.contains("not supported for"))
-
+      assert(intercept[ColumnMappingUnsupportedException] {
+        createTableWithDataFrameWriterV2API(
+          "t1",
+          Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode),
+          withColumnIds = true,
+          randomIds = true)
+      }.getMessage.contains("not supported for"))
+    }
   }
 
   test("read/write id mode should be blocked") {
-    // create in name mode is allowed
-    createTableWithSQLAPI(
+    withTable("t1") {
+      // create in name mode is allowed
+      createTableWithSQLAPI(
         "t1",
         Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"),
         withColumnIds = true,
         randomIds = true)
 
-    // manually change delta log metadata to id
-    val deltaLog = DeltaLog.forTable(spark, TableIdentifier("t1"))
-    val crcFiles = new File(deltaLog.logPath.toUri).listFiles()
-      .filter(_.getAbsolutePath.endsWith(".crc"))
-    val jsonFile = new File(deltaLog.logPath.toUri).listFiles()
-      .find(_.getAbsolutePath.endsWith(".json"))
-      .get
-    crcFiles.foreach(_.delete())
-    val jsonContent = new String(Files.readAllBytes(jsonFile.toPath))
-      .replace("\"name\"", "\"id\"")
-    Files.write(jsonFile.toPath, jsonContent.getBytes)
+      // manually change delta log metadata to id
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("t1"))
+      val crcFiles = new File(deltaLog.logPath.toUri).listFiles()
+        .filter(_.getAbsolutePath.endsWith(".crc"))
+      val jsonFile = new File(deltaLog.logPath.toUri).listFiles()
+        .find(_.getAbsolutePath.endsWith(".json"))
+        .get
+      crcFiles.foreach(_.delete())
+      val jsonContent = new String(Files.readAllBytes(jsonFile.toPath))
+        .replace("\"name\"", "\"id\"")
+      Files.write(jsonFile.toPath, jsonContent.getBytes)
 
-    // read should fail
-    assert(intercept[ColumnMappingUnsupportedException] {
-      sql("SELECT * FROM t1").collect()
-    }.getMessage.contains("not supported for"))
+      // read should fail
+      assert(intercept[ColumnMappingUnsupportedException] {
+        sql("SELECT * FROM t1").collect()
+      }.getMessage.contains("not supported for"))
 
-    // write should fail
-    assert(intercept[ColumnMappingUnsupportedException] {
-      sql(s"insert into t1 values ('a', 1), ('b', 2)").collect()
-    }.getMessage.contains("not supported for"))
-
+      // write should fail
+      assert(intercept[ColumnMappingUnsupportedException] {
+        sql(s"insert into t1 values ('a', 1), ('b', 2)").collect()
+      }.getMessage.contains("not supported for"))
+    }
   }
 
   testColumnMapping("create table through raw schema API should " +

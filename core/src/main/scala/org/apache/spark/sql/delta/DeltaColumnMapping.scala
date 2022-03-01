@@ -258,7 +258,7 @@ trait DeltaColumnMappingBase {
 
     // use id mapping to keep all column mapping metadata
     // this method checks for missing physical name & column id already
-    val physicalSchema = transformToPhysicalSchema(schema, schema, IdMapping)
+    val physicalSchema = createPhysicalSchema(schema, schema, IdMapping, checkSupportedMode = false)
 
     SchemaMergingUtils.transformColumns(physicalSchema) ((parentPhysicalPath, field, _) => {
       // field.name is now physical name
@@ -357,37 +357,23 @@ trait DeltaColumnMappingBase {
    * @param referenceSchema the schema from the delta log, which has all the metadata
    * @param columnMappingMode column mapping mode of the delta table, which determines which
    *                          metadata to fill in
+   * @param checkSupportedMode whether we should check of the column mapping mode is supported
    */
   def createPhysicalSchema(
       schema: StructType,
       referenceSchema: StructType,
-      columnMappingMode: DeltaColumnMappingMode): StructType = {
+      columnMappingMode: DeltaColumnMappingMode,
+      checkSupportedMode: Boolean = true): StructType = {
     if (columnMappingMode == NoMapping) {
       return schema
     }
 
     // createPhysicalSchema is the narrow-waist for both read/write code path
     // so we could check for mode support here
-    if (!supportedModes.contains(columnMappingMode)) {
+    if (checkSupportedMode && !supportedModes.contains(columnMappingMode)) {
       throw DeltaErrors.unsupportedColumnMappingMode(columnMappingMode.name)
     }
 
-    // perform the name conversion
-    transformToPhysicalSchema(schema, referenceSchema, columnMappingMode)
-  }
-
-  /**
-   * Convert input schema to physical schema given a reference schema with metadata
-   * @param schema the given logical schema (potentially without any metadata)
-   * @param referenceSchema the schema from the delta log, which has all the metadata
-   * @param columnMappingMode column mapping mode of the delta table, which determines which
-   *                          metadata to fill in
-   * @return
-   */
-  private[sql] def transformToPhysicalSchema(
-      schema: StructType,
-      referenceSchema: StructType,
-      columnMappingMode: DeltaColumnMappingMode): StructType = {
     SchemaMergingUtils.transformColumns(schema) { (path, field, _) =>
       val fullName = path :+ field.name
       val inSchema = SchemaUtils

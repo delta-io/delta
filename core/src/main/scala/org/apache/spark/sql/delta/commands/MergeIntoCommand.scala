@@ -601,7 +601,7 @@ case class MergeIntoCommand(
       // In cases of schema evolution, they may not be the same type as the original attributes.
       val original =
         deltaTxn.deltaLog.createDataFrame(deltaTxn.snapshot, files).queryExecution.analyzed
-      original.transform {
+      val transformed = original.transform {
         case LogicalRelation(base, output, catalogTbl, isStreaming) =>
           LogicalRelation(
             base,
@@ -609,6 +609,16 @@ case class MergeIntoCommand(
             targetOutputCols.collect { case a: AttributeReference => a },
             catalogTbl,
             isStreaming)
+      }
+
+      // In case of schema evolution & column mapping, we would also need to rebuild the file format
+      // because under column mapping, the reference schema within DeltaParquetFileFormat
+      // that is used to populate metadata needs to be updated
+      if (deltaTxn.metadata.columnMappingMode != NoMapping) {
+        val updatedFileFormat = deltaTxn.deltaLog.fileFormat(deltaTxn.metadata)
+        DeltaTableUtils.replaceFileFormat(transformed, updatedFileFormat)
+      } else {
+        transformed
       }
     }
 

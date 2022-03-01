@@ -285,3 +285,7 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
   }
 }
 
+
+class MergeIntoSQLNameColumnMappingSuite extends MergeIntoSQLSuite
+  with DeltaColumnMappingEnableNameMode
+  with DeltaColumnMappingTestUtils
