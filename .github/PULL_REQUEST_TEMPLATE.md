@@ -21,22 +21,22 @@ For instance,
   2. Describe why we need the change.
 -->
 
-## Review Request Guideline
+## Does this PR introduce _any_ user-facing change?
+<!--
+Note that it means *any* user-facing change including all aspects such as the documentation fix.
+If yes, please clarify the previous behavior and the change this PR proposes - provide the console output, description and/or an example to show the behavior difference if possible.
+If possible, please also clarify if this is a user-facing change compared to the released Delta Lake versions or within the unreleased branches such as master.
+If no, write 'No'.
+-->
 
-## Checklist for the PR Reviewer
-**Only the reviewer is allowed to make changes in this section!**
-**Reviewers should check the checkboxes below before approval.**
-
-1. Basic Checks
-    1. [ ] Commits are properly organized and messages fully satisfy the guideline
-    1. [ ] PR title describes the changes
-1. Code correctness
-    1. [ ] The problem/feature is solved (reproducibly)
-    1. [ ] The solution is performant enough for the use case in mind
+## How was this patch tested?
+<!--
+If tests were added, say they were added here. Please make sure to add some test cases that check the changes thoroughly including negative and positive cases if possible.
+If it was tested in a way different from regular unit tests, please clarify how you tested step by step, ideally copy and paste-able, so that other reviewers can test and check, and descendants can verify in the future.
+If tests were not added, please describe why they were not added and/or why it was difficult to add.
+-->
 
 ## Post-Review Checklist for the PR Author
-
-**PR Author should check the checkboxes below before merging.**
 
 <!--
 If this PR resolves an issue be sure to include "Resolves #XXX" to correctly link and close the issue upon merging.

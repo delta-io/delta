@@ -8,10 +8,9 @@ title: '[BUG]'
 
 ## Bug
 
-### Describe your environment/System Information
+### Environment information
 
 * Delta Lake Version:
-* Delta version:
 * Spark Version:
 * Scala Version:
 
@@ -19,15 +18,17 @@ title: '[BUG]'
 
 #### Observed Results:
 
-* What happened?  This could be a description, log output, etc.
+<!-- What happened?  This could be a description, log output, etc. -->
 
 #### Expected Results:
 
-* What did you expect to happen?
+<!-- What did you expect to happen? -->
 
 #### Relevant Code/Logs:
 
-* TODO(you): code here to reproduce the problem. Include any logs or source code that would be helpful to diagnose the problem. If including tracebacks, please include the full traceback. Large logs and files should be attached.
+<!--
+Code here to reproduce the problem. Include any logs or source code that would be helpful to diagnose the problem. If including tracebacks, please include the full traceback. Large logs and files should be attached.
+-->
 
 ### Willingness to contribute
 The Delta Lake Community encourages bug fix contributions. Would you or another member of your organization be willing to contribute a fix for this bug to the Delta Lake code base?
