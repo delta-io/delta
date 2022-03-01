@@ -14,34 +14,16 @@ For instance,
   [#ISSUE NUMBER] Your PR title
 -->
 
-## Description (required)
+## Description
 
 <!-- Describe what this PR changes. For instance,
-  1. If you propose a new API, clarify the use case for a new API.
-  2. If you fix a bug, you can clarify why it is a bug.
+  1. Describe the change.
+  2. Describe why we need the change.
 -->
 
-## Review Procedure (required)
+## Review Request Guideline
 
-<!-- Explain how to review this PR and also leave notes for reviewer. -->
-
-## Related PR (optional)
-
-<!-- Link related PR -->
-
-## Pre-Review Checklist for the PR Author (required)
-
-- [ ] Read [commit-guidelines](https://github.com/delta-io/delta/blob/master/CONTRIBUTING.md)
-- [ ] Assign PR to reviewer
-- [ ] Target branch set correctly. Default: `master`
-- [ ] Fill out all the required sections
-    - [ ] Related Issue
-    - [ ] Description
-    - [ ] Review Procedure
-    - [ ] Pre-Review Checklist for the PR Author
-
-
-## Checklist for the PR Reviewer (required)
+## Checklist for the PR Reviewer
 **Only the reviewer is allowed to make changes in this section!**
 **Reviewers should check the checkboxes below before approval.**
 
@@ -52,8 +34,10 @@ For instance,
     1. [ ] The problem/feature is solved (reproducibly)
     1. [ ] The solution is performant enough for the use case in mind
 
-## Post-Review Checklist for the PR Author (required)
+## Post-Review Checklist for the PR Author
 
 **PR Author should check the checkboxes below before merging.**
 
-- If this PR resolves an issue be sure to include "Resolves #XXX" to correctly link and close the issue upon merging.
+<!--
+If this PR resolves an issue be sure to include "Resolves #XXX" to correctly link and close the issue upon merging.
+-->

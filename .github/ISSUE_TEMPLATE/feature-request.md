@@ -1,36 +1,35 @@
 ---
 name: Feature Request
 about: Use this template for raising a feature request
-labels: 'type:enhancement'
+labels: 'enhancement'
 title: '[Feature Request]'
 
 ---
 
 ## Feature Request
 
-**Please attach [Feature Request] to the title for feature requests**
-
 ### Overview
+<!-- Provide an overview of feature requests here. -->
 
-* TODO(you): Provide an overview of feature requests here.
+### Willingness to contribute
+The Delta Lake Community encourages new feature contributions. Would you or another member of your organization be willing to contribute an implementation of this feature (either as an Delta Lake Plugin or an enhancement to the Delta Lake code base)?
 
-### System Information
+- [ ] Yes. I can contribute this feature independently.
+- [ ] Yes. I would be willing to contribute this feature with guidance from the Delta Lake community.
+- [ ] No. I cannot contribute this feature at this time.
 
-- Delta Lake version (you are using):
-- Are you willing to contribute it (Yes/No):
+### Specific Requirements of Feature
 
-### Requirements
-
-* TODO(you): What kind of features are required by the users?
+<!-- What kind of features are required by the users? -->
 
 ### Design Sketch
 
-* TODO(you): Attach design sketch here.
+<!-- Attach design sketch here. -->
 
-### Who will benefit with this feature?
+### Details
 
-* TODO(you): Write out who will benefit from this feature here.
+(Use this section to include any additional information about the feature. If you have a proposal for how to implement this feature, please include it here. For implementation guidelines, please refer to the [Contributing Guide](https://github.com/delta-io/delta/blob/master/CONTRIBUTING.md).)
 
-### Future Work
+### Motivation
 
-* TODO(you): How will this feature affect future work.
+<!-- How will this feature be used? Why is it important? Who will benefit from it? -->

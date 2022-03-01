@@ -1,28 +1,21 @@
 ---
 name: Bug Issue
 about: Use this template for reporting a bug
-labels: 'type:bug'
+labels: 'bug'
 title: '[BUG]'
 
 ---
 
 ## Bug
-**Please attach [Bug] to the title for bug reports**
 
 ### Describe your environment/System Information
 
-* Data Lake Version:
+* Delta Lake Version:
 * Delta version:
 * Spark Version:
 * Scala Version:
 
 ### Describe the problem
-
-#### Steps to reproduce:
-
-1. _____
-2. _____
-3. _____
 
 #### Observed Results:
 
@@ -32,11 +25,13 @@ title: '[BUG]'
 
 * What did you expect to happen?
 
-#### [Contributing](https://github.com/delta-io/delta/blob/master/CONTRIBUTING.md):
-
-- Do you want to contribute a PR? (yes/no):
-- Briefly describe your candidate solution(if contributing):
-
 #### Relevant Code/Logs:
 
 * TODO(you): code here to reproduce the problem. Include any logs or source code that would be helpful to diagnose the problem. If including tracebacks, please include the full traceback. Large logs and files should be attached.
+
+### Willingness to contribute
+The Delta Lake Community encourages bug fix contributions. Would you or another member of your organization be willing to contribute a fix for this bug to the Delta Lake code base?
+
+- [ ] Yes. I can contribute a fix for this bug independently.
+- [ ] Yes. I would be willing to contribute a fix for this bug with guidance from the Delta Lake community.
+- [ ] No. I cannot contribute a bug fix at this time.
