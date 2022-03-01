@@ -36,7 +36,7 @@ If it was tested in a way different from regular unit tests, please clarify how 
 If tests were not added, please describe why they were not added and/or why it was difficult to add.
 -->
 
-## Post-Review Checklist for the PR Author
+## Post-Review for the PR Author
 
 <!--
 If this PR resolves an issue be sure to include "Resolves #XXX" to correctly link and close the issue upon merging.
