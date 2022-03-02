@@ -100,7 +100,7 @@ Then run a simple table write-read test: Run the following in your shell.
 Structure of this framework's code
 - `build.sbt`, `project/`, `src/` form the SBT project which contains the Scala code that define the benchmark workload.
     - `Benchmark.scala` is the basic interface, and `TestBenchmark.scala` is a sample implementation.
-- `run-benchmark.py` contains the specification of the benchmarks defined by name (e.g. `tpcds-3tb-delta`). Each benchmark specifications is defined by the following: 
+- `run-benchmark.py` contains the specification of the benchmarks defined by name (e.g. `tpcds-3tb-delta`). Each benchmark specification is defined by the following: 
     - Fully qualified name of the main Scala class to be started.
     - Command line argument for the main function.
     - Additional Maven artifact to load (example `io.delta:delta-core_2.12:1.0.0`).
