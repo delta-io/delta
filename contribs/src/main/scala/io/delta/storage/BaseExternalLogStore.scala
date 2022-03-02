@@ -30,6 +30,11 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.storage.HadoopFileSystemLogStore
 
+/**
+* Used so that we can use an external store child implementation
+* to provide the mutual exclusion that the cloud store,
+* e.g. s3, is missing.
+*/
 abstract class BaseExternalLogStore(
     sparkConf: SparkConf,
     hadoopConf: Configuration
@@ -80,10 +85,10 @@ abstract class BaseExternalLogStore(
   /**
    * Method for assuring consistency on filesystem according to the external cache.
    * Method tries to rewrite TransactionLog entry from temporary path if it does not exists.
-   * Method returns completed [[LogEntry]]
+   * Method returns completed [[ExternalCommitEntry]]
    */
 
-  private def fixDeltaLog(fs: FileSystem, entry: LogEntry): Unit = {
+  private def fixDeltaLog(fs: FileSystem, entry: ExternalCommitEntry): Unit = {
     if (entry.complete) {
       return
     }
@@ -111,12 +116,25 @@ abstract class BaseExternalLogStore(
     }
   }
 
+  /**
+   * The following four methods are extracted for testing purposes
+   * so we can more easily inject errors and test for failures.
+   */
+
+  protected def writeCopyTempFile(fs: FileSystem, src: Path, dst: Path) = {
+    copyFile(fs, src, dst)
+  }
+
+  protected def writePutCompleteDbEntry(entry: ExternalCommitEntry): Unit = {
+    putExternalEntry(entry.asComplete(), overwrite = true)
+  }
+
   protected def fixDeltaLogCopyTempFile(fs: FileSystem, src: Path, dst: Path): Unit = {
     copyFile(fs, src, dst);
   }
 
-  protected def fixDeltaLogPutCompleteDbEntry(entry: LogEntry): Unit = {
-    putDbEntry(entry.asComplete(), overwrite = true);
+  protected def fixDeltaLogPutCompleteDbEntry(entry: ExternalCommitEntry): Unit = {
+    putExternalEntry(entry.asComplete(), overwrite = true);
   }
 
   /**
@@ -155,7 +173,7 @@ abstract class BaseExternalLogStore(
     logDebug(s"listFrom path: ${path}")
     val (fs, resolvedPath) = resolvePath(path, hadoopConf)
     val tablePath = getTablePath(resolvedPath)
-    var entry = getLatestDbEntry(tablePath)
+    var entry = getLatestExternalEntry(tablePath)
     entry.foreach(fixDeltaLog(fs, _))
 
     super.listFrom(path, hadoopConf)
@@ -203,7 +221,7 @@ abstract class BaseExternalLogStore(
       if (version > 0) {
         val prevVersion = version - 1
         val prevPath = FileNames.deltaFile(tablePath, prevVersion)
-        getDbEntry(tablePath, prevPath) match {
+        getExternalEntry(tablePath, prevPath) match {
           case Some(entry) => fixDeltaLog(fs, entry)
           case None =>
             if (!fs.exists(prevPath)) {
@@ -214,7 +232,7 @@ abstract class BaseExternalLogStore(
           // previous commit exists in fs but not in dynamodb
         }
       } else {
-        getDbEntry(tablePath, path) match {
+        getExternalEntry(tablePath, path) match {
           case Some(entry) =>
             if (entry.complete && !fs.exists(path)) {
               throw new java.nio.file.FileSystemException(
@@ -230,7 +248,7 @@ abstract class BaseExternalLogStore(
     val tempPath = createTemporaryPath(resolvedPath)
 
     val entry =
-      LogEntry(
+      ExternalCommitEntry(
         tablePath,
         resolvedPath.getName,
         tempPath,
@@ -243,7 +261,7 @@ abstract class BaseExternalLogStore(
 
     // commit to dynamodb E(N, false) and exclude commitTime
     logDebug(s"write incomplete entry to dynamodb ${entry}")
-    putDbEntry(entry, overwrite = false)
+    putExternalEntry(entry, overwrite = false)
 
     try {
       writeCopyTempFile(fs, entry.absoluteTempPath(), resolvedPath)
@@ -256,47 +274,42 @@ abstract class BaseExternalLogStore(
     }
   }
 
-  protected def writeCopyTempFile(fs: FileSystem, src: Path, dst: Path) = {
-    copyFile(fs, src, dst)
-  }
-
-  protected def writePutCompleteDbEntry(entry: LogEntry): Unit = {
-    putDbEntry(entry.asComplete(), overwrite = true)
-  }
-
   /*
    * Write to db in exclusive way.
    * Method should throw @java.nio.file.FileAlreadyExistsException if path exists in cache.
    */
-  protected def putDbEntry(
-      logEntry: LogEntry,
+  protected def putExternalEntry(
+      ExternalCommitEntry: ExternalCommitEntry,
       overwrite: Boolean = false
   ): Unit
 
-  protected def getDbEntry(
-      absoluteTablePath: Path,
-      absoluteJsonPath: Path
-  ): Option[LogEntry]
+  protected def getExternalEntry(
+      tablePath: Path,
+      jsonPath: Path
+  ): Option[ExternalCommitEntry]
 
-  protected def getLatestDbEntry(
+  protected def getLatestExternalEntry(
       tablePath: Path
-  ): Option[LogEntry]
+  ): Option[ExternalCommitEntry]
 
   override def isPartialWriteVisible(path: Path): Boolean = false
 }
 
 /**
  * The file metadata to be stored in the external db
+ * @param tablePath path to the root of the table (path/to/my/table)
+ * @param tempPath relative path to the `tablePath`
+ * @param commitTime in epoch seconds
  */
-case class LogEntry(
+case class ExternalCommitEntry(
     tablePath: Path,
     fileName: String,
     tempPath: String,
     complete: Boolean,
     commitTime: Option[Long]
 ) {
-  def asComplete(): LogEntry = {
-    LogEntry(
+  def asComplete(): ExternalCommitEntry = {
+    ExternalCommitEntry(
       tablePath,
       fileName,
       tempPath,

@@ -42,7 +42,7 @@ class FailingDynamoDBLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
     super.writeCopyTempFile(fs, src, dst)
   }
 
-  override protected def writePutCompleteDbEntry(entry: LogEntry): Unit = {
+  override protected def writePutCompleteDbEntry(entry: ExternalCommitEntry): Unit = {
     injectError("write_put_db_entry")
     super.writePutCompleteDbEntry(entry)
   }
@@ -56,7 +56,7 @@ class FailingDynamoDBLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
     super.fixDeltaLogCopyTempFile(fs, src, dst)
   }
 
-  override def fixDeltaLogPutCompleteDbEntry(entry: LogEntry): Unit = {
+  override def fixDeltaLogPutCompleteDbEntry(entry: ExternalCommitEntry): Unit = {
     injectError("fix_delta_log_put_db_entry")
     super.fixDeltaLogPutCompleteDbEntry(entry)
   }

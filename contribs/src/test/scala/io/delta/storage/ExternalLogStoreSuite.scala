@@ -127,7 +127,7 @@ class MemoryLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
     hashMap.clear()
   }
 
-  override protected def getLatestDbEntry(tablePath: Path): Option[LogEntry] = {
+  override protected def getLatestExternalEntry(tablePath: Path): Option[ExternalCommitEntry] = {
     hashMap.asScala.iterator
       .filter(r => r._2.tablePath == tablePath)
       .toList
@@ -137,26 +137,26 @@ class MemoryLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
       .map(r => r._2)
   }
 
-  override protected def getDbEntry(tablePath: Path, path: Path): Option[LogEntry] = {
+  override protected def getExternalEntry(tablePath: Path, path: Path): Option[ExternalCommitEntry] = {
     hashMap.asScala.get(path)
   }
 
-  override protected def putDbEntry(
-      logEntry: LogEntry,
+  override protected def putExternalEntry(
+      ExternalCommitEntry: ExternalCommitEntry,
       overwrite: Boolean = false
   ): Unit = {
 
     logDebug(
-      s"WriteExternalCache: ${logEntry.absoluteJsonPath} (overwrite=$overwrite)"
+      s"WriteExternalCache: ${ExternalCommitEntry.absoluteJsonPath} (overwrite=$overwrite)"
     )
 
     if (overwrite) {
-      hashMap.put(logEntry.absoluteJsonPath, logEntry)
+      hashMap.put(ExternalCommitEntry.absoluteJsonPath, ExternalCommitEntry)
     } else {
-      val curr_val = hashMap.putIfAbsent(logEntry.absoluteJsonPath, logEntry);
+      val curr_val = hashMap.putIfAbsent(ExternalCommitEntry.absoluteJsonPath, ExternalCommitEntry);
       if (curr_val != null) {
         throw new java.nio.file.FileAlreadyExistsException(
-          s"TransactionLog exists ${logEntry.absoluteJsonPath}"
+          s"TransactionLog exists ${ExternalCommitEntry.absoluteJsonPath}"
         )
       }
     }
@@ -164,7 +164,7 @@ class MemoryLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
 }
 
 object MemoryLogStore {
-  val hashMap = new ConcurrentHashMap[Path, LogEntry]()
+  val hashMap = new ConcurrentHashMap[Path, ExternalCommitEntry]()
 }
 
 class TestLogStore(
@@ -172,6 +172,11 @@ class TestLogStore(
     hadoopConf: Configuration
 ) extends MemoryLogStore(sparkConf, hadoopConf) {}
 
+/**
+ * This utility enables failure simulation on file system.
+ * Providing a matching suffix results in an exception being
+ * thrown that allows to test file system failure scenarios.
+ */
 class FailingFileSystem extends RawLocalFileSystem {
   override def getScheme: String = FailingFileSystem.scheme
 

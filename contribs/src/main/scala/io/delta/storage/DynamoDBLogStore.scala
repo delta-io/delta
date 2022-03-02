@@ -76,8 +76,8 @@ class DynamoDBLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
   private val client: AmazonDynamoDBClient =
     DynamoDBLogStore.getClient(sparkConf)
 
-  override protected def putDbEntry(
-      entry: LogEntry,
+  override protected def putExternalEntry(
+      entry: ExternalCommitEntry,
       overwrite: Boolean = false
   ): Unit = {
     try {
@@ -91,11 +91,14 @@ class DynamoDBLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
         )
     }
   }
-
-  override protected def getDbEntry(
+  /**
+  * @param absoluteTablePath partition key
+  * @param absoluteJsonPath sort key
+  */
+  override protected def getExternalEntry(
       absoluteTablePath: Path,
       absoluteJsonPath: Path
-  ): Option[LogEntry] = {
+  ): Option[ExternalCommitEntry] = {
     Option(
       client
         .getItem(
@@ -112,9 +115,9 @@ class DynamoDBLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
     ).map(itemToDbEntry)
   }
 
-  override protected def getLatestDbEntry(
+  override protected def getLatestExternalEntry(
       tablePath: Path
-  ): Option[LogEntry] = {
+  ): Option[ExternalCommitEntry] = {
     client
       .query(
         new QueryRequest(tableName)
@@ -138,7 +141,7 @@ class DynamoDBLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
 
   def itemToDbEntry(
       item: java.util.Map[String, AttributeValue]
-  ): LogEntry = LogEntry(
+  ): ExternalCommitEntry = ExternalCommitEntry(
     tablePath = new Path(item.get("tablePath").getS),
     fileName = item.get("fileName").getS,
     tempPath = item.get("tempPath").getS,
@@ -150,8 +153,10 @@ class DynamoDBLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
 object DynamoDBLogStore {
   val confPrefix = "spark.delta.DynamoDBLogStore."
 
-  implicit def logEntryToWrapper(entry: LogEntry): LogEntryWrapper =
-    LogEntryWrapper(entry)
+  implicit def ExternalCommitEntryToWrapper(
+  entry: ExternalCommitEntry
+  ): ExternalCommitEntryWrapper =
+    ExternalCommitEntryWrapper(entry)
 
   def getClient(sparkConf: SparkConf): AmazonDynamoDBClient = {
 
@@ -181,7 +186,7 @@ object DynamoDBLogStore {
   }
 }
 
-case class LogEntryWrapper(entry: LogEntry) {
+case class ExternalCommitEntryWrapper(entry: ExternalCommitEntry) {
   def asPutItemRequest(
       tableName: String,
       overwrite: Boolean
