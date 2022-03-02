@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.commands
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, DeltaTableUtils, OptimisticTransaction}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkContext
