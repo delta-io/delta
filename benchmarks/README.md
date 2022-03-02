@@ -15,7 +15,7 @@ This is a basic framework for writing benchmarks to measure Delta's performance.
 ### Create EMR cluster
 Create an EMR cluster that connects to the external Hive Metastore.  Here are the specifications of the EMR cluster required for running benchmarks.
 - Master - i3.2xlarge
-- Workers - i3.2xlarge (just 1 worker if you are just testing by running the 1GB benchmark).
+- Workers - i3.2xlarge
 - No autoscaling, and default EBS storage.
 
 Once the EMR cluster is ready, note the following: 
