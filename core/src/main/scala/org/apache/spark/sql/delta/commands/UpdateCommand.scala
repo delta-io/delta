@@ -263,4 +263,5 @@ case class UpdateMetric(
     numAddedChangeFiles: Long,
     changeFileBytes: Long,
     scanTimeMs: Long,
-    rewriteTimeMs: Long)
+    rewriteTimeMs: Long
+)
