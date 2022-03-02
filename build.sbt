@@ -181,7 +181,8 @@ lazy val storageDynamodb = (project in file("storage-dynamodb"))
   .settings (
     name := "delta-storage-dynamodb",
     commonSettings,
-    releaseSettings,
+    skipReleaseSettings,
+    // releaseSettings,
     libraryDependencies ++= Seq(
       "com.amazonaws" % "aws-java-sdk" % "1.7.4"
     )
@@ -316,6 +317,11 @@ lazy val unidocSettings = Seq(
  ********************
  */
 import ReleaseTransformations._
+
+lazy val skipReleaseSettings = Seq(
+  publishArtifact := false,
+  publish / skip := true
+)
 
 lazy val releaseSettings = Seq(
   publishMavenStyle := true,
