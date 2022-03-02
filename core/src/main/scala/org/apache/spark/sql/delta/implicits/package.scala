@@ -16,6 +16,11 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.plans.QueryPlan
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.rules.{RuleId, UnknownRuleId}
+import org.apache.spark.sql.catalyst.trees.{AlwaysProcess, TreePatternBits}
 import org.apache.spark.sql.types.{ArrayType, MapType, StructField, StructType}
 
 package object implicits {
@@ -79,6 +84,36 @@ package object implicits {
         case _ =>
           None
       }
+    }
+  }
+
+  /**
+   * This implicit class is used to provide helpful methods used throughout the code that are not
+   * provided by Spark-Catalyst's LogicalPlan.
+   */
+  implicit class RichLogicalPlan(plan: LogicalPlan) {
+    /**
+     * Returns the result of running QueryPlan.transformExpressionsUpWithPruning on this node
+     * and all its children.
+     */
+    def transformAllExpressionsUpWithPruning(
+        cond: TreePatternBits => Boolean,
+        ruleId: RuleId = UnknownRuleId)(
+        rule: PartialFunction[Expression, Expression]
+      ): LogicalPlan = {
+      plan.transformUpWithPruning(cond, ruleId) {
+        case q: QueryPlan[_] =>
+          q.transformExpressionsUpWithPruning(cond, ruleId)(rule)
+      }
+    }
+
+    /**
+     * Returns the result of running QueryPlan.transformExpressionsUp on this node
+     * and all its children.
+     */
+    def transformAllExpressionsUp(
+        rule: PartialFunction[Expression, Expression]): LogicalPlan = {
+      transformAllExpressionsUpWithPruning(AlwaysProcess.fn, UnknownRuleId)(rule)
     }
   }
 }

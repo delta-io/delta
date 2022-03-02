@@ -32,9 +32,10 @@ import org.apache.spark.sql.delta.hooks.{GenerateSymlinkManifest, PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.stats.FileSizeHistogram
+import org.apache.spark.sql.delta.stats.{DeltaScan, DeltaScanGenerator, DeltaScanGeneratorBase, FileSizeHistogram}
+import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{AnalysisException, Column, SparkSession}
+import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.util.{Clock, Utils}
@@ -166,6 +167,7 @@ object OptimisticTransaction {
  */
 trait OptimisticTransactionImpl extends TransactionalWrite
   with SQLMetricsReporting
+  with DeltaScanGenerator
   with DeltaLogging {
 
   import org.apache.spark.sql.delta.util.FileNames._
@@ -202,6 +204,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   /** The transaction start time. */
   protected val txnStartNano = System.nanoTime()
+
+  override val snapshotToScan: Snapshot = snapshot
+
+  /**
+   * Tracks the first-access snapshots of other Delta logs read by this transaction.
+   * The snapshots are keyed by the log's unique id.
+   */
+  protected var readSnapshots = new java.util.concurrent.ConcurrentHashMap[(String, Path), Snapshot]
 
   /** The transaction commit start time. */
   protected var commitStartNano = -1L
@@ -419,6 +429,48 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
   }
 
+  /**
+   * Returns the [[DeltaScanGenerator]] for the given log, which will be used to generate
+   * [[DeltaScan]]s. Every time this method is called on a log, the returned generator
+   * generator will read a snapshot that is pinned on the first access for that log.
+   *
+   * Internally, if the given log is the same as the log associated with this
+   * transaction, then it returns this transaction, otherwise it will return a snapshot of
+   * given log
+   */
+  def getDeltaScanGenerator(index: TahoeLogFileIndex): DeltaScanGenerator = {
+    if (index.deltaLog.isSameLogAs(deltaLog)) {
+      this
+    } else {
+      if (spark.conf.get(DeltaSQLConf.DELTA_SNAPSHOT_ISOLATION)) {
+        readSnapshots.computeIfAbsent(index.deltaLog.compositeId, _ => {
+          // Will be called only when the log is accessed the first time
+          index.getSnapshot
+        })
+      } else {
+        index.getSnapshot
+      }
+    }
+  }
+
+  /** Returns a[[DeltaScan]] based on the given filters and projections. */
+  override def filesForScan(projection: Seq[Attribute], filters: Seq[Expression]): DeltaScan = {
+    val scan = snapshot.filesForScan(projection, filters)
+    val partitionFilters = filters.filter { f =>
+      DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
+    }
+    readPredicates += partitionFilters.reduceLeftOption(And).getOrElse(Literal(true))
+    readFiles ++= scan.files
+    scan
+  }
+
+  override def filesWithStatsForScan(partitionFilters: Seq[Expression]): DataFrame = {
+    val metadata = snapshot.filesWithStatsForScan(partitionFilters)
+    readPredicates += partitionFilters.reduceLeftOption(And).getOrElse(Literal(true))
+    withFilesRead(filterFiles(partitionFilters))
+    metadata
+  }
+
   /** Returns files matching the given predicates. */
   def filterFiles(): Seq[AddFile] = filterFiles(Seq(Literal.TrueLiteral))
 
@@ -437,6 +489,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   def readWholeTable(): Unit = {
     readPredicates += Literal.TrueLiteral
     readTheWholeTable = true
+  }
+
+  /** Mark the given files as read within this transaction. */
+  def withFilesRead(files: Seq[AddFile]): Unit = {
+    readFiles ++= files
   }
 
   /**
