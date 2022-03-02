@@ -96,6 +96,8 @@ case class MergeStats(
     source: MergeDataSizes,
     targetBeforeSkipping: MergeDataSizes,
     targetAfterSkipping: MergeDataSizes,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    sourceRowsInSecondScan: Option[Long],
 
     // Data change sizes
     targetFilesRemoved: Long,
@@ -150,6 +152,8 @@ object MergeStats {
           files = Some(metrics("numTargetFilesAfterSkipping").value),
           bytes = Some(metrics("numTargetBytesAfterSkipping").value),
           partitions = metricValueIfPartitioned("numTargetPartitionsAfterSkipping")),
+      sourceRowsInSecondScan =
+        metrics.get("numSourceRowsInSecondScan").map(_.value).filter(_ >= 0),
 
       // Data change sizes
       targetFilesAdded = metrics("numTargetFilesAdded").value,
@@ -240,6 +244,8 @@ case class MergeIntoCommand(
 
   override lazy val metrics = Map[String, SQLMetric](
     "numSourceRows" -> createMetric(sc, "number of source rows"),
+    "numSourceRowsInSecondScan" ->
+      createMetric(sc, "number of source rows (during repeated scan)"),
     "numTargetRowsCopied" -> createMetric(sc, "number of target rows rewritten unmodified"),
     "numTargetRowsInserted" -> createMetric(sc, "number of inserted rows"),
     "numTargetRowsUpdated" -> createMetric(sc, "number of updated rows"),
@@ -292,9 +298,21 @@ case class MergeIntoCommand(
             filesToRewrite.map(_.remove) ++ newWrittenFiles
           }
         }
+
         // Metrics should be recorded before commit (where they are written to delta logs).
         metrics("executionTimeMs").set((System.nanoTime() - startTime) / 1000 / 1000)
         deltaTxn.registerSQLMetrics(spark, metrics)
+
+        // This is a best-effort sanity check.
+        if (metrics("numSourceRowsInSecondScan").value >= 0 &&
+            metrics("numSourceRows").value != metrics("numSourceRowsInSecondScan").value) {
+          log.warn(s"Merge source has ${metrics("numSourceRows")} rows in initial scan but " +
+            s"${metrics("numSourceRowsInSecondScan")} rows in second scan")
+          if (conf.getConf(DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED)) {
+            throw DeltaErrors.sourceNotDeterministicInMergeException(spark)
+          }
+        }
+
         deltaTxn.commit(
           deltaActions,
           DeltaOperations.Merge(
@@ -349,7 +367,10 @@ case class MergeIntoCommand(
     //     target row is modified by multiple user or not
     // - the target file name the row is from to later identify the files touched by matched rows
     val joinToFindTouchedFiles = {
+      // UDF to increment metrics
+      val incrSourceRowCountExpr = makeMetricUpdateUDF("numSourceRows")
       val sourceDF = Dataset.ofRows(spark, source)
+        .filter(new Column(incrSourceRowCountExpr))
       val targetDF = Dataset.ofRows(spark, buildTargetPlanWithFiles(deltaTxn, dataSkippedFiles))
         .withColumn(ROW_ID_COL, monotonically_increasing_id())
         .withColumn(FILE_NAME_COL, input_file_name())
@@ -494,7 +515,7 @@ case class MergeIntoCommand(
        """.stripMargin)
 
     // UDFs to update metrics
-    val incrSourceRowCountExpr = makeMetricUpdateUDF("numSourceRows")
+    val incrSourceRowCountExpr = makeMetricUpdateUDF("numSourceRowsInSecondScan")
     val incrUpdatedCountExpr = makeMetricUpdateUDF("numTargetRowsUpdated")
     val incrInsertedCountExpr = makeMetricUpdateUDF("numTargetRowsInserted")
     val incrNoopCountExpr = makeMetricUpdateUDF("numTargetRowsCopied")

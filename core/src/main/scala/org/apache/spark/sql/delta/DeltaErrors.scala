@@ -96,7 +96,8 @@ trait DocsPath {
     "ignoreStreamingUpdatesAndDeletesWarning",
     "concurrentModificationExceptionMsg",
     "incorrectLogStoreImplementationException",
-    "columnRenameNotSupported"
+    "columnRenameNotSupported",
+    "sourceNotDeterministicInMergeException"
   )
 }
 
@@ -700,6 +701,14 @@ object DeltaErrors
          |multiple matches. Please refer to
          |${generateDocsLink(spark.sparkContext.getConf,
         "/delta-update.html#upsert-into-a-table-using-merge")}""".stripMargin
+    )
+  }
+
+  def sourceNotDeterministicInMergeException(spark: SparkSession): Throwable = {
+    new UnsupportedOperationException(
+      s"""Cannot perform Merge because the source dataset is not deterministic. Please refer to
+         |${generateDocsLink(spark.sparkContext.getConf,
+        "/delta-update.html#operation-semantics")} for more information.""".stripMargin
     )
   }
 

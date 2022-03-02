@@ -371,6 +371,18 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val MERGE_FAIL_IF_SOURCE_CHANGED =
+    buildConf("merge.failIfSourceChanged")
+      .internal()
+      .doc(
+        """
+          |When enabled, MERGE will fail if it detects that the source dataframe was changed.
+          |This can be triggered as a result of modified input data or the use of nondeterministic
+          |query plans. The detection is best-effort.
+      """.stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_LAST_COMMIT_VERSION_IN_SESSION =
     buildConf("lastCommitVersionInSession")
       .doc("The version of the last commit made in the SparkSession for any table.")
