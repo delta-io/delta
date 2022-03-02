@@ -16,7 +16,8 @@
 
 package org.apache.spark.sql.delta
 
-class ExternalLogStoreSuite extends PublicLogStoreSuite {
+// TODO: make non-abstract and implement when tests when DynamoDBLogStore is ready
+abstract class ExternalLogStoreSuite extends PublicLogStoreSuite {
   override protected val publicLogStoreClassName: String =
     classOf[io.delta.storage.external.DynamoDBLogStore].getName
 }
