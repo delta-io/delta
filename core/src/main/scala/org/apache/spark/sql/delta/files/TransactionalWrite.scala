@@ -74,7 +74,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
   protected def mapColumnAttributes(
       output: Seq[Attribute],
       mappingMode: DeltaColumnMappingMode): Seq[Attribute] = {
-    throw DeltaErrors.writesWithColumnMappingNotSupported
+    DeltaColumnMapping.createPhysicalAttributes(output, metadata.schema, mappingMode)
   }
 
   /**
