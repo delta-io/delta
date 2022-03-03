@@ -176,7 +176,9 @@ abstract class BaseExternalLogStore(
     var entry = getLatestExternalEntry(tablePath)
     entry.foreach(fixDeltaLog(fs, _))
 
-    super.listFrom(path, hadoopConf)
+    super.listFrom(path, hadoopConf).filter(
+        p => !p.getPath().getName().startsWith(".") && !p.getPath().getName().startsWith("_")
+    )
   }
 
   /**
@@ -318,5 +320,5 @@ case class ExternalCommitEntry(
     )
   }
   def absoluteJsonPath(): Path = new Path(new Path(tablePath, "_delta_log"), fileName)
-  def absoluteTempPath(): Path = new Path(tablePath, tempPath)
+  def absoluteTempPath(): Path = new Path(new Path(tablePath, "_delta_log"), tempPath)
 }
