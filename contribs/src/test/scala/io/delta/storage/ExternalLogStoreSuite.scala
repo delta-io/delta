@@ -137,7 +137,10 @@ class MemoryLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
       .map(r => r._2)
   }
 
-  override protected def getExternalEntry(tablePath: Path, path: Path): Option[ExternalCommitEntry] = {
+  override protected def getExternalEntry(
+    tablePath: Path,
+    path: Path
+  ): Option[ExternalCommitEntry] = {
     hashMap.asScala.get(path)
   }
 
