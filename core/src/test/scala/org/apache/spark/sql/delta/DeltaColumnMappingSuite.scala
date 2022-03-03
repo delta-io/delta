@@ -493,7 +493,7 @@ class DeltaColumnMappingSuite extends QueryTest
     }
   }
 
-  test("read/write id mode should be blocked") {
+  ignore("read/write id mode should be blocked") {
     withTable("t1") {
       // create in name mode is allowed
       createTableWithSQLAPI(
