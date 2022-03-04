@@ -6,7 +6,7 @@ title: '[Feature Request]'
 
 ---
 
-## Feature Request
+## Feature request
 
 ### Overview
 <!-- Provide a high-level description of the feature request. -->
