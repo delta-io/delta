@@ -25,7 +25,6 @@ For instance,
 
 ## Does this PR introduce _any_ user-facing changes?
 <!--
-Note that it means *any* user-facing change including all aspects such as the documentation fix.
 If yes, please clarify the previous behavior and the change this PR proposes - provide the console output, description and/or an example to show the behavior difference if possible.
 If possible, please also clarify if this is a user-facing change compared to the released Delta Lake versions or within the unreleased branches such as master.
 If no, write 'No'.
