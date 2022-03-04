@@ -24,10 +24,10 @@ title: '[BUG]'
 
 <!-- What did you expect to happen? -->
 
-#### Relevant Code/Logs:
+#### Further details
 
 <!--
-Code here to reproduce the problem. Include any logs or source code that would be helpful to diagnose the problem. If including tracebacks, please include the full traceback. Large logs and files should be attached.
+Include any additional details that may be useful for diagnosing the problem here. If including tracebacks, please include the full traceback. Large logs and files should be attached.
 -->
 
 ### Willingness to contribute
