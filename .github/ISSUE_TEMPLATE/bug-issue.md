@@ -10,11 +10,19 @@ title: '[BUG]'
 
 ### Environment information
 
-* Delta Lake Version:
-* Spark Version:
-* Scala Version:
+* Delta Lake version:
+* Spark version:
+* Scala version:
 
 ### Describe the problem
+
+#### Steps to reproduce
+
+<!--
+1. _____
+2. _____
+3. _____
+-->
 
 #### Observed Results:
 
@@ -31,6 +39,7 @@ Include any additional details that may be useful for diagnosing the problem her
 -->
 
 ### Willingness to contribute
+
 The Delta Lake Community encourages bug fix contributions. Would you or another member of your organization be willing to contribute a fix for this bug to the Delta Lake code base?
 
 - [ ] Yes. I can contribute a fix for this bug independently.

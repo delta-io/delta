@@ -9,14 +9,8 @@ title: '[Feature Request]'
 ## Feature request
 
 ### Overview
+
 <!-- Provide a high-level description of the feature request. -->
-
-### Willingness to contribute
-The Delta Lake Community encourages new feature contributions. Would you or another member of your organization be willing to contribute an implementation of this feature?
-
-- [ ] Yes. I can contribute this feature independently.
-- [ ] Yes. I would be willing to contribute this feature with guidance from the Delta Lake community.
-- [ ] No. I cannot contribute this feature at this time.
 
 ### Specific requirements of feature
 
@@ -31,3 +25,11 @@ Use this section to include any additional information about the feature. If you
 ### Motivation
 
 <!-- How will this feature be used? Why is it important? Which users will benefit from it? -->
+
+### Willingness to contribute
+
+The Delta Lake Community encourages new feature contributions. Would you or another member of your organization be willing to contribute an implementation of this feature?
+
+- [ ] Yes. I can contribute this feature independently.
+- [ ] Yes. I would be willing to contribute this feature with guidance from the Delta Lake community.
+- [ ] No. I cannot contribute this feature at this time.

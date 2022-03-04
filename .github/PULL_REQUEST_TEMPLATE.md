@@ -7,23 +7,18 @@ Thanks for sending a pull request!  Here are some tips for you:
   5. If possible, provide a concise example to reproduce the issue for a faster review.
   6. If applicable, include corresponding issue number in the PR title and link it in the body.
 -->
-## Related Issue
-
-<!-- Link related issue
-For instance,
-  [#ISSUE NUMBER] Your PR title
--->
 
 ## Description
 
 <!--
- - Describe what this PR changes.
- - Describe why we need the change.
+- Describe what this PR changes.
+- Describe why we need the change.
  
- If this PR resolves an issue be sure to include "Resolves #XXX" to correctly link and close the issue upon merge.
+If this PR resolves an issue be sure to include "Resolves #XXX" to correctly link and close the issue upon merge.
 -->
 
 ## Does this PR introduce _any_ user-facing changes?
+
 <!--
 If yes, please clarify the previous behavior and the change this PR proposes - provide the console output, description and/or an example to show the behavior difference if possible.
 If possible, please also clarify if this is a user-facing change compared to the released Delta Lake versions or within the unreleased branches such as master.
@@ -31,14 +26,10 @@ If no, write 'No'.
 -->
 
 ## How was this patch tested?
+
 <!--
 If tests were added, say they were added here. Please make sure to test the changes thoroughly including negative and positive cases if possible.
 If the changes were tested in any way other than unit tests, please clarify how you tested step by step (ideally copy and paste-able, so that other reviewers can test and check, and descendants can verify in the future).
 If the changes were not tested, please explain why.
 -->
 
-## Post-Review for the PR Author
-
-<!--
-If this PR resolves an issue be sure to include "Resolves #XXX" to correctly link and close the issue upon merging.
--->
