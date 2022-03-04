@@ -90,11 +90,12 @@ trait SnapshotManagement { self: DeltaLog =>
     // LIST the directory, starting from the provided lower bound (treat missing dir as empty).
     // NOTE: "empty/missing" is _NOT_ equivalent to "contains no useful commit files."
     val listing = try {
-      listFrom(startVersion)
+      val listing = listFrom(startVersion)
+      if (listing.isEmpty) return None
+      listing
     } catch {
-      case _: FileNotFoundException => Iterator.empty
+      case _: FileNotFoundException => return None
     }
-    if (listing.isEmpty) return None
 
     val files = listing
       // Pick up all checkpoint and delta files
