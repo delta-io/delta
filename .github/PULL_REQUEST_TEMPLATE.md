@@ -21,7 +21,7 @@ For instance,
   2. Describe why we need the change.
 -->
 
-## Does this PR introduce _any_ user-facing change?
+## Does this PR introduce _any_ user-facing changes?
 <!--
 Note that it means *any* user-facing change including all aspects such as the documentation fix.
 If yes, please clarify the previous behavior and the change this PR proposes - provide the console output, description and/or an example to show the behavior difference if possible.
