@@ -16,9 +16,11 @@ For instance,
 
 ## Description
 
-<!-- Describe what this PR changes. For instance,
-  1. Describe the change.
-  2. Describe why we need the change.
+<!--
+ - Describe what this PR changes.
+ - Describe why we need the change.
+ 
+ If this PR resolves an issue be sure to include "Resolves #XXX" to correctly link and close the issue upon merge.
 -->
 
 ## Does this PR introduce _any_ user-facing changes?
