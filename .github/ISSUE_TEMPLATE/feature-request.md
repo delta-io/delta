@@ -18,7 +18,7 @@ The Delta Lake Community encourages new feature contributions. Would you or anot
 - [ ] Yes. I would be willing to contribute this feature with guidance from the Delta Lake community.
 - [ ] No. I cannot contribute this feature at this time.
 
-### Specific Requirements of Feature
+### Specific requirements of feature
 
 <!-- What kind of features are required by the users? -->
 
