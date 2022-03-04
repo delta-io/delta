@@ -30,4 +30,4 @@ Use this section to include any additional information about the feature. If you
 
 ### Motivation
 
-<!-- How will this feature be used? Why is it important? Who will benefit from it? -->
+<!-- How will this feature be used? Why is it important? Which users will benefit from it? -->
