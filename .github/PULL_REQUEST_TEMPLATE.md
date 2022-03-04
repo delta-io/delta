@@ -32,7 +32,7 @@ If no, write 'No'.
 
 ## How was this patch tested?
 <!--
-If tests were added, say they were added here. Please make sure to add some test cases that check the changes thoroughly including negative and positive cases if possible.
+If tests were added, say they were added here. Please make sure to test the changes thoroughly including negative and positive cases if possible.
 If it was tested in a way different from regular unit tests, please clarify how you tested step by step, ideally copy and paste-able, so that other reviewers can test and check, and descendants can verify in the future.
 If the changes were not tested, please explain why.
 -->
