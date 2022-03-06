@@ -25,6 +25,7 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.concurrent.TimeLimits.failAfter
 import org.scalatest.time.SpanSugar._
 
+import org.apache.spark.SparkException
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.catalog.ExternalCatalogUtils
 import org.apache.spark.sql.catalyst.parser.ParseException
@@ -307,6 +308,42 @@ trait OptimizeCompactionSuiteBase extends QueryTest
           sql(s"OPTIMIZE '$path'")
         }
         assert(deltaLog.snapshot.numOfFiles === numPartitions) // 1 file per partition
+      }
+    }
+  }
+
+  test("optimize - abort before all tasks complete") {
+    val numPartitions = 2
+    withTempDir { tempDir =>
+      spark.range(100)
+          .withColumn("pCol", 'id % numPartitions)
+          .repartition(10)
+          .write
+          .format("delta")
+          .partitionBy("pCol")
+          .save(tempDir.getAbsolutePath)
+
+      // Delete one of the partitions manually to force an exception.
+      // This relies on the partition 0 being compacted first, if it is not
+      // this will hang.
+      val partition = new File(tempDir, "pCol=0")
+      partition.listFiles.foreach(f => assert(f.delete))
+
+      // We have two partitions so we would have two tasks. We can make sure we have two batches
+      withSQLConf(
+        ("fs.AbstractFileSystem.block.impl",
+          classOf[BlockWritesAbstractFileSystem].getCanonicalName),
+        ("fs.block.impl", classOf[BlockWritesLocalFileSystem].getCanonicalName)) {
+
+        val path = s"block://${tempDir.getAbsolutePath}"
+        val deltaLog = DeltaLog.forTable(spark, path)
+        require(deltaLog.snapshot.numOfFiles === 20) // 10 files in each partition
+        // block the first write until the second batch can attempt to write.
+        BlockWritesLocalFileSystem.blockUntilConcurrentWrites(numPartitions)
+        val e = intercept[SparkException] {
+          sql(s"OPTIMIZE '$path'")
+        }
+        assert(deltaLog.snapshot.numOfFiles === 20) // Optimize failed
       }
     }
   }
