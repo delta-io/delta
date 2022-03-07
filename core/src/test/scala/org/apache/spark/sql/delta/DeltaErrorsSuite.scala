@@ -99,7 +99,7 @@ trait DeltaErrorsSuiteBase
     }
   }
 
-  test("Validate that links to docs in DeltaErrors are correct") {
+  ignore("Validate that links to docs in DeltaErrors are correct") {
     testUrls()
   }
 }
