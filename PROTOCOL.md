@@ -280,7 +280,7 @@ Incremental processing systems (e.g., streaming systems) that track progress usi
 Transaction identifiers allow this information to be recorded atomically in the transaction log of a delta table along with the other actions that modify the contents of the table.
 
 Transaction identifiers are stored in the form of `appId` `version` pairs, where `appId` is a unique identifier for the process that is modifying the table and `version` is an indication of how much progress has been made by that application.
-The atomic recording of this information along with modifications to the table enables these external system can make their writes into a Delta table _idempotent_.
+The atomic recording of this information along with modifications to the table enables these external system to make their writes into a Delta table _idempotent_.
 
 For example, the [Delta Sink for Apache Spark's Structured Streaming](https://github.com/delta-io/delta/blob/master/src/main/scala/org/apache/spark/sql/delta/sources/DeltaSink.scala) ensures exactly-once semantics when writing a stream into a table using the following process:
  1. Record in a write-ahead-log the data that will be written, along with a monotonically increasing identifier for this batch.
