@@ -258,7 +258,7 @@ trait DeltaSQLConfBase {
       .doc("Sets the number of partitions to use for file listing")
       .intConf
       .checkValue(_ > 0, "fileListing.parallelism must be positive")
-      .createWithDefault(200)
+      .createOptional
 
   val DELTA_SCHEMA_AUTO_MIGRATE =
     buildConf("schema.autoMerge.enabled")
