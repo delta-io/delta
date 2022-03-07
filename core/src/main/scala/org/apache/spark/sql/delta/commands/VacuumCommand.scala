@@ -140,10 +140,11 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           actions.flatMap { action =>
             val files = action.unwrap match {
               case tombstone: RemoveFile if tombstone.delTimestamp < deleteBeforeTimestamp =>
-                getFilePath(tombstone, fs, reservoirBase, relativizeIgnoreError)
+                getFilePath(tombstone, fs, reservoirBase, isRemoveFile = true,
+                  relativizeIgnoreError)
                   .map(f => TrackedFile(null, f))
               case fa: FileAction =>
-                getFilePath(fa, fs, reservoirBase, relativizeIgnoreError)
+                getFilePath(fa, fs, reservoirBase, isRemoveFile = false, relativizeIgnoreError)
                   .map(f => TrackedFile(f, null))
               case _ => Seq(TrackedFile(null, null))
             }
@@ -180,6 +181,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
 
       val validFiles = allTrackedFiles.select($"toKeep" as "path")
         .where(col("path").isNotNull)
+        .dropDuplicates()
       val allFilesAndDirs = DeltaFileOperations.recursiveListDirs(
           spark,
           Seq(basePath),
@@ -237,7 +239,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           }
 
         if (dryRun) {
-          val numFiles = diff.count() + toCleanFiles.count()
+          val numFiles = diff.count()
           val stats = DeltaVacuumStats(
             isDryRun = true,
             specifiedRetentionMillis = retentionMillis,
@@ -249,8 +251,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           recordDeltaEvent(deltaLog, "delta.gc.stats", data = stats)
           logConsole(s"Found $numFiles files and directories in a total of " +
             s"$dirCounts directories that are safe to delete.")
-
-          return diff.union(toCleanFiles).map(f => stringToPath(f).toString).toDF("path")
+          return diff.map(f => stringToPath(f).toString).toDF("path")
         }
         logVacuumStart(
           spark,
@@ -292,6 +293,7 @@ trait VacuumCommandImpl extends DeltaCommand {
       fileAction: FileAction,
       fs: FileSystem,
       reservoirBase: Path,
+      isRemoveFile: Boolean,
       relativizeIgnoreError: Boolean): Seq[String] = {
     val filePath = stringToPath(fileAction.path)
     val validFileOpt = if (filePath.isAbsolute) {
@@ -308,10 +310,16 @@ trait VacuumCommandImpl extends DeltaCommand {
       Option(pathToString(filePath))
     }
     validFileOpt.toSeq.flatMap { f =>
-      // paths are relative so provide '/' as the basePath.
       Seq(f).flatMap { file =>
-        val dirs = getAllSubdirs("/", file, fs)
-        dirs ++ Iterator(file)
+        if (isRemoveFile) {
+          Iterator(file)
+        }
+        else {
+          // get all parent paths that file has,
+          // those paths will be used to find the untracked files and dirs
+          val dirs = getAllSubdirs("/", file, fs)
+          dirs ++ Iterator(file)
+        }
       }
     }
   }
