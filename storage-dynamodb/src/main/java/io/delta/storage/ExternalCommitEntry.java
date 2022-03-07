@@ -14,12 +14,8 @@
  * limitations under the License.
  */
 
-package io.delta.storage.external;
+package io.delta.storage;
 
-import org.apache.hadoop.conf.Configuration;
+public class ExternalCommitEntry {
 
-public class DynamoDBLogStore extends BaseExternalLogStore {
-    public DynamoDBLogStore(Configuration hadoopConf) {
-        super(hadoopConf);
-    }
 }

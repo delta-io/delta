@@ -34,7 +34,6 @@ lazy val commonSettings = Seq(
 
 lazy val core = (project in file("core"))
   .dependsOn(storage)
-  .dependsOn(storageDynamodb % "test->compile") // delta-core tests depend on storageDynamodb
   .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin, Antlr4Plugin)
   .settings (
     name := "delta-core",
@@ -175,9 +174,9 @@ lazy val storage = (project in file("storage"))
     )
   )
 
-// TODO(scott): figure out a better way to include tests in this project
 lazy val storageDynamodb = (project in file("storage-dynamodb"))
   .dependsOn(storage)
+  .dependsOn(core % "test->test")
   .settings (
     name := "delta-storage-dynamodb",
     commonSettings,

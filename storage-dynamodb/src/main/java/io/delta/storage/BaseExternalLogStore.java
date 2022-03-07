@@ -14,9 +14,8 @@
  * limitations under the License.
  */
 
-package io.delta.storage.external;
+package io.delta.storage;
 
-import io.delta.storage.HadoopFileSystemLogStore;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
