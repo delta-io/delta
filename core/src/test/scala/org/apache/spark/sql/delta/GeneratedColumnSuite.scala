@@ -532,6 +532,17 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
       "A generated column cannot use a non-existent column or another generated column")
   }
 
+  test("validateGeneratedColumns: supported expressions") {
+    for (exprString <- Seq(
+      // Generated column should support timestamp to date
+      "to_date(foo, \"yyyy-MM-dd'T'HH:mm:ss.SSSSSSSSS'Z'\")")) {
+      val f1 = StructField("foo", TimestampType)
+      val f2 = withGenerationExpression(StructField("bar", DateType), exprString)
+      val schema = StructType(Seq(f1, f2))
+      validateGeneratedColumns(spark, schema)
+    }
+  }
+
   test("validateGeneratedColumns: unsupported expressions") {
     spark.udf.register("myudf", (s: Array[Int]) => s)
     for ((exprString, error) <- Seq(

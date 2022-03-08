@@ -215,6 +215,9 @@ object SupportedGenerationExpressions {
     expression[Second]("second"),
     expression[ParseToTimestamp]("to_timestamp"),
     expression[ParseToDate]("to_date"),
+    // `gettimestamp` is not a Spark built-in class but `ParseToDate` will refer to
+    // `gettimestamp` when a format is given, so it needs to be on the allowed list
+    expression[GetTimestamp]("gettimestamp"),
     expression[ToUnixTimestamp]("to_unix_timestamp"),
     expression[ToUTCTimestamp]("to_utc_timestamp"),
     expression[TruncDate]("trunc"),
