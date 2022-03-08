@@ -27,7 +27,10 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
 import io.delta.flink.sink.DeltaSink;
-import io.delta.flink.sink.DeltaTablePartitionAssigner;
+import io.delta.flink.sink.internal.DeltaBucketAssigner;
+import io.delta.flink.sink.internal.DeltaPartitionComputer;
+import io.delta.flink.sink.internal.DeltaSinkBuilder;
+import io.delta.flink.sink.internal.DeltaSinkInternal;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
 import io.delta.flink.sink.internal.committables.DeltaGlobalCommittable;
 import org.apache.commons.io.FileUtils;
@@ -44,6 +47,7 @@ import org.apache.flink.runtime.minicluster.MiniCluster;
 import org.apache.flink.runtime.minicluster.MiniClusterConfiguration;
 import org.apache.flink.streaming.api.functions.sink.filesystem.DeltaBulkBucketWriter;
 import org.apache.flink.streaming.api.functions.sink.filesystem.DeltaPendingFile;
+import org.apache.flink.streaming.api.functions.sink.filesystem.bucketassigners.BasePathBucketAssigner;
 import org.apache.flink.streaming.api.functions.sink.filesystem.rollingpolicies.OnCheckpointRollingPolicy;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.data.util.DataFormatConverters;
@@ -341,16 +345,25 @@ public class DeltaSinkTestUtils {
     // IT case utils
     ///////////////////////////////////////////////////////////////////////////
 
-    public static DeltaSink<RowData> createDeltaSink(String deltaTablePath,
-                                                     boolean isTablePartitioned) {
+    public static DeltaSinkInternal<RowData> createDeltaSink(String deltaTablePath,
+                                                             boolean isTablePartitioned) {
         if (isTablePartitioned) {
-            return DeltaSink
-                .forRowData(
-                    new Path(deltaTablePath),
+            DeltaSinkBuilder<RowData> builder = new DeltaSinkBuilder.DefaultDeltaFormatBuilder<>(
+                new Path(deltaTablePath),
+                DeltaSinkTestUtils.getHadoopConf(),
+                ParquetRowDataBuilder.createWriterFactory(
+                    DeltaSinkTestUtils.TEST_ROW_TYPE,
                     DeltaSinkTestUtils.getHadoopConf(),
-                    DeltaSinkTestUtils.TEST_ROW_TYPE)
+                    true // utcTimestamp
+                ),
+                new BasePathBucketAssigner<>(),
+                OnCheckpointRollingPolicy.build(),
+                DeltaSinkTestUtils.TEST_ROW_TYPE,
+                false // mergeSchema
+            );
+            return builder
                 .withBucketAssigner(getTestPartitionAssigner())
-                    .build();
+                .build();
         }
         return DeltaSink
             .forRowData(
@@ -359,13 +372,13 @@ public class DeltaSinkTestUtils {
                 DeltaSinkTestUtils.TEST_ROW_TYPE).build();
     }
 
-    public static DeltaTablePartitionAssigner<RowData> getTestPartitionAssigner() {
-        DeltaTablePartitionAssigner.DeltaPartitionComputer<RowData> partitionComputer =
+    public static DeltaBucketAssigner<RowData> getTestPartitionAssigner() {
+        DeltaPartitionComputer<RowData> partitionComputer =
             (element, context) -> new LinkedHashMap<String, String>() {{
                     put("col1", Integer.toString(ThreadLocalRandom.current().nextInt(0, 2)));
                     put("col2", Integer.toString(ThreadLocalRandom.current().nextInt(0, 2)));
                 }};
-        return new DeltaTablePartitionAssigner<>(partitionComputer);
+        return new DeltaBucketAssigner<>(partitionComputer);
     }
 
     public static MiniCluster getMiniCluster() {

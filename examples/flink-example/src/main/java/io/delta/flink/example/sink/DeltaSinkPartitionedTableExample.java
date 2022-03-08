@@ -1,8 +1,12 @@
 package io.delta.flink.example.sink;
 
+import java.util.Arrays;
+import java.util.List;
+
 import io.delta.flink.sink.DeltaSink;
 import io.delta.flink.sink.DeltaSinkBuilder;
 import io.delta.flink.sink.DeltaTablePartitionAssigner;
+
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.streaming.api.functions.sink.filesystem.BucketAssigner;
 import org.apache.flink.table.data.RowData;
@@ -30,27 +34,15 @@ public class DeltaSinkPartitionedTableExample extends DeltaSinkExampleBase {
 
     @Override
     DeltaSink<RowData> getDeltaSink(String tablePath) {
-        DeltaTablePartitionAssigner<RowData> partitionAssigner =
-                new DeltaTablePartitionAssigner<>(new MultiplePartitioningColumnComputer());
+        List<String> partitionCols = Arrays.asList("f1", "f3");
 
-        DeltaSinkBuilder<RowData> deltaSinkBuilder = DeltaSink.forRowData(
-                new Path(TABLE_PATH), new Configuration(), ROW_TYPE);
-        deltaSinkBuilder.withBucketAssigner(partitionAssigner);
+        DeltaSinkBuilder<RowData> deltaSinkBuilder = DeltaSink
+            .forRowData(
+                new Path(TABLE_PATH),
+                new Configuration(),
+                ROW_TYPE)
+            .withPartitionColumns(partitionCols);
+
         return deltaSinkBuilder.build();
-    }
-
-    static class MultiplePartitioningColumnComputer implements
-            DeltaTablePartitionAssigner.DeltaPartitionComputer<RowData> {
-
-        @Override
-        public LinkedHashMap<String, String> generatePartitionValues(
-                RowData element, BucketAssigner.Context context) {
-            String f1 = element.getString(0).toString();
-            int f3 = element.getInt(2);
-            LinkedHashMap<String, String> partitionSpec = new LinkedHashMap<>();
-            partitionSpec.put("f1", f1);
-            partitionSpec.put("f3", Integer.toString(f3));
-            return partitionSpec;
-        }
     }
 }

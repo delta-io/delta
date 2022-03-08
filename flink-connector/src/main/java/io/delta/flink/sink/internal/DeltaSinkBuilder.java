@@ -45,6 +45,7 @@ import org.apache.flink.streaming.api.functions.sink.filesystem.BucketWriter;
 import org.apache.flink.streaming.api.functions.sink.filesystem.DeltaBulkBucketWriter;
 import org.apache.flink.streaming.api.functions.sink.filesystem.OutputFileConfig;
 import org.apache.flink.streaming.api.functions.sink.filesystem.rollingpolicies.CheckpointRollingPolicy;
+import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.types.logical.RowType;
 import org.apache.hadoop.conf.Configuration;
 import static org.apache.flink.util.Preconditions.checkNotNull;
@@ -52,14 +53,38 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 /**
  * A builder class for {@link DeltaSinkInternal}.
  * <p>
- * Most of the logic for this class was sourced from
- * {@link org.apache.flink.connector.file.sink.FileSink.BulkFormatBuilder} as the behaviour is very
- * similar. The main difference is that this {@link DeltaSinkBuilderInternal} was extended with
- * DeltaLake's specific parts that are explicitly marked in the implementation below.
+ * For most common use cases use {@link DeltaSink#forRowData} utility method to instantiate the
+ * sink. This builder should be used only if you need to provide custom writer factory instance
+ * or configure some low level settings for the sink.
+ * <p>
+ * Example how to use this class for the stream of {@link RowData}:
+ * <pre>
+ *     RowType rowType = ...;
+ *     Configuration conf = new Configuration();
+ *     conf.set("parquet.compression", "SNAPPY");
+ *     ParquetWriterFactory&lt;RowData&gt; writerFactory =
+ *         ParquetRowDataBuilder.createWriterFactory(rowType, conf, true);
+ *
+ *     DeltaSinkBuilder&lt;RowData&gt; sinkBuilder = new DeltaSinkBuilder(
+ *         basePath,
+ *         conf,
+ *         bucketCheckInterval,
+ *         writerFactory,
+ *         new BasePathBucketAssigner&lt;&gt;(),
+ *         OnCheckpointRollingPolicy.build(),
+ *         OutputFileConfig.builder().withPartSuffix(".snappy.parquet").build(),
+ *         appId,
+ *         rowType,
+ *         mergeSchema
+ *     );
+ *
+ *     DeltaSink&lt;RowData&gt; sink = sinkBuilder.build();
+ *
+ * </pre>
  *
  * @param <IN> The type of input elements.
  */
-public class DeltaSinkBuilderInternal<IN> implements Serializable {
+public class DeltaSinkBuilder<IN> implements Serializable {
 
     private static final long serialVersionUID = 7493169281026370228L;
 
@@ -124,7 +149,25 @@ public class DeltaSinkBuilderInternal<IN> implements Serializable {
 
     private final OutputFileConfig outputFileConfig;
 
-    protected DeltaSinkBuilderInternal(
+    /**
+     * Creates instance of the builder for {@link DeltaSink}.
+     *
+     * @param basePath            path to a Delta table
+     * @param conf                Hadoop's conf object
+     * @param writerFactory       a factory that in runtime is used to create instances of
+     *                            {@link org.apache.flink.api.common.serialization.BulkWriter}
+     * @param assigner            {@link BucketAssigner} used with a Delta sink to determine the
+     *                            bucket each incoming element should be put into
+     * @param policy              instance of {@link CheckpointRollingPolicy} which rolls on every
+     *                            checkpoint by default
+     * @param rowType             Flink's logical type to indicate the structure of the events in
+     *                            the stream
+     * @param mergeSchema         indicator whether we should try to update table's schema with
+     *                            stream's schema in case those will not match. The update is not
+     *                            guaranteed as there will be still some checks performed whether
+     *                            the updates to the schema are compatible.
+     */
+    protected DeltaSinkBuilder(
         Path basePath,
         Configuration conf,
         ParquetWriterFactory<IN> writerFactory,
@@ -146,7 +189,34 @@ public class DeltaSinkBuilderInternal<IN> implements Serializable {
         );
     }
 
-    protected DeltaSinkBuilderInternal(
+    /**
+     * Creates instance of the builder for {@link DeltaSink}.
+     *
+     * @param basePath            path to a Delta table
+     * @param conf                Hadoop's conf object
+     * @param bucketCheckInterval interval (in milliseconds) for triggering
+     *                            {@link Sink.ProcessingTimeService} within internal
+     *                            {@code io.delta.flink.sink.internal.writer.DeltaWriter} instance
+     * @param writerFactory       a factory that in runtime is used to create instances of
+     *                            {@link org.apache.flink.api.common.serialization.BulkWriter}
+     * @param assigner            {@link BucketAssigner} used with a Delta sink to determine the
+     *                            bucket each incoming element should be put into
+     * @param policy              instance of {@link CheckpointRollingPolicy} which rolls on every
+     *                            checkpoint by default
+     * @param outputFileConfig    part file name configuration. This allow to define a prefix and a
+     *                            suffix to the part file name.
+     * @param appId               unique identifier of the Flink application that will be used as a
+     *                            part of transactional id in Delta's transactions. It is crucial
+     *                            for this value to be unique across all applications committing to
+     *                            a given Delta table
+     * @param rowType             Flink's logical type to indicate the structure of the events in
+     *                            the stream
+     * @param mergeSchema         indicator whether we should try to update table's schema with
+     *                            stream's schema in case those will not match. The update is not
+     *                            guaranteed as there will be still some checks performed whether
+     *                            the updates to the schema are compatible.
+     */
+    protected DeltaSinkBuilder(
         Path basePath,
         Configuration conf,
         long bucketCheckInterval,
@@ -177,10 +247,10 @@ public class DeltaSinkBuilderInternal<IN> implements Serializable {
      *
      * @param mergeSchema whether we should try to update table's schema with stream's
      *                    schema in case those will not match. See
-     *                    {@link DeltaSinkBuilderInternal#mergeSchema} for details.
+     *                    {@link DeltaSinkBuilder#mergeSchema} for details.
      * @return builder for {@link DeltaSink}
      */
-    public DeltaSinkBuilderInternal<IN> withMergeSchema(final boolean mergeSchema) {
+    public DeltaSinkBuilder<IN> withMergeSchema(final boolean mergeSchema) {
         this.mergeSchema = mergeSchema;
         return this;
     }
@@ -217,7 +287,7 @@ public class DeltaSinkBuilderInternal<IN> implements Serializable {
      * @param assigner bucket assigner instance for this sink
      * @return builder for {@link DeltaSink}
      */
-    public DeltaSinkBuilderInternal<IN> withBucketAssigner(BucketAssigner<IN, String> assigner) {
+    public DeltaSinkBuilder<IN> withBucketAssigner(BucketAssigner<IN, String> assigner) {
         this.bucketAssigner = checkNotNull(assigner);
         return this;
     }
@@ -270,5 +340,24 @@ public class DeltaSinkBuilderInternal<IN> implements Serializable {
     private DeltaBulkBucketWriter<IN, String> createBucketWriter() throws IOException {
         return new DeltaBulkBucketWriter<>(
             FileSystem.get(tableBasePath.toUri()).createRecoverableWriter(), writerFactory);
+    }
+
+    /**
+     * Default builder for {@link DeltaSink}.
+     */
+    public static final class DefaultDeltaFormatBuilder<IN> extends DeltaSinkBuilder<IN> {
+
+        private static final long serialVersionUID = 2818087325120827526L;
+
+        public DefaultDeltaFormatBuilder(
+            Path basePath,
+            final Configuration conf,
+            ParquetWriterFactory<IN> writerFactory,
+            BucketAssigner<IN, String> assigner,
+            CheckpointRollingPolicy<IN, String> policy,
+            RowType rowType,
+            boolean mergeSchema) {
+            super(basePath, conf, writerFactory, assigner, policy, rowType, mergeSchema);
+        }
     }
 }

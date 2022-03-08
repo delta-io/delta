@@ -25,6 +25,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.LongStream;
 
+import io.delta.flink.sink.internal.DeltaSinkInternal;
 import io.delta.flink.sink.utils.DeltaSinkTestUtils;
 import io.delta.flink.sink.utils.TestParquetReader;
 import org.apache.flink.api.common.RuntimeExecutionMode;
@@ -115,7 +116,7 @@ public class DeltaSinkBatchExecutionITCase extends BatchExecutionFileSinkITCase 
     protected JobGraph createJobGraph(String path) {
         StreamExecutionEnvironment env = getTestStreamEnv();
 
-        DeltaSink<RowData> deltaSink = DeltaSinkTestUtils.createDeltaSink(
+        DeltaSinkInternal<RowData> deltaSink = DeltaSinkTestUtils.createDeltaSink(
             path,
             false // isTablePartitioned
         );

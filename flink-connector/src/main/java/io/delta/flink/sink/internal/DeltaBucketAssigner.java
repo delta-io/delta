@@ -16,15 +16,14 @@
  * limitations under the License.
  */
 
-package io.delta.flink.sink;
+package io.delta.flink.sink.internal;
 
-import java.io.Serializable;
 import java.util.LinkedHashMap;
 
+import io.delta.flink.sink.RowDataDeltaSinkBuilder;
 import org.apache.flink.core.io.SimpleVersionedSerializer;
 import org.apache.flink.streaming.api.functions.sink.filesystem.BucketAssigner;
 import org.apache.flink.streaming.api.functions.sink.filesystem.bucketassigners.SimpleVersionedStringSerializer;
-import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.utils.PartitionPathUtils;
 
 /**
@@ -37,13 +36,20 @@ import org.apache.flink.table.utils.PartitionPathUtils;
  * It's still possible for users to roll out their own version of {@link BucketAssigner}
  * and pass it to the {@link DeltaSinkBuilder} during creation of the sink.
  * <p>
- * To create new instance of the assigner and set it for the Delta sink:
+ * This {@link DeltaBucketAssigner} is applicable only to {@link DeltaSinkBuilder} and not to
+ * {@link RowDataDeltaSinkBuilder}. The former lets you use this
+ * {@link DeltaBucketAssigner} to provide the required custom bucketing behaviour, while the latter
+ * doesn't expose a custom bucketing API, and you can provide the partition column keys only.
+ * <p>
+ * Thus, this {@link DeltaBucketAssigner} is currently not exposed to the user through any public
+ * API.
+ * <p>
+ * In the future, if you'd like to implement your own custom bucketing...
  * <pre>
  *     /////////////////////////////////////////////////////////////////////////////////
  *     // implements a custom partition computer
  *     /////////////////////////////////////////////////////////////////////////////////
- *     static class CustomPartitionColumnComputer implements
- *             DeltaTablePartitionAssigner.DeltaPartitionComputer&lt;RowData&gt; {
+ *     static class CustomPartitionColumnComputer implements DeltaPartitionComputer&lt;RowData&gt; {
  *
  *         &#64;Override
  *         public LinkedHashMap&lt;String, String&gt; generatePartitionValues(
@@ -60,48 +66,30 @@ import org.apache.flink.table.utils.PartitionPathUtils;
  *     /////////////////////////////////////////
  *     // creates partition assigner for a custom partition computer
  *     /////////////////////////////////////////
- *     DeltaTablePartitionAssigner&lt;RowData&gt; partitionAssigner =
- *                 new DeltaTablePartitionAssigner&lt;&gt;(new CustomPartitionColumnComputer());
+ *     DeltaBucketAssignerInternal&lt;RowData&gt; partitionAssigner =
+ *                 new DeltaBucketAssignerInternal&lt;&gt;(new CustomPartitionColumnComputer());
  *
  *     ...
  *
  *     /////////////////////////////////////////////////////////////////////////////////
- *     // creates an instance of partition assigner that extracts partition values from
- *     // {@link RowData} events
- *     /////////////////////////////////////////////////////////////////////////////////
- *     RowType rowType = ...;*
- *     List&lt;String&gt; partitionCols = ...; // list of partition columns' names
- *
- *     DeltaTablePartitionAssigner.DeltaRowDataPartitionComputer rowDataPartitionComputer =
- *         new DeltaTablePartitionAssigner.DeltaRowDataPartitionComputer(rowType, partitionCols);
- *
- *     DeltaTablePartitionAssigner&lt;RowData&gt; partitionAssigner =
- *         new DeltaTablePartitionAssigner&lt;&gt;(rowDataPartitionComputer);
- *
- *     ...
- *
- *     /////////////////////////////////////////////////////////////////////////////////
- *     // shows how to set a partition assigner for {@link DeltaSink}
+ *     // create the builder
  *     /////////////////////////////////////////////////////////////////////////////////
  *
- *     DeltaSink&lt;RowData&gt; deltaSink = DeltaSink.forRowData(
- *             new Path(deltaTablePath),
- *             new Configuration(),
- *             rowType)
- *         .withBucketAssigner(partitionAssigner)
- *         .build();
- *     stream.sinkTo(deltaSink);
+ *     DeltaSinkBuilder<RowData></RowData> foo = new DeltaSinkBuilder.DefaultDeltaFormatBuilder<>(
+ *         ...,
+ *         partitionAssigner,
+ *         ...)
  * </pre>
  *
  * @param <T> The type of input elements.
  */
-public class DeltaTablePartitionAssigner<T> implements BucketAssigner<T, String> {
+public class DeltaBucketAssigner<T> implements BucketAssigner<T, String> {
 
     private static final long serialVersionUID = -6033643154550226022L;
 
     private final DeltaPartitionComputer<T> partitionComputer;
 
-    public DeltaTablePartitionAssigner(DeltaPartitionComputer<T> partitionComputer) {
+    public DeltaBucketAssigner(DeltaPartitionComputer<T> partitionComputer) {
         this.partitionComputer = partitionComputer;
     }
 
@@ -119,31 +107,6 @@ public class DeltaTablePartitionAssigner<T> implements BucketAssigner<T, String>
 
     @Override
     public String toString() {
-        return "DeltaTablePartitionAssigner";
-    }
-
-    public interface DeltaPartitionComputer<T> extends Serializable {
-
-        /**
-         * Compute partition values from record.
-         * <p>
-         * E.g.
-         * If the table has two partitioning columns 'date' and 'country' then this method should
-         * return linked hashmap like:
-         * LinkedHashMap(
-         * "date" -&gt; "2020-01-01",
-         * "country" -&gt; "x"
-         * )
-         * <p>
-         * for event that should be written to example path of:
-         * '/some_path/table_1/date=2020-01-01/country=x'.
-         *
-         * @param element input record.
-         * @param context {@link Context} that can be used during partition's
-         *                assignment
-         * @return partition values.
-         */
-        LinkedHashMap<String, String> generatePartitionValues(
-            T element, Context context);
+        return "DeltaBucketAssigner";
     }
 }

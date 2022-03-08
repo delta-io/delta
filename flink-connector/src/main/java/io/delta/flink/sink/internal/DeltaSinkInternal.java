@@ -79,9 +79,9 @@ public class DeltaSinkInternal<IN>
     implements Sink<IN, DeltaCommittable, DeltaWriterBucketState, DeltaGlobalCommittable>,
                    Logging {
 
-    private final DeltaSinkBuilderInternal<IN> sinkBuilder;
+    private final DeltaSinkBuilder<IN> sinkBuilder;
 
-    protected DeltaSinkInternal(DeltaSinkBuilderInternal<IN> sinkBuilder) {
+    protected DeltaSinkInternal(DeltaSinkBuilder<IN> sinkBuilder) {
         this.sinkBuilder = checkNotNull(sinkBuilder);
     }
 
@@ -93,7 +93,7 @@ public class DeltaSinkInternal<IN>
      * states were provided.
      * If there are no previous states then we assume that this is a fresh start of the app and set
      * next checkpoint id in {@code io.delta.flink.sink.internal.writer.DeltaWriter} to 1 and app id
-     * is taken from the {@link DeltaSinkBuilderInternal#getAppId} what guarantees us that each
+     * is taken from the {@link DeltaSinkBuilder#getAppId} what guarantees us that each
      * writer will get the same value. In other case, if we are provided by the Flink framework
      * with some previous writers' states then we use those to restore values of appId and
      * nextCheckpointId.
