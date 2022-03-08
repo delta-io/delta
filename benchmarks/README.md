@@ -5,7 +5,7 @@ This is a basic framework for writing benchmarks to measure Delta's performance.
 
 ## Running TPC-DS benchmark
 
-This TPC-DS benchmark is constructed such that you have to run the follow two steps. 
+This TPC-DS benchmark is constructed such that you have to run the following two steps. 
 1. *Load data*: You have to create the TPC-DS database with all the Delta tables. To do that, the raw TPC-DS data has been provided as Apache Parquet files. In this step you will have to use your EMR cluster to read the parquet files and rewrite them as Delta tables.
 2. *Query data*: Then, using the tables definitions in the Hive Metatore, you can run the 99 benchmark queries.   
 
