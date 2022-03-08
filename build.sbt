@@ -454,7 +454,7 @@ lazy val standalone = (project in file("standalone"))
       // -- Bump up the genjavadoc version explicitly to 0.18 to work with Scala 2.12
       compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.18" cross CrossVersion.full)
     ),
-    Compile /sourceGenerators += Def.task {
+    Compile / sourceGenerators += Def.task {
       val file = (Compile / sourceManaged).value / "io" / "delta" / "standalone" / "package.scala"
       IO.write(file,
         s"""package io.delta
@@ -671,7 +671,7 @@ lazy val flinkConnector = (project in file("flink-connector"))
     commonSettings,
     publishArtifact := scalaBinaryVersion.value != "2.13",
     Test / publishArtifact := false,
-    skipReleaseSettings, // TODO remove when releasing
+    releaseSettings,
     crossPaths := false,
     libraryDependencies ++= Seq(
       "org.apache.flink" % ("flink-parquet_" + flinkScalaVersion(scalaBinaryVersion.value)) % flinkVersion % "provided",
@@ -713,6 +713,7 @@ lazy val flinkConnector = (project in file("flink-connector"))
       "-tag", "implNote:a:Implementation Note:",
       "-Xdoclint:all"
     ),
+    Compile / doc / javacOptions := (JavaUnidoc / unidoc / javacOptions).value,
     JavaUnidoc / unidoc /  unidocAllSources := {
       (JavaUnidoc / unidoc / unidocAllSources).value
         // include only relevant flink-connector classes
