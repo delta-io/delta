@@ -79,7 +79,7 @@ public abstract class HadoopFileSystemLogStore extends LogStore {
     protected void writeWithRename(
             Path path,
             Iterator<String> actions,
-            Boolean overwrite,
+            boolean overwrite,
             Configuration hadoopConf) throws IOException {
         FileSystem fs = path.getFileSystem(hadoopConf);
 
@@ -102,8 +102,8 @@ public abstract class HadoopFileSystemLogStore extends LogStore {
                 throw new FileAlreadyExistsException(path.toString());
             }
             Path tempPath = createTempPath(path);
-            Boolean streamClosed = false; // This flag is to avoid double close
-            Boolean renameDone = false;   // This flag is to save the delete operation in most of cases.
+            boolean streamClosed = false; // This flag is to avoid double close
+            boolean renameDone = false;   // This flag is to save the delete operation in most of cases.
             final FSDataOutputStream stream = fs.create(tempPath);
             try {
                 while (actions.hasNext()) {
@@ -123,7 +123,7 @@ public abstract class HadoopFileSystemLogStore extends LogStore {
                             );
                         }
                     }
-                } catch (org.apache.hadoop.fs.FileAlreadyExistsException e) {
+                } catch (FileAlreadyExistsException e) {
                     throw new FileAlreadyExistsException(path.toString());
                 }
             } finally {
