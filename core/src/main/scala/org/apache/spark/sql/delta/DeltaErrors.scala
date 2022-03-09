@@ -896,6 +896,15 @@ object DeltaErrors
          |of the last commit: "TIMESTAMP AS OF '$timestampString'".
        """.stripMargin)
 
+  def restoreVersionNotExistException(
+      userVersion: Long,
+      earliest: Long,
+      latest: Long): Throwable = {
+    new AnalysisException(
+      s"Cannot restore table to version $userVersion. Available versions: [$earliest, $latest]."
+    )
+  }
+
 
   def timeTravelNotSupportedException: Throwable = {
     new AnalysisException("Cannot time travel views, subqueries or streams.")
