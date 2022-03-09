@@ -80,6 +80,35 @@ class BenchmarkSpec:
         return spark_shell_cmd
 
 
+class TPCDSDataLoadSpec(BenchmarkSpec):
+    """
+    Specifications of TPC-DS data load process.
+    Always mixin in this first before the base benchmark class.
+    """
+    def __init__(self, scale_in_gb, exclude_nulls=True, **kwargs):
+        # forward all keyword args to next constructor
+        super().__init__(benchmark_main_class="benchmark.TPCDSDataLoad", **kwargs)
+        self.benchmark_main_class_args.extend([
+            "--format", self.format_name,
+            "--scale-in-gb", str(scale_in_gb),
+            "--exclude-nulls", str(exclude_nulls),
+        ])
+        # To access the public TPCDS parquet files on S3
+        self.spark_confs.extend(["spark.hadoop.fs.s3.useRequesterPaysHeader=true"])
+
+
+class TPCDSBenchmarkSpec(BenchmarkSpec):
+    """
+    Specifications of TPC-DS benchmark
+    """
+    def __init__(self, scale_in_gb, **kwargs):
+        # forward all keyword args to next constructor
+        super().__init__(benchmark_main_class="benchmark.TPCDSBenchmark", **kwargs)
+        # after init of super class, use the format to add main class args
+        self.benchmark_main_class_args.extend([
+            "--format", self.format_name,
+            "--scale-in-gb", str(scale_in_gb)
+        ])
 
 # ============== Delta benchmark specifications ==============
 
@@ -113,6 +142,15 @@ class DeltaBenchmarkSpec(BenchmarkSpec):
     def delta_maven_artifacts(delta_version, scala_version):
         return f"io.delta:delta-core_{scala_version}:{delta_version},io.delta:delta-hive_{scala_version}:0.2.0"
 
+
+class DeltaTPCDSDataLoadSpec(TPCDSDataLoadSpec, DeltaBenchmarkSpec):
+    def __init__(self, delta_version, scale_in_gb=1):
+        super().__init__(delta_version=delta_version, scale_in_gb=scale_in_gb)
+
+
+class DeltaTPCDSBenchmarkSpec(TPCDSBenchmarkSpec, DeltaBenchmarkSpec):
+    def __init__(self, delta_version, scale_in_gb=1):
+        super().__init__(delta_version=delta_version, scale_in_gb=scale_in_gb)
 
 
 # ============== General benchmark execution ==============

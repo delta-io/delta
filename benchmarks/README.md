@@ -1,27 +1,51 @@
 # Benchmarks 
 
 ## Overview
-This is a basic framework for writing benchmarks to measure Delta's performance. It is currently designed to run benchmark on Spark running in an EMR cluster. However, it can be easily extended for other Spark-based benchmarks. To get started, first download/clone this repository in your local machine. Then you have to set up an EMR cluster and run the benchmark scipts in this directory. See the next section for more details.
+This is a basic framework for writing benchmarks to measure Delta's performance. It is currently designed to run benchmark on Spark running in an EMR cluster. However, it can be easily extended for other Spark-based benchmarks. To get started, first download/clone this repository in your local machine. Then you have to set up an EMR cluster and run the benchmark scripts in this directory. See the next section for more details.
 
-## Running benchmark
+## Running TPC-DS benchmark
+
+This TPC-DS benchmark is constructed such that you have to run the following two steps. 
+1. *Load data*: You have to create the TPC-DS database with all the Delta tables. To do that, the raw TPC-DS data has been provided as Apache Parquet files. In this step you will have to use your EMR cluster to read the parquet files and rewrite them as Delta tables.
+2. *Query data*: Then, using the tables definitions in the Hive Metatore, you can run the 99 benchmark queries.   
+
+The next section will provide the detailed steps of how to setup the necessary Hive Metastore and EMR cluster, how to test the setup with small-scale data, and then finally run the full scale benchmark.  
 
 ### Prerequisites
 - An AWS account with necessary permissions to do the following:
+  - Manage RDS instances for creating an external Hive Metastore
   - Manage EMR clusters for running the benchmark
   - Read and write to an S3 bucket from the EMR cluster
-- A S3 bucket which will be used to generate the TPC-DS data in different storage formats.
+- A S3 bucket which will be used to generate the TPC-DS data.
 - A machine which has access to the AWS setup and where this repository has been downloaded or cloned. 
 
+### Create external Hive Metastore using Amazon RDS
+Create an external Hive Metastore in a MySQL database using Amazon RDS with the following specifications:
+- MySQL 8.x on a `db.m5.large`.
+- General purpose SSDs, and no Autoscaling storage.
+- Non-empty password for admin
+- Same region, VPC, subnet as those you will run the EMR cluster. See AWS docs for more guidance.
+  - *Note:* Region us-west-2 since that is what this benchmark has been most tested with.
+
+After the database is ready, note the JDBC connection details, the username and password. We will need them for the next step. Note that this step needs to be done just once. All EMR clusters can connect and reused this Hive Metastsore. 
+  
 ### Create EMR cluster
 Create an EMR cluster that connects to the external Hive Metastore.  Here are the specifications of the EMR cluster required for running benchmarks.
+- EMR version 6.5.0 having Apache Spark 3.1
 - Master - i3.2xlarge
-- Workers - i3.2xlarge
+- Workers - 16 x i3.2xlarge (or just 1 worker if you are just testing by running the 1GB benchmark).
+- Hive-site configuration to connect to the Hive Metastore. See [Using an external MySQL database or Amazon Aurora](https://docs.aws.amazon.com/emr/latest/ReleaseGuide/emr-hive-metastore-external.html) for more details.
+- Same region, VPC, subnet as those of the Hive Metastore.
+  - *Note:* Region us-west-2 since that is what this benchmark has been most tested with.
 - No autoscaling, and default EBS storage.
 
 Once the EMR cluster is ready, note the following: 
 - Hostname of the EMR cluster master node.
 - PEM file for SSH into the master node.
 These will be needed to run the workloads in this framework. 
+
+### Prepare S3 bucket
+Create a new S3 bucket (or use an existing one) which is in the same region your EMR cluster.
 
 ### Test the cluster setup
 Navigate to your local copy of this repository and this benchmark directory. Then run the following steps.
@@ -32,12 +56,13 @@ Verify that you have the following information
   - <PEM_FILE>: Local path to your PEM file for SSH into the master node.
   - <BENCHMARK_PATH>: S3 path where tables will be created. Make sure your AWS credentials have read/write permission to that path.
     
-Then run a simple table write-read test: Run the following in your shell. 
+Then run a simple table write-read test: Run the following in your shell.
+ 
     ```sh
     ./run-benchmark.py --cluster-hostname <HOSTNAME> -i <PEM_FILE> --benchmark-path <BENCHMARK_PATH> --benchmark test 
     ```
 
-    If this works correctly, then you should see an output that look like this.
+If this works correctly, then you should see an output that look like this.
      
     ```text
     >>> Benchmark script generated and uploaded
@@ -92,8 +117,25 @@ Then run a simple table write-read test: Run the following in your shell.
     FILE UPLOAD: Uploaded /home/hadoop/20220126-191336-test-report.json to s3:// ...
     SUCCESS
     ```
-    The above metrics are also written to a json file and uploaded to the given path. Please verify that both the table and report are generated in that path. 
+    
+The above metrics are also written to a json file and uploaded to the given path. Please verify that both the table and report are generated in that path. 
 
+#### Run 1GB TPC-DS
+Now that you are familiar with how the framework runs the workload, you can try running the small scale TPC-DS benchmark.
+
+
+1. Load data as Delta tables: `./run-benchmark.py --cluster-hostname <HOSTNAME> -i <PEM_FILE> --benchmark-path <BENCHMARK_PATH> --benchmark tpcds-1gb-delta-load`
+
+2. Run queries on Delta tables: `./run-benchmark.py --cluster-hostname <HOSTNAME> -i <PEM_FILE> --benchmark-path <BENCHMARK_PATH> --benchmark tpcds-1gb-delta`
+
+### Run 3TB TPC-DS
+Finally, you are all set up to run the full scale benchmark. Similar to the 1GB benchmark, run the following
+
+1. Load data as Delta tables: `./run-benchmark.py --cluster-hostname <HOSTNAME> -i <PEM_FILE> --benchmark-path <BENCHMARK_PATH> --benchmark tpcds-3tb-delta-load`
+
+2. Run queries on Delta tables: `./run-benchmark.py --cluster-hostname <HOSTNAME> -i <PEM_FILE> --benchmark-path <BENCHMARK_PATH> --benchmark tpcds-3tb-delta`
+
+Compare the results using the generated JSON files.
 
 ## Internals of the framework
 
