@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.stats
 
 import java.io.File
 
-// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.metering.ScanReport
@@ -30,9 +29,10 @@ import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 import org.scalatest.GivenWhenThen
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal, PredicateHelper}
-import org.apache.spark.sql.functions.{col, lit, struct}
+import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
@@ -1205,4 +1205,3 @@ class DataSkippingDeltaV1Suite extends DataSkippingDeltaTests {
     }
   }
 }
-
