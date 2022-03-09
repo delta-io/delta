@@ -293,7 +293,7 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
       createTempViewFromTable(targetName, isSQLTempView)
       val fieldNames = spark.table(targetName).schema.fieldNames
       val fieldNamesStr = fieldNames.mkString("`", "`, `", "`")
-      val e = intercept[AnalysisException] {
+      val e = intercept[DeltaAnalysisException] {
         executeMerge(
           target = "v t",
           source = s"$sourceName s",

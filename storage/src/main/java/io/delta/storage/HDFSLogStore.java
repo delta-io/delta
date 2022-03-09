@@ -127,7 +127,7 @@ public class HDFSLogStore extends HadoopFileSystemLogStore {
                 // resolved
                 tryRemoveCrcFile(fc, tempPath);
             } catch (org.apache.hadoop.fs.FileAlreadyExistsException e) {
-                throw new FileNotFoundException(path.toString());
+                throw new FileAlreadyExistsException(path.toString());
             }
         } finally {
             if (!streamClosed) {

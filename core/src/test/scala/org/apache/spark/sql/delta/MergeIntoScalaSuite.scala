@@ -24,7 +24,7 @@ import io.delta.tables._
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.plans.Inner
-import org.apache.spark.sql.catalyst.plans.logical.Join
+import org.apache.spark.sql.catalyst.plans.logical.{Assignment, DeltaMergeIntoClause, Join}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
 
@@ -775,6 +775,13 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
         spark.read.json(
           strToJsonSeq("""{ "key": "A", "value": { "a": { "x": 1, "y": 1 } } }""").toDS)
       )
+    }
+  }
+
+  test("delta merge into clause with invalid data type.") {
+    import org.apache.spark.sql.catalyst.dsl.expressions._
+    intercept[DeltaAnalysisException] {
+      DeltaMergeIntoClause.toActions(Seq(Assignment("1".expr, "1".expr)))
     }
   }
 }

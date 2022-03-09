@@ -23,7 +23,7 @@ import scala.collection.Set._
 import scala.collection.mutable
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, GeneratedColumn, NoMapping}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, GeneratedColumn, NoMapping}
 import org.apache.spark.sql.delta.actions
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
@@ -123,14 +123,14 @@ object SchemaUtils {
         struct(nested: _*).alias(sf.name)
       case a: ArrayType if typeExistsRecursively(a)(_.isInstanceOf[NullType]) =>
         val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
-        throw new AnalysisException(
-          s"Found nested NullType in column $colName which is of ArrayType. Delta doesn't " +
-            "support writing NullType in complex types.")
+        throw new DeltaAnalysisException(
+          errorClass = "COMPLEX_TYPE_COLUMN_CANNOT_CONTAIN_NULL_TYPE",
+          messageParameters = Array(colName, "ArrayType"))
       case m: MapType if typeExistsRecursively(m)(_.isInstanceOf[NullType]) =>
         val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
-        throw new AnalysisException(
-          s"Found nested NullType in column $colName which is of MapType. Delta doesn't " +
-            "support writing NullType in complex types.")
+        throw new DeltaAnalysisException(
+          errorClass = "COMPLEX_TYPE_COLUMN_CANNOT_CONTAIN_NULL_TYPE",
+          messageParameters = Array(colName, "NullType"))
       case _ =>
         val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
         col(colName).alias(sf.name)

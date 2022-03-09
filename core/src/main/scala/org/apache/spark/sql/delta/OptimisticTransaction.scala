@@ -301,9 +301,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       snapshot.metadata,
       latestMetadata,
       isCreatingNewTable)
-    // Replace CHAR and VARCHAR with StringType
     if (latestMetadata.schemaString != null) {
-      val schema = CharVarcharUtils.replaceCharVarcharWithStringInSchema(latestMetadata.schema)
+      // Replace CHAR and VARCHAR with StringType
+      var schema = CharVarcharUtils.replaceCharVarcharWithStringInSchema(latestMetadata.schema)
       latestMetadata = latestMetadata.copy(schemaString = schema.json)
     }
 

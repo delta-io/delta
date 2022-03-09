@@ -222,7 +222,10 @@ trait Checkpoints extends DeltaLogging {
    */
   protected def findLastCompleteCheckpoint(cv: CheckpointInstance): Option[CheckpointInstance] = {
     var cur = math.max(cv.version, 0L)
+    val startVersion = cur
     val hadoopConf = newDeltaHadoopConf()
+
+    logInfo(s"Try to find Delta last complete checkpoint before version $startVersion")
     while (cur >= 0) {
       val checkpoints = store.listFrom(
             checkpointPrefix(logPath, math.max(0, cur - 1000)),
@@ -235,11 +238,13 @@ trait Checkpoints extends DeltaLogging {
           .toArray
       val lastCheckpoint = getLatestCompleteCheckpointFromList(checkpoints, cv)
       if (lastCheckpoint.isDefined) {
+        logInfo(s"Delta checkpoint is found at version ${lastCheckpoint.get.version}")
         return lastCheckpoint
       } else {
         cur -= 1000
       }
     }
+    logInfo(s"No checkpoint found for Delta table before version $startVersion")
     None
   }
 
@@ -371,7 +376,7 @@ object Checkpoints extends DeltaLogging {
         } else {
           // There should be only one writer writing the checkpoint file, so there must be
           // something wrong here.
-          throw new IllegalStateException(s"Cannot rename $src to $dest")
+          throw DeltaErrors.failOnCheckpoint(src, dest)
         }
       } finally {
         if (!renameDone) {
