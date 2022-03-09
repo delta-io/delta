@@ -503,7 +503,7 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
     val f1 = StructField("c1", IntegerType)
     val f2 = withGenerationExpression(StructField("c2", IntegerType), "c10 + 10")
     val schema = StructType(f1 :: f2 :: Nil)
-    val e = intercept[AnalysisException](validateGeneratedColumns(spark, schema))
+    val e = intercept[DeltaAnalysisException](validateGeneratedColumns(spark, schema))
     errorContains(e.getMessage,
       "A generated column cannot use a non-existent column or another generated column")
   }
@@ -527,7 +527,7 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
     val f2 = withGenerationExpression(StructField("c2", IntegerType), "c1 + 10")
     val f3 = withGenerationExpression(StructField("c3", IntegerType), "c2 + 10")
     val schema = StructType(f1 :: f2 :: f3 :: Nil)
-    val e = intercept[AnalysisException](validateGeneratedColumns(spark, schema))
+    val e = intercept[DeltaAnalysisException](validateGeneratedColumns(spark, schema))
     errorContains(e.getMessage,
       "A generated column cannot use a non-existent column or another generated column")
   }

@@ -157,6 +157,16 @@ object DeltaErrors
     new AnalysisException(s"Can't resolve column ${name} in ${schema.treeString}")
   }
 
+  def failOnCheckpoint(src: Path, dest: Path): DeltaIllegalStateException = {
+    failOnCheckpoint(src.toString, dest.toString)
+  }
+
+  def failOnCheckpoint(src: String, dest: String): DeltaIllegalStateException = {
+    new DeltaIllegalStateException(
+      errorClass = "FAILED_CHECKPOINT",
+      messageParameters = Array(s"$src", s"$dest"))
+  }
+
 
   def formatColumn(colName: String): String = s"`$colName`"
 
@@ -175,9 +185,9 @@ object DeltaErrors
   }
 
   def notNullColumnMissingException(constraint: Constraints.NotNull): Throwable = {
-    new InvariantViolationException(s"Column ${UnresolvedAttribute(constraint.column).name}" +
-      s", which has a NOT NULL constraint, is missing from the data being " +
-      s"written into the table.")
+    new InvariantViolationException(
+      errorClass = "MISSING_NOT_NULL_COLUMN_VALUE",
+      messageParameters = Array(s"${UnresolvedAttribute(constraint.column).name}"))
   }
 
   def nestedNotNullConstraint(
@@ -267,13 +277,16 @@ object DeltaErrors
   }
 
   def notADeltaTableException(deltaTableIdentifier: DeltaTableIdentifier): Throwable = {
-    new AnalysisException(s"$deltaTableIdentifier is not a Delta table.")
+    new DeltaAnalysisException(
+      errorClass = "MISSING_DELTA_TABLE",
+      messageParameters = Array(s"$deltaTableIdentifier"))
   }
 
   def notADeltaTableException(
       operation: String, deltaTableIdentifier: DeltaTableIdentifier): Throwable = {
-    new AnalysisException(s"$deltaTableIdentifier is not a Delta table. " +
-      s"$operation is only supported for Delta tables.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_TABLE_ONLY_OPERATION",
+      messageParameters = Array(s"$deltaTableIdentifier", s"$operation"))
   }
 
   def notADeltaTableException(operation: String): Throwable = {
@@ -305,10 +318,9 @@ object DeltaErrors
   }
 
   def invalidColumnName(name: String): Throwable = {
-    new AnalysisException(
-      s"""Attribute name "$name" contains invalid character(s) among " ,;{}()\\n\\t=".
-         |Please use alias to rename it.
-       """.stripMargin.split("\n").mkString(" ").trim)
+    new DeltaAnalysisException(
+      errorClass = "INVALID_CHARACTERS_IN_COLUMN_NAME",
+      messageParameters = Array(name))
   }
 
   def invalidPartitionColumn(e: AnalysisException): Throwable = {
@@ -627,13 +639,15 @@ object DeltaErrors
   }
 
   def updateSetColumnNotFoundException(col: String, colList: Seq[String]): Throwable = {
-    new AnalysisException(
-      s"SET column ${formatColumn(col)} not found given columns: ${formatColumnList(colList)}.")
+    new DeltaAnalysisException(
+      errorClass = "MISSING_SET_COLUMN",
+      messageParameters = Array(formatColumn(col), formatColumnList(colList)))
   }
 
   def updateSetConflictException(cols: Seq[String]): Throwable = {
-    new AnalysisException(
-      s"There is a conflict from these SET columns: ${formatColumnList(cols)}.")
+    new DeltaAnalysisException(
+      errorClass = "CONFLICT_SET_COLUMN",
+      messageParameters = Array(formatColumnList(cols)))
   }
 
   def updateNonStructTypeFieldNotSupportedException(col: String, s: DataType): Throwable = {
@@ -654,8 +668,9 @@ object DeltaErrors
   }
 
   def bloomFilterOnNestedColumnNotSupportedException(name: String): Throwable = {
-    new AnalysisException(
-      s"Creating a bloom filer index on a nested column is currently unsupported: $name")
+    new DeltaAnalysisException(
+      errorClass = "UNSUPPORTED_NESTED_COLUMN_IN_BLOOM_FILTER",
+      messageParameters = Array(name))
   }
 
   def bloomFilterOnColumnTypeNotSupportedException(name: String, dataType: DataType): Throwable = {
@@ -1004,6 +1019,18 @@ object DeltaErrors
         s"COPY INTO source encryption currently only supports s3/s3n/s3a/abfss.")
   }
 
+  def copyIntoEncryptionSseCRequired(): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "INVALID_COPY_ENCRYPTION",
+      messageParameters = Array("encryption type", "encryption must specify 'TYPE' = 'AWS_SSE_C'"))
+  }
+
+  def copyIntoEncryptionMasterKeyRequired(): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "INVALID_COPY_ENCRYPTION",
+      messageParameters = Array("encryption arguments", "encryption must specify a MASTER_KEY"))
+  }
+
   def copyIntoCredentialsNotAllowedOn(scheme: String): Throwable = {
      new IllegalArgumentException(
       s"Invalid scheme $scheme. " +
@@ -1146,9 +1173,8 @@ object DeltaErrors
   }
 
   def generatedColumnsReferToWrongColumns(e: AnalysisException): Throwable = {
-    new AnalysisException(
-      "A generated column cannot use a non-existent column or another generated column",
-      cause = Some(e))
+    new DeltaAnalysisException(
+      errorClass = "INVALID_GENERATED_COLUMN_REFERENCES", Array.empty, cause = Some(e))
   }
 
   def generatedColumnsUpdateColumnType(current: StructField, update: StructField): Throwable = {
@@ -1235,39 +1261,36 @@ object DeltaErrors
   }
 
   def changeColumnMappingModeNotSupported(oldMode: String, newMode: String): Throwable = {
-    new ColumnMappingUnsupportedException("Changing column mapping mode from" +
-      s" '$oldMode' to '$newMode' is not supported.")
+    new DeltaColumnMappingUnsupportedException(
+      errorClass = "UNSUPPORTED_COLUMN_MAPPING_MODE_CHANGE",
+      messageParameters = Array(oldMode, newMode))
+  }
+
+  def writesWithColumnMappingNotSupported: Throwable = {
+    new DeltaColumnMappingUnsupportedException(
+      errorClass = "UNSUPPORTED_COLUMN_MAPPING_WRITE")
   }
 
   def generateManifestWithColumnMappingNotSupported: Throwable = {
-    new ColumnMappingUnsupportedException("Manifest generation is not supported for tables that " +
-      "leverage column mapping, as external readers cannot read these Delta tables. " +
-      "See Databricks documentation for more details.")
+    new DeltaColumnMappingUnsupportedException(
+      errorClass = "UNSUPPORTED_MANIFEST_GENERATION_WITH_COLUMN_MAPPING")
   }
 
   def convertToDeltaWithColumnMappingNotSupported(mode: DeltaColumnMappingMode): Throwable = {
-    new ColumnMappingUnsupportedException(
-      s"The configuration '${DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey}' " +
-        s"cannot be set to `${mode.name}` when using CONVERT TO DELTA.")
+    new DeltaColumnMappingUnsupportedException(
+      errorClass = "UNSUPPORTED_COLUMN_MAPPING_CONVERT_TO_DELTA",
+      messageParameters = Array(
+        DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey,
+        mode.name))
   }
 
   def changeColumnMappingModeOnOldProtocol(oldProtocol: Protocol): Throwable = {
-    // scalastyle:off line.size.limit
-    new ColumnMappingUnsupportedException(
-      s"""
-         |Your current table protocol version does not support changing column mapping modes
-         |using ${DeltaConfigs.COLUMN_MAPPING_MODE.key}.
-         |
-         |Required Delta protocol version for column mapping:
-         |${DeltaColumnMapping.MIN_PROTOCOL_VERSION}
-         |
-         |Your table's current Delta protocol version:
-         |$oldProtocol
-         |
-         |Please upgrade your table's protocol version using ALTER TABLE SET TBLPROPERTIES and try again.
-         |
-         |""".stripMargin)
-    // scalastyle:on line.size.limit
+    new DeltaColumnMappingUnsupportedException(
+      errorClass = "UNSUPPORTED_COLUMN_MAPPING_PROTOCOL",
+      messageParameters = Array(
+        s"${DeltaConfigs.COLUMN_MAPPING_MODE.key}",
+        s"${DeltaColumnMapping.MIN_PROTOCOL_VERSION.toString}",
+        s"$oldProtocol"))
   }
 
   def columnRenameNotSupported(spark: SparkSession, protocol: Protocol): Throwable = {
@@ -1301,19 +1324,11 @@ object DeltaErrors
   def schemaChangeDuringMappingModeChangeNotSupported(
       oldSchema: StructType,
       newSchema: StructType): Throwable =
-    new ColumnMappingUnsupportedException(
-      s"""
-         |Schema change is detected:
-         |
-         |old schema:
-         |${formatSchema(oldSchema)}
-         |
-         |new schema:
-         |${formatSchema(newSchema)}
-         |
-         |Schema changes are not allowed during the change of column mapping mode.
-         |
-         |""".stripMargin)
+    new DeltaColumnMappingUnsupportedException(
+      errorClass = "UNSUPPORTED_COLUMN_MAPPING_SCHEMA_CHANGE",
+      messageParameters = Array(
+        formatSchema(oldSchema),
+        formatSchema(newSchema)))
 
   def foundInvalidCharsInColumnNames(cause: Throwable): Throwable = {
     var adviceMsg = "Please use alias to rename it."
@@ -1623,6 +1638,35 @@ class MetadataMismatchErrorBuilder {
   def finalizeAndThrow(conf: SQLConf): Unit = {
     throw new AnalysisException(bits.mkString("\n"))
   }
+}
+
+class DeltaColumnMappingUnsupportedException(
+    errorClass: String,
+    messageParameters: Array[String] = Array.empty)
+  extends ColumnMappingUnsupportedException(
+    DeltaThrowableHelper.getMessage(errorClass, messageParameters))
+    with DeltaThrowable {
+  override def getErrorClass: String = errorClass
+}
+
+class DeltaIllegalArgumentException(
+    errorClass: String,
+    messageParameters: Array[String] = Array.empty,
+    cause: Throwable = null)
+  extends IllegalArgumentException(
+    DeltaThrowableHelper.getMessage(errorClass, messageParameters), cause)
+    with DeltaThrowable {
+  override def getErrorClass: String = errorClass
+}
+
+class DeltaIllegalStateException(
+    errorClass: String,
+    messageParameters: Array[String] = Array.empty,
+    cause: Throwable = null)
+  extends IllegalStateException(
+    DeltaThrowableHelper.getMessage(errorClass, messageParameters), cause)
+  with DeltaThrowable {
+  override def getErrorClass: String = errorClass
 }
 
 /** Errors thrown around column mapping. */
