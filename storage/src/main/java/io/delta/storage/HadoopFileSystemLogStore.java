@@ -123,7 +123,7 @@ public abstract class HadoopFileSystemLogStore extends LogStore {
                             );
                         }
                     }
-                } catch (FileAlreadyExistsException e) {
+                } catch (org.apache.hadoop.fs.FileAlreadyExistsException e) {
                     throw new FileAlreadyExistsException(path.toString());
                 }
             } finally {
