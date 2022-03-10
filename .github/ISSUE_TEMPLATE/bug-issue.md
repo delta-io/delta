@@ -24,7 +24,7 @@ title: '[BUG]'
 3. _____
 -->
 
-#### Observed Results:
+#### Observed results
 
 <!-- What happened?  This could be a description, log output, etc. -->
 
