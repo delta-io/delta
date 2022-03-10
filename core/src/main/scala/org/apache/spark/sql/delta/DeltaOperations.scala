@@ -185,14 +185,6 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = predicate.map("predicate" -> _).toMap
     override val operationMetrics: Set[String] = DeltaOperationMetrics.UPDATE
 
-    override def transformMetrics(metrics: Map[String, SQLMetric]): Map[String, String] = {
-      val numOutputRows = metrics("numOutputRows").value
-      val numUpdatedRows = metrics("numUpdatedRows").value
-      var strMetrics = super.transformMetrics(metrics)
-      val numCopiedRows = numOutputRows - numUpdatedRows
-      strMetrics += "numCopiedRows" -> numCopiedRows.toString
-      strMetrics
-    }
     override def changesData: Boolean = true
   }
   /** Recorded when the table is created. */
