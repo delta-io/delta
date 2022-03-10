@@ -18,6 +18,8 @@ package io.delta.storage;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.util.EnumSet;
@@ -135,6 +137,37 @@ public class HDFSLogStore extends HadoopFileSystemLogStore {
             }
             if (!renameDone) {
                 fc.delete(tempPath, false); // recursive=false
+            }
+        }
+
+        msyncIfSupported(path, hadoopConf);
+    }
+
+    /**
+     * Normally when using HDFS with an Observer NameNode setup, there would be read after write
+     * consistency within a single process, so the write would be guaranteed to be visible on the
+     * next read. However, since we are using the FileContext API for writing (for atomic rename),
+     * and the FileSystem API for reading (for more compatibility with various file systems), we
+     * are essentially using two separate clients that are not guaranteed to be kept in sync.
+     * Therefore we "msync" the FileSystem instance, which is cached across all uses of the same
+     * protocol/host combination, to make sure the next read through the HDFSLogStore can see this
+     * write.
+     * Any underlying FileSystem that is not the DistributedFileSystem will simply throw an
+     * UnsupportedOperationException, which can be ignored. Additionally, if an older version of
+     * Hadoop is being used that does not include msync, a NoSuchMethodError will be thrown while
+     * looking up the method, which can also be safely ignored.
+     */
+    private void msyncIfSupported(Path path, Configuration hadoopConf) throws IOException {
+        try {
+            FileSystem fs = path.getFileSystem(hadoopConf);
+            Method msync = fs.getClass().getMethod("msync");
+            msync.invoke(fs);
+        } catch (NoSuchMethodException e) {
+        } catch (IllegalAccessException e) {
+        } catch (InvocationTargetException e) {
+        } catch (Throwable e) {
+            if (!LogStoreErrors.isNonFatal(e)) {
+                throw e;
             }
         }
     }

@@ -126,18 +126,24 @@ class HDFSLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
       }
     }
 
-    // Normally when using HDFS with an Observer NameNode setup, there would be read after write
-    // consistency within a single process, so the write would be guaranteed to be visible on the
-    // next read. However, since we are using the FileContext API for writing (for atomic rename),
-    // and the FileSystem API for reading (for more compatibility with various file systems), we
-    // are essentially using two separate clients that are not guaranteed to be kept in sync.
-    // Therefore we "msync" the FileSystem instance, which is cached across all uses of the same
-    // protocol/host combination, to make sure the next read through the HDFSLogStore can see this
-    // write.
-    // Any underlying FileSystem that is not the DistributedFileSystem will simply throw an
-    // UnsupportedOperationException, which can be ignored. Additionally, if an older version of
-    // Hadoop is being used that does not include msync, a NoSuchMethodError will be thrown while
-    // looking up the method, which can also be safely ignored.
+    msyncIfSupported(path, hadoopConf)
+  }
+
+  /**
+   * Normally when using HDFS with an Observer NameNode setup, there would be read after write
+   * consistency within a single process, so the write would be guaranteed to be visible on the
+   * next read. However, since we are using the FileContext API for writing (for atomic rename),
+   * and the FileSystem API for reading (for more compatibility with various file systems), we
+   * are essentially using two separate clients that are not guaranteed to be kept in sync.
+   * Therefore we "msync" the FileSystem instance, which is cached across all uses of the same
+   * protocol/host combination, to make sure the next read through the HDFSLogStore can see this
+   * write.
+   * Any underlying FileSystem that is not the DistributedFileSystem will simply throw an
+   * UnsupportedOperationException, which can be ignored. Additionally, if an older version of
+   * Hadoop is being used that does not include msync, a NoSuchMethodError will be thrown while
+   * looking up the method, which can also be safely ignored.
+   */
+  private def msyncIfSupported(path: Path, hadoopConf: Configuration): Unit = {
     try {
       val fs = path.getFileSystem(hadoopConf)
       val msync = fs.getClass.getMethod("msync")
@@ -145,9 +151,10 @@ class HDFSLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
     } catch {
       case parent: InvocationTargetException =>
         parent.getCause match {
-          case _: UnsupportedOperationException | _: NoSuchMethodError =>
+          case _: UnsupportedOperationException =>
           case e => throw e
         }
+      case _: NoSuchMethodException =>
     }
   }
 
