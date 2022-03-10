@@ -415,3 +415,8 @@ class CustomPublicLogStoreSuite extends LogStoreSuiteBase {
 
   protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
+
+class PublicS3SingleDriverLogStore extends PublicLogStoreSuite {
+  override protected val publicLogStoreClassName: String =
+    classOf[io.delta.storage.S3SingleDriverLogStore].getName
+}
