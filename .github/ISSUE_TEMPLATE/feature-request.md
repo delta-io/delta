@@ -16,7 +16,7 @@ title: '[Feature Request]'
 
 <!-- What kind of features are required by the users? -->
 
-### Details
+### Further details
 
 <!--
 Use this section to include any additional information about the feature. If you have a proposal for how to implement this feature, please include it here. For implementation guidelines, please read our contributor guidelines: https://github.com/delta-io/delta/blob/master/CONTRIBUTING.md
