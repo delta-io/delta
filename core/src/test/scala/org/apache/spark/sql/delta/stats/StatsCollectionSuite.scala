@@ -67,6 +67,20 @@ class StatsCollectionSuite
     }
   }
 
+  test("gather stats") {
+    withTempDir { dir =>
+      val deltaLog = DeltaLog.forTable(spark, dir)
+
+      val data = spark.range(1, 10, 1, 10).withColumn("odd", $"id" % 2 === 1)
+      data.write.partitionBy("odd").format("delta").save(dir.getAbsolutePath)
+
+      val df = spark.read.format("delta").load(dir.getAbsolutePath)
+      withSQLConf("spark.sql.parquet.filterPushdown" -> "false") {
+        assert(recordsScanned(df) == 9)
+        assert(recordsScanned(df.where("id = 1")) == 1)
+      }
+    }
+  }
 
   statsTest("recompute stats basic") {
     withTempDir { tempDir =>

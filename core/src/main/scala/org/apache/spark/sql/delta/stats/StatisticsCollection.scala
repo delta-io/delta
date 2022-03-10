@@ -107,6 +107,7 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
   /**
    * Returns a struct column that can be used to collect statistics for the current
    * schema of the table.
+   * The types we keep stats on must be consistent with DataSkippingReader.SkippingEligibleLiteral.
    */
   lazy val statsCollector: Column = {
     val stringPrefix =
