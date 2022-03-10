@@ -8,17 +8,12 @@ title: '[BUG]'
 
 ## Bug
 
-### Environment information
-
-* Delta Lake version:
-* Spark version:
-* Scala version:
-
 ### Describe the problem
 
 #### Steps to reproduce
 
 <!--
+Please include copy-pastable code snippets if possible.
 1. _____
 2. _____
 3. _____
@@ -37,6 +32,12 @@ title: '[BUG]'
 <!--
 Include any additional details that may be useful for diagnosing the problem here. If including tracebacks, please include the full traceback. Large logs and files should be attached.
 -->
+
+### Environment information
+
+* Delta Lake version:
+* Spark version:
+* Scala version:
 
 ### Willingness to contribute
 

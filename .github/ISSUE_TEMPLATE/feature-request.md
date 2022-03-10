@@ -12,19 +12,15 @@ title: '[Feature Request]'
 
 <!-- Provide a high-level description of the feature request. -->
 
-### Specific requirements of feature
+### Motivation
 
-<!-- What kind of features are required by the users? -->
+<!-- How will this feature be used? Why is it important? Which users will benefit from it? -->
 
 ### Further details
 
 <!--
-Use this section to include any additional information about the feature. If you have a proposal for how to implement this feature, please include it here. For implementation guidelines, please read our contributor guidelines: https://github.com/delta-io/delta/blob/master/CONTRIBUTING.md
+Use this section to include any additional information about the feature. If you have a proposal for how to implement this feature, please include it here. For implementation guidelines, please read our contributor guidelines: https://github.com/delta-io/delta/blob/master/CONTRIBUTING.md If there are any specific requirements for this feature that are not immediately obvious please outline them here.
 -->
-
-### Motivation
-
-<!-- How will this feature be used? Why is it important? Which users will benefit from it? -->
 
 ### Willingness to contribute
 

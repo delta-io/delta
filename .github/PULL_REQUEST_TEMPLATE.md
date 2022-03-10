@@ -17,14 +17,6 @@ Thanks for sending a pull request!  Here are some tips for you:
 If this PR resolves an issue be sure to include "Resolves #XXX" to correctly link and close the issue upon merge.
 -->
 
-## Does this PR introduce _any_ user-facing changes?
-
-<!--
-If yes, please clarify the previous behavior and the change this PR proposes - provide the console output, description and/or an example to show the behavior difference if possible.
-If possible, please also clarify if this is a user-facing change compared to the released Delta Lake versions or within the unreleased branches such as master.
-If no, write 'No'.
--->
-
 ## How was this patch tested?
 
 <!--
@@ -33,3 +25,10 @@ If the changes were tested in any way other than unit tests, please clarify how 
 If the changes were not tested, please explain why.
 -->
 
+## Does this PR introduce _any_ user-facing changes?
+
+<!--
+If yes, please clarify the previous behavior and the change this PR proposes - provide the console output, description and/or an example to show the behavior difference if possible.
+If possible, please also clarify if this is a user-facing change compared to the released Delta Lake versions or within the unreleased branches such as master.
+If no, write 'No'.
+-->
