@@ -749,19 +749,6 @@ trait DataSkippingDeltaTestsBase extends QueryTest
       val Seq(r2) = getScanReport {
         assert(sql(allQuery).collect().length == 10)
       }
-
-      // File pruning metrics should not exist for non-Delta table
-      withTempDir { tempDir1 =>
-        val data = spark.range(10).toDF("col1")
-          .withColumn("col2", 'col1./(3).cast(DataTypes.IntegerType))
-        data.write.format("parquet").mode("overwrite").partitionBy("col1")
-          .save(tempDir1.getCanonicalPath)
-        spark.read.format("parquet").load(tempDir1.getAbsolutePath).createTempView("t2")
-        val query = "SELECT * from t2 where col1 > 5"
-        val Seq(r1) = getScanReport {
-          assert(sql(query).collect().length == 4)
-        }
-      }
     }
   }
 

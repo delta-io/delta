@@ -118,25 +118,6 @@ trait ScanReportHelper extends SharedSparkSession with AdaptiveSparkPlanHelper {
 
               scans += report
 
-            case _ if scanExec.relation.location.rootPaths.nonEmpty =>
-              val partitionBytes = scanExec.selectedPartitions.map(_.files.map(_.getLen).sum).sum
-              val report = ScanReport(
-                tableId = null,
-                path = scanExec.relation.location.rootPaths.head.toString,
-                scanType = scanExec.relation.fileFormat.toString,
-                partitionFilters = scanExec.partitionFilters.map(_.sql),
-                dataFilters = scanExec.dataFilters.map(_.sql),
-                unusedFilters = Nil,
-                size = Map(
-                  "partition" -> DataSize(bytesCompressed = Some(partitionBytes))
-                ),
-                metrics = scanExec.metrics.mapValues(_.value).toMap,
-                versionScanned = None,
-                annotations = Map.empty
-              )
-
-              scans += report
-
             case _ => // ignore
           }
         }
