@@ -300,7 +300,7 @@ abstract class BaseExternalLogStore(
 /**
  * The file metadata to be stored in the external db
  * @param tablePath path to the root of the table (path/to/my/table)
- * @param tempPath relative path to the `tablePath`
+ * @param tempPath path relative to the `_delta_log` directory
  * @param commitTime in epoch seconds
  */
 case class ExternalCommitEntry(
