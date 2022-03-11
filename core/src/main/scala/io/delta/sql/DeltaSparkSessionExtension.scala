@@ -21,6 +21,7 @@ import org.apache.spark.sql.delta.stats.PrepareDeltaScan
 import io.delta.sql.parser.DeltaSqlParser
 
 import org.apache.spark.sql.SparkSessionExtensions
+import org.apache.spark.sql.delta.PreprocessTableRestore
 import org.apache.spark.sql.internal.SQLConf
 
 /**
@@ -75,6 +76,9 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
   override def apply(extensions: SparkSessionExtensions): Unit = {
     extensions.injectParser { (session, parser) =>
       new DeltaSqlParser(parser)
+    }
+    extensions.injectResolutionRule { session =>
+      new PreprocessTableRestore(session)
     }
     extensions.injectResolutionRule { session =>
       new DeltaAnalysis(session)
