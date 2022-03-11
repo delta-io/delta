@@ -314,14 +314,17 @@ object Checkpoints extends DeltaLogging {
     val checkpointRowCount = res.getLong(0)
     val numOfFiles = res.getLong(1)
 
-    val checkpointPaths = maxActionsPerFile.map { maxActions =>
-      val numCheckpointFiles = (checkpointRowCount - 1) / maxActions + 1
+    val numCheckpointFiles = maxActionsPerFile.map { maxActions =>
+      (checkpointRowCount - 1) / maxActions + 1
+    }.getOrElse(1L)
+
+    val checkpointPaths = if (numCheckpointFiles > 1) {
       checkpointFileWithParts(snapshot.path, snapshot.version, numCheckpointFiles.toInt)
-    }.getOrElse {
+    } else {
       checkpointFileSingular(snapshot.path, snapshot.version) :: Nil
     }
 
-    val numPartsOption = if (maxActionsPerFile.isDefined) {
+    val numPartsOption = if (numCheckpointFiles > 1) {
       Some(checkpointPaths.length)
     } else {
       None
