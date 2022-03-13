@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.util
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.Snapshot
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
@@ -42,6 +43,9 @@ trait StateCache {
   /** Method to expose the value of _isCached for testing. */
   private[delta] def isCached: Boolean = _isCached
 
+  private val storageLevel = StorageLevel.fromString(
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL))
+
   class CachedDS[A](ds: Dataset[A], name: String) {
     // While we cache RDD to avoid re-computation in different spark sessions, `Dataset` can only be
     // reused by the session that created it to avoid session pollution. So we use `DatasetRefCache`
@@ -51,7 +55,7 @@ trait StateCache {
       if (isCached) {
         val rdd = ds.queryExecution.toRdd.map(_.copy())
         rdd.setName(name)
-        rdd.persist(StorageLevel.MEMORY_AND_DISK_SER)
+        rdd.persist(storageLevel)
         cached += rdd
         val dsCache = new DatasetRefCache(() => {
           Dataset.ofRows(
