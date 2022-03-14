@@ -206,7 +206,7 @@ abstract class LogStoreSuiteBase extends QueryTest
   }
 }
 
-class AzureLogStoreSuite extends LogStoreSuiteBase {
+trait AzureLogStoreSuiteBase extends LogStoreSuiteBase {
 
   override val logStoreClassName: String = classOf[AzureLogStore].getName
 
@@ -408,4 +408,9 @@ abstract class PublicLogStoreSuite extends LogStoreSuiteBase {
 class PublicHDFSLogStoreSuite extends PublicLogStoreSuite with HDFSLogStoreSuiteBase {
   override protected val publicLogStoreClassName: String =
     classOf[io.delta.storage.HDFSLogStore].getName
+}
+
+class PublicAzureLogStoreSuite extends PublicLogStoreSuite with AzureLogStoreSuiteBase {
+  override protected val publicLogStoreClassName: String =
+    classOf[io.delta.storage.AzureLogStore].getName
 }
