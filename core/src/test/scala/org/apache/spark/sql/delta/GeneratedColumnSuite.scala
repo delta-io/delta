@@ -63,14 +63,8 @@ trait GeneratedColumnTest extends QueryTest with SharedSparkSession with DeltaSQ
       .build()
     field.copy(metadata = newMetadata)
   }
-}
 
-trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
-
-  import GeneratedColumn._
-  import testImplicits._
-
-  private def buildTable(
+  protected def buildTable(
       builder: DeltaTableBuilder,
       tableName: String,
       path: Option[String],
@@ -78,7 +72,7 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
       generatedColumns: Map[String, String],
       partitionColumns: Seq[String],
       notNullColumns: Set[String],
-       comments: Map[String, String]): DeltaTableBuilder = {
+      comments: Map[String, String]): DeltaTableBuilder = {
     val schema = if (schemaString.nonEmpty) {
       StructType.fromDDL(schemaString)
     } else {
@@ -124,6 +118,12 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
       generatedColumns, partitionColumns, notNullColumns, comments)
       .execute()
   }
+}
+
+trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
+
+  import GeneratedColumn._
+  import testImplicits._
 
   protected def replaceTable(
       tableName: String,

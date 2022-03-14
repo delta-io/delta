@@ -564,6 +564,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val GENERATED_COLUMN_PARTITION_FILTER_OPTIMIZATION_ENABLED =
+    buildConf("generatedColumn.partitionFilterOptimization.enabled")
+      .internal()
+      .doc(
+      "Whether to extract partition filters automatically from data filters for a partition" +
+        " generated column if possible")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_OPTIMIZE_MIN_FILE_SIZE =
     buildConf("optimize.minFileSize")
         .internal()
