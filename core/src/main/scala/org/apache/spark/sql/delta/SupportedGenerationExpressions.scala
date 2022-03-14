@@ -58,7 +58,7 @@ object SupportedGenerationExpressions {
     expression[If]("if"),
     expression[If]("iff", true),
     expression[IsNaN]("isnan"),
-    expression[IfNull]("ifnull"),
+    expression[Nvl]("ifnull", true),
     expression[IsNull]("isnull"),
     expression[IsNotNull]("isnotnull"),
     expression[Least]("least"),
@@ -231,7 +231,7 @@ object SupportedGenerationExpressions {
     expression[MakeDate]("make_date"),
     expression[MakeTimestamp]("make_timestamp"),
     expression[MakeInterval]("make_interval"),
-    expression[DatePart]("date_part"),
+    expression[Extract]("date_part", setAlias = true),
     expression[Extract]("extract"),
 
     // collection functions
