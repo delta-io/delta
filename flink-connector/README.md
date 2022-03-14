@@ -165,7 +165,7 @@ public class DeltaSinkExample {
 
   public DataStream<RowData> createDeltaSink(DataStream<RowData> stream,
                                              String deltaTablePath) {
-    List<String> partitionCols = Arrays.asList("surname");
+    String[] partitionCols = {"surname"};
     DeltaSink<RowData> deltaSink = DeltaSink
             .forRowData(
                 new Path(deltaTablePath),

@@ -117,7 +117,7 @@ public class RowDataDeltaSinkBuilder {
      * for this sink and must be in the same order as expected order of occurrence in the partition
      * path that will be generated.
      *
-     * @param partitionColumns list of partition columns' names in the order they should be applied
+     * @param partitionColumns array of partition columns' names in the order they should be applied
      *                         when creating destination path.
      * @return builder for {@link DeltaSink}
      */

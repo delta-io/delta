@@ -75,7 +75,8 @@ import org.apache.flink.table.utils.PartitionPathUtils;
  *     // create the builder
  *     /////////////////////////////////////////////////////////////////////////////////
  *
- *     DeltaSinkBuilder<RowData></RowData> foo = new DeltaSinkBuilder.DefaultDeltaFormatBuilder<>(
+ *     DeltaSinkBuilder&lt;RowData&gt;&lt;/RowData&gt; foo =
+ *      new DeltaSinkBuilder.DefaultDeltaFormatBuilder&lt;&gt;(
  *         ...,
  *         partitionAssigner,
  *         ...)

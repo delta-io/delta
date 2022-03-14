@@ -54,7 +54,7 @@ import io.delta.standalone.DeltaLog;
  *
  * To create new instance of the sink to a partitioned Delta table for stream of {@link RowData}:
  * <pre>
- *     List&lt;String&gt; partitionCols = ...; // list of partition columns' names
+ *     String[] partitionCols = ...; // array of partition columns' names
  *
  *     DeltaSink&lt;RowData&gt; deltaSink = DeltaSink.forRowData(
  *             new Path(deltaTablePath),
