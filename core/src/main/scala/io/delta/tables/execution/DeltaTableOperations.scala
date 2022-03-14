@@ -18,7 +18,9 @@ package io.delta.tables.execution
 
 import scala.collection.Map
 
+import org.apache.spark.sql.catalyst.TimeTravel
 import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{DeltaGenerateCommand, RestoreTableCommand, VacuumCommand}
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import io.delta.tables.DeltaTable
@@ -26,8 +28,10 @@ import io.delta.tables.DeltaTable
 import org.apache.spark.sql.{functions, Column, DataFrame}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical._
+import org.apache.spark.sql.connector.catalog.Identifier
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 
 /**
  * Interface to provide the actual implementations of DeltaTable operations.
@@ -76,11 +80,21 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
   }
 
   protected def executeRestore(
-      deltaLog: DeltaLog,
-      version: Option[Long] = None,
-      timestamp: Option[String] = None): DataFrame = {
-    RestoreTableCommand(deltaLog, version, timestamp).run(sparkSession)
-    sparkSession.emptyDataFrame
+      table: DeltaTableV2,
+      versionAsOf: Option[Long],
+      timestampAsOf: Option[String]): DataFrame = {
+    val identifier = table.getTableIdentifierIfExists.map(
+      id => Identifier.of(id.database.toArray, id.table))
+    val sourceRelation = DataSourceV2Relation.create(table, None, identifier)
+
+    val restore = RestoreTableStatement(
+      TimeTravel(
+        sourceRelation,
+        timestampAsOf.map(Literal(_)),
+        versionAsOf,
+        Some("deltaTable"))
+      )
+    toDataset(sparkSession, restore)
   }
 
   protected def toStrColumnMap(map: Map[String, String]): Map[String, Column] = {

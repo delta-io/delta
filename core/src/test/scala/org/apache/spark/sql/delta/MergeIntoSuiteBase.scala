@@ -27,6 +27,7 @@ import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.execution.adaptive.DisableAdaptiveExecution
+import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{ArrayType, IntegerType, MapType, StringType, StructType}
@@ -569,8 +570,8 @@ abstract class MergeIntoSuiteBase
           target = s"delta.`$tempPath` as target",
           source = "source src",
           condition = "key1 = key2",
-          update = "key2 = '33' + key2, value = '20'",
-          insert = "(key2, value) VALUES ('44', src.value + '10')")
+          update = "key2 = 33 + cast(key2 as double), value = '20'",
+          insert = "(key2, value) VALUES ('44', try_cast(src.value as double) + 10)")
 
         checkAnswer(readDeltaTable(tempPath),
           Row(44, 19) :: // Insert
@@ -910,7 +911,7 @@ abstract class MergeIntoSuiteBase
       targetKeyValueNames: (String, String) = ("key", "value"))(
       thunk: (String, String) => Unit = null): Unit = {
 
-    append(target.toDF(targetKeyValueNames._1, targetKeyValueNames._2),
+    append(target.toDF(targetKeyValueNames._1, targetKeyValueNames._2).coalesce(2),
       if (isKeyPartitioned) Seq(targetKeyValueNames._1) else Nil)
     withTempView("source") {
       source.toDF(sourceKeyValueNames._1, sourceKeyValueNames._2).createOrReplaceTempView("source")
@@ -2996,7 +2997,9 @@ abstract class MergeIntoSuiteBase
       .asInstanceOf[List[(Integer, Integer)]].toDF("key", "value"),
     expectedWithoutEvolution =
       ((0, 0) +: (1, 10) +: (2, 2) +: (3, 30) +: (5, null) +: Nil)
-        .asInstanceOf[List[(Integer, Integer)]].toDF("key", "value")
+        .asInstanceOf[List[(Integer, Integer)]].toDF("key", "value"),
+    // Disable ANSI as this test needs to cast string "notANumber" to int
+    confs = Seq(SQLConf.ANSI_ENABLED.key -> "false")
   )
 
   // This is kinda bug-for-bug compatibility. It doesn't really make sense that infinity is casted
@@ -3010,7 +3013,9 @@ abstract class MergeIntoSuiteBase
         .asInstanceOf[List[(Integer, Integer)]].toDF("key", "value"),
     expectedWithoutEvolution =
       ((0, 0) +: (1, 10) +: (2, 2) +: (3, 30) +: (5, Int.MaxValue) +: Nil)
-        .asInstanceOf[List[(Integer, Integer)]].toDF("key", "value")
+        .asInstanceOf[List[(Integer, Integer)]].toDF("key", "value"),
+    // Disable ANSI as this test needs to cast Double.PositiveInfinity to int
+    confs = Seq(SQLConf.ANSI_ENABLED.key -> "false")
   )
 
   testEvolution("extra nested column in source - insert")(
@@ -4460,6 +4465,18 @@ abstract class MergeIntoSuiteBase
       }
     }
   }
+
+  testEvolution("array of struct should work with containsNull as false")(
+    Seq(500000).toDF("key"),
+    Seq(500000, 100000).toDF("key")
+      .withColumn("generalDeduction",
+        struct(current_date().as("date"), array(struct(lit(0d).as("data"))))),
+    update("*") :: insert("*") :: Nil,
+    Seq(500000, 100000).toDF("key")
+      .withColumn("generalDeduction",
+        struct(current_date().as("date"), array(struct(lit(0d).as("data"))))),
+    Seq(500000, 100000).toDF("key")
+  )
 
   /**
    * @param function the unsupported function.

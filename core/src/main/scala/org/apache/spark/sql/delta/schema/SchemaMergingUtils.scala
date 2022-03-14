@@ -20,6 +20,8 @@ import java.util.Locale
 
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.DeltaAnalysisException
+
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.analysis.{Resolver, TypeCoercion, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.Literal
@@ -202,14 +204,18 @@ object SchemaMergingUtils {
           if ((leftPrecision == rightPrecision) && (leftScale == rightScale)) {
             current
           } else if ((leftPrecision != rightPrecision) && (leftScale != rightScale)) {
-            throw new AnalysisException("Failed to merge decimal types with incompatible " +
-              s"precision $leftPrecision and $rightPrecision & scale $leftScale and $rightScale")
+            throw new DeltaAnalysisException(
+              errorClass = "MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+              messageParameters = Array(
+                s"precision $leftPrecision and $rightPrecision & scale $leftScale and $rightScale"))
           } else if (leftPrecision != rightPrecision) {
-            throw new AnalysisException("Failed to merge decimal types with incompatible " +
-              s"precision $leftPrecision and $rightPrecision")
+            throw new DeltaAnalysisException(
+              errorClass = "MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+              messageParameters = Array(s"precision $leftPrecision and $rightPrecision"))
           } else {
-            throw new AnalysisException("Failed to merge decimal types with incompatible " +
-              s"scale $leftScale and $rightScale")
+            throw new DeltaAnalysisException(
+              errorClass = "MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+              messageParameters = Array(s"scale $leftScale and $rightScale"))
           }
         case _ if current == update =>
           current

@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.commands
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, DeltaTableUtils, OptimisticTransaction}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkContext
@@ -57,6 +58,7 @@ case class UpdateCommand(
     "numAddedFiles" -> createMetric(sc, "number of files added."),
     "numRemovedFiles" -> createMetric(sc, "number of files removed."),
     "numUpdatedRows" -> createMetric(sc, "number of rows updated."),
+    "numCopiedRows" -> createMetric(sc, "number of rows copied."),
     "executionTimeMs" -> createMetric(sc, "time taken to execute the entire operation"),
     "scanTimeMs" -> createMetric(sc, "time taken to scan the files for matches"),
     "rewriteTimeMs" -> createMetric(sc, "time taken to rewrite the matched files")
@@ -179,6 +181,7 @@ case class UpdateCommand(
       if (metrics("numUpdatedRows").value == 0 && outputRows != 0) {
         metrics("numUpdatedRows").set(outputRows)
       }
+      metrics("numCopiedRows").set(outputRows - metrics("numUpdatedRows").value)
       txn.registerSQLMetrics(sparkSession, metrics)
       txn.commit(actions, DeltaOperations.Update(condition.map(_.toString)))
       // This is needed to make the SQL metrics visible in the Spark UI
@@ -263,4 +266,5 @@ case class UpdateMetric(
     numAddedChangeFiles: Long,
     changeFileBytes: Long,
     scanTimeMs: Long,
-    rewriteTimeMs: Long)
+    rewriteTimeMs: Long
+)

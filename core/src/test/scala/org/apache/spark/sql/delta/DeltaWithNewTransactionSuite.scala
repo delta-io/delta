@@ -16,15 +16,17 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
-import org.apache.spark.sql.{DataFrame, QueryTest}
+import org.apache.spark.sql.{DataFrame, Dataset, QueryTest}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.{ThreadUtils, Utils}
 
 trait DeltaWithNewTransactionSuiteBase extends QueryTest
-  with SharedSparkSession  with DeltaSQLCommandTest {
+  with SharedSparkSession  with DeltaColumnMappingTestUtils
+  with DeltaSQLCommandTest {
 
   /**
    * Test whether `withNewTransaction` captures all delta read made within it and correctly
@@ -270,6 +272,81 @@ trait DeltaWithNewTransactionSuiteBase extends QueryTest
       }
     }
   }
+
+  testWithNewTransaction(
+    name = "capture reads on txn table even when data skipping is disabled",
+    confs = Map(DeltaSQLConf.DELTA_STATS_SKIPPING.key -> "false"),
+    partitionedTableKeys = Seq(1, 2, 3),
+    currentThreadReadOp = txnTable => {
+      txnTable.filter("key == 1").count()
+    },
+    concurrentUpdateOp = txnTableName => {
+      sql(s"UPDATE $txnTableName SET key = 2 WHERE key = 3")
+    },
+    currentThreadCommitOperation = txn => {
+      // use physical name
+      val key = getPhysicalName("key", txn.metadata.schema)
+      // Any concurrent change (even if its seemingly non-conflicting) should fail the filter as
+      // the whole table will be scanned by the filter when data skipping is disabled.
+      // Note: Adding a file to avoid snapshot isolation level for the commit.
+      txn.commit(Seq(AddFile("a", Map(key -> "2"), 1, 1, true)), DeltaOperations.ManualUpdate)
+    },
+    shouldFail = true)
+
+  def testSnapshotIsolation(
+      name: String,
+      isolationEnabled: Boolean): Unit = {
+    val txnTablePath = Utils.createTempDir().getCanonicalPath
+    val nonTxnTablePath = Utils.createTempDir().getCanonicalPath
+
+    def txnTable: DataFrame = spark.read.format("delta").load(txnTablePath)
+    def nonTxnTable: DataFrame = spark.read.format("delta").load(nonTxnTablePath)
+
+    def writeToNonTxnTable(ds: Dataset[java.lang.Long]): Unit = {
+      import testImplicits._
+      ds.toDF("key").select('key, 'key as "value")
+        .write.format("delta").mode("append").partitionBy("key").save(nonTxnTablePath)
+      DeltaLog.forTable(spark, nonTxnTablePath).update(stalenessAcceptable = false)
+    }
+
+    testWithNewTransaction(
+      name = s"snapshot isolation - $name",
+      confs = Map(DeltaSQLConf.DELTA_SNAPSHOT_ISOLATION.key -> isolationEnabled.toString),
+      partitionTablePath = txnTablePath,
+      partitionedTableKeys = Seq(1, 2, 3, 4, 5),  // Prepare txn-table
+      preTxnSetup = _ => {
+        writeToNonTxnTable(spark.range(3))        // Prepare non-txn table
+      },
+      currentThreadReadOp = txnTable => {
+        // First read on tables
+        require(txnTable.count() == 5)
+        require(nonTxnTable.count() === 3)
+      },
+      concurrentUpdateOp = txnTableName => {
+        // Update tables in a different thread and make sure the DeltaLog gets updated
+        sql(s"INSERT INTO $txnTableName SELECT 6, 6")
+        DeltaLog.forTable(spark, txnTablePath).update(stalenessAcceptable = false)
+        require(txnTable.count() == 6)
+
+        writeToNonTxnTable(spark.range(3, 10))
+        require(nonTxnTable.count() == 10)
+      },
+      currentThreadCommitOperation = _ => {
+        if (isolationEnabled) {
+          // Second read on concurrently updated tables should read old snapshots
+          assert(txnTable.count() == 5, "snapshot isolation failed on txn table")
+          assert(nonTxnTable.count() == 3, "snapshot isolation failed on non-txn table")
+        } else {
+          assert(txnTable.count() == 5) // txn table always gets snapshot isolation
+          assert(nonTxnTable.count() > 3) // non-txn table does not get snapshot isolation
+        }
+      },
+      shouldFail = false)
+  }
+
+  testSnapshotIsolation("disabled", isolationEnabled = false)
+
+  testSnapshotIsolation("uses first-access snapshots when enabled", isolationEnabled = true)
 }
 
 class DeltaWithNewTransactionSuite extends DeltaWithNewTransactionSuiteBase

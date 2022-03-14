@@ -22,6 +22,7 @@ import java.util.UUID
 import scala.collection.mutable
 import scala.util.control.NonFatal
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.{Metadata, SingleAction}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -36,6 +37,7 @@ import org.apache.hadoop.mapreduce.{Job, TaskType}
 
 import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.expressions.{ElementAt, Literal}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.functions.{col, struct, when}
 import org.apache.spark.sql.internal.SQLConf
@@ -183,26 +185,28 @@ trait Checkpoints extends DeltaLogging {
 
   /** Loads the checkpoint metadata from the _last_checkpoint file. */
   private def loadMetadataFromFile(tries: Int): Option[CheckpointMetaData] = {
-    try {
-      val checkpointMetadataJson = store.read(LAST_CHECKPOINT, newDeltaHadoopConf())
-      val checkpointMetadata =
-        JsonUtils.mapper.readValue[CheckpointMetaData](checkpointMetadataJson.head)
-      Some(checkpointMetadata)
-    } catch {
-      case _: FileNotFoundException =>
-        None
-      case NonFatal(e) if tries < 3 =>
-        logWarning(s"Failed to parse $LAST_CHECKPOINT. This may happen if there was an error " +
-          "during read operation, or a file appears to be partial. Sleeping and trying again.", e)
-        Thread.sleep(1000)
-        loadMetadataFromFile(tries + 1)
-      case NonFatal(e) =>
-        logWarning(s"$LAST_CHECKPOINT is corrupted. Will search the checkpoint files directly", e)
-        // Hit a partial file. This could happen on Azure as overwriting _last_checkpoint file is
-        // not atomic. We will try to list all files to find the latest checkpoint and restore
-        // CheckpointMetaData from it.
-        val verifiedCheckpoint = findLastCompleteCheckpoint(CheckpointInstance(-1L, None))
-        verifiedCheckpoint.map(manuallyLoadCheckpoint)
+    recordFrameProfile("Delta", "Checkpoints.loadMetadataFromFile") {
+      try {
+        val checkpointMetadataJson = store.read(LAST_CHECKPOINT, newDeltaHadoopConf())
+        val checkpointMetadata =
+          JsonUtils.mapper.readValue[CheckpointMetaData](checkpointMetadataJson.head)
+        Some(checkpointMetadata)
+      } catch {
+        case _: FileNotFoundException =>
+          None
+        case NonFatal(e) if tries < 3 =>
+          logWarning(s"Failed to parse $LAST_CHECKPOINT. This may happen if there was an error " +
+            "during read operation, or a file appears to be partial. Sleeping and trying again.", e)
+          Thread.sleep(1000)
+          loadMetadataFromFile(tries + 1)
+        case NonFatal(e) =>
+          logWarning(s"$LAST_CHECKPOINT is corrupted. Will search the checkpoint files directly", e)
+          // Hit a partial file. This could happen on Azure as overwriting _last_checkpoint file is
+          // not atomic. We will try to list all files to find the latest checkpoint and restore
+          // CheckpointMetaData from it.
+          val verifiedCheckpoint = findLastCompleteCheckpoint(CheckpointInstance(-1L, None))
+          verifiedCheckpoint.map(manuallyLoadCheckpoint)
+      }
     }
   }
 
@@ -218,7 +222,10 @@ trait Checkpoints extends DeltaLogging {
    */
   protected def findLastCompleteCheckpoint(cv: CheckpointInstance): Option[CheckpointInstance] = {
     var cur = math.max(cv.version, 0L)
+    val startVersion = cur
     val hadoopConf = newDeltaHadoopConf()
+
+    logInfo(s"Try to find Delta last complete checkpoint before version $startVersion")
     while (cur >= 0) {
       val checkpoints = store.listFrom(
             checkpointPrefix(logPath, math.max(0, cur - 1000)),
@@ -231,11 +238,13 @@ trait Checkpoints extends DeltaLogging {
           .toArray
       val lastCheckpoint = getLatestCompleteCheckpointFromList(checkpoints, cv)
       if (lastCheckpoint.isDefined) {
+        logInfo(s"Delta checkpoint is found at version ${lastCheckpoint.get.version}")
         return lastCheckpoint
       } else {
         cur -= 1000
       }
     }
+    logInfo(s"No checkpoint found for Delta table before version $startVersion")
     None
   }
 
@@ -367,7 +376,7 @@ object Checkpoints extends DeltaLogging {
         } else {
           // There should be only one writer writing the checkpoint file, so there must be
           // something wrong here.
-          throw new IllegalStateException(s"Cannot rename $src to $dest")
+          throw DeltaErrors.failOnCheckpoint(src, dest)
         }
       } finally {
         if (!renameDone) {
@@ -457,9 +466,11 @@ object CheckpointV2 {
   def extractPartitionValues(partitionSchema: StructType): Option[Column] = {
     val partitionValues = partitionSchema.map { field =>
       val physicalName = DeltaColumnMapping.getPhysicalName(field)
-      new Column(UnresolvedAttribute("add" :: "partitionValues" :: physicalName :: Nil))
-        .cast(field.dataType)
-        .as(physicalName)
+      new Column(ElementAt(
+        UnresolvedAttribute("add" :: "partitionValues" :: Nil),
+        Literal(physicalName),
+        failOnError = false)
+      ).cast(field.dataType).as(physicalName)
     }
     if (partitionValues.isEmpty) None else Some(struct(partitionValues: _*).as(PARTITIONS_COL_NAME))
   }

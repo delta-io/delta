@@ -277,8 +277,13 @@ case class AddFile(
   def copyWithTag(tag: AddFile.Tags.KeyType, value: String): AddFile =
     copy(tags = Option(tags).getOrElse(Map.empty) + (tag.name -> value))
 
-  def copyWithoutTag(tag: AddFile.Tags.KeyType): AddFile =
-    copy(tags = Option(tags).getOrElse(Map.empty) - tag.name)
+  def copyWithoutTag(tag: AddFile.Tags.KeyType): AddFile = {
+    if (tags == null) {
+      this
+    } else {
+      copy(tags = tags - tag.name)
+    }
+  }
 
 }
 

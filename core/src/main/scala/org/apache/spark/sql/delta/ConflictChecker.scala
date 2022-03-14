@@ -53,8 +53,11 @@ private[delta] class CurrentTransactionInfo(
   /** Final actions to commit - including the [[CommitInfo]] */
   lazy val finalActionsToCommit: Seq[Action] = actions ++ commitInfo
 
-  /** Whether this transaction wants to commit actions other than [[FileAction]] */
-  val hasOnlyFileActions = actions.forall(_.isInstanceOf[FileAction])
+  /** Whether this transaction wants to make any [[Metadata]] update */
+  lazy val metadataChanged: Boolean = actions.exists {
+    case _: Metadata => true
+    case _ => false
+  }
 }
 
 /**
@@ -93,6 +96,7 @@ private[delta] class ConflictChecker(
     winningCommitVersion: Long,
     isolationLevel: IsolationLevel) extends DeltaLogging {
 
+  protected val startTimeMs = System.currentTimeMillis()
   protected val timingStats = mutable.HashMap[String, Long]()
   protected val deltaLog = initialCurrentTransactionInfo.readSnapshot.deltaLog
 
@@ -111,7 +115,7 @@ private[delta] class ConflictChecker(
     checkForDeletedFilesAgainstCurrentTxnReadFiles()
     checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
     checkForUpdatedApplicationTransactionIdsThatCurrentTxnDependsOn()
-    reportMetrics()
+    logMetrics()
     currentTransactionInfo
   }
 
@@ -165,7 +169,7 @@ private[delta] class ConflictChecker(
     recordTime("checked-appends") {
       // Fail if new files have been added that the txn should have read.
       val addedFilesToCheckForConflicts = isolationLevel match {
-        case WriteSerializable if currentTransactionInfo.hasOnlyFileActions =>
+        case WriteSerializable if !currentTransactionInfo.metadataChanged =>
           winningCommitSummary.changedDataAddedFiles // don't conflict with blind appends
         case Serializable | WriteSerializable =>
           winningCommitSummary.changedDataAddedFiles ++ winningCommitSummary.blindAppendAddedFiles
@@ -283,9 +287,11 @@ private[delta] class ConflictChecker(
     ret
   }
 
-  protected def reportMetrics(): Unit = {
+  protected def logMetrics(): Unit = {
+    val totalTimeTakenMs = System.currentTimeMillis() - startTimeMs
     val timingStr = timingStats.keys.toSeq.sorted.map(k => s"$k=${timingStats(k)}").mkString(",")
-    logInfo(s"[$logPrefix] Timing stats against $winningCommitVersion [$timingStr]")
+    logInfo(s"[$logPrefix] Timing stats against $winningCommitVersion " +
+      s"[$timingStr, totalTimeTakenMs: $totalTimeTakenMs]")
   }
 
   protected lazy val logPrefix: String = {

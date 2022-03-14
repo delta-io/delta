@@ -713,81 +713,87 @@ trait DescribeDeltaHistorySuiteBase
     }
   }
 
+  def metricsUpdateTest : Unit = withTempDir { tempDir =>
+    // Create the initial table as a single file
+    Seq(1, 2, 5, 11, 21, 3, 4, 6, 9, 7, 8, 0).toDF("key")
+      .withColumn("value", 'key % 2)
+      .write
+      .format("delta")
+      .save(tempDir.getAbsolutePath)
+
+    // append additional data with the same number range to the table.
+    // This data is saved as a separate file as well
+    Seq(15, 16, 17).toDF("key")
+      .withColumn("value", 'key % 2)
+      .repartition(1)
+      .write
+      .format("delta")
+      .mode("append")
+      .save(tempDir.getAbsolutePath)
+    val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tempDir.getAbsolutePath)
+    val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+    deltaLog.snapshot.numOfFiles
+
+    // update the table
+    deltaTable.update(col("key") === lit("16"), Map("value" -> lit("1")))
+    // The file from the append gets updated but the file from the initial table gets scanned
+    // as well. We want to make sure numCopied rows is calculated from written files and not
+    // scanned files[SC-33980]
+
+    // get operation metrics
+    val operationMetrics = getOperationMetrics(deltaTable.history(1))
+    val expectedMetrics = Map(
+      "numAddedFiles" -> "1",
+      "numRemovedFiles" -> "1",
+      "numUpdatedRows" -> "1",
+      "numCopiedRows" -> "2" // There should be only three rows in total(updated + copied)
+    )
+    checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.UPDATE)
+    val expectedTimeMetrics = Set("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
+    checkOperationTimeMetricsInvariant(expectedTimeMetrics, operationMetrics)
+  }
+
   test("operation metrics - update") {
-    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
-      withTempDir { tempDir =>
-        // Create the initial table as a single file
-        Seq(1, 2, 5, 11, 21, 3, 4, 6, 9, 7, 8, 0).toDF("key")
-          .withColumn("value", 'key % 2)
-          .write
-          .format("delta")
-          .save(tempDir.getAbsolutePath)
+    withSQLConf((DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true")) {
+      metricsUpdateTest
+    }
+  }
 
-        // append additional data with the same number range to the table.
-        // This data is saved as a separate file as well
-        Seq(15, 16, 17).toDF("key")
-          .withColumn("value", 'key % 2)
-          .repartition(1)
-          .write
-          .format("delta")
-          .mode("append")
-          .save(tempDir.getAbsolutePath)
-        val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tempDir.getAbsolutePath)
-        val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
-        deltaLog.snapshot.numOfFiles
+  def metricsUpdatePartitionedColumnTest : Unit = {
+    val numRows = 100
+    val numPartitions = 5
+    withTempDir { tempDir =>
+      spark.range(numRows)
+        .withColumn("c1", 'id + 1)
+        .withColumn("c2", 'id % numPartitions)
+        .write
+        .partitionBy("c2")
+        .format("delta")
+        .save(tempDir.getAbsolutePath)
 
-        // update the table
-        deltaTable.update(col("key") === lit("16"), Map("value" -> lit("1")))
-        // The file from the append gets updated but the file from the initial table gets scanned
-        // as well. We want to make sure numCopied rows is calculated from written files and not
-        // scanned files[SC-33980]
+      val deltaTable = io.delta.tables.DeltaTable.forPath(tempDir.getAbsolutePath)
+      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+      val numFilesBeforeUpdate = deltaLog.snapshot.numOfFiles
+      deltaTable.update(col("c2") < 1, Map("c2" -> lit("1")))
+      val numFilesAfterUpdate = deltaLog.snapshot.numOfFiles
 
-        // get operation metrics
-        val operationMetrics = getOperationMetrics(deltaTable.history(1))
-        val expectedMetrics = Map(
-          "numAddedFiles" -> "1",
-          "numRemovedFiles" -> "1",
-          "numUpdatedRows" -> "1",
-          "numCopiedRows" -> "2" // There should be only three rows in total(updated + copied)
-        )
-        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.UPDATE)
-        val expectedTimeMetrics = Set("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
-        checkOperationTimeMetricsInvariant(expectedTimeMetrics, operationMetrics)
-      }
+      val operationMetrics = getOperationMetrics(deltaTable.history(1))
+      val newFiles = numFilesAfterUpdate - numFilesBeforeUpdate
+      val oldFiles = numFilesBeforeUpdate / numPartitions
+      val addedFiles = newFiles + oldFiles
+      val expectedMetrics = Map(
+        "numUpdatedRows" -> (numRows / numPartitions).toString,
+        "numCopiedRows" -> "0",
+        "numAddedFiles" -> addedFiles.toString,
+        "numRemovedFiles" -> (numFilesBeforeUpdate / numPartitions).toString
+      )
+      checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.UPDATE)
     }
   }
 
   test("operation metrics - update - partitioned column") {
-    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
-      val numRows = 100
-      val numPartitions = 5
-      withTempDir { tempDir =>
-        spark.range(numRows)
-          .withColumn("c1", 'id + 1)
-          .withColumn("c2", 'id % numPartitions)
-          .write
-          .partitionBy("c2")
-          .format("delta")
-          .save(tempDir.getAbsolutePath)
-
-        val deltaTable = io.delta.tables.DeltaTable.forPath(tempDir.getAbsolutePath)
-        val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
-        val numFilesBeforeUpdate = deltaLog.snapshot.numOfFiles
-        deltaTable.update(col("c2") < 1, Map("c2" -> lit("1")))
-        val numFilesAfterUpdate = deltaLog.snapshot.numOfFiles
-
-        val operationMetrics = getOperationMetrics(deltaTable.history(1))
-        val newFiles = numFilesAfterUpdate - numFilesBeforeUpdate
-        val oldFiles = numFilesBeforeUpdate / numPartitions
-        val addedFiles = newFiles + oldFiles
-        val expectedMetrics = Map(
-          "numUpdatedRows" -> (numRows / numPartitions).toString,
-          "numCopiedRows" -> "0",
-          "numAddedFiles" -> addedFiles.toString,
-          "numRemovedFiles" -> (numFilesBeforeUpdate / numPartitions).toString
-        )
-        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.UPDATE)
-      }
+    withSQLConf((DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true")) {
+      metricsUpdatePartitionedColumnTest
     }
   }
 

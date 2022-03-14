@@ -77,9 +77,10 @@ trait OptimisticTransactionSuiteBase
       reads,
       Seq(concurrentTxn),
       actions,
-      errorMessageHint,
-      exceptionClass,
-      Seq.empty
+      operation = Truncate(), // a data-changing operation
+      errorMessageHint = errorMessageHint,
+      exceptionClass = exceptionClass,
+      additionalSQLConfs = Seq.empty
     )
   }
 
@@ -110,6 +111,7 @@ trait OptimisticTransactionSuiteBase
       reads: Seq[OptimisticTransaction => Unit],
       concurrentTxns: Seq[OptimisticTransaction => Unit],
       actions: Seq[Action],
+      operation: DeltaOperations.Operation,
       errorMessageHint: Option[Seq[String]],
       exceptionClass: Option[String],
       additionalSQLConfs: Seq[(String, String)]): Unit = {
@@ -133,7 +135,7 @@ trait OptimisticTransactionSuiteBase
         // Try commit and check expected conflict behavior
         if (conflicts) {
           val e = intercept[ConcurrentModificationException] {
-            txn.commit(actions, Truncate())
+            txn.commit(actions, operation)
           }
           errorMessageHint.foreach { expectedParts =>
             assert(expectedParts.forall(part => e.getMessage.contains(part)))
@@ -142,7 +144,7 @@ trait OptimisticTransactionSuiteBase
             assert(e.getClass.getName.contains(exceptionClass.get))
           }
         } else {
-          txn.commit(actions, Truncate())
+          txn.commit(actions, operation)
         }
       }
     }

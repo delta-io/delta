@@ -57,7 +57,7 @@ trait OpenSourceDataFrameWriterV2Tests
   }
 
   def catalog: TableCatalog = {
-    spark.sessionState.catalogManager.currentCatalog.asInstanceOf[DeltaCatalog]
+    spark.sessionState.catalogManager.currentCatalog.asInstanceOf[TableCatalog]
   }
 
   protected def getProperties(table: Table): Map[String, String] = {

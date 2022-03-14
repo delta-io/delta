@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{AddFile, SingleAction}
-import org.apache.spark.sql.delta.stats.DeltaScan
+import org.apache.spark.sql.delta.stats.{DataSize, DeltaScan}
 
 import org.apache.spark.sql.catalyst.expressions._
 
@@ -38,6 +38,17 @@ trait PartitionFiltering { self: Snapshot =>
         partitionFilters).as[AddFile].collect()
     }
 
-    DeltaScan(version = version, files, null, null, null)(null, null, null, null, 0, null)
+    DeltaScan(
+      version = version,
+      files = files,
+      total = DataSize(),
+      partition = DataSize(),
+      scanned = DataSize())(
+      projection = AttributeSet(Nil),
+      partitionFilters = ExpressionSet(Nil),
+      dataFilters = ExpressionSet(Nil),
+      unusedFilters = ExpressionSet(Nil),
+      scanDurationMs = 0,
+      dataSkippingType = null)
   }
 }

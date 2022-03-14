@@ -503,7 +503,7 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
     val f1 = StructField("c1", IntegerType)
     val f2 = withGenerationExpression(StructField("c2", IntegerType), "c10 + 10")
     val schema = StructType(f1 :: f2 :: Nil)
-    val e = intercept[AnalysisException](validateGeneratedColumns(spark, schema))
+    val e = intercept[DeltaAnalysisException](validateGeneratedColumns(spark, schema))
     errorContains(e.getMessage,
       "A generated column cannot use a non-existent column or another generated column")
   }
@@ -527,9 +527,20 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
     val f2 = withGenerationExpression(StructField("c2", IntegerType), "c1 + 10")
     val f3 = withGenerationExpression(StructField("c3", IntegerType), "c2 + 10")
     val schema = StructType(f1 :: f2 :: f3 :: Nil)
-    val e = intercept[AnalysisException](validateGeneratedColumns(spark, schema))
+    val e = intercept[DeltaAnalysisException](validateGeneratedColumns(spark, schema))
     errorContains(e.getMessage,
       "A generated column cannot use a non-existent column or another generated column")
+  }
+
+  test("validateGeneratedColumns: supported expressions") {
+    for (exprString <- Seq(
+      // Generated column should support timestamp to date
+      "to_date(foo, \"yyyy-MM-dd'T'HH:mm:ss.SSSSSSSSS'Z'\")")) {
+      val f1 = StructField("foo", TimestampType)
+      val f2 = withGenerationExpression(StructField("bar", DateType), exprString)
+      val schema = StructType(Seq(f1, f2))
+      validateGeneratedColumns(spark, schema)
+    }
   }
 
   test("validateGeneratedColumns: unsupported expressions") {
@@ -661,7 +672,9 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
       createTable(table, None, "c1 SMALLINT, c2 SMALLINT",
         Map("c2" -> "CAST(HASH(c1 + 32767s) AS SMALLINT)"), Nil)
       val tableSchema = spark.table(table).schema
-      Seq(32767.toShort).toDF("c1").write.format("delta").mode("append").saveAsTable(table)
+      withSQLConf(SQLConf.ANSI_ENABLED.key -> "false") {
+        Seq(32767.toShort).toDF("c1").write.format("delta").mode("append").saveAsTable(table)
+      }
       assert(tableSchema == spark.table(table).schema)
       // Insert an INT to `c1` should fail rather than changing the `c1` type to INT
       val e = intercept[AnalysisException] {

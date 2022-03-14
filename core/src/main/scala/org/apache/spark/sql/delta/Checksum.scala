@@ -22,9 +22,11 @@ import java.nio.charset.StandardCharsets.UTF_8
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
@@ -37,22 +39,19 @@ import org.apache.spark.util.Utils
  * Stats calculated within a snapshot, which we store along individual transactions for
  * verification.
  *
- * Note: we no longer check the number of `SetTransaction` actions in the snapshot during validation
- *
  * @param tableSizeBytes The size of the table in bytes
  * @param numFiles Number of `AddFile` actions in the snapshot
  * @param numMetadata Number of `Metadata` actions in the snapshot
  * @param numProtocol Number of `Protocol` actions in the snapshot
- * @param numTransactions Number of `SetTransaction` actions in the snapshot
  */
 case class VersionChecksum(
     tableSizeBytes: Long,
     numFiles: Long,
     numMetadata: Long,
     numProtocol: Long,
-    numTransactions: Long,
     protocol: Protocol,
-    metadata: Metadata)
+    metadata: Metadata,
+    histogramOpt: Option[FileSizeHistogram])
 
 /**
  * Record the state of the table as a checksum file along with a commit.
@@ -75,9 +74,9 @@ trait RecordChecksum extends DeltaLogging {
       numFiles = snapshot.numOfFiles,
       numMetadata = snapshot.numOfMetadata,
       numProtocol = snapshot.numOfProtocol,
-      numTransactions = snapshot.numOfSetTransactions,
       protocol = snapshot.protocol,
-      metadata = snapshot.metadata)
+      metadata = snapshot.metadata,
+      histogramOpt = snapshot.fileSizeHistogram)
     try {
       recordDeltaOperation(deltaLog, "delta.checksum.write") {
         val stream = writer.createAtomic(
@@ -109,48 +108,50 @@ trait ReadChecksum extends DeltaLogging { self: DeltaLog =>
   private[delta] def store: LogStore
 
   protected def readChecksum(version: Long): Option[VersionChecksum] = {
-    val checksumFile = FileNames.checksumFile(logPath, version)
+    recordFrameProfile("Delta", "ReadChecksum.readChecksum") {
+      val checksumFile = FileNames.checksumFile(logPath, version)
 
-    var exception: Option[String] = None
-    val content = try Some(store.read(checksumFile, newDeltaHadoopConf())) catch {
-      case NonFatal(e) =>
-        // We expect FileNotFoundException; if it's another kind of exception, we still catch them
-        // here but we log them in the checksum error event below.
-        if (!e.isInstanceOf[FileNotFoundException]) {
-          exception = Some(Utils.exceptionString(e))
-        }
-        None
-    }
+      var exception: Option[String] = None
+      val content = try Some(store.read(checksumFile, newDeltaHadoopConf())) catch {
+        case NonFatal(e) =>
+          // We expect FileNotFoundException; if it's another kind of exception, we still catch them
+          // here but we log them in the checksum error event below.
+          if (!e.isInstanceOf[FileNotFoundException]) {
+            exception = Some(Utils.exceptionString(e))
+          }
+          None
+      }
 
-    if (content.isEmpty) {
-      // We may not find the checksum file in two cases:
-      //  - We just upgraded our Spark version from an old one
-      //  - Race conditions where we commit a transaction, and before we can write the checksum
-      //    this reader lists the new version, and uses it to create the snapshot.
-      recordDeltaEvent(
-        this,
-        "delta.checksum.error.missing",
-        data = Map("version" -> version) ++ exception.map("exception" -> _))
-
-      return None
-    }
-    val checksumData = content.get
-    if (checksumData.isEmpty) {
-      recordDeltaEvent(
-        this,
-        "delta.checksum.error.empty",
-        data = Map("version" -> version))
-      return None
-    }
-    try {
-      Option(JsonUtils.mapper.readValue[VersionChecksum](checksumData.head))
-    } catch {
-      case NonFatal(e) =>
+      if (content.isEmpty) {
+        // We may not find the checksum file in two cases:
+        //  - We just upgraded our Spark version from an old one
+        //  - Race conditions where we commit a transaction, and before we can write the checksum
+        //    this reader lists the new version, and uses it to create the snapshot.
         recordDeltaEvent(
           this,
-          "delta.checksum.error.parsing",
-          data = Map("exception" -> Utils.exceptionString(e)))
-        None
+          "delta.checksum.error.missing",
+          data = Map("version" -> version) ++ exception.map("exception" -> _))
+
+        return None
+      }
+      val checksumData = content.get
+      if (checksumData.isEmpty) {
+        recordDeltaEvent(
+          this,
+          "delta.checksum.error.empty",
+          data = Map("version" -> version))
+        return None
+      }
+      try {
+        Option(JsonUtils.mapper.readValue[VersionChecksum](checksumData.head))
+      } catch {
+        case NonFatal(e) =>
+          recordDeltaEvent(
+            this,
+            "delta.checksum.error.parsing",
+            data = Map("exception" -> Utils.exceptionString(e)))
+          None
+      }
     }
   }
 }
