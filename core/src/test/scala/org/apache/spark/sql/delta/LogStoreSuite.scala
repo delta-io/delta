@@ -409,3 +409,8 @@ class PublicHDFSLogStoreSuite extends PublicLogStoreSuite with HDFSLogStoreSuite
   override protected val publicLogStoreClassName: String =
     classOf[io.delta.storage.HDFSLogStore].getName
 }
+
+class PublicLocalLogStoreSuite extends PublicLogStoreSuite with HDFSLogStoreSuiteBase {
+  override protected val publicLogStoreClassName: String =
+    classOf[io.delta.storage.LocalLogStore].getName
+}
