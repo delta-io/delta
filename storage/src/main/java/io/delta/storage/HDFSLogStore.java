@@ -18,6 +18,7 @@ package io.delta.storage;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
@@ -162,13 +163,14 @@ public class HDFSLogStore extends HadoopFileSystemLogStore {
             FileSystem fs = path.getFileSystem(hadoopConf);
             Method msync = fs.getClass().getMethod("msync");
             msync.invoke(fs);
-        } catch (NoSuchMethodException e) {
-        } catch (IllegalAccessException e) {
-        } catch (InvocationTargetException e) {
+        } catch (InterruptedIOException e) {
+            throw e;
         } catch (Throwable e) {
-            if (!LogStoreErrors.isNonFatal(e)) {
-                throw e;
+            if (e instanceof InterruptedException) {
+                // Propagate the interrupt status
+                Thread.currentThread().interrupt();
             }
+            // We ignore non fatal errors as calling msync is best effort.
         }
     }
 

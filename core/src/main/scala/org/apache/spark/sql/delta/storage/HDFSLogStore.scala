@@ -149,12 +149,7 @@ class HDFSLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
       val msync = fs.getClass.getMethod("msync")
       msync.invoke(fs)
     } catch {
-      case parent: InvocationTargetException =>
-        parent.getCause match {
-          case _: UnsupportedOperationException =>
-          case e => throw e
-        }
-      case _: NoSuchMethodException =>
+      case NonFatal(_) => // ignore, calling msync is best effort
     }
   }
 
