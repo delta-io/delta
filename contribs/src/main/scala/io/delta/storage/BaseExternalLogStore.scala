@@ -28,7 +28,6 @@ import org.apache.hadoop.fs._
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.FileNames
-import org.apache.spark.sql.delta.storage.HadoopFileSystemLogStore
 
 /**
 * Used so that we can use an external store child implementation
@@ -38,7 +37,7 @@ import org.apache.spark.sql.delta.storage.HadoopFileSystemLogStore
 abstract class BaseExternalLogStore(
     sparkConf: SparkConf,
     hadoopConf: Configuration
-) extends HadoopFileSystemLogStore(sparkConf, hadoopConf)
+) extends org.apache.spark.sql.delta.storage.HadoopFileSystemLogStore(sparkConf, hadoopConf)
     with DeltaLogging {
 
   /**
