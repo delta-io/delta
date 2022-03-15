@@ -317,16 +317,8 @@ class HDFSLogStoreSuite extends HDFSLogStoreSuiteBase {
   override val logStoreClassName: String = classOf[HDFSLogStore].getName
 }
 
-class LocalLogStoreSuite extends LogStoreSuiteBase {
-
+class LocalLogStoreSuite extends LocalLogStoreSuiteBase {
   override val logStoreClassName: String = classOf[LocalLogStore].getName
-
-  testHadoopConf(
-    expectedErrMsg = ".*No FileSystem for scheme.*fake.*",
-    "fs.fake.impl" -> classOf[FakeFileSystem].getName,
-    "fs.fake.impl.disable.cache" -> "true")
-
-  protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 
 /** A fake file system to test whether session Hadoop configuration will be picked up. */
