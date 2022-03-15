@@ -17,9 +17,7 @@
 package io.delta.storage;
 
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.*;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.hadoop.fs.Path;
 
 import java.io.IOException;
 import java.util.Iterator;
@@ -28,32 +26,37 @@ import java.util.Iterator;
  * LogStore implementation for Azure.
  * <p>
  * We assume the following from Azure's [[FileSystem]] implementations:
- * - Rename without overwrite is atomic.
- * - List-after-write is consistent.
+ * <ul>
+ *     <li>Rename without overwrite is atomic.</li>
+ *     <li>List-after-write is consistent.</li>
+ * </ul>
  * <p>
  * Regarding file creation, this implementation:
- * - Uses atomic rename when overwrite is false; if the destination file exists or the rename
- * fails, throws an exception.
- * - Uses create-with-overwrite when overwrite is true. This does not make the file atomically
- * visible and therefore the caller must handle partial files.
+ *  <ul>
+ *     <li>Uses atomic rename when overwrite is false; if the destination file exists or the rename
+ *         fails, throws an exception.</li>
+ *     <li>Uses create-with-overwrite when overwrite is true. This does not make the file atomically
+ *         visible and therefore the caller must handle partial files.</li>
+ * </ul>
  */
-
 public class AzureLogStore extends HadoopFileSystemLogStore {
-    private static final Logger LOG = LoggerFactory.getLogger(AzureLogStore.class);
 
     public AzureLogStore(Configuration hadoopConf) {
         super(hadoopConf);
     }
 
     @Override
-    public void write(Path path,
-                      Iterator<String> actions,
-                      Boolean overwrite,
-                      Configuration hadoopConf) throws IOException {
+    public void write(
+            Path path,
+            Iterator<String> actions,
+            Boolean overwrite,
+            Configuration hadoopConf) throws IOException {
         writeWithRename(path, actions, overwrite, hadoopConf);
     }
 
-    public Boolean isPartialWriteVisible(Path path, Configuration hadoopConf) {
+    public Boolean isPartialWriteVisible(
+            Path path,
+            Configuration hadoopConf) {
         return true;
     }
 }
