@@ -178,7 +178,11 @@ lazy val storage = (project in file("storage"))
   )
 
 lazy val storageDynamodb = (project in file("storage-dynamodb"))
-  // TODO: java port should depend on storage
+  // TODO: uncomment after refactoring from scala -> java
+  // .dependsOn(storage % "compile->compile;test->test;provided->provided")
+  // .dependsOn(core % "test->test")
+
+  // TODO: delete after refactoring from scala -> java. Keep delta-core dependency for now.
   .dependsOn(core % "compile->compile;test->test;provided->provided")
   .settings (
     name := "delta-storage-dynamodb",

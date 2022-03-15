@@ -82,7 +82,8 @@ abstract class LogStoreSuiteBase extends QueryTest
     val deltaLogDir = createDeltaLogDir()
     val store = createLogStore(spark)
 
-    val deltas = Seq(0, 1).map(i => new File(deltaLogDir.toString, i.toString)).map(_.toURI).map(new Path(_))
+    val deltas = Seq(0, 1)
+      .map(i => new File(deltaLogDir.toString, i.toString)).map(_.toURI).map(new Path(_))
     store.write(deltas.head, Iterator("zero", "none"), overwrite = false, sessionHadoopConf)
     store.write(deltas(1), Iterator("one"), overwrite = false, sessionHadoopConf)
 
@@ -98,7 +99,8 @@ abstract class LogStoreSuiteBase extends QueryTest
     val deltaLogDir = createDeltaLogDir()
     val store = createLogStore(spark)
 
-    val deltas = Seq(0, 1).map(i => new File(deltaLogDir.toString, i.toString)).map(_.toURI).map(new Path(_))
+    val deltas = Seq(0, 1)
+      .map(i => new File(deltaLogDir.toString, i.toString)).map(_.toURI).map(new Path(_))
     store.write(deltas.head, Iterator("zero"), overwrite = false, sessionHadoopConf)
     store.write(deltas(1), Iterator("one"), overwrite = false, sessionHadoopConf)
 
@@ -111,8 +113,8 @@ abstract class LogStoreSuiteBase extends QueryTest
     val deltaLogDir = createDeltaLogDir()
     val store = createLogStore(spark)
 
-    val deltas =
-      Seq(0, 1, 2, 3, 4).map(i => new File(deltaLogDir.toString, i.toString)).map(_.toURI).map(new Path(_))
+    val deltas = Seq(0, 1, 2, 3, 4)
+      .map(i => new File(deltaLogDir.toString, i.toString)).map(_.toURI).map(new Path(_))
     store.write(deltas(1), Iterator("zero"), overwrite = false, sessionHadoopConf)
     store.write(deltas(2), Iterator("one"), overwrite = false, sessionHadoopConf)
     store.write(deltas(3), Iterator("two"), overwrite = false, sessionHadoopConf)
