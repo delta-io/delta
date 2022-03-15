@@ -208,8 +208,6 @@ abstract class LogStoreSuiteBase extends QueryTest
 
 trait AzureLogStoreSuiteBase extends LogStoreSuiteBase {
 
-  override val logStoreClassName: String = classOf[AzureLogStore].getName
-
   testHadoopConf(
     expectedErrMsg = ".*No FileSystem for scheme.*fake.*",
     "fs.fake.impl" -> classOf[FakeFileSystem].getName,
@@ -306,6 +304,10 @@ trait HDFSLogStoreSuiteBase extends LogStoreSuiteBase {
 
 class HDFSLogStoreSuite extends HDFSLogStoreSuiteBase {
   override val logStoreClassName: String = classOf[HDFSLogStore].getName
+}
+
+class AzureLogStoreSuite extends AzureLogStoreSuiteBase {
+  override val logStoreClassName: String = classOf[AzureLogStore].getName
 }
 
 class LocalLogStoreSuite extends LogStoreSuiteBase {
