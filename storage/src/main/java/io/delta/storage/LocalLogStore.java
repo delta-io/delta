@@ -27,17 +27,20 @@ import java.util.Iterator;
 /**
  * Default {@link LogStore} implementation (should be used for testing only!).
  *
- * Production users should specify the appropriate {@link LogStore} implementation in Spark properties.
+ * Production users should specify the appropriate {@link LogStore} implementation in Spark properties.<p>
  *
- * We assume the following from {@link FileSystem} implementations:<p>
- * - Rename without overwrite is atomic.<p>
- * - List-after-write is consistent.
- * <p>
- * Regarding file creation, this implementation:<p>
- * - Uses atomic rename when overwrite is false; if the destination file exists or the rename
- *   fails, throws an exception. <p>
- * - Uses create-with-overwrite when overwrite is true. This does not make the file atomically
- *   visible and therefore the caller must handle partial files.
+ * We assume the following from {@link FileSystem} implementations:
+ * <ul>
+ * <li>Rename without overwrite is atomic.</li>
+ * <li>List-after-write is consistent.</li>
+ * </ul>
+ * Regarding file creation, this implementation:
+ * <ul>
+ * <li>Uses atomic rename when overwrite is false; if the destination file exists or the rename
+ *   fails, throws an exception. </li>
+ * <li>Uses create-with-overwrite when overwrite is true. This does not make the file atomically
+ *   visible and therefore the caller must handle partial files.</li>
+ * </ul>
  */
 public class LocalLogStore extends HadoopFileSystemLogStore{
     public LocalLogStore(Configuration hadoopConf) {
