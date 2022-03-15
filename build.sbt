@@ -127,6 +127,9 @@ lazy val contribs = (project in file("contribs"))
     releaseSettings,
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
       listPythonFiles(baseDirectory.value.getParentFile / "python"),
+    libraryDependencies ++= Seq(
+      "com.amazonaws" % "aws-java-sdk" % "1.7.4"
+    ),
 
     Test / testOptions += Tests.Argument("-oDF"),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
@@ -175,8 +178,12 @@ lazy val storage = (project in file("storage"))
   )
 
 lazy val storageDynamodb = (project in file("storage-dynamodb"))
-  .dependsOn(storage % "compile->compile;test->test;provided->provided")
-  .dependsOn(core % "test->test")
+  // TODO: uncomment after refactoring from scala -> java
+  // .dependsOn(storage % "compile->compile;test->test;provided->provided")
+  // .dependsOn(core % "test->test")
+
+  // TODO: delete after refactoring from scala -> java. Keep delta-core dependency for now.
+  .dependsOn(core % "compile->compile;test->test;provided->provided")
   .settings (
     name := "delta-storage-dynamodb",
     commonSettings,
@@ -284,7 +291,7 @@ def ignoreUndocumentedPackages(packages: Seq[Seq[java.io.File]]): Seq[Seq[java.i
 }
 
 lazy val unidocSettings = Seq(
-  
+
   // Configure Scala unidoc
   ScalaUnidoc / unidoc / scalacOptions ++= Seq(
     "-skip-packages", "org:com:io.delta.sql:io.delta.tables.execution",
