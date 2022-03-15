@@ -130,9 +130,10 @@ case class DeleteCommand(
         numBytesAfterSkipping = numBytes
         if (txn.metadata.partitionColumns.nonEmpty) {
           numPartitionsAfterSkipping = Some(numPartitions)
+          numPartitionsRemovedFrom = Some(numPartitions)
+          numPartitionsAddedTo = Some(0)
         }
         val operationTimestamp = System.currentTimeMillis()
-        metrics("numRemovedFiles").set(allFiles.size)
         allFiles.map(_.removeWithTimestamp(operationTimestamp))
       case Some(cond) =>
         val (metadataPredicates, otherPredicates) =
@@ -157,8 +158,9 @@ case class DeleteCommand(
           numBytesAfterSkipping = numCandidateBytes
           if (txn.metadata.partitionColumns.nonEmpty) {
             numPartitionsAfterSkipping = Some(numCandidatePartitions)
+            numPartitionsRemovedFrom = Some(numCandidatePartitions)
+            numPartitionsAddedTo = Some(0)
           }
-          metrics("numRemovedFiles").set(numRemovedFiles)
           candidateFiles.map(_.removeWithTimestamp(operationTimestamp))
         } else {
           // Case 3: Delete the rows based on the condition.
@@ -172,7 +174,6 @@ case class DeleteCommand(
             numPartitionsAfterSkipping = Some(numCandidatePartitions)
           }
 
-          numRemovedFiles = candidateFiles.size
           val nameToAddFileMap = generateCandidateFileMap(deltaLog.dataPath, candidateFiles)
 
           val fileIndex = new TahoeBatchFileIndex(
@@ -188,7 +189,7 @@ case class DeleteCommand(
           }.asNondeterministic()
           val filesToRewrite =
             withStatusCode("DELTA", s"Finding files to rewrite for DELETE operation") {
-              if (numRemovedFiles == 0) {
+              if (candidateFiles.isEmpty) {
                 Array.empty[String]
               } else {
                 data
@@ -199,10 +200,14 @@ case class DeleteCommand(
               }
             }
 
-          metrics("numRemovedFiles").set(filesToRewrite.size)
+          numRemovedFiles = filesToRewrite.length
           scanTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
           if (filesToRewrite.isEmpty) {
             // Case 3.1: no row matches and no delete will be triggered
+            if (txn.metadata.partitionColumns.nonEmpty) {
+              numPartitionsRemovedFrom = Some(0)
+              numPartitionsAddedTo = Some(0)
+            }
             Nil
           } else {
             // Case 3.2: some files need an update to remove the deleted files
@@ -249,6 +254,7 @@ case class DeleteCommand(
           }
         }
     }
+    metrics("numRemovedFiles").set(numRemovedFiles)
     metrics("numAddedFiles").set(numAddedFiles)
     val executionTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
     metrics("executionTimeMs").set(executionTimeMs)
@@ -275,7 +281,7 @@ case class DeleteCommand(
       data = DeleteMetric(
         condition = condition.map(_.sql).getOrElse("true"),
         numFilesTotal,
-        numRemovedFiles,
+        numFilesAfterSkipping,
         numAddedFiles,
         numRemovedFiles,
         numAddedFiles,
@@ -319,7 +325,7 @@ object DeleteCommand {
  *
  * @param condition: what was the delete condition
  * @param numFilesTotal: how big is the table
- * @param numTouchedFiles: how many files did we touch. Alias for `numRemovedFiles`
+ * @param numTouchedFiles: how many files did we touch. Alias for `numFilesAfterSkipping`
  * @param numRewrittenFiles: how many files had to be rewritten. Alias for `numAddedFiles`
  * @param numRemovedFiles: how many files we removed. Alias for `numTouchedFiles`
  * @param numAddedFiles: how many files we added. Alias for `numRewrittenFiles`
