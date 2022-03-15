@@ -16,6 +16,42 @@
 
 package io.delta.storage;
 
-public class ExternalCommitEntry {
+import org.apache.hadoop.fs.Path;
 
+public class ExternalCommitEntry {
+    public Path tablePath;
+    public String fileName;
+    public String tempPath;
+    public boolean complete;
+    public Long commitTime;
+
+    public ExternalCommitEntry(
+        Path tablePath,
+        String fileName,
+        String tempPath,
+        boolean complete,
+        Long commitTime
+    ) {
+        this.tablePath = tablePath;
+        this.fileName = fileName;
+        this.tempPath = tempPath;
+        this.complete = complete;
+        this.commitTime = commitTime;
+    }
+    public ExternalCommitEntry asComplete() {
+        return new ExternalCommitEntry(
+            this.tablePath,
+            this.fileName,
+            this.tempPath,
+            true,
+            new Long(System.currentTimeMillis() / 1000)
+        );
+    }
+    public Path absoluteJsonPath() {
+        return new Path(new Path(tablePath, "_delta_log"), fileName);
+    }
+
+    public Path absoluteTempPath() {
+        return new Path(new Path(tablePath, "_delta_log"), tempPath);
+    }
 }

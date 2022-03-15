@@ -16,8 +16,134 @@
 
 package io.delta.storage
 
-// TODO: make non-abstract and implement tests when DynamoDBLogStore is ready
-abstract class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSuite {
+import collection.JavaConverters._
+
+import java.io.{File, IOException}
+import java.net.URI
+import java.util.concurrent.ConcurrentHashMap;
+
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs._
+
+import org.apache.spark.sql.delta.{FakeFileSystem, LogStoreSuiteBase}
+import org.apache.hadoop.conf.Configuration
+import org.apache.spark.SparkConf
+import java.nio.file.FileSystemException
+import org.apache.spark.sql.delta.util.FileNames
+
+class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSuite {
   override protected val publicLogStoreClassName: String =
-    classOf[DynamoDBLogStore].getName
+    classOf[MemoryLogStore].getName
+
+  testHadoopConf(
+    expectedErrMsg = "No FileSystem for scheme \"fake\"",
+    "fs.fake.impl" -> classOf[FakeFileSystem].getName,
+    "fs.fake.impl.disable.cache" -> "true"
+  )
+
+  test("single write") {
+    withTempDir { tempDir =>
+      val store = createLogStore(spark)
+      val path = FileNames.deltaFile(new Path(new Path(tempDir.toURI), "_delta_log"), 0)
+      store.write(path, Iterator("foo", "bar"), false)
+      val entry = MemoryLogStore.get(path);
+      assert(entry != null)
+      assert(entry.complete);
+    }
+  }
+
+  test("double write") {
+    withTempDir { tempDir =>
+      val store = createLogStore(spark)
+      val path = FileNames.deltaFile(new Path(new Path(tempDir.toURI), "_delta_log"), 0)
+      store.write(path, Iterator("foo", "bar"), false)
+      assert(MemoryLogStore.containsKey(path))
+      assertThrows[java.nio.file.FileSystemException] {
+        store.write(path, Iterator("foo", "bar"), false)
+      }
+    }
+  }
+
+  test("overwrite") {
+    withTempDir { tempDir =>
+      val store = createLogStore(spark)
+      val path = FileNames.deltaFile(new Path(new Path(tempDir.toURI), "_delta_log"), 0)
+      store.write(path, Iterator("foo", "bar"), false)
+      assert(MemoryLogStore.containsKey(path))
+      store.write(path, Iterator("foo", "bar"), true)
+      assert(MemoryLogStore.containsKey(path))
+    }
+  }
+
+  test("recovery") {
+    withSQLConf(
+      "fs.failing.impl" -> classOf[FailingFileSystem].getName,
+      "fs.failing.impl.disable.cache" -> "true"
+    ) {
+      FailingFileSystem.failOnSuffix = Some("00000000000000000000.json")
+      withTempDir { tempDir =>
+        val store = createLogStore(spark)
+        val path = FileNames.deltaFile(
+          new Path(new Path(s"failing:${tempDir.getCanonicalPath}"), "_delta_log"),
+          0
+        )
+        store.write(path, Iterator("foo", "bar"), false)
+        val entry = MemoryLogStore.get(path)
+        assert(entry != null)
+        assert(!entry.complete)
+        assert(entry.tempPath.nonEmpty)
+
+        assertThrows[java.io.FileNotFoundException] {
+          store.read(path)
+        }
+        val contents = store.read(entry.absoluteTempPath()).toList
+
+        FailingFileSystem.failOnSuffix = None
+        val files = store.listFrom(path.toString)
+        val entry2 = MemoryLogStore.get(path)
+        assert(entry2 != null)
+        assert(entry2.complete)
+        assert(store.read(entry2.absoluteJsonPath()).toList == contents)
+      }
+    }
+  }
+
+  test("listFrom exceptions") {
+    val store = createLogStore(spark)
+    assertThrows[java.io.FileNotFoundException] {
+      store.listFrom("/non-existing-path/with-parent")
+    }
+  }
+
+  protected def shouldUseRenameToWriteCheckpoint: Boolean = false
+}
+
+/**
+ * This utility enables failure simulation on file system.
+ * Providing a matching suffix results in an exception being
+ * thrown that allows to test file system failure scenarios.
+ */
+class FailingFileSystem extends RawLocalFileSystem {
+  override def getScheme: String = FailingFileSystem.scheme
+
+  override def getUri: URI = FailingFileSystem.uri
+
+  override def create(path: Path, overwrite: Boolean): FSDataOutputStream = {
+
+    FailingFileSystem.failOnSuffix match {
+      case Some(suffix) =>
+        if (path.toString.endsWith(suffix)) {
+          throw new java.nio.file.FileSystemException("fail")
+        }
+      case None => ;
+    }
+    super.create(path, overwrite)
+  }
+}
+
+object FailingFileSystem {
+  private val scheme = "failing"
+  private val uri: URI = URI.create(s"$scheme:///")
+
+  var failOnSuffix: Option[String] = None
 }
