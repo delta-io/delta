@@ -34,7 +34,7 @@ import org.apache.spark.sql.delta.util.FileNames
 * to provide the mutual exclusion that the cloud store,
 * e.g. s3, is missing.
 */
-abstract class BaseExternalLogStore(
+abstract class BaseExternalLogStoreScala(
     sparkConf: SparkConf,
     hadoopConf: Configuration
 ) extends org.apache.spark.sql.delta.storage.HadoopFileSystemLogStore(sparkConf, hadoopConf)
@@ -84,10 +84,10 @@ abstract class BaseExternalLogStore(
   /**
    * Method for assuring consistency on filesystem according to the external cache.
    * Method tries to rewrite TransactionLog entry from temporary path if it does not exists.
-   * Method returns completed [[ExternalCommitEntry]]
+   * Method returns completed [[ExternalCommitEntryScala]]
    */
 
-  private def fixDeltaLog(fs: FileSystem, entry: ExternalCommitEntry): Unit = {
+  private def fixDeltaLog(fs: FileSystem, entry: ExternalCommitEntryScala): Unit = {
     if (entry.complete) {
       return
     }
@@ -124,7 +124,7 @@ abstract class BaseExternalLogStore(
     copyFile(fs, src, dst)
   }
 
-  protected def writePutCompleteDbEntry(entry: ExternalCommitEntry): Unit = {
+  protected def writePutCompleteDbEntry(entry: ExternalCommitEntryScala): Unit = {
     putExternalEntry(entry.asComplete(), overwrite = true)
   }
 
@@ -132,7 +132,7 @@ abstract class BaseExternalLogStore(
     copyFile(fs, src, dst);
   }
 
-  protected def fixDeltaLogPutCompleteDbEntry(entry: ExternalCommitEntry): Unit = {
+  protected def fixDeltaLogPutCompleteDbEntry(entry: ExternalCommitEntryScala): Unit = {
     putExternalEntry(entry.asComplete(), overwrite = true);
   }
 
@@ -248,7 +248,7 @@ abstract class BaseExternalLogStore(
     val tempPath = createTemporaryPath(resolvedPath)
 
     val entry =
-      ExternalCommitEntry(
+      ExternalCommitEntryScala(
         tablePath,
         resolvedPath.getName,
         tempPath,
@@ -279,18 +279,18 @@ abstract class BaseExternalLogStore(
    * Method should throw @java.nio.file.FileAlreadyExistsException if path exists in cache.
    */
   protected def putExternalEntry(
-      ExternalCommitEntry: ExternalCommitEntry,
+      ExternalCommitEntryScala: ExternalCommitEntryScala,
       overwrite: Boolean = false
   ): Unit
 
   protected def getExternalEntry(
       tablePath: Path,
       jsonPath: Path
-  ): Option[ExternalCommitEntry]
+  ): Option[ExternalCommitEntryScala]
 
   protected def getLatestExternalEntry(
       tablePath: Path
-  ): Option[ExternalCommitEntry]
+  ): Option[ExternalCommitEntryScala]
 
   override def isPartialWriteVisible(path: Path): Boolean = false
 }
@@ -301,15 +301,15 @@ abstract class BaseExternalLogStore(
  * @param tempPath path relative to the `_delta_log` directory
  * @param commitTime in epoch seconds
  */
-case class ExternalCommitEntry(
+case class ExternalCommitEntryScala(
     tablePath: Path,
     fileName: String,
     tempPath: String,
     complete: Boolean,
     commitTime: Option[Long]
 ) {
-  def asComplete(): ExternalCommitEntry = {
-    ExternalCommitEntry(
+  def asComplete(): ExternalCommitEntryScala = {
+    ExternalCommitEntryScala(
       tablePath,
       fileName,
       tempPath,

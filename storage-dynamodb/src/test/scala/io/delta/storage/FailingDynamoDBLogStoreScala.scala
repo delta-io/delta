@@ -20,12 +20,12 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs._
 
 class FailingDynamoDBLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
-    extends DynamoDBLogStore(sparkConf, hadoopConf) {
+    extends DynamoDBLogStoreScala(sparkConf, hadoopConf) {
 
   private val injectErrors: Boolean = true
   private val errorRates = {
     val rates = sparkConf
-      .get(s"${DynamoDBLogStore.confPrefix}errorRates", "")
+      .get(s"${DynamoDBLogStoreScala.confPrefix}errorRates", "")
       .split(',')
       .filter(s => s.contains('='))
       .map(v => v.split("=", 2))
@@ -42,7 +42,7 @@ class FailingDynamoDBLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
     super.writeCopyTempFile(fs, src, dst)
   }
 
-  override protected def writePutCompleteDbEntry(entry: ExternalCommitEntry): Unit = {
+  override protected def writePutCompleteDbEntry(entry: ExternalCommitEntryScala): Unit = {
     injectError("write_put_db_entry")
     super.writePutCompleteDbEntry(entry)
   }
@@ -56,7 +56,7 @@ class FailingDynamoDBLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
     super.fixDeltaLogCopyTempFile(fs, src, dst)
   }
 
-  override def fixDeltaLogPutCompleteDbEntry(entry: ExternalCommitEntry): Unit = {
+  override def fixDeltaLogPutCompleteDbEntry(entry: ExternalCommitEntryScala): Unit = {
     injectError("fix_delta_log_put_db_entry")
     super.fixDeltaLogPutCompleteDbEntry(entry)
   }

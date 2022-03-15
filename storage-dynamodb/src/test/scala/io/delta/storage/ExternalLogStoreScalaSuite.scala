@@ -31,7 +31,7 @@ import org.apache.spark.SparkConf
 import java.nio.file.FileSystemException
 import org.apache.spark.sql.delta.util.FileNames
 
-class ExternalLogStoreSuite extends LogStoreSuiteBase {
+class ExternalLogStoreScalaSuite extends LogStoreSuiteBase {
 
   override val logStoreClassName: String = classOf[MemoryLogStore].getName
 
@@ -119,7 +119,7 @@ class ExternalLogStoreSuite extends LogStoreSuiteBase {
 }
 
 class MemoryLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
-    extends BaseExternalLogStore(sparkConf, hadoopConf) {
+    extends BaseExternalLogStoreScala(sparkConf, hadoopConf) {
 
   import MemoryLogStore._;
 
@@ -127,7 +127,7 @@ class MemoryLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
     hashMap.clear()
   }
 
-  override protected def getLatestExternalEntry(tablePath: Path): Option[ExternalCommitEntry] = {
+  override protected def getLatestExternalEntry(tablePath: Path): Option[ExternalCommitEntryScala] = {
     hashMap.asScala.iterator
       .filter(r => r._2.tablePath == tablePath)
       .toList
@@ -140,26 +140,26 @@ class MemoryLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
   override protected def getExternalEntry(
     tablePath: Path,
     path: Path
-  ): Option[ExternalCommitEntry] = {
+  ): Option[ExternalCommitEntryScala] = {
     hashMap.asScala.get(path)
   }
 
   override protected def putExternalEntry(
-      ExternalCommitEntry: ExternalCommitEntry,
+      externalCommitEntry: ExternalCommitEntryScala,
       overwrite: Boolean = false
   ): Unit = {
 
     logDebug(
-      s"WriteExternalCache: ${ExternalCommitEntry.absoluteJsonPath} (overwrite=$overwrite)"
+      s"WriteExternalCache: ${externalCommitEntry.absoluteJsonPath} (overwrite=$overwrite)"
     )
 
     if (overwrite) {
-      hashMap.put(ExternalCommitEntry.absoluteJsonPath, ExternalCommitEntry)
+      hashMap.put(externalCommitEntry.absoluteJsonPath, externalCommitEntry)
     } else {
-      val curr_val = hashMap.putIfAbsent(ExternalCommitEntry.absoluteJsonPath, ExternalCommitEntry);
+      val curr_val = hashMap.putIfAbsent(externalCommitEntry.absoluteJsonPath, externalCommitEntry);
       if (curr_val != null) {
         throw new java.nio.file.FileAlreadyExistsException(
-          s"TransactionLog exists ${ExternalCommitEntry.absoluteJsonPath}"
+          s"TransactionLog exists ${externalCommitEntry.absoluteJsonPath}"
         )
       }
     }
@@ -167,7 +167,7 @@ class MemoryLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
 }
 
 object MemoryLogStore {
-  val hashMap = new ConcurrentHashMap[Path, ExternalCommitEntry]()
+  val hashMap = new ConcurrentHashMap[Path, ExternalCommitEntryScala]()
 }
 
 class TestLogStore(

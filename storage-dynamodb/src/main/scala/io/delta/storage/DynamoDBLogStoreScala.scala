@@ -59,25 +59,25 @@ import com.amazonaws.regions.Regions
       --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5
 
   Following spark properties are recognized:
-  - spark.delta.DynamoDBLogStore.tableName - table name (defaults to 'delta_log')
-  - spark.delta.DynamoDBLogStore.endpoint - endpoint (defaults to 'Amazon AWS')
-  - spark.delta.DynamoDBLogStore.region - AWS region (defaults to 'us-east-1')
-  - spark.delta.DynamoDBLogStore.credentials.provider - name of class implementing
+  - spark.delta.DynamoDBLogStoreScala.tableName - table name (defaults to 'delta_log')
+  - spark.delta.DynamoDBLogStoreScala.endpoint - endpoint (defaults to 'Amazon AWS')
+  - spark.delta.DynamoDBLogStoreScala.region - AWS region (defaults to 'us-east-1')
+  - spark.delta.DynamoDBLogStoreScala.credentials.provider - name of class implementing
     `com.amazonaws.auth.AWSCredentialsProvider` (defaults to 'DefaultAWSCredentialsProviderChain')
  */
-class DynamoDBLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
-    extends BaseExternalLogStore(sparkConf, hadoopConf) {
+class DynamoDBLogStoreScala(sparkConf: SparkConf, hadoopConf: Configuration)
+    extends BaseExternalLogStoreScala(sparkConf, hadoopConf) {
 
-  import DynamoDBLogStore._
+  import DynamoDBLogStoreScala._
 
   private val tableName =
     sparkConf.get(s"${confPrefix}tableName", "delta_log")
 
   private val client: AmazonDynamoDBClient =
-    DynamoDBLogStore.getClient(sparkConf)
+    DynamoDBLogStoreScala.getClient(sparkConf)
 
   override protected def putExternalEntry(
-      entry: ExternalCommitEntry,
+      entry: ExternalCommitEntryScala,
       overwrite: Boolean = false
   ): Unit = {
     try {
@@ -98,7 +98,7 @@ class DynamoDBLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
   override protected def getExternalEntry(
       absoluteTablePath: Path,
       absoluteJsonPath: Path
-  ): Option[ExternalCommitEntry] = {
+  ): Option[ExternalCommitEntryScala] = {
     Option(
       client
         .getItem(
@@ -117,7 +117,7 @@ class DynamoDBLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
 
   override protected def getLatestExternalEntry(
       tablePath: Path
-  ): Option[ExternalCommitEntry] = {
+  ): Option[ExternalCommitEntryScala] = {
     client
       .query(
         new QueryRequest(tableName)
@@ -141,7 +141,7 @@ class DynamoDBLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
 
   def itemToDbEntry(
       item: java.util.Map[String, AttributeValue]
-  ): ExternalCommitEntry = ExternalCommitEntry(
+  ): ExternalCommitEntryScala = ExternalCommitEntryScala(
     tablePath = new Path(item.get("tablePath").getS),
     fileName = item.get("fileName").getS,
     tempPath = item.get("tempPath").getS,
@@ -150,11 +150,11 @@ class DynamoDBLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
   )
 }
 
-object DynamoDBLogStore {
-  val confPrefix = "spark.delta.DynamoDBLogStore."
+object DynamoDBLogStoreScala {
+  val confPrefix = "spark.delta.DynamoDBLogStoreScala."
 
   implicit def ExternalCommitEntryToWrapper(
-  entry: ExternalCommitEntry
+  entry: ExternalCommitEntryScala
   ): ExternalCommitEntryWrapper =
     ExternalCommitEntryWrapper(entry)
 
@@ -186,7 +186,7 @@ object DynamoDBLogStore {
   }
 }
 
-case class ExternalCommitEntryWrapper(entry: ExternalCommitEntry) {
+case class ExternalCommitEntryWrapper(entry: ExternalCommitEntryScala) {
   def asPutItemRequest(
       tableName: String,
       overwrite: Boolean

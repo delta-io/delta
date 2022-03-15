@@ -178,8 +178,8 @@ lazy val storage = (project in file("storage"))
   )
 
 lazy val storageDynamodb = (project in file("storage-dynamodb"))
-  .dependsOn(storage % "compile->compile;test->test;provided->provided")
-  .dependsOn(core % "test->test")
+  // TODO: java port should depend on storage
+  .dependsOn(core % "compile->compile;test->test;provided->provided")
   .settings (
     name := "delta-storage-dynamodb",
     commonSettings,
