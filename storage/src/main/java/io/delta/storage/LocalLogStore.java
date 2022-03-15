@@ -17,18 +17,44 @@
 package io.delta.storage;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.RawLocalFileSystem;
 
 import java.io.IOException;
 import java.util.Iterator;
 
+/**
+ * Default {@link LogStore} implementation (should be used for testing only!).
+ *
+ * Production users should specify the appropriate {@link LogStore} implementation in Spark properties.
+ *
+ * We assume the following from {@link FileSystem} implementations:<p>
+ * - Rename without overwrite is atomic.<p>
+ * - List-after-write is consistent.
+ * <p>
+ * Regarding file creation, this implementation:<p>
+ * - Uses atomic rename when overwrite is false; if the destination file exists or the rename
+ *   fails, throws an exception. <p>
+ * - Uses create-with-overwrite when overwrite is true. This does not make the file atomically
+ *   visible and therefore the caller must handle partial files.
+ */
 public class LocalLogStore extends HadoopFileSystemLogStore{
     public LocalLogStore(Configuration hadoopConf) {
         super(hadoopConf);
     }
 
+    /**
+     * This write implementation needs to wrap `writeWithRename` with `synchronized` as rename()
+     * for {@link RawLocalFileSystem} doesn't throw an exception when the target file
+     * exists. Hence, we must make sure `exists + rename` in `writeWithRename` is atomic in our tests.
+     */
     @Override
-    public void write(Path path, Iterator<String> actions, Boolean overwrite, Configuration hadoopConf) throws IOException {
+    public void write(
+            Path path,
+            Iterator<String> actions,
+            Boolean overwrite,
+            Configuration hadoopConf) throws IOException {
         synchronized(this) {
             writeWithRename(path, actions, overwrite, hadoopConf);
         }
