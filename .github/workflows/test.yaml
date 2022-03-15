@@ -29,7 +29,7 @@ jobs:
           key: delta-sbt-cache-spark3.2-scala${{ matrix.scala }}
       - name: Install Job dependencies
         run: |
-          sudo apt-get update
+          sudo apt-get --allow-releaseinfo-change update
           sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python-openssl git
           sudo apt install libedit-dev
           sudo apt install python3-pip --fix-missing
