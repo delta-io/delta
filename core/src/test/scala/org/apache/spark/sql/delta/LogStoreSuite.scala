@@ -304,6 +304,15 @@ trait HDFSLogStoreSuiteBase extends LogStoreSuiteBase {
   protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 
+trait LocalLogStoreSuiteBase extends LogStoreSuiteBase {
+  testHadoopConf(
+    expectedErrMsg = ".*No FileSystem for scheme.*fake.*",
+    "fs.fake.impl" -> classOf[FakeFileSystem].getName,
+    "fs.fake.impl.disable.cache" -> "true")
+
+  protected def shouldUseRenameToWriteCheckpoint: Boolean = true
+}
+
 class HDFSLogStoreSuite extends HDFSLogStoreSuiteBase {
   override val logStoreClassName: String = classOf[HDFSLogStore].getName
 }
@@ -410,7 +419,7 @@ class PublicHDFSLogStoreSuite extends PublicLogStoreSuite with HDFSLogStoreSuite
     classOf[io.delta.storage.HDFSLogStore].getName
 }
 
-class PublicLocalLogStoreSuite extends PublicLogStoreSuite with HDFSLogStoreSuiteBase {
+class PublicLocalLogStoreSuite extends PublicLogStoreSuite with LocalLogStoreSuiteBase {
   override protected val publicLogStoreClassName: String =
     classOf[io.delta.storage.LocalLogStore].getName
 }
