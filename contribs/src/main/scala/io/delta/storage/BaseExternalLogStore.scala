@@ -152,14 +152,13 @@ abstract class BaseExternalLogStore(
     s".tmp/${path.getName}.$uuid"
   }
 
+  /**
+   * Returns table path for provided delta file
+   * @param path path to delta file
+   */
+
   protected def getTablePath(path: Path): Path = {
-    var tablePath = path.getParent;
-    if (tablePath.getName == "_delta_log") {
-      // we do this conditionally as tests in LogStoreSuiet do not
-      // create _delta_log directory
-      tablePath = tablePath.getParent
-    }
-    return tablePath
+    return path.getParent.getParent;
   }
 
   override def listFrom(path: Path): Iterator[FileStatus] = {

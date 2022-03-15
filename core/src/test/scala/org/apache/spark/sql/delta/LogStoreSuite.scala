@@ -54,6 +54,13 @@ abstract class LogStoreSuiteBase extends QueryTest
 
   testInitFromSparkConf()
 
+  def createDeltaLogDir(): java.io.File = {
+    val tempDir = Utils.createTempDir()
+    val deltaLogStoreDir = new File(tempDir.toString, "_delta_log");
+    deltaLogStoreDir.mkdir();
+    deltaLogStoreDir
+  }
+
   test("read / write") {
     def assertNoLeakedCrcFiles(dir: File): Unit = {
       // crc file should not be leaked when origin file doesn't exist.
@@ -72,10 +79,10 @@ abstract class LogStoreSuiteBase extends QueryTest
           s"expected origin files: $originFileNamesForExistingCrcFiles / actual files: $fileNames")
     }
 
-    val tempDir = Utils.createTempDir()
+    val deltaLogDir = createDeltaLogDir()
     val store = createLogStore(spark)
 
-    val deltas = Seq(0, 1).map(i => new File(tempDir, i.toString)).map(_.toURI).map(new Path(_))
+    val deltas = Seq(0, 1).map(i => new File(deltaLogDir.toString, i.toString)).map(_.toURI).map(new Path(_))
     store.write(deltas.head, Iterator("zero", "none"), overwrite = false, sessionHadoopConf)
     store.write(deltas(1), Iterator("one"), overwrite = false, sessionHadoopConf)
 
@@ -84,14 +91,14 @@ abstract class LogStoreSuiteBase extends QueryTest
     assert(store.read(deltas(1), sessionHadoopConf) == Seq("one"))
     assert(store.readAsIterator(deltas(1), sessionHadoopConf).toSeq == Seq("one"))
 
-    assertNoLeakedCrcFiles(tempDir)
+    assertNoLeakedCrcFiles(deltaLogDir.getParentFile)
   }
 
   test("detects conflict") {
-    val tempDir = Utils.createTempDir()
+    val deltaLogDir = createDeltaLogDir()
     val store = createLogStore(spark)
 
-    val deltas = Seq(0, 1).map(i => new File(tempDir, i.toString)).map(_.toURI).map(new Path(_))
+    val deltas = Seq(0, 1).map(i => new File(deltaLogDir.toString, i.toString)).map(_.toURI).map(new Path(_))
     store.write(deltas.head, Iterator("zero"), overwrite = false, sessionHadoopConf)
     store.write(deltas(1), Iterator("one"), overwrite = false, sessionHadoopConf)
 
@@ -101,11 +108,11 @@ abstract class LogStoreSuiteBase extends QueryTest
   }
 
   test("listFrom") {
-    val tempDir = Utils.createTempDir()
+    val deltaLogDir = createDeltaLogDir()
     val store = createLogStore(spark)
 
     val deltas =
-      Seq(0, 1, 2, 3, 4).map(i => new File(tempDir, i.toString)).map(_.toURI).map(new Path(_))
+      Seq(0, 1, 2, 3, 4).map(i => new File(deltaLogDir.toString, i.toString)).map(_.toURI).map(new Path(_))
     store.write(deltas(1), Iterator("zero"), overwrite = false, sessionHadoopConf)
     store.write(deltas(2), Iterator("one"), overwrite = false, sessionHadoopConf)
     store.write(deltas(3), Iterator("two"), overwrite = false, sessionHadoopConf)
