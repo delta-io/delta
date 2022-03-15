@@ -5,7 +5,7 @@ Thanks for sending a pull request!  Here are some tips for you:
   3. Be sure to keep the PR description updated to reflect all changes.
   4. Please write your PR title to summarize what this PR proposes.
   5. If possible, provide a concise example to reproduce the issue for a faster review.
-  6. If applicable, include corresponding issue number in the PR title and link it in the body.
+  6. If applicable, include the corresponding issue number in the PR title and link it in the body.
 -->
 
 ## Description
