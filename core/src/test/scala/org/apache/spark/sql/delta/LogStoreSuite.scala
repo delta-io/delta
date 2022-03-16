@@ -304,6 +304,10 @@ trait HDFSLogStoreSuiteBase extends LogStoreSuiteBase {
   protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 
+class HDFSLogStoreSuite extends HDFSLogStoreSuiteBase {
+  override val logStoreClassName: String = classOf[HDFSLogStore].getName
+}
+
 trait LocalLogStoreSuiteBase extends LogStoreSuiteBase {
   testHadoopConf(
     expectedErrMsg = ".*No FileSystem for scheme.*fake.*",
@@ -311,10 +315,6 @@ trait LocalLogStoreSuiteBase extends LogStoreSuiteBase {
     "fs.fake.impl.disable.cache" -> "true")
 
   protected def shouldUseRenameToWriteCheckpoint: Boolean = true
-}
-
-class HDFSLogStoreSuite extends HDFSLogStoreSuiteBase {
-  override val logStoreClassName: String = classOf[HDFSLogStore].getName
 }
 
 class LocalLogStoreSuite extends LocalLogStoreSuiteBase {
