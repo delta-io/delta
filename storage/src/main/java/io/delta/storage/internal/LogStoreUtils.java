@@ -21,12 +21,17 @@ import org.apache.hadoop.conf.Configuration;
 
 import java.lang.reflect.InvocationTargetException;
 
-public class LogStoreProvider {
+public class LogStoreUtils {
 
-    LogStore createLogStoreWithClassName(
+    public static String logStoreSchemeConfKey(String scheme) {
+        return String.format("spark.delta.logStore.%s.impl", scheme);
+    }
+
+    public static LogStore createLogStoreWithClassName(
             String className,
             Configuration hadoopConf) throws ClassNotFoundException, NoSuchMethodException,
-                InvocationTargetException, InstantiationException, IllegalAccessException {
+                                             InvocationTargetException, InstantiationException,
+                                             IllegalAccessException {
         Class<?> logStoreClass = Class.forName(
                 className, true, Thread.currentThread().getContextClassLoader());
 
