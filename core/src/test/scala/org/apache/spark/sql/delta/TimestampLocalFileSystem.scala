@@ -23,7 +23,8 @@ import org.apache.hadoop.fs.{DelegateToFileSystem, Path, RawLocalFileSystem}
 import org.apache.hadoop.fs.FileStatus
 
 /**
- * This custom fs implementation is used for testing the msync calling in HDFSLogStore writes
+ * This custom fs implementation is used for testing the msync calling in HDFSLogStore writes.
+ * If `msync` is not called, `listStatus` will return stale results.
  */
 class TimestampLocalFileSystem extends RawLocalFileSystem {
 
