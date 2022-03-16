@@ -53,12 +53,16 @@ export DELTA_NUM_ROWS=16
   --packages io.delta:delta-contribs_2.12:${VERSION},org.apache.hadoop:hadoop-aws:3.3.1,com.amazonaws:aws-java-sdk-bundle:1.12.142
 """
 
+# TODO: why does the above directions skip DELTA_DYNAMO_REGION
+# what is the error rates?
+
 # conf
 delta_table_path = os.environ.get("DELTA_TABLE_PATH")
 concurrent_writers = int(os.environ.get("DELTA_CONCURRENT_WRITERS", 2))
 concurrent_readers = int(os.environ.get("DELTA_CONCURRENT_READERS", 2))
 num_rows = int(os.environ.get("DELTA_NUM_ROWS", 32))
 
+# TODO: why is this a variable?
 delta_storage = os.environ.get("DELTA_STORAGE", "io.delta.storage.DynamoDBLogStore")
 dynamo_table_name = os.environ.get("DELTA_DYNAMO_TABLE", "delta_log_test")
 dynamo_region = os.environ.get("DELTA_DYNAMO_REGION", "us-west-2")

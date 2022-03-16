@@ -57,7 +57,7 @@ def run_scala_integration_tests(root_dir, version, test_name, extra_maven_repo, 
                 raise
 
 
-def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo, extra_packages, jars, conf):
+def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo):
     print("\n\n##### Running Python tests on version %s #####" % str(version))
     clear_artifact_cache()
     test_dir = path.join(root_dir, path.join("examples", "python"))
@@ -71,16 +71,8 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
     package = "io.delta:delta-core_2.12:" + version
-    if extra_packages:
-        package += "," + extra_packages
-
-    jars = jars and ["--jars", jars] or []
 
     repo = extra_maven_repo if extra_maven_repo else ""
-    conf_args = []
-    if conf:
-        for i in conf:
-            conf_args.extend(["--conf", i])
 
     for test_file in test_files:
         if test_name is not None and test_name not in test_file:
@@ -90,13 +82,50 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
             cmd = ["spark-submit",
                    "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
                    "--packages", package,
-                   *jars,
-                   "--repositories", repo] + conf_args + [test_file]
+                   "--repositories", repo, test_file]
             print("\nRunning Python tests in %s\n=============" % test_file)
             print("Command: %s" % str(cmd))
             run_cmd(cmd, stream_output=True)
         except:
             print("Failed Python tests in %s" % (test_file))
+            raise
+
+
+def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_maven_repo,  extra_packages, conf):
+    print("\n\n##### Running DynamoDB logstore integration tests on version %s #####" % str(version))
+    clear_artifact_cache()
+    test_dir = path.join(root_dir, path.join("storage-dynamodb", "integration_tests"))
+
+    test_files = [path.join(test_dir, f) for f in os.listdir(test_dir)
+                  if path.isfile(path.join(test_dir, f)) and
+                  f.endswith(".py") and not f.startswith("_")]
+
+    python_root_dir = path.join(root_dir, "python")
+    extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
+    packages = "io.delta:delta-core_2.12:" + version
+    packages += "," + "io.delta:storage-dynamodb_2.12:" + version
+    # TODO: aws packages (java SDK and hadoop aws?) will these be passed in from extra_packages?
+
+    repo = extra_maven_repo if extra_maven_repo else ""
+    conf_args = []
+    if conf:
+        for i in conf:
+            conf_args.extend(["--conf", i])
+
+    for test_file in test_files:
+        if test_name is not None and test_name not in test_file:
+            print("\nSkipping DynamoDB logstore integration tests in %s\n=====================" % test_file)
+            continue
+        try:
+            cmd = ["spark-submit",
+                   "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
+                   "--packages", packages,
+                   "--repositories", repo] + conf_args + [test_file]
+            print("\nRunning DynamoDB logstore integration tests in %s\n=============" % test_file)
+            print("Command: %s" % str(cmd))
+            run_cmd(cmd, stream_output=True)
+        except:
+            print("Failed  DynamoDB logstore integration tests tests in %s" % (test_file))
             raise
 
 
@@ -244,15 +273,23 @@ if __name__ == "__main__":
         action="store_true",
         help="Use testpypi for testing pip installation")
     parser.add_argument(
+        "--run-dynamodb-logstore-integration-tests",
+        required=False,
+        default=False,
+        action="store_true",
+        help="Run only DynamoDB integration tests"
+    )
+    # TODO: run only? don't run?
+    # storage-dynamodb-integration-tests
+
+    # TODO: should I edit the python file?
+    # TODO: how many of these should be a command line argument vs part of running dynamodb integration tests?
+    # TODO: from the how-to wiki perspective, how much of this should be hard-coded?
+    parser.add_argument(
         "--packages",
         required=False,
         default=None,
-        help="Additional packages required for some tests")
-    parser.add_argument(
-        "--jars",
-        required=False,
-        default=None,
-        help="Additional jars required for some tests")
+        help="Additional packages required for Dynamodb logstore integration tests")
     parser.add_argument(
         "--conf",
         required=False,
@@ -278,8 +315,12 @@ if __name__ == "__main__":
                                     args.scala_version)
 
     if run_python:
-        run_python_integration_tests(
-            root_dir, args.version, args.test, args.maven_repo, args.packages, args.jars, args.conf
+        run_python_integration_tests(root_dir, args.version, args.test, args.maven_repo)
+
+    # TODO: when to run them?
+    if args.run_dynamodb_logstore_integration_tests:
+        run_dynamodb_logstore_integration_tests(
+            root_dir, args.version, args.test, args.maven_repo, args.packages, args.conf
         )
 
     if run_pip:
