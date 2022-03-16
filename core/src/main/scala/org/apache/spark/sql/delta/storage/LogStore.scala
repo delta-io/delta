@@ -252,14 +252,30 @@ object LogStore extends LogStoreProvider
       className: String,
       sparkConf: SparkConf,
       hadoopConf: Configuration): LogStore = {
-    if (className == classOf[DelegatingLogStore].getName) {
+    if (className == classOf[io.delta.storage.DelegatingLogStore].getName) {
+      // case 1: use a DelegatingLogStore for Java LogStore implementations
+
+      // io.delta.storage.DelegatingLogStore only takes in a hadoopConf, so transfer any
+      // LogStore-related from sparkConf to hadoopConf
+      for (scheme <- DelegatingLogStore.allSchemes) {
+        val schemeConfKey = logStoreSchemeConfKey(scheme)
+        if (sparkConf.contains(schemeConfKey)) {
+          hadoopConf.set(schemeConfKey, sparkConf.get(schemeConfKey))
+        }
+      }
+
+      new LogStoreAdaptor(new io.delta.storage.DelegatingLogStore(hadoopConf))
+    } else if (className == classOf[DelegatingLogStore].getName) {
+      // case 2: use a DelegatingLogStore for Scala LogStore implementations
       new DelegatingLogStore(hadoopConf)
     } else {
       val logStoreClass = Utils.classForName(className)
       if (classOf[io.delta.storage.LogStore].isAssignableFrom(logStoreClass)) {
+        // case 3: instantiate a specific Java LogStore
         new LogStoreAdaptor(logStoreClass.getConstructor(classOf[Configuration])
           .newInstance(hadoopConf))
       } else {
+        // case 4: instantiate a specific Scala LogStore
         logStoreClass.getConstructor(classOf[SparkConf], classOf[Configuration])
           .newInstance(sparkConf, hadoopConf).asInstanceOf[LogStore]
       }
@@ -269,6 +285,7 @@ object LogStore extends LogStoreProvider
 
 trait LogStoreProvider {
   val logStoreClassConfKey: String = "spark.delta.logStore.class"
+  // TODO val defaultLogStoreClass: String = classOf[io.delta.storage.DelegatingLogStore].getName
   val defaultLogStoreClass: String = classOf[DelegatingLogStore].getName
 
   def createLogStore(spark: SparkSession): LogStore = {

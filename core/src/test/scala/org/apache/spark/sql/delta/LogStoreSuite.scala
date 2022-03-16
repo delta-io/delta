@@ -391,6 +391,7 @@ abstract class PublicLogStoreSuite extends LogStoreSuiteBase {
   override val logStoreClassName: String = classOf[LogStoreAdaptor].getName
 
   protected override def sparkConf = {
+    // override logStoreClassConfKey
     super.sparkConf.set(logStoreClassConfKey, publicLogStoreClassName)
   }
 
@@ -408,4 +409,32 @@ abstract class PublicLogStoreSuite extends LogStoreSuiteBase {
 class PublicHDFSLogStoreSuite extends PublicLogStoreSuite with HDFSLogStoreSuiteBase {
   override protected val publicLogStoreClassName: String =
     classOf[io.delta.storage.HDFSLogStore].getName
+}
+
+///////////////////////////////////////////
+// DelegatingLogStore Public Test Suites //
+///////////////////////////////////////////
+
+trait PublicDelegatingLogStoreSuite extends PublicLogStoreSuite {
+  override protected val publicLogStoreClassName: String =
+    classOf[io.delta.storage.DelegatingLogStore].getName
+
+  protected val schemeAndClass: Option[(String, String)]
+
+  protected override def sparkConf = {
+    schemeAndClass match {
+      case Some(x) =>
+        val scheme = x._1
+        val schemeClass = x._2
+        val schemeKey = LogStore.logStoreSchemeConfKey(scheme)
+        super.sparkConf.set(schemeKey, schemeClass)
+      case _ => super.sparkConf
+    }
+  }
+}
+
+class PublicDelegatingAzureLogStoreSuite extends PublicDelegatingLogStoreSuite {
+  override protected val schemeAndClass: String = Some(
+    DelegatingLogStore.azureSchemes.head,
+    classOf[io.delta.storage.AzureLogStore].getName)
 }

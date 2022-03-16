@@ -154,6 +154,7 @@ object DelegatingLogStore {
   // Supported schemes with default.
   val s3Schemes = Set("s3", "s3a", "s3n")
   val azureSchemes = Set("abfs", "abfss", "adl", "wasb", "wasbs")
+  val allSchemes = s3Schemes ++ azureSchemes
 
   // Returns the default LogStore class name for `scheme`.
   // None if we do not have a default for it.
