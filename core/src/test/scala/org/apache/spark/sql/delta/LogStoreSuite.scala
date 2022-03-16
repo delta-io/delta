@@ -206,9 +206,7 @@ abstract class LogStoreSuiteBase extends QueryTest
   }
 }
 
-class AzureLogStoreSuite extends LogStoreSuiteBase {
-
-  override val logStoreClassName: String = classOf[AzureLogStore].getName
+trait AzureLogStoreSuiteBase extends LogStoreSuiteBase {
 
   testHadoopConf(
     expectedErrMsg = ".*No FileSystem for scheme.*fake.*",
@@ -306,6 +304,10 @@ trait HDFSLogStoreSuiteBase extends LogStoreSuiteBase {
 
 class HDFSLogStoreSuite extends HDFSLogStoreSuiteBase {
   override val logStoreClassName: String = classOf[HDFSLogStore].getName
+}
+
+class AzureLogStoreSuite extends AzureLogStoreSuiteBase {
+  override val logStoreClassName: String = classOf[AzureLogStore].getName
 }
 
 class LocalLogStoreSuite extends LogStoreSuiteBase {
@@ -408,4 +410,9 @@ abstract class PublicLogStoreSuite extends LogStoreSuiteBase {
 class PublicHDFSLogStoreSuite extends PublicLogStoreSuite with HDFSLogStoreSuiteBase {
   override protected val publicLogStoreClassName: String =
     classOf[io.delta.storage.HDFSLogStore].getName
+}
+
+class PublicAzureLogStoreSuite extends PublicLogStoreSuite with AzureLogStoreSuiteBase {
+  override protected val publicLogStoreClassName: String =
+    classOf[io.delta.storage.AzureLogStore].getName
 }
