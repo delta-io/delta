@@ -50,7 +50,7 @@ def run_scala_integration_tests(root_dir, version, test_name, extra_maven_repo, 
             try:
                 cmd = ["build/sbt", "runMain example.%s" % test_class]
                 print("\nRunning Scala tests in %s\n=====================" % test_class)
-                print("Command: %s" % str(cmd))
+                print("Command: %s" % " ".join(cmd))
                 run_cmd(cmd, stream_output=True, env=env)
             except:
                 print("Failed Scala tests in %s" % (test_class))
@@ -60,6 +60,7 @@ def run_scala_integration_tests(root_dir, version, test_name, extra_maven_repo, 
 def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo):
     print("\n\n##### Running Python tests on version %s #####" % str(version))
     clear_artifact_cache()
+    run_cmd(["build/sbt", "publishM2"])  // TODO: THIS IS TEMPORARY, NEED TO MERGE #990
     test_dir = path.join(root_dir, path.join("examples", "python"))
     files_to_skip = {"using_with_pip.py"}
 
@@ -84,7 +85,7 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo)
                    "--packages", package,
                    "--repositories", repo, test_file]
             print("\nRunning Python tests in %s\n=============" % test_file)
-            print("Command: %s" % str(cmd))
+            print("Command: %s" % " ".join(cmd))
             run_cmd(cmd, stream_output=True)
         except:
             print("Failed Python tests in %s" % (test_file))
@@ -94,7 +95,7 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo)
 def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_maven_repo,  extra_packages, conf):
     print("\n\n##### Running DynamoDB logstore integration tests on version %s #####" % str(version))
     clear_artifact_cache()
-    run_cmd(["build/sbt", "publishM2"])
+    run_cmd(["build/sbt", "publishM2"])  // TODO: THIS IS TEMPORARY, NEED TO MERGE #990
     test_dir = path.join(root_dir, path.join("storage-dynamodb", "integration_tests"))
 
     test_files = [path.join(test_dir, f) for f in os.listdir(test_dir)
@@ -108,11 +109,12 @@ def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_
     if extra_packages:
         packages += "," + extra_packages
 
-    repo = extra_maven_repo if extra_maven_repo else ""
     conf_args = []
     if conf:
         for i in conf:
             conf_args.extend(["--conf", i])
+
+    repo_args = ["--repositories", extra_maven_repo] if extra_maven_repo else []
 
     for test_file in test_files:
         if test_name is not None and test_name not in test_file:
@@ -121,10 +123,10 @@ def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_
         try:
             cmd = ["spark-submit",
                    "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
-                   "--packages", packages,
-                   "--repositories", repo] + conf_args + [test_file]
+                   "--packages", packages]
+                   + repo_args + conf_args + [test_file]
             print("\nRunning DynamoDB logstore integration tests in %s\n=============" % test_file)
-            print("Command: %s" % str(cmd))
+            print("Command: %s" % " ".join(cmd))
             run_cmd(cmd, stream_output=True)
         except:
             print("Failed  DynamoDB logstore integration tests tests in %s" % (test_file))

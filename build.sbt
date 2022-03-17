@@ -169,7 +169,7 @@ lazy val storage = (project in file("storage"))
   .settings (
     name := "delta-storage",
     commonSettings,
-    releaseSettings,
+    releaseSettings, // TODO: proper artifact name
     libraryDependencies ++= Seq(
       // User can provide any 2.x or 3.x version. We don't use any new fancy APIs. Watch out for
       // versions with known vulnerabilities.
@@ -187,11 +187,9 @@ lazy val storageDynamodb = (project in file("storage-dynamodb"))
   .settings (
     name := "delta-storage-dynamodb",
     commonSettings,
-//    skipReleaseSettings,
-     releaseSettings,
+    releaseSettings, // TODO: proper artifact name
     libraryDependencies ++= Seq(
-      "com.amazonaws" % "aws-java-sdk" % "1.7.4",
-      "org.apache.hadoop" % "hadoop-common" % "3.3.1" % "provided"
+      "com.amazonaws" % "aws-java-sdk" % "1.7.4" // TODO: mark as provided?
     )
   )
 

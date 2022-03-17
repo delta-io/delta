@@ -43,14 +43,17 @@ export DELTA_CONCURRENT_WRITERS=2
 export DELTA_CONCURRENT_READERS=2
 export DELTA_TABLE_PATH=s3a://test-bucket/delta-test/
 export DELTA_DYNAMO_TABLE=delta_log_test
-export DELTA_STORAGE=io.delta.storage.DynamoDBLogStore
+export DELTA_STORAGE=io.delta.storage.DynamoDBLogStoreScala # TODO: remove `Scala` when Java version finished
 export DELTA_NUM_ROWS=16
+
+TODO: update this comment with proper delta-storage artifact ID (i.e. no _2.12 scala version)
+
 ./run-integration-tests.py \
   --test dynamodb_logstore.py \
   --python-only \
   --conf spark.jars.ivySettings=/workspace/ivy.settings \
          spark.driver.extraJavaOptions=-Dlog4j.configuration=file:debug/log4j.properties \
-  --packages io.delta:delta-contribs_2.12:${VERSION},org.apache.hadoop:hadoop-aws:3.3.1,com.amazonaws:aws-java-sdk-bundle:1.12.142
+  --packages io.delta:delta-storage-dynamodb_2.12:${VERSION},org.apache.hadoop:hadoop-aws:3.3.1,com.amazonaws:aws-java-sdk-bundle:1.12.142
 """
 
 # TODO: why does the above directions skip DELTA_DYNAMO_REGION
@@ -82,15 +85,17 @@ dynamo table name: {dynamo_table_name}
 """
 print(test_log)
 
+# TODO: update to spark.delta.DynamoDBLogStore.tableName (no `Scala`) when Java version finished
+
 spark = SparkSession \
     .builder \
     .appName("utilities") \
     .master("local[*]") \
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
-    .config("spark.delta.logStore.class", "io.delta.storage.DynamoDBLogStore") \
-    .config("spark.delta.DynamoDBLogStore.tableName", dynamo_table_name) \
-    .config("spark.delta.DynamoDBLogStore.region", dynamo_region) \
-    .config("spark.delta.DynamoDBLogStore.errorRates", dynamo_error_rates) \
+    .config("spark.delta.logStore.class", "io.delta.storage.DynamoDBLogStoreScala") \
+    .config("spark.delta.DynamoDBLogStoreScala.tableName", dynamo_table_name) \
+    .config("spark.delta.DynamoDBLogStoreScala.region", dynamo_region) \
+    .config("spark.delta.DynamoDBLogStoreScala.errorRates", dynamo_error_rates) \
     .getOrCreate()
 
 data = spark.createDataFrame([], "id: int, a: int")
