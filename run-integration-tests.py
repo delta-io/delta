@@ -76,8 +76,8 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
         package += "," + extra_packages
 
     jars = jars and ["--jars", jars] or []
+    repos = extra_maven_repo and ["--repositories", extra_maven_repo] or []
 
-    repo = extra_maven_repo if extra_maven_repo else ""
     conf_args = []
     if conf:
         for i in conf:
@@ -91,9 +91,7 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
             cmd = ["spark-submit",
                    "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
                    "--packages", package,
-                   *jars] + conf_args + [test_file]
-            if repo:
-                cmd = cmd + ["--repositories", repo]
+                   *jars] + repos + conf_args + [test_file]
 
             print("\nRunning Python tests in %s\n=============" % test_file)
             print("Command: %s" % " ".join(cmd))
