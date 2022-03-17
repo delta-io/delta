@@ -136,7 +136,7 @@ public class DelegatingLogStore extends LogStore {
             Iterator<String> actions,
             Boolean overwrite,
             Configuration hadoopConf) throws IOException {
-        getDelegateByScheme(path, hadoopConf).read(path, hadoopConf);
+        getDelegateByScheme(path, hadoopConf).write(path, actions, overwrite, hadoopConf);
     }
 
     @Override

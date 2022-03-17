@@ -385,13 +385,18 @@ class FailingRenameAbstractFileSystem(uri: URI, conf: org.apache.hadoop.conf.Con
 
 abstract class PublicLogStoreSuite extends LogStoreSuiteBase {
 
+  /**
+   * The runtime implementation used by the [[LogStoreAdaptor]].
+   */
   protected val publicLogStoreClassName: String
 
-  // The actual type of LogStore created will be LogStoreAdaptor.
+  /**
+   * The actual type of LogStore created will be [[LogStoreAdaptor]].
+   */
   override val logStoreClassName: String = classOf[LogStoreAdaptor].getName
 
   protected override def sparkConf = {
-    // override logStoreClassConfKey
+    // override logStoreClassConfKey set in LogStoreSuiteBase
     super.sparkConf.set(logStoreClassConfKey, publicLogStoreClassName)
   }
 
@@ -401,7 +406,6 @@ abstract class PublicLogStoreSuite extends LogStoreSuiteBase {
       assert(LogStore(spark.sparkContext).getClass.getName == logStoreClassName)
       assert(LogStore(spark.sparkContext).asInstanceOf[LogStoreAdaptor]
         .logStoreImpl.getClass.getName == publicLogStoreClassName)
-
     }
   }
 }
@@ -415,12 +419,25 @@ class PublicHDFSLogStoreSuite extends PublicLogStoreSuite with HDFSLogStoreSuite
 // DelegatingLogStore Public Test Suites //
 ///////////////////////////////////////////
 
-trait PublicDelegatingLogStoreSuite extends PublicLogStoreSuite {
+/**
+ * Helper class to test the io.delta.storage.DelegatingLogStore (Java) implementation.
+ *
+ * Concrete children must override [[schemeAndClass]].
+ */
+abstract class PublicDelegatingLogStoreSuite extends PublicLogStoreSuite {
   override protected val publicLogStoreClassName: String =
     classOf[io.delta.storage.DelegatingLogStore].getName
 
+  /**
+   * The desired (scheme, schemeClass) for the intended runtime LogStore implementation that is
+   * instantiated by the DelegatingLogStore.
+   */
   protected val schemeAndClass: Option[(String, String)]
 
+  /**
+   * If [[schemeAndClass]] is not None, will assign the $schemeClass to the $schemeKey (of format
+   * `spark.delta.logStore.${scheme}.impl`) in the sparkConf
+   */
   protected override def sparkConf = {
     schemeAndClass match {
       case Some(x) =>
@@ -433,8 +450,17 @@ trait PublicDelegatingLogStoreSuite extends PublicLogStoreSuite {
   }
 }
 
-class PublicDelegatingAzureLogStoreSuite extends PublicDelegatingLogStoreSuite {
-  override protected val schemeAndClass: String = Some(
-    DelegatingLogStore.azureSchemes.head,
-    classOf[io.delta.storage.AzureLogStore].getName)
+/**
+ * DelegatingLogStore will, by default, use HDFSLogStore.
+ */
+class PublicDelegatingLogStoreDefaultSuite
+  extends PublicDelegatingLogStoreSuite
+  with HDFSLogStoreSuiteBase {
+  override protected val schemeAndClass: Option[(String, String)] = None
 }
+
+// class PublicDelegatingLogStoreAzureSuite extends PublicDelegatingLogStoreSuite {
+//   override protected val schemeAndClass: Option[(String, String)] = Some(
+//     DelegatingLogStore.azureSchemes.head,
+//     classOf[io.delta.storage.AzureLogStore].getName)
+// }
