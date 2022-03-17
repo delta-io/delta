@@ -60,6 +60,7 @@ def run_scala_integration_tests(root_dir, version, test_name, extra_maven_repo, 
 def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo, extra_packages, jars, conf):
     print("\n\n##### Running Python tests on version %s #####" % str(version))
     clear_artifact_cache()
+    run_cmd(["build/sbt", "publishM2"])
     test_dir = path.join(root_dir, path.join("examples", "python"))
     files_to_skip = {"using_with_pip.py"}
 
@@ -75,8 +76,8 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
         package += "," + extra_packages
 
     jars = jars and ["--jars", jars] or []
+    repos = extra_maven_repo and ["--repositories", extra_maven_repo] or []
 
-    repo = extra_maven_repo if extra_maven_repo else ""
     conf_args = []
     if conf:
         for i in conf:
@@ -90,10 +91,10 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
             cmd = ["spark-submit",
                    "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
                    "--packages", package,
-                   *jars,
-                   "--repositories", repo] + conf_args + [test_file]
+                   *jars] + repos + conf_args + [test_file]
+
             print("\nRunning Python tests in %s\n=============" % test_file)
-            print("Command: %s" % str(cmd))
+            print("Command: %s" % " ".join(cmd))
             run_cmd(cmd, stream_output=True)
         except:
             print("Failed Python tests in %s" % (test_file))
