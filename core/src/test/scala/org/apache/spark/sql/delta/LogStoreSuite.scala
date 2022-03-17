@@ -302,6 +302,15 @@ trait HDFSLogStoreSuiteBase extends LogStoreSuiteBase {
   protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 
+trait LocalLogStoreSuiteBase extends LogStoreSuiteBase {
+  testHadoopConf(
+    expectedErrMsg = ".*No FileSystem for scheme.*fake.*",
+    "fs.fake.impl" -> classOf[FakeFileSystem].getName,
+    "fs.fake.impl.disable.cache" -> "true")
+
+  protected def shouldUseRenameToWriteCheckpoint: Boolean = true
+}
+
 class HDFSLogStoreSuite extends HDFSLogStoreSuiteBase {
   override val logStoreClassName: String = classOf[HDFSLogStore].getName
 }
@@ -310,16 +319,8 @@ class AzureLogStoreSuite extends AzureLogStoreSuiteBase {
   override val logStoreClassName: String = classOf[AzureLogStore].getName
 }
 
-class LocalLogStoreSuite extends LogStoreSuiteBase {
-
+class LocalLogStoreSuite extends LocalLogStoreSuiteBase {
   override val logStoreClassName: String = classOf[LocalLogStore].getName
-
-  testHadoopConf(
-    expectedErrMsg = ".*No FileSystem for scheme.*fake.*",
-    "fs.fake.impl" -> classOf[FakeFileSystem].getName,
-    "fs.fake.impl.disable.cache" -> "true")
-
-  protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 
 /** A fake file system to test whether session Hadoop configuration will be picked up. */
@@ -415,4 +416,9 @@ class PublicHDFSLogStoreSuite extends PublicLogStoreSuite with HDFSLogStoreSuite
 class PublicAzureLogStoreSuite extends PublicLogStoreSuite with AzureLogStoreSuiteBase {
   override protected val publicLogStoreClassName: String =
     classOf[io.delta.storage.AzureLogStore].getName
+}
+
+class PublicLocalLogStoreSuite extends PublicLogStoreSuite with LocalLogStoreSuiteBase {
+  override protected val publicLogStoreClassName: String =
+    classOf[io.delta.storage.LocalLogStore].getName
 }
