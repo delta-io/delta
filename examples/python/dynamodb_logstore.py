@@ -53,7 +53,7 @@ TODO: update this comment with proper delta-storage artifact ID (i.e. no _2.12 s
   --python-only \
   --conf spark.jars.ivySettings=/workspace/ivy.settings \
          spark.driver.extraJavaOptions=-Dlog4j.configuration=file:debug/log4j.properties \
-  --packages io.delta:delta-storage_2.12:${VERSION},org.apache.hadoop:hadoop-aws:3.3.1,com.amazonaws:aws-java-sdk-bundle:1.12.142
+  --packages io.delta:delta-storage-dynamodb_2.12:${VERSION},org.apache.hadoop:hadoop-aws:3.3.1,com.amazonaws:aws-java-sdk-bundle:1.12.142
 """
 
 # conf
