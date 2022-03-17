@@ -53,7 +53,7 @@ trait DeltaColumnMappingSelectedTestMixin extends SparkFunSuite with SQLTestUtil
     }
   }
 
-  override protected def afterAll(): Unit = {
+  override def afterAll(): Unit = {
     super.afterAll()
     val missingTests = runOnlyTests.toSet diff testsRun
     if (missingTests.nonEmpty) {

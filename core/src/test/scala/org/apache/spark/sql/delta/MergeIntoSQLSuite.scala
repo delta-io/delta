@@ -329,9 +329,7 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
 
 
 class MergeIntoSQLNameColumnMappingSuite extends MergeIntoSQLSuite
-  with DeltaColumnMappingEnableNameMode
-  with DeltaColumnMappingTestUtils
-  with DeltaColumnMappingSelectedTestMixin {
+  with DeltaColumnMappingEnableNameMode {
 
   override protected def columnMappingMode: String = NameMapping.name
 
