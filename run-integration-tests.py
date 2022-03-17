@@ -60,7 +60,6 @@ def run_scala_integration_tests(root_dir, version, test_name, extra_maven_repo, 
 def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo):
     print("\n\n##### Running Python tests on version %s #####" % str(version))
     clear_artifact_cache()
-    run_cmd(["build/sbt", "publishM2"])  // TODO: THIS IS TEMPORARY, NEED TO MERGE #990
     test_dir = path.join(root_dir, path.join("examples", "python"))
     files_to_skip = {"using_with_pip.py"}
 
@@ -92,10 +91,11 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo)
             raise
 
 
-def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_maven_repo,  extra_packages, conf):
+def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_maven_repo,
+                                            extra_packages, conf):
     print("\n\n##### Running DynamoDB logstore integration tests on version %s #####" % str(version))
     clear_artifact_cache()
-    run_cmd(["build/sbt", "publishM2"])  // TODO: THIS IS TEMPORARY, NEED TO MERGE #990
+    run_cmd(["build/sbt", "publishM2"])  # TODO: THIS IS TEMPORARY, NEED TO MERGE #990
     test_dir = path.join(root_dir, path.join("storage-dynamodb", "integration_tests"))
 
     test_files = [path.join(test_dir, f) for f in os.listdir(test_dir)
@@ -118,13 +118,12 @@ def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_
 
     for test_file in test_files:
         if test_name is not None and test_name not in test_file:
-            print("\nSkipping DynamoDB logstore integration tests in %s\n=====================" % test_file)
+            print("\nSkipping DynamoDB logstore integration tests in %s\n============" % test_file)
             continue
         try:
             cmd = ["spark-submit",
                    "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
-                   "--packages", packages]
-                   + repo_args + conf_args + [test_file]
+                   "--packages", packages] + repo_args + conf_args + [test_file]
             print("\nRunning DynamoDB logstore integration tests in %s\n=============" % test_file)
             print("Command: %s" % " ".join(cmd))
             run_cmd(cmd, stream_output=True)
@@ -277,16 +276,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Use testpypi for testing pip installation")
     parser.add_argument(
-        "--run-dynamodb-logstore-integration-tests",
+        "--run-storage-dynamodb-integration-tests",
         required=False,
         default=False,
         action="store_true",
-        help="Run only DynamoDB integration tests"
-    )
-    # TODO: run only? don't run?
-    # storage-dynamodb-integration-tests
-
-    # TODO: should I edit the python file?
+        help="Run the DynamoDB integration tests (and only them)")
     parser.add_argument(
         "--packages",
         required=False,
@@ -297,7 +291,7 @@ if __name__ == "__main__":
         required=False,
         default=None,
         nargs="+",
-        help="All possible `--conf` values passed to `spark-submit` for DynamoDB logstore integration tests")
+        help="All `--conf` values passed to `spark-submit` for DynamoDB logstore integration tests")
 
     args = parser.parse_args()
 
@@ -308,9 +302,15 @@ if __name__ == "__main__":
     if args.pip_only and args.no_pip:
         raise Exception("Cannot specify both --pip-only and --no-pip")
 
-    run_python = not args.scala_only and not args.pip_only and not args.run_dynamodb_logstore_integration_tests
-    run_scala = not args.python_only and not args.pip_only and not args.run_dynamodb_logstore_integration_tests
-    run_pip = not args.python_only and not args.scala_only and not args.no_pip and not args.run_dynamodb_logstore_integration_tests
+    run_python = not args.scala_only and not args.pip_only
+    run_scala = not args.python_only and not args.pip_only
+    run_pip = not args.python_only and not args.scala_only and not args.no_pip
+
+    if args.run_storage_dynamodb_integration_tests:
+        run_dynamodb_logstore_integration_tests(
+            root_dir, args.version, args.test, args.maven_repo, args.packages, args.conf
+        )
+        quit()
 
     if run_scala:
         run_scala_integration_tests(root_dir, args.version, args.test, args.maven_repo,
@@ -319,14 +319,5 @@ if __name__ == "__main__":
     if run_python:
         run_python_integration_tests(root_dir, args.version, args.test, args.maven_repo)
 
-    if args.run_dynamodb_logstore_integration_tests:
-        run_dynamodb_logstore_integration_tests(
-            root_dir, args.version, args.test, args.maven_repo, args.packages, args.conf
-        )
-
     if run_pip:
         run_pip_installation_tests(root_dir, args.version, args.use_testpypi, args.maven_repo)
-
-
-# with 1.12.142: (null pointer exception)
-# with it: weird unreadable AWS error (1.7.4) & without aws-sdk-bundle package
