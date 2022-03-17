@@ -94,6 +94,7 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo)
 def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_maven_repo,  extra_packages, conf):
     print("\n\n##### Running DynamoDB logstore integration tests on version %s #####" % str(version))
     clear_artifact_cache()
+    run_cmd(["build/sbt", "publishM2"])
     test_dir = path.join(root_dir, path.join("storage-dynamodb", "integration_tests"))
 
     test_files = [path.join(test_dir, f) for f in os.listdir(test_dir)
@@ -103,8 +104,9 @@ def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
     packages = "io.delta:delta-core_2.12:" + version
-    packages += "," + "io.delta:storage-dynamodb_2.12:" + version
-    # TODO: aws packages (java SDK and hadoop aws?) will these be passed in from extra_packages?
+    packages += "," + "io.delta:delta-storage-dynamodb_2.12:" + version
+    if extra_packages:
+        packages += "," + extra_packages
 
     repo = extra_maven_repo if extra_maven_repo else ""
     conf_args = []
@@ -283,8 +285,6 @@ if __name__ == "__main__":
     # storage-dynamodb-integration-tests
 
     # TODO: should I edit the python file?
-    # TODO: how many of these should be a command line argument vs part of running dynamodb integration tests?
-    # TODO: from the how-to wiki perspective, how much of this should be hard-coded?
     parser.add_argument(
         "--packages",
         required=False,
@@ -295,7 +295,7 @@ if __name__ == "__main__":
         required=False,
         default=None,
         nargs="+",
-        help="All possible `--conf` values passed to `spark-submit`")
+        help="All possible `--conf` values passed to `spark-submit` for DynamoDB logstore integration tests")
 
     args = parser.parse_args()
 
@@ -306,9 +306,9 @@ if __name__ == "__main__":
     if args.pip_only and args.no_pip:
         raise Exception("Cannot specify both --pip-only and --no-pip")
 
-    run_python = not args.scala_only and not args.pip_only
-    run_scala = not args.python_only and not args.pip_only
-    run_pip = not args.python_only and not args.scala_only and not args.no_pip
+    run_python = not args.scala_only and not args.pip_only and not args.run_dynamodb_logstore_integration_tests
+    run_scala = not args.python_only and not args.pip_only and not args.run_dynamodb_logstore_integration_tests
+    run_pip = not args.python_only and not args.scala_only and not args.no_pip and not args.run_dynamodb_logstore_integration_tests
 
     if run_scala:
         run_scala_integration_tests(root_dir, args.version, args.test, args.maven_repo,
@@ -317,7 +317,6 @@ if __name__ == "__main__":
     if run_python:
         run_python_integration_tests(root_dir, args.version, args.test, args.maven_repo)
 
-    # TODO: when to run them?
     if args.run_dynamodb_logstore_integration_tests:
         run_dynamodb_logstore_integration_tests(
             root_dir, args.version, args.test, args.maven_repo, args.packages, args.conf
@@ -325,3 +324,7 @@ if __name__ == "__main__":
 
     if run_pip:
         run_pip_installation_tests(root_dir, args.version, args.use_testpypi, args.maven_repo)
+
+
+# with 1.12.142: (null pointer exception)
+# with it: weird unreadable AWS error (1.7.4) & without aws-sdk-bundle package

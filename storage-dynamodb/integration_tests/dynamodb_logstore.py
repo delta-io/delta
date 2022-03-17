@@ -60,10 +60,8 @@ export DELTA_NUM_ROWS=16
 delta_table_path = os.environ.get("DELTA_TABLE_PATH")
 concurrent_writers = int(os.environ.get("DELTA_CONCURRENT_WRITERS", 2))
 concurrent_readers = int(os.environ.get("DELTA_CONCURRENT_READERS", 2))
-num_rows = int(os.environ.get("DELTA_NUM_ROWS", 32))
+num_rows = int(os.environ.get("DELTA_NUM_ROWS", 16))
 
-# TODO: why is this a variable?
-delta_storage = os.environ.get("DELTA_STORAGE", "io.delta.storage.DynamoDBLogStore")
 dynamo_table_name = os.environ.get("DELTA_DYNAMO_TABLE", "delta_log_test")
 dynamo_region = os.environ.get("DELTA_DYNAMO_REGION", "us-west-2")
 dynamo_error_rates = os.environ.get("DELTA_DYNAMO_ERROR_RATES", "")
@@ -79,7 +77,6 @@ delta table path: {delta_table_path}
 concurrent writers: {concurrent_writers}
 concurrent readers: {concurrent_readers}
 number of rows: {num_rows}
-delta storage: {delta_storage}
 dynamo table name: {dynamo_table_name}
 =====================
 """
@@ -90,7 +87,7 @@ spark = SparkSession \
     .appName("utilities") \
     .master("local[*]") \
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
-    .config("spark.delta.logStore.class", delta_storage) \
+    .config("spark.delta.logStore.class", "io.delta.storage.DynamoDBLogStore") \
     .config("spark.delta.DynamoDBLogStore.tableName", dynamo_table_name) \
     .config("spark.delta.DynamoDBLogStore.region", dynamo_region) \
     .config("spark.delta.DynamoDBLogStore.errorRates", dynamo_error_rates) \
