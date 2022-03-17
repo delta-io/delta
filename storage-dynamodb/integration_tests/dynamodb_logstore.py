@@ -44,6 +44,7 @@ export DELTA_CONCURRENT_READERS=2
 export DELTA_TABLE_PATH=s3a://test-bucket/delta-test/
 export DELTA_DYNAMO_TABLE=delta_log_test
 export DELTA_DYNAMO_REGION=us-west-2
+export DELTA_STORAGE=io.delta.storage.DynamoDBLogStoreScala # TODO: remove `Scala` when Java version finished
 export DELTA_NUM_ROWS=16
 
 TODO: update this comment with proper delta-storage artifact ID (i.e. no _2.12 scala version)
@@ -62,6 +63,8 @@ concurrent_writers = int(os.environ.get("DELTA_CONCURRENT_WRITERS", 2))
 concurrent_readers = int(os.environ.get("DELTA_CONCURRENT_READERS", 2))
 num_rows = int(os.environ.get("DELTA_NUM_ROWS", 16))
 
+# TODO change back to default io.delta.storage.DynamoDBLogStore
+delta_storage = os.environ.get("DELTA_STORAGE", "io.delta.storage.DynamoDBLogStoreScala")
 dynamo_table_name = os.environ.get("DELTA_DYNAMO_TABLE", "delta_log_test")
 dynamo_region = os.environ.get("DELTA_DYNAMO_REGION", "us-west-2")
 dynamo_error_rates = os.environ.get("DELTA_DYNAMO_ERROR_RATES", "")
@@ -77,6 +80,7 @@ delta table path: {delta_table_path}
 concurrent writers: {concurrent_writers}
 concurrent readers: {concurrent_readers}
 number of rows: {num_rows}
+delta storage: {delta_storage}
 dynamo table name: {dynamo_table_name}
 =====================
 """
@@ -89,7 +93,7 @@ spark = SparkSession \
     .appName("utilities") \
     .master("local[*]") \
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
-    .config("spark.delta.logStore.class", "io.delta.storage.DynamoDBLogStoreScala") \
+    .config("spark.delta.logStore.class", delta_storage) \
     .config("spark.delta.DynamoDBLogStoreScala.tableName", dynamo_table_name) \
     .config("spark.delta.DynamoDBLogStoreScala.region", dynamo_region) \
     .config("spark.delta.DynamoDBLogStoreScala.errorRates", dynamo_error_rates) \

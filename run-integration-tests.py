@@ -128,7 +128,7 @@ def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_
             print("Command: %s" % " ".join(cmd))
             run_cmd(cmd, stream_output=True)
         except:
-            print("Failed  DynamoDB logstore integration tests tests in %s" % (test_file))
+            print("Failed DynamoDB logstore integration tests tests in %s" % (test_file))
             raise
 
 
