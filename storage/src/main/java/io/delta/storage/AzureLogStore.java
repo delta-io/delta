@@ -54,9 +54,8 @@ public class AzureLogStore extends HadoopFileSystemLogStore {
         writeWithRename(path, actions, overwrite, hadoopConf);
     }
 
-    public Boolean isPartialWriteVisible(
-            Path path,
-            Configuration hadoopConf) {
+    @Override
+    public Boolean isPartialWriteVisible(Path path, Configuration hadoopConf) {
         return true;
     }
 }
