@@ -19,12 +19,29 @@ package org.apache.spark.sql.delta.schema
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.{DeltaThrowable, DeltaThrowableHelper}
 import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraints}
 
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 
 /** Thrown when the given data doesn't match the rules defined on the table. */
-case class InvariantViolationException(message: String) extends RuntimeException(message)
+case class InvariantViolationException(
+    message: String,
+    errorClass: Option[String],
+    messageParameters: Array[String])
+  extends RuntimeException(message) with DeltaThrowable {
+
+  def this(message: String) = this(message = message, None, Array.empty)
+
+  def this(errorClass: String, messageParameters: Array[String]) = {
+    this(
+      DeltaThrowableHelper.getMessage(errorClass, messageParameters),
+      Some(errorClass),
+      messageParameters)
+  }
+
+  override def getErrorClass: String = errorClass.get
+}
 
 object InvariantViolationException {
   def apply(constraint: Constraints.NotNull): InvariantViolationException = {

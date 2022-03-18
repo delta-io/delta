@@ -17,9 +17,11 @@
 package io.delta.sql
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.stats.PrepareDeltaScan
 import io.delta.sql.parser.DeltaSqlParser
 
 import org.apache.spark.sql.SparkSessionExtensions
+import org.apache.spark.sql.delta.PreprocessTableRestore
 import org.apache.spark.sql.internal.SQLConf
 
 /**
@@ -76,6 +78,9 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
       new DeltaSqlParser(parser)
     }
     extensions.injectResolutionRule { session =>
+      new PreprocessTableRestore(session)
+    }
+    extensions.injectResolutionRule { session =>
       new DeltaAnalysis(session)
     }
     extensions.injectCheckRule { session =>
@@ -91,7 +96,7 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
       new PreprocessTableDelete(session.sessionState.conf)
     }
     extensions.injectOptimizerRule { session =>
-      new ActiveOptimisticTransactionRule(session)
+      new PrepareDeltaScan(session)
     }
   }
 }

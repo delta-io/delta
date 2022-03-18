@@ -58,7 +58,7 @@ object SupportedGenerationExpressions {
     expression[If]("if"),
     expression[If]("iff", true),
     expression[IsNaN]("isnan"),
-    expression[IfNull]("ifnull"),
+    expression[Nvl]("ifnull", true),
     expression[IsNull]("isnull"),
     expression[IsNotNull]("isnotnull"),
     expression[Least]("least"),
@@ -215,6 +215,9 @@ object SupportedGenerationExpressions {
     expression[Second]("second"),
     expression[ParseToTimestamp]("to_timestamp"),
     expression[ParseToDate]("to_date"),
+    // `gettimestamp` is not a Spark built-in class but `ParseToDate` will refer to
+    // `gettimestamp` when a format is given, so it needs to be on the allowed list
+    expression[GetTimestamp]("gettimestamp"),
     expression[ToUnixTimestamp]("to_unix_timestamp"),
     expression[ToUTCTimestamp]("to_utc_timestamp"),
     expression[TruncDate]("trunc"),
@@ -228,7 +231,7 @@ object SupportedGenerationExpressions {
     expression[MakeDate]("make_date"),
     expression[MakeTimestamp]("make_timestamp"),
     expression[MakeInterval]("make_interval"),
-    expression[DatePart]("date_part"),
+    expression[Extract]("date_part", setAlias = true),
     expression[Extract]("extract"),
 
     // collection functions

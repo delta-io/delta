@@ -27,6 +27,7 @@ import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.execution.adaptive.DisableAdaptiveExecution
+import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{ArrayType, IntegerType, MapType, StringType, StructType}
@@ -910,7 +911,7 @@ abstract class MergeIntoSuiteBase
       targetKeyValueNames: (String, String) = ("key", "value"))(
       thunk: (String, String) => Unit = null): Unit = {
 
-    append(target.toDF(targetKeyValueNames._1, targetKeyValueNames._2),
+    append(target.toDF(targetKeyValueNames._1, targetKeyValueNames._2).coalesce(2),
       if (isKeyPartitioned) Seq(targetKeyValueNames._1) else Nil)
     withTempView("source") {
       source.toDF(sourceKeyValueNames._1, sourceKeyValueNames._2).createOrReplaceTempView("source")
@@ -4464,6 +4465,18 @@ abstract class MergeIntoSuiteBase
       }
     }
   }
+
+  testEvolution("array of struct should work with containsNull as false")(
+    Seq(500000).toDF("key"),
+    Seq(500000, 100000).toDF("key")
+      .withColumn("generalDeduction",
+        struct(current_date().as("date"), array(struct(lit(0d).as("data"))))),
+    update("*") :: insert("*") :: Nil,
+    Seq(500000, 100000).toDF("key")
+      .withColumn("generalDeduction",
+        struct(current_date().as("date"), array(struct(lit(0d).as("data"))))),
+    Seq(500000, 100000).toDF("key")
+  )
 
   /**
    * @param function the unsupported function.

@@ -28,7 +28,7 @@ class DelegatingLogStoreSuite
   extends SparkFunSuite {
 
 
-  private val customLogStoreClassName = classOf[CustomPublicLogStore].getName
+  private val customLogStoreClassName = classOf[io.delta.storage.HDFSLogStore].getName
 
   private def fakeSchemeWithNoDefault = "fake"
 

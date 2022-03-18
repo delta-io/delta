@@ -20,7 +20,6 @@ import org.apache.spark.sql.delta.actions.Metadata
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.datasources.FileFormat
-import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 
 trait DeltaFileFormat {
   // TODO: Add support for column mapping
@@ -35,5 +34,6 @@ trait DeltaFileFormat {
    * transaction, so if possible, we should always pass in the latest transaction's metadata
    * instead of one from a past snapshot.
    */
-  def fileFormat(metadata: Metadata = metadata): FileFormat = new ParquetFileFormat()
+  def fileFormat(metadata: Metadata = metadata): FileFormat =
+    new DeltaParquetFileFormat(metadata.columnMappingMode, metadata.schema)
 }

@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.files
 
+import java.net.URI
+
 import scala.collection.mutable.ListBuffer
 
 import org.apache.spark.sql.delta._
@@ -24,15 +26,18 @@ import org.apache.spark.sql.delta.constraints.{Constraint, Constraints, DeltaInv
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.{DeltaJobStatisticsTracker, StatisticsCollection}
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
-import org.apache.spark.sql.Dataset
-import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, AttributeSet, NamedExpression}
+import org.apache.spark.sql.{Dataset, SparkSession}
+import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.datasources.{BasicWriteJobStatsTracker, FileFormatWriter, WriteJobStatsTracker}
-import org.apache.spark.sql.types.{ArrayType, MapType, MetadataBuilder, StringType, StructType}
+import org.apache.spark.sql.functions.to_json
+import org.apache.spark.sql.types.{StringType, StructType}
 import org.apache.spark.util.SerializableConfiguration
 
 /**
@@ -69,7 +74,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
   protected def mapColumnAttributes(
       output: Seq[Attribute],
       mappingMode: DeltaColumnMappingMode): Seq[Attribute] = {
-    throw DeltaErrors.writesWithColumnMappingNotSupported
+    DeltaColumnMapping.createPhysicalAttributes(output, metadata.schema, mappingMode)
   }
 
   /**
@@ -234,6 +239,38 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
     val committer = getCommitter(outputPath)
 
+    // If Statistics Collection is enabled, then create a stats tracker that will be injected during
+    // the FileFormatWriter.write call below and will collect per-file stats using
+    // StatisticsCollection
+    val optionalStatsTracker =
+      if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COLLECT_STATS)) {
+        val partitionColNames = partitionSchema.map(_.name).toSet
+
+        // schema should be normalized, therefore we can do an equality check
+        val statsDataSchema = output.filterNot(c => partitionColNames.contains(c.name))
+
+        val indexedCols = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(metadata)
+
+        val statsCollection = new StatisticsCollection {
+          override def dataSchema = statsDataSchema.toStructType
+          override val spark: SparkSession = data.sparkSession
+          override val numIndexedCols = indexedCols
+        }
+
+        val statsColExpr: Expression = {
+          val dummyDF = Dataset.ofRows(spark, LocalRelation(statsDataSchema))
+          dummyDF.select(to_json(statsCollection.statsCollector))
+            .queryExecution.analyzed.expressions.head
+        }
+
+        Some(new DeltaJobStatisticsTracker(
+          deltaLog.newDeltaHadoopConf(),
+          outputPath,
+          statsDataSchema,
+          statsColExpr))
+      } else {
+        None
+      }
 
     val constraints =
       Constraints.getAll(metadata, spark) ++ generatedColumnConstraints ++ additionalConstraints
@@ -271,7 +308,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
           // scalastyle:on deltahadoopconfiguration
           partitionColumns = partitioningColumns,
           bucketSpec = None,
-          statsTrackers = statsTrackers.toSeq,
+          statsTrackers = optionalStatsTracker.toSeq ++ statsTrackers,
           options = Map.empty)
       } catch {
         case s: SparkException =>
@@ -285,6 +322,11 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       }
     }
 
-    committer.addedStatuses.toSeq
+    val resultFiles = committer.addedStatuses.map { a =>
+      a.copy(stats = optionalStatsTracker.map(
+        _.recordedStats(new Path(new URI(a.path)).getName)).getOrElse(a.stats))
+    }
+
+    resultFiles.toSeq
   }
 }

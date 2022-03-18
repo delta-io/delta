@@ -1,0 +1,77 @@
+{
+  "COMPLEX_TYPE_COLUMN_CANNOT_CONTAIN_NULL_TYPE" : {
+    "message" : [ " Found nested NullType in column %s which is of %s. Delta doesn't support writing NullType in complex types." ],
+    "sqlState" : "22005"
+  },
+  "CONFLICT_SET_COLUMN" : {
+    "message" : [ "There is a conflict from these SET columns: %s." ],
+    "sqlState" : "42000"
+  },
+  "DELTA_MERGE_UNEXPECTED_ASSIGNMENT_KEY" : {
+    "message" : [ "Unexpected assignment key: %s - %s" ],
+    "sqlState" : "22005"
+  },
+  "DELTA_TABLE_ONLY_OPERATION" : {
+    "message" : [ "%s is not a Delta table. %s is only supported for Delta tables." ],
+    "sqlState" : "0A000"
+  },
+  "FAILED_CHECKPOINT" : {
+    "message" : [ "Cannot rename %s to %s" ]
+  },
+  "INVALID_CHARACTERS_IN_COLUMN_NAME" : {
+    "message" : [ "Attribute name \"%s\" contains invalid character(s) among \" ,;{}()\\\\n\\\\t=\". Please use alias to rename it." ],
+    "sqlState" : "42000"
+  },
+  "INVALID_COPY_ENCRYPTION" : {
+    "message" : [ "Invalid %s. COPY INTO source %s." ],
+    "sqlState" : "42000"
+  },
+  "INVALID_GENERATED_COLUMN_REFERENCES" : {
+    "message" : [ "A generated column cannot use a non-existent column or another generated column" ],
+    "sqlState" : "42000"
+  },
+  "MERGE_INCOMPATIBLE_DECIMAL_TYPE" : {
+    "message" : [ "Failed to merge decimal types with incompatible %s" ],
+    "sqlState" : "22005"
+  },
+  "MISSING_DELTA_TABLE" : {
+    "message" : [ "%s is not a Delta table." ],
+    "sqlState" : "42000"
+  },
+  "MISSING_NOT_NULL_COLUMN_VALUE" : {
+    "message" : [ "Column %s, which has a NOT NULL constraint, is missing from the data being written into the table." ],
+    "sqlState" : "42000"
+  },
+  "MISSING_SET_COLUMN" : {
+    "message" : [ "SET column %s not found given columns: %s." ],
+    "sqlState" : "42000"
+  },
+  "UNSUPPORTED_COLUMN_MAPPING_CONVERT_TO_DELTA" : {
+    "message" : [ "The configuration '%s' cannot be set to `%s` when using CONVERT TO DELTA." ],
+    "sqlState" : "0A000"
+  },
+  "UNSUPPORTED_COLUMN_MAPPING_MODE_CHANGE" : {
+    "message" : [ "Changing column mapping mode from '%s' to '%s' is not supported." ],
+    "sqlState" : "0A000"
+  },
+  "UNSUPPORTED_COLUMN_MAPPING_PROTOCOL" : {
+    "message" : [ "", "Your current table protocol version does not support changing column mapping modes", "using %s.", "", "Required Delta protocol version for column mapping:", "%s", "Your table's current Delta protocol version:", "%s", "", "Please upgrade your table's protocol version using ALTER TABLE SET TBLPROPERTIES and try again.", "", "" ],
+    "sqlState" : "0A000"
+  },
+  "UNSUPPORTED_COLUMN_MAPPING_SCHEMA_CHANGE" : {
+    "message" : [ "", "Schema change is detected:", "", "old schema:", "%s", "", "new schema:", "%s", "", "Schema changes are not allowed during the change of column mapping mode.", "", "" ],
+    "sqlState" : "0A000"
+  },
+  "UNSUPPORTED_COLUMN_MAPPING_WRITE" : {
+    "message" : [ "Writing data with column mapping mode is not supported." ],
+    "sqlState" : "0A000"
+  },
+  "UNSUPPORTED_MANIFEST_GENERATION_WITH_COLUMN_MAPPING" : {
+    "message" : [ "Manifest generation is not supported for tables that leverage column mapping, as external readers cannot read these Delta tables. See Databricks documentation for more details." ],
+    "sqlState" : "0A000"
+  },
+  "UNSUPPORTED_NESTED_COLUMN_IN_BLOOM_FILTER" : {
+    "message" : [ "Creating a bloom filer index on a nested column is currently unsupported: %s" ],
+    "sqlState" : "0A000"
+  }
+}

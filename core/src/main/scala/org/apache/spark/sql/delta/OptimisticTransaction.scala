@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta
 
 import java.nio.file.FileAlreadyExistsException
-import java.util.{ConcurrentModificationException, Locale, UUID}
+import java.util.{ConcurrentModificationException, UUID}
 import java.util.concurrent.TimeUnit.NANOSECONDS
 
 import scala.collection.mutable
@@ -32,9 +32,10 @@ import org.apache.spark.sql.delta.hooks.{GenerateSymlinkManifest, PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.stats.FileSizeHistogram
+import org.apache.spark.sql.delta.stats.{DeltaScan, DeltaScanGenerator, DeltaScanGeneratorBase, FileSizeHistogram}
+import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{AnalysisException, SparkSession}
+import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.util.{Clock, Utils}
@@ -164,7 +165,9 @@ object OptimisticTransaction {
  *
  * This trait is not thread-safe.
  */
-trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReporting
+trait OptimisticTransactionImpl extends TransactionalWrite
+  with SQLMetricsReporting
+  with DeltaScanGenerator
   with DeltaLogging {
 
   import org.apache.spark.sql.delta.util.FileNames._
@@ -201,6 +204,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
 
   /** The transaction start time. */
   protected val txnStartNano = System.nanoTime()
+
+  override val snapshotToScan: Snapshot = snapshot
+
+  /**
+   * Tracks the first-access snapshots of other Delta logs read by this transaction.
+   * The snapshots are keyed by the log's unique id.
+   */
+  protected var readSnapshots = new java.util.concurrent.ConcurrentHashMap[(String, Path), Snapshot]
 
   /** The transaction commit start time. */
   protected var commitStartNano = -1L
@@ -247,6 +258,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
     Some(NANOSECONDS.toMillis((commitEndNano - txnStartNano)))
   }
 
+  /** Gets the stats collector for the table at the snapshot this transaction has. */
+  def statsCollector: Column = snapshot.statsCollector
+
   /**
    * Returns the metadata for this transaction. The metadata refers to the metadata of the snapshot
    * at the transaction's read version unless updated during the transaction.
@@ -287,9 +301,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       snapshot.metadata,
       latestMetadata,
       isCreatingNewTable)
-    // Replace CHAR and VARCHAR with StringType
     if (latestMetadata.schemaString != null) {
-      val schema = CharVarcharUtils.replaceCharVarcharWithStringInSchema(latestMetadata.schema)
+      // Replace CHAR and VARCHAR with StringType
+      var schema = CharVarcharUtils.replaceCharVarcharWithStringInSchema(latestMetadata.schema)
       latestMetadata = latestMetadata.copy(schemaString = schema.json)
     }
 
@@ -415,6 +429,48 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
     }
   }
 
+  /**
+   * Returns the [[DeltaScanGenerator]] for the given log, which will be used to generate
+   * [[DeltaScan]]s. Every time this method is called on a log, the returned generator
+   * generator will read a snapshot that is pinned on the first access for that log.
+   *
+   * Internally, if the given log is the same as the log associated with this
+   * transaction, then it returns this transaction, otherwise it will return a snapshot of
+   * given log
+   */
+  def getDeltaScanGenerator(index: TahoeLogFileIndex): DeltaScanGenerator = {
+    if (index.deltaLog.isSameLogAs(deltaLog)) {
+      this
+    } else {
+      if (spark.conf.get(DeltaSQLConf.DELTA_SNAPSHOT_ISOLATION)) {
+        readSnapshots.computeIfAbsent(index.deltaLog.compositeId, _ => {
+          // Will be called only when the log is accessed the first time
+          index.getSnapshot
+        })
+      } else {
+        index.getSnapshot
+      }
+    }
+  }
+
+  /** Returns a[[DeltaScan]] based on the given filters and projections. */
+  override def filesForScan(projection: Seq[Attribute], filters: Seq[Expression]): DeltaScan = {
+    val scan = snapshot.filesForScan(projection, filters)
+    val partitionFilters = filters.filter { f =>
+      DeltaTableUtils.isPredicatePartitionColumnsOnly(f, metadata.partitionColumns, spark)
+    }
+    readPredicates += partitionFilters.reduceLeftOption(And).getOrElse(Literal(true))
+    readFiles ++= scan.files
+    scan
+  }
+
+  override def filesWithStatsForScan(partitionFilters: Seq[Expression]): DataFrame = {
+    val metadata = snapshot.filesWithStatsForScan(partitionFilters)
+    readPredicates += partitionFilters.reduceLeftOption(And).getOrElse(Literal(true))
+    withFilesRead(filterFiles(partitionFilters))
+    metadata
+  }
+
   /** Returns files matching the given predicates. */
   def filterFiles(): Seq[AddFile] = filterFiles(Seq(Literal.TrueLiteral))
 
@@ -433,6 +489,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   def readWholeTable(): Unit = {
     readPredicates += Literal.TrueLiteral
     readTheWholeTable = true
+  }
+
+  /** Mark the given files as read within this transaction. */
+  def withFilesRead(files: Seq[AddFile]): Unit = {
+    readFiles ++= files
   }
 
   /**
@@ -484,7 +545,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
       val preparedActions = prepareCommit(actions, op)
 
       // Find the isolation level to use for this commit
-      val isolationLevelToUse = getIsolationLevelToUse(preparedActions)
+      val isolationLevelToUse = getIsolationLevelToUse(preparedActions, op)
 
       if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_INFO_ENABLED)) {
         val isBlindAppend = {
@@ -639,20 +700,63 @@ trait OptimisticTransactionImpl extends TransactionalWrite with SQLMetricsReport
   }
 
   // Returns the isolation level to use for committing the transaction
-  protected def getIsolationLevelToUse(preparedActions: Seq[Action]): IsolationLevel = {
-    val noDataChanged = preparedActions
-      .collectFirst { case f: FileAction if f.dataChange => f }
-      .isEmpty
-    val hasOnlyFileActions = preparedActions.forall(_.isInstanceOf[FileAction])
-    val isolationLevelToUse = if (noDataChanged && hasOnlyFileActions) {
-      // If no data has changed (i.e. its is only being rearranged), then SnapshotIsolation
-      // provides Serializable guarantee. Hence, allow reduced conflict detection by using
-      // SnapshotIsolation of what the table isolation level is.
+  protected def getIsolationLevelToUse(
+      preparedActions: Seq[Action], op: DeltaOperations.Operation): IsolationLevel = {
+    val isolationLevelToUse = if (canDowngradeToSnapshotIsolation(preparedActions, op)) {
       SnapshotIsolation
     } else {
       getDefaultIsolationLevel()
     }
     isolationLevelToUse
+  }
+
+  protected def canDowngradeToSnapshotIsolation(
+      preparedActions: Seq[Action], op: DeltaOperations.Operation): Boolean = {
+
+    var dataChanged = false
+    var hasNonFileActions = false
+    preparedActions.foreach {
+      case f: FileAction =>
+        if (f.dataChange) {
+          dataChanged = true
+        }
+      case _ =>
+        hasNonFileActions = true
+    }
+    val noDataChanged = !dataChanged
+
+    if (hasNonFileActions) {
+      // if Non-file-actions are present (e.g. METADATA etc.), then don't downgrade the isolation
+      // level to SnapshotIsolation.
+      return false
+    }
+
+    val defaultIsolationLevel = getDefaultIsolationLevel()
+    // Note-1: For no-data-change transactions such as OPTIMIZE/Auto Compaction/ZorderBY, we can
+    // change the isolation level to SnapshotIsolation. SnapshotIsolation allows reduced conflict
+    // detection by skipping the
+    // [[ConflictChecker.checkForAddedFilesThatShouldHaveBeenReadByCurrentTxn]] check i.e.
+    // don't worry about concurrent appends.
+    // Note-2:
+    // We can also use SnapshotIsolation for empty transactions. e.g. consider a commit:
+    // t0 - Initial state of table
+    // t1 - Q1, Q2 starts
+    // t2 - Q1 commits
+    // t3 - Q2 is empty and wants to commit.
+    // In this scenario, we can always allow Q2 to commit without worrying about new files
+    // generated by Q1.
+    // The final order which satisfies both Serializability and WriteSerializability is: Q2, Q1
+    // Note that Metadata only update transactions shouldn't be considered empty. If Q2 above has
+    // a Metadata update (say schema change/identity column high watermark update), then Q2 can't
+    // be moved above Q1 in the final SERIALIZABLE order. This is because if Q2 is moved above Q1,
+    // then Q1 should see the updates from Q2 - which actually didn't happen.
+
+    val allowFallbackToSnapshotIsolation = defaultIsolationLevel match {
+      case Serializable => noDataChanged
+      case WriteSerializable => noDataChanged && !op.changesData
+      case _ => false // This case should never happen
+    }
+    allowFallbackToSnapshotIsolation
   }
 
   protected def getDefaultIsolationLevel(): IsolationLevel = {

@@ -18,6 +18,7 @@ package org.apache.spark.sql.catalyst.plans.logical
 
 import java.util.Locale
 
+import org.apache.spark.sql.delta.DeltaAnalysisException
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -150,7 +151,9 @@ object DeltaMergeIntoClause {
         case Assignment(key: UnresolvedAttribute, expr) => DeltaMergeAction(key.nameParts, expr)
         case Assignment(key: Attribute, expr) => DeltaMergeAction(Seq(key.name), expr)
         case other =>
-          throw new AnalysisException(s"Unexpected assignment key: ${other.getClass} - $other")
+          throw new DeltaAnalysisException(
+            errorClass = "DELTA_MERGE_UNEXPECTED_ASSIGNMENT_KEY",
+            messageParameters = Array(s"${other.getClass}", s"$other"))
       }
     }
   }

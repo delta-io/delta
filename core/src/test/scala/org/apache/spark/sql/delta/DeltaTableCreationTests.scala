@@ -363,27 +363,51 @@ trait DeltaTableCreationTests
     }
   }
 
-  testQuietly("cannot create delta table with an invalid column name") {
+  testQuietly("create delta table with spaces in column names") {
     val tableName = "delta_test"
-    withTable(tableName) {
-      val tableLoc =
-        new File(spark.sessionState.catalog.defaultTablePath(TableIdentifier(tableName)))
-      Utils.deleteRecursively(tableLoc)
-      val ex = intercept[AnalysisException] {
-        Seq(1, 2, 3).toDF("a column name with spaces")
-          .write
-          .format(format)
-          .mode(SaveMode.Overwrite)
-          .saveAsTable(tableName)
-      }
-      assert(ex.getMessage.contains("invalid character(s)"))
-      assert(!tableLoc.exists())
 
-      val ex2 = intercept[AnalysisException] {
-        sql(s"CREATE TABLE $tableName(`a column name with spaces` LONG, b String) USING delta")
+    val tableLoc =
+      new File(spark.sessionState.catalog.defaultTablePath(TableIdentifier(tableName)))
+    Utils.deleteRecursively(tableLoc)
+
+    def createTableUsingDF: Unit = {
+      Seq(1, 2, 3).toDF("a column name with spaces")
+        .write
+        .format(format)
+        .mode(SaveMode.Overwrite)
+        .saveAsTable(tableName)
+    }
+
+    def createTableUsingSQL: DataFrame = {
+      sql(s"CREATE TABLE $tableName(`a column name with spaces` LONG, b String) USING delta")
+    }
+
+    withTable(tableName) {
+      if (!columnMappingEnabled) {
+        val ex = intercept[AnalysisException] {
+          createTableUsingDF
+        }
+        assert(ex.getMessage.contains("invalid character(s)"))
+        assert(!tableLoc.exists())
+      } else {
+        // column mapping modes support creating table with arbitrary col names
+        createTableUsingDF
+        assert(tableLoc.exists())
       }
-      assert(ex2.getMessage.contains("invalid character(s)"))
-      assert(!tableLoc.exists())
+    }
+
+    withTable(tableName) {
+      if (!columnMappingEnabled) {
+        val ex2 = intercept[AnalysisException] {
+          createTableUsingSQL
+        }
+        assert(ex2.getMessage.contains("invalid character(s)"))
+        assert(!tableLoc.exists())
+      } else {
+        // column mapping modes support creating table with arbitrary col names
+        createTableUsingSQL
+        assert(tableLoc.exists())
+      }
     }
   }
 

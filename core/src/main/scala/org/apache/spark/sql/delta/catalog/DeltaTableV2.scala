@@ -32,6 +32,7 @@ import org.apache.spark.sql.{AnalysisException, DataFrame, SaveMode, SparkSessio
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.connector.catalog.{SupportsWrite, Table, TableCapability, TableCatalog, V2TableWithV1Fallback}
+import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.expressions._
 import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsOverwrite, SupportsTruncate, V1Write, WriteBuilder}
@@ -72,8 +73,9 @@ case class DeltaTableV2(
   // in cases where we will fallback to the V1 behavior.
   lazy val deltaLog: DeltaLog = DeltaLog.forTable(spark, rootPath, options)
 
-  def getTableIdentifierIfExists: Option[TableIdentifier] = tableIdentifier.map(
-    spark.sessionState.sqlParser.parseTableIdentifier)
+  def getTableIdentifierIfExists: Option[TableIdentifier] = tableIdentifier.map { tableName =>
+    spark.sessionState.sqlParser.parseMultipartIdentifier(tableName).asTableIdentifier
+  }
 
   override def name(): String = catalogTable.map(_.identifier.unquotedString)
     .orElse(tableIdentifier)

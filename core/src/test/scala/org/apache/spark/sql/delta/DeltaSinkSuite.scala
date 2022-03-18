@@ -37,6 +37,22 @@ class DeltaSinkSuite extends StreamTest with DeltaColumnMappingTestUtils {
   override val streamingTimeout = 60.seconds
   import testImplicits._
 
+  // Before we start running the tests in this suite, we should let Spark perform all necessary set
+  // up that needs to be done for streaming. Without this, the first test in the suite may be flaky
+  // as its running time can exceed the timeout for the test due to Spark setup. See: ES-235735
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    withTempDirs { (outputDir, checkpointDir) =>
+      val inputData = MemoryStream[Int].toDF()
+      val query = inputData.writeStream
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .format("delta")
+        .start(outputDir.getCanonicalPath)
+
+      query.stop()
+    }
+  }
+
   private def withTempDirs(f: (File, File) => Unit): Unit = {
     withTempDir { file1 =>
       withTempDir { file2 =>

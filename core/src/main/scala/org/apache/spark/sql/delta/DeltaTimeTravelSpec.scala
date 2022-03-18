@@ -52,7 +52,8 @@ case class DeltaTimeTravelSpec(
     val timeZone = conf.sessionLocalTimeZone
     val evaluable = timestamp match {
       case Some(e) => e.transform {
-        case rr: RuntimeReplaceable => rr.child
+        case rr: RuntimeReplaceable =>
+          rr.children.head
         case e: Unevaluable =>
           recordDeltaEvent(null, "delta.timeTravel.unexpected", data = e.sql)
           throw new IllegalStateException(s"Unsupported expression (${e.sql}) for time travel.")
