@@ -105,6 +105,7 @@ def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
     packages = "io.delta:delta-core_2.12:" + version
+    # TODO: update this with proper delta-storage artifact ID (i.e. no _2.12 scala version)
     packages += "," + "io.delta:delta-storage-dynamodb_2.12:" + version
     if extra_packages:
         packages += "," + extra_packages
@@ -282,12 +283,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Run the DynamoDB integration tests (and only them)")
     parser.add_argument(
-        "--packages",
+        "--dbb-packages",
         required=False,
         default=None,
         help="Additional packages required for Dynamodb logstore integration tests")
     parser.add_argument(
-        "--conf",
+        "--dbb-conf",
         required=False,
         default=None,
         nargs="+",
@@ -308,7 +309,7 @@ if __name__ == "__main__":
 
     if args.run_storage_dynamodb_integration_tests:
         run_dynamodb_logstore_integration_tests(
-            root_dir, args.version, args.test, args.maven_repo, args.packages, args.conf
+            root_dir, args.version, args.test, args.maven_repo, args.dbb_packages, args.dbb_conf
         )
         quit()
 
