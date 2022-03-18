@@ -25,14 +25,23 @@ import org.apache.hadoop.conf.Configuration;
 
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient;
 import com.amazonaws.auth.BasicAWSCredentials;
+import com.amazonaws.services.dynamodbv2.model.AttributeDefinition;
 import com.amazonaws.services.dynamodbv2.model.AttributeValue;
 import com.amazonaws.services.dynamodbv2.model.ComparisonOperator;
 import com.amazonaws.services.dynamodbv2.model.Condition;
 import com.amazonaws.services.dynamodbv2.model.ConditionalCheckFailedException;
+import com.amazonaws.services.dynamodbv2.model.DescribeTableResult;
+import com.amazonaws.services.dynamodbv2.model.TableDescription;
 import com.amazonaws.services.dynamodbv2.model.ExpectedAttributeValue;
 import com.amazonaws.services.dynamodbv2.model.GetItemRequest;
+import com.amazonaws.services.dynamodbv2.model.KeySchemaElement;
+import com.amazonaws.services.dynamodbv2.model.KeyType;
+import com.amazonaws.services.dynamodbv2.model.ProvisionedThroughput;
 import com.amazonaws.services.dynamodbv2.model.PutItemRequest;
 import com.amazonaws.services.dynamodbv2.model.QueryRequest;
+import com.amazonaws.services.dynamodbv2.model.ResourceNotFoundException;
+import com.amazonaws.services.dynamodbv2.model.ResourceInUseException;
+import com.amazonaws.services.dynamodbv2.model.ScalarAttributeType;
 import com.amazonaws.auth.AWSCredentialsProvider;
 
 import com.amazonaws.regions.Region;
@@ -51,10 +60,8 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
     private String credentialsProviderName;
     private String regionName;
     private String endpoint;
-    private String rcu;
-    private String wcu;
 
-    public DynamoDBLogStore(Configuration hadoopConf) {
+    public DynamoDBLogStore(Configuration hadoopConf) throws IOException {
         super(hadoopConf);
         tableName = getParam(hadoopConf, "tableName", "delta_log");
         credentialsProviderName = getParam(
@@ -64,20 +71,8 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
         );
         regionName = getParam(hadoopConf, "region", "us-east-1");
         endpoint = getParam(hadoopConf, "endpoint", null);
-        rcu = getParam(hadoopConf, "provisionedThroughput.rcu", "5");
-        wcu = getParam(hadoopConf, "provisionedThroughput.wcu", "5");
-
+        tryEnsureTableExists(hadoopConf);
     }
-
-    private void tryEnsureTableExists() {
-        AmazonDynamoDBClient client = getClient();
-        try {
-            client.describeTablex(tableName);
-        } catch (ResourceNotFoundException e) {
-
-        }
-    }
-
 
    /*
     * Write to db in exclusive way.
@@ -141,13 +136,13 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
     }
 
     private ExternalCommitEntry itemToDbEntry(java.util.Map<String, AttributeValue> item) {
-        String commitTime = item.get("commitTime").getN();
+        AttributeValue commitTimeAttr = item.get("commitTime");
         return new ExternalCommitEntry(
             new Path(item.get("tablePath").getS()),
             item.get("fileName").getS(),
             item.get("tempPath").getS(),
             item.get("complete").getS() == "true",
-            commitTime != null ? Long.parseLong(commitTime) : null
+            commitTimeAttr != null ? Long.parseLong(commitTimeAttr.getN()) : null
         );
     }
 
@@ -173,6 +168,65 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
             pr.withExpected(expected);
         }
         return pr;
+    }
+
+    private void tryEnsureTableExists(Configuration hadoopConf) throws IOException {
+        int retries = 0;
+        boolean created = false;
+        AmazonDynamoDBClient client = getClient();
+        while(retries < 20) {
+            String status = "CREATING";
+            try {
+                // https://docs.aws.amazon.com/AWSJavaSDK/latest/javadoc/com/amazonaws/services/dynamodbv2/model/TableDescription.html#getTableStatus--
+                DescribeTableResult result = client.describeTable(tableName);
+                TableDescription descr = result.getTable();
+                status = descr.getTableStatus();
+            } catch (ResourceNotFoundException e) {
+                long rcu = Long.parseLong(getParam(hadoopConf, "provisionedThroughput.rcu", "5"));
+                long wcu = Long.parseLong(getParam(hadoopConf, "provisionedThroughput.wcu", "5"));
+
+                LOG.info(String.format(
+                    "DynamoDB table `%s` in region `%s` does not exist."
+                    + "Creating it now with provisioned throughput of %s RCUs and %s WCUs.",
+                    tableName, regionName, rcu, wcu));
+                try {
+                    client.createTable(
+                        // attributeDefinitions
+                        java.util.Arrays.asList(
+                            new AttributeDefinition("tablePath", ScalarAttributeType.S),
+                            new AttributeDefinition("fileName", ScalarAttributeType.S)
+                        ),
+                        tableName,
+                        // keySchema
+                        java.util.Arrays.asList(
+                            new KeySchemaElement("tablePath", KeyType.HASH),
+                            new KeySchemaElement("fileName", KeyType.RANGE)
+                        ),
+                        new ProvisionedThroughput(rcu, wcu)
+                    );
+                    created = true;
+                } catch(ResourceInUseException e3) {
+                    // race condition - table just created by concurrent process
+                }
+            }
+            if(status.equals("ACTIVE")) {
+                if(created) {
+                    LOG.info(String.format("Successfully created DynamoDB table `%s`", tableName));
+                } else {
+                    LOG.info(String.format("Table `%s` already exists", tableName));
+                }
+                break;
+            } else if(status.equals("CREATING")) {
+                retries += 1;
+                LOG.info(String.format("Waiting for `%s` table creation", tableName));
+                try {
+                    Thread.sleep(1000);
+                } catch(InterruptedException interrupted) {}
+            } else {
+                LOG.error(String.format("table `%s` status: %s", tableName, status));
+                break;  // TODO - raise exception?
+            }
+        };
     }
 
     AmazonDynamoDBClient getClient() throws java.io.IOException {

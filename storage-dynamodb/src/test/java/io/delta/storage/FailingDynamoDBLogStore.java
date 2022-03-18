@@ -22,12 +22,12 @@ import java.io.IOException;
 import java.util.stream.Stream;
 import java.util.concurrent.ConcurrentHashMap;
 
-class FailingDynamoDBLogStore extends DynamoDBLogStore {
+public class FailingDynamoDBLogStore extends DynamoDBLogStore {
 
     private static java.util.Random rng = new java.util.Random();
     private ConcurrentHashMap<String, Float> errorRates;
 
-    public FailingDynamoDBLogStore(Configuration hadoopConf) {
+    public FailingDynamoDBLogStore(Configuration hadoopConf) throws IOException {
         super(hadoopConf);
         errorRates = new ConcurrentHashMap<>();
         String errorRatesDef = getParam(hadoopConf, "errorRates", "");

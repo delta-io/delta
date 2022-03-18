@@ -311,7 +311,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     }
 
     private Path deltaFile(Path tablePath, long version) {
-        return new Path(tablePath, String.format("%020d.json", version));
+        return new Path(tablePath, String.format("_delta_log/%020d.json", version));
     }
 
     private long deltaVersion(Path path) {
