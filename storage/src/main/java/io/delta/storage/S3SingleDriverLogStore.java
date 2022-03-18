@@ -16,16 +16,16 @@
 
 package io.delta.storage;
 
-import org.apache.spark.sql.delta.util.FileNames;
-import java.net.URI;
-import java.util.concurrent.{ConcurrentHashMap,TimeUnit};
-
-import org.apache.spark.sql.delta.util.FileNames;
-import com.google.common.cache.CacheBuilder;
-import com.google.common.io.CountingOutputStream;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
 
-import org.apache.spark.SparkConf;
+import java.io.IOException;
+import java.net.URI;
+import java.util.Iterator;
+import java.util.concurrent.ConcurrentHashMap;
+import org.apache.spark.sql.delta.util.FileNames;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Single Spark-driver/JVM LogStore implementation for S3.
@@ -41,12 +41,52 @@ import org.apache.spark.SparkConf;
  * Regarding directory listing, this implementation:
  * - returns a list by merging the files listed from S3 and recently-written files from the cache.
  */
-public class  S3SingleDriverLogStore extends HadoopFileSystemLogStore {
+public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
 
-    private FileSystem resolved(Path path, Configuration hadoopConf) {
-        return path.getFileSystem(hadoopConf);
+    static class FileMetadata {
+        private long length;
+        private long modificationTime;
     }
-    
+
+    /**
+     * A global path lock to ensure that no concurrent writers writing to the same path in the same
+     * JVM.
+     */
+    private static final ConcurrentHashMap<Path, Object> pathLock = new ConcurrentHashMap<Path, Object>();
+
+    /**
+     * A global cache that records the metadata of the files recently written.
+     * As list-after-write may be inconsistent on S3, we can use the files in the cache
+     * to fix the inconsistent file listing.
+     */
+//    private static final LoadingCache<String, String> writtenPathCache = CacheBuilder.newBuilder().expireAfterAccess(120, TimeUnit.MINUTES).build(Path, FileMetadata);
+
+    /**
+     * Release the lock for the path after writing.
+     *
+     * Note: the caller should resolve the path to make sure we are locking the correct absolute path.
+     */
+    //    private static final void releasePathLock(Path resolvedPath) {
+    //        var lock = pathLock.remove(resolvedPath);
+    //        lock.synchronized {
+    //            lock.notifyAll();
+    //        }
+    //    }
+
+    /**
+     * Check if the path is an initial version of a Delta log.
+     */
+    public Boolean isInitialVersion(Path path) {
+        if ( (FileNames.isDeltaFile(path)) & (FileNames.deltaVersion(path) == 0L)) {
+            return true;
+        }
+        return false;
+    }
+
+    public S3SingleDriverLogStore(Configuration hadoopConf) {
+        super(hadoopConf);
+    }
+
     private Path getPathKey(Path resolvedPath) {
         return stripUserInfo(resolvedPath);
     }
@@ -61,155 +101,23 @@ public class  S3SingleDriverLogStore extends HadoopFileSystemLogStore {
             uri.getPath,
             uri.getQuery,
             uri.getFragment
-        )
+        );
         return new Path(newUri);
     }
-    
-    // Merge two iterators of [[FileStatus]] into a single iterator ordered by file path name.
-    // In case both iterators have [[FileStatus]]s for the same file path, keep the one from
-    // `iterWithPrecedence` and discard that from `iter`.
-    private Iterator<FileStatus> mergeFileIterators(
-        Iterator<FileStatus> iter,
-        Iterator<FileStatus> iterWithPrecedence) {
-        //     (iter.map(f => (f.getPath, f)).toMap ++ iterWithPrecedence.map(f => (f.getPath, f)))
-        //   .values
-        //   .toSeq
-        //   .sortBy(_.getPath.getName)
-        //   .iterator
-    }
-    
-    // List files starting from `resolvedPath` (inclusive) in the same directory.
-    //   private def listFromCache(fs: FileSystem, resolvedPath: Path) = {
-    //     val pathKey = getPathKey(resolvedPath)
-    //     writtenPathCache
-    //       .asMap()
-    //       .asScala
-    //       .iterator
-    //       .filter { case (path, _) =>
-    //         path.getParent == pathKey.getParent() && path.getName >= pathKey.getName }
-    //       .map { case (path, fileMetadata) =>
-    //         new FileStatus(
-    //           fileMetadata.length,
-    //           false,
-    //           1,
-    //           fs.getDefaultBlockSize(path),
-    //           fileMetadata.modificationTime,
-    //           path)
-    //       }
-    //   }
-    
-    // List files starting from `resolvedPath` (inclusive) in the same directory, which merges
-    // the file system list and the cache list when `useCache` is on, otherwise
-    // use file system list only.
-    private Iterator<FileStatus> listFromInternal(
-                FileSystem fs, 
-                Path resolvedPath, 
-                Boolean useCache) throws IOException {
-
-        Path parentPath = resolvedPath.getParent();
-
-        if (!fs.exists(parentPath)) {
-            throw new FileNotFoundException("No such file or directory: %s", parentPath);
-        }
-
-        // val listedFromFs = fs.listStatus(parentPath).filter(_.getPath.getName >= resolvedPath.getName).iterator
-        // val listedFromCache = if (useCache) listFromCache(fs, resolvedPath) else Iterator.empty
-
-        // File statuses listed from file system take precedence
-        return mergeFileIterators(listedFromCache, listedFromFs);
-    }
-
-    // List files starting from `resolvedPath` (inclusive) in the same directory.
-    @Override
-    public Iterator<FileStatus> listFrom(Path path, Configuration hadoopConf) {
-        FileSystem fs = resolve(path);
-        Path resolvedPath = stripUserInfo(fs.makeQualified(path));
-        return listFromInternal(fs, resolvedPath, true);
-    }
-    
-    private Boolean isInitialVersion(Path path) {
-        return FileNames.isDeltaFile(path) && (FileNames.deltaVersion(path) == 0L);
-    }
-    
-    // Check if a path exists. Normally we check both the file system and the cache, but when the
-    // path is the first version of a Delta log, we ignore the cache.
-    private Boolean exists(FileSystem fs, Path resolvedPath) {
-        // Ignore the cache for the first file of a Delta log
-        //     listFromInternal(fs, resolvedPath, !isInitialVersion(resolvedPath))
-        //       .take(1)
-        //       .exists(_.getPath.getName == resolvedPath.getName)
-    }
-    
-
-        @Override
-        public void write(
-                Path path, 
-                Iterator<String> actions, 
-                Boolean overwrite,
-                Configuration hadoopConf) throws IOException {
-            FileSystem fs = resolve(path);
-            Path resolvedPath = stripUserInfo(fs.makeQualified(path));
-            Path lockedPath = getPathKey(resolvedPath);
-            acquirePathLock(lockedPath);
-               //     try {
-    //       if (exists(fs, resolvedPath) && !overwrite) {
-    //         throw new java.nio.file.FileAlreadyExistsException(resolvedPath.toUri.toString)
-    //       }
-    //       val stream = new CountingOutputStream(fs.create(resolvedPath, overwrite))
-    //       actions.map(_ + "\n").map(_.getBytes(UTF_8)).foreach(stream.write)
-    //       stream.close()
-    
-    //       // When a Delta log starts afresh, all cached files in that Delta log become obsolete,
-    //       // so we remove them from the cache.
-    //       if (isInitialVersion(resolvedPath)) {
-    //         val obsoleteFiles = writtenPathCache
-    //           .asMap()
-    //           .asScala
-    //           .keys
-    //           .filter(_.getParent == lockedPath.getParent())
-    //           .asJava
-    
-    //         writtenPathCache.invalidateAll(obsoleteFiles)
-    //       }
-    
-    //       // Cache the information of written files to help fix the inconsistency in future listings
-    //       writtenPathCache.put(lockedPath,
-    //         FileMetadata(stream.getCount(), System.currentTimeMillis()))
-    //     } catch {
-    //       // Convert Hadoop's FileAlreadyExistsException to Java's FileAlreadyExistsException
-    //       case e: org.apache.hadoop.fs.FileAlreadyExistsException =>
-    //           throw new java.nio.file.FileAlreadyExistsException(e.getMessage)
-    //     } finally {
-    //       releasePathLock(lockedPath)
-    //     }
-    }
-
-    // Acquire a lock for the path before writing.
-    // Note: the caller should resolve the path to make sure we are locking the correct absolute path.
-    private void acquirePathLock(Path resolvedPath) {
-        // while (true) {
-        //   val lock = pathLock.putIfAbsent(resolvedPath, new Object)
-        //   if (lock == null) return
-        //   lock.synchronized {
-        //     while (pathLock.get(resolvedPath) == lock) {
-        //       lock.wait()
-        //     }
-        //   }
-        // }
-    }
 
     @Override
-    public Boolean isPartialWriteVisible(Path path) {
+    public void write(
+            Path path,
+            Iterator<String> actions,
+            Boolean overwrite,
+            Configuration hadoopConf) throws IOException {
+        writeWithRename(path, actions, overwrite, hadoopConf);
+    }
+
+    public Boolean isPartialWriteVisible(
+            Path path,
+            Configuration hadoopConf) {
         return false;
     }
-    
-    @Override
-    public Boolean isPartialWriteVisible(Path path, Configuration hadoopConf) {
-        return false;
-    }
-    
-    @Override
-    public void invalidateCache() {
-        writtenPathCache.invalidateAll();
-    }
+
 }
