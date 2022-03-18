@@ -51,6 +51,8 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
     private String credentialsProviderName;
     private String regionName;
     private String endpoint;
+    private String rcu;
+    private String wcu;
 
     public DynamoDBLogStore(Configuration hadoopConf) {
         super(hadoopConf);
@@ -62,7 +64,20 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
         );
         regionName = getParam(hadoopConf, "region", "us-east-1");
         endpoint = getParam(hadoopConf, "endpoint", null);
+        rcu = getParam(hadoopConf, "provisionedThroughput.rcu", "5");
+        wcu = getParam(hadoopConf, "provisionedThroughput.wcu", "5");
+
     }
+
+    private void tryEnsureTableExists() {
+        AmazonDynamoDBClient client = getClient();
+        try {
+            client.describeTablex(tableName);
+        } catch (ResourceNotFoundException e) {
+
+        }
+    }
+
 
    /*
     * Write to db in exclusive way.
@@ -161,9 +176,8 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
     }
 
     AmazonDynamoDBClient getClient() throws java.io.IOException {
-        Configuration config = initHadoopConf();
         if(client == null) {
-            // TODO - maybe use some helper?
+            Configuration config = initHadoopConf();
             try {
                 AWSCredentialsProvider auth =
                     (AWSCredentialsProvider)Class.forName(credentialsProviderName)
@@ -188,7 +202,7 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
 
     protected String getParam(Configuration config, String name, String defaultValue) {
         return config.get(
-            String.format("hadoop.delta.DynamoDBLogStore.%s", name),  // TODO
+            String.format("spark.delta.DynamoDBLogStore.%s", name),
             defaultValue
         );
     }
