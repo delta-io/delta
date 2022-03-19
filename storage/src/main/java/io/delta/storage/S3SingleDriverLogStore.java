@@ -151,7 +151,7 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
      * Note: the caller should resolve the path to make sure we are locking the correct absolute path.
      */
         private static final void releasePathLock(Path resolvedPath) {
-            final var lock = pathLock.remove(resolvedPath);
+            final Object lock = pathLock.remove(resolvedPath);
             synchronized(lock) {
                 lock.notifyAll();
             }
@@ -164,7 +164,7 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
      */
     private static final void acquirePathLock(Path resolvedPath) throws InterruptedException {
         while (true) {
-            final var lock = pathLock.putIfAbsent(resolvedPath, new Object());
+            final Object lock = pathLock.putIfAbsent(resolvedPath, new Object());
             if (lock == null) {
                 return;
             }
