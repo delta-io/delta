@@ -410,7 +410,7 @@ class PublicHDFSLogStoreSuite extends PublicLogStoreSuite with HDFSLogStoreSuite
     classOf[io.delta.storage.HDFSLogStore].getName
 }
 
-abstract class PublicS3SingleDriverLogStore extends PublicLogStoreSuite {
+abstract class PublicS3SingleDriverLogStoreSuite extends PublicLogStoreSuite {
   override protected val publicLogStoreClassName: String =
     classOf[io.delta.storage.S3SingleDriverLogStore].getName
 }
