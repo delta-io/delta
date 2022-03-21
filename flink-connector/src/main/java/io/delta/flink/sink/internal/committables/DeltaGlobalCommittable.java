@@ -20,7 +20,8 @@ package io.delta.flink.sink.internal.committables;
 
 import java.util.List;
 
-import io.delta.flink.sink.internal.logging.Logging;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
@@ -54,13 +55,15 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  *         no longer recovered and exist only in the previously snapshotted states.</li>
  * </ol>
  */
-public class DeltaGlobalCommittable implements Logging {
+public class DeltaGlobalCommittable {
+
+    private static final Logger LOG = LoggerFactory.getLogger(DeltaGlobalCommittable.class);
 
     private final List<DeltaCommittable> deltaCommittables;
 
     public DeltaGlobalCommittable(List<DeltaCommittable> deltaCommittables) {
         for (DeltaCommittable committable : deltaCommittables) {
-            logInfo("Creating global committable object with committable for: " +
+            LOG.info("Creating global committable object with committable for: " +
                 "appId=" + committable.getAppId() +
                 " checkpointId=" + committable.getCheckpointId() +
                 " deltaPendingFile=" + committable.getDeltaPendingFile()

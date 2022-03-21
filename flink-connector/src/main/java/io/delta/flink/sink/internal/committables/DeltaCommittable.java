@@ -20,8 +20,9 @@ package io.delta.flink.sink.internal.committables;
 
 import java.io.Serializable;
 
-import io.delta.flink.sink.internal.logging.Logging;
 import org.apache.flink.streaming.api.functions.sink.filesystem.DeltaPendingFile;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
@@ -61,7 +62,9 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  *         no longer recovered and exist only in the previously snapshotted states.</li>
  * </ol>
  */
-public class DeltaCommittable implements Serializable, Logging {
+public class DeltaCommittable implements Serializable {
+
+    private static final Logger LOG = LoggerFactory.getLogger(DeltaCommittable.class);
 
     private final DeltaPendingFile deltaPendingFile;
 
@@ -82,7 +85,7 @@ public class DeltaCommittable implements Serializable, Logging {
     public DeltaCommittable(DeltaPendingFile deltaPendingFile,
                             String appId,
                             long checkpointId) {
-        logInfo("Creating committable object for: " +
+        LOG.info("Creating committable object for: " +
             "appId=" + appId +
             " checkpointId=" + checkpointId +
             " deltaPendingFile=" + deltaPendingFile

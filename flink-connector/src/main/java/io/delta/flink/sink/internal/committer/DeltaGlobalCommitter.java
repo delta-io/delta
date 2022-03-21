@@ -36,12 +36,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.delta.flink.sink.internal.SchemaConverter;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
 import io.delta.flink.sink.internal.committables.DeltaGlobalCommittable;
-import io.delta.flink.sink.internal.logging.Logging;
 import org.apache.flink.api.connector.sink.GlobalCommitter;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.streaming.api.functions.sink.filesystem.DeltaPendingFile;
 import org.apache.flink.table.types.logical.RowType;
 import org.apache.hadoop.conf.Configuration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import io.delta.standalone.DeltaLog;
 import io.delta.standalone.Operation;
@@ -76,8 +77,9 @@ import io.delta.standalone.types.StructType;
  * </ol>
  */
 public class DeltaGlobalCommitter
-    implements GlobalCommitter<DeltaCommittable, DeltaGlobalCommittable>, Logging {
+    implements GlobalCommitter<DeltaCommittable, DeltaGlobalCommittable> {
 
+    private static final Logger LOG = LoggerFactory.getLogger(DeltaGlobalCommitter.class);
     private static final String APPEND_MODE = "Append";
     private static final String ENGINE_INFO =
         "flink-engine/" + io.delta.flink.sink.internal.committer.Meta.FLINK_VERSION +
@@ -221,7 +223,7 @@ public class DeltaGlobalCommitter
                         committablesPerCheckpoint.get(checkpointId),
                         deltaLog.tableExists());
                 } else {
-                    logInfo(String.format(
+                    LOG.info(String.format(
                         "Skipping already committed transaction (appId='%s', checkpointId='%s')",
                         appId, checkpointId));
                 }
@@ -262,7 +264,7 @@ public class DeltaGlobalCommitter
         for (DeltaCommittable deltaCommittable : committables) {
             logFiles.append(" deltaPendingFile=").append(deltaCommittable.getDeltaPendingFile());
         }
-        logInfo("Files to be committed to the Delta table: " +
+        LOG.info("Files to be committed to the Delta table: " +
             "appId=" + appId +
             " checkpointId=" + checkpointId +
             " files:" + logFiles
@@ -310,11 +312,11 @@ public class DeltaGlobalCommitter
             operationMetrics
         );
 
-        logInfo(String.format(
+        LOG.info(String.format(
             "Attempting to commit transaction (appId='%s', checkpointId='%s')",
             appId, checkpointId));
         transaction.commit(actions, operation, ENGINE_INFO);
-        logInfo(String.format(
+        LOG.info(String.format(
             "Successfully committed transaction (appId='%s', checkpointId='%s')",
             appId, checkpointId));
     }
