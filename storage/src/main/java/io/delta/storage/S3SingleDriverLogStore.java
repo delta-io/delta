@@ -39,7 +39,7 @@ import org.apache.hadoop.fs.Path;
 /**
  * Single Spark-driver/JVM LogStore implementation for S3.
  *
- * We assume the following from S3's [[FileSystem]] implementations:
+ * We assume the following from S3's {@link FileSystem} implementations:
  * - File writing on S3 is all-or-nothing, whether overwrite or not.
  * - List-after-write can be inconsistent.
  *
@@ -78,7 +78,7 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
      * Note: the caller should resolve the path to make sure we are locking the correct absolute
      * path.
      */
-    private static final void releasePathLock(Path resolvedPath) {
+    private static void releasePathLock(Path resolvedPath) {
         final Object lock = pathLock.remove(resolvedPath);
         synchronized(lock) {
             lock.notifyAll();
@@ -91,7 +91,7 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
      * Note: the caller should resolve the path to make sure we are locking the correct absolute
      * path.
      */
-    private static final void acquirePathLock(Path resolvedPath) throws InterruptedException {
+    private static void acquirePathLock(Path resolvedPath) throws InterruptedException {
         while (true) {
             final Object lock = pathLock.putIfAbsent(resolvedPath, new Object());
             if (lock == null) {
@@ -128,7 +128,7 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
         final URI uri = path.toUri();
         final URI newUri = new URI(
             uri.getScheme(),
-            null,
+            null, // userInfo
             uri.getHost(),
             uri.getPort(),
             uri.getPath(),
@@ -139,27 +139,30 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
     }
 
     /**
-     * TODO
+     * Merge two lists of {@link FileStatus} into a single list ordered by file path name.
+     * In case both lists have {@link FileSystem}'s for the same file path, keep the one from
+     * `listWithPrecedence` and discard the other from `list`.
      */
     private Iterator<FileStatus> mergeFileLists(
             List<FileStatus> list,
             List<FileStatus> listWithPrecedence) {
         final Map<Path, FileStatus> fileStatusMap = new HashMap<>();
 
-        final Map<Path, FileStatus> m1 = list
+        final Map<Path, FileStatus> lowPriorityMap = list
             .stream()
             .collect(Collectors.toMap(FileStatus::getPath, Function.identity()));
 
-        final Map<Path, FileStatus> m2 = listWithPrecedence
+        final Map<Path, FileStatus> highPriorityMap = listWithPrecedence
             .stream()
             .collect(Collectors.toMap(FileStatus::getPath, Function.identity()));
 
-        fileStatusMap.putAll(m1); // m1 has lower priority
-        fileStatusMap.putAll(m2); // m2 has higher priority (replaces existing entry if conflict)
+        fileStatusMap.putAll(lowPriorityMap);
+        fileStatusMap.putAll(highPriorityMap); // replaces existing entry if conflict
 
         return fileStatusMap
             .values()
-            .stream().sorted(Comparator.comparing(a -> a.getPath().getName()))
+            .stream()
+            .sorted(Comparator.comparing(a -> a.getPath().getName()))
             .iterator();
     }
 
@@ -176,12 +179,12 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
             .entrySet()
             .stream()
             .filter(e -> {
-                Path path = e.getKey();
+                final Path path = e.getKey();
                 return path.getParent() == pathKey.getParent() &&
                        path.getName().compareTo(pathKey.getName()) >= 0;
             }).map(e -> {
-                Path path = e.getKey();
-                FileMetadata fileMetadata = e.getValue();
+                final Path path = e.getKey();
+                final FileMetadata fileMetadata = e.getValue();
                 return new FileStatus(
                     fileMetadata.length,
                     false, // isDir
@@ -203,7 +206,8 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
             );
         }
 
-        final List<FileStatus> listedFromFs = Arrays.stream(fs.listStatus(parentPath))
+        final List<FileStatus> listedFromFs = Arrays
+            .stream(fs.listStatus(parentPath))
             .filter(s -> s.getPath().getName().compareTo(resolvedPath.getName()) >= 0)
             .collect(Collectors.toList());
 
@@ -290,6 +294,18 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
         }
     }
 
+    @Override
+    public Iterator<FileStatus> listFrom(Path path, Configuration hadoopConf) throws IOException {
+        try {
+            final FileSystem fs = path.getFileSystem(hadoopConf);
+            final Path resolvedPath = stripUserInfo(fs.makeQualified(path));
+            return listFromInternal(fs, resolvedPath, true); // useCache=true
+        } catch (java.net.URISyntaxException e) {
+            throw new IOException("S3SingleDriverLogStore: java.net.URISyntaxException", e);
+        }
+    }
+
+    @Override
     public Boolean isPartialWriteVisible(Path path, Configuration hadoopConf) {
         return false;
     }
@@ -308,14 +324,6 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
         public FileMetadata(long length, long modificationTime) {
             this.length = length;
             this.modificationTime = modificationTime;
-        }
-
-        public long getLength() {
-            return length;
-        }
-
-        public long getModificationTime() {
-            return modificationTime;
         }
     }
 }
