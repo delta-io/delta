@@ -57,20 +57,26 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     hits = Seq(
       "True", // trivial base case
       "a = 1",
+      "a <=> 1",
       "a >= 1",
       "a <= 1",
       "a <= 2",
       "a >= 0",
       "1 = a",
+      "1 <=> a",
       "1 <= a",
       "1 >= a",
       "2 >= a",
       "0 <= a"
     ),
     misses = Seq(
+      "NOT a = 1",
+      "NOT a <=> 1",
       "a = 2",
+      "a <=> 2",
       "a != 1",
       "2 = a",
+      "2 <=> a",
       "1 != a",
       "a > 1",
       "a < 1",
@@ -539,7 +545,8 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     hits = Seq(
       "a IS NULL",
       "a = NULL",  // Ideally this should not hit as it is always FALSE, but its correct to not skip
-      "a <=> NULL",
+      "NOT a = NULL", // Same as previous case
+      "a <=> NULL", // This is optimized to `IsNull(a)` by NullPropagation
       "TRUE",
       "FALSE",     // Ideally this should not hit, but its correct to not skip
       "NULL AND a = 1" // This is optimized to FALSE by ReplaceNullWithFalse, so it's same as above
@@ -547,10 +554,14 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     misses = Seq(
       // stats tell us a is always NULL, so any predicate that requires non-NULL a should skip
       "a IS NOT NULL",
+      "NOT a <=> NULL", // This is optimized to `IsNotNull(a)`
       "a = 1",
+      "NOT a = 1",
       "a > 1",
       "a < 1",
-      "a <> 1"
+      "a <> 1",
+      "a <=> 1",
+      "NOT a <=> 1"
     )
   )
 
@@ -565,8 +576,11 @@ trait DataSkippingDeltaTestsBase extends QueryTest
       "a IS NULL",
       "a IS NOT NULL",
       "a = NULL", // Ideally this should not hit as it is always FALSE, but its correct to not skip
-      "a <=> NULL",
+      "NOT a = NULL", // Same as previous case
+      "a <=> NULL", // This is optimized to `IsNull(a)` by NullPropagation
+      "NOT a <=> NULL", // This is optimized to `IsNotNull(a)`
       "a = 1",
+      "a <=> 1",
       "TRUE",
       "FALSE",    // Ideally this should not hit, but its correct to not skip
       "NULL AND a = 1" // This is optimized to FALSE by ReplaceNullWithFalse, so it's same as above
@@ -574,7 +588,9 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     misses = Seq(
       "a <> 1",
       "a > 1",
-      "a < 1"
+      "a < 1",
+      "NOT a = 1",
+      "NOT a <=> 1"
     )
   )
 
@@ -826,10 +842,22 @@ trait DataSkippingDeltaTestsBase extends QueryTest
       expNumFiles = 1)   // 1 files with key = 'a'
 
     checkResults(
+      predicate = "key <=> 'a'",
+      expResults = allData.filter(_._1 == "a"),
+      expNumPartitions = 1,
+      expNumFiles = 1)   // 1 files with key <=> 'a'
+
+    checkResults(
       predicate = "key = 'b'",
       expResults = allData.filter(_._1 == "b"),
       expNumPartitions = 1,
       expNumFiles = 1)   // 1 files with key = 'b'
+
+    checkResults(
+      predicate = "key <=> 'b'",
+      expResults = allData.filter(_._1 == "b"),
+      expNumPartitions = 1,
+      expNumFiles = 1)   // 1 files with key <=> 'b'
 
     // Conditions on partitions keys and values
     checkResults(
@@ -857,6 +885,12 @@ trait DataSkippingDeltaTestsBase extends QueryTest
       expNumFiles = 2)  // only two files contain "a"
 
     checkResults(
+      predicate = "value <=> 'a'",
+      expResults = allData.filter(_._2 == "a"),
+      expNumPartitions = 2,  // one partition has no files left after data skipping
+      expNumFiles = 2)  // only two files contain "a"
+
+    checkResults(
       predicate = "value <> 'a'",
       expResults = allData.filter(x => x._2 != "a" && x._2 != null),  // i.e., only (null, b)
       expNumPartitions = 1,
@@ -864,6 +898,12 @@ trait DataSkippingDeltaTestsBase extends QueryTest
 
     checkResults(
       predicate = "value = 'b'",
+      expResults = allData.filter(_._2 == "b"),
+      expNumPartitions = 1,
+      expNumFiles = 1)   // same as previous case
+
+    checkResults(
+      predicate = "value <=> 'b'",
       expResults = allData.filter(_._2 == "b"),
       expNumPartitions = 1,
       expNumFiles = 1)   // same as previous case
