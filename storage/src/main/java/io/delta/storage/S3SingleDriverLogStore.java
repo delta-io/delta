@@ -16,20 +16,25 @@
 
 package io.delta.storage;
 
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
+import com.google.common.io.CountingOutputStream;
+import io.delta.storage.internal.FileNameUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-
-import java.io.IOException;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.util.Iterator;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Single Spark-driver/JVM LogStore implementation for S3.
@@ -47,120 +52,44 @@ import java.util.concurrent.TimeUnit;
  */
 public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
 
-    public S3SingleDriverLogStore(Configuration hadoopConf) {
-        super(hadoopConf);
-    }
-
-    private FileSystem resolved(Path path, Configuration hadoopConf) throws IOException {
-        return path.getFileSystem(hadoopConf);
-    }
-
-    private Path getPathKey(Path resolvedPath) throws URISyntaxException {
-        return stripUserInfo(resolvedPath);
-    }
-
-    private Path stripUserInfo(Path path) throws URISyntaxException {
-        URI uri = path.toUri();
-        URI newUri = new URI(
-                uri.getScheme(),
-                null,
-                uri.getHost(),
-                uri.getPort(),
-                uri.getPath(),
-                uri.getQuery(),
-                uri.getFragment()
-        );
-        return new Path(newUri);
-    }
-
-    /**
-     * Merge two iterators of [[FileStatus]] into a single iterator ordered by file path name.
-     * In case both iterators have [[FileStatus]]s for the same file path, keep the one from
-     * `iterWithPrecedence` and discard that from `iter`.
-     */
-//    private Iterator<FileStatus> mergeFileIterators(
-//            Iterator<FileStatus> iter,
-//            Iterator<FileStatus> iterWithPrecedence) {
-//            iter.forEach()
-////                (iter.map(f => (f.getPath, f)).toMap ++ iterWithPrecedence.map(f => (f.getPath, f)))
-////                .values
-////                .toSeq
-////                .sortBy(_.getPath.getName)
-////                .iterator
-//    }
-
-    /**
-     * List files starting from `resolvedPath` (inclusive) in the same directory.
-     */
-//    private FileStatus listFromCache(FileSystem fs, Path resolvedPath) throws URISyntaxException {
-//            final var pathKey = getPathKey(resolvedPath);
-//            writtenPathCache.iterator.filter { case (path, _) =>
-//            path.getParent == pathKey.getParent() && path.getName >= pathKey.getName }
-//      .map { case (path, fileMetadata) =>
-//            new FileStatus(
-//                    fileMetadata.length,
-//                    false,
-//                    1,
-//                    fs.getDefaultBlockSize(path),
-//                    fileMetadata.modificationTime,
-//                    path);
-//        }
-//    }
-
-    /**
-     * Check if the path is an initial version of a Delta log.
-     */
-//    public Boolean isInitialVersion(Path path) {
-//        if ( (FileNames.isDeltaFile(path)) & (FileNames.deltaVersion(path) == 0L)) {
-//            return true;
-//        }
-//        return false;
-//    }
-
-    @Override
-    public void write(
-            Path path,
-            Iterator<String> actions,
-            Boolean overwrite,
-            Configuration hadoopConf) throws IOException {
-        writeWithRename(path, actions, overwrite, hadoopConf);
-    }
-
-    public Boolean isPartialWriteVisible(
-            Path path,
-            Configuration hadoopConf) {
-        return false;
-    }
+    ///////////////////////////
+    // Static Helper Methods //
+    ///////////////////////////
 
     /**
      * A global path lock to ensure that no concurrent writers writing to the same path in the same
      * JVM.
      */
-    private static final ConcurrentHashMap<Path, Object> pathLock = new ConcurrentHashMap<Path, Object>();
+    private static final ConcurrentHashMap<Path, Object> pathLock = new ConcurrentHashMap<>();
 
     /**
      * A global cache that records the metadata of the files recently written.
      * As list-after-write may be inconsistent on S3, we can use the files in the cache
      * to fix the inconsistent file listing.
      */
-    private static final ConcurrentMap<Path, FileMetadata> writtenPathCache = CacheBuilder.newBuilder().expireAfterAccess(120, TimeUnit.MINUTES).<Path,FileMetadata>build().asMap();
+    private static final Cache<Path, FileMetadata> writtenPathCache =
+        CacheBuilder.newBuilder()
+            .expireAfterAccess(120, TimeUnit.MINUTES)
+            .build();
 
     /**
      * Release the lock for the path after writing.
      *
-     * Note: the caller should resolve the path to make sure we are locking the correct absolute path.
+     * Note: the caller should resolve the path to make sure we are locking the correct absolute
+     * path.
      */
-        private static final void releasePathLock(Path resolvedPath) {
-            final Object lock = pathLock.remove(resolvedPath);
-            synchronized(lock) {
-                lock.notifyAll();
-            }
+    private static final void releasePathLock(Path resolvedPath) {
+        final Object lock = pathLock.remove(resolvedPath);
+        synchronized(lock) {
+            lock.notifyAll();
         }
+    }
 
     /**
      * Acquire a lock for the path before writing.
      *
-     * Note: the caller should resolve the path to make sure we are locking the correct absolute path.
+     * Note: the caller should resolve the path to make sure we are locking the correct absolute
+     * path.
      */
     private static final void acquirePathLock(Path resolvedPath) throws InterruptedException {
         while (true) {
@@ -177,10 +106,216 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
     }
 
     /**
+     * Check if the path is an initial version of a Delta log.
+     */
+    public static boolean isInitialVersion(Path path) {
+        return FileNameUtils.isDeltaFile(path) && FileNameUtils.deltaVersion(path) == 0L;
+    }
+
+    /////////////////////////////////////////////
+    // Constructor and Instance Helper Methods //
+    /////////////////////////////////////////////
+
+    public S3SingleDriverLogStore(Configuration hadoopConf) {
+        super(hadoopConf);
+    }
+
+    private Path getPathKey(Path resolvedPath) throws URISyntaxException {
+        return stripUserInfo(resolvedPath);
+    }
+
+    private Path stripUserInfo(Path path) throws URISyntaxException {
+        final URI uri = path.toUri();
+        final URI newUri = new URI(
+            uri.getScheme(),
+            null,
+            uri.getHost(),
+            uri.getPort(),
+            uri.getPath(),
+            uri.getQuery(),
+            uri.getFragment()
+        );
+        return new Path(newUri);
+    }
+
+    /**
+     * TODO
+     */
+    private Iterator<FileStatus> mergeFileLists(
+            List<FileStatus> list,
+            List<FileStatus> listWithPrecedence) {
+        final Map<Path, FileStatus> fileStatusMap = new HashMap<>();
+
+        final Map<Path, FileStatus> m1 = list
+            .stream()
+            .collect(Collectors.toMap(FileStatus::getPath, Function.identity()));
+
+        final Map<Path, FileStatus> m2 = listWithPrecedence
+            .stream()
+            .collect(Collectors.toMap(FileStatus::getPath, Function.identity()));
+
+        fileStatusMap.putAll(m1); // m1 has lower priority
+        fileStatusMap.putAll(m2); // m2 has higher priority (replaces existing entry if conflict)
+
+        return fileStatusMap
+            .values()
+            .stream().sorted(Comparator.comparing(a -> a.getPath().getName()))
+            .iterator();
+    }
+
+    /**
+     * List files starting from `resolvedPath` (inclusive) in the same directory.
+     */
+    private List<FileStatus> listFromCache(
+            FileSystem fs,
+            Path resolvedPath) throws URISyntaxException {
+        final Path pathKey = getPathKey(resolvedPath);
+
+        return writtenPathCache
+            .asMap()
+            .entrySet()
+            .stream()
+            .filter(e -> {
+                Path path = e.getKey();
+                return path.getParent() == pathKey.getParent() &&
+                       path.getName().compareTo(pathKey.getName()) >= 0;
+            }).map(e -> {
+                Path path = e.getKey();
+                FileMetadata fileMetadata = e.getValue();
+                return new FileStatus(
+                    fileMetadata.length,
+                    false, // isDir
+                    1, // block_replication
+                    fs.getDefaultBlockSize(path),
+                    fileMetadata.modificationTime,
+                    path);
+            }).collect(Collectors.toList());
+    }
+
+    private Iterator<FileStatus> listFromInternal(
+            FileSystem fs,
+            Path resolvedPath,
+            boolean useCache) throws IOException, URISyntaxException {
+        final Path parentPath = resolvedPath.getParent();
+        if (!fs.exists(parentPath)) {
+            throw new FileNotFoundException(
+                String.format("No such file or directory: %s", parentPath)
+            );
+        }
+
+        final List<FileStatus> listedFromFs = Arrays.stream(fs.listStatus(parentPath))
+            .filter(s -> s.getPath().getName().compareTo(resolvedPath.getName()) >= 0)
+            .collect(Collectors.toList());
+
+        final List<FileStatus> listedFromCache = useCache ?
+            listFromCache(fs, resolvedPath) : Collections.emptyList();
+
+        return mergeFileLists(listedFromCache, listedFromFs);
+    }
+
+    /**
+     * Check if a path exists. Normally we check both the file system and the cache, but when the
+     * path is the first version of a Delta log, we ignore the cache.
+     */
+    private boolean exists(
+            FileSystem fs,
+            Path resolvedPath) throws IOException, URISyntaxException {
+        final boolean useCache = !isInitialVersion(resolvedPath);
+        final Iterator<FileStatus> iter = listFromInternal(fs, resolvedPath, useCache);
+        if (!iter.hasNext()) return false;
+
+        return iter.next().getPath().getName().equals(resolvedPath.getName());
+    }
+
+    ////////////////////////
+    // Public API Methods //
+    ////////////////////////
+
+    @Override
+    public void write(
+            Path path,
+            Iterator<String> actions,
+            Boolean overwrite,
+            Configuration hadoopConf) throws IOException {
+        try {
+            final FileSystem fs = path.getFileSystem(hadoopConf);
+            final Path resolvedPath = stripUserInfo(fs.makeQualified(path));
+            final Path lockedPath = getPathKey(resolvedPath);
+            acquirePathLock(lockedPath);
+
+            try {
+                if (exists(fs, resolvedPath) && !overwrite) {
+                    throw new java.nio.file.FileAlreadyExistsException(
+                        resolvedPath.toUri().toString()
+                    );
+                }
+
+                final CountingOutputStream stream =
+                    new CountingOutputStream(fs.create(resolvedPath, overwrite));
+
+                while (actions.hasNext()) {
+                    stream.write((actions.next() + "\n").getBytes(StandardCharsets.UTF_8));
+                }
+                stream.close();
+
+                // When a Delta log starts afresh, all cached files in that Delta log become
+                // obsolete, so we remove them from the cache.
+                if (isInitialVersion(resolvedPath)) {
+                    final List<Path> obsoleteFiles = writtenPathCache
+                        .asMap()
+                        .keySet()
+                        .stream()
+                        .filter(p -> p.getParent() == lockedPath.getParent())
+                        .collect(Collectors.toList());
+
+                    writtenPathCache.invalidateAll(obsoleteFiles);
+                }
+
+                // Cache the information of written files to help fix the inconsistency in future
+                // listings
+                writtenPathCache.put(
+                    lockedPath,
+                    new FileMetadata(stream.getCount(), System.currentTimeMillis())
+                );
+            } catch (org.apache.hadoop.fs.FileAlreadyExistsException e) {
+                // Convert Hadoop's FileAlreadyExistsException to Java's FileAlreadyExistsException
+                throw new java.nio.file.FileAlreadyExistsException(e.getMessage());
+            } finally {
+                releasePathLock(lockedPath);
+            }
+        } catch (java.net.URISyntaxException e) {
+            throw new IOException("S3SingleDriverLogStore: java.net.URISyntaxException", e);
+        } catch (java.lang.InterruptedException e) {
+            throw new IOException("S3SingleDriverLogStore: java.lang.InterruptedException", e);
+        }
+    }
+
+    public Boolean isPartialWriteVisible(Path path, Configuration hadoopConf) {
+        return false;
+    }
+
+    //////////////////
+    // Helper Class //
+    //////////////////
+
+    /**
      * The file metadata to be stored in the cache.
      */
-    class FileMetadata {
+    private class FileMetadata {
         private long length;
         private long modificationTime;
+
+        public FileMetadata(long length, long modificationTime) {
+            this.length = length;
+            this.modificationTime = modificationTime;
+        }
+
+        public long getLength() {
+            return length;
+        }
+
+        public long getModificationTime() {
+            return modificationTime;
+        }
     }
 }

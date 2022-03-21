@@ -308,6 +308,12 @@ class HDFSLogStoreSuite extends HDFSLogStoreSuiteBase {
   override val logStoreClassName: String = classOf[HDFSLogStore].getName
 }
 
+class S3SingleDriverLogStoreSuite extends LogStoreSuiteBase {
+  override val logStoreClassName: String = classOf[S3SingleDriverLogStore].getName
+
+  override protected def shouldUseRenameToWriteCheckpoint: Boolean = false
+}
+
 class LocalLogStoreSuite extends LogStoreSuiteBase {
 
   override val logStoreClassName: String = classOf[LocalLogStore].getName
@@ -410,7 +416,9 @@ class PublicHDFSLogStoreSuite extends PublicLogStoreSuite with HDFSLogStoreSuite
     classOf[io.delta.storage.HDFSLogStore].getName
 }
 
-abstract class PublicS3SingleDriverLogStoreSuite extends PublicLogStoreSuite {
+class PublicS3SingleDriverLogStoreSuite extends PublicLogStoreSuite {
   override protected val publicLogStoreClassName: String =
     classOf[io.delta.storage.S3SingleDriverLogStore].getName
+
+  override protected def shouldUseRenameToWriteCheckpoint: Boolean = false
 }
