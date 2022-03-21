@@ -1,9 +1,12 @@
 package io.delta.storage.internal;
 
-import org.apache.hadoop.fs.Path;
-
 import java.util.regex.Pattern;
 
+import org.apache.hadoop.fs.Path;
+
+/**
+ * Helper for creating file names for specific commits / checkpoints.
+ */
 public class FileNameUtils {
     static Pattern DELTA_FILE_PATTERN = Pattern.compile("\\d+\\.json");
 
