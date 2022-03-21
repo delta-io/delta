@@ -288,8 +288,10 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
                 releasePathLock(lockedPath);
             }
         } catch (java.net.URISyntaxException e) {
+            // Hide this internal error and re-throw using public-api wrapper
             throw new IOException("S3SingleDriverLogStore: java.net.URISyntaxException", e);
         } catch (java.lang.InterruptedException e) {
+            // Hide this internal error and re-throw using public-api wrapper
             throw new IOException("S3SingleDriverLogStore: java.lang.InterruptedException", e);
         }
     }
@@ -301,6 +303,7 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
             final Path resolvedPath = stripUserInfo(fs.makeQualified(path));
             return listFromInternal(fs, resolvedPath, true); // useCache=true
         } catch (java.net.URISyntaxException e) {
+            // Hide this internal error and re-throw using public-api wrapper
             throw new IOException("S3SingleDriverLogStore: java.net.URISyntaxException", e);
         }
     }
