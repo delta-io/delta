@@ -672,6 +672,19 @@ lazy val flinkConnector = (project in file("flink-connector"))
     publishArtifact := scalaBinaryVersion.value != "2.13",
     Test / publishArtifact := false,
     releaseSettings,
+    pomExtra :=
+      <url>https://github.com/delta-io/connectors</url>
+        <scm>
+          <url>git@github.com:delta-io/connectors.git</url>
+          <connection>scm:git:git@github.com:delta-io/connectors.git</connection>
+        </scm>
+        <developers>
+          <developer>
+            <id>pkubit-g</id>
+            <name>Paweł Kubit</name>
+            <url>https://github.com/pkubit-g</url>
+          </developer>
+        </developers>,
     crossPaths := false,
     libraryDependencies ++= Seq(
       "org.apache.flink" % ("flink-parquet_" + flinkScalaVersion(scalaBinaryVersion.value)) % flinkVersion % "provided",
