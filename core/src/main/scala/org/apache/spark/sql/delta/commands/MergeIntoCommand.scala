@@ -24,7 +24,7 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction}
 import org.apache.spark.sql.delta.files._
-import org.apache.spark.sql.delta.schema.ImplicitMetadataOperation
+import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{AnalysisHelper, SetAccumulator}
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
@@ -272,6 +272,20 @@ case class MergeIntoCommand(
       createMetric(sc, "time taken to rewrite the matched files"))
 
   override def run(spark: SparkSession): Seq[Row] = {
+    if (migratedSchema.isDefined) {
+      // Block writes of void columns in the Delta log. Currently void columns are not properly
+      // supported and are dropped on read, but this is not enough for merge command that is also
+      // reading the schema from the Delta log. Until proper support we prefer to fail merge
+      // queries that add void columns.
+      val newNullColumn = SchemaUtils.findNullTypeColumn(migratedSchema.get)
+      if (newNullColumn.isDefined) {
+        throw new AnalysisException(
+          s"""Cannot add column '${newNullColumn.get}' with type 'void'. Please explicitly specify a
+              |non-void type.""".stripMargin.replaceAll("\n", " ")
+        )
+      }
+    }
+
     recordDeltaOperation(targetDeltaLog, "delta.dml.merge") {
       val startTime = System.nanoTime()
       targetDeltaLog.withNewTransaction { deltaTxn =>

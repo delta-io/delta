@@ -160,6 +160,29 @@ object SchemaUtils {
   }
 
   /**
+   * Returns the name of the first column/field that has null type (void).
+   */
+  def findNullTypeColumn(schema: StructType): Option[String] = {
+    // Helper method to recursively check nested structs.
+    def findNullTypeColumnRec(s: StructType, nameStack: Seq[String]): Option[String] = {
+      val nullFields = s.flatMap {
+        case StructField(name, n: NullType, _, _) => Some((nameStack :+ name).mkString("."))
+        case StructField(name, s: StructType, _, _) => findNullTypeColumnRec(s, nameStack :+ name)
+        // Note that we don't recursively check Array and Map types because NullTypes are already
+        // not allowed (see 'dropNullTypeColumns').
+        case _ => None
+      }
+      return nullFields.headOption
+    }
+
+    if (typeExistsRecursively(schema)(_.isInstanceOf[NullType])) {
+      findNullTypeColumnRec(schema, Seq.empty)
+    } else {
+      None
+    }
+  }
+
+  /**
    * Rewrite the query field names according to the table schema. This method assumes that all
    * schema validation checks have been made and this is the last operation before writing into
    * Delta.
