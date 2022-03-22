@@ -35,7 +35,6 @@ class TimestampLocalFileSystem extends RawLocalFileSystem {
 
   override def initialize(name: URI, conf: Configuration): Unit = {
     uri = URI.create(name.getScheme + ":///")
-    latestTimestamp = System.currentTimeMillis()
     super.initialize(name, conf)
   }
 

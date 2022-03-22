@@ -315,15 +315,10 @@ trait HDFSLogStoreSuiteBase extends LogStoreSuiteBase {
         // Initialize the TimestampLocalFileSystem object which will be reused later due to the
         // FileSystem cache
         assert(store.listFrom(path, sessionHadoopConf).length == 0)
-        // The LocalFileSystem only tracks modified time at second granularity, so we need to
-        // wait a second to make sure the behavior works, otherwise the below `listFrom` would
-        // succeed even without the `msync` call, as the file timestamp is rounded down to the
-        // nearest second.
-        Thread.sleep(1000)
 
         store.write(path, Iterator("zero", "none"), overwrite = false, sessionHadoopConf)
         // Verify `msync` is called by checking whether `listFrom` returns the latest result.
-        // Without the `msync` call, the TimestampLocalFileSystem would not see this file
+        // Without the `msync` call, the TimestampLocalFileSystem would not see this file.
         assert(store.listFrom(path, sessionHadoopConf).length == 1)
       }
     }
