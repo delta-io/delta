@@ -18,6 +18,7 @@ package io.delta.storage;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
@@ -288,11 +289,9 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
                 releasePathLock(lockedPath);
             }
         } catch (java.net.URISyntaxException e) {
-            // Hide this internal error and re-throw using public-api wrapper
-            throw new IOException("S3SingleDriverLogStore: java.net.URISyntaxException", e);
+            throw new IllegalArgumentException(e);
         } catch (java.lang.InterruptedException e) {
-            // Hide this internal error and re-throw using public-api wrapper
-            throw new IOException("S3SingleDriverLogStore: java.lang.InterruptedException", e);
+            throw new InterruptedIOException(e.getMessage());
         }
     }
 
@@ -303,8 +302,7 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
             final Path resolvedPath = stripUserInfo(fs.makeQualified(path));
             return listFromInternal(fs, resolvedPath, true); // useCache=true
         } catch (java.net.URISyntaxException e) {
-            // Hide this internal error and re-throw using public-api wrapper
-            throw new IOException("S3SingleDriverLogStore: java.net.URISyntaxException", e);
+            throw new IllegalArgumentException(e);
         }
     }
 
