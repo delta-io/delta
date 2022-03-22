@@ -424,7 +424,7 @@ class PublicHDFSLogStoreSuite extends PublicLogStoreSuite with HDFSLogStoreSuite
  *
  * Concrete children must override [[schemeAndClass]].
  */
-abstract class PublicDelegatingLogStoreSuite extends PublicLogStoreSuite {
+abstract class PublicDelegatingLogStoreSuiteBase extends PublicLogStoreSuite {
   override protected val publicLogStoreClassName: String =
     classOf[io.delta.storage.DelegatingLogStore].getName
 
@@ -454,12 +454,13 @@ abstract class PublicDelegatingLogStoreSuite extends PublicLogStoreSuite {
  * DelegatingLogStore will, by default, use HDFSLogStore.
  */
 class PublicDelegatingLogStoreDefaultSuite
-  extends PublicDelegatingLogStoreSuite
+  extends PublicDelegatingLogStoreSuiteBase
   with HDFSLogStoreSuiteBase {
+
   override protected val schemeAndClass: Option[(String, String)] = None
 }
 
-// class PublicDelegatingLogStoreAzureSuite extends PublicDelegatingLogStoreSuite {
+// class PublicDelegatingLogStoreAzureSuite extends PublicDelegatingLogStoreSuiteBase {
 //   override protected val schemeAndClass: Option[(String, String)] = Some(
 //     DelegatingLogStore.azureSchemes.head,
 //     classOf[io.delta.storage.AzureLogStore].getName)

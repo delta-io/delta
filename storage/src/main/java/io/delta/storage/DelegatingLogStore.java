@@ -19,6 +19,8 @@ package io.delta.storage;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.util.*;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import io.delta.storage.internal.LogStoreUtils;
 import org.apache.hadoop.conf.Configuration;
@@ -49,6 +51,9 @@ public class DelegatingLogStore extends LogStore {
     public static final Set<String> AZURE_SCHEMES =
             new HashSet<>(Arrays.asList("abfs", "abfss", "adl", "wasb", "wasbs"));
 
+    public static final Set<String> ALL_SCHEMES =
+        Stream.concat(S3_SCHEMES.stream(), AZURE_SCHEMES.stream()).collect(Collectors.toSet());
+
     public static String getDefaultLogStoreClassName(String scheme) {
         if (S3_SCHEMES.contains(scheme)) {
             return DEFAULT_S3_LOG_STORE_CLASS_NAME;
@@ -73,7 +78,7 @@ public class DelegatingLogStore extends LogStore {
         this.schemaToLogStoreMap = new HashMap<>();
     }
 
-    private LogStore getDelegateByScheme(Path path, Configuration hadoopConf) throws IOException {
+    public LogStore getDelegateByScheme(Path path, Configuration hadoopConf) throws IOException {
         final String origScheme = path.toUri().getScheme();
 
         synchronized (this) {
