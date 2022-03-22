@@ -52,6 +52,7 @@ case class DeltaUnsupportedOperationsCheck(spark: SparkSession)
   def apply(plan: LogicalPlan): Unit = plan.foreach {
     // Unsupported Hive commands
     case c: CreateTableLikeCommand =>
+      // NOTE: CTL for Delta Tables from HMS to UC is allowed and handled in UpgradeTableCommand
       recordDeltaEvent(null, "delta.unsupported.createLike")
       fail(operation = "CREATE TABLE LIKE", c.sourceTable)
 
