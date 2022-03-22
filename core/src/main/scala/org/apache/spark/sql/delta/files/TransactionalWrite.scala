@@ -303,7 +303,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
           writeOptions.options.filterKeys(key =>
             key.equalsIgnoreCase("maxRecordsPerFile") ||
             key.equalsIgnoreCase(DateTimeUtils.TIMEZONE_OPTION)
-          ).mapValues(_.toString)
+          ).toMap
       }
 
       try {
