@@ -16,13 +16,24 @@
 
 package org.apache.spark.sql.delta
 
+import scala.collection.JavaConverters._
+
+import org.apache.spark.sql.delta.schema.InvariantViolationException
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.scalatest.GivenWhenThen
 
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.types._
 
 class DeltaColumnRenameSuite extends QueryTest
   with DeltaArbitraryColumnNameSuiteBase
   with GivenWhenThen {
+
+  private def assertException(message: String)(block: => Unit): Unit = {
+    val e = intercept[Exception](block)
+
+    assert(e.getMessage.contains(message))
+  }
 
   testColumnMapping("rename in column mapping mode") { mode =>
     withTable("t1") {
@@ -61,6 +72,18 @@ class DeltaColumnRenameSuite extends QueryTest
       spark.sql(s"Alter table t1 RENAME COLUMN a to a1")
       // rename nested column
       spark.sql(s"Alter table t1 RENAME COLUMN b1.c to c1")
+
+      // cannot rename column to the same name
+      assert(
+        intercept[AnalysisException] {
+          spark.sql(s"Alter table t1 RENAME COLUMN map to map")
+        }.getMessage.contains("map already exists in root"))
+
+      // cannot rename to a different casing
+      assert(
+        intercept[AnalysisException] {
+          spark.sql("Alter table t1 RENAME COLUMN arr to Arr")
+        }.getMessage.contains("Arr already exists in root"))
 
       // a is no longer visible
       val e2 = intercept[AnalysisException] {
@@ -102,8 +125,13 @@ class DeltaColumnRenameSuite extends QueryTest
         DeltaConfigs.MIN_READER_VERSION.key -> "2",
         DeltaConfigs.MIN_WRITER_VERSION.key -> "5"))
 
-      // spice things up by changing name to arbitrary chars
+      // rename a column to have arbitrary chars
       spark.sql(s"Alter table t1 RENAME COLUMN a to `${colName("a")}`")
+
+      // rename a column that already has arbitrary chars
+      spark.sql(s"Alter table t1" +
+        s" RENAME COLUMN `${colName("a")}` to `${colName("a1")}`")
+
       // rename partition column
       spark.sql(s"Alter table t1 RENAME COLUMN map to `${colName("map")}`")
 
@@ -112,7 +140,7 @@ class DeltaColumnRenameSuite extends QueryTest
         "values ('str3', struct('str1.3', 3), map('k3', 'v3'), array(3, 33))")
 
       checkAnswer(
-        spark.table("t1").select(colName("a"), "b.d", colName("map"))
+        spark.table("t1").select(colName("a1"), "b.d", colName("map"))
           .where("b.c >= 'str1.2'"),
         Seq(Row("str2", 2, Map("k2" -> "v2")),
           Row("str3", 3, Map("k3" -> "v3"))))
@@ -126,7 +154,7 @@ class DeltaColumnRenameSuite extends QueryTest
         " 'new_str4', map('new_k4', 'new_v4'))")
 
       checkAnswer(
-        spark.table("t1").select(colName("a"), "a", colName("map"), "map")
+        spark.table("t1").select(colName("a1"), "a", colName("map"), "map")
           .where("b.c >= 'str1.2'"),
         Seq(
           Row("str2", null, Map("k2" -> "v2"), null),
@@ -193,4 +221,159 @@ class DeltaColumnRenameSuite extends QueryTest
     }
   }
 
+  test("rename with constraints") {
+    withTable("t1") {
+      val schemaWithNotNull =
+        simpleNestedData.schema.toDDL.replace("c: STRING", "c: STRING NOT NULL")
+
+      withTable("source") {
+        spark.sql(
+          s"""
+             |CREATE TABLE t1 ($schemaWithNotNull)
+             |USING DELTA
+             |${partitionStmt(Seq("a"))}
+             |${propString(Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))}
+             |""".stripMargin)
+        simpleNestedData.write.format("delta").mode("append").saveAsTable("t1")
+      }
+
+      spark.sql("alter table t1 add constraint rangeABC check (concat(a, a) > 'str')")
+      spark.sql("alter table t1 add constraint rangeBD check (`b`.`d` > 0)")
+      spark.sql("alter table t1" +
+        " add constraint mapValue check (map['k1'] = 'v1' or map['k1'] is null)")
+
+      spark.sql("alter table t1 add constraint arrValue check (arr[0] > 0)")
+
+      assertException("Cannot rename column a") {
+        spark.sql("alter table t1 rename column a to a1")
+      }
+
+      assertException("Cannot rename column arr") {
+        spark.sql("alter table t1 rename column arr to arr1")
+      }
+
+      assertException("Cannot rename column map") {
+        spark.sql("alter table t1 rename column map to map1")
+      }
+
+      // cannot rename b because its child is referenced
+      assertException("Cannot rename column b") {
+        spark.sql("alter table t1 rename column b to b1")
+      }
+
+      // can still rename map because it's referenced by a null constraint
+      spark.sql("alter table t1 rename column b.c to c1")
+
+      spark.sql("insert into t1 " +
+        "values ('str3', struct('str1.3', 3), map('k3', 'v3'), array(3, 33))")
+
+      assertException("CHECK constraint rangeabc (concat(a, a) > 'str')") {
+        spark.sql("insert into t1 " +
+          "values ('fail constraint', struct('str1.3', 3), map('k3', 'v3'), array(3, 33))")
+      }
+
+      assertException("CHECK constraint rangebd (b.d > 0)") {
+        spark.sql("insert into t1 " +
+          "values ('str3', struct('str1.3', -1), map('k3', 'v3'), array(3, 33))")
+      }
+
+
+      // this is a safety flag - it won't error when you turn it off
+      withSQLConf(DeltaSQLConf.DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS.key -> "false") {
+        spark.sql("alter table t1 rename column a to a1")
+        spark.sql("alter table t1 rename column arr to arr1")
+        spark.sql("alter table t1 rename column b to b1")
+      }
+    }
+  }
+
+  test("rename with generated column") {
+    withTable("t1") {
+      val tableBuilder = io.delta.tables.DeltaTable.create(spark).tableName("t1")
+      tableBuilder.property("delta.columnMapping.mode", "name")
+
+      // add existing columns
+      simpleNestedSchema.map(field => (field.name, field.dataType)).foreach(col => {
+        val (colName, dataType) = col
+        val columnBuilder = io.delta.tables.DeltaTable.columnBuilder(spark, colName)
+        columnBuilder.dataType(dataType.sql)
+        tableBuilder.addColumn(columnBuilder.build())
+      })
+
+      // add generated columns
+      val genCol1 = io.delta.tables.DeltaTable.columnBuilder(spark, "genCol1")
+        .dataType("int")
+        .generatedAlwaysAs("length(a)")
+        .build()
+
+      val genCol2 = io.delta.tables.DeltaTable.columnBuilder(spark, "genCol2")
+        .dataType("int")
+        .generatedAlwaysAs("b.d * 100 + arr[0]")
+        .build()
+
+      val genCol3 = io.delta.tables.DeltaTable.columnBuilder(spark, "genCol3")
+        .dataType("string")
+        .generatedAlwaysAs("concat(a, a)")
+        .build()
+
+      tableBuilder
+        .addColumn(genCol1)
+        .addColumn(genCol2)
+        .addColumn(genCol3)
+        .partitionedBy("genCol2")
+        .execute()
+
+      simpleNestedData.write.format("delta").mode("append").saveAsTable("t1")
+
+      assertException("Cannot rename column a") {
+        spark.sql("alter table t1 rename column a to a1")
+      }
+
+      assertException("Cannot rename column b") {
+        spark.sql("alter table t1 rename column b to b1")
+      }
+
+      assertException("Cannot rename column b.d") {
+        spark.sql("alter table t1 rename column b.d to d1")
+      }
+
+      assertException("Cannot rename column arr") {
+        spark.sql("alter table t1 rename column arr to arr1")
+      }
+
+      // you can still rename b.c
+      spark.sql("alter table t1 rename column b.c to c1")
+
+      // The following is just to show generated columns are actually there
+
+      // add new data (without data for generated columns so that they are auto populated)
+      spark.createDataFrame(
+        Seq(Row("str3", Row("str1.3", 3), Map("k3" -> "v3"), Array(3, 33))).asJava,
+        new StructType()
+         .add("a", StringType, true)
+          .add("b",
+        new StructType()
+          .add("c1", StringType, true)
+          .add("d", IntegerType, true))
+          .add("map", MapType(StringType, StringType), true)
+          .add("arr", ArrayType(IntegerType), true))
+      .write.format("delta").mode("append").saveAsTable("t1")
+
+      checkAnswer(spark.table("t1"),
+        Seq(
+            Row("str1", Row("str1.1", 1), Map("k1" -> "v1"), Array(1, 11), 4, 101, "str1str1"),
+            Row("str2", Row("str1.2", 2), Map("k2" -> "v2"), Array(2, 22), 4, 202, "str2str2"),
+            Row("str3", Row("str1.3", 3), Map("k3" -> "v3"), Array(3, 33), 4, 303, "str3str3")))
+
+      // this is a safety flag - if you turn it off, it will still error but msg is not as helpful
+      withSQLConf(DeltaSQLConf.DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS.key -> "false") {
+        assertException("A generated column cannot use a non-existent column") {
+          spark.sql("alter table t1 rename column arr to arr1")
+        }
+        assertException("No such struct field d in c1, d1") {
+          spark.sql("alter table t1 rename column b.d to d1")
+        }
+      }
+    }
+  }
 }
