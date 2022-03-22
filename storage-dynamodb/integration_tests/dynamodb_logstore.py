@@ -43,24 +43,21 @@ export DELTA_CONCURRENT_WRITERS=2
 export DELTA_CONCURRENT_READERS=2
 export DELTA_TABLE_PATH=s3a://test-bucket/delta-test/
 export DELTA_DYNAMO_TABLE=delta_log_test
+export DELTA_DYNAMO_REGION=us-west-2
 export DELTA_STORAGE=io.delta.storage.DynamoDBLogStoreScala # TODO: remove `Scala` when Java version finished
 export DELTA_NUM_ROWS=16
 
-TODO: update this comment with proper delta-storage artifact ID (i.e. no _2.12 scala version)
-
-./run-integration-tests.py \
-  --test dynamodb_logstore.py \
-  --python-only \
-  --conf spark.jars.ivySettings=/workspace/ivy.settings \
-         spark.driver.extraJavaOptions=-Dlog4j.configuration=file:debug/log4j.properties \
-  --packages io.delta:delta-storage-dynamodb_2.12:${VERSION},org.apache.hadoop:hadoop-aws:3.3.1,com.amazonaws:aws-java-sdk-bundle:1.12.142
+./run-integration-tests.py --run-storage-dynamodb-integration-tests \
+    --dbb-packages org.apache.hadoop:hadoop-aws:3.3.1,com.amazonaws:aws-java-sdk-bundle:1.12.142 \
+    --dbb-conf spark.jars.ivySettings=/workspace/ivy.settings \
+        spark.driver.extraJavaOptions=-Dlog4j.configuration=file:debug/log4j.properties
 """
 
 # conf
 delta_table_path = os.environ.get("DELTA_TABLE_PATH")
 concurrent_writers = int(os.environ.get("DELTA_CONCURRENT_WRITERS", 2))
 concurrent_readers = int(os.environ.get("DELTA_CONCURRENT_READERS", 2))
-num_rows = int(os.environ.get("DELTA_NUM_ROWS", 32))
+num_rows = int(os.environ.get("DELTA_NUM_ROWS", 16))
 
 # TODO change back to default io.delta.storage.DynamoDBLogStore
 delta_storage = os.environ.get("DELTA_STORAGE", "io.delta.storage.DynamoDBLogStoreScala")

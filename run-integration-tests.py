@@ -50,17 +50,16 @@ def run_scala_integration_tests(root_dir, version, test_name, extra_maven_repo, 
             try:
                 cmd = ["build/sbt", "runMain example.%s" % test_class]
                 print("\nRunning Scala tests in %s\n=====================" % test_class)
-                print("Command: %s" % str(cmd))
+                print("Command: %s" % " ".join(cmd))
                 run_cmd(cmd, stream_output=True, env=env)
             except:
                 print("Failed Scala tests in %s" % (test_class))
                 raise
 
 
-def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo, extra_packages, jars, conf):
+def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo):
     print("\n\n##### Running Python tests on version %s #####" % str(version))
     clear_artifact_cache()
-    run_cmd(["build/sbt", "publishM2"])
     test_dir = path.join(root_dir, path.join("examples", "python"))
     files_to_skip = {"using_with_pip.py"}
 
@@ -72,16 +71,8 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
     package = "io.delta:delta-core_2.12:" + version
-    if extra_packages:
-        package += "," + extra_packages
 
-    jars = jars and ["--jars", jars] or []
-    repos = extra_maven_repo and ["--repositories", extra_maven_repo] or []
-
-    conf_args = []
-    if conf:
-        for i in conf:
-            conf_args.extend(["--conf", i])
+    repo = extra_maven_repo if extra_maven_repo else ""
 
     for test_file in test_files:
         if test_name is not None and test_name not in test_file:
@@ -91,13 +82,54 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
             cmd = ["spark-submit",
                    "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
                    "--packages", package,
-                   *jars] + repos + conf_args + [test_file]
-
+                   "--repositories", repo, test_file]
             print("\nRunning Python tests in %s\n=============" % test_file)
             print("Command: %s" % " ".join(cmd))
             run_cmd(cmd, stream_output=True)
         except:
             print("Failed Python tests in %s" % (test_file))
+            raise
+
+
+def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_maven_repo,
+                                            extra_packages, conf):
+    print("\n\n##### Running DynamoDB logstore integration tests on version %s #####" % str(version))
+    clear_artifact_cache()
+    run_cmd(["build/sbt", "publishM2"])  # TODO: THIS IS TEMPORARY, NEED TO MERGE #990
+    test_dir = path.join(root_dir, path.join("storage-dynamodb", "integration_tests"))
+
+    test_files = [path.join(test_dir, f) for f in os.listdir(test_dir)
+                  if path.isfile(path.join(test_dir, f)) and
+                  f.endswith(".py") and not f.startswith("_")]
+
+    python_root_dir = path.join(root_dir, "python")
+    extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
+    packages = "io.delta:delta-core_2.12:" + version
+    # TODO: update this with proper delta-storage artifact ID (i.e. no _2.12 scala version)
+    packages += "," + "io.delta:delta-storage-dynamodb_2.12:" + version
+    if extra_packages:
+        packages += "," + extra_packages
+
+    conf_args = []
+    if conf:
+        for i in conf:
+            conf_args.extend(["--conf", i])
+
+    repo_args = ["--repositories", extra_maven_repo] if extra_maven_repo else []
+
+    for test_file in test_files:
+        if test_name is not None and test_name not in test_file:
+            print("\nSkipping DynamoDB logstore integration tests in %s\n============" % test_file)
+            continue
+        try:
+            cmd = ["spark-submit",
+                   "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
+                   "--packages", packages] + repo_args + conf_args + [test_file]
+            print("\nRunning DynamoDB logstore integration tests in %s\n=============" % test_file)
+            print("Command: %s" % " ".join(cmd))
+            run_cmd(cmd, stream_output=True)
+        except:
+            print("Failed DynamoDB logstore integration tests tests in %s" % (test_file))
             raise
 
 
@@ -245,21 +277,22 @@ if __name__ == "__main__":
         action="store_true",
         help="Use testpypi for testing pip installation")
     parser.add_argument(
-        "--packages",
+        "--run-storage-dynamodb-integration-tests",
+        required=False,
+        default=False,
+        action="store_true",
+        help="Run the DynamoDB integration tests (and only them)")
+    parser.add_argument(
+        "--dbb-packages",
         required=False,
         default=None,
-        help="Additional packages required for some tests")
+        help="Additional packages required for Dynamodb logstore integration tests")
     parser.add_argument(
-        "--jars",
-        required=False,
-        default=None,
-        help="Additional jars required for some tests")
-    parser.add_argument(
-        "--conf",
+        "--dbb-conf",
         required=False,
         default=None,
         nargs="+",
-        help="All possible `--conf` values passed to `spark-submit`")
+        help="All `--conf` values passed to `spark-submit` for DynamoDB logstore integration tests")
 
     args = parser.parse_args()
 
@@ -274,14 +307,18 @@ if __name__ == "__main__":
     run_scala = not args.python_only and not args.pip_only
     run_pip = not args.python_only and not args.scala_only and not args.no_pip
 
+    if args.run_storage_dynamodb_integration_tests:
+        run_dynamodb_logstore_integration_tests(
+            root_dir, args.version, args.test, args.maven_repo, args.dbb_packages, args.dbb_conf
+        )
+        quit()
+
     if run_scala:
         run_scala_integration_tests(root_dir, args.version, args.test, args.maven_repo,
                                     args.scala_version)
 
     if run_python:
-        run_python_integration_tests(
-            root_dir, args.version, args.test, args.maven_repo, args.packages, args.jars, args.conf
-        )
+        run_python_integration_tests(root_dir, args.version, args.test, args.maven_repo)
 
     if run_pip:
         run_pip_installation_tests(root_dir, args.version, args.use_testpypi, args.maven_repo)

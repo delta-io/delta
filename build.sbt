@@ -189,7 +189,7 @@ lazy val storageDynamodb = (project in file("storage-dynamodb"))
     commonSettings,
     releaseSettings, // TODO: proper artifact name
     libraryDependencies ++= Seq(
-      "com.amazonaws" % "aws-java-sdk" % "1.7.4" // TODO: mark as provided?
+      "com.amazonaws" % "aws-java-sdk" % "1.7.4" % "provided"
     )
   )
 
