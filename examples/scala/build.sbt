@@ -18,36 +18,47 @@ name := "example"
 organization := "com.example"
 organizationName := "example"
 
-val scala212 = "2.12.14"
-val scala213 = "2.13.5"
+val scala212 = "2.12.15"
+val scala213 = "2.13.8"
+val deltaVersion = "1.1.0"
 
-def getScalaVersion(): String = {
-  val envVars = System.getenv
-  if (envVars.containsKey("SCALA_VERSION")) {
-    val version = envVars.get("SCALA_VERSION")
-    println("Using Scala version " + version)
-    if (version == "2.13") {
-      return scala213
-    }
+val getScalaVersion = settingKey[String](
+  s"get scala version from environment variable SCALA_VERSION. If it doesn't exist, use $scala213"
+)
+val getDeltaVersion = settingKey[String](
+  s"get delta version from environment variable DELTA_VERSION. If it doesn't exist, use $deltaVersion"
+)
+
+getScalaVersion := {
+  sys.env.get("SCALA_VERSION") match {
+    case Some("2.12") =>
+      scala212
+    case Some("2.13") =>
+      scala213
+    case Some(v) =>
+      println(
+        s"[warn] Invalid  SCALA_VERSION. Expected 2.12 or 2.13 but got $v. Fallback to $scala213."
+      )
+      scala213
+    case None =>
+      scala213
   }
-  scala212
 }
 
-scalaVersion := getScalaVersion
+scalaVersion := getScalaVersion.value
 version := "0.1.0"
 
-def getDeltaVersion(): String = {
-  val envVars = System.getenv
-  if (envVars.containsKey("DELTA_VERSION")) {
-    val version = envVars.get("DELTA_VERSION")
-    println("Using Delta version " + version)
-    version
-  } else {
-    "1.1.0"
+getDeltaVersion := {
+  sys.env.get("DELTA_VERSION") match {
+    case Some(v) =>
+      println(s"Using Delta version $v")
+      v
+    case None =>
+      "1.1.0"
   }
 }
 
-lazy val extraMavenRepo = sys.env.get("EXTRA_MAVEN_REPO").toSeq.map { repo => 
+lazy val extraMavenRepo = sys.env.get("EXTRA_MAVEN_REPO").toSeq.map { repo =>
   resolvers += "Delta" at repo
 }
 
@@ -55,8 +66,13 @@ lazy val root = (project in file("."))
   .settings(
     name := "hello-world",
     crossScalaVersions := Seq(scala212, scala213),
-    libraryDependencies += "io.delta" %% "delta-core" % getDeltaVersion(),
-    libraryDependencies += "org.apache.spark" %% "spark-sql" % "3.2.0",
-    extraMavenRepo
+    libraryDependencies ++= Seq(
+      "io.delta" %% "delta-core" % getDeltaVersion.value,
+      "org.apache.spark" %% "spark-sql" % "3.2.1"
+    ),
+    extraMavenRepo,
+    scalacOptions ++= Seq(
+      "-deprecation",
+      "-feature"
+    )
   )
-  

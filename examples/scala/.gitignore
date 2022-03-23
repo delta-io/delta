@@ -1,0 +1,5 @@
+.jvmopts
+sbt-launch-*.jar
+.bsp
+.vscode
+.metals

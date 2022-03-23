@@ -32,12 +32,15 @@ object Quickstart {
       .appName("Quickstart")
       .master("local[*]")
       .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-      .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+      .config(
+        "spark.sql.catalog.spark_catalog",
+        "org.apache.spark.sql.delta.catalog.DeltaCatalog"
+      )
       .getOrCreate()
 
     val file = new File("/tmp/delta-table")
     if (file.exists()) FileUtils.deleteDirectory(file)
-    
+
     // Create a table
     println("Creating a table")
     val path = file.getCanonicalPath
@@ -51,16 +54,15 @@ object Quickstart {
 
     // Upsert (merge) new data
     println("Upsert new data")
-    val newData = spark.range(0, 20).toDF
+    val newData = spark.range(0, 20).toDF()
     val deltaTable = DeltaTable.forPath(path)
 
-    deltaTable.as("oldData")
-      .merge(
-        newData.as("newData"),
-        "oldData.id = newData.id")
-      .whenMatched
+    deltaTable
+      .as("oldData")
+      .merge(newData.as("newData"), "oldData.id = newData.id")
+      .whenMatched()
       .update(Map("id" -> col("newData.id")))
-      .whenNotMatched
+      .whenNotMatched()
       .insert(Map("id" -> col("newData.id")))
       .execute()
 
@@ -76,7 +78,8 @@ object Quickstart {
     println("Update to the table (add 100 to every even value)")
     deltaTable.update(
       condition = expr("id % 2 == 0"),
-      set = Map("id" -> expr("id + 100")))
+      set = Map("id" -> expr("id + 100"))
+    )
     deltaTable.toDF.show()
 
     // Delete every even value
