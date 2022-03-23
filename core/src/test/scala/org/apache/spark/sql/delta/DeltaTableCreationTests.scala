@@ -1989,3 +1989,29 @@ class DeltaTableCreationSuite
   }
 }
 
+
+class DeltaTableCreationNameColumnMappingSuite extends DeltaTableCreationSuite
+  with DeltaColumnMappingEnableNameMode {
+
+  override protected def getTableProperties(tableName: String): Map[String, String] = {
+    // ignore comparing column mapping properties
+    dropColumnMappingConfigurations(super.getTableProperties(tableName))
+  }
+
+  override protected def runOnlyTests: Seq[String] = Seq(
+    "create table with schema and path",
+    "create external table without schema",
+    "REPLACE TABLE",
+    "CREATE OR REPLACE TABLE on non-empty directory"
+  ) ++ Seq("partitioned" -> Seq("v2"), "non-partitioned" -> Nil)
+    .flatMap { case (isPartitioned, cols) =>
+      SaveMode.values().flatMap { saveMode =>
+        Seq(
+          s"saveAsTable to a new table (managed) - $isPartitioned, saveMode: $saveMode",
+          s"saveAsTable to a new table (external) - $isPartitioned, saveMode: $saveMode")
+      }
+    } ++ Seq("a b", "a:b", "a%b").map { specialChars =>
+      s"location uri contains $specialChars for datasource table"
+    }
+
+}

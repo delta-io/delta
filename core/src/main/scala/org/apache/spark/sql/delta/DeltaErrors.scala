@@ -1357,6 +1357,30 @@ object DeltaErrors
         |""".stripMargin, cause = Some(cause))
   }
 
+  def foundViolatingConstraintsForColumnChange(
+      operation: String,
+      columnName: String,
+      constraints: Map[String, String]): Throwable = {
+    val plural = if (constraints.size > 1) "s" else ""
+    new AnalysisException(
+      s"""
+        |Cannot $operation column $columnName because this column is referenced by the following
+        | check constraint$plural:\n\t${constraints.mkString("\n\t")}
+        |""".stripMargin)
+  }
+
+  def foundViolatingGeneratedColumnsForColumnChange(
+      operation: String,
+      columnName: String,
+      fields: Seq[StructField]): Throwable = {
+    val plural = if (fields.size > 1) "s" else ""
+    new AnalysisException(
+      s"""
+         |Cannot $operation column $columnName because this column is referenced by the following
+         | generated column$plural:\n\t${fields.map(_.name).mkString("\n\t")}
+         |""".stripMargin)
+  }
+
 
   def missingColumnsInInsertInto(column: String): Throwable = {
     new AnalysisException(s"Column $column is not specified in INSERT")

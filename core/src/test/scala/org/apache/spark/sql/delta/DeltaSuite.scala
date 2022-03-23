@@ -1679,3 +1679,17 @@ class DeltaSuite extends QueryTest
   }
 }
 
+
+class DeltaNameColumnMappingSuite extends DeltaSuite
+  with DeltaColumnMappingEnableNameMode {
+
+  override protected def runOnlyTests = Seq(
+    "handle partition filters and data filters",
+    "query with predicates should skip partitions",
+    "valid replaceWhere",
+    "batch write: append, overwrite where",
+    "get touched files for update, delete and merge",
+    "isBlindAppend with save and saveAsTable"
+  )
+
+}

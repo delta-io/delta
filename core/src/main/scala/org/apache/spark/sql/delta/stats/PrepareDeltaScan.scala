@@ -84,6 +84,8 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
         }
         snapshot
       }
+    import PrepareDeltaScanBase._
+    if (onGetDeltaScanGeneratorCallback != null) onGetDeltaScanGeneratorCallback(scanGenerator)
     scanGenerator
   }
 
@@ -115,7 +117,15 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       filters: Seq[Expression],
       delta: LogicalRelation): (Snapshot, DeltaScan) = {
     withStatusCode("DELTA", "Filtering files for query") {
-      scanGenerator.snapshotToScan -> scanGenerator.filesForScan(projection, filters)
+      val filtersForScan =
+        if (!GeneratedColumn.partitionFilterOptimizationEnabled(spark)) {
+          filters
+        } else {
+          val generatedPartitionFilters = GeneratedColumn.generatePartitionFilters(
+            spark, scanGenerator.snapshotToScan, filters, delta)
+          filters ++ generatedPartitionFilters
+        }
+      scanGenerator.snapshotToScan -> scanGenerator.filesForScan(projection, filtersForScan)
     }
   }
 
@@ -164,8 +174,22 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       filters: Seq[Expression],
       limit: Option[Int],
       delta: LogicalRelation): LogicalPlan = {
-    // TODO: future generated columns optimization
-    DeltaTableUtils.replaceFileIndex(scan, preparedIndex)
+    if (!GeneratedColumn.partitionFilterOptimizationEnabled(spark)) {
+      DeltaTableUtils.replaceFileIndex(scan, preparedIndex)
+    } else {
+      val generatedPartitionFilters =
+        GeneratedColumn.generatePartitionFilters(spark, scannedSnapshot, filters, delta)
+      val scanWithFilters =
+        if (generatedPartitionFilters.nonEmpty) {
+          scan transformUp {
+            case delta @ DeltaTable(_: TahoeLogFileIndex) =>
+              Filter(generatedPartitionFilters.reduceLeft(And), delta)
+          }
+        } else {
+          scan
+        }
+      DeltaTableUtils.replaceFileIndex(scanWithFilters, preparedIndex)
+    }
   }
 
   override def apply(_plan: LogicalPlan): LogicalPlan = {
@@ -246,6 +270,29 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
 class PrepareDeltaScan(protected val spark: SparkSession)
   extends PrepareDeltaScanBase
 
+object PrepareDeltaScanBase {
+
+  /**
+   * Optional callback function that is called after `getDeltaScanGenerator` is called
+   * by the PrepareDeltaScan rule. This is primarily used for testing purposes.
+   */
+  @volatile private var onGetDeltaScanGeneratorCallback: DeltaScanGenerator => Unit = _
+
+  /**
+   * Run a thunk of code with the given callback function injected into the PrepareDeltaScan rule.
+   * The callback function is called after `getDeltaScanGenerator` is called
+   * by the PrepareDeltaScan rule. This is primarily used for testing purposes.
+   */
+  private[delta] def withCallbackOnGetDeltaScanGenerator[T](
+      callback: DeltaScanGenerator => Unit)(thunk: => T): T = {
+    try {
+      onGetDeltaScanGeneratorCallback = callback
+      thunk
+    } finally {
+      onGetDeltaScanGeneratorCallback = null
+    }
+  }
+}
 
 /**
  * A [[TahoeFileIndex]] that uses a prepared scan to return the list of relevant files.

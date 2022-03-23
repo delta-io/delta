@@ -23,7 +23,7 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.scalatest.BeforeAndAfter
 
 import org.apache.spark.{SparkConf, SparkException}
@@ -166,6 +166,33 @@ class DeltaInsertIntoDataFrameByPathSuite
   }
 }
 
+
+trait DeltaInsertIntoColumnMappingSelectedTests extends DeltaColumnMappingSelectedTestMixin {
+  override protected def runOnlyTests = Seq(
+    "InsertInto: overwrite - mixed clause reordered - static mode",
+    "InsertInto: overwrite - multiple static partitions - dynamic mode"
+  )
+}
+
+class DeltaInsertIntoSQLNameColumnMappingSuite extends DeltaInsertIntoSQLSuite
+  with DeltaColumnMappingEnableNameMode
+  with DeltaInsertIntoColumnMappingSelectedTests {
+  override protected def runOnlyTests: Seq[String] = super.runOnlyTests :+
+    "insert overwrite should work with selecting constants"
+}
+
+class DeltaInsertIntoSQLByPathNameColumnMappingSuite extends DeltaInsertIntoSQLByPathSuite
+  with DeltaColumnMappingEnableNameMode
+  with DeltaInsertIntoColumnMappingSelectedTests
+
+class DeltaInsertIntoDataFrameNameColumnMappingSuite extends DeltaInsertIntoDataFrameSuite
+  with DeltaColumnMappingEnableNameMode
+  with DeltaInsertIntoColumnMappingSelectedTests
+
+class DeltaInsertIntoDataFrameByPathNameColumnMappingSuite
+  extends DeltaInsertIntoDataFrameByPathSuite
+    with DeltaColumnMappingEnableNameMode
+    with DeltaInsertIntoColumnMappingSelectedTests
 
 abstract class DeltaInsertIntoTestsWithTempViews(
     supportsDynamicOverwrite: Boolean,

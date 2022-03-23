@@ -160,6 +160,29 @@ object SchemaUtils {
   }
 
   /**
+   * Returns the name of the first column/field that has null type (void).
+   */
+  def findNullTypeColumn(schema: StructType): Option[String] = {
+    // Helper method to recursively check nested structs.
+    def findNullTypeColumnRec(s: StructType, nameStack: Seq[String]): Option[String] = {
+      val nullFields = s.flatMap {
+        case StructField(name, n: NullType, _, _) => Some((nameStack :+ name).mkString("."))
+        case StructField(name, s: StructType, _, _) => findNullTypeColumnRec(s, nameStack :+ name)
+        // Note that we don't recursively check Array and Map types because NullTypes are already
+        // not allowed (see 'dropNullTypeColumns').
+        case _ => None
+      }
+      return nullFields.headOption
+    }
+
+    if (typeExistsRecursively(schema)(_.isInstanceOf[NullType])) {
+      findNullTypeColumnRec(schema, Seq.empty)
+    } else {
+      None
+    }
+  }
+
+  /**
    * Rewrite the query field names according to the table schema. This method assumes that all
    * schema validation checks have been made and this is the last operation before writing into
    * Delta.
@@ -954,4 +977,29 @@ object SchemaUtils {
   // Escapes back-ticks within the identifier name with double-back-ticks, and then quote the
   // identifier with back-ticks.
   def quoteIdentifier(part: String): String = s"`${part.replace("`", "``")}`"
+
+  /**
+   * Will a column change, e.g., rename, need to be populated to the expression. This is true when
+   * the column to change itself or any of its descendent column is referenced by expression.
+   * For example:
+   *  - a, length(a) -> true
+   *  - b, (b.c + 1) -> true, because renaming b1 will need to change the expr to (b1.c + 1).
+   *  - b.c, (cast b as string) -> false, because you can change b.c to b.c1 without affecting b.
+   */
+  def containsDependentExpression(
+      spark: SparkSession,
+      columnToChange: Seq[String],
+      exprString: String,
+      resolver: Resolver): Boolean = {
+    val expression = spark.sessionState.sqlParser.parseExpression(exprString)
+    expression.foreach {
+      case refCol: UnresolvedAttribute =>
+        // columnToChange is the referenced column or its prefix
+        val prefixMatched = columnToChange.size <= refCol.nameParts.size &&
+          refCol.nameParts.zip(columnToChange).forall(pair => resolver(pair._1, pair._2))
+        if (prefixMatched) return true
+      case _ =>
+    }
+    false
+  }
 }

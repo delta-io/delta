@@ -31,6 +31,10 @@ import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
+/////////////////////
+// Base Test Suite //
+/////////////////////
+
 abstract class LogStoreSuiteBase extends QueryTest
   with LogStoreProvider
   with SharedSparkSession {
@@ -206,9 +210,11 @@ abstract class LogStoreSuiteBase extends QueryTest
   }
 }
 
-class AzureLogStoreSuite extends LogStoreSuiteBase {
+///////////////////////////
+// Child-specific traits //
+///////////////////////////
 
-  override val logStoreClassName: String = classOf[AzureLogStore].getName
+trait AzureLogStoreSuiteBase extends LogStoreSuiteBase {
 
   testHadoopConf(
     expectedErrMsg = ".*No FileSystem for scheme.*fake.*",
@@ -304,6 +310,19 @@ trait HDFSLogStoreSuiteBase extends LogStoreSuiteBase {
   protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 
+trait LocalLogStoreSuiteBase extends LogStoreSuiteBase {
+  testHadoopConf(
+    expectedErrMsg = ".*No FileSystem for scheme.*fake.*",
+    "fs.fake.impl" -> classOf[FakeFileSystem].getName,
+    "fs.fake.impl.disable.cache" -> "true")
+
+  protected def shouldUseRenameToWriteCheckpoint: Boolean = true
+}
+
+////////////////////////////////
+// Concrete child test suites //
+////////////////////////////////
+
 class HDFSLogStoreSuite extends HDFSLogStoreSuiteBase {
   override val logStoreClassName: String = classOf[HDFSLogStore].getName
 }
@@ -314,17 +333,17 @@ class S3SingleDriverLogStoreSuite extends LogStoreSuiteBase {
   override protected def shouldUseRenameToWriteCheckpoint: Boolean = false
 }
 
-class LocalLogStoreSuite extends LogStoreSuiteBase {
-
-  override val logStoreClassName: String = classOf[LocalLogStore].getName
-
-  testHadoopConf(
-    expectedErrMsg = ".*No FileSystem for scheme.*fake.*",
-    "fs.fake.impl" -> classOf[FakeFileSystem].getName,
-    "fs.fake.impl.disable.cache" -> "true")
-
-  protected def shouldUseRenameToWriteCheckpoint: Boolean = true
+class AzureLogStoreSuite extends AzureLogStoreSuiteBase {
+  override val logStoreClassName: String = classOf[AzureLogStore].getName
 }
+
+class LocalLogStoreSuite extends LocalLogStoreSuiteBase {
+  override val logStoreClassName: String = classOf[LocalLogStore].getName
+}
+
+////////////////////////////////
+// File System Helper Classes //
+////////////////////////////////
 
 /** A fake file system to test whether session Hadoop configuration will be picked up. */
 class FakeFileSystem extends RawLocalFileSystem {
@@ -421,4 +440,14 @@ class PublicS3SingleDriverLogStoreSuite extends PublicLogStoreSuite {
     classOf[io.delta.storage.S3SingleDriverLogStore].getName
 
   override protected def shouldUseRenameToWriteCheckpoint: Boolean = false
+}
+
+class PublicAzureLogStoreSuite extends PublicLogStoreSuite with AzureLogStoreSuiteBase {
+  override protected val publicLogStoreClassName: String =
+    classOf[io.delta.storage.AzureLogStore].getName
+}
+
+class PublicLocalLogStoreSuite extends PublicLogStoreSuite with LocalLogStoreSuiteBase {
+  override protected val publicLogStoreClassName: String =
+    classOf[io.delta.storage.LocalLogStore].getName
 }

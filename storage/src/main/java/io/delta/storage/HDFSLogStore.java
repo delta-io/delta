@@ -16,7 +16,6 @@
 
 package io.delta.storage;
 
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
