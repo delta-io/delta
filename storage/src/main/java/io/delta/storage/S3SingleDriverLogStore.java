@@ -39,17 +39,25 @@ import org.apache.hadoop.fs.Path;
 
 /**
  * Single Spark-driver/JVM LogStore implementation for S3.
- *
+ * <p>
  * We assume the following from S3's {@link FileSystem} implementations:
- * - File writing on S3 is all-or-nothing, whether overwrite or not.
- * - List-after-write can be inconsistent.
- *
+ * <ul>
+ *   <li>File writing on S3 is all-or-nothing, whether overwrite or not.</li>
+ *   <li>List-after-write can be inconsistent.</li>
+ * </ul>
+ * <p>
  * Regarding file creation, this implementation:
- * - Opens a stream to write to S3 (regardless of the overwrite option).
- * - Failures during stream write may leak resources, but may never result in partial writes.
- *
+ * <ul>
+ *   <li>Opens a stream to write to S3 (regardless of the overwrite option).</li>
+ *   <li>Failures during stream write may leak resources, but may never result in partial
+ *       writes.</li>
+ * </ul>
+ * <p>
  * Regarding directory listing, this implementation:
- * - returns a list by merging the files listed from S3 and recently-written files from the cache.
+ * <ul>
+ *   <li>returns a list by merging the files listed from S3 and recently-written files from the
+ *       cache.</li>
+ * </ul>
  */
 public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
 
