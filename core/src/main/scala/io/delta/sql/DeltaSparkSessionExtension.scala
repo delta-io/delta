@@ -95,7 +95,10 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
     extensions.injectPostHocResolutionRule { session =>
       new PreprocessTableDelete(session.sessionState.conf)
     }
-    extensions.injectOptimizerRule { session =>
+    // We don't use `injectOptimizerRule` here as we won't want to apply further optimizations after
+    // `PrepareDeltaScan`.
+    // For example, `ConstantFolding` will break unit tests in `OptimizeGeneratedColumnSuite`.
+    extensions.injectPreCBORule { session =>
       new PrepareDeltaScan(session)
     }
   }

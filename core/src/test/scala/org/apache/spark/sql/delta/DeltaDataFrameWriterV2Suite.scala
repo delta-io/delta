@@ -684,3 +684,20 @@ class DeltaDataFrameWriterV2Suite
   }
 }
 
+
+class DeltaDataFrameWriterV2NameColumnMappingSuite extends DeltaDataFrameWriterV2Suite
+  with DeltaColumnMappingEnableNameMode {
+
+  override protected def getProperties(table: Table): Map[String, String] = {
+    // ignore column mapping configurations
+    dropColumnMappingConfigurations(super.getProperties(table))
+  }
+
+  override protected def runOnlyTests = Seq(
+    "Append: basic append",
+    "Create: with using",
+    "Overwrite: overwrite by expression: true",
+    "Replace: partitioned table"
+  )
+
+}
