@@ -16,16 +16,17 @@
 
 package org.apache.spark.sql.delta
 
-import io.delta.storage.GCSLogStore
-
 import java.io.{File, IOException}
 import java.net.URI
+
 import scala.collection.mutable.ArrayBuffer
+
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.storage._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path, RawLocalFileSystem}
+
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
@@ -205,6 +206,18 @@ abstract class LogStoreSuiteBase extends QueryTest
   }
 }
 
+class AzureLogStoreSuite extends LogStoreSuiteBase {
+
+  override val logStoreClassName: String = classOf[AzureLogStore].getName
+
+  testHadoopConf(
+    expectedErrMsg = ".*No FileSystem for scheme.*fake.*",
+    "fs.fake.impl" -> classOf[FakeFileSystem].getName,
+    "fs.fake.impl.disable.cache" -> "true")
+
+  protected def shouldUseRenameToWriteCheckpoint: Boolean = true
+}
+
 trait GCSLogStoreSuiteBase extends LogStoreSuiteBase {
 
   testHadoopConf(
@@ -319,10 +332,6 @@ trait HDFSLogStoreSuiteBase extends LogStoreSuiteBase {
 
 class HDFSLogStoreSuite extends HDFSLogStoreSuiteBase {
   override val logStoreClassName: String = classOf[HDFSLogStore].getName
-}
-
-class GCSLogStoreSuite extends GCSLogStoreSuiteBase {
-  override val logStoreClassName: String = classOf[GCSLogStore].getName
 }
 
 class LocalLogStoreSuite extends LogStoreSuiteBase {
