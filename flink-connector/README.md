@@ -198,7 +198,7 @@ No, currently only append is supported. Other modes may be added in future relea
 #### Do I need to specify the partition columns when creating a Delta table?
 
 If you'd like your data to be partitioned, then you should. If you are using the DataStream API, then
-you can provide the partition columns using the `RowDataDeltaSinkBuilder.withPartitionColumns(List<String> partitionCols` API.
+you can provide the partition columns using the `RowDataDeltaSinkBuilder.withPartitionColumns(List<String> partitionCols)` API.
 
 #### Why do I need to specify the table schema? Shouldn’t it exist in the underlying Delta table metadata or be extracted from the stream's metadata?
 
