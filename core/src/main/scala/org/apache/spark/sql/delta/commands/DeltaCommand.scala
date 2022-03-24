@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit.NANOSECONDS
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{CommitStats, DeltaErrors, DeltaLog, DeltaOperations, OptimisticTransaction, Serializable}
+import org.apache.spark.sql.delta.{CommitStats, DeltaErrors, DeltaLog, DeltaOperations, DeltaTableIdentifier, OptimisticTransaction, Serializable}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -29,12 +29,12 @@ import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
-
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Analyzer, EliminateSubqueryAliases, NoSuchTableException, UnresolvedAttribute, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.catalog.CatalogTableType
 import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -268,7 +268,8 @@ trait DeltaCommand extends DeltaLogging {
         isBlindAppend = Some(false),
         Some(metrics),
         userMetadata = txn.getUserMetadata(op),
-        tags = None)
+        tags = None,
+        txnId = Some(txn.txnId))
 
       val extraActions = Seq(commitInfo, metadata)
       // We don't expect commits to have more than 2 billion actions
@@ -289,7 +290,7 @@ trait DeltaCommand extends DeltaLogging {
             addFilesHistogram.foreach(_.insert(a.size))
           case r: RemoveFile =>
             numRemoveFiles += 1
-            removeFilesHistogram.foreach(_.insert(r.size))
+            removeFilesHistogram.foreach(_.insert(r.size.getOrElse(0L)))
           case _ =>
         }
         action
@@ -297,9 +298,11 @@ trait DeltaCommand extends DeltaLogging {
       if (txn.readVersion < 0) {
         deltaLog.createLogDirectory()
       }
+      val fsWriteStartNano = System.nanoTime()
+      val jsonActions = allActions.map(_.json)
       deltaLog.store.write(
         deltaFile(deltaLog.logPath, attemptVersion),
-        allActions.map(_.json),
+        jsonActions,
         overwrite = false,
         deltaLog.newDeltaHadoopConf())
 
@@ -310,12 +313,16 @@ trait DeltaCommand extends DeltaLogging {
 
       updateAndCheckpoint(spark, deltaLog, commitSize, attemptVersion)
       val postCommitSnapshot = deltaLog.snapshot
+      val postCommitReconstructionTime = System.nanoTime()
       var stats = CommitStats(
         startVersion = txn.readVersion,
         commitVersion = attemptVersion,
         readVersion = postCommitSnapshot.version,
         txnDurationMs = NANOSECONDS.toMillis(commitTime - txn.txnStartTimeNs),
         commitDurationMs = NANOSECONDS.toMillis(commitTime - commitStartNano),
+        fsWriteDurationMs = NANOSECONDS.toMillis(commitTime - fsWriteStartNano),
+        stateReconstructionDurationMs =
+          NANOSECONDS.toMillis(postCommitReconstructionTime - commitTime),
         numAdd = numAddFiles,
         numRemove = numRemoveFiles,
         bytesNew = bytesNew,
@@ -324,11 +331,17 @@ trait DeltaCommand extends DeltaLogging {
         numCdcFiles = 0,
         cdcBytesNew = 0,
         protocol = postCommitSnapshot.protocol,
+        commitSizeBytes = jsonActions.map(_.size).sum,
+        checkpointSizeBytes = postCommitSnapshot.checkpointSizeInBytes(),
+        totalCommitsSizeSinceLastCheckpoint = 0L,
+        checkpointAttempt = true,
         info = Option(commitInfo).map(_.copy(readVersion = None, isolationLevel = None)).orNull,
         newMetadata = Some(metadata),
         numAbsolutePathsInAdd = numAbsolutePaths,
         numDistinctPartitionsInAdd = -1, // not tracking distinct partitions as of now
-        isolationLevel = Serializable.toString)
+        numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
+        isolationLevel = Serializable.toString,
+        txnId = Some(txn.txnId))
 
       recordDeltaEvent(deltaLog, "delta.commit.stats", data = stats)
 
@@ -360,5 +373,53 @@ trait DeltaCommand extends DeltaLogging {
           data = Map("exception" -> Utils.exceptionString(e), "operation" -> op.name))
         throw e
     }
+  }
+
+  /**
+   * Utility method to return the [[DeltaLog]] of an existing Delta table referred
+   * by either the given [[path]] or [[tableIdentifier].
+   *
+   * @param spark [[SparkSession]] reference to use.
+   * @param path Table location. Expects a non-empty [[tableIdentifier]] or [[path]].
+   * @param tableIdentifier Table identifier. Expects a non-empty [[tableIdentifier]] or [[path]].
+   * @param operationName Operation that is getting the DeltaLog, used in error messages.
+   * @return DeltaLog of the table
+   * @throws AnalysisException If either no Delta table exists at the given path/identifier or
+   *                           there is neither [[path]] nor [[tableIdentifier]] is provided.
+   */
+  protected def getDeltaLog(
+      spark: SparkSession,
+      path: Option[String],
+      tableIdentifier: Option[TableIdentifier],
+      operationName: String): DeltaLog = {
+    val tablePath =
+      if (path.nonEmpty) {
+        new Path(path.get)
+      } else if (tableIdentifier.nonEmpty) {
+        val sessionCatalog = spark.sessionState.catalog
+        lazy val metadata = sessionCatalog.getTableMetadata(tableIdentifier.get)
+
+        DeltaTableIdentifier(spark, tableIdentifier.get) match {
+          case Some(id) if id.path.nonEmpty =>
+            new Path(id.path.get)
+          case Some(id) if id.table.nonEmpty =>
+            new Path(metadata.location)
+          case _ =>
+            if (metadata.tableType == CatalogTableType.VIEW) {
+              throw DeltaErrors.viewNotSupported(operationName)
+            }
+            throw DeltaErrors.notADeltaTableException(operationName)
+        }
+      } else {
+        throw DeltaErrors.missingTableIdentifierException(operationName)
+      }
+
+    val deltaLog = DeltaLog.forTable(spark, tablePath)
+    if (deltaLog.snapshot.version < 0) {
+      throw DeltaErrors.notADeltaTableException(
+        operationName,
+        DeltaTableIdentifier(path, tableIdentifier))
+    }
+    deltaLog
   }
 }

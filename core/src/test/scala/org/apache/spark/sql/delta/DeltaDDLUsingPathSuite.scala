@@ -23,11 +23,13 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.Tag
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.connector.catalog.{CatalogV2Util, TableCatalog}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.StructType
 
 trait DeltaDDLUsingPathTests extends QueryTest
     with SharedSparkSession with DeltaColumnMappingTestUtils {
@@ -145,4 +147,13 @@ trait DeltaDDLUsingPathTests extends QueryTest
 class DeltaDDLUsingPathSuite extends DeltaDDLUsingPathTests with DeltaSQLCommandTest {
 }
 
+
+class DeltaDDLUsingPathNameColumnMappingSuite extends DeltaDDLUsingPathSuite
+  with DeltaColumnMappingEnableNameMode {
+
+  override protected def runOnlyTests = Seq(
+    "create table with NOT NULL - check violation through file writing",
+    "ALTER TABLE CHANGE COLUMN with nullability change in struct type - relaxed"
+  )
+}
 

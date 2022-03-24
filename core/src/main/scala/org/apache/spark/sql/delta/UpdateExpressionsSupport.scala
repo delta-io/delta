@@ -73,7 +73,15 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
               val indexVar = NamedLambdaVariable("indexVar", IntegerType, false)
               LambdaFunction(structConverter(elementVar, indexVar), Seq(elementVar, indexVar))
             }
-            cast(ArrayTransform(fromExpression, transformLambdaFunc), dataType)
+            // Transforms every element in the array using the lambda function.
+            // Because castIfNeeded is called recursively for array elements, which
+            // generates nullable expression, ArrayTransform will generate an ArrayType with
+            // containsNull as true. Thus, the ArrayType to be casted to need to have containsNull
+            // as true to avoid casting failures.
+            cast(
+              ArrayTransform(fromExpression, transformLambdaFunc),
+              ArrayType(toEt, containsNull = true)
+            )
           case (from: StructType, to: StructType)
               if !DataType.equalsIgnoreCaseAndNullability(from, to) && resolveStructsByName =>
             // All from fields must be present in the final schema, or we'll silently lose data.

@@ -25,11 +25,11 @@ import java.util.concurrent.TimeUnit
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, GeneratedColumn}
+import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, GeneratedColumn, OptimizablePartitionExpression}
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
-import com.fasterxml.jackson.annotation.{JsonIgnore, JsonInclude}
+import com.fasterxml.jackson.annotation.{JsonIgnore, JsonIgnoreProperties, JsonInclude}
 import com.fasterxml.jackson.core.{JsonGenerator, JsonProcessingException}
 import com.fasterxml.jackson.databind.{JsonMappingException, JsonSerializer, ObjectMapper, SerializerProvider}
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
@@ -53,7 +53,7 @@ class ProtocolDowngradeException(oldProtocol: Protocol, newProtocol: Protocol)
 object Action {
   /** The maximum version of the protocol that this version of Delta understands. */
   val readerVersion = 2
-  val writerVersion = 5
+  val writerVersion = 6
   val protocolVersion: Protocol = Protocol(readerVersion, writerVersion)
 
   def fromJson(json: String): Action = {
@@ -156,6 +156,15 @@ object Protocol {
       throw DeltaErrors.cdcNotAllowedInThisVersion()
     }
 
+    if (ColumnWithDefaultExprUtils.hasIdentityColumn(metadata.schema)) {
+      minimumRequired = Protocol(
+        minReaderVersion = 0,
+        minWriterVersion = ColumnWithDefaultExprUtils.IDENTITY_MIN_WRITER_VERSION
+      )
+      featuresUsed.append("Using IDENTITY Columns")
+      throw DeltaErrors.identityColumnNotSupported()
+    }
+
     if (DeltaColumnMapping.requiresNewProtocol(metadata)) {
       minimumRequired = DeltaColumnMapping.MIN_PROTOCOL_VERSION
     }
@@ -241,10 +250,11 @@ case class AddFile(
   def removeWithTimestamp(
       timestamp: Long = System.currentTimeMillis(),
       dataChange: Boolean = true): RemoveFile = {
+    var newTags = tags
     // scalastyle:off
     RemoveFile(
       path, Some(timestamp), dataChange,
-      extendedFileMetadata = true, partitionValues, size, tags)
+      extendedFileMetadata = Some(true), partitionValues, Some(size), newTags)
     // scalastyle:on
   }
 
@@ -257,14 +267,22 @@ case class AddFile(
   @JsonIgnore
   lazy val numAutoCompactions: Int = tag(AddFile.Tags.NUM_AUTO_COMPACTIONS).getOrElse("0").toInt
 
+  def optimizedTargetSize: Option[Long] =
+    tag(AddFile.Tags.OPTIMIZE_TARGET_SIZE).map(_.toLong)
+
   def tag(tag: AddFile.Tags.KeyType): Option[String] =
-    Option(tags).getOrElse(Map.empty).get(tag.name)
+    Option(tags).flatMap(_.get(tag.name))
 
   def copyWithTag(tag: AddFile.Tags.KeyType, value: String): AddFile =
     copy(tags = Option(tags).getOrElse(Map.empty) + (tag.name -> value))
 
-  def copyWithoutTag(tag: AddFile.Tags.KeyType): AddFile =
-    copy(tags = Option(tags).getOrElse(Map.empty) - tag.name)
+  def copyWithoutTag(tag: AddFile.Tags.KeyType): AddFile = {
+    if (tags == null) {
+      this
+    } else {
+      copy(tags = tags - tag.name)
+    }
+  }
 
 }
 
@@ -325,38 +343,47 @@ object AddFile {
  * are only present when the extendedFileMetadata flag is true. New writers should generally be
  * setting this flag, but old writers (and FSCK) won't, so readers must check this flag before
  * attempting to consume those values.
+ *
+ * Since old tables would not have `extendedFileMetadata` and `size` field, we should make them
+ * nullable by setting their type Option.
  */
 // scalastyle:off
+@JsonIgnoreProperties(Array("numRecords"))
 case class RemoveFile(
     path: String,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     deletionTimestamp: Option[Long],
     dataChange: Boolean = true,
-    extendedFileMetadata: Boolean = false,
+    extendedFileMetadata: Option[Boolean] = Some(false),
     partitionValues: Map[String, String] = null,
-    size: Long = 0,
-    tags: Map[String, String] = null) extends FileAction {
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    size: Option[Long] = Some(0L),
+    tags: Map[String, String] = null,
+    numRecords: Option[Long] = None) extends FileAction {
   override def wrap: SingleAction = SingleAction(remove = this)
 
   @JsonIgnore
   val delTimestamp: Long = deletionTimestamp.getOrElse(0L)
 
-  /**
-   * Return tag value if extendedFileMetadata is true and the tag present.
-   */
-  def getTag(tagName: String): Option[String] = {
-    if (!extendedFileMetadata || tags == null) {
-      None
-    } else {
-      tags.get(tagName)
-    }
-  }
+  def optimizedTargetSize: Option[Long] =
+    getTag(AddFile.Tags.OPTIMIZE_TARGET_SIZE.name).map(_.toLong)
 
   /**
-   * Create a copy with the new tag.
+   * Return tag value if tags is not null and the tag present.
    */
-  def copyWithTag(tag: String, value: String): RemoveFile =
-    copy(tags = Option(tags).getOrElse(Map.empty) + (tag -> value), extendedFileMetadata = true)
+  def getTag(tagName: String): Option[String] = Option(tags).getOrElse(Map.empty).get(tagName)
+
+  /**
+   * Create a copy with the new tag. `extendedFileMetadata` is copied unchanged.
+   */
+  def copyWithTag(tag: String, value: String): RemoveFile = copy(
+    tags = Option(tags).getOrElse(Map.empty) + (tag -> value))
+
+  /**
+   * Create a copy without the tag.
+   */
+  def copyWithoutTag(tag: String): RemoveFile =
+    copy(tags = Option(tags).getOrElse(Map.empty) - tag)
 
 }
 // scalastyle:on
@@ -368,6 +395,7 @@ case class RemoveFile(
  */
 case class AddCDCFile(
     path: String,
+    @JsonInclude(JsonInclude.Include.ALWAYS)
     partitionValues: Map[String, String],
     size: Long,
     tags: Map[String, String] = null) extends FileAction {
@@ -452,6 +480,13 @@ case class Metadata(
   lazy val fixedTypeColumns: Set[String] =
     GeneratedColumn.getGeneratedColumnsAndColumnsUsedByGeneratedColumns(schema)
 
+  /**
+   * Store non-partition columns and their corresponding [[OptimizablePartitionExpression]] which
+   * can be used to create partition filters from data filters of these non-partition columns.
+   */
+  @JsonIgnore
+  lazy val optimizablePartitionExpressions: Map[String, Seq[OptimizablePartitionExpression]]
+  = GeneratedColumn.getOptimizablePartitionExpressions(schema, partitionSchema)
 
   override def wrap: SingleAction = SingleAction(metaData = this)
 }
@@ -501,7 +536,8 @@ case class CommitInfo(
     operationMetrics: Option[Map[String, String]],
     userMetadata: Option[String],
     tags: Option[Map[String, String]],
-    engineInfo: Option[String]) extends Action with CommitMarker {
+    engineInfo: Option[String],
+    txnId: Option[String]) extends Action with CommitMarker {
   override def wrap: SingleAction = SingleAction(commitInfo = this)
 
   override def withTimestamp(timestamp: Long): CommitInfo = {
@@ -545,9 +581,10 @@ object NotebookInfo {
 object CommitInfo {
   def empty(version: Option[Long] = None): CommitInfo = {
     CommitInfo(version, null, None, None, null, null, None, None,
-      None, None, None, None, None, None, None, None)
+      None, None, None, None, None, None, None, None, None)
   }
 
+  // scalastyle:off argcount
   def apply(
       time: Long,
       operation: String,
@@ -558,7 +595,8 @@ object CommitInfo {
       isBlindAppend: Option[Boolean],
       operationMetrics: Option[Map[String, String]],
       userMetadata: Option[String],
-      tags: Option[Map[String, String]]): CommitInfo = {
+      tags: Option[Map[String, String]],
+      txnId: Option[String]): CommitInfo = {
 
     val getUserName = commandContext.get("user").flatMap {
       case "unknown" => None
@@ -581,8 +619,10 @@ object CommitInfo {
       operationMetrics,
       userMetadata,
       tags,
-      getEngineInfo)
+      getEngineInfo,
+      txnId)
   }
+  // scalastyle:on argcount
 
   private def getEngineInfo: Option[String] = {
     Some(s"Apache-Spark/${org.apache.spark.SPARK_VERSION} Delta-Lake/${io.delta.VERSION}")

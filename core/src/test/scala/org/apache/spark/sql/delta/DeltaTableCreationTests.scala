@@ -363,27 +363,51 @@ trait DeltaTableCreationTests
     }
   }
 
-  testQuietly("cannot create delta table with an invalid column name") {
+  testQuietly("create delta table with spaces in column names") {
     val tableName = "delta_test"
-    withTable(tableName) {
-      val tableLoc =
-        new File(spark.sessionState.catalog.defaultTablePath(TableIdentifier(tableName)))
-      Utils.deleteRecursively(tableLoc)
-      val ex = intercept[AnalysisException] {
-        Seq(1, 2, 3).toDF("a column name with spaces")
-          .write
-          .format(format)
-          .mode(SaveMode.Overwrite)
-          .saveAsTable(tableName)
-      }
-      assert(ex.getMessage.contains("invalid character(s)"))
-      assert(!tableLoc.exists())
 
-      val ex2 = intercept[AnalysisException] {
-        sql(s"CREATE TABLE $tableName(`a column name with spaces` LONG, b String) USING delta")
+    val tableLoc =
+      new File(spark.sessionState.catalog.defaultTablePath(TableIdentifier(tableName)))
+    Utils.deleteRecursively(tableLoc)
+
+    def createTableUsingDF: Unit = {
+      Seq(1, 2, 3).toDF("a column name with spaces")
+        .write
+        .format(format)
+        .mode(SaveMode.Overwrite)
+        .saveAsTable(tableName)
+    }
+
+    def createTableUsingSQL: DataFrame = {
+      sql(s"CREATE TABLE $tableName(`a column name with spaces` LONG, b String) USING delta")
+    }
+
+    withTable(tableName) {
+      if (!columnMappingEnabled) {
+        val ex = intercept[AnalysisException] {
+          createTableUsingDF
+        }
+        assert(ex.getMessage.contains("invalid character(s)"))
+        assert(!tableLoc.exists())
+      } else {
+        // column mapping modes support creating table with arbitrary col names
+        createTableUsingDF
+        assert(tableLoc.exists())
       }
-      assert(ex2.getMessage.contains("invalid character(s)"))
-      assert(!tableLoc.exists())
+    }
+
+    withTable(tableName) {
+      if (!columnMappingEnabled) {
+        val ex2 = intercept[AnalysisException] {
+          createTableUsingSQL
+        }
+        assert(ex2.getMessage.contains("invalid character(s)"))
+        assert(!tableLoc.exists())
+      } else {
+        // column mapping modes support creating table with arbitrary col names
+        createTableUsingSQL
+        assert(tableLoc.exists())
+      }
     }
   }
 
@@ -1552,6 +1576,16 @@ trait DeltaTableCreationTests
   }
 
   testQuietly("CREATE TABLE with existing data path") {
+    // Re-use `filterV2TableProperties()` from `SQLTestUtils` as soon as it will be released.
+    def isReservedProperty(propName: String): Boolean = {
+      CatalogV2Util.TABLE_RESERVED_PROPERTIES.contains(propName) ||
+        propName.startsWith(TableCatalog.OPTION_PREFIX) ||
+        propName == TableCatalog.PROP_EXTERNAL
+    }
+    def filterV2TableProperties(properties: Map[String, String]): Map[String, String] = {
+      properties.filterNot(kv => isReservedProperty(kv._1))
+    }
+
     withTempPath { path =>
       withTable("src", "t1", "t2", "t3", "t4", "t5", "t6") {
         sql("CREATE TABLE src(i int, p string) USING delta PARTITIONED BY (p) " +
@@ -1568,7 +1602,7 @@ trait DeltaTableCreationTests
           s"LOCATION '${path.getAbsolutePath}'")
         checkAnswer(spark.table("t2"), Row(1, "a"))
         // Table properties should not be changed to empty.
-        assert(getTableProperties("t2").filter(_._1 != "Type") ==
+        assert(filterV2TableProperties(getTableProperties("t2")).filter(_._1 != "Type") ==
           Map("delta.randomizeFilePrefixes" -> "true"))
 
         // CREATE TABLE with the same schema but no partitioning fails.
@@ -1955,3 +1989,29 @@ class DeltaTableCreationSuite
   }
 }
 
+
+class DeltaTableCreationNameColumnMappingSuite extends DeltaTableCreationSuite
+  with DeltaColumnMappingEnableNameMode {
+
+  override protected def getTableProperties(tableName: String): Map[String, String] = {
+    // ignore comparing column mapping properties
+    dropColumnMappingConfigurations(super.getTableProperties(tableName))
+  }
+
+  override protected def runOnlyTests: Seq[String] = Seq(
+    "create table with schema and path",
+    "create external table without schema",
+    "REPLACE TABLE",
+    "CREATE OR REPLACE TABLE on non-empty directory"
+  ) ++ Seq("partitioned" -> Seq("v2"), "non-partitioned" -> Nil)
+    .flatMap { case (isPartitioned, cols) =>
+      SaveMode.values().flatMap { saveMode =>
+        Seq(
+          s"saveAsTable to a new table (managed) - $isPartitioned, saveMode: $saveMode",
+          s"saveAsTable to a new table (external) - $isPartitioned, saveMode: $saveMode")
+      }
+    } ++ Seq("a b", "a:b", "a%b").map { specialChars =>
+      s"location uri contains $specialChars for datasource table"
+    }
+
+}

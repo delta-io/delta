@@ -63,3 +63,17 @@ class DeleteSQLSuite extends DeleteSuiteBase  with DeltaSQLCommandTest {
   }
 }
 
+
+class DeleteSQLNameColumnMappingSuite extends DeleteSQLSuite
+  with DeltaColumnMappingEnableNameMode {
+
+
+  protected override def runOnlyTests: Seq[String] = Seq(true, false).map { isPartitioned =>
+    s"basic case - delete from a Delta table by name - Partition=$isPartitioned"
+  } ++ Seq(true, false).flatMap { isPartitioned =>
+    Seq(
+      s"where key columns - Partition=$isPartitioned",
+      s"where data columns - Partition=$isPartitioned")
+  }
+
+}

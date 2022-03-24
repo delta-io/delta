@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
 
+import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta._
@@ -27,7 +28,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraints}
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.schema.SchemaUtils.transformColumnsStructs
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 
 import org.apache.spark.sql.{AnalysisException, Column, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -250,7 +251,8 @@ case class AlterTableChangeColumnDeltaCommand(
     columnPath: Seq[String],
     columnName: String,
     newColumn: StructField,
-    colPosition: Option[ColumnPosition])
+    colPosition: Option[ColumnPosition],
+    syncIdentity: Boolean)
   extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -269,15 +271,16 @@ case class AlterTableChangeColumnDeltaCommand(
           val oldColumn = struct(columnName)
           verifyColumnChange(sparkSession, struct(columnName), resolver, txn)
 
-          // Take the name, comment, nullability and data type from newField
-          // It's crucial to keep the old column's metadata, which may contain column mapping
-          // metadata.
-          val newField = newColumn.getComment().map(oldColumn.withComment).getOrElse(oldColumn)
-            .copy(
-              name = newColumn.name,
-              dataType =
-                SchemaUtils.changeDataType(oldColumn.dataType, newColumn.dataType, resolver),
-              nullable = newColumn.nullable)
+          val newField =
+            // Take the name, comment, nullability and data type from newField
+            // It's crucial to keep the old column's metadata, which may contain column mapping
+            // metadata.
+            newColumn.getComment().map(oldColumn.withComment).getOrElse(oldColumn)
+              .copy(
+                name = newColumn.name,
+                dataType =
+                  SchemaUtils.changeDataType(oldColumn.dataType, newColumn.dataType, resolver),
+                nullable = newColumn.nullable)
 
           // Replace existing field with new field
           val newFieldList = fields.map { field =>
@@ -304,6 +307,44 @@ case class AlterTableChangeColumnDeltaCommand(
 
       val newMetadata = metadata.copy(
         schemaString = newSchema.json, partitionColumns = newPartitionColumns)
+
+      // need to validate the changes if there is a column rename
+      if (newColumn.name != columnName &&
+        sparkSession.sessionState.conf.getConf(
+          DeltaSQLConf.DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS)) {
+        val columnParts = columnPath :+ columnName
+        // if renaming column, need to check if the column is referenced by check constraints
+        val dependentConstraints = newMetadata.configuration.filter {
+          case (key, constraint) if key.toLowerCase(Locale.ROOT).startsWith("delta.constraints.") =>
+            SchemaUtils.containsDependentExpression(sparkSession, columnParts, constraint, resolver)
+          case _ => false
+        }
+
+        if (dependentConstraints.nonEmpty) {
+          throw DeltaErrors.foundViolatingConstraintsForColumnChange(
+            "rename", UnresolvedAttribute(columnParts).name, dependentConstraints)
+        }
+
+        // if renaming column, need to check if the change affects any generated columns
+        if (GeneratedColumn.satisfyGeneratedColumnProtocol(txn.protocol) &&
+          GeneratedColumn.hasGeneratedColumns(newMetadata.schema)) {
+
+          val dependentGenCols = ArrayBuffer[StructField]()
+          SchemaMergingUtils.transformColumns(newMetadata.schema) { (_, field, _) =>
+            GeneratedColumn.getGenerationExpressionStr(field.metadata).foreach { exprStr =>
+              val needsToChangeExpr = SchemaUtils.containsDependentExpression(
+                sparkSession, columnParts, exprStr, resolver)
+              if (needsToChangeExpr) dependentGenCols += field
+            }
+            field
+          }
+          if (dependentGenCols.nonEmpty) {
+            throw DeltaErrors.foundViolatingGeneratedColumnsForColumnChange(
+              "rename", UnresolvedAttribute(columnParts).name, dependentGenCols.toList)
+          }
+        }
+      }
+
       txn.updateMetadata(newMetadata)
       txn.commit(Nil, DeltaOperations.ChangeColumn(
         columnPath, columnName, newColumn, colPosition.map(_.toString)))

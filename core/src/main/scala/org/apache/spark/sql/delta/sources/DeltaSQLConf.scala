@@ -51,6 +51,13 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createOptional
 
+  val DELTA_COLLECT_STATS =
+    buildConf("stats.collect")
+      .internal()
+      .doc("When true, statistics are collected while writing files into a Delta table.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_USER_METADATA =
     buildConf("commitInfo.userMetadata")
       .doc("Arbitrary user-defined metadata to include in CommitInfo. Requires commitInfo.enabled.")
@@ -92,6 +99,15 @@ trait DeltaSQLConfBase {
       .intConf
       .checkValue(n => n > 0, "Delta snapshot partition number must be positive.")
       .createOptional
+
+  val DELTA_SNAPSHOT_LOADING_MAX_RETRIES =
+    buildConf("snapshotLoading.maxRetries")
+      .internal()
+      .doc("How many times to retry when failing to load a snapshot. Each retry will try to use " +
+        "a different checkpoint in order to skip potential corrupt checkpoints.")
+      .intConf
+      .checkValue(n => n >= 0, "must not be negative.")
+      .createWithDefault(2)
 
   val DELTA_PARTITION_COLUMN_CHECK_ENABLED =
     buildConf("partitionColumnValidity.enabled")
@@ -194,7 +210,7 @@ trait DeltaSQLConfBase {
       .doc("The default writer protocol version to create new tables with, unless a feature " +
         "that requires a higher version for correctness is enabled.")
       .intConf
-      .checkValues(Set(1, 2, 3, 4, 5))
+      .checkValues(Set(1, 2, 3, 4, 5, 6))
       .createWithDefault(2)
 
   val DELTA_PROTOCOL_DEFAULT_READER_VERSION =
@@ -355,6 +371,18 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val MERGE_FAIL_IF_SOURCE_CHANGED =
+    buildConf("merge.failIfSourceChanged")
+      .internal()
+      .doc(
+        """
+          |When enabled, MERGE will fail if it detects that the source dataframe was changed.
+          |This can be triggered as a result of modified input data or the use of nondeterministic
+          |query plans. The detection is best-effort.
+      """.stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_LAST_COMMIT_VERSION_IN_SESSION =
     buildConf("lastCommitVersionInSession")
       .doc("The version of the last commit made in the SparkSession for any table.")
@@ -382,6 +410,16 @@ trait DeltaSQLConfBase {
       .doc("Whether the checksum file can be written.")
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED =
+      buildConf("checkpoint.exceptionThrowing.enabled")
+        .internal()
+      .doc("Throw an error if checkpoint is failed. This flag is intentionally used for " +
+          "testing purpose to catch the checkpoint issues proactively. In production, we " +
+          "should not set this flag to be true because successful commit should return " +
+          "success to client regardless of the checkpoint result without throwing.")
+      .booleanConf
+      .createWithDefault(false)
 
   val DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME =
     buildConf("resolveMergeUpdateStructsByName.enabled")
@@ -499,6 +537,85 @@ trait DeltaSQLConfBase {
         """
           |If true, always convert empty string to null for string partition columns before
           |constraint checks.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  /**
+   * This conf has a special prefix `spark.databricks.io` because this is the conf value already
+   * used by Databricks' data skipping implementation. There's no benefit to making OSS users,
+   * some of whom are Databricks customers, have to keep track of two different conf values for the
+   * same data skipping parameter.
+   */
+  val DATA_SKIPPING_STRING_PREFIX_LENGTH =
+    SQLConf.buildConf("spark.databricks.io.skipping.stringPrefixLength")
+      .internal()
+      .doc("For string columns, how long prefix to store in the data skipping index.")
+      .intConf
+      .createWithDefault(32)
+
+  val INTERNAL_UDF_OPTIMIZATION_ENABLED =
+    buildConf("internalUdfOptimization.enabled")
+      .internal()
+      .doc(
+        """If true, create udfs used by Delta internally from templates to reduce lock contention
+          |caused by Scala Reflection.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val GENERATED_COLUMN_PARTITION_FILTER_OPTIMIZATION_ENABLED =
+    buildConf("generatedColumn.partitionFilterOptimization.enabled")
+      .internal()
+      .doc(
+      "Whether to extract partition filters automatically from data filters for a partition" +
+        " generated column if possible")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_OPTIMIZE_MIN_FILE_SIZE =
+    buildConf("optimize.minFileSize")
+        .internal()
+        .doc(
+          """Files which are smaller than this threshold (in bytes) will be grouped together
+             | and rewritten as larger files by the OPTIMIZE command.
+             |""".stripMargin)
+        .longConf
+        .checkValue(_ >= 0, "minFileSize has to be positive")
+        .createWithDefault(1024 * 1024 * 1024)
+
+  val DELTA_OPTIMIZE_MAX_FILE_SIZE =
+    buildConf("optimize.maxFileSize")
+        .internal()
+        .doc("Target file size produced by the OPTIMIZE command.")
+        .longConf
+        .checkValue(_ >= 0, "maxFileSize has to be positive")
+        .createWithDefault(1024 * 1024 * 1024)
+
+  val DELTA_OPTIMIZE_MAX_THREADS =
+    buildConf("optimize.maxThreads")
+        .internal()
+        .doc(
+          """
+            |Maximum number of parallel jobs allowed in OPTIMIZE command. Increasing the maximum
+            | parallel jobs allows the OPTIMIZE command to run faster, but increases the job
+            | management on the Spark driver side.
+            |""".stripMargin)
+        .intConf
+        .checkValue(_ > 0, "'optimize.maxThreads' must be positive.")
+        .createWithDefault(15)
+
+  val DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS =
+    buildConf("alterTable.changeColumn.checkExpressions")
+      .internal()
+      .doc(
+        """
+          |Given an ALTER TABLE command that changes columns, check if there are expressions used
+          | in Check Constraints and Generated Columns that reference this column and thus will
+          | be affected by this change.
+          |
+          |This is a safety switch - we should only turn this off when there is an issue with
+          |expression checking logic that prevents a valid column change from going through.
           |""".stripMargin)
       .booleanConf
       .createWithDefault(true)

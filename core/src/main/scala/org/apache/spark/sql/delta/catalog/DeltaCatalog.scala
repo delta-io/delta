@@ -42,7 +42,7 @@ import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, QualifiedColTyp
 import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableChange, V1Table}
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.TableChange._
-import org.apache.spark.sql.connector.expressions.{BucketTransform, FieldReference, IdentityTransform, Transform}
+import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Literal, NamedReference, Transform}
 import org.apache.spark.sql.connector.write.{LogicalWriteInfo, V1Write, WriteBuilder}
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.execution.datasources.{DataSource, PartitioningUtils}
@@ -104,7 +104,9 @@ class DeltaCatalog extends DelegatingCatalogExtension
     val isByPath = isPathIdentifier(ident)
     if (isByPath && !conf.getConf(DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS)
       && allTableProperties.containsKey("location")
-      && Option(ident.name()) != Option(allTableProperties.get("location"))
+      // The location property can be qualified and different from the path in the identifier, so
+      // we check `endsWith` here.
+      && Option(allTableProperties.get("location")).exists(!_.endsWith(ident.name()))
     ) {
       throw DeltaErrors.ambiguousPathsInCreateTableException(
         ident.name(), allTableProperties.get("location"))
@@ -241,6 +243,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
         ident, schema, partitions, properties, TableCreationModes.CreateOrReplace)
     } else {
         try super.dropTable(ident) catch {
+          case _: NoSuchDatabaseException => // this is fine
           case _: NoSuchTableException => // this is fine
         }
         BestEffortStagedTable(
@@ -274,9 +277,9 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case IdentityTransform(FieldReference(Seq(col))) =>
         identityCols += col
 
-
-      case BucketTransform(numBuckets, FieldReference(Seq(col))) =>
-        bucketSpec = Some(BucketSpec(numBuckets, col :: Nil, Nil))
+      case BucketTransform(numBuckets, bucketCols, sortCols) =>
+        bucketSpec = Some(BucketSpec(
+          numBuckets, bucketCols.map(_.fieldNames.head), sortCols.map(_.fieldNames.head)))
 
       case transform =>
         throw DeltaErrors.operationNotSupportedException(s"Partitioning by expressions")
@@ -434,6 +437,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case c => c.getClass
     }
 
+    // Whether this is an ALTER TABLE ALTER COLUMN SYNC IDENTITY command.
+    var syncIdentity = false
     val columnUpdates = new mutable.HashMap[Seq[String], (StructField, Option[ColumnPosition])]()
 
     grouped.foreach {
@@ -512,6 +517,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
             val (oldField, pos) = getColumn(field)
             columnUpdates(field) = oldField.copy(name = rename.newName()) -> pos
 
+
           case other =>
             throw new UnsupportedOperationException("Unrecognized column change " +
               s"${other.getClass}. You may be running an out of date Delta Lake version.")
@@ -548,7 +554,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
         fieldNames.dropRight(1),
         fieldNames.last,
         newField,
-        newPositionOpt).run(spark)
+        newPositionOpt,
+        syncIdentity = syncIdentity).run(spark)
     }
 
     loadTable(ident)
@@ -618,6 +625,34 @@ trait SupportsPathIdentifier extends TableCatalog { self: DeltaCatalog =>
       fs.exists(path) && fs.listStatus(path).nonEmpty
     } else {
       super.tableExists(ident)
+    }
+  }
+}
+
+object BucketTransform {
+  def unapply(transform: Transform): Option[(Int, Seq[NamedReference], Seq[NamedReference])] = {
+    val arguments = transform.arguments()
+    if (transform.name() == "sorted_bucket") {
+      var posOfLit: Int = -1
+      var numOfBucket: Int = -1
+      arguments.zipWithIndex.foreach {
+        case (literal: Literal[_], i) if literal.dataType() == IntegerType =>
+          numOfBucket = literal.value().asInstanceOf[Integer]
+          posOfLit = i
+        case _ =>
+      }
+      Some(numOfBucket, arguments.take(posOfLit).map(_.asInstanceOf[NamedReference]),
+        arguments.drop(posOfLit + 1).map(_.asInstanceOf[NamedReference]))
+    } else if (transform.name() == "bucket") {
+      val numOfBucket = arguments(0) match {
+        case literal: Literal[_] if literal.dataType() == IntegerType =>
+          literal.value().asInstanceOf[Integer]
+        case _ => throw new IllegalStateException("invalid bucket transform")
+      }
+      Some(numOfBucket, arguments.drop(1).map(_.asInstanceOf[NamedReference]),
+        Seq.empty[FieldReference])
+    } else {
+      None
     }
   }
 }

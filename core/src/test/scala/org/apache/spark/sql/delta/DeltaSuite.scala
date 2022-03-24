@@ -861,8 +861,8 @@ class DeltaSuite extends QueryTest
 
       val files = spark.read.format("delta").load(tempDir.toString).inputFiles
 
-      assert(files.forall(path => path.contains("by4=")),
-        s"${files.toSeq.mkString("\n")}\ndidn't contain partition columns by4")
+      val deltaLog = loadDeltaLog(tempDir.getAbsolutePath)
+      assertPartitionExists("by4", deltaLog, files)
 
       spark.range(101, 200).select('id, 'id % 4 as 'by4, 'id % 8 as 'by8)
         .write
@@ -1679,3 +1679,17 @@ class DeltaSuite extends QueryTest
   }
 }
 
+
+class DeltaNameColumnMappingSuite extends DeltaSuite
+  with DeltaColumnMappingEnableNameMode {
+
+  override protected def runOnlyTests = Seq(
+    "handle partition filters and data filters",
+    "query with predicates should skip partitions",
+    "valid replaceWhere",
+    "batch write: append, overwrite where",
+    "get touched files for update, delete and merge",
+    "isBlindAppend with save and saveAsTable"
+  )
+
+}

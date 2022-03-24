@@ -42,6 +42,9 @@ import java.util.Locale
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.catalyst.TimeTravel
+
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands._
 import io.delta.sql.parser.DeltaSqlBaseParser._
 import io.delta.tables.execution.VacuumTableCommand
@@ -51,12 +54,12 @@ import org.antlr.v4.runtime.misc.{Interval, ParseCancellationException}
 import org.antlr.v4.runtime.tree._
 
 import org.apache.spark.sql.AnalysisException
-import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
-import org.apache.spark.sql.catalyst.analysis.UnresolvedTable
+import org.apache.spark.sql.catalyst.analysis.{UnresolvedRelation, UnresolvedTable}
 import org.apache.spark.sql.catalyst.parser.{ParseErrorListener, ParseException, ParserInterface}
 import org.apache.spark.sql.catalyst.parser.ParserUtils.{string, withOrigin}
-import org.apache.spark.sql.catalyst.plans.logical.{AlterTableAddConstraint, AlterTableDropConstraint, LogicalPlan}
+import org.apache.spark.sql.catalyst.plans.logical.{AlterTableAddConstraint, AlterTableDropConstraint, LogicalPlan, RestoreTableStatement}
 import org.apache.spark.sql.catalyst.trees.Origin
 import org.apache.spark.sql.types._
 
@@ -156,6 +159,30 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       ctx.RUN != null)
   }
 
+  /**
+   * Create a [[OptimizeTableCommand]] logical plan.
+   * Syntax:
+   * {{{
+   *    OPTIMIZE <table-identifier> [WHERE predicate-using-partition-columns]
+   * }}}
+   * Examples:
+   * {{{
+   *    OPTIMIZE '/path/to/delta/table';
+   *    OPTIMIZE delta_table_name;
+   *    OPTIMIZE delta.`/path/to/delta/table`;
+   *    OPTIMIZE delta_table_name WHERE partCol = 25;
+   * }}}
+   */
+  override def visitOptimizeTable(ctx: OptimizeTableContext): AnyRef = withOrigin(ctx) {
+    if (ctx.path == null && ctx.table == null) {
+      throw new ParseException("OPTIMIZE command requires a file path or table name.", ctx)
+    }
+    OptimizeTableCommand(
+      Option(ctx.path).map(string),
+      Option(ctx.table).map(visitTableIdentifier),
+      Option(ctx.partitionPredicate).map(extractRawText(_)))
+  }
+
   override def visitDescribeDeltaDetail(
       ctx: DescribeDeltaDetailContext): LogicalPlan = withOrigin(ctx) {
     DescribeDeltaDetailCommand(
@@ -182,6 +209,24 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       visitTableIdentifier(ctx.table),
       Option(ctx.colTypeList).map(colTypeList => StructType(visitColTypeList(colTypeList))),
       None)
+  }
+
+  override def visitRestore(ctx: RestoreContext): LogicalPlan = withOrigin(ctx) {
+    val tableRelation = UnresolvedRelation(visitTableIdentifier(ctx.table))
+    val timeTravelTableRelation = maybeTimeTravelChild(ctx.clause, tableRelation)
+    RestoreTableStatement(timeTravelTableRelation.asInstanceOf[TimeTravel])
+  }
+
+  /**
+   * Time travel the table to the given version or timestamp.
+   */
+  private def maybeTimeTravelChild(ctx: TemporalClauseContext, child: LogicalPlan): LogicalPlan = {
+    if (ctx == null) return child
+    TimeTravel(
+      child,
+      Option(ctx.timestamp).map(token => Literal(token.getText.replaceAll("^'|'$", ""))),
+      Option(ctx.version).map(_.getText.toLong),
+      Some("sql"))
   }
 
   override def visitSingleStatement(ctx: SingleStatementContext): LogicalPlan = withOrigin(ctx) {
@@ -225,8 +270,15 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   // space. This produces some strange spacing (e.g. `structCol . arr [ 0 ]`), but right now we
   // think that's preferable to the additional complexity involved in trying to produce cleaner
   // output.
-  private def buildCheckConstraintText(tokens: Seq[CheckExprTokenContext]): String = {
+  private def buildCheckConstraintText(tokens: Seq[ExprTokenContext]): String = {
     tokens.map(_.getText).mkString(" ")
+  }
+
+  private def extractRawText(exprContext: ExprTokenContext): String = {
+    // Extract the raw expression which will be parsed later
+    exprContext.getStart.getInputStream.getText(new Interval(
+      exprContext.getStart.getStartIndex,
+      exprContext.getStop.getStopIndex))
   }
 
   override def visitAddTableConstraint(
@@ -237,7 +289,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       createUnresolvedTable(ctx.table.identifier.asScala.map(_.getText).toSeq,
         "ALTER TABLE ... ADD CONSTRAINT"),
       ctx.name.getText,
-      buildCheckConstraintText(checkConstraint.checkExprToken().asScala.toSeq))
+      buildCheckConstraintText(checkConstraint.exprToken().asScala.toSeq))
   }
 
   override def visitDropTableConstraint(

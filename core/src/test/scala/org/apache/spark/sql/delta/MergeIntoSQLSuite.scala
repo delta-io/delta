@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 
 import org.apache.spark.sql.{AnalysisException, Row}
 import org.apache.spark.sql.catalyst.analysis.{Analyzer, ResolveSessionCatalog}
@@ -207,6 +207,48 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
     }
   }
 
+  def testNondeterministicOrder: Unit = {
+    withTable("target") {
+      sql("CREATE TABLE target(`trgKey` INT, `trgValue` INT) using delta")
+      sql("INSERT INTO target VALUES (1,2), (3,4)")
+      // This generates two different data sets if the executions of the source view are within
+      // 100 seconds (100,000 milliseconds) apart.
+      val sourceSql =
+      s"""
+         |(SELECT r.id AS srcKey, r.id AS srcValue
+         |FROM range(1, 100000) as r
+         |     JOIN (SELECT unix_millis(current_timestamp()) % 100000 AS bound)
+         |       ON r.id < bound) AS source
+         |""".stripMargin
+
+      sql(
+        s"""
+           |MERGE INTO target
+           |USING ${sourceSql}
+           |ON srcKey = trgKey
+           |WHEN MATCHED THEN
+           |  UPDATE SET trgValue = srcValue
+           |WHEN NOT MATCHED THEN
+           |  INSERT (trgValue, trgKey) VALUES (srcValue, srcKey)
+      """.stripMargin)
+    }
+  }
+
+  test("detect nondeterministic source - flag on") {
+    withSQLConf(DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "true") {
+      val e = intercept[UnsupportedOperationException](
+        testNondeterministicOrder
+      )
+      assert(e.getMessage.contains("source dataset is not deterministic"))
+    }
+  }
+
+  test("detect nondeterministic source - flag off") {
+    withSQLConf(DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "false") {
+      testNondeterministicOrder
+    }
+  }
+
   test("merge into a dataset temp views with star") {
     withTempView("v") {
       def testMergeWithView(testClue: String): Unit = {
@@ -251,7 +293,7 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
       createTempViewFromTable(targetName, isSQLTempView)
       val fieldNames = spark.table(targetName).schema.fieldNames
       val fieldNamesStr = fieldNames.mkString("`", "`, `", "`")
-      val e = intercept[AnalysisException] {
+      val e = intercept[DeltaAnalysisException] {
         executeMerge(
           target = "v t",
           source = s"$sourceName s",
@@ -285,3 +327,13 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
   }
 }
 
+
+class MergeIntoSQLNameColumnMappingSuite extends MergeIntoSQLSuite
+  with DeltaColumnMappingEnableNameMode {
+
+  override protected def columnMappingMode: String = NameMapping.name
+
+  override protected def runOnlyTests: Seq[String] =
+    Seq("schema evolution - new nested column with update non-* and insert * - " +
+      "array of struct - longer target")
+}

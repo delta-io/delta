@@ -88,7 +88,7 @@ class DeltaDataSource
     }
 
     val deltaLog = DeltaLog.forTable(sqlContext.sparkSession, path)
-    val schemaToUse = GeneratedColumn.removeGenerationExpressions(deltaLog.snapshot.schema)
+    val schemaToUse = ColumnWithDefaultExprUtils.removeDefaultExpressions(deltaLog.snapshot.schema)
     if (schemaToUse.isEmpty) {
       throw DeltaErrors.schemaNotSetException
     }
@@ -159,30 +159,32 @@ class DeltaDataSource
   override def createRelation(
       sqlContext: SQLContext,
       parameters: Map[String, String]): BaseRelation = {
-    val maybePath = parameters.getOrElse("path", {
-      throw DeltaErrors.pathNotSpecifiedException
-    })
+    recordFrameProfile("Delta", "DeltaDataSource.createRelation") {
+      val maybePath = parameters.getOrElse("path", {
+        throw DeltaErrors.pathNotSpecifiedException
+      })
 
-    // Log any invalid options that are being passed in
-    DeltaOptions.verifyOptions(CaseInsensitiveMap(parameters))
+      // Log any invalid options that are being passed in
+      DeltaOptions.verifyOptions(CaseInsensitiveMap(parameters))
 
-    val timeTravelByParams = DeltaDataSource.getTimeTravelVersion(parameters)
-    var cdcOptions: mutable.Map[String, String] = mutable.Map.empty
+      val timeTravelByParams = DeltaDataSource.getTimeTravelVersion(parameters)
+      var cdcOptions: mutable.Map[String, String] = mutable.Map.empty
 
-    val dfOptions: Map[String, String] =
-      if (sqlContext.sparkSession.sessionState.conf.getConf(
-          DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
-        parameters
-      } else {
-        Map.empty
-      }
-    DeltaTableV2(
-      sqlContext.sparkSession,
-      new Path(maybePath),
-      timeTravelOpt = timeTravelByParams,
-      options = dfOptions,
-      cdcOptions = new CaseInsensitiveStringMap(cdcOptions.asJava)
-    ).toBaseRelation
+      val dfOptions: Map[String, String] =
+        if (sqlContext.sparkSession.sessionState.conf.getConf(
+            DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
+          parameters
+        } else {
+          Map.empty
+        }
+      DeltaTableV2(
+        sqlContext.sparkSession,
+        new Path(maybePath),
+        timeTravelOpt = timeTravelByParams,
+        options = dfOptions,
+        cdcOptions = new CaseInsensitiveStringMap(cdcOptions.asJava)
+      ).toBaseRelation
+    }
   }
 
   override def shortName(): String = {

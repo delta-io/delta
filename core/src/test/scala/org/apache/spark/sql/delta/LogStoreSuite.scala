@@ -19,16 +19,14 @@ package org.apache.spark.sql.delta
 import java.io.{File, IOException}
 import java.net.URI
 
-import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.storage._
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileStatus, FileSystem, Path, RawLocalFileSystem}
+import org.apache.hadoop.fs.{FileSystem, Path, RawLocalFileSystem}
 
-import org.apache.spark.SparkEnv
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
@@ -208,9 +206,7 @@ abstract class LogStoreSuiteBase extends QueryTest
   }
 }
 
-class AzureLogStoreSuite extends LogStoreSuiteBase {
-
-  override val logStoreClassName: String = classOf[AzureLogStore].getName
+trait AzureLogStoreSuiteBase extends LogStoreSuiteBase {
 
   testHadoopConf(
     expectedErrMsg = ".*No FileSystem for scheme.*fake.*",
@@ -220,9 +216,8 @@ class AzureLogStoreSuite extends LogStoreSuiteBase {
   protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 
-class HDFSLogStoreSuite extends LogStoreSuiteBase {
+trait HDFSLogStoreSuiteBase extends LogStoreSuiteBase {
 
-  override val logStoreClassName: String = classOf[HDFSLogStore].getName
   // HDFSLogStore is based on FileContext APIs and hence requires AbstractFileSystem-based
   // implementations.
   testHadoopConf(
@@ -241,8 +236,8 @@ class HDFSLogStoreSuite extends LogStoreSuiteBase {
         createLogStore(spark)
           .write(path, Iterator("zero", "none"), overwrite = false, sessionHadoopConf)
       }
-      assert(e.getMessage.contains(
-        DeltaErrors.incorrectLogStoreImplementationException(sparkConf, null).getMessage))
+      assert(e.getMessage
+        .contains("The error typically occurs when the default LogStore implementation"))
     }
   }
 
@@ -273,8 +268,8 @@ class HDFSLogStoreSuite extends LogStoreSuiteBase {
         val e = intercept[IOException] {
           Seq(1, 2, 4).toDF().write.format("delta").save(fakeFSLocation)
         }
-        assert(e.getMessage.contains(
-          DeltaErrors.incorrectLogStoreImplementationException(sparkConf, null).getMessage))
+        assert(e.getMessage
+          .contains("The error typically occurs when the default LogStore implementation"))
       }
     }
     // Reading files written by other systems will work.
@@ -288,19 +283,44 @@ class HDFSLogStoreSuite extends LogStoreSuiteBase {
     }
   }
 
+  test("if fc.rename() fails, it should throw java.nio.file.FileAlreadyExistsException") {
+    withTempDir { tempDir =>
+      withSQLConf(
+        "fs.AbstractFileSystem.fake.impl" -> classOf[FailingRenameAbstractFileSystem].getName,
+        "fs.fake.impl" -> classOf[FakeFileSystem].getName,
+        "fs.fake.impl.disable.cache" -> "true") {
+        val store = createLogStore(spark)
+        val commit0 = new Path(s"fake://${tempDir.getCanonicalPath}/00000.json")
+
+        intercept[java.nio.file.FileAlreadyExistsException] {
+          store.write(commit0, Iterator("zero"), overwrite = false, sessionHadoopConf)
+        }
+      }
+    }
+  }
+
   protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 
-class LocalLogStoreSuite extends LogStoreSuiteBase {
-
-  override val logStoreClassName: String = classOf[LocalLogStore].getName
-
+trait LocalLogStoreSuiteBase extends LogStoreSuiteBase {
   testHadoopConf(
     expectedErrMsg = ".*No FileSystem for scheme.*fake.*",
     "fs.fake.impl" -> classOf[FakeFileSystem].getName,
     "fs.fake.impl.disable.cache" -> "true")
 
   protected def shouldUseRenameToWriteCheckpoint: Boolean = true
+}
+
+class HDFSLogStoreSuite extends HDFSLogStoreSuiteBase {
+  override val logStoreClassName: String = classOf[HDFSLogStore].getName
+}
+
+class AzureLogStoreSuite extends AzureLogStoreSuiteBase {
+  override val logStoreClassName: String = classOf[AzureLogStore].getName
+}
+
+class LocalLogStoreSuite extends LocalLogStoreSuiteBase {
+  override val logStoreClassName: String = classOf[LocalLogStore].getName
 }
 
 /** A fake file system to test whether session Hadoop configuration will be picked up. */
@@ -350,68 +370,55 @@ object TrackingRenameFileSystem {
   @volatile var numOfRename = 0
 }
 
-class CustomPublicLogStore(initHadoopConf: Configuration)
-  extends io.delta.storage.LogStore(initHadoopConf) {
+/**
+ * A fake AbstractFileSystem to ensure FileSystem.renameInternal(), and thus FileContext.rename(),
+ * fails. This will be used to test HDFSLogStore.writeInternal corner case.
+ */
+class FailingRenameAbstractFileSystem(uri: URI, conf: org.apache.hadoop.conf.Configuration)
+  extends FakeAbstractFileSystem(uri, conf) {
 
-  private val logStoreInternal = new HDFSLogStore(SparkEnv.get.conf, initHadoopConf)
-
-  override def read(
-      path: Path,
-      hadoopConf: Configuration): io.delta.storage.CloseableIterator[String] = {
-    val iter = logStoreInternal.readAsIterator(path, hadoopConf)
-    new io.delta.storage.CloseableIterator[String] {
-      override def close(): Unit = iter.close
-      override def hasNext: Boolean = iter.hasNext
-      override def next(): String = iter.next
-    }
+  override def renameInternal(src: Path, dst: Path, overwrite: Boolean): Unit = {
+    throw new org.apache.hadoop.fs.FileAlreadyExistsException(s"$dst path already exists")
   }
-
-  override def write(
-      path: Path,
-      actions: java.util.Iterator[String],
-      overwrite: java.lang.Boolean,
-      hadoopConf: Configuration): Unit = {
-    logStoreInternal.write(path, actions.asScala, overwrite, hadoopConf)
-  }
-
-  override def listFrom(
-      path: Path,
-      hadoopConf: Configuration): java.util.Iterator[FileStatus] = {
-    logStoreInternal.listFrom(path, hadoopConf).asJava
-  }
-
-  override def resolvePathOnPhysicalStorage(
-      path: Path,
-      hadoopConf: Configuration): Path = {
-    logStoreInternal.resolvePathOnPhysicalStorage(path, hadoopConf)
-  }
-
-  override def isPartialWriteVisible(path: Path, hadoopConf: Configuration): java.lang.Boolean = {
-    logStoreInternal.isPartialWriteVisible(path, hadoopConf)
-  }
-
 }
 
-class CustomPublicLogStoreSuite extends LogStoreSuiteBase {
+////////////////////////////////////////////////////////////////////
+// Public LogStore (Java) suite tests from delta-storage artifact //
+////////////////////////////////////////////////////////////////////
 
-  private val customLogStoreClassName: String = classOf[CustomPublicLogStore].getName
+abstract class PublicLogStoreSuite extends LogStoreSuiteBase {
+
+  protected val publicLogStoreClassName: String
 
   // The actual type of LogStore created will be LogStoreAdaptor.
   override val logStoreClassName: String = classOf[LogStoreAdaptor].getName
 
   protected override def sparkConf = {
-    super.sparkConf.set(logStoreClassConfKey, customLogStoreClassName)
+    super.sparkConf.set(logStoreClassConfKey, publicLogStoreClassName)
   }
 
   protected override def testInitFromSparkConf(): Unit = {
     test("instantiation through SparkConf") {
-      assert(spark.sparkContext.getConf.get(logStoreClassConfKey) == customLogStoreClassName)
+      assert(spark.sparkContext.getConf.get(logStoreClassConfKey) == publicLogStoreClassName)
       assert(LogStore(spark.sparkContext).getClass.getName == logStoreClassName)
       assert(LogStore(spark.sparkContext).asInstanceOf[LogStoreAdaptor]
-        .logStoreImpl.getClass.getName == customLogStoreClassName)
+        .logStoreImpl.getClass.getName == publicLogStoreClassName)
 
     }
   }
+}
 
-  protected def shouldUseRenameToWriteCheckpoint: Boolean = true
+class PublicHDFSLogStoreSuite extends PublicLogStoreSuite with HDFSLogStoreSuiteBase {
+  override protected val publicLogStoreClassName: String =
+    classOf[io.delta.storage.HDFSLogStore].getName
+}
+
+class PublicAzureLogStoreSuite extends PublicLogStoreSuite with AzureLogStoreSuiteBase {
+  override protected val publicLogStoreClassName: String =
+    classOf[io.delta.storage.AzureLogStore].getName
+}
+
+class PublicLocalLogStoreSuite extends PublicLogStoreSuite with LocalLogStoreSuiteBase {
+  override protected val publicLogStoreClassName: String =
+    classOf[io.delta.storage.LocalLogStore].getName
 }

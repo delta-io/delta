@@ -185,14 +185,6 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = predicate.map("predicate" -> _).toMap
     override val operationMetrics: Set[String] = DeltaOperationMetrics.UPDATE
 
-    override def transformMetrics(metrics: Map[String, SQLMetric]): Map[String, String] = {
-      val numOutputRows = metrics("numOutputRows").value
-      val numUpdatedRows = metrics("numUpdatedRows").value
-      var strMetrics = super.transformMetrics(metrics)
-      val numCopiedRows = numOutputRows - numUpdatedRows
-      strMetrics += "numCopiedRows" -> numCopiedRows.toString
-      strMetrics
-    }
     override def changesData: Boolean = true
   }
   /** Recorded when the table is created. */
@@ -318,6 +310,33 @@ object DeltaOperations {
         Map("name" -> constraintName, "existed" -> "false")
       }
     }
+  }
+
+  /** Recorded when recomputing stats on the table. */
+  case class ComputeStats(predicate: Seq[String]) extends Operation("COMPUTE STATS") {
+    override val parameters: Map[String, Any] = Map(
+      "predicate" -> JsonUtils.toJson(predicate))
+  }
+
+  /** Recorded when restoring a Delta table to an older version. */
+  case class Restore(
+      version: Option[Long],
+      timestamp: Option[String]) extends Operation("RESTORE") {
+    override val parameters: Map[String, Any] = Map(
+      "version" -> version,
+      "timestamp" -> timestamp)
+    override def changesData: Boolean = true
+  }
+
+  val OPTIMIZE_OPERATION_NAME = "OPTIMIZE"
+
+  /** Recorded when optimizing the table. */
+  case class Optimize(
+      predicate: Seq[String]
+  ) extends Operation(OPTIMIZE_OPERATION_NAME) {
+    override val parameters: Map[String, Any] = Map(
+      "predicate" -> JsonUtils.toJson(predicate)
+      )
   }
 
 

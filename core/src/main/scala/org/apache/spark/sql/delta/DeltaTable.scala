@@ -24,7 +24,7 @@ import scala.util.{Failure, Success, Try}
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -87,9 +87,10 @@ object DeltaTableUtils extends PredicateHelper
   def isDeltaTable(spark: SparkSession, tableName: TableIdentifier): Boolean = {
     val catalog = spark.sessionState.catalog
     val tableIsNotTemporaryTable = !catalog.isTempView(tableName)
-    val tableExists =
-      (tableName.database.isEmpty || catalog.databaseExists(tableName.database.get)) &&
-      catalog.tableExists(tableName)
+    val tableExists = {
+        (tableName.database.isEmpty || catalog.databaseExists(tableName.database.get)) &&
+        catalog.tableExists(tableName)
+    }
     tableIsNotTemporaryTable && tableExists && isDeltaTable(catalog.getTableMetadata(tableName))
   }
 
@@ -135,7 +136,11 @@ object DeltaTableUtils extends PredicateHelper
   private def dbExistsAndAssumePath(
       catalog: SessionCatalog,
       ident: TableIdentifier): (Boolean, Boolean) = {
-    Try(ident.database.forall(catalog.databaseExists)) match {
+    def databaseExists = {
+          ident.database.forall(catalog.databaseExists)
+    }
+
+    Try(databaseExists) match {
       // DB exists, check table exists only if path is not valid
       case Success(true) => (true, false)
       // DB does not exist, check table exists only if path does not exist
@@ -165,6 +170,13 @@ object DeltaTableUtils extends PredicateHelper
     // scalastyle:off deltahadoopconfiguration
     val fs = path.getFileSystem(spark.sessionState.newHadoopConfWithOptions(options))
     // scalastyle:on deltahadoopconfiguration
+
+
+    findDeltaTableRoot(fs, path)
+  }
+
+  /** Finds the root of a Delta table given a path if it exists. */
+  def findDeltaTableRoot(fs: FileSystem, path: Path): Option[Path] = {
     var currentPath = path
     while (currentPath != null && currentPath.getName != "_delta_log" &&
         currentPath.getName != "_samples") {

@@ -108,7 +108,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
     }
   }
 
-  test("allow to change schema before staring a streaming query") {
+  test("allow to change schema before starting a streaming query") {
     withTempDir { inputDir =>
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
       (0 until 5).foreach { i =>
@@ -1718,6 +1718,18 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
 
 }
 
+
+class DeltaSourceNameColumnMappingSuite extends DeltaSourceSuite
+  with DeltaColumnMappingEnableNameMode {
+
+  override protected def runOnlyTests = Seq(
+    "basic",
+    "maxBytesPerTrigger: metadata checkpoint",
+    "maxFilesPerTrigger: metadata checkpoint",
+    "allow to change schema before starting a streaming query"
+  )
+
+}
 
 /**
  * A FileSystem implementation that returns monotonically increasing timestamps for file creation.

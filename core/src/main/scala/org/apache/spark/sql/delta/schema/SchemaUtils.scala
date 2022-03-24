@@ -23,7 +23,7 @@ import scala.collection.Set._
 import scala.collection.mutable
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, GeneratedColumn, NoMapping}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, GeneratedColumn, NoMapping}
 import org.apache.spark.sql.delta.actions
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
@@ -34,7 +34,7 @@ import org.apache.spark.sql.catalyst.analysis.{Resolver, TypeCoercion, Unresolve
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.catalog.Identifier
-import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
+import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
@@ -123,14 +123,14 @@ object SchemaUtils {
         struct(nested: _*).alias(sf.name)
       case a: ArrayType if typeExistsRecursively(a)(_.isInstanceOf[NullType]) =>
         val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
-        throw new AnalysisException(
-          s"Found nested NullType in column $colName which is of ArrayType. Delta doesn't " +
-            "support writing NullType in complex types.")
+        throw new DeltaAnalysisException(
+          errorClass = "COMPLEX_TYPE_COLUMN_CANNOT_CONTAIN_NULL_TYPE",
+          messageParameters = Array(colName, "ArrayType"))
       case m: MapType if typeExistsRecursively(m)(_.isInstanceOf[NullType]) =>
         val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
-        throw new AnalysisException(
-          s"Found nested NullType in column $colName which is of MapType. Delta doesn't " +
-            "support writing NullType in complex types.")
+        throw new DeltaAnalysisException(
+          errorClass = "COMPLEX_TYPE_COLUMN_CANNOT_CONTAIN_NULL_TYPE",
+          messageParameters = Array(colName, "NullType"))
       case _ =>
         val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
         col(colName).alias(sf.name)
@@ -157,6 +157,29 @@ object SchemaUtils {
       }
     }
     StructType(recurseAndRemove(schema))
+  }
+
+  /**
+   * Returns the name of the first column/field that has null type (void).
+   */
+  def findNullTypeColumn(schema: StructType): Option[String] = {
+    // Helper method to recursively check nested structs.
+    def findNullTypeColumnRec(s: StructType, nameStack: Seq[String]): Option[String] = {
+      val nullFields = s.flatMap {
+        case StructField(name, n: NullType, _, _) => Some((nameStack :+ name).mkString("."))
+        case StructField(name, s: StructType, _, _) => findNullTypeColumnRec(s, nameStack :+ name)
+        // Note that we don't recursively check Array and Map types because NullTypes are already
+        // not allowed (see 'dropNullTypeColumns').
+        case _ => None
+      }
+      return nullFields.headOption
+    }
+
+    if (typeExistsRecursively(schema)(_.isInstanceOf[NullType])) {
+      findNullTypeColumnRec(schema, Seq.empty)
+    } else {
+      None
+    }
   }
 
   /**
@@ -505,7 +528,7 @@ object SchemaUtils {
         case (Seq(), ArrayType(s: StructType, _)) =>
           find(colTail, s, stack :+ thisCol)
         case (Seq(), ArrayType(_, _)) =>
-          (Seq(0), 0)
+          (Nil, 0)
         case (_, ArrayType(_, _)) =>
           throw new AnalysisException(
             s"""An ArrayType was found. In order to access elements of an ArrayType, specify
@@ -887,7 +910,12 @@ object SchemaUtils {
    * columns have these characters.
    */
   def checkFieldNames(names: Seq[String]): Unit = {
-    names.foreach(ParquetSchemaConverter.checkFieldName)
+    names.foreach { name =>
+      // ,;{}()\n\t= and space are special characters in Delta schema
+      if (name.matches(".*[ ,;{}()\n\t=].*")) {
+        throw QueryCompilationErrors.columnNameContainsInvalidCharactersError(name)
+      }
+    }
     // The method checkFieldNames doesn't have a valid regex to search for '\n'. That should be
     // fixed in Apache Spark, and we can remove this additional check here.
     names.find(_.contains("\n")).foreach(col => throw DeltaErrors.invalidColumnName(col))
@@ -949,4 +977,29 @@ object SchemaUtils {
   // Escapes back-ticks within the identifier name with double-back-ticks, and then quote the
   // identifier with back-ticks.
   def quoteIdentifier(part: String): String = s"`${part.replace("`", "``")}`"
+
+  /**
+   * Will a column change, e.g., rename, need to be populated to the expression. This is true when
+   * the column to change itself or any of its descendent column is referenced by expression.
+   * For example:
+   *  - a, length(a) -> true
+   *  - b, (b.c + 1) -> true, because renaming b1 will need to change the expr to (b1.c + 1).
+   *  - b.c, (cast b as string) -> false, because you can change b.c to b.c1 without affecting b.
+   */
+  def containsDependentExpression(
+      spark: SparkSession,
+      columnToChange: Seq[String],
+      exprString: String,
+      resolver: Resolver): Boolean = {
+    val expression = spark.sessionState.sqlParser.parseExpression(exprString)
+    expression.foreach {
+      case refCol: UnresolvedAttribute =>
+        // columnToChange is the referenced column or its prefix
+        val prefixMatched = columnToChange.size <= refCol.nameParts.size &&
+          refCol.nameParts.zip(columnToChange).forall(pair => resolver(pair._1, pair._2))
+        if (prefixMatched) return true
+      case _ =>
+    }
+    false
+  }
 }

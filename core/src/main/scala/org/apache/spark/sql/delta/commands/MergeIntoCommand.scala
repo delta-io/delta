@@ -24,7 +24,7 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction}
 import org.apache.spark.sql.delta.files._
-import org.apache.spark.sql.delta.schema.ImplicitMetadataOperation
+import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{AnalysisHelper, SetAccumulator}
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
@@ -38,6 +38,7 @@ import org.apache.spark.sql.catalyst.expressions.BasePredicate
 import org.apache.spark.sql.catalyst.expressions.NamedExpression
 import org.apache.spark.sql.catalyst.expressions.codegen._
 import org.apache.spark.sql.catalyst.plans.logical._
+import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.LogicalRelation
@@ -95,6 +96,8 @@ case class MergeStats(
     source: MergeDataSizes,
     targetBeforeSkipping: MergeDataSizes,
     targetAfterSkipping: MergeDataSizes,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    sourceRowsInSecondScan: Option[Long],
 
     // Data change sizes
     targetFilesRemoved: Long,
@@ -149,6 +152,8 @@ object MergeStats {
           files = Some(metrics("numTargetFilesAfterSkipping").value),
           bytes = Some(metrics("numTargetBytesAfterSkipping").value),
           partitions = metricValueIfPartitioned("numTargetPartitionsAfterSkipping")),
+      sourceRowsInSecondScan =
+        metrics.get("numSourceRowsInSecondScan").map(_.value).filter(_ >= 0),
 
       // Data change sizes
       targetFilesAdded = metrics("numTargetFilesAdded").value,
@@ -208,14 +213,29 @@ case class MergeIntoCommand(
     migratedSchema: Option[StructType]) extends LeafRunnableCommand
   with DeltaCommand with PredicateHelper with AnalysisHelper with ImplicitMetadataOperation {
 
-  import SQLMetrics._
   import MergeIntoCommand._
+
+  import SQLMetrics._
 
   override val canMergeSchema: Boolean = conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE)
   override val canOverwriteSchema: Boolean = false
 
   @transient private lazy val sc: SparkContext = SparkContext.getOrCreate()
   @transient private lazy val targetDeltaLog: DeltaLog = targetFileIndex.deltaLog
+  /**
+   * Map to get target output attributes by name.
+   * The case sensitivity of the map is set accordingly to Spark configuration.
+   */
+  @transient private lazy val targetOutputAttributesMap: Map[String, Attribute] = {
+    val attrMap: Map[String, Attribute] = target
+      .outputSet.view
+      .map(attr => attr.name -> attr).toMap
+    if (conf.caseSensitiveAnalysis) {
+      attrMap
+    } else {
+      CaseInsensitiveMap(attrMap)
+    }
+  }
 
   /** Whether this merge statement has only a single insert (NOT MATCHED) clause. */
   private def isSingleInsertOnly: Boolean = matchedClauses.isEmpty && notMatchedClauses.length == 1
@@ -224,6 +244,8 @@ case class MergeIntoCommand(
 
   override lazy val metrics = Map[String, SQLMetric](
     "numSourceRows" -> createMetric(sc, "number of source rows"),
+    "numSourceRowsInSecondScan" ->
+      createMetric(sc, "number of source rows (during repeated scan)"),
     "numTargetRowsCopied" -> createMetric(sc, "number of target rows rewritten unmodified"),
     "numTargetRowsInserted" -> createMetric(sc, "number of inserted rows"),
     "numTargetRowsUpdated" -> createMetric(sc, "number of updated rows"),
@@ -250,6 +272,20 @@ case class MergeIntoCommand(
       createMetric(sc, "time taken to rewrite the matched files"))
 
   override def run(spark: SparkSession): Seq[Row] = {
+    if (migratedSchema.isDefined) {
+      // Block writes of void columns in the Delta log. Currently void columns are not properly
+      // supported and are dropped on read, but this is not enough for merge command that is also
+      // reading the schema from the Delta log. Until proper support we prefer to fail merge
+      // queries that add void columns.
+      val newNullColumn = SchemaUtils.findNullTypeColumn(migratedSchema.get)
+      if (newNullColumn.isDefined) {
+        throw new AnalysisException(
+          s"""Cannot add column '${newNullColumn.get}' with type 'void'. Please explicitly specify a
+              |non-void type.""".stripMargin.replaceAll("\n", " ")
+        )
+      }
+    }
+
     recordDeltaOperation(targetDeltaLog, "delta.dml.merge") {
       val startTime = System.nanoTime()
       targetDeltaLog.withNewTransaction { deltaTxn =>
@@ -276,9 +312,21 @@ case class MergeIntoCommand(
             filesToRewrite.map(_.remove) ++ newWrittenFiles
           }
         }
+
         // Metrics should be recorded before commit (where they are written to delta logs).
         metrics("executionTimeMs").set((System.nanoTime() - startTime) / 1000 / 1000)
         deltaTxn.registerSQLMetrics(spark, metrics)
+
+        // This is a best-effort sanity check.
+        if (metrics("numSourceRowsInSecondScan").value >= 0 &&
+            metrics("numSourceRows").value != metrics("numSourceRowsInSecondScan").value) {
+          log.warn(s"Merge source has ${metrics("numSourceRows")} rows in initial scan but " +
+            s"${metrics("numSourceRowsInSecondScan")} rows in second scan")
+          if (conf.getConf(DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED)) {
+            throw DeltaErrors.sourceNotDeterministicInMergeException(spark)
+          }
+        }
+
         deltaTxn.commit(
           deltaActions,
           DeltaOperations.Merge(
@@ -333,7 +381,10 @@ case class MergeIntoCommand(
     //     target row is modified by multiple user or not
     // - the target file name the row is from to later identify the files touched by matched rows
     val joinToFindTouchedFiles = {
+      // UDF to increment metrics
+      val incrSourceRowCountExpr = makeMetricUpdateUDF("numSourceRows")
       val sourceDF = Dataset.ofRows(spark, source)
+        .filter(new Column(incrSourceRowCountExpr))
       val targetDF = Dataset.ofRows(spark, buildTargetPlanWithFiles(deltaTxn, dataSkippedFiles))
         .withColumn(ROW_ID_COL, monotonically_increasing_id())
         .withColumn(FILE_NAME_COL, input_file_name())
@@ -478,7 +529,7 @@ case class MergeIntoCommand(
        """.stripMargin)
 
     // UDFs to update metrics
-    val incrSourceRowCountExpr = makeMetricUpdateUDF("numSourceRows")
+    val incrSourceRowCountExpr = makeMetricUpdateUDF("numSourceRowsInSecondScan")
     val incrUpdatedCountExpr = makeMetricUpdateUDF("numTargetRowsUpdated")
     val incrInsertedCountExpr = makeMetricUpdateUDF("numTargetRowsInserted")
     val incrNoopCountExpr = makeMetricUpdateUDF("numTargetRowsCopied")
@@ -570,12 +621,22 @@ case class MergeIntoCommand(
     deltaTxn: OptimisticTransaction,
     files: Seq[AddFile]): LogicalPlan = {
     val targetOutputCols = getTargetOutputCols(deltaTxn)
+    val targetOutputColsMap = {
+      val colsMap: Map[String, NamedExpression] = targetOutputCols.view
+          .map(col => col.name -> col).toMap
+      if (conf.caseSensitiveAnalysis) {
+        colsMap
+      } else {
+        CaseInsensitiveMap(colsMap)
+      }
+    }
+
     val plan = {
       // We have to do surgery to use the attributes from `targetOutputCols` to scan the table.
       // In cases of schema evolution, they may not be the same type as the original attributes.
       val original =
         deltaTxn.deltaLog.createDataFrame(deltaTxn.snapshot, files).queryExecution.analyzed
-      original.transform {
+      val transformed = original.transform {
         case LogicalRelation(base, output, catalogTbl, isStreaming) =>
           LogicalRelation(
             base,
@@ -584,18 +645,27 @@ case class MergeIntoCommand(
             catalogTbl,
             isStreaming)
       }
+
+      // In case of schema evolution & column mapping, we would also need to rebuild the file format
+      // because under column mapping, the reference schema within DeltaParquetFileFormat
+      // that is used to populate metadata needs to be updated
+      if (deltaTxn.metadata.columnMappingMode != NoMapping) {
+        val updatedFileFormat = deltaTxn.deltaLog.fileFormat(deltaTxn.metadata)
+        DeltaTableUtils.replaceFileFormat(transformed, updatedFileFormat)
+      } else {
+        transformed
+      }
     }
 
     // For each plan output column, find the corresponding target output column (by name) and
     // create an alias
     val aliases = plan.output.map {
       case newAttrib: AttributeReference =>
-        val existingTargetAttrib = getTargetOutputCols(deltaTxn).find { col =>
-          conf.resolver(col.name, newAttrib.name)
-        }.getOrElse {
+        val existingTargetAttrib = targetOutputColsMap.get(newAttrib.name)
+          .getOrElse {
             throw new AnalysisException(
               s"Could not find ${newAttrib.name} among the existing target output " +
-                s"${getTargetOutputCols(deltaTxn)}")
+                s"${targetOutputCols}")
           }.asInstanceOf[AttributeReference]
 
         if (existingTargetAttrib.exprId == newAttrib.exprId) {
@@ -621,10 +691,13 @@ case class MergeIntoCommand(
 
   private def getTargetOutputCols(txn: OptimisticTransaction): Seq[NamedExpression] = {
     txn.metadata.schema.map { col =>
-      target.output.find(attr => conf.resolver(attr.name, col.name)).map { a =>
-        AttributeReference(col.name, col.dataType, col.nullable)(a.exprId)
-      }.getOrElse(
-        Alias(Literal(null), col.name)())
+      targetOutputAttributesMap
+        .get(col.name)
+        .map { a =>
+          AttributeReference(col.name, col.dataType, col.nullable)(a.exprId)
+        }
+        .getOrElse(Alias(Literal(null), col.name)()
+      )
     }
   }
 

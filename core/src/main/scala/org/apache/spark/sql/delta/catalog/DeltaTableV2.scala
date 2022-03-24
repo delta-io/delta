@@ -22,8 +22,7 @@ import java.{util => ju}
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, DeltaTimeTravelSpec, Snapshot}
-import org.apache.spark.sql.delta.GeneratedColumn
+import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaColumnMapping, DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, DeltaTimeTravelSpec, Snapshot}
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils}
@@ -31,8 +30,9 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogUtils}
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.connector.catalog.{SupportsWrite, Table, TableCapability, TableCatalog, V2TableWithV1Fallback}
+import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.expressions._
 import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsOverwrite, SupportsTruncate, V1Write, WriteBuilder}
@@ -73,8 +73,9 @@ case class DeltaTableV2(
   // in cases where we will fallback to the V1 behavior.
   lazy val deltaLog: DeltaLog = DeltaLog.forTable(spark, rootPath, options)
 
-  def getTableIdentifierIfExists: Option[TableIdentifier] = tableIdentifier.map(
-    spark.sessionState.sqlParser.parseTableIdentifier)
+  def getTableIdentifierIfExists: Option[TableIdentifier] = tableIdentifier.map { tableName =>
+    spark.sessionState.sqlParser.parseMultipartIdentifier(tableName).asTableIdentifier
+  }
 
   override def name(): String = catalogTable.map(_.identifier.unquotedString)
     .orElse(tableIdentifier)
@@ -103,7 +104,7 @@ case class DeltaTableV2(
 
   private lazy val tableSchema: StructType =
     DeltaColumnMapping.dropColumnMappingMetadata(
-      GeneratedColumn.removeGenerationExpressions(snapshot.schema))
+      ColumnWithDefaultExprUtils.removeDefaultExpressions(snapshot.schema))
 
   override def schema(): StructType = tableSchema
 
@@ -116,10 +117,20 @@ case class DeltaTableV2(
   override def properties(): ju.Map[String, String] = {
     val base = snapshot.getProperties
     base.put(TableCatalog.PROP_PROVIDER, "delta")
-    base.put(TableCatalog.PROP_LOCATION, CatalogUtils.URIToString(path.toUri))
+    // DO NOT put the LOCATION property for MANAGED tables, so that the v2 SHOW CREATE TABLE command
+    // can omit the LOCATION clause properly.
+    if (catalogTable.isEmpty || catalogTable.get.tableType == CatalogTableType.EXTERNAL) {
+      base.put(TableCatalog.PROP_LOCATION, CatalogUtils.URIToString(path.toUri))
+    }
     catalogTable.foreach { table =>
       if (table.owner != null && table.owner.nonEmpty) {
         base.put(TableCatalog.PROP_OWNER, table.owner)
+      }
+      v1Table.storage.properties.foreach { case (key, value) =>
+        base.put(TableCatalog.OPTION_PREFIX + key, value)
+      }
+      if (v1Table.tableType == CatalogTableType.EXTERNAL) {
+        base.put(TableCatalog.PROP_EXTERNAL, "true")
       }
     }
     Option(snapshot.metadata.description).foreach(base.put(TableCatalog.PROP_COMMENT, _))
