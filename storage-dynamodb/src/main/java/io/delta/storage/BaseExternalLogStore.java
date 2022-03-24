@@ -67,14 +67,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
         if(entry != null) {
             fixDeltaLog(fs, entry);
         }
-
-        return new FilterIterator(
-            super.listFrom(path, hadoopConf),
-            item -> {
-                String name = ((FileStatus)item).getPath().getName();
-                return !name.startsWith("_") && !name.startsWith(".");
-            }
-        );
+        return super.listFrom(path, hadoopConf);
     }
 
     @Override
@@ -131,8 +124,8 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
             tablePath,
             resolvedPath.getName(),
             tempPath,
-            false,
-            null
+            false,  // not complete
+            null    // commitTime
         );
         writeActions(fs, entry.absoluteTempPath(), actions);
         putExternalEntry(entry, false);

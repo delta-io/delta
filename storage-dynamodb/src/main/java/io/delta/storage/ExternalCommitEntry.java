@@ -29,7 +29,9 @@ public class ExternalCommitEntry {
         Path tablePath,
         String fileName,
         String tempPath,
+        // entry is complete if delta json file is successfully copied to its destination location
         boolean complete,
+        // timestamp of commit if complete, null otherwise
         Long commitTime
     ) {
         this.tablePath = tablePath;

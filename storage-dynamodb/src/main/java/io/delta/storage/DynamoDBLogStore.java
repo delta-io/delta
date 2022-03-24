@@ -71,6 +71,7 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
         );
         regionName = getParam(hadoopConf, "region", "us-east-1");
         endpoint = getParam(hadoopConf, "endpoint", null);
+        client = getClient();
         tryEnsureTableExists(hadoopConf);
     }
 
@@ -82,7 +83,6 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
     protected void putExternalEntry(
         ExternalCommitEntry entry, boolean overwrite
     ) throws IOException {
-        AmazonDynamoDBClient client = getClient();
         try {
             LOG.debug(String.format("putItem %s, overwrite: %s", entry, overwrite));
             client.putItem(createPutItemRequest(entry, tableName, overwrite));
@@ -98,7 +98,6 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
     protected ExternalCommitEntry getExternalEntry(
         Path absoluteTablePath, Path absoluteJsonPath
     ) throws IOException {
-        AmazonDynamoDBClient client = getClient();
         Map<String, AttributeValue> attributes = new ConcurrentHashMap<>();
         attributes.put("tablePath", new AttributeValue(absoluteTablePath.toString()));
         attributes.put("fileName", new AttributeValue(absoluteJsonPath.toString()));
@@ -112,7 +111,6 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
 
     @Override
     protected ExternalCommitEntry getLatestExternalEntry(Path tablePath) throws IOException {
-        AmazonDynamoDBClient client = getClient();
         Map<String, Condition> conditions = new ConcurrentHashMap<>();
         conditions.put(
             "tablePath",
@@ -173,7 +171,6 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
     private void tryEnsureTableExists(Configuration hadoopConf) throws IOException {
         int retries = 0;
         boolean created = false;
-        AmazonDynamoDBClient client = getClient();
         while(retries < 20) {
             String status = "CREATING";
             try {
@@ -229,29 +226,26 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
         };
     }
 
-    AmazonDynamoDBClient getClient() throws java.io.IOException {
-        if(client == null) {
-            Configuration config = initHadoopConf();
-            try {
-                AWSCredentialsProvider auth =
-                    (AWSCredentialsProvider)Class.forName(credentialsProviderName)
-                    .getConstructor().newInstance();
-                client = new AmazonDynamoDBClient(auth);
-                client.setRegion(Region.getRegion(Regions.fromName(regionName)));
-                if(endpoint != null) {
-                    client.setEndpoint(endpoint);
-                }
-            } catch(
-                ClassNotFoundException
-                | InstantiationException
-                | NoSuchMethodException
-                | IllegalAccessException
-                | java.lang.reflect.InvocationTargetException e
-            ) {
-                throw new java.io.IOException(e);
+    private AmazonDynamoDBClient getClient() throws java.io.IOException {
+        try {
+            AWSCredentialsProvider auth =
+                (AWSCredentialsProvider)Class.forName(credentialsProviderName)
+                .getConstructor().newInstance();
+            AmazonDynamoDBClient client = new AmazonDynamoDBClient(auth);
+            client.setRegion(Region.getRegion(Regions.fromName(regionName)));
+            if(endpoint != null) {
+                client.setEndpoint(endpoint);
             }
+            return client;
+        } catch(
+            ClassNotFoundException
+            | InstantiationException
+            | NoSuchMethodException
+            | IllegalAccessException
+            | java.lang.reflect.InvocationTargetException e
+        ) {
+            throw new java.io.IOException(e);
         }
-        return client;
     }
 
     protected String getParam(Configuration config, String name, String defaultValue) {
