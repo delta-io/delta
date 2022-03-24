@@ -34,7 +34,6 @@ import org.apache.spark.SparkException
 import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
-import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.datasources.{BasicWriteJobStatsTracker, FileFormatWriter, WriteJobStatsTracker}
 import org.apache.spark.sql.functions.to_json
@@ -296,13 +295,13 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         statsTrackers.append(basicWriteJobStatsTracker)
       }
 
-      // Retain only known Spark writer options to avoid any potential compatibility issues
+      // Retain only a minimal selection of Spark writer options to avoid any potential
+      // compatibility issues
       val options = writeOptions match {
         case None => Map.empty[String, String]
         case Some(writeOptions) =>
           writeOptions.options.filterKeys(key =>
-            key.equalsIgnoreCase("maxRecordsPerFile") ||
-            key.equalsIgnoreCase(DateTimeUtils.TIMEZONE_OPTION)
+            key.equalsIgnoreCase("maxRecordsPerFile")
           ).toMap
       }
 
