@@ -104,7 +104,9 @@ public class GCSLogStore extends HadoopFileSystemLogStore {
             // was a helper method used, without any further details of the helper
             Stream<StackTraceElement> placeHolderStackElem = Stream.of(
                     new StackTraceElement(
-                            String.format("... run in separate thread using $s", GCSLogStore.class.getSimpleName(),
+                            String.format(
+                                    "... run in separate thread using $s",
+                                    GCSLogStore.class.getSimpleName(),
                                     " static method runInNewThread"),
                             "",
                             "",
