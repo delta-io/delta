@@ -216,6 +216,32 @@ trait AzureLogStoreSuiteBase extends LogStoreSuiteBase {
   protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 
+trait GCSLogStoreSuiteBase extends LogStoreSuiteBase {
+
+  testHadoopConf(
+    expectedErrMsg = ".*No FileSystem for scheme.*fake.*",
+    "fs.fake.impl" -> classOf[FakeFileSystem].getName,
+    "fs.fake.impl.disable.cache" -> "true")
+
+  protected def shouldUseRenameToWriteCheckpoint: Boolean = false
+
+  test("gcs write should happen in a new thread") {
+    withTempDir { tempDir =>
+      // Use `FakeGCSFileSystem` to verify we write in the correct thread.
+      withSQLConf(
+        "fs.gs.impl" -> classOf[FakeGCSFileSystem].getName,
+        "fs.gs.impl.disable.cache" -> "true") {
+        val store = createLogStore(spark)
+        store.write(
+          new Path(s"gs://${tempDir.getCanonicalPath}", "1.json"),
+          Iterator("foo"),
+          overwrite = false,
+          sessionHadoopConf)
+      }
+    }
+  }
+}
+
 trait HDFSLogStoreSuiteBase extends LogStoreSuiteBase {
 
   // HDFSLogStore is based on FileContext APIs and hence requires AbstractFileSystem-based
@@ -421,4 +447,9 @@ class PublicAzureLogStoreSuite extends PublicLogStoreSuite with AzureLogStoreSui
 class PublicLocalLogStoreSuite extends PublicLogStoreSuite with LocalLogStoreSuiteBase {
   override protected val publicLogStoreClassName: String =
     classOf[io.delta.storage.LocalLogStore].getName
+}
+
+class PublicGCSLogStoreSuite extends PublicLogStoreSuite with GCSLogStoreSuiteBase {
+  override protected val publicLogStoreClassName: String =
+    classOf[io.delta.storage.GCSLogStore].getName
 }
