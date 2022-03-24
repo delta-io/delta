@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+import scala.util.Try
 name := "example"
 organization := "com.example"
 organizationName := "example"
@@ -21,6 +21,22 @@ organizationName := "example"
 val scala212 = "2.12.15"
 val scala213 = "2.13.8"
 val deltaVersion = "1.1.0"
+
+val lookupSparkVersion: PartialFunction[String, String] = {
+  case v11x if v11x.startsWith("1.1") => "3.2.1"
+  case v10x if v10x.startsWith("1.0") => "3.1.1"
+  case v07x_v08x
+      if v07x_v08x.startsWith("0.7") || v07x_v08x.startsWith("0.8") =>
+    "3.0.2"
+  case belowv07 if Try {
+        belowv07.split(".")(1).toInt
+      }.toOption.map(_ < 7).getOrElse(false) =>
+    "2.4.4"
+  case v =>
+    throw new RuntimeException(
+      s"Unsupported delta version: $v. Please check https://docs.delta.io/latest/releases.html"
+    )
+}
 
 val getScalaVersion = settingKey[String](
   s"get scala version from environment variable SCALA_VERSION. If it doesn't exist, use $scala213"
@@ -68,7 +84,9 @@ lazy val root = (project in file("."))
     crossScalaVersions := Seq(scala212, scala213),
     libraryDependencies ++= Seq(
       "io.delta" %% "delta-core" % getDeltaVersion.value,
-      "org.apache.spark" %% "spark-sql" % "3.2.1"
+      "org.apache.spark" %% "spark-sql" % lookupSparkVersion.apply(
+        getDeltaVersion.value
+      )
     ),
     extraMavenRepo,
     scalacOptions ++= Seq(
