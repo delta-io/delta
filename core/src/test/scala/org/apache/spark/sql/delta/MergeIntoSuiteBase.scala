@@ -30,7 +30,7 @@ import org.apache.spark.sql.execution.adaptive.DisableAdaptiveExecution
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
-import org.apache.spark.sql.types.{ArrayType, IntegerType, MapType, StringType, StructType}
+import org.apache.spark.sql.types.{ArrayType, IntegerType, MapType, NullType, StringType, StructType}
 import org.apache.spark.util.Utils
 
 abstract class MergeIntoSuiteBase
@@ -4477,6 +4477,33 @@ abstract class MergeIntoSuiteBase
         struct(current_date().as("date"), array(struct(lit(0d).as("data"))))),
     Seq(500000, 100000).toDF("key")
   )
+
+  testEvolution("void columns are not allowed")(
+    targetData = Seq((1, 1)).toDF("key", "value"),
+    sourceData = Seq((1, 100, null), (2, 200, null)).toDF("key", "value", "extra"),
+    clauses = update("*") :: insert("*") :: Nil,
+    expectErrorContains = "Cannot add column 'extra' with type 'void'",
+    expectedWithoutEvolution = Seq((1, 100), (2, 200)).toDF("key", "value")
+  )
+
+  testNestedStructsEvolution("nested void columns are not allowed")(
+    target = """{ "key": "A", "value": { "a": { "x": 1 }, "b": 1 } }""",
+    source = """{ "key": "A", "value": { "a": { "x": 2, "z": null } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value",
+        new StructType()
+          .add("a", new StructType().add("x", IntegerType))
+          .add("b", IntegerType)),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value",
+        new StructType()
+          .add("a", new StructType().add("x", IntegerType).add("z", NullType))),
+    clauses = update("*") :: Nil,
+    expectErrorContains = "Cannot add column 'value.a.z' with type 'void'",
+    expectErrorWithoutEvolutionContains = "All nested columns must match")
+
 
   /**
    * @param function the unsupported function.

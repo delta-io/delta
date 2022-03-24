@@ -564,6 +564,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val GENERATED_COLUMN_PARTITION_FILTER_OPTIMIZATION_ENABLED =
+    buildConf("generatedColumn.partitionFilterOptimization.enabled")
+      .internal()
+      .doc(
+      "Whether to extract partition filters automatically from data filters for a partition" +
+        " generated column if possible")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_OPTIMIZE_MIN_FILE_SIZE =
     buildConf("optimize.minFileSize")
         .internal()
@@ -595,6 +604,21 @@ trait DeltaSQLConfBase {
         .intConf
         .checkValue(_ > 0, "'optimize.maxThreads' must be positive.")
         .createWithDefault(15)
+
+  val DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS =
+    buildConf("alterTable.changeColumn.checkExpressions")
+      .internal()
+      .doc(
+        """
+          |Given an ALTER TABLE command that changes columns, check if there are expressions used
+          | in Check Constraints and Generated Columns that reference this column and thus will
+          | be affected by this change.
+          |
+          |This is a safety switch - we should only turn this off when there is an issue with
+          |expression checking logic that prevents a valid column change from going through.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

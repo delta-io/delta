@@ -22,7 +22,7 @@ import java.io.File
 import org.apache.spark.sql.delta.DeltaConfigs.CHECKPOINT_INTERVAL
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -1630,3 +1630,18 @@ class DeltaAlterTableByNameSuite
 
 class DeltaAlterTableByPathSuite extends DeltaAlterTableByPathTests with DeltaSQLCommandTest
 
+
+trait DeltaAlterTableColumnMappingSelectedTests extends DeltaColumnMappingSelectedTestMixin {
+  override protected def runOnlyTests = Seq(
+    "ADD COLUMNS into complex types - Array",
+    "CHANGE COLUMN - move to first (nested)",
+    "CHANGE COLUMN - case insensitive")
+}
+
+class DeltaAlterTableByNameNameColumnMappingSuite extends DeltaAlterTableByNameSuite
+  with DeltaColumnMappingEnableNameMode
+  with DeltaAlterTableColumnMappingSelectedTests
+
+class DeltaAlterTableByPathNameColumnMappingSuite extends DeltaAlterTableByPathSuite
+  with DeltaColumnMappingEnableNameMode
+  with DeltaAlterTableColumnMappingSelectedTests
