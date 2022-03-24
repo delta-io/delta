@@ -16,17 +16,16 @@
 
 package org.apache.spark.sql.delta
 
+import io.delta.storage.GCSLogStore
+
 import java.io.{File, IOException}
 import java.net.URI
-
 import scala.collection.mutable.ArrayBuffer
-
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.storage._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path, RawLocalFileSystem}
-
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
@@ -206,16 +205,6 @@ abstract class LogStoreSuiteBase extends QueryTest
   }
 }
 
-trait AzureLogStoreSuiteBase extends LogStoreSuiteBase {
-
-  testHadoopConf(
-    expectedErrMsg = ".*No FileSystem for scheme.*fake.*",
-    "fs.fake.impl" -> classOf[FakeFileSystem].getName,
-    "fs.fake.impl.disable.cache" -> "true")
-
-  protected def shouldUseRenameToWriteCheckpoint: Boolean = true
-}
-
 trait GCSLogStoreSuiteBase extends LogStoreSuiteBase {
 
   testHadoopConf(
@@ -332,8 +321,8 @@ class HDFSLogStoreSuite extends HDFSLogStoreSuiteBase {
   override val logStoreClassName: String = classOf[HDFSLogStore].getName
 }
 
-class AzureLogStoreSuite extends AzureLogStoreSuiteBase {
-  override val logStoreClassName: String = classOf[AzureLogStore].getName
+class GCSLogStoreSuite extends GCSLogStoreSuiteBase {
+  override val logStoreClassName: String = classOf[GCSLogStore].getName
 }
 
 class LocalLogStoreSuite extends LogStoreSuiteBase {
@@ -438,7 +427,7 @@ class PublicHDFSLogStoreSuite extends PublicLogStoreSuite with HDFSLogStoreSuite
     classOf[io.delta.storage.HDFSLogStore].getName
 }
 
-class PublicAzureLogStoreSuite extends PublicLogStoreSuite with AzureLogStoreSuiteBase {
+class PublicGCSLogStoreSuite extends PublicLogStoreSuite with GCSLogStoreSuiteBase {
   override protected val publicLogStoreClassName: String =
-    classOf[io.delta.storage.AzureLogStore].getName
+    classOf[io.delta.storage.GCSLogStore].getName
 }
