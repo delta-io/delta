@@ -22,7 +22,7 @@ scalaVersion := "2.12.8"
 version := "0.1.0"
 
 lazy val commonSettings = Seq(
-  crossScalaVersions := Seq("2.12.8", "2.11.12"),
+  crossScalaVersions := Seq("2.13.8", "2.12.8", "2.11.12"),
   libraryDependencies ++= Seq(
     "io.delta" %% "delta-standalone" % getStandaloneVersion(),
     "org.apache.hadoop" % "hadoop-client" % "3.1.0",
