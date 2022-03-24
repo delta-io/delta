@@ -337,6 +337,7 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = Map(
       "predicate" -> JsonUtils.toJson(predicate)
       )
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.OPTIMIZE
   }
 
 
@@ -430,6 +431,18 @@ private[delta] object DeltaOperationMetrics {
     "executionTimeMs",  // time taken to execute the entire operation
     "scanTimeMs", // time taken to scan the files for matches
     "rewriteTimeMs" // time taken to rewrite the matched files
+  )
+
+  val OPTIMIZE = Set(
+    "numAddedFiles", // number of files added
+    "numRemovedFiles", // number of files removed
+    "numAddedBytes", // number of bytes added by optimize
+    "numRemovedBytes", // number of bytes removed by optimize
+    "minFileSize", // the size of the smallest file
+    "p25FileSize", // the size of the 25th percentile file
+    "p50FileSize", // the median file size
+    "p75FileSize", // the 75th percentile of the file sizes
+    "maxFileSize" // the size of the largest file
   )
 
 }
