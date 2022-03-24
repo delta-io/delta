@@ -27,6 +27,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
@@ -114,13 +115,6 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
         }
     }
 
-    /**
-     * Check if the path is an initial version of a Delta log.
-     */
-    public static boolean isInitialVersion(Path path) {
-        return FileNameUtils.isDeltaFile(path) && FileNameUtils.deltaVersion(path) == 0L;
-    }
-
     /////////////////////////////////////////////
     // Constructor and Instance Helper Methods //
     /////////////////////////////////////////////
@@ -129,27 +123,43 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
         super(hadoopConf);
     }
 
-    private Path getPathKey(Path resolvedPath) throws URISyntaxException {
-        return stripUserInfo(resolvedPath);
+    /**
+     * Check if the path is an initial version of a Delta log.
+     */
+    private boolean isInitialVersion(Path path) {
+        return FileNameUtils.isDeltaFile(path) && FileNameUtils.deltaVersion(path) == 0L;
     }
 
-    private Path stripUserInfo(Path path) throws URISyntaxException {
+    private Path resolvePath(FileSystem fs, Path path) {
+        return stripUserInfo(fs.makeQualified(path));
+    }
+
+    private Path stripUserInfo(Path path) {
         final URI uri = path.toUri();
-        final URI newUri = new URI(
-            uri.getScheme(),
-            null, // userInfo
-            uri.getHost(),
-            uri.getPort(),
-            uri.getPath(),
-            uri.getQuery(),
-            uri.getFragment()
-        );
-        return new Path(newUri);
+
+        try {
+            final URI newUri = new URI(
+                uri.getScheme(),
+                null, // userInfo
+                uri.getHost(),
+                uri.getPort(),
+                uri.getPath(),
+                uri.getQuery(),
+                uri.getFragment()
+            );
+
+            return new Path(newUri);
+        } catch (URISyntaxException e) {
+            // Propagating this URISyntaxException to callers would mean we would have to either
+            // include it in the public LogStore.java interface or wrap it in an
+            // IllegalArgumentException somewhere else. Instead, catch and wrap it here.
+            throw new IllegalArgumentException(e);
+        }
     }
 
     /**
      * Merge two lists of {@link FileStatus} into a single list ordered by file path name.
-     * In case both lists have {@link FileSystem}'s for the same file path, keep the one from
+     * In case both lists have {@link FileStatus}'s for the same file path, keep the one from
      * `listWithPrecedence` and discard the other from `list`.
      */
     private Iterator<FileStatus> mergeFileLists(
@@ -157,16 +167,10 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
             List<FileStatus> listWithPrecedence) {
         final Map<Path, FileStatus> fileStatusMap = new HashMap<>();
 
-        final Map<Path, FileStatus> lowPriorityMap = list
-            .stream()
-            .collect(Collectors.toMap(FileStatus::getPath, Function.identity()));
-
-        final Map<Path, FileStatus> highPriorityMap = listWithPrecedence
-            .stream()
-            .collect(Collectors.toMap(FileStatus::getPath, Function.identity()));
-
-        fileStatusMap.putAll(lowPriorityMap);
-        fileStatusMap.putAll(highPriorityMap); // replaces existing entry if conflict
+        // insert all elements from `listWithPrecedence` (highest priority)
+        // and then insert elements from `list` if and only if that key doesn't already exist
+        Stream.concat(listWithPrecedence.stream(), list.stream())
+            .forEach(fs -> fileStatusMap.putIfAbsent(fs.getPath(), fs));
 
         return fileStatusMap
             .values()
@@ -180,8 +184,8 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
      */
     private List<FileStatus> listFromCache(
             FileSystem fs,
-            Path resolvedPath) throws URISyntaxException {
-        final Path pathKey = getPathKey(resolvedPath);
+            Path resolvedPath) {
+        final Path pathKey = stripUserInfo(resolvedPath);
 
         return writtenPathCache
             .asMap()
@@ -204,10 +208,15 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
             }).collect(Collectors.toList());
     }
 
+    /**
+     * List files starting from `resolvedPath` (inclusive) in the same directory, which merges
+     * the file system list and the cache list when `useCache` is on, otherwise
+     * use file system list only.
+     */
     private Iterator<FileStatus> listFromInternal(
             FileSystem fs,
             Path resolvedPath,
-            boolean useCache) throws IOException, URISyntaxException {
+            boolean useCache) throws IOException {
         final Path parentPath = resolvedPath.getParent();
         if (!fs.exists(parentPath)) {
             throw new FileNotFoundException(
@@ -232,7 +241,7 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
      */
     private boolean exists(
             FileSystem fs,
-            Path resolvedPath) throws IOException, URISyntaxException {
+            Path resolvedPath) throws IOException {
         final boolean useCache = !isInitialVersion(resolvedPath);
         final Iterator<FileStatus> iter = listFromInternal(fs, resolvedPath, useCache);
         if (!iter.hasNext()) return false;
@@ -252,9 +261,8 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
             Configuration hadoopConf) throws IOException {
         try {
             final FileSystem fs = path.getFileSystem(hadoopConf);
-            final Path resolvedPath = stripUserInfo(fs.makeQualified(path));
-            final Path lockedPath = getPathKey(resolvedPath);
-            acquirePathLock(lockedPath);
+            final Path resolvedPath = resolvePath(fs, path);
+            acquirePathLock(resolvedPath);
 
             try {
                 if (exists(fs, resolvedPath) && !overwrite) {
@@ -278,7 +286,7 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
                         .asMap()
                         .keySet()
                         .stream()
-                        .filter(p -> p.getParent() == lockedPath.getParent())
+                        .filter(p -> p.getParent() == resolvedPath.getParent())
                         .collect(Collectors.toList());
 
                     writtenPathCache.invalidateAll(obsoleteFiles);
@@ -287,17 +295,15 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
                 // Cache the information of written files to help fix the inconsistency in future
                 // listings
                 writtenPathCache.put(
-                    lockedPath,
+                    resolvedPath,
                     new FileMetadata(stream.getCount(), System.currentTimeMillis())
                 );
             } catch (org.apache.hadoop.fs.FileAlreadyExistsException e) {
                 // Convert Hadoop's FileAlreadyExistsException to Java's FileAlreadyExistsException
                 throw new java.nio.file.FileAlreadyExistsException(e.getMessage());
             } finally {
-                releasePathLock(lockedPath);
+                releasePathLock(resolvedPath);
             }
-        } catch (java.net.URISyntaxException e) {
-            throw new IllegalArgumentException(e);
         } catch (java.lang.InterruptedException e) {
             throw new InterruptedIOException(e.getMessage());
         }
@@ -305,13 +311,9 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
 
     @Override
     public Iterator<FileStatus> listFrom(Path path, Configuration hadoopConf) throws IOException {
-        try {
-            final FileSystem fs = path.getFileSystem(hadoopConf);
-            final Path resolvedPath = stripUserInfo(fs.makeQualified(path));
-            return listFromInternal(fs, resolvedPath, true); // useCache=true
-        } catch (java.net.URISyntaxException e) {
-            throw new IllegalArgumentException(e);
-        }
+        final FileSystem fs = path.getFileSystem(hadoopConf);
+        final Path resolvedPath = resolvePath(fs, path);
+        return listFromInternal(fs, resolvedPath, true); // useCache=true
     }
 
     @Override

@@ -5,9 +5,9 @@ import java.util.regex.Pattern;
 import org.apache.hadoop.fs.Path;
 
 /**
- * Helper for creating file names for specific commits / checkpoints.
+ * Helper for misc functions relating to file names for delta commits.
  */
-public class FileNameUtils {
+public final class FileNameUtils {
     static Pattern DELTA_FILE_PATTERN = Pattern.compile("\\d+\\.json");
 
     public static long deltaVersion(Path path) {
