@@ -26,8 +26,9 @@ import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.storage._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path, RawLocalFileSystem}
-
-import org.apache.spark.sql.QueryTest
+import org.apache.spark.SparkConf
+import org.apache.spark.sql.LocalSparkSession.withSparkSession
+import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
@@ -379,6 +380,36 @@ class FailingRenameAbstractFileSystem(uri: URI, conf: org.apache.hadoop.conf.Con
 
   override def renameInternal(src: Path, dst: Path, overwrite: Boolean): Unit = {
     throw new org.apache.hadoop.fs.FileAlreadyExistsException(s"$dst path already exists")
+  }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Fake LogStore class & test suite to check that hadoopConf is set properly //
+///////////////////////////////////////////////////////////////////////////////
+
+class FakePublicLogStore(initHadoopConf: Configuration)
+  extends io.delta.storage.HDFSLogStore(initHadoopConf) {
+
+  assert(initHadoopConf.get("spark.delta.storage.custom.key") == "foo")
+}
+
+/**
+ * We want to ensure that, to set configuration values for the Java LogStore implementations,
+ * users can simply use `--conf $key=$value`, instead of `--conf spark.hadoop.$key=$value`
+ */
+class CorrectHadoopConfSuite extends QueryTest with SharedSparkSession {
+  test("java LogStore is instantiated with hadoopConf with SQLConf values") {
+    val sparkConf = new SparkConf()
+      .setMaster("local")
+      // equivalent to --conf spark.delta.storage.custom.key=foo
+      .set("spark.delta.storage.custom.key", "foo")
+      .set("spark.delta.logStore.class", classOf[FakePublicLogStore].getName)
+
+    withSparkSession(SparkSession.builder.config(sparkConf).getOrCreate()) { spark =>
+      // this will instantiate the FakePublicLogStore above. If its assertion fails,
+      // then this test will fail
+      LogStore(spark)
+    }
   }
 }
 
