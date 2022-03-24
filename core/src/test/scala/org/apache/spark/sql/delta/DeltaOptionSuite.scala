@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.actions.{Action, FileAction}
 import org.apache.spark.sql.delta.util.FileNames
 
+import org.apache.commons.io.FileUtils
+
 import org.apache.spark.sql.{AnalysisException, QueryTest}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
@@ -129,5 +131,17 @@ class DeltaOptionSuite extends QueryTest
         DeltaErrors.unexpectedDataChangeException("Overwrite the Delta table schema or " +
           "change the partition schema").getMessage)
     }
+  }
+
+  test("support the maxRecordsPerFile write option") {
+    val tempDir = Utils.createTempDir()
+
+    spark.range(100)
+      .write
+      .format("delta")
+      .option("maxRecordsPerFile", 5)
+      .save(tempDir.toString)
+
+    assert(FileUtils.listFiles(tempDir, Array("parquet"), false).size === 20)
   }
 }
