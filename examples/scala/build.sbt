@@ -80,6 +80,7 @@ lazy val extraMavenRepo = sys.env.get("EXTRA_MAVEN_REPO").toSeq.map { repo =>
 
 lazy val root = (project in file("."))
   .settings(
+    run / fork := true,
     name := "hello-world",
     crossScalaVersions := Seq(scala212, scala213),
     libraryDependencies ++= Seq(
