@@ -444,5 +444,4 @@ private[delta] object DeltaOperationMetrics {
     "p75FileSize", // the 75th percentile of the file sizes
     "maxFileSize" // the size of the largest file
   )
-
 }
