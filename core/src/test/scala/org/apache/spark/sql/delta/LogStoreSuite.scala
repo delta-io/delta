@@ -48,7 +48,7 @@ abstract class LogStoreSuiteBase extends QueryTest
   protected def testInitFromSparkConf(): Unit = {
     test("instantiation through SparkConf") {
       assert(spark.sparkContext.getConf.get(logStoreClassConfKey) == logStoreClassName)
-      assert(LogStore(spark.sparkContext).getClass.getName == logStoreClassName)
+      assert(LogStore(spark).getClass.getName == logStoreClassName)
     }
   }
 
@@ -400,8 +400,8 @@ abstract class PublicLogStoreSuite extends LogStoreSuiteBase {
   protected override def testInitFromSparkConf(): Unit = {
     test("instantiation through SparkConf") {
       assert(spark.sparkContext.getConf.get(logStoreClassConfKey) == publicLogStoreClassName)
-      assert(LogStore(spark.sparkContext).getClass.getName == logStoreClassName)
-      assert(LogStore(spark.sparkContext).asInstanceOf[LogStoreAdaptor]
+      assert(LogStore(spark).getClass.getName == logStoreClassName)
+      assert(LogStore(spark).asInstanceOf[LogStoreAdaptor]
         .logStoreImpl.getClass.getName == publicLogStoreClassName)
 
     }

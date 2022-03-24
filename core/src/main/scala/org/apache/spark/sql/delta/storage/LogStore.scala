@@ -236,8 +236,12 @@ trait LogStore {
 object LogStore extends LogStoreProvider
   with Logging {
 
-  def apply(sc: SparkContext): LogStore = {
-    apply(sc.getConf, sc.hadoopConfiguration)
+  def apply(spark: SparkSession): LogStore = {
+    // scalastyle:off deltahadoopconfiguration
+    // Ensure that the LogStore's hadoopConf has the values from the SQLConf.
+    // This ensures that io.delta.storage LogStore (Java) hadoopConf's are configured correctly.
+    apply(spark.sparkContext.getConf, spark.sessionState.newHadoopConf)
+    // scalastyle:on deltahadoopconfiguration
   }
 
   def apply(sparkConf: SparkConf, hadoopConf: Configuration): LogStore = {
@@ -272,9 +276,7 @@ trait LogStoreProvider {
   val defaultLogStoreClass: String = classOf[DelegatingLogStore].getName
 
   def createLogStore(spark: SparkSession): LogStore = {
-    // TODO: return the singleton.
-    val sc = spark.sparkContext
-    createLogStore(sc.getConf, sc.hadoopConfiguration)
+    LogStore(spark)
   }
 
   def checkLogStoreConfConflicts(sparkConf: SparkConf): Unit = {
