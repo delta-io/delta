@@ -43,16 +43,6 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
 
   import testImplicits._
 
-  private def withTempDirs(f: (File, File, File) => Unit): Unit = {
-    withTempDir { file1 =>
-      withTempDir { file2 =>
-        withTempDir { file3 =>
-          f(file1, file2, file3)
-        }
-      }
-    }
-  }
-
   test("no schema should throw an exception") {
     withTempDir { inputDir =>
       new File(inputDir, "_delta_log").mkdir()
