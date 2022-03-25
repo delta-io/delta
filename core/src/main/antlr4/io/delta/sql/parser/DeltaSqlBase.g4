@@ -75,6 +75,8 @@ statement
     : VACUUM (path=STRING | table=qualifiedName)
         (RETAIN number HOURS)? (DRY RUN)?                               #vacuumTable
     | (DESC | DESCRIBE) DETAIL (path=STRING | table=qualifiedName)      #describeDeltaDetail
+    | SHOW PARTITIONS (path=STRING | table=qualifiedName)
+        partitionSpec?                                                  #showPartitions
     | GENERATE modeName=identifier FOR TABLE table=qualifiedName        #generate
     | (DESC | DESCRIBE) HISTORY (path=STRING | table=qualifiedName)
         (LIMIT limit=INTEGER_VALUE)?                                    #describeDeltaHistory
@@ -142,6 +144,19 @@ exprToken
     :  .+?
     ;
 
+partitionSpec
+    : PARTITION '(' partitionVal (',' partitionVal)* ')'
+    ;
+
+partitionVal
+    : identifier (EQ constant)?
+    ;
+
+constant
+    : NULL                                                                                     #nullLiteral
+    | STRING+                                                                                  #stringLiteral
+    ;
+
 // Add keywords here so that people's queries don't break if they have a column name as one of
 // these tokens
 nonReserved
@@ -191,6 +206,9 @@ TIMESTAMP: 'TIMESTAMP';
 VACUUM: 'VACUUM';
 WHERE: 'WHERE';
 VERSION: 'VERSION';
+SHOW: 'SHOW';
+PARTITIONS: 'PARTITIONS';
+PARTITION: 'PARTITION';
 
 // Multi-character operator tokens need to be defined even though we don't explicitly reference
 // them so that they can be recognized as single tokens when parsing. If we split them up and
