@@ -299,6 +299,29 @@ trait HDFSLogStoreSuiteBase extends LogStoreSuiteBase {
     }
   }
 
+  test("Read after write consistency with msync") {
+     withTempDir { tempDir =>
+      val tsFSLocation = s"ts://${tempDir.getCanonicalFile}"
+      // Use the file scheme so that it uses a different FileSystem cached object
+      withSQLConf(
+        ("fs.ts.impl", classOf[TimestampLocalFileSystem].getCanonicalName),
+        ("fs.AbstractFileSystem.ts.impl",
+          classOf[TimestampAbstractFileSystem].getCanonicalName)) {
+        val store = createLogStore(spark)
+        val path = new Path(tsFSLocation, "1.json")
+
+        // Initialize the TimestampLocalFileSystem object which will be reused later due to the
+        // FileSystem cache
+        assert(store.listFrom(path, sessionHadoopConf).length == 0)
+
+        store.write(path, Iterator("zero", "none"), overwrite = false, sessionHadoopConf)
+        // Verify `msync` is called by checking whether `listFrom` returns the latest result.
+        // Without the `msync` call, the TimestampLocalFileSystem would not see this file.
+        assert(store.listFrom(path, sessionHadoopConf).length == 1)
+      }
+    }
+  }
+
   protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 
