@@ -113,7 +113,8 @@ trait DeltaSQLConfBase {
   val DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL =
     buildConf("snapshotCache.storageLevel")
       .internal()
-      .doc("The cache StorageLevel to use for caching the DeltaLog Snapshot")
+      .doc("StorageLevel to use for caching the DeltaLog Snapshot. In general, this should not " +
+        "be used unless you are pretty sure that caching has a negative impact.")
       .stringConf
       .createWithDefault("MEMORY_AND_DISK_SER")
 
