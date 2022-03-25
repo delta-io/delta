@@ -238,11 +238,13 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession  with Delt
         assert(actualOutputMetrics.schema == expectedRestoreOutputSchema)
 
         val outputRow = actualOutputMetrics.take(1).head
-        assert(outputRow.getLong(0) == 1177L) // table_size_after_restore
+        // File sizes are flaky due to differences in order of data (=> encoding size differences)
+        assert(outputRow.getLong(0) > 0L) // table_size_after_restore
         assert(outputRow.getLong(1) == 2L) // num_of_files_after_restore
         assert(outputRow.getLong(2) == 2L) // num_removed_files
         assert(outputRow.getLong(3) == 0L) // num_restored_files
-        assert(outputRow.getLong(4) == 1177L) // removed_files_size
+        // File sizes are flaky due to differences in order of data (=> encoding size differences)
+        assert(outputRow.getLong(4) > 0L) // removed_files_size
         assert(outputRow.getLong(5) == 0L) // restored_files_size
       }
     }

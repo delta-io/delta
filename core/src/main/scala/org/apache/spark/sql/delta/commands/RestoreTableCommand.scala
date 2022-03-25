@@ -162,16 +162,16 @@ case class RestoreTableCommand(
           addActions ++ removeActions,
           DeltaOperations.Restore(version, timestamp),
           Map.empty,
-          metrics)
-      }
+          metrics.mapValues(_.toString).toMap)
 
-      Seq(Row(
-        metrics.get(TABLE_SIZE_AFTER_RESTORE),
-        metrics.get(NUM_OF_FILES_AFTER_RESTORE),
-        metrics.get(NUM_REMOVED_FILES),
-        metrics.get(NUM_RESTORED_FILES),
-        metrics.get(REMOVED_FILES_SIZE),
-        metrics.get(RESTORED_FILES_SIZE)))
+        Seq(Row(
+          metrics.get(TABLE_SIZE_AFTER_RESTORE),
+          metrics.get(NUM_OF_FILES_AFTER_RESTORE),
+          metrics.get(NUM_REMOVED_FILES),
+          metrics.get(NUM_RESTORED_FILES),
+          metrics.get(REMOVED_FILES_SIZE),
+          metrics.get(RESTORED_FILES_SIZE)))
+      }
     }
   }
 
@@ -198,7 +198,7 @@ case class RestoreTableCommand(
     toAdd: Dataset[AddFile],
     toRemove: Dataset[RemoveFile],
     snapshot: Snapshot
-  ): Map[String, String] = {
+  ): Map[String, Long] = {
     import toAdd.sparkSession.implicits._
 
     val (numRestoredFiles, restoredFilesSize) = toAdd
@@ -214,7 +214,7 @@ case class RestoreTableCommand(
       REMOVED_FILES_SIZE -> removedFilesSize.getOrElse(0),
       NUM_OF_FILES_AFTER_RESTORE -> snapshot.numOfFiles,
       TABLE_SIZE_AFTER_RESTORE -> snapshot.sizeInBytes
-    ).mapValues(_.toString).toMap
+    )
   }
 
   /* Prevent users from running restore to table version with missed
