@@ -26,9 +26,9 @@ import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.storage._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path, RawLocalFileSystem}
-import org.apache.spark.SparkConf
+import org.apache.spark.{SparkConf, SparkFunSuite}
 import org.apache.spark.sql.LocalSparkSession.withSparkSession
-import org.apache.spark.sql.{QueryTest, SparkSession}
+import org.apache.spark.sql.{LocalSparkSession, QueryTest, SparkSession}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
@@ -397,7 +397,7 @@ class FakePublicLogStore(initHadoopConf: Configuration)
  * We want to ensure that, to set configuration values for the Java LogStore implementations,
  * users can simply use `--conf $key=$value`, instead of `--conf spark.hadoop.$key=$value`
  */
-class CorrectHadoopConfSuite extends QueryTest with SharedSparkSession {
+class CorrectHadoopConfSuite extends SparkFunSuite with LocalSparkSession with LogStoreProvider {
   test("java LogStore is instantiated with hadoopConf with SQLConf values") {
     val sparkConf = new SparkConf()
       .setMaster("local")
@@ -408,7 +408,7 @@ class CorrectHadoopConfSuite extends QueryTest with SharedSparkSession {
     withSparkSession(SparkSession.builder.config(sparkConf).getOrCreate()) { spark =>
       // this will instantiate the FakePublicLogStore above. If its assertion fails,
       // then this test will fail
-      LogStore(spark)
+      createLogStore(spark)
     }
   }
 }
