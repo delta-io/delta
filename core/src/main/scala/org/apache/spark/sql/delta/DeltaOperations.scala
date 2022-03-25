@@ -326,6 +326,8 @@ object DeltaOperations {
       "version" -> version,
       "timestamp" -> timestamp)
     override def changesData: Boolean = true
+
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.RESTORE
   }
 
   val OPTIMIZE_OPERATION_NAME = "OPTIMIZE"
@@ -443,5 +445,14 @@ private[delta] object DeltaOperationMetrics {
     "p50FileSize", // the median file size
     "p75FileSize", // the 75th percentile of the file sizes
     "maxFileSize" // the size of the largest file
+  )
+
+  val RESTORE = Set(
+    "tableSizeAfterRestore", // table size in bytes after restore
+    "numOfFilesAfterRestore", // number of files in the table after restore
+    "numRemovedFiles", // number of files removed by the restore operation
+    "numRestoredFiles", // number of files that were added as a result of the restore
+    "removedFilesSize", // size in bytes of files removed by the restore
+    "restoredFilesSize" // size in bytes of files added by the restore
   )
 }
