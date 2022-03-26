@@ -101,7 +101,7 @@ public abstract class LogStore {
         Path path,
         Iterator<String> actions,
         Boolean overwrite,
-        Configuration hadoopConf) throws IOException;
+        Configuration hadoopConf) throws Exception;
 
   /**
    * :: DeveloperApi ::

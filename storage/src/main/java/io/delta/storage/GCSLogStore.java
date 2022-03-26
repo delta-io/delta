@@ -17,6 +17,7 @@
 package io.delta.storage;
 
 import com.google.common.base.Throwables;
+import io.delta.storage.internal.ThreadUtils;
 import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataOutputStream;
@@ -27,10 +28,7 @@ import org.apache.hadoop.fs.Path;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Iterator;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.stream.Stream;
 
@@ -69,66 +67,12 @@ public class GCSLogStore extends HadoopFileSystemLogStore {
         super(hadoopConf);
     }
 
-    private static <T> T runInNewThread(
-            String threadName,
-            Boolean isDaemon,
-            Callable<T> body) throws Exception {
-        List<Exception> exceptionHolder = new ArrayList<>(1);
-        List<T> resultHolder = new ArrayList<>(1);
-        Thread thread = new Thread(threadName) {
-            @Override
-            public void run() {
-                try {
-                    resultHolder.add(body.call());
-                } catch (Exception ex) {
-                    exceptionHolder.add(ex);
-                }
-            }
-        };
-        thread.setDaemon(isDaemon);
-        thread.start();
-        thread.join();
-        if (!exceptionHolder.isEmpty()) {
-            Exception realException = exceptionHolder.get(0);
-            // Remove the part of the stack that shows method calls into this helper method
-            // This means drop everything from the top until the stack element
-            // ThreadUtils.runInNewThread(), and then drop that as well (hence the `drop(1)`).
-            Stream<StackTraceElement> baseStackTrace = Arrays.stream(
-                    Thread.currentThread().getStackTrace()).dropWhile(t ->
-                    !t.getClassName().contains(GCSLogStore.class.getSimpleName())).skip(1);
-            // Remove the part of the new thread stack that shows methods call from this helper method
-            Stream<StackTraceElement> extraStackTrace = Arrays.stream(
-                    realException.getStackTrace()).takeWhile(e ->
-                    !e.getClassName().contains(GCSLogStore.class.getSimpleName()));
-            // Combine the two stack traces, with a place holder just specifying that there
-            // was a helper method used, without any further details of the helper
-            Stream<StackTraceElement> placeHolderStackElem = Stream.of(
-                    new StackTraceElement(
-                            String.format(
-                                    "... run in separate thread using $s",
-                                    GCSLogStore.class.getSimpleName(),
-                                    " static method runInNewThread"),
-                            "",
-                            "",
-                            -1)
-            );
-            StackTraceElement[] finalStackTrace = Stream.concat(
-                    Stream.concat(baseStackTrace,
-                            placeHolderStackElem),
-                    baseStackTrace).toArray(StackTraceElement[]::new);
-            realException.setStackTrace(finalStackTrace);
-            throw realException;
-        } else {
-            return resultHolder.get(0);
-        }
-    }
-
     @Override
     public void write(Path path,
                       Iterator<String> actions,
                       Boolean overwrite,
-                      Configuration hadoopConf) throws IOException {
-        FileSystem fs = path.getFileSystem(hadoopConf);
+                      Configuration hadoopConf) throws Exception {
+        final FileSystem fs = path.getFileSystem(hadoopConf);
 
         // This is needed for the tests to throw error with local file system.
         if (fs instanceof LocalFileSystem && !overwrite && fs.exists(path)) {
@@ -156,23 +100,25 @@ public class GCSLogStore extends HadoopFileSystemLogStore {
         };
 
         try {
-            runInNewThread("delta-gcs-logstore-write", true, body);
+            ThreadUtils.runInNewThread("delta-gcs-logstore-write", true, body);
         } catch (org.apache.hadoop.fs.FileAlreadyExistsException e) {
+            //removed FileAlreadyExistsException(..).initCause(e) that throws Throwable,
+            //to make it consistent with the other LogStore implementations
             throw new FileAlreadyExistsException(path.toString());
             // GCS uses preconditions to handle race conditions for multiple writers.
             // If path gets created between fs.create and stream.close by an external
             // agent or race conditions. Then this block will execute.
             // Reference: https://cloud.google.com/storage/docs/generations-preconditions
         } catch (IOException e) {
-            if (isPreconditionFailure(e) && !overwrite)
+            if (isPreconditionFailure(e) && !overwrite) {
+                //removed FileAlreadyExistsException(..).initCause(e) that throws Throwable,
+                //to make it consistent with the other LogStore implementations
                 throw new FileAlreadyExistsException(path.toString());
-        } catch (Throwable throwable) {
-            throwable.printStackTrace();
+            }
         }
-
     }
 
-    private Boolean isPreconditionFailure(Throwable x) {
+    private boolean isPreconditionFailure(Throwable x) {
         return Throwables.getCausalChain(x)
                 .stream()
                 .filter(p -> p != null)
@@ -184,6 +130,6 @@ public class GCSLogStore extends HadoopFileSystemLogStore {
 
     @Override
     public Boolean isPartialWriteVisible(Path path, Configuration hadoopConf) throws IOException {
-        return null;
+        return false;
     }
 }
