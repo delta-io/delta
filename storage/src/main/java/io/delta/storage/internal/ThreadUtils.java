@@ -101,7 +101,7 @@ public class ThreadUtils {
             finalStackTrace.addAll(placeHolderStackElem);
             finalStackTrace.addAll(baseStackTrace);
 
-            realException.setStackTrace(finalStackTrace.toArray(StackTraceElement[]::new));
+            realException.setStackTrace(finalStackTrace.toArray(new StackTraceElement[0]));
             throw realException;
         } else {
             return resultHolder.get(0);
