@@ -22,7 +22,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.Callable;
 
-public class ThreadUtils {
+public final class ThreadUtils {
 
     /**
      * Converted sparks ThreadUtils.runInNewThread to java here
