@@ -124,8 +124,12 @@ class OptimizeExecutor(
 
       parallelJobCollection.tasksupport = forkJoinPoolTaskSupport
 
-      val updates = parallelJobCollection.flatMap(
-        partitionBinGroup => runCompactBinJob(txn, partitionBinGroup._1, partitionBinGroup._2)).seq
+      val updates = try {
+        parallelJobCollection.flatMap(partitionBinGroup =>
+          runCompactBinJob(txn, partitionBinGroup._1, partitionBinGroup._2)).seq
+      } finally {
+        forkJoinPoolTaskSupport.forkJoinPool.shutdownNow()
+      }
 
       val addedFiles = updates.collect { case a: AddFile => a }
       val removedFiles = updates.collect { case r: RemoveFile => r }
