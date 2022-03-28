@@ -57,7 +57,6 @@ import java.util.concurrent.Callable;
  * This class is not meant for direct access but for configuration based on storage system.
  * See https://docs.delta.io/latest/delta-storage.html for details.
  */
-@InterfaceStability.Unstable
 public class GCSLogStore extends HadoopFileSystemLogStore {
 
     String preconditionFailedExceptionMessage = "412 Precondition Failed";

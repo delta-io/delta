@@ -102,7 +102,7 @@ public final class ThreadUtils {
             finalStackTrace.addAll(baseStackTrace);
 
             realException.setStackTrace(finalStackTrace.toArray(new StackTraceElement[0]));
-            //Throwing RuntimeException to avoid the calling interfaces from throwing InterruptedException
+            //Throwing RuntimeException to avoid the calling interfaces from throwing Exception
             throw new RuntimeException(realException);
         } else {
             return resultHolder.get(0);
