@@ -16,6 +16,7 @@
 
 package io.delta.storage.internal;
 
+import java.nio.file.FileAlreadyExistsException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -25,21 +26,15 @@ import java.util.concurrent.Callable;
 public final class ThreadUtils {
 
     /**
-     * Converted sparks ThreadUtils.runInNewThread to java here
-     * Run a piece of code in a new thread and return the result. Exception in the new thread is
-     * thrown in the caller thread with an adjusted stack trace that removes references to this
-     * method for clarity. The exception stack traces will be like the following
-     * <p>
-     * SomeException: exception-message
-     * at CallerClass.body-method (sourcefile.java)
-     * at ... run in separate thread using org.apache.spark.util.ThreadUtils ... ()
-     * at CallerClass.caller-method (sourcefile.java)
-     * ...
+     * Based out of sparks ThreadUtils.runInNewThread
+     * Run a piece of code in a new thread and return the result.
+     * RuntimeException is thrown to avoid the calling interfaces
+     * from handling InterruptedException and Exception
      */
     public static <T> T runInNewThread(
             String threadName,
             boolean isDaemon,
-            Callable<T> body) throws Exception {
+            Callable<T> body) {
         //Using a single element list to hold the exception and result,
         //since T exception or T result cannot be used in static method
         List<Exception> exceptionHolder = new ArrayList<>(1);
@@ -56,7 +51,13 @@ public final class ThreadUtils {
         };
         thread.setDaemon(isDaemon);
         thread.start();
-        thread.join();
+        try {
+            thread.join();
+        } catch (InterruptedException e) {
+            //Throwing RuntimeException to avoid interfaces to this method
+            // from throwing InterruptedException
+            throw new RuntimeException(e);
+        }
         if (!exceptionHolder.isEmpty()) {
             Exception realException = exceptionHolder.get(0);
             // Remove the part of the stack that shows method calls into this helper method
@@ -102,7 +103,8 @@ public final class ThreadUtils {
             finalStackTrace.addAll(baseStackTrace);
 
             realException.setStackTrace(finalStackTrace.toArray(new StackTraceElement[0]));
-            throw realException;
+            //Throwing RuntimeException to avoid the calling interfaces from throwing InterruptedException
+            throw new RuntimeException(realException);
         } else {
             return resultHolder.get(0);
         }

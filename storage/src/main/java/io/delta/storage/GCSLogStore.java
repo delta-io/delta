@@ -53,8 +53,8 @@ import java.util.concurrent.Callable;
  *    <li>Throws [[FileAlreadyExistsException]] if file exists and overwrite is false.</li>
  *    <li>Assumes file writing to be all-or-nothing, irrespective of overwrite option.</li>
  * </ul>
- *
- * @note This class is not meant for direct access but for configuration based on storage system.
+ * <p>
+ * This class is not meant for direct access but for configuration based on storage system.
  * See https://docs.delta.io/latest/delta-storage.html for details.
  */
 @Unstable
@@ -70,7 +70,7 @@ public class GCSLogStore extends HadoopFileSystemLogStore {
     public void write(Path path,
                       Iterator<String> actions,
                       Boolean overwrite,
-                      Configuration hadoopConf) throws Exception {
+                      Configuration hadoopConf) throws IOException {
         final FileSystem fs = path.getFileSystem(hadoopConf);
 
         // This is needed for the tests to throw error with local file system.
@@ -98,23 +98,7 @@ public class GCSLogStore extends HadoopFileSystemLogStore {
             return "";
         };
 
-        try {
-            ThreadUtils.runInNewThread("delta-gcs-logstore-write", true, body);
-        } catch (org.apache.hadoop.fs.FileAlreadyExistsException e) {
-            //removed FileAlreadyExistsException(..).initCause(e) that throws Throwable,
-            //to make it consistent with the other LogStore implementations
-            throw new FileAlreadyExistsException(path.toString());
-            // GCS uses preconditions to handle race conditions for multiple writers.
-            // If path gets created between fs.create and stream.close by an external
-            // agent or race conditions. Then this block will execute.
-            // Reference: https://cloud.google.com/storage/docs/generations-preconditions
-        } catch (IOException e) {
-            if (isPreconditionFailure(e) && !overwrite) {
-                //removed FileAlreadyExistsException(..).initCause(e) that throws Throwable,
-                //to make it consistent with the other LogStore implementations
-                throw new FileAlreadyExistsException(path.toString());
-            }
-        }
+        ThreadUtils.runInNewThread("delta-gcs-logstore-write", true, body);
     }
 
     private boolean isPreconditionFailure(Throwable x) {
