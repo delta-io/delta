@@ -13,6 +13,11 @@ This is the repository for Delta Lake Connectors. It includes
 
 Please refer to the main [Delta Lake](https://github.com/delta-io/delta) repository if you want to learn more about the Delta Lake project.
 
+# API documentation
+
+- Delta Standalone [Java API docs](https://delta-io.github.io/connectors/latest/delta-standalone/api/java/index.html)
+- Flink/Delta Connector [Java API docs](https://delta-io.github.io/connectors/latest/flink-connector/api/java/index.html)
+
 # Delta Standalone
 
 Delta Standalone, formerly known as the Delta Standalone Reader (DSR), is a JVM library to read **and write** Delta tables. Unlike https://github.com/delta-io/delta, this project doesn't use Spark to read or write tables and it has only a few transitive dependencies. It can be used by any application that cannot use a Spark cluster.
