@@ -16,6 +16,7 @@
 
 package io.delta.storage.internal;
 
+import java.io.InterruptedIOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -29,12 +30,12 @@ public final class ThreadUtils {
      * Based out of sparks ThreadUtils.runInNewThread
      * Run a piece of code in a new thread and return the result.
      * RuntimeException is thrown to avoid the calling interfaces
-     * from handling InterruptedException and Exception
+     * from handling any Exceptions other than IOExceptions
      */
     public static <T> T runInNewThread(
             String threadName,
             boolean isDaemon,
-            Callable<T> body) {
+            Callable<T> body) throws InterruptedIOException {
         //Using a single element list to hold the exception and result,
         //since T exception or T result cannot be used in static method
         List<Exception> exceptionHolder = new ArrayList<>(1);
@@ -54,9 +55,7 @@ public final class ThreadUtils {
         try {
             thread.join();
         } catch (InterruptedException e) {
-            //Throwing RuntimeException to avoid interfaces to this method
-            // from throwing InterruptedException
-            throw new RuntimeException(e);
+            throw new InterruptedIOException(e.getMessage());
         }
         if (!exceptionHolder.isEmpty()) {
             Exception realException = exceptionHolder.get(0);

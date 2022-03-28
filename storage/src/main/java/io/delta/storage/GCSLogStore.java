@@ -18,7 +18,7 @@ package io.delta.storage;
 
 import com.google.common.base.Throwables;
 import io.delta.storage.internal.ThreadUtils;
-import io.delta.storage.internal.Unstable;
+import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileSystem;
@@ -57,7 +57,7 @@ import java.util.concurrent.Callable;
  * This class is not meant for direct access but for configuration based on storage system.
  * See https://docs.delta.io/latest/delta-storage.html for details.
  */
-@Unstable
+@InterfaceStability.Unstable
 public class GCSLogStore extends HadoopFileSystemLogStore {
 
     String preconditionFailedExceptionMessage = "412 Precondition Failed";
