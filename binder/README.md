@@ -8,7 +8,7 @@ Note that the [docker option](../quickstart_containers) enables comprhensive exp
 
 - Click Me
 
-
+[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/delta-io/delta/HEAD)
 
 - Navigate to the work folder
 - Follow the quickstart
