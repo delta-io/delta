@@ -164,7 +164,7 @@ nonReserved
     | CONVERT | TO | DELTA | PARTITIONED | BY
     | DESC | DESCRIBE | LIMIT | DETAIL
     | GENERATE | FOR | TABLE | CHECK | EXISTS | OPTIMIZE
-    | RESTORE | AS | OF
+    | RESTORE | AS | OF | SHOW | PARTITIONS
     ;
 
 // Define how the keywords above should appear in a user's SQL statement.

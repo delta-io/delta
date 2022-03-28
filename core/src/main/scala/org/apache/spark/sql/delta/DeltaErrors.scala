@@ -342,6 +342,11 @@ object DeltaErrors
       s"$view is a view. DESCRIBE DETAIL is only supported for tables.")
   }
 
+  def viewInShowPartitionsException(view: TableIdentifier): Throwable = {
+    new AnalysisException(
+      s"$view is a view. SHOW PARTITIONS is only supported for tables.")
+  }
+
   def alterTableChangeColumnException(oldColumns: String, newColumns: String): Throwable = {
     new AnalysisException(
       "ALTER TABLE CHANGE COLUMN is not supported for changing column " + oldColumns + " to "

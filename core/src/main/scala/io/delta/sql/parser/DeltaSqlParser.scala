@@ -190,57 +190,11 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       Option(ctx.table).map(visitTableIdentifier))
   }
 
-  // TODO: under construction
-
   override def visitShowPartitions(ctx: ShowPartitionsContext): LogicalPlan = withOrigin(ctx) {
     val path = Option(ctx.path).map(string)
     val tableIdentifier = Option(ctx.table).map(visitTableIdentifier)
-    val partitionKeys = Option(ctx.partitionSpec).map(visitNonOptionalPartitionSpec)
-    ShowDeltaPartitionsCommand(path, tableIdentifier, partitionKeys)
+    ShowDeltaPartitionsCommand(path, tableIdentifier)
   }
-
-  /**
-   * Create a partition specification map without optional values.
-   */
-  protected def visitNonOptionalPartitionSpec(
-                                               ctx: PartitionSpecContext): Map[String, String] = withOrigin(ctx) {
-    visitPartitionSpec(ctx).map {
-      case (key, None) => throw new ParseException(s"Found an empty partition key '$key'.", ctx)
-      case (key, Some(value)) => key -> value
-    }
-  }
-
-  /**
-   * Create a partition specification map.
-   */
-  override def visitPartitionSpec(
-                                   ctx: PartitionSpecContext): Map[String, Option[String]] = withOrigin(ctx) {
-    val parts = ctx.partitionVal.asScala.map { pVal =>
-      val name = pVal.identifier.getText
-      val value = Option(pVal.constant).map(visitStringConstant)
-      name -> value
-    }
-    // Before calling `toMap`, we check duplicated keys to avoid silently ignore partition values
-    // in partition spec like PARTITION(a='1', b='2', a='3'). The real semantical check for
-    // partition columns will be done in analyzer.
-    // checkDuplicateKeys(parts, ctx)
-    parts.toMap
-  }
-
-  /**
-   * Convert a constant of any type into a string. This is typically used in DDL commands, and its
-   * main purpose is to prevent slight differences due to back to back conversions i.e.:
-   * String -> Literal -> String.
-   */
-  protected def visitStringConstant(ctx: ConstantContext): String = withOrigin(ctx) {
-    ctx match {
-      case s: StringLiteralContext => s.STRING().asScala.map(string).mkString
-      case o => o.getText
-    }
-  }
-
-  // TODO : end of construction
-
 
   override def visitDescribeDeltaHistory(
       ctx: DescribeDeltaHistoryContext): LogicalPlan = withOrigin(ctx) {

@@ -17,183 +17,137 @@
 package org.apache.spark.sql.delta
 
 import java.io.File
-import java.io.FileNotFoundException
-
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-
-import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.functions.{col, lit}
+import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row, SparkSession}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
 trait ShowDeltaPartitionsSuiteBase extends QueryTest
-  with SharedSparkSession {
+  with SharedSparkSession with DeltaTestUtilsForTempViews {
 
   import testImplicits._
 
   protected def checkResult(
     result: DataFrame,
-    expected: Seq[Any],
+    expected: Seq[Row],
     columns: Seq[String]): Unit = {
     checkAnswer(
       result.select(columns.head, columns.tail: _*),
-      Seq(Row(expected: _*))
+      expected
     )
   }
 
-  def describeDeltaDetailTest(f: File => String): Unit = {
+  def showDeltaPartitionsTest(f: File => String): Unit = {
     val tempDir = Utils.createTempDir()
-    Seq(1 -> 1).toDF("column1", "column2")
+    (1 to 10).toDF("column1")
+      .withColumn("column2", col("column1") % 2)
       .write
       .format("delta")
-      .partitionBy("column1")
+      .partitionBy("column2")
       .save(tempDir.toString())
+
     checkResult(
-      sql(s"DESCRIBE DETAIL ${f(tempDir)}"),
-      Seq("delta", Array("column1"), 1),
-      Seq("format", "partitionColumns", "numFiles"))
-  }
-
-  test("fake delta table: path") {
-    val tempDir = Utils.createTempDir()
-    Seq(1 -> 1).toDF("column1", "column2")
-      .write
-      .format("delta")
-      .partitionBy("column1")
-      .save(tempDir.toString())
-
-    sql(s"SHOW PARTITIONS delta.`${tempDir.toString}`").show()
-
+      sql(s"SHOW PARTITIONS ${f(tempDir)}"),
+      Seq(Row(0), Row(1)),
+      Seq("column2"))
   }
 
   test("delta table: path") {
-    describeDeltaDetailTest(f => s"'${f.toString()}'")
+    showDeltaPartitionsTest(f => s"'${f.toString()}'")
   }
 
   test("delta table: delta table identifier") {
-    describeDeltaDetailTest(f => s"delta.`${f.toString()}`")
+    showDeltaPartitionsTest(f => s"delta.`${f.toString()}`")
   }
 
-  test("non-delta table: table name") {
-    withTable("describe_detail") {
+  ignore("non-delta table: table name") {
+    withTable("show_partitions") {
       sql(
         """
-          |CREATE TABLE describe_detail(column1 INT, column2 INT)
+          |CREATE TABLE show_partitions(column1 INT, column2 INT)
           |USING parquet
           |PARTITIONED BY (column1)
           |COMMENT "this is a table comment"
         """.stripMargin)
       sql(
         """
-          |INSERT INTO describe_detail VALUES(1, 1)
+          |INSERT INTO show_partitions PARTITION (column1 = 1) VALUES (1)
         """.stripMargin
       )
-      checkResult(
-        sql("DESCRIBE DETAIL describe_detail"),
-        Seq("parquet", Array("column1")),
-        Seq("format", "partitionColumns"))
+
+      sql("SHOW PARTITIONS show_partitions").show()
+      /* checkResult(
+        sql("SHOW PARTITIONS show_partitions"),
+        Seq(Row("column1")),
+        Seq("column1")) */
     }
   }
 
-  test("non-delta table: path") {
-    val tempDir = Utils.createTempDir().toString
-    Seq(1 -> 1).toDF("column1", "column2")
+  ignore("parquet table partitions") {
+    val tempDir = Utils.createTempDir()
+
+    val spark = SparkSession
+      .builder()
+      .appName("test_app")
+      .master("local[*]")
+      .getOrCreate()
+
+    (1 to 10).toDF("column1")
+      .withColumn("column2", col("column1") % 2)
       .write
       .format("parquet")
-      .partitionBy("column1")
-      .mode("overwrite")
-      .save(tempDir)
-    checkResult(
-      sql(s"DESCRIBE DETAIL '$tempDir'"),
-      Seq(tempDir),
-      Seq("location"))
-  }
+      .partitionBy("column2")
+      .saveAsTable("my_parquet_tab")
 
-  test("non-delta table: path doesn't exist") {
-    val tempDir = Utils.createTempDir()
-    tempDir.delete()
-    val e = intercept[FileNotFoundException] {
-      sql(s"DESCRIBE DETAIL '$tempDir'")
-    }
-    assert(e.getMessage.contains(tempDir.toString))
+    spark.sql("show partitions my_parquet_tab").show()
   }
 
   test("delta table: table name") {
-    withTable("describe_detail") {
+    withTable("show_partitions") {
       sql(
         """
-          |CREATE TABLE describe_detail(column1 INT, column2 INT)
+          |CREATE TABLE show_partitions(column1 INT, column2 INT)
           |USING delta
           |PARTITIONED BY (column1)
           |COMMENT "describe a non delta table"
         """.stripMargin)
       sql(
         """
-          |INSERT INTO describe_detail VALUES(1, 1)
+          |INSERT INTO show_partitions PARTITION (column1 = 1) VALUES(1)
         """.stripMargin
       )
       checkResult(
-        sql("DESCRIBE DETAIL describe_detail"),
-        Seq("delta", Array("column1"), 1),
-        Seq("format", "partitionColumns", "numFiles"))
+        sql("SHOW PARTITIONS show_partitions"),
+        Seq(Row(1)),
+        Seq("column1"))
     }
   }
 
-  test("delta table: create table on an existing delta log") {
-    val tempDir = Utils.createTempDir().toString
-    Seq(1 -> 1).toDF("column1", "column2")
-      .write
-      .format("delta")
-      .partitionBy("column1")
-      .mode("overwrite")
-      .save(tempDir)
-    val tblName1 = "tbl_name1"
-    val tblName2 = "tbl_name2"
-    withTable(tblName1, tblName2) {
-      sql(s"CREATE TABLE $tblName1 USING DELTA LOCATION '$tempDir'")
-      sql(s"CREATE TABLE $tblName2 USING DELTA LOCATION '$tempDir'")
-      checkResult(
-        sql(s"DESCRIBE DETAIL $tblName1"),
-        Seq(s"default.$tblName1"),
-        Seq("name"))
-      checkResult(
-        sql(s"DESCRIBE DETAIL $tblName2"),
-        Seq(s"default.$tblName2"),
-        Seq("name"))
-      checkResult(
-        sql(s"DESCRIBE DETAIL delta.`$tempDir`"),
-        Seq(null),
-        Seq("name"))
-      checkResult(
-        sql(s"DESCRIBE DETAIL '$tempDir'"),
-        Seq(null),
-        Seq("name"))
-    }
-  }
-
-  testWithTempView(s"SC-37296: describe detail on temp view") { isSQLTempView =>
+  testWithTempView("show partitions on temp view") { isSQLTempView =>
     withTable("t1") {
-      Seq(1, 2, 3).toDF().write.format("delta").saveAsTable("t1")
+      Seq(1, 2, 3).toDF()
+        .withColumn("part", lit(1))
+        .write.format("delta").saveAsTable("t1")
       val viewName = "v"
       createTempViewFromTable("t1", isSQLTempView)
       val e = intercept[AnalysisException] {
-        sql(s"DESCRIBE DETAIL $viewName")
+        sql(s"SHOW PARTITIONS $viewName")
       }
       assert(e.getMessage.contains(
-        s"`$viewName` is a view. DESCRIBE DETAIL is only supported for tables."))
+        s"`$viewName` is a view. SHOW PARTITIONS is only supported for tables."))
     }
   }
 
-  test("SC-37296: describe detail on permanent view") {
+  test("show partitions on permanent view") {
     val view = "detailTestView"
     withView(view) {
       sql(s"CREATE VIEW $view AS SELECT 1")
-      val e = intercept[AnalysisException] { sql(s"DESCRIBE DETAIL $view") }
+      val e = intercept[AnalysisException] { sql(s"SHOW PARTITIONS $view") }
       assert(e.getMessage.contains(
-        "`detailTestView` is a view. DESCRIBE DETAIL is only supported for tables."))
+        "`detailTestView` is a view. SHOW PARTITIONS is only supported for tables."))
     }
   }
-
-  // TODO: run it with OSS Delta after it's supported
 }
 
 class ShowDeltaPartitionsSuite
