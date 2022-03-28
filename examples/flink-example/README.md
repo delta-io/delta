@@ -6,28 +6,44 @@ To run example in-memory Flink job writing data a non-partitioned Delta table ru
 
 - with your local IDE:
   Simply run `io.delta.flink.example.sink.DeltaSinkExample` class that contains `main` method
+
 - with Maven:
+```
 > cd examples/flink-example/
 >
-> mvn package exec:java -Dexec.cleanupDaemonThreads=false -Dexec.mainClass=io.delta.flink.example.sink.DeltaSinkExample
+> mvn package exec:java -Dexec.cleanupDaemonThreads=false -Dexec.mainClass=example.DeltaSinkExample -Dstaging.repo.url={maven_repo} -Dconnectors.version={version}
+```
+
 - with SBT:
+```
 > cd examples/
+> export STANDALONE_VERSION=0.4.0-SNAPSHOT  # update to desired version
+> export EXTRA_MAVEN_REPO={staged_repo}  # include staged repo if desired
 >
-> build/sbt "flinkExample/runMain io.delta.flink.example.sink.DeltaSinkExample"
+> build/sbt "flinkExample/runMain example.DeltaSinkExample"
+```
 
 ## Run example for partitioned Delta table
 To run example in-memory Flink job writing data a non-partitioned Delta table run:
 
 - with your local IDE:
   Simply run `io.delta.flink.example.sink.DeltaSinkPartitionedTableExample` class that contains `main` method
+
 - with Maven:
+```
 > cd examples/flink-example/
 >
-> mvn package exec:java -Dexec.cleanupDaemonThreads=false -Dexec.mainClass=io.delta.flink.example.sink.DeltaSinkPartitionedTableExample
+> mvn package exec:java -Dexec.cleanupDaemonThreads=false -Dexec.mainClass=example.DeltaSinkPartitionedTableExample -Dstaging.repo.url={maven_repo} -Dconnectors.version={version}
+```
+
 - with SBT:
+```
 > cd examples/
+> export STANDALONE_VERSION=0.4.0-SNAPSHOT  # update to desired version
+> export EXTRA_MAVEN_REPO={staged_repo}  # include staged repo if desired
 >
-> build/sbt "flinkExample/runMain io.delta.flink.example.sink.DeltaSinkPartitionedTableExample"
+> build/sbt "flinkExample/runMain example.DeltaSinkPartitionedTableExample"
+```
 
 ## Verify
 After performing above steps you may observe your command line that will be printing descriptive information

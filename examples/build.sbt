@@ -23,6 +23,7 @@ version := "0.1.0"
 
 lazy val commonSettings = Seq(
   crossScalaVersions := Seq("2.13.8", "2.12.8", "2.11.12"),
+  resolvers += Resolver.mavenLocal,
   libraryDependencies ++= Seq(
     "io.delta" %% "delta-standalone" % getStandaloneVersion(),
     "org.apache.hadoop" % "hadoop-client" % "3.1.0",
@@ -62,7 +63,6 @@ lazy val helloWorld = (project in file("hello-world")) settings (
 val flinkVersion = "1.12.0"
 val flinkScalaVersion = "2.12"
 val flinkHadoopVersion = "3.1.0"
-val flinkConnectorVersion = "0.4.0-SNAPSHOT"
 lazy val flinkExample = (project in file("flink-example")) settings (
   name := "flink",
   scalaVersion := "2.12.8",
@@ -70,7 +70,7 @@ lazy val flinkExample = (project in file("flink-example")) settings (
   extraMavenRepo,
   resolvers += Resolver.mavenLocal,
   libraryDependencies ++= Seq(
-    "io.delta" % "flink-connector" % flinkConnectorVersion,
+    "io.delta" % "flink-connector" % getStandaloneVersion(),
     "io.delta" % ("delta-standalone_" + flinkScalaVersion) % getStandaloneVersion(),
     "org.apache.flink" % ("flink-parquet_" + flinkScalaVersion) % flinkVersion,
     "org.apache.flink" % "flink-table-common" % flinkVersion,

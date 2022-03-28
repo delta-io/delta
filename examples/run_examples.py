@@ -31,7 +31,6 @@ def delete_if_exists(path):
 
 def run_maven_proj(test_dir, example, version, maven_repo, scala_version):
     print(f"\n\n##### Running Maven verification {example} on standalone version {version} with scala version {scala_version}#####")
-    clear_artifact_cache()
     with WorkingDirectory(test_dir):
         cmd = ["mvn", "package", "exec:java", "-Dexec.cleanupDaemonThreads=false",
             f"-Dexec.mainClass=example.{example}",
@@ -39,14 +38,14 @@ def run_maven_proj(test_dir, example, version, maven_repo, scala_version):
             f"-Dstandalone.version={version}"]
         run_cmd(cmd, stream_output=True)
 
-def run_sbt_proj(test_dir, example, version, maven_repo, scala_version):
-    print(f"\n\n##### Running SBT verification {example} on standalone version {version} with scala version {scala_version}#####")
-    clear_artifact_cache()
+def run_sbt_proj(test_dir, proj, className, version, maven_repo, scala_version):
+    print(f"\n\n##### Running SBT verification {proj} on standalone version {version} with scala version {scala_version}#####")
+
     env = {"STANDALONE_VERSION": str(version)}
     if maven_repo:
         env["EXTRA_MAVEN_REPO"] = maven_repo
     with WorkingDirectory(test_dir):
-        cmd = ["build/sbt", f"++ {scala_version}", f"{example[0].lower() + example[1:]}/runMain example.{example}"]
+        cmd = ["build/sbt", f"++ {scala_version}", f"{proj}/runMain example.{className}"]
         run_cmd(cmd, stream_output=True, env=env)
 
 def clear_artifact_cache():
@@ -114,17 +113,26 @@ if __name__ == "__main__":
         required=False,
         default=None,
         help="Additional Maven repo to resolve staged new release artifacts")
+    parser.add_argument(
+        "--use-local-cache",
+        required=False,
+        default=False,
+        action="store_true",
+        help="Don't clear Delta artifacts from ivy2 and mvn cache")
 
     args = parser.parse_args()
 
-    examples = [("convert-to-delta", "ConvertToDelta"),
-                ("hello-world", "HelloWorld")]
+    if not args.use_local_cache:
+        clear_artifact_cache()
 
-    for dir, c in examples:
-        run_maven_proj(path.join(root_dir, dir), c, args.version, args.maven_repo, "2.11")
-        run_maven_proj(path.join(root_dir, dir), c, args.version, args.maven_repo, "2.12")
-        run_maven_proj(path.join(root_dir, dir), c, args.version, args.maven_repo, "2.13")
+    examples = [("convert-to-delta", "convertToDelta", "ConvertToDelta"),
+                ("hello-world", "helloWorld", "HelloWorld")]
 
-        run_sbt_proj(root_dir, c, args.version, args.maven_repo, "2.11.12")
-        run_sbt_proj(root_dir, c, args.version, args.maven_repo, "2.12.8")
-        run_sbt_proj(root_dir, c, args.version, args.maven_repo, "2.13.8")
+    for dir, proj, className in examples:
+        run_maven_proj(path.join(root_dir, dir), className, args.version, args.maven_repo, "2.11")
+        run_maven_proj(path.join(root_dir, dir), className, args.version, args.maven_repo, "2.12")
+        run_maven_proj(path.join(root_dir, dir), className, args.version, args.maven_repo, "2.13")
+
+        run_sbt_proj(root_dir, proj, className, args.version, args.maven_repo, "2.11.12")
+        run_sbt_proj(root_dir, proj, className, args.version, args.maven_repo, "2.12.8")
+        run_sbt_proj(root_dir, proj, className, args.version, args.maven_repo, "2.13.8")
