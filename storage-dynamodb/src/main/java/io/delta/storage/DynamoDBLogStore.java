@@ -55,8 +55,8 @@ import org.slf4j.LoggerFactory;
 /**
  * DynamoDB entries are of form
  * - key
- * -- tablePath (HASH, String)
- * -- filename (RANGE, String)
+ * -- tablePath (HASH, STRING)
+ * -- filename (RANGE, STRING)
  *
  * - attributes
  * -- tempPath (STRING, relative to _delta_log)
@@ -102,18 +102,18 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
         } catch (ConditionalCheckFailedException e) {
             LOG.debug(e.toString());
             throw new java.nio.file.FileAlreadyExistsException(
-                entry.absoluteJsonPath().toString()
+                entry.absoluteFilePath().toString()
             );
         }
     }
 
     @Override
     protected Optional<ExternalCommitEntry> getExternalEntry(
-            Path absoluteTablePath,
-            Path absoluteJsonPath) {
+            String tablePath,
+            String fileName) {
         final Map<String, AttributeValue> attributes = new ConcurrentHashMap<>();
-        attributes.put(ATTR_TABLE_PATH, new AttributeValue(absoluteTablePath.toString()));
-        attributes.put(ATTR_FILE_NAME, new AttributeValue(absoluteJsonPath.toString()));
+        attributes.put(ATTR_TABLE_PATH, new AttributeValue(tablePath));
+        attributes.put(ATTR_FILE_NAME, new AttributeValue(fileName));
 
         Map<String, AttributeValue> item = client.getItem(
             new GetItemRequest(tableName, attributes).withConsistentRead(true)

@@ -18,6 +18,9 @@ package io.delta.storage;
 
 import org.apache.hadoop.fs.Path;
 
+/**
+ * TODO
+ */
 public class ExternalCommitEntry {
 
     /**
@@ -59,7 +62,7 @@ public class ExternalCommitEntry {
     }
 
     /**
-     * Return this entry with `complete=true`
+     * @return this entry with `complete=true`
      */
     public ExternalCommitEntry asComplete() {
         return new ExternalCommitEntry(
@@ -71,10 +74,17 @@ public class ExternalCommitEntry {
         );
     }
 
-    public Path absoluteJsonPath() {
+    /**
+     * @return the absolute path to the file for this entry.
+     * e.g. $tablePath/_delta_log/0000000N.json
+     */
+    public Path absoluteFilePath() {
         return new Path(new Path(tablePath, "_delta_log"), fileName);
     }
 
+    /**
+     * @return the absolute path to the temp file for this entry
+     */
     public Path absoluteTempPath() {
         return new Path(new Path(tablePath, "_delta_log"), tempPath);
     }

@@ -19,7 +19,8 @@ package io.delta.storage;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
-import io.delta.storage.HadoopFileSystemLogStore;
+
+import com.google.common.annotations.VisibleForTesting;
 import org.apache.commons.io.IOUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
@@ -27,7 +28,6 @@ import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.commons.collections.iterators.FilterIterator;
 
 import java.io.IOException;
 import java.util.Iterator;
@@ -91,9 +91,13 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
             if (version > 0) {
                 final long prevVersion = version - 1;
                 final Path prevPath = deltaFile(tablePath, prevVersion);
-                final Optional<ExternalCommitEntry> entry = getExternalEntry(tablePath, prevPath);
-                if (entry.isPresent()) {
-                    fixDeltaLog(fs, entry.get());
+                final String prevFileName = prevPath.getName();
+                final Optional<ExternalCommitEntry> prevEntry = getExternalEntry(
+                    tablePath.toString(),
+                    prevFileName
+                );
+                if (prevEntry.isPresent()) {
+                    fixDeltaLog(fs, prevEntry.get());
                 } else {
                     if (!fs.exists(prevPath)) {
                         throw new java.nio.file.FileSystemException(
@@ -102,12 +106,17 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
                     }
                 }
             } else {
-                final Optional<ExternalCommitEntry> entry = getExternalEntry(tablePath, path);
+                final String fileName = path.getName();
+                final Optional<ExternalCommitEntry> entry = getExternalEntry(
+                    tablePath.toString(),
+                    fileName
+                );
                 if (entry.isPresent()) {
                     if (entry.get().complete && !fs.exists(path)) {
                         throw new java.nio.file.FileSystemException(
                             String.format(
-                                "Old entries for %s still exist in the database", tablePath
+                                "Old entries for table %s still exist in the external store",
+                                tablePath
                             )
                         );
                     }
@@ -192,13 +201,10 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     /**
      * Return external store entry corresponding to delta log file with given `tablePath` and
      * `fileName`, or `Optional.empty()` if it doesn't exist.
-     *
-     * @param tablePath TODO
-     * @param jsonPath TODO
      */
     abstract protected Optional<ExternalCommitEntry> getExternalEntry(
-        Path tablePath,
-        Path jsonPath) throws IOException;
+        String tablePath,
+        String fileName) throws IOException;
 
     /**
      * Return the latest external store entry corresponding to the delta log for given `tablePath`,
@@ -216,6 +222,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     /**
      * Wrapper for `copyFile`, called by the `write` method.
      */
+    @VisibleForTesting
     protected void writeCopyTempFile(FileSystem fs, Path src, Path dst) throws IOException {
         copyFile(fs, src, dst);
     }
@@ -223,6 +230,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     /**
      * Wrapper for `putExternalEntry`, called by the `write` method.
      */
+    @VisibleForTesting
     protected void writePutCompleteDbEntry(ExternalCommitEntry entry) throws IOException {
         putExternalEntry(entry.asComplete(), true);
     }
@@ -230,6 +238,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     /**
      * Wrapper for `copyFile`, called by the `fixDeltaLog` method.
      */
+    @VisibleForTesting
     protected void fixDeltaLogCopyTempFile(FileSystem fs, Path src, Path dst) throws IOException {
         copyFile(fs, src, dst);
     }
@@ -237,6 +246,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     /**
      * Wrapper for `putExternalEntry`, called by the `fixDeltaLog` method.
      */
+    @VisibleForTesting
     protected void fixDeltaLogPutCompleteDbEntry(ExternalCommitEntry entry) throws IOException {
         putExternalEntry(entry.asComplete(), true);
     }
@@ -258,8 +268,8 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
         while (true) {
             LOG.debug("trying to fix: {}", entry.fileName);
             try {
-                if (!copied && !fs.exists(entry.absoluteJsonPath())) {
-                    fixDeltaLogCopyTempFile(fs, entry.absoluteTempPath(), entry.absoluteJsonPath());
+                if (!copied && !fs.exists(entry.absoluteFilePath())) {
+                    fixDeltaLogCopyTempFile(fs, entry.absoluteTempPath(), entry.absoluteFilePath());
                     copied = true;
                 }
                 fixDeltaLogPutCompleteDbEntry(entry);

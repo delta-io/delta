@@ -19,24 +19,24 @@ public class MemoryLogStore extends BaseExternalLogStore {
     protected void putExternalEntry(
             ExternalCommitEntry entry,
             boolean overwrite) throws IOException {
+        final String key = createKey(entry.tablePath.toString(), entry.fileName);
         if (overwrite) {
-            hashMap.put(entry.absoluteJsonPath(), entry);
+            hashMap.put(key, entry);
+        } else if (hashMap.containsKey(key)) { // and overwrite=false
+            throw new java.nio.file.FileAlreadyExistsException("already exists");
         } else {
-            ExternalCommitEntry curr_val = hashMap.putIfAbsent(entry.absoluteJsonPath(), entry);
-            if (curr_val != null) {
-                throw new java.nio.file.FileAlreadyExistsException("already exists");
-            }
+            hashMap.put(key, entry);
         }
     }
 
     @Override
     protected Optional<ExternalCommitEntry> getExternalEntry(
-            Path absoluteTablePath,
-            Path absoluteJsonPath) {
-        if (hashMap.containsKey(absoluteJsonPath)) {
-            return Optional.of(hashMap.get(absoluteJsonPath));
+            String tablePath,
+            String fileName) {
+        final String key = createKey(tablePath, fileName);
+        if (hashMap.containsKey(key)) {
+            return Optional.of(hashMap.get(key));
         }
-
         return Optional.empty();
     }
 
@@ -46,9 +46,27 @@ public class MemoryLogStore extends BaseExternalLogStore {
             .values()
             .stream()
             .filter(item -> item.tablePath.equals(tablePath))
-            .sorted((a, b) -> b.absoluteJsonPath().compareTo(a.absoluteJsonPath()))
+            .sorted((a, b) -> b.absoluteFilePath().compareTo(a.absoluteFilePath()))
             .findFirst();
     }
 
-    static ConcurrentHashMap<Path, ExternalCommitEntry> hashMap = new ConcurrentHashMap<>();
+    static String createKey(String tablePath, String fileName) {
+        return String.format("%s-%s", tablePath, fileName);
+    }
+
+    static ExternalCommitEntry get(Path path) {
+        final String tablePath = path.getParent().getParent().toString();
+        final String fileName = path.getName();
+        final String key = createKey(tablePath, fileName);
+        return hashMap.get(key);
+    }
+
+    static boolean containsKey(Path path) {
+        final String tablePath = path.getParent().getParent().toString();
+        final String fileName = path.getName();
+        final String key = createKey(tablePath, fileName);
+        return hashMap.containsKey(key);
+    }
+
+    static ConcurrentHashMap<String, ExternalCommitEntry> hashMap = new ConcurrentHashMap<>();
 }
