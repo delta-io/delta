@@ -95,7 +95,24 @@ public class GCSLogStore extends HadoopFileSystemLogStore {
             return "";
         };
 
-        ThreadUtils.runInNewThread("delta-gcs-logstore-write", true, body);
+        try {
+            ThreadUtils.runInNewThread("delta-gcs-logstore-write", true, body);
+        }
+         catch (org.apache.hadoop.fs.FileAlreadyExistsException e) {
+            //removed FileAlreadyExistsException(..).initCause(e) that throws Throwable,
+            //to make it consistent with the other LogStore implementations
+            throw new FileAlreadyExistsException(path.toString());
+            // GCS uses preconditions to handle race conditions for multiple writers.
+            // If path gets created between fs.create and stream.close by an external
+            // agent or race conditions. Then this block will execute.
+            // Reference: https://cloud.google.com/storage/docs/generations-preconditions
+        } catch (IOException e) {
+            if (isPreconditionFailure(e) && !overwrite) {
+                //removed FileAlreadyExistsException(..).initCause(e) that throws Throwable,
+                //to make it consistent with the other LogStore implementations
+                throw new FileAlreadyExistsException(path.toString());
+            }
+        }
     }
 
     private boolean isPreconditionFailure(Throwable x) {

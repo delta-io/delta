@@ -16,8 +16,8 @@
 
 package io.delta.storage.internal;
 
+import java.io.IOException;
 import java.io.InterruptedIOException;
-import java.nio.file.FileAlreadyExistsException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -35,7 +35,7 @@ public final class ThreadUtils {
     public static <T> T runInNewThread(
             String threadName,
             boolean isDaemon,
-            Callable<T> body) throws InterruptedIOException {
+            Callable<T> body) throws IOException {
         //Using a single element list to hold the exception and result,
         //since T exception or T result cannot be used in static method
         List<Exception> exceptionHolder = new ArrayList<>(1);
@@ -102,8 +102,14 @@ public final class ThreadUtils {
             finalStackTrace.addAll(baseStackTrace);
 
             realException.setStackTrace(finalStackTrace.toArray(new StackTraceElement[0]));
-            //Throwing RuntimeException to avoid the calling interfaces from throwing Exception
-            throw new RuntimeException(realException);
+            if (realException instanceof org.apache.hadoop.fs.FileAlreadyExistsException) {
+                throw (org.apache.hadoop.fs.FileAlreadyExistsException) realException;
+            } else if (realException instanceof IOException) {
+                throw (IOException) realException;
+            } else {
+                //Throwing RuntimeException to avoid the calling interfaces from throwing Exception
+                throw new RuntimeException(realException);
+            }
         } else {
             return resultHolder.get(0);
         }
