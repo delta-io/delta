@@ -55,13 +55,20 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
         deltaFilePattern = Pattern.compile("\\d+\\.json");
     }
 
+    /**
+     * First checks if there is any incomplete entry in the external store. If so, tries to perform
+     * a recovery/fix.
+     *
+     * Then, performs a normal listFrom user the `super` implementation.
+     */
     @Override
     public Iterator<FileStatus> listFrom(Path path, Configuration hadoopConf) throws IOException {
         final FileSystem fs = path.getFileSystem(hadoopConf);
         final Path resolvedPath = stripUserInfo(fs.makeQualified(path));
         final Path tablePath = getTablePath(resolvedPath);
         final Optional<ExternalCommitEntry> entry = getLatestExternalEntry(tablePath);
-        if (entry.isPresent()) {
+
+        if (entry.isPresent() && !entry.get().complete) {
             fixDeltaLog(fs, entry.get());
         }
 
@@ -72,6 +79,18 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
         return super.listFrom(path, hadoopConf);
     }
 
+    /**
+     * If overwrite=true, then write normally without any interaction with external store.
+     * Else, to commit for delta version N:
+     * - Step 1: Ensure that N-1.json exists. If not, perform a recovery.
+     * - Step 2: PREPARE the commit.
+     *      - Write `actions` into temp file T(N)
+     *      - Write with mutual exclusion to external store and entry E(N, T(N), complete=false)
+     * - Step 3: COMMIT the commit to the delta log.
+     *      - Copy T(N) into N.json
+     * - Step 4: ACKNOWLEDGE the commit.
+     *      - Overwrite entry E in external store and set complete=true
+     */
     @Override
     public void write(
             Path path,
@@ -86,6 +105,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
             return;
         }
 
+        // Step 0: Ensure that N-1.json exists
         final Path tablePath = getTablePath(resolvedPath);
         if (isDeltaFile(path)) {
             final long version = deltaVersion(path);
@@ -97,7 +117,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
                     tablePath.toString(),
                     prevFileName
                 );
-                if (prevEntry.isPresent()) {
+                if (prevEntry.isPresent() && !prevEntry.get().complete) {
                     fixDeltaLog(fs, prevEntry.get());
                 } else {
                     if (!fs.exists(prevPath)) {
@@ -125,6 +145,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
             }
         }
 
+        // Step 2: PREPARE the commit
         final String tempPath = createTemporaryPath(resolvedPath);
         final ExternalCommitEntry entry = new ExternalCommitEntry(
             tablePath,
@@ -133,12 +154,14 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
             false, // not complete
             null // commitTime
         );
-
         writeActions(fs, entry.absoluteTempPath(), actions);
         putExternalEntry(entry, false); // overwrite=false
 
         try {
+            // Step 3: COMMIT the commit to the delta log
             writeCopyTempFile(fs, entry.absoluteTempPath(), resolvedPath);
+
+            // Step 4: ACKNOWLEDGE the commit
             writePutCompleteDbEntry(entry);
         } catch (Throwable e) {
             LOG.info(
