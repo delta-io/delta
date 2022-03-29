@@ -4,11 +4,12 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import java.io.IOException;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.Collection;
 
-import java.util.function.Predicate;
 import java.util.Optional;
 
+/**
+ * TODO
+ */
 public class MemoryLogStore extends BaseExternalLogStore {
     public MemoryLogStore(Configuration hadoopConf) {
         super(hadoopConf);
@@ -16,8 +17,8 @@ public class MemoryLogStore extends BaseExternalLogStore {
 
     @Override
     protected void putExternalEntry(
-        ExternalCommitEntry entry, boolean overwrite
-    ) throws IOException {
+            ExternalCommitEntry entry,
+            boolean overwrite) throws IOException {
         if (overwrite) {
             hashMap.put(entry.absoluteJsonPath(), entry);
         } else {
@@ -29,29 +30,25 @@ public class MemoryLogStore extends BaseExternalLogStore {
     }
 
     @Override
-    protected ExternalCommitEntry getExternalEntry(
-        Path absoluteTablePath, Path absoluteJsonPath
-    ) throws IOException {
-        return get(absoluteJsonPath);
+    protected Optional<ExternalCommitEntry> getExternalEntry(
+            Path absoluteTablePath,
+            Path absoluteJsonPath) {
+        if (hashMap.containsKey(absoluteJsonPath)) {
+            return Optional.of(hashMap.get(absoluteJsonPath));
+        }
+
+        return Optional.empty();
     }
 
     @Override
-    protected ExternalCommitEntry getLatestExternalEntry(Path tablePath) throws IOException {
+    protected Optional<ExternalCommitEntry> getLatestExternalEntry(Path tablePath) {
         return hashMap
             .values()
             .stream()
             .filter(item -> item.tablePath.equals(tablePath))
             .sorted((a, b) -> b.absoluteJsonPath().compareTo(a.absoluteJsonPath()))
-            .findFirst().orElse(null);
+            .findFirst();
     }
 
     static ConcurrentHashMap<Path, ExternalCommitEntry> hashMap = new ConcurrentHashMap<>();
-
-    public static boolean containsKey(Path path) {
-        return hashMap.containsKey(path);
-    }
-
-    public static ExternalCommitEntry get(Path path) {
-        return hashMap.get(path);
-    }
 }

@@ -17,6 +17,7 @@
 package io.delta.storage;
 
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import io.delta.storage.HadoopFileSystemLogStore;
 import org.apache.commons.io.IOUtils;
@@ -30,6 +31,7 @@ import org.apache.commons.collections.iterators.FilterIterator;
 
 import java.io.IOException;
 import java.util.Iterator;
+import java.util.Optional;
 import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
@@ -50,23 +52,22 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     public BaseExternalLogStore(Configuration hadoopConf) {
         super(hadoopConf);
         deltaFilePattern = Pattern.compile("\\d+\\.json");
-
     }
 
     @Override
     public Iterator<FileStatus> listFrom(Path path, Configuration hadoopConf) throws IOException {
-        FileSystem fs = path.getFileSystem(hadoopConf);
-        Path resolvedPath;
-        try {
-            resolvedPath = stripUserInfo(fs.makeQualified(path));
-        } catch(java.net.URISyntaxException e) {
-            throw new IOException(e);
-        };
-        Path tablePath = getTablePath(resolvedPath);
-        ExternalCommitEntry entry = getLatestExternalEntry(tablePath);
-        if(entry != null) {
-            fixDeltaLog(fs, entry);
+        final FileSystem fs = path.getFileSystem(hadoopConf);
+        final Path resolvedPath = stripUserInfo(fs.makeQualified(path));
+        final Path tablePath = getTablePath(resolvedPath);
+        final Optional<ExternalCommitEntry> entry = getLatestExternalEntry(tablePath);
+        if (entry.isPresent()) {
+            fixDeltaLog(fs, entry.get());
         }
+
+        // This is predicated on the storage system providing consistent listing
+        // If there was a recovery performed in the `fixDeltaLog` call, then some temp file
+        // was just copied into some N.json in the delta log. Because of consistent listing,
+        // the `super.listFrom` is guaranteed to see N.json.
         return super.listFrom(path, hadoopConf);
     }
 
@@ -76,40 +77,34 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
             Iterator<String> actions,
             Boolean overwrite,
             Configuration hadoopConf) throws IOException {
+        final FileSystem fs = path.getFileSystem(hadoopConf);
+        final Path resolvedPath = stripUserInfo(fs.makeQualified(path));
 
-        FileSystem fs = path.getFileSystem(hadoopConf);
-        Path resolvedPath;
-        try {
-            resolvedPath = stripUserInfo(fs.makeQualified(path));
-        } catch(java.net.URISyntaxException e) {
-            throw new IOException(e);
-        };
-
-        if(overwrite) {
+        if (overwrite) {
             writeActions(fs, path, actions);
             return;
-        };
+        }
 
-        Path tablePath = getTablePath(resolvedPath);
-        if(isDeltaFile(path)) {
-            long version = deltaVersion(path);
-            if(version > 0) {
-                long prevVersion = version - 1;
-                Path prevPath = deltaFile(tablePath, prevVersion);
-                ExternalCommitEntry entry = getExternalEntry(tablePath, prevPath);
-                if(entry != null) {
-                    fixDeltaLog(fs, entry);
+        final Path tablePath = getTablePath(resolvedPath);
+        if (isDeltaFile(path)) {
+            final long version = deltaVersion(path);
+            if (version > 0) {
+                final long prevVersion = version - 1;
+                final Path prevPath = deltaFile(tablePath, prevVersion);
+                final Optional<ExternalCommitEntry> entry = getExternalEntry(tablePath, prevPath);
+                if (entry.isPresent()) {
+                    fixDeltaLog(fs, entry.get());
                 } else {
-                    if(!fs.exists(prevPath)) {
+                    if (!fs.exists(prevPath)) {
                         throw new java.nio.file.FileSystemException(
                             String.format("previous commit %s doesn't exist", prevPath)
                         );
                     }
                 }
             } else {
-                ExternalCommitEntry entry = getExternalEntry(tablePath, path);
-                if(entry != null) {
-                    if(entry.complete && !fs.exists(path)) {
+                final Optional<ExternalCommitEntry> entry = getExternalEntry(tablePath, path);
+                if (entry.isPresent()) {
+                    if (entry.get().complete && !fs.exists(path)) {
                         throw new java.nio.file.FileSystemException(
                             String.format(
                                 "Old entries for %s still exist in the database", tablePath
@@ -119,28 +114,31 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
                 }
             }
         }
-        String tempPath = createTemporaryPath(resolvedPath);
-        ExternalCommitEntry entry = new ExternalCommitEntry(
+
+        final String tempPath = createTemporaryPath(resolvedPath);
+        final ExternalCommitEntry entry = new ExternalCommitEntry(
             tablePath,
             resolvedPath.getName(),
             tempPath,
-            false,  // not complete
-            null    // commitTime
+            false, // not complete
+            null // commitTime
         );
+
         writeActions(fs, entry.absoluteTempPath(), actions);
-        putExternalEntry(entry, false);
+        putExternalEntry(entry, false); // overwrite=false
 
         try {
             writeCopyTempFile(fs, entry.absoluteTempPath(), resolvedPath);
             writePutCompleteDbEntry(entry);
-        } catch(Throwable e) {
-            LOG.info(String.format(
-                "%s: ignoring recoverable error: %s", e.getClass().getSimpleName(), e));
+        } catch (Throwable e) {
+            LOG.info(
+                "{}: ignoring recoverable error: {}", e.getClass().getSimpleName(), e
+            );
         }
     }
 
     @Override
-    public Boolean isPartialWriteVisible(Path path, Configuration hadoopConf) throws IOException {
+    public Boolean isPartialWriteVisible(Path path, Configuration hadoopConf) {
         return false;
     }
 
@@ -156,20 +154,13 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
         Path path,
         Iterator<String> actions
     ) throws IOException {
-        LOG.debug(String.format("writeActions to: %s", path));
+        LOG.debug("writeActions to: {}", path);
         FSDataOutputStream stream = fs.create(path, true);
         while(actions.hasNext()) {
             byte[] line = String.format("%s\n", actions.next()).getBytes(StandardCharsets.UTF_8);
             stream.write(line);
         }
         stream.close();
-    }
-
-    /**
-     * Returns path stripped user info.
-     */
-    protected Path getPathKey(Path resolvedPath) throws java.net.URISyntaxException {
-        return stripUserInfo(resolvedPath);
     }
 
     /**
@@ -180,47 +171,72 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
         return String.format(".tmp/%s.%s", path.getName(), uuid);
     }
 
+    /**
+     * Returns the base table path for a given Delta log entry located in
+     * e.g. input path of $tablePath/_delta_log/00000N.json would return $tablePath
+     */
     protected Path getTablePath(Path path) {
         return path.getParent().getParent();
     }
 
-   /*
-    * Write to db in exclusive way.
-    * Method should throw @java.nio.file.FileAlreadyExistsException if path exists in cache.
-    */
+    /**
+     * Write to external store in exclusive way.
+     *
+     * @throws java.nio.file.FileAlreadyExistsException if path exists in cache and `overwrite` is
+     *                                                  false
+     */
     abstract protected void putExternalEntry(
-        ExternalCommitEntry entry, boolean overwrite
-    ) throws IOException;
+        ExternalCommitEntry entry,
+        boolean overwrite) throws IOException;
 
-    abstract protected ExternalCommitEntry getExternalEntry(
-        Path tablePath, Path jsonPath
-    ) throws IOException;
+    /**
+     * Return external store entry corresponding to delta log file with given `tablePath` and
+     * `fileName`, or `Optional.empty()` if it doesn't exist.
+     *
+     * @param tablePath TODO
+     * @param jsonPath TODO
+     */
+    abstract protected Optional<ExternalCommitEntry> getExternalEntry(
+        Path tablePath,
+        Path jsonPath) throws IOException;
 
-    abstract protected ExternalCommitEntry getLatestExternalEntry(
-        Path tablePath
-    ) throws IOException;
+    /**
+     * Return the latest external store entry corresponding to the delta log for given `tablePath`,
+     * or `Optional.empty()` if it doesn't exist.
+     *
+     * @param tablePath TODO
+     */
+    abstract protected Optional<ExternalCommitEntry> getLatestExternalEntry(
+        Path tablePath) throws IOException;
 
     //////////////////////////////////////////////////////////
     // Protected Members (for error injection during tests) //
     //////////////////////////////////////////////////////////
 
     /**
-     * The following four methods are extracted for testing purposes
-     * so we can more easily inject errors and test for failures.
+     * Wrapper for `copyFile`, called by the `write` method.
      */
-
     protected void writeCopyTempFile(FileSystem fs, Path src, Path dst) throws IOException {
         copyFile(fs, src, dst);
     }
 
+    /**
+     * Wrapper for `putExternalEntry`, called by the `write` method.
+     */
     protected void writePutCompleteDbEntry(ExternalCommitEntry entry) throws IOException {
         putExternalEntry(entry.asComplete(), true);
     }
 
+    /**
+     * Wrapper for `copyFile`, called by the `fixDeltaLog` method.
+     */
     protected void fixDeltaLogCopyTempFile(FileSystem fs, Path src, Path dst) throws IOException {
         copyFile(fs, src, dst);
     }
 
+    /**
+     * Wrapper for `putExternalEntry`, called by the `fixDeltaLog` method.
+     */
     protected void fixDeltaLogPutCompleteDbEntry(ExternalCommitEntry entry) throws IOException {
         putExternalEntry(entry.asComplete(), true);
     }
@@ -231,29 +247,27 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
 
     /**
      * Method for assuring consistency on filesystem according to the external cache.
-     * Method tries to rewrite TransactionLog entry from temporary path if it does not exists.
-     * Method returns completed [[ExternalCommitEntry]]
+     * Method tries to rewrite TransactionLog entry from temporary path if it does not exist.
      */
-
     private void fixDeltaLog(FileSystem fs, ExternalCommitEntry entry) throws IOException {
-        if(entry.complete) {
+        if (entry.complete) {
             return;
         }
         int retry = 0;
         boolean copied = false;
-        while(true) {
-            LOG.debug(String.format("trying to fix: %s", entry.fileName));
+        while (true) {
+            LOG.debug("trying to fix: {}", entry.fileName);
             try {
                 if (!copied && !fs.exists(entry.absoluteJsonPath())) {
                     fixDeltaLogCopyTempFile(fs, entry.absoluteTempPath(), entry.absoluteJsonPath());
                     copied = true;
                 }
                 fixDeltaLogPutCompleteDbEntry(entry);
-                LOG.info(String.format("fixed %s", entry.fileName));
+                LOG.info("fixed {}", entry.fileName);
                 return;
             } catch(Throwable e) {
-                LOG.info(String.format("%s: %s", e.getClass().getSimpleName(), e));
-                if(retry >= 3) {
+                LOG.info("{}: {}", e.getClass().getSimpleName(), e);
+                if (retry >= 3) {
                     throw e;
                 }
             }
@@ -268,7 +282,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     * @param dst path to destination file
     */
     private void copyFile(FileSystem fs, Path src, Path dst) throws IOException {
-        LOG.debug(String.format("copy file: %s -> %s", src, dst));
+        LOG.debug("copy file: {} -> {}", src, dst);
         FSDataInputStream input_stream = fs.open(src);
         FSDataOutputStream output_stream = fs.create(dst, true);
         try {
@@ -282,18 +296,27 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     /**
      * Returns path stripped user info.
      */
-    private Path stripUserInfo(Path path) throws java.net.URISyntaxException {
-        URI uri = path.toUri();
-        URI newUri = new URI(
-            uri.getScheme(),
-            null,
-            uri.getHost(),
-            uri.getPort(),
-            uri.getPath(),
-            uri.getQuery(),
-            uri.getFragment()
-        );
-        return new Path(newUri);
+    private Path stripUserInfo(Path path) {
+        final URI uri = path.toUri();
+
+        try {
+            final URI newUri = new URI(
+                uri.getScheme(),
+                null, // userInfo
+                uri.getHost(),
+                uri.getPort(),
+                uri.getPath(),
+                uri.getQuery(),
+                uri.getFragment()
+            );
+
+            return new Path(newUri);
+        } catch (URISyntaxException e) {
+            // Propagating this URISyntaxException to callers would mean we would have to either
+            // include it in the public LogStore.java interface or wrap it in an
+            // IllegalArgumentException somewhere else. Instead, catch and wrap it here.
+            throw new IllegalArgumentException(e);
+        }
     }
 
     // TODO - use java version of FileNames utils?

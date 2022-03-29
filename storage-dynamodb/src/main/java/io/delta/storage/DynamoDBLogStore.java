@@ -17,14 +17,17 @@
 package io.delta.storage;
 
 import org.apache.hadoop.fs.Path;
+
+import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.io.IOException;
 
 import org.apache.hadoop.conf.Configuration;
 
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient;
-import com.amazonaws.auth.BasicAWSCredentials;
 import com.amazonaws.services.dynamodbv2.model.AttributeDefinition;
 import com.amazonaws.services.dynamodbv2.model.AttributeValue;
 import com.amazonaws.services.dynamodbv2.model.ComparisonOperator;
@@ -47,19 +50,20 @@ import com.amazonaws.auth.AWSCredentialsProvider;
 import com.amazonaws.regions.Region;
 import com.amazonaws.regions.Regions;
 
-import java.util.NoSuchElementException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-
+/**
+ * TODO
+ */
 public class DynamoDBLogStore extends BaseExternalLogStore {
     private static final Logger LOG = LoggerFactory.getLogger(DynamoDBLogStore.class);
 
-    private AmazonDynamoDBClient client = null;
-    private String tableName;
-    private String credentialsProviderName;
-    private String regionName;
-    private String endpoint;
+    private final AmazonDynamoDBClient client;
+    private final String tableName;
+    private final String credentialsProviderName;
+    private final String regionName;
+    private final String endpoint;
 
     public DynamoDBLogStore(Configuration hadoopConf) throws IOException {
         super(hadoopConf);
@@ -75,14 +79,10 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
         tryEnsureTableExists(hadoopConf);
     }
 
-   /*
-    * Write to db in exclusive way.
-    * Method should throw @java.nio.file.FileAlreadyExistsException if path exists in cache.
-    */
     @Override
     protected void putExternalEntry(
-        ExternalCommitEntry entry, boolean overwrite
-    ) throws IOException {
+            ExternalCommitEntry entry,
+            boolean overwrite) throws IOException {
         try {
             LOG.debug(String.format("putItem %s, overwrite: %s", entry, overwrite));
             client.putItem(createPutItemRequest(entry, tableName, overwrite));
@@ -95,23 +95,23 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
     }
 
     @Override
-    protected ExternalCommitEntry getExternalEntry(
-        Path absoluteTablePath, Path absoluteJsonPath
-    ) throws IOException {
-        Map<String, AttributeValue> attributes = new ConcurrentHashMap<>();
+    protected Optional<ExternalCommitEntry> getExternalEntry(
+            Path absoluteTablePath,
+            Path absoluteJsonPath) {
+        final Map<String, AttributeValue> attributes = new ConcurrentHashMap<>();
         attributes.put("tablePath", new AttributeValue(absoluteTablePath.toString()));
         attributes.put("fileName", new AttributeValue(absoluteJsonPath.toString()));
 
-        java.util.Map<String, AttributeValue> item = client.getItem(
-            new GetItemRequest(tableName, attributes)
-               .withConsistentRead(true)
+        Map<String, AttributeValue> item = client.getItem(
+            new GetItemRequest(tableName, attributes).withConsistentRead(true)
         ).getItem();
-        return item != null ? itemToDbEntry(item) : null;
+
+        return item != null ? Optional.of(dbResultToCommitEntry(item)) : Optional.empty();
     }
 
     @Override
-    protected ExternalCommitEntry getLatestExternalEntry(Path tablePath) throws IOException {
-        Map<String, Condition> conditions = new ConcurrentHashMap<>();
+    protected Optional<ExternalCommitEntry> getLatestExternalEntry(Path tablePath) {
+        final Map<String, Condition> conditions = new ConcurrentHashMap<>();
         conditions.put(
             "tablePath",
             new Condition()
@@ -119,22 +119,26 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
                 .withAttributeValueList(new AttributeValue(tablePath.toString()))
         );
 
-        try {
-            java.util.Map<String, AttributeValue> item = client.query(
-                new QueryRequest(tableName)
-                    .withConsistentRead(true)
-                    .withScanIndexForward(false)
-                    .withLimit(1)
-                    .withKeyConditions(conditions)
-            ).getItems().get(0);
-            return itemToDbEntry(item);
-        } catch(IndexOutOfBoundsException e) {
-            return null;
+        final List<Map<String,AttributeValue>> items = client.query(
+            new QueryRequest(tableName)
+                .withConsistentRead(true)
+                .withScanIndexForward(false)
+                .withLimit(1)
+                .withKeyConditions(conditions)
+        ).getItems();
+
+        if (items.isEmpty()) {
+            return Optional.empty();
+        } else {
+            return Optional.of(dbResultToCommitEntry(items.get(0)));
         }
     }
 
-    private ExternalCommitEntry itemToDbEntry(java.util.Map<String, AttributeValue> item) {
-        AttributeValue commitTimeAttr = item.get("commitTime");
+    /**
+     * Map a DBB query result item to an {@link ExternalCommitEntry}.
+     */
+    private ExternalCommitEntry dbResultToCommitEntry(Map<String, AttributeValue> item) {
+        final AttributeValue commitTimeAttr = item.get("commitTime");
         return new ExternalCommitEntry(
             new Path(item.get("tablePath").getS()),
             item.get("fileName").getS(),
@@ -145,21 +149,25 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
     }
 
     private PutItemRequest createPutItemRequest(
-        ExternalCommitEntry entry, String tableName, boolean overwrite
-    ) {
+            ExternalCommitEntry entry,
+            String tableName,
+            boolean overwrite) {
 
-        Map<String, AttributeValue> attributes = new ConcurrentHashMap<>();
+        final Map<String, AttributeValue> attributes = new ConcurrentHashMap<>();
         attributes.put("tablePath", new AttributeValue(entry.tablePath.toString()));
         attributes.put("fileName", new AttributeValue(entry.fileName));
         attributes.put("tempPath", new AttributeValue(entry.tempPath));
         attributes.put(
             "complete",
-            new AttributeValue().withS(new Boolean(entry.complete).toString())
+            new AttributeValue().withS(Boolean.toString(entry.complete))
         );
+
         if (entry.complete) {
             attributes.put("commitTime", new AttributeValue().withN(entry.commitTime.toString()));
         }
-        PutItemRequest pr = new PutItemRequest(tableName, attributes);
+
+        final PutItemRequest pr = new PutItemRequest(tableName, attributes);
+
         if(!overwrite) {
             Map<String, ExpectedAttributeValue> expected = new ConcurrentHashMap<>();
             expected.put("fileName", new ExpectedAttributeValue(false));
@@ -168,7 +176,7 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
         return pr;
     }
 
-    private void tryEnsureTableExists(Configuration hadoopConf) throws IOException {
+    private void tryEnsureTableExists(Configuration hadoopConf) {
         int retries = 0;
         boolean created = false;
         while(retries < 20) {
@@ -182,10 +190,10 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
                 long rcu = Long.parseLong(getParam(hadoopConf, "provisionedThroughput.rcu", "5"));
                 long wcu = Long.parseLong(getParam(hadoopConf, "provisionedThroughput.wcu", "5"));
 
-                LOG.info(String.format(
-                    "DynamoDB table `%s` in region `%s` does not exist."
-                    + "Creating it now with provisioned throughput of %s RCUs and %s WCUs.",
-                    tableName, regionName, rcu, wcu));
+                LOG.info(
+                    "DynamoDB table `{}` in region `{}` does not exist."
+                    + "Creating it now with provisioned throughput of {} RCUs and {} WCUs.",
+                    tableName, regionName, rcu, wcu);
                 try {
                     client.createTable(
                         // attributeDefinitions
@@ -195,32 +203,32 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
                         ),
                         tableName,
                         // keySchema
-                        java.util.Arrays.asList(
+                        Arrays.asList(
                             new KeySchemaElement("tablePath", KeyType.HASH),
                             new KeySchemaElement("fileName", KeyType.RANGE)
                         ),
                         new ProvisionedThroughput(rcu, wcu)
                     );
                     created = true;
-                } catch(ResourceInUseException e3) {
+                } catch (ResourceInUseException e3) {
                     // race condition - table just created by concurrent process
                 }
             }
-            if(status.equals("ACTIVE")) {
+            if (status.equals("ACTIVE")) {
                 if(created) {
-                    LOG.info(String.format("Successfully created DynamoDB table `%s`", tableName));
+                    LOG.info("Successfully created DynamoDB table `{}`", tableName);
                 } else {
-                    LOG.info(String.format("Table `%s` already exists", tableName));
+                    LOG.info("Table `{}` already exists", tableName);
                 }
                 break;
             } else if(status.equals("CREATING")) {
                 retries += 1;
-                LOG.info(String.format("Waiting for `%s` table creation", tableName));
+                LOG.info("Waiting for `{}` table creation", tableName);
                 try {
                     Thread.sleep(1000);
                 } catch(InterruptedException interrupted) {}
             } else {
-                LOG.error(String.format("table `%s` status: %s", tableName, status));
+                LOG.error("table `{}` status: {}", tableName, status);
                 break;  // TODO - raise exception?
             }
         };
@@ -228,12 +236,12 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
 
     private AmazonDynamoDBClient getClient() throws java.io.IOException {
         try {
-            AWSCredentialsProvider auth =
+            final AWSCredentialsProvider auth =
                 (AWSCredentialsProvider)Class.forName(credentialsProviderName)
                 .getConstructor().newInstance();
-            AmazonDynamoDBClient client = new AmazonDynamoDBClient(auth);
+            final AmazonDynamoDBClient client = new AmazonDynamoDBClient(auth);
             client.setRegion(Region.getRegion(Regions.fromName(regionName)));
-            if(endpoint != null) {
+            if (endpoint != null) {
                 client.setEndpoint(endpoint);
             }
             return client;
