@@ -18,6 +18,7 @@ package io.delta.storage;
 
 import org.apache.hadoop.fs.Path;
 
+import java.io.InterruptedIOException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -203,7 +204,7 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
         return pr;
     }
 
-    private void tryEnsureTableExists(Configuration hadoopConf) {
+    private void tryEnsureTableExists(Configuration hadoopConf) throws IOException {
         int retries = 0;
         boolean created = false;
         while(retries < 20) {
@@ -253,7 +254,9 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
                 LOG.info("Waiting for `{}` table creation", tableName);
                 try {
                     Thread.sleep(1000);
-                } catch(InterruptedException interrupted) {}
+                } catch(InterruptedException e) {
+                    throw new InterruptedIOException(e.getMessage());
+                }
             } else {
                 LOG.error("table `{}` status: {}", tableName, status);
                 break;  // TODO - raise exception?
