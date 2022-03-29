@@ -34,7 +34,7 @@ import java.util.concurrent.Callable;
 /**
  * :: Unstable ::
  * <p>
- * The [[LogStore]] implementation for GCS, which uses gcs-connector to
+ * The {@link LogStore} implementation for GCS, which uses gcs-connector to
  * provide the necessary atomic and durability guarantees:
  *
  * <ol>
@@ -59,7 +59,7 @@ import java.util.concurrent.Callable;
  */
 public class GCSLogStore extends HadoopFileSystemLogStore {
 
-    String preconditionFailedExceptionMessage = "412 Precondition Failed";
+    final String preconditionFailedExceptionMessage = "412 Precondition Failed";
 
     public GCSLogStore(Configuration hadoopConf) {
         super(hadoopConf);
