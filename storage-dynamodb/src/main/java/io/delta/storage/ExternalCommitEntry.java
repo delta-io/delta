@@ -19,9 +19,11 @@ package io.delta.storage;
 import org.apache.hadoop.fs.Path;
 
 /**
- * TODO
+ * Wrapper class representing an entry in an external store for a given commit into the Delta log.
+ *
+ * Contains relevant fields and helper methods.
  */
-public class ExternalCommitEntry {
+public final class ExternalCommitEntry {
 
     /**
      * Absolute path to this delta table

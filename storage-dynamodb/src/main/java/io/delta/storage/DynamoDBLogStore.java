@@ -53,6 +53,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
+ * A concrete implementation of {@link BaseExternalLogStore} that uses an external DynamoDB table
+ * to provide the mutual exclusion during calls to `putExternalEntry`.
+ *
  * DynamoDB entries are of form
  * - key
  * -- tablePath (HASH, STRING)
@@ -66,28 +69,39 @@ import org.slf4j.LoggerFactory;
 public class DynamoDBLogStore extends BaseExternalLogStore {
     private static final Logger LOG = LoggerFactory.getLogger(DynamoDBLogStore.class);
 
+    /**
+     * Configuration keys for the DynamoDB client
+     */
+    private static final String DBB_CLIENT_TABLE = "tableName";
+    private static final String DBB_CLIENT_REGION = "region";
+    private static final String DBB_CLIENT_CREDENTIALS_PROVIDER = "credentials.provider";
+
+    /**
+     * DynamoDB table attribute keys
+     */
     private static final String ATTR_TABLE_PATH = "tablePath";
     private static final String ATTR_FILE_NAME = "fileName";
     private static final String ATTR_TEMP_PATH = "tempPath";
     private static final String ATTR_COMPLETE = "complete";
     private static final String ATTR_COMMIT_TIME = "commitTime";
 
+    /**
+     * Member fields
+     */
     private final AmazonDynamoDBClient client;
     private final String tableName;
     private final String credentialsProviderName;
     private final String regionName;
-    private final String endpoint;
 
     public DynamoDBLogStore(Configuration hadoopConf) throws IOException {
         super(hadoopConf);
-        tableName = getParam(hadoopConf, "tableName", "delta_log");
+        tableName = getParam(hadoopConf, DBB_CLIENT_TABLE, "delta_log");
         credentialsProviderName = getParam(
             hadoopConf,
-            "credentials.provider",
+            DBB_CLIENT_CREDENTIALS_PROVIDER,
             "com.amazonaws.auth.DefaultAWSCredentialsProviderChain"
         );
-        regionName = getParam(hadoopConf, "region", "us-east-1");
-        endpoint = getParam(hadoopConf, "endpoint", null);
+        regionName = getParam(hadoopConf, DBB_CLIENT_REGION, "us-east-1");
         client = getClient();
         tryEnsureTableExists(hadoopConf);
     }
@@ -200,8 +214,8 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
                 TableDescription descr = result.getTable();
                 status = descr.getTableStatus();
             } catch (ResourceNotFoundException e) {
-                long rcu = Long.parseLong(getParam(hadoopConf, "provisionedThroughput.rcu", "5"));
-                long wcu = Long.parseLong(getParam(hadoopConf, "provisionedThroughput.wcu", "5"));
+                final long rcu = Long.parseLong(getParam(hadoopConf, "provisionedThroughput.rcu", "5"));
+                final long wcu = Long.parseLong(getParam(hadoopConf, "provisionedThroughput.wcu", "5"));
 
                 LOG.info(
                     "DynamoDB table `{}` in region `{}` does not exist."
@@ -250,21 +264,18 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
     private AmazonDynamoDBClient getClient() throws java.io.IOException {
         try {
             final AWSCredentialsProvider auth =
-                (AWSCredentialsProvider)Class.forName(credentialsProviderName)
-                .getConstructor().newInstance();
+                (AWSCredentialsProvider) Class.forName(credentialsProviderName)
+                    .getConstructor()
+                    .newInstance();
             final AmazonDynamoDBClient client = new AmazonDynamoDBClient(auth);
             client.setRegion(Region.getRegion(Regions.fromName(regionName)));
-            if (endpoint != null) {
-                client.setEndpoint(endpoint);
-            }
             return client;
-        } catch(
+        } catch (
             ClassNotFoundException
             | InstantiationException
             | NoSuchMethodException
             | IllegalAccessException
-            | java.lang.reflect.InvocationTargetException e
-        ) {
+            | java.lang.reflect.InvocationTargetException e) {
             throw new java.io.IOException(e);
         }
     }

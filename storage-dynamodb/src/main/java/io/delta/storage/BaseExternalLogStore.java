@@ -16,9 +16,13 @@
 
 package io.delta.storage;
 
+import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
+import java.util.Iterator;
+import java.util.Optional;
+import java.util.regex.Pattern;
 
 import com.google.common.annotations.VisibleForTesting;
 import org.apache.commons.io.IOUtils;
@@ -29,19 +33,16 @@ import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 
-import java.io.IOException;
-import java.util.Iterator;
-import java.util.Optional;
-import java.util.regex.Pattern;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
-* Used so that we can use an external store child implementation
-* to provide the mutual exclusion that the cloud store,
-* e.g. s3, is missing.
-*/
+ * A base {@link LogStore} implementation for cloud stores (e.g. Amazon S3) that do not provide
+ * mutual exclusion.
+ * <p>
+ * This implementation depends on child methods, particularly `putExternalEntry`, to provide
+ * the mutual exclusion that the cloud store is lacking.
+ */
 public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     private static final Logger LOG = LoggerFactory.getLogger(BaseExternalLogStore.class);
 
