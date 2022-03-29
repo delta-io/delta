@@ -83,16 +83,14 @@ public class GCSLogStore extends HadoopFileSystemLogStore {
         // If overwrite=false and path already exists, gcs-connector will throw
         // org.apache.hadoop.fs.FileAlreadyExistsException after fs.create is invoked.
         // This should be mapped to java.nio.file.FileAlreadyExistsException.
-        FSDataOutputStream stream = fs.create(path, overwrite);
-
         Callable body = () -> {
+            FSDataOutputStream stream = fs.create(path, overwrite);
             try {
                 while (actions.hasNext()) {
                     stream.write((actions.next() + "\n").getBytes(StandardCharsets.UTF_8));
                 }
             } finally {
                 stream.close();
-
             }
             return "";
         };
