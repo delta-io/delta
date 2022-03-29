@@ -19,36 +19,58 @@ package io.delta.storage;
 import org.apache.hadoop.fs.Path;
 
 public class ExternalCommitEntry {
-    public Path tablePath;
-    public String fileName;
-    public String tempPath;
-    public boolean complete;
-    public Long commitTime;
+
+    /**
+     * Absolute path to this delta table
+     */
+    public final Path tablePath;
+
+    /**
+     * File name of this commit, e.g. "000000N.json"
+     */
+    public final String fileName;
+
+    /**
+     * Path to temp file for this commit, relative to the `_delta_log
+     */
+    public final String tempPath;
+
+    /**
+     * true if delta json file is successfully copied to its destination location, else false
+     */
+    public final boolean complete;
+
+    /**
+     * epoch seconds of time of commit if complete=true, else null
+     */
+    public final Long commitTime;
 
     public ExternalCommitEntry(
-        Path tablePath,
-        String fileName,
-        String tempPath,
-        // entry is complete if delta json file is successfully copied to its destination location
-        boolean complete,
-        // timestamp of commit if complete, null otherwise
-        Long commitTime
-    ) {
+            Path tablePath,
+            String fileName,
+            String tempPath,
+            boolean complete,
+            Long commitTime) {
         this.tablePath = tablePath;
         this.fileName = fileName;
         this.tempPath = tempPath;
         this.complete = complete;
         this.commitTime = commitTime;
     }
+
+    /**
+     * Return this entry with `complete=true`
+     */
     public ExternalCommitEntry asComplete() {
         return new ExternalCommitEntry(
             this.tablePath,
             this.fileName,
             this.tempPath,
             true,
-            new Long(System.currentTimeMillis() / 1000)
+            System.currentTimeMillis() / 1000L
         );
     }
+
     public Path absoluteJsonPath() {
         return new Path(new Path(tablePath, "_delta_log"), fileName);
     }
