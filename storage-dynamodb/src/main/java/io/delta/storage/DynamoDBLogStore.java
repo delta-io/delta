@@ -27,6 +27,7 @@ import java.io.IOException;
 
 import org.apache.hadoop.conf.Configuration;
 
+import com.amazonaws.auth.AWSCredentialsProvider;
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient;
 import com.amazonaws.services.dynamodbv2.model.AttributeDefinition;
 import com.amazonaws.services.dynamodbv2.model.AttributeValue;
@@ -45,8 +46,6 @@ import com.amazonaws.services.dynamodbv2.model.QueryRequest;
 import com.amazonaws.services.dynamodbv2.model.ResourceNotFoundException;
 import com.amazonaws.services.dynamodbv2.model.ResourceInUseException;
 import com.amazonaws.services.dynamodbv2.model.ScalarAttributeType;
-import com.amazonaws.auth.AWSCredentialsProvider;
-
 import com.amazonaws.regions.Region;
 import com.amazonaws.regions.Regions;
 
@@ -54,10 +53,24 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * TODO
+ * DynamoDB entries are of form
+ * - key
+ * -- tablePath (HASH, String)
+ * -- filename (RANGE, String)
+ *
+ * - attributes
+ * -- tempPath (STRING, relative to _delta_log)
+ * -- complete (STRING, representing boolean, "true" or "false")
+ * -- commitTime (NUMBER, epoch seconds)
  */
 public class DynamoDBLogStore extends BaseExternalLogStore {
     private static final Logger LOG = LoggerFactory.getLogger(DynamoDBLogStore.class);
+
+    private static final String ATTR_TABLE_PATH = "tablePath";
+    private static final String ATTR_FILE_NAME = "fileName";
+    private static final String ATTR_TEMP_PATH = "tempPath";
+    private static final String ATTR_COMPLETE = "complete";
+    private static final String ATTR_COMMIT_TIME = "commitTime";
 
     private final AmazonDynamoDBClient client;
     private final String tableName;
@@ -85,7 +98,7 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
             boolean overwrite) throws IOException {
         try {
             LOG.debug(String.format("putItem %s, overwrite: %s", entry, overwrite));
-            client.putItem(createPutItemRequest(entry, tableName, overwrite));
+            client.putItem(createPutItemRequest(entry, overwrite));
         } catch (ConditionalCheckFailedException e) {
             LOG.debug(e.toString());
             throw new java.nio.file.FileAlreadyExistsException(
@@ -99,8 +112,8 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
             Path absoluteTablePath,
             Path absoluteJsonPath) {
         final Map<String, AttributeValue> attributes = new ConcurrentHashMap<>();
-        attributes.put("tablePath", new AttributeValue(absoluteTablePath.toString()));
-        attributes.put("fileName", new AttributeValue(absoluteJsonPath.toString()));
+        attributes.put(ATTR_TABLE_PATH, new AttributeValue(absoluteTablePath.toString()));
+        attributes.put(ATTR_FILE_NAME, new AttributeValue(absoluteJsonPath.toString()));
 
         Map<String, AttributeValue> item = client.getItem(
             new GetItemRequest(tableName, attributes).withConsistentRead(true)
@@ -113,7 +126,7 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
     protected Optional<ExternalCommitEntry> getLatestExternalEntry(Path tablePath) {
         final Map<String, Condition> conditions = new ConcurrentHashMap<>();
         conditions.put(
-            "tablePath",
+            ATTR_TABLE_PATH,
             new Condition()
                 .withComparisonOperator(ComparisonOperator.EQ)
                 .withAttributeValueList(new AttributeValue(tablePath.toString()))
@@ -138,41 +151,41 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
      * Map a DBB query result item to an {@link ExternalCommitEntry}.
      */
     private ExternalCommitEntry dbResultToCommitEntry(Map<String, AttributeValue> item) {
-        final AttributeValue commitTimeAttr = item.get("commitTime");
+        final AttributeValue commitTimeAttr = item.get(ATTR_COMMIT_TIME);
         return new ExternalCommitEntry(
-            new Path(item.get("tablePath").getS()),
-            item.get("fileName").getS(),
-            item.get("tempPath").getS(),
-            item.get("complete").getS() == "true",
+            new Path(item.get(ATTR_TABLE_PATH).getS()),
+            item.get(ATTR_FILE_NAME).getS(),
+            item.get(ATTR_TEMP_PATH).getS(),
+            item.get(ATTR_COMPLETE).getS().equals("true"),
             commitTimeAttr != null ? Long.parseLong(commitTimeAttr.getN()) : null
         );
     }
 
-    private PutItemRequest createPutItemRequest(
-            ExternalCommitEntry entry,
-            String tableName,
-            boolean overwrite) {
-
+    private PutItemRequest createPutItemRequest(ExternalCommitEntry entry, boolean overwrite) {
         final Map<String, AttributeValue> attributes = new ConcurrentHashMap<>();
-        attributes.put("tablePath", new AttributeValue(entry.tablePath.toString()));
-        attributes.put("fileName", new AttributeValue(entry.fileName));
-        attributes.put("tempPath", new AttributeValue(entry.tempPath));
+        attributes.put(ATTR_TABLE_PATH, new AttributeValue(entry.tablePath.toString()));
+        attributes.put(ATTR_FILE_NAME, new AttributeValue(entry.fileName));
+        attributes.put(ATTR_TEMP_PATH, new AttributeValue(entry.tempPath));
         attributes.put(
-            "complete",
+            ATTR_COMPLETE,
             new AttributeValue().withS(Boolean.toString(entry.complete))
         );
 
         if (entry.complete) {
-            attributes.put("commitTime", new AttributeValue().withN(entry.commitTime.toString()));
+            attributes.put(
+                ATTR_COMMIT_TIME,
+                new AttributeValue().withN(entry.commitTime.toString())
+            );
         }
 
         final PutItemRequest pr = new PutItemRequest(tableName, attributes);
 
-        if(!overwrite) {
+        if (!overwrite) {
             Map<String, ExpectedAttributeValue> expected = new ConcurrentHashMap<>();
-            expected.put("fileName", new ExpectedAttributeValue(false));
+            expected.put(ATTR_FILE_NAME, new ExpectedAttributeValue(false));
             pr.withExpected(expected);
         }
+
         return pr;
     }
 
@@ -198,14 +211,14 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
                     client.createTable(
                         // attributeDefinitions
                         java.util.Arrays.asList(
-                            new AttributeDefinition("tablePath", ScalarAttributeType.S),
-                            new AttributeDefinition("fileName", ScalarAttributeType.S)
+                            new AttributeDefinition(ATTR_TABLE_PATH, ScalarAttributeType.S),
+                            new AttributeDefinition(ATTR_FILE_NAME, ScalarAttributeType.S)
                         ),
                         tableName,
                         // keySchema
                         Arrays.asList(
-                            new KeySchemaElement("tablePath", KeyType.HASH),
-                            new KeySchemaElement("fileName", KeyType.RANGE)
+                            new KeySchemaElement(ATTR_TABLE_PATH, KeyType.HASH),
+                            new KeySchemaElement(ATTR_FILE_NAME, KeyType.RANGE)
                         ),
                         new ProvisionedThroughput(rcu, wcu)
                     );
@@ -215,13 +228,13 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
                 }
             }
             if (status.equals("ACTIVE")) {
-                if(created) {
+                if (created) {
                     LOG.info("Successfully created DynamoDB table `{}`", tableName);
                 } else {
                     LOG.info("Table `{}` already exists", tableName);
                 }
                 break;
-            } else if(status.equals("CREATING")) {
+            } else if (status.equals("CREATING")) {
                 retries += 1;
                 LOG.info("Waiting for `{}` table creation", tableName);
                 try {
