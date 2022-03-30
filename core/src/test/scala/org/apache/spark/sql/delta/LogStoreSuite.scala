@@ -33,6 +33,10 @@ import org.apache.spark.sql.LocalSparkSession.withSparkSession
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
+/////////////////////
+// Base Test Suite //
+/////////////////////
+
 abstract class LogStoreSuiteBase extends QueryTest
   with LogStoreProvider
   with SharedSparkSession {
@@ -208,6 +212,10 @@ abstract class LogStoreSuiteBase extends QueryTest
   }
 }
 
+///////////////////////////
+// Child-specific traits //
+///////////////////////////
+
 trait AzureLogStoreSuiteBase extends LogStoreSuiteBase {
 
   testHadoopConf(
@@ -336,6 +344,10 @@ trait LocalLogStoreSuiteBase extends LogStoreSuiteBase {
   protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 
+////////////////////////////////
+// Concrete child test suites //
+////////////////////////////////
+
 class HDFSLogStoreSuite extends HDFSLogStoreSuiteBase {
   override val logStoreClassName: String = classOf[HDFSLogStore].getName
 }
@@ -347,6 +359,10 @@ class AzureLogStoreSuite extends AzureLogStoreSuiteBase {
 class LocalLogStoreSuite extends LocalLogStoreSuiteBase {
   override val logStoreClassName: String = classOf[LocalLogStore].getName
 }
+
+////////////////////////////////
+// File System Helper Classes //
+////////////////////////////////
 
 /** A fake file system to test whether session Hadoop configuration will be picked up. */
 class FakeFileSystem extends RawLocalFileSystem {
@@ -470,6 +486,16 @@ abstract class PublicLogStoreSuite extends LogStoreSuiteBase {
 class PublicHDFSLogStoreSuite extends PublicLogStoreSuite with HDFSLogStoreSuiteBase {
   override protected val publicLogStoreClassName: String =
     classOf[io.delta.storage.HDFSLogStore].getName
+}
+
+class PublicS3SingleDriverLogStoreSuite
+  extends PublicLogStoreSuite
+  with S3SingleDriverLogStoreSuiteBase {
+
+  override protected val publicLogStoreClassName: String =
+    classOf[io.delta.storage.S3SingleDriverLogStore].getName
+
+  override protected def canInvalidateCache: Boolean = false
 }
 
 class PublicAzureLogStoreSuite extends PublicLogStoreSuite with AzureLogStoreSuiteBase {
