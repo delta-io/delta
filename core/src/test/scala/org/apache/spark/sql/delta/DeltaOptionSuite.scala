@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Action, FileAction}
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
 
 import org.apache.commons.io.FileUtils
@@ -26,7 +27,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
 class DeltaOptionSuite extends QueryTest
-  with SharedSparkSession {
+  with SharedSparkSession with DeltaSQLCommandTest {
 
   import testImplicits._
 
