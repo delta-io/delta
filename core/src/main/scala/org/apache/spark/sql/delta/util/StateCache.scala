@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.util
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.Snapshot
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.rdd.RDD
@@ -32,7 +33,7 @@ import org.apache.spark.storage.StorageLevel
  * will materialize the results.  However once uncache is called,
  * all data will be flushed and will not be cached again.
  */
-trait StateCache {
+trait StateCache extends DeltaLogging {
   protected def spark: SparkSession
 
   /** If state RDDs for this snapshot should still be cached. */
@@ -105,7 +106,7 @@ trait StateCache {
   /**
    * Create a CachedDS instance for the given Dataset and the name.
    */
-  def cacheDS[A](ds: Dataset[A], name: String): CachedDS[A] = {
+  def cacheDS[A](ds: Dataset[A], name: String): CachedDS[A] = withDmqTag {
     new CachedDS[A](ds, name)
   }
 
