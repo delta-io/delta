@@ -64,36 +64,41 @@ public final class ThreadUtils {
             // ThreadUtils.runInNewThread(), and then drop that as well (hence the + 1 to start index).
             List<StackTraceElement> currentThreadStackTrace =
                     Arrays.asList(Thread.currentThread().getStackTrace());
-            int startIndex = currentThreadStackTrace.indexOf(ThreadUtils.class.getSimpleName()) + 1;
+            //index of the stack element pointing to ThreadUtils.runInNewThread()
+            int startIndex = currentThreadStackTrace.stream()
+                    .filter(e -> e.getClassName().contains(ThreadUtils.class.getSimpleName()))
+                    .map(e -> currentThreadStackTrace.indexOf(e))
+                    .findFirst()
+                    .orElse(-1);
             int endIndex = currentThreadStackTrace.size();
             List<StackTraceElement> baseStackTrace;
-            if (startIndex <= 0 || startIndex >= endIndex) {
+            if (startIndex == -1 || startIndex >= endIndex) {
                 baseStackTrace = Collections.emptyList();
             } else {
+                //startIndex + 1 to drop the stack element ThreadUtils.runInNewThread()
                 baseStackTrace =
-                        currentThreadStackTrace.subList(startIndex, currentThreadStackTrace.size());
+                        currentThreadStackTrace.subList(startIndex + 1, currentThreadStackTrace.size());
             }
             // Remove the part of the new thread stack that shows methods call from this helper method
             // This means take everything from the top until the stack element
             StackTraceElement[] realExceptionStackTrace = realException.getStackTrace();
             List<StackTraceElement> extraStackTrace = new ArrayList<>();
             for (StackTraceElement st : realExceptionStackTrace) {
-                if (st.getClassName().contains(ThreadUtils.class.getSimpleName())) {
-                    break;
+                if (!st.getClassName().contains(ThreadUtils.class.getSimpleName())) {
+                    extraStackTrace.add(st);
                 }
-                extraStackTrace.add(st);
             }
             // Combine the two stack traces, with a place holder just specifying that there
             // was a helper method used, without any further details of the helper
             List<StackTraceElement> placeHolderStackElem = Arrays.asList(
                     new StackTraceElement(
                             String.format(
-                                    "... run in separate thread using $s",
+                                    "... run in separate thread using %s",
                                     ThreadUtils.class.getSimpleName(),
-                                    " static method runInNewThread"),
-                            "",
-                            "",
-                            -1)
+                                    " static method runInNewThread"), //Providing the helper class info.
+                            "", //method name containing the execution point, not required here.
+                            "",   //filename containing the execution point, not required here.
+                            -1) //source line number also not required. -1 indicates unavailable.
             );
 
             List<StackTraceElement> finalStackTrace = new ArrayList<>();

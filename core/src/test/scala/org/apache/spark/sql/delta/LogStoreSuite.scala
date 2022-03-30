@@ -20,13 +20,13 @@ import java.io.{File, IOException}
 import java.net.URI
 
 import scala.collection.mutable.ArrayBuffer
+import scala.util.Random
 
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.storage._
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileSystem, Path, RawLocalFileSystem}
-
+import org.apache.hadoop.fs.{FileAlreadyExistsException, FileSystem, Path, RawLocalFileSystem}
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
@@ -240,6 +240,48 @@ trait GCSLogStoreSuiteBase extends LogStoreSuiteBase {
       }
     }
   }
+  test("runInNewThread") {
+    import io.delta.storage.internal.ThreadUtils.runInNewThread
+
+    assert(runInNewThread("thread-name",
+      true,
+      () => {Thread.currentThread().getName}) === "thread-name")
+    assert(runInNewThread("thread-name",
+      true,
+      () => {
+        Thread.currentThread().isDaemon
+      }))
+    assert(runInNewThread("thread-name",
+      false,
+      () => {
+        Thread.currentThread().isDaemon
+      }) == false)
+
+    val ioExceptionMessage = "test" + Random.nextInt()
+    val ioException = intercept[IOException] {
+      runInNewThread("thread-name",
+        true,
+        () => {
+          throw new IOException(ioExceptionMessage)
+        })
+    }
+    assert(ioException.getMessage === ioExceptionMessage)
+    assert(ioException.getStackTrace.mkString("\n")
+      .contains("... run in separate thread using ThreadUtils"))
+
+    val fileAlreadyExistsExceptionMessage = "test" + Random.nextInt()
+    val fileAlreadyExistsException = intercept[FileAlreadyExistsException] {
+      runInNewThread("thread-name",
+        true,
+        () => {
+          throw new FileAlreadyExistsException(fileAlreadyExistsExceptionMessage)
+        })
+    }
+    assert(fileAlreadyExistsException.getMessage === fileAlreadyExistsExceptionMessage)
+    assert(fileAlreadyExistsException.getStackTrace.mkString("\n")
+      .contains("... run in separate thread using ThreadUtils"))
+
+  }
 }
 
 trait HDFSLogStoreSuiteBase extends LogStoreSuiteBase {
@@ -352,6 +394,7 @@ class LocalLogStoreSuite extends LocalLogStoreSuiteBase {
 /** A fake file system to test whether session Hadoop configuration will be picked up. */
 class FakeFileSystem extends RawLocalFileSystem {
   override def getScheme: String = FakeFileSystem.scheme
+
   override def getUri: URI = FakeFileSystem.uri
 }
 
