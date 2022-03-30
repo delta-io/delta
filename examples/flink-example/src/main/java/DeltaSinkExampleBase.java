@@ -55,8 +55,10 @@ public abstract class DeltaSinkExampleBase implements DeltaSinkLocalJobRunner {
     void run(String tablePath) throws IOException, InterruptedException {
         System.out.println("Will use table path: " + tablePath);
         File tableDir = new File(tablePath);
-        if (tableDir.list().length > 0) {
+        if (tableDir.exists()) {
             FileUtils.cleanDirectory(tableDir);
+        } else {
+            tableDir.mkdirs();
         }
         StreamExecutionEnvironment env = getFlinkStreamExecutionEnvironment(tablePath);
         runFlinkJobInBackground(env);
