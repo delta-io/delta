@@ -24,9 +24,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.time.ZoneOffset;
-import java.time.ZonedDateTime;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -120,7 +118,7 @@ public class DeltaSinkWriteReadITCase {
             value.longValue(), // big int type
             String.valueOf(value).getBytes(StandardCharsets.UTF_8), // binary type
             String.valueOf(value).getBytes(StandardCharsets.UTF_8), // varbinary type
-            LocalDateTime.now(ZoneOffset.UTC), // timestamp type
+            LocalDateTime.now(ZoneOffset.systemDefault()), // timestamp type
             Instant.now(), // local zoned timestamp type
             LocalDate.now(), // date type
             String.valueOf(value), // char type
@@ -133,7 +131,7 @@ public class DeltaSinkWriteReadITCase {
 
         // THEN
         DeltaLog deltaLog =
-            DeltaLog.forTable(new org.apache.hadoop.conf.Configuration(), deltaTablePath);
+            DeltaLog.forTable(DeltaSinkTestUtils.getHadoopConf(), deltaTablePath);
         waitUntilDeltaLogExists(deltaLog);
         validate(deltaLog.snapshot(), testRow);
     }
@@ -276,13 +274,9 @@ public class DeltaSinkWriteReadITCase {
                 originalValue,
                 Integer.valueOf(new String(row.getBinary("f10"), StandardCharsets.UTF_8)));
             assertEquals(
-                originalRow.getField(10),
-                toZone(
-                    row.getTimestamp("f11").toLocalDateTime(),
-                    ZoneId.systemDefault(),
-                    ZoneId.of("UTC"))
-            );
-            assertEquals(originalRow.getField(11), row.getTimestamp("f12").toInstant());
+                originalRow.getField(10), row.getTimestamp("f11").toLocalDateTime());
+            assertEquals(originalRow.getField(11),
+                row.getTimestamp("f12").toLocalDateTime().toInstant(ZoneOffset.UTC));
             assertEquals(originalRow.getField(12), row.getDate("f13").toLocalDate());
             assertEquals(String.valueOf(originalValue), row.getString("f14"));
             BigDecimal expectedBigDecimal1 = BigDecimal.valueOf(originalValue);
@@ -295,23 +289,5 @@ public class DeltaSinkWriteReadITCase {
                 row.getBigDecimal("f16").setScale(expectedBigDecimal2.scale()));
         }
         assertEquals(1, numRows);
-    }
-
-    /**
-     * Method for converting instances of {@link LocalDateTime} from one time zone to another.
-     * It is needed because when we write {@link LocalDateTime} (which does not store any time zone
-     * information) to a Parquet file and then read it back then internal Parquet reader interprets
-     * read value as UTC and automatically converts it to the system's time zone.
-     *
-     * @param time     {@link LocalDateTime} to convert
-     * @param fromZone source time zone
-     * @param toZone   target time zone
-     * @return representation of {@link LocalDateTime} in target time zone
-     */
-    public static LocalDateTime toZone(
-        final LocalDateTime time, final ZoneId fromZone, final ZoneId toZone) {
-        final ZonedDateTime zonedTime = time.atZone(fromZone);
-        final ZonedDateTime converted = zonedTime.withZoneSameInstant(toZone);
-        return converted.toLocalDateTime();
     }
 }

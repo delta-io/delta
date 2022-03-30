@@ -262,6 +262,7 @@ public class DeltaSinkTestUtils {
     public static org.apache.hadoop.conf.Configuration getHadoopConf() {
         org.apache.hadoop.conf.Configuration conf = new org.apache.hadoop.conf.Configuration();
         conf.set("parquet.compression", "SNAPPY");
+        conf.set("io.delta.standalone.PARQUET_DATA_TIME_ZONE_ID", "UTC");
         return conf;
     }
 
