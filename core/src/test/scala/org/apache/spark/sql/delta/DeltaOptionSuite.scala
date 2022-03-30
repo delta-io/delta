@@ -133,15 +133,47 @@ class DeltaOptionSuite extends QueryTest
     }
   }
 
-  test("support the maxRecordsPerFile write option") {
-    val tempDir = Utils.createTempDir()
+  test("support the maxRecordsPerFile write option: path") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withTable("maxRecordsPerFile") {
+        spark.range(100)
+          .write
+          .format("delta")
+          .option("maxRecordsPerFile", 5)
+          .save(path)
+        assert(FileUtils.listFiles(tempDir, Array("parquet"), false).size === 20)
+      }
+    }
+  }
 
-    spark.range(100)
-      .write
-      .format("delta")
-      .option("maxRecordsPerFile", 5)
-      .save(tempDir.toString)
+  test("support the maxRecordsPerFile write option: external table") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withTable("maxRecordsPerFile") {
+        spark.range(100)
+          .write
+          .format("delta")
+          .option("maxRecordsPerFile", 5)
+          .option("path", path)
+          .saveAsTable("maxRecordsPerFile")
+        assert(FileUtils.listFiles(tempDir, Array("parquet"), false).size === 20)
+      }
+    }
+  }
 
-    assert(FileUtils.listFiles(tempDir, Array("parquet"), false).size === 20)
+  test("support the maxRecordsPerFile write option: v2 write") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withTable("maxRecordsPerFile") {
+        spark.range(100)
+          .writeTo(s"maxRecordsPerFile")
+          .using("delta")
+          .option("maxRecordsPerFile", 5)
+          .tableProperty("location", path)
+          .create()
+        assert(FileUtils.listFiles(tempDir, Array("parquet"), false).size === 20)
+      }
+    }
   }
 }
