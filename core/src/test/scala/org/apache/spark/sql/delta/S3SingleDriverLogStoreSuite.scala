@@ -57,6 +57,9 @@ trait S3SingleDriverLogStoreSuiteBase extends LogStoreSuiteBase {
       fs.delete(deltas(2), true)
       fs.delete(delta2CRC, true)
 
+      // we should still be able to read deltas(2)
+      checkLogStoreList(store, deltas(0), Seq(0, 1, 2), sessionHadoopConf)
+
       // magically create a different version of file 2 in the FileSystem only
       val hackyStore = new HDFSLogStore(sparkConf, sessionHadoopConf)
       hackyStore.write(deltas(2), Iterator("foo"), overwrite = true, sessionHadoopConf)

@@ -482,7 +482,7 @@ abstract class PublicLogStoreSuite extends LogStoreSuiteBase {
   protected override def testInitFromSparkConf(): Unit = {
     test("instantiation through SparkConf") {
       assert(spark.sparkContext.getConf.get(logStoreClassConfKey) == publicLogStoreClassName)
-      assert(LogStore(spark).getClass.getName == logStoreClassName)
+      assert(LogStore(spark).getClass.getName == logStoreClassName) // LogStoreAdapter
       assert(LogStore(spark).asInstanceOf[LogStoreAdaptor]
         .logStoreImpl.getClass.getName == publicLogStoreClassName)
     }
@@ -563,12 +563,11 @@ abstract class PublicDelegatingLogStoreSuiteBase extends PublicLogStoreSuite {
           val schemeKey = LogStore.logStoreSchemeConfKey(scheme)
           assert(spark.sparkContext.getConf.get(schemeKey) == schemeClass)
         case _ =>
-
       }
-//      assert(spark.sparkContext.getConf.get(logStoreClassConfKey) == publicLogStoreClassName)
-//      assert(LogStore(spark).getClass.getName == logStoreClassName)
-//      assert(LogStore(spark).asInstanceOf[LogStoreAdaptor]
-//        .logStoreImpl.getClass.getName == publicLogStoreClassName)
+
+      assert(LogStore(spark).getClass.getName == logStoreClassName) // LogStoreAdapter
+      assert(LogStore(spark).asInstanceOf[LogStoreAdaptor]
+        .logStoreImpl.getClass.getName == classOf[io.delta.storage.DelegatingLogStore].getName)
     }
   }
 }
@@ -576,14 +575,21 @@ abstract class PublicDelegatingLogStoreSuiteBase extends PublicLogStoreSuite {
 /**
  * DelegatingLogStore will, by default, use HDFSLogStore.
  */
-class PublicDelegatingLogStoreDefaultSuite
+class PublicDelegatingDefaultLogStoreSuite
   extends PublicDelegatingLogStoreSuiteBase
   with HDFSLogStoreSuiteBase {
 
   override protected val schemeAndClass: Option[(String, String)] = None
 }
 
-class PublicDelegatingLogStoreAzureSuite
+/*
+TODO: these test suites won't work as intended since the file paths (i.e. deltas) used for testing
+      aren't using the right scheme. Thus, DelegatingLogStore.java will instantiate the wrong
+      LogStore based on the path's scheme. We will have to
+      - create deltas with corresponding scheme, e.g. s3:// + $filePath
+      - use a mock FileSystem
+
+class PublicDelegatingAzureLogStoreSuite
   extends PublicDelegatingLogStoreSuiteBase
   with AzureLogStoreSuiteBase {
 
@@ -592,7 +598,8 @@ class PublicDelegatingLogStoreAzureSuite
     classOf[io.delta.storage.AzureLogStore].getName)
 }
 
-class PublicDelegatingLogStoreS3SingleDriverSuite
+
+class PublicDelegatingS3SingleDriverLogStoreSuite
   extends PublicDelegatingLogStoreSuiteBase
   with S3SingleDriverLogStoreSuiteBase {
 
@@ -602,3 +609,5 @@ class PublicDelegatingLogStoreS3SingleDriverSuite
 
   override protected def canInvalidateCache: Boolean = false
 }
+*/
+
