@@ -74,3 +74,6 @@ available at https://www.contributor-covenant.org/version/1/4/code-of-conduct.ht
 
 For answers to common questions about this code of conduct, see
 https://www.contributor-covenant.org/faq
+
+## Linux Foundation Code of Conduct
+Your use is additionally subject to the [Linux Foundation Code of Conduct](https://lfprojects.org/policies/code-of-conduct/)

@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.{File, IOException}
 import java.net.URI
 
+import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
@@ -27,9 +28,15 @@ import org.apache.spark.sql.delta.storage._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path, RawLocalFileSystem}
 
-import org.apache.spark.sql.QueryTest
+import org.apache.spark.{SparkConf, SparkFunSuite}
+import org.apache.spark.sql.{LocalSparkSession, QueryTest, SparkSession}
+import org.apache.spark.sql.LocalSparkSession.withSparkSession
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
+
+/////////////////////
+// Base Test Suite //
+/////////////////////
 
 abstract class LogStoreSuiteBase extends QueryTest
   with LogStoreProvider
@@ -48,7 +55,7 @@ abstract class LogStoreSuiteBase extends QueryTest
   protected def testInitFromSparkConf(): Unit = {
     test("instantiation through SparkConf") {
       assert(spark.sparkContext.getConf.get(logStoreClassConfKey) == logStoreClassName)
-      assert(LogStore(spark.sparkContext).getClass.getName == logStoreClassName)
+      assert(LogStore(spark).getClass.getName == logStoreClassName)
     }
   }
 
@@ -206,9 +213,11 @@ abstract class LogStoreSuiteBase extends QueryTest
   }
 }
 
-class AzureLogStoreSuite extends LogStoreSuiteBase {
+///////////////////////////
+// Child-specific traits //
+///////////////////////////
 
-  override val logStoreClassName: String = classOf[AzureLogStore].getName
+trait AzureLogStoreSuiteBase extends LogStoreSuiteBase {
 
   testHadoopConf(
     expectedErrMsg = ".*No FileSystem for scheme.*fake.*",
@@ -301,17 +310,33 @@ trait HDFSLogStoreSuiteBase extends LogStoreSuiteBase {
     }
   }
 
+  test("Read after write consistency with msync") {
+     withTempDir { tempDir =>
+      val tsFSLocation = s"ts://${tempDir.getCanonicalFile}"
+      // Use the file scheme so that it uses a different FileSystem cached object
+      withSQLConf(
+        ("fs.ts.impl", classOf[TimestampLocalFileSystem].getCanonicalName),
+        ("fs.AbstractFileSystem.ts.impl",
+          classOf[TimestampAbstractFileSystem].getCanonicalName)) {
+        val store = createLogStore(spark)
+        val path = new Path(tsFSLocation, "1.json")
+
+        // Initialize the TimestampLocalFileSystem object which will be reused later due to the
+        // FileSystem cache
+        assert(store.listFrom(path, sessionHadoopConf).length == 0)
+
+        store.write(path, Iterator("zero", "none"), overwrite = false, sessionHadoopConf)
+        // Verify `msync` is called by checking whether `listFrom` returns the latest result.
+        // Without the `msync` call, the TimestampLocalFileSystem would not see this file.
+        assert(store.listFrom(path, sessionHadoopConf).length == 1)
+      }
+    }
+  }
+
   protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 
-class HDFSLogStoreSuite extends HDFSLogStoreSuiteBase {
-  override val logStoreClassName: String = classOf[HDFSLogStore].getName
-}
-
-class LocalLogStoreSuite extends LogStoreSuiteBase {
-
-  override val logStoreClassName: String = classOf[LocalLogStore].getName
-
+trait LocalLogStoreSuiteBase extends LogStoreSuiteBase {
   testHadoopConf(
     expectedErrMsg = ".*No FileSystem for scheme.*fake.*",
     "fs.fake.impl" -> classOf[FakeFileSystem].getName,
@@ -319,6 +344,26 @@ class LocalLogStoreSuite extends LogStoreSuiteBase {
 
   protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
+
+////////////////////////////////
+// Concrete child test suites //
+////////////////////////////////
+
+class HDFSLogStoreSuite extends HDFSLogStoreSuiteBase {
+  override val logStoreClassName: String = classOf[HDFSLogStore].getName
+}
+
+class AzureLogStoreSuite extends AzureLogStoreSuiteBase {
+  override val logStoreClassName: String = classOf[AzureLogStore].getName
+}
+
+class LocalLogStoreSuite extends LocalLogStoreSuiteBase {
+  override val logStoreClassName: String = classOf[LocalLogStore].getName
+}
+
+////////////////////////////////
+// File System Helper Classes //
+////////////////////////////////
 
 /** A fake file system to test whether session Hadoop configuration will be picked up. */
 class FakeFileSystem extends RawLocalFileSystem {
@@ -379,6 +424,40 @@ class FailingRenameAbstractFileSystem(uri: URI, conf: org.apache.hadoop.conf.Con
   }
 }
 
+///////////////////////////////////////////////////////////////////////////////
+// Fake LogStore class & test suite to check that hadoopConf is set properly //
+///////////////////////////////////////////////////////////////////////////////
+
+class FakePublicLogStore(initHadoopConf: Configuration)
+  extends io.delta.storage.HDFSLogStore(initHadoopConf) {
+
+  assert(initHadoopConf.get("spark.delta.storage.custom.key") == "foo")
+}
+
+/**
+ * We want to ensure that, to set configuration values for the Java LogStore implementations,
+ * users can simply use `--conf $key=$value`, instead of `--conf spark.hadoop.$key=$value`
+ */
+class CorrectHadoopConfLogStoreSuite
+  extends SparkFunSuite
+  with LocalSparkSession
+  with LogStoreProvider {
+
+  test("java LogStore is instantiated with hadoopConf with SQLConf values") {
+    val sparkConf = new SparkConf()
+      .setMaster("local")
+      // equivalent to --conf spark.delta.storage.custom.key=foo
+      .set("spark.delta.storage.custom.key", "foo")
+      .set("spark.delta.logStore.class", classOf[FakePublicLogStore].getName)
+
+    withSparkSession(SparkSession.builder.config(sparkConf).getOrCreate()) { spark =>
+      // this will instantiate the FakePublicLogStore above. If its assertion fails,
+      // then this test will fail
+      createLogStore(spark)
+    }
+  }
+}
+
 ////////////////////////////////////////////////////////////////////
 // Public LogStore (Java) suite tests from delta-storage artifact //
 ////////////////////////////////////////////////////////////////////
@@ -403,8 +482,8 @@ abstract class PublicLogStoreSuite extends LogStoreSuiteBase {
   protected override def testInitFromSparkConf(): Unit = {
     test("instantiation through SparkConf") {
       assert(spark.sparkContext.getConf.get(logStoreClassConfKey) == publicLogStoreClassName)
-      assert(LogStore(spark.sparkContext).getClass.getName == logStoreClassName)
-      assert(LogStore(spark.sparkContext).asInstanceOf[LogStoreAdaptor]
+      assert(LogStore(spark).getClass.getName == logStoreClassName)
+      assert(LogStore(spark).asInstanceOf[LogStoreAdaptor]
         .logStoreImpl.getClass.getName == publicLogStoreClassName)
     }
   }
@@ -413,6 +492,26 @@ abstract class PublicLogStoreSuite extends LogStoreSuiteBase {
 class PublicHDFSLogStoreSuite extends PublicLogStoreSuite with HDFSLogStoreSuiteBase {
   override protected val publicLogStoreClassName: String =
     classOf[io.delta.storage.HDFSLogStore].getName
+}
+
+class PublicS3SingleDriverLogStoreSuite
+  extends PublicLogStoreSuite
+  with S3SingleDriverLogStoreSuiteBase {
+
+  override protected val publicLogStoreClassName: String =
+    classOf[io.delta.storage.S3SingleDriverLogStore].getName
+
+  override protected def canInvalidateCache: Boolean = false
+}
+
+class PublicAzureLogStoreSuite extends PublicLogStoreSuite with AzureLogStoreSuiteBase {
+  override protected val publicLogStoreClassName: String =
+    classOf[io.delta.storage.AzureLogStore].getName
+}
+
+class PublicLocalLogStoreSuite extends PublicLogStoreSuite with LocalLogStoreSuiteBase {
+  override protected val publicLogStoreClassName: String =
+    classOf[io.delta.storage.LocalLogStore].getName
 }
 
 ///////////////////////////////////////////
@@ -439,13 +538,37 @@ abstract class PublicDelegatingLogStoreSuiteBase extends PublicLogStoreSuite {
    * `spark.delta.logStore.${scheme}.impl`) in the sparkConf
    */
   protected override def sparkConf = {
+    val _sparkConf = super.sparkConf
+    _sparkConf.remove(LogStore.logStoreClassConfKey)
+
     schemeAndClass match {
       case Some(x) =>
         val scheme = x._1
         val schemeClass = x._2
         val schemeKey = LogStore.logStoreSchemeConfKey(scheme)
-        super.sparkConf.set(schemeKey, schemeClass)
-      case _ => super.sparkConf
+        _sparkConf.set(schemeKey, schemeClass)
+      case _ =>
+        _sparkConf
+    }
+  }
+
+  protected override def testInitFromSparkConf(): Unit = {
+    test("instantiation through SparkConf") {
+      assert(!spark.sparkContext.getConf.contains(logStoreClassConfKey))
+
+      schemeAndClass match {
+        case Some(x) =>
+          val scheme = x._1
+          val schemeClass = x._2
+          val schemeKey = LogStore.logStoreSchemeConfKey(scheme)
+          assert(spark.sparkContext.getConf.get(schemeKey) == schemeClass)
+        case _ =>
+
+      }
+//      assert(spark.sparkContext.getConf.get(logStoreClassConfKey) == publicLogStoreClassName)
+//      assert(LogStore(spark).getClass.getName == logStoreClassName)
+//      assert(LogStore(spark).asInstanceOf[LogStoreAdaptor]
+//        .logStoreImpl.getClass.getName == publicLogStoreClassName)
     }
   }
 }
@@ -460,8 +583,22 @@ class PublicDelegatingLogStoreDefaultSuite
   override protected val schemeAndClass: Option[(String, String)] = None
 }
 
-// class PublicDelegatingLogStoreAzureSuite extends PublicDelegatingLogStoreSuiteBase {
-//   override protected val schemeAndClass: Option[(String, String)] = Some(
-//     DelegatingLogStore.azureSchemes.head,
-//     classOf[io.delta.storage.AzureLogStore].getName)
-// }
+class PublicDelegatingLogStoreAzureSuite
+  extends PublicDelegatingLogStoreSuiteBase
+  with AzureLogStoreSuiteBase {
+
+  override protected val schemeAndClass: Option[(String, String)] = Some(
+    io.delta.storage.DelegatingLogStore.AZURE_SCHEMES.asScala.head,
+    classOf[io.delta.storage.AzureLogStore].getName)
+}
+
+class PublicDelegatingLogStoreS3SingleDriverSuite
+  extends PublicDelegatingLogStoreSuiteBase
+  with S3SingleDriverLogStoreSuiteBase {
+
+  override protected val schemeAndClass: Option[(String, String)] = Some(
+    io.delta.storage.DelegatingLogStore.S3_SCHEMES.asScala.head,
+    classOf[io.delta.storage.S3SingleDriverLogStore].getName)
+
+  override protected def canInvalidateCache: Boolean = false
+}

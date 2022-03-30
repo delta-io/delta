@@ -334,3 +334,13 @@ class StatsCollectionSuite
   }
 }
 
+
+class StatsCollectionNameColumnMappingSuite extends StatsCollectionSuite
+  with DeltaColumnMappingEnableNameMode {
+
+  override protected def runOnlyTests = Seq(
+    "on write",
+    "recompute stats with partition predicates"
+  )
+}
+

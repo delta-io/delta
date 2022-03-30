@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 
 import org.apache.spark.sql.{AnalysisException, Row}
 import org.apache.spark.sql.catalyst.analysis.{Analyzer, ResolveSessionCatalog}
@@ -329,5 +329,11 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
 
 
 class MergeIntoSQLNameColumnMappingSuite extends MergeIntoSQLSuite
-  with DeltaColumnMappingEnableNameMode
-  with DeltaColumnMappingTestUtils
+  with DeltaColumnMappingEnableNameMode {
+
+  override protected def columnMappingMode: String = NameMapping.name
+
+  override protected def runOnlyTests: Seq[String] =
+    Seq("schema evolution - new nested column with update non-* and insert * - " +
+      "array of struct - longer target")
+}

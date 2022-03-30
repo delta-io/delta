@@ -130,4 +130,5 @@ class DeltaOptionSuite extends QueryTest
           "change the partition schema").getMessage)
     }
   }
+
 }

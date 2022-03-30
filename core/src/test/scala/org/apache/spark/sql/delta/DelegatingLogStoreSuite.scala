@@ -72,17 +72,17 @@ class DelegatingLogStoreSuite extends SparkFunSuite {
       expClassName: String): Unit = {
     val sparkConf = constructSparkConf(scheme, None, schemeConf)
     withSparkSession(SparkSession.builder.config(sparkConf).getOrCreate()) { spark =>
-      // scalastyle:off hadoopconfiguration
-      val hadoopConf = spark.sparkContext.hadoopConfiguration
-      // scalastyle:on hadoopconfiguration
+      // scalastyle:off deltahadoopconfiguration
+      val hadoopConf = spark.sessionState.newHadoopConf()
+      // scalastyle:on deltahadoopconfiguration
 
-      val actualLogStore = LogStore(spark.sparkContext)
+      val actualLogStore = LogStore(spark)
       val delegatedLogStore = new DelegatingLogStore(hadoopConf)
         .getDelegateByScheme(new Path(s"${scheme}://dummy"), hadoopConf)
 
       assert(actualLogStore.isInstanceOf[LogStoreAdaptor])
       assert(actualLogStore.asInstanceOf[LogStoreAdaptor]
-        .logStoreImpl.getClass.getName == expClassName)
+        .logStoreImpl.getClass.getName == classOf[DelegatingLogStore].getName)
       assert(delegatedLogStore.getClass.getName == expClassName)
     }
   }
@@ -94,8 +94,8 @@ class DelegatingLogStoreSuite extends SparkFunSuite {
     val sparkConf = constructSparkConf(
       scheme, Some(DelegatingLogStore.DEFAULT_HDFS_LOG_STORE_CLASS_NAME), None)
     withSparkSession(SparkSession.builder.config(sparkConf).getOrCreate()) { spark =>
-      assert(LogStore(spark.sparkContext).isInstanceOf[LogStoreAdaptor])
-      assert(LogStore(spark.sparkContext).asInstanceOf[LogStoreAdaptor]
+      assert(LogStore(spark).isInstanceOf[LogStoreAdaptor])
+      assert(LogStore(spark).asInstanceOf[LogStoreAdaptor]
         .logStoreImpl.getClass.getName == DelegatingLogStore.DEFAULT_HDFS_LOG_STORE_CLASS_NAME)
     }
   }
@@ -135,7 +135,7 @@ class DelegatingLogStoreSuite extends SparkFunSuite {
     val sparkConf = constructSparkConf(fakeSchemeWithNoDefault, classConf, schemeConf)
     val e = intercept[AnalysisException](
       withSparkSession(SparkSession.builder.config(sparkConf).getOrCreate()) { spark =>
-        LogStore(spark.sparkContext)
+        LogStore(spark)
       }
     )
     assert(e.getMessage.contains(
@@ -153,7 +153,7 @@ class DelegatingLogStoreSuite extends SparkFunSuite {
     val sparkConf = constructSparkConf("s3a", classConf, schemeConf)
     val e = intercept[AnalysisException](
       withSparkSession(SparkSession.builder.config(sparkConf).getOrCreate()) { spark =>
-        LogStore(spark.sparkContext)
+        LogStore(spark)
       }
     )
     assert(e.getMessage.contains(

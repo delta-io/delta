@@ -17,16 +17,15 @@
 package org.apache.spark.sql.delta
 
 import java.io.File
-import java.text.SimpleDateFormat
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
 
-import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.{DataFrame, QueryTest}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types._
 
 /** Base suite containing the restore tests. */
 trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession  with DeltaSQLCommandTest {
@@ -178,6 +177,76 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession  with Delt
       restoreTableToVersion(tempDir.getAbsolutePath, 2, false)
       checkAnswer(spark.read.format("delta").load(tempDir.getAbsolutePath), df1)
       assert(deltaLog.update().version == 4)
+    }
+  }
+
+  test("restore operation metrics in Delta table history") {
+    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+      withTempDir { tempDir =>
+        val df1 = Seq(1, 2, 3).toDF("id")
+        val df2 = Seq(4, 5, 6).toDF("id")
+        df1.write.format("delta").save(tempDir.getAbsolutePath)
+        val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+        df2.write.format("delta").mode("append").save(tempDir.getAbsolutePath)
+        assert(deltaLog.update().version == 1)
+
+        // we have two versions now, let's restore to version 0 first
+        restoreTableToVersion(tempDir.getAbsolutePath, 0, false)
+
+        val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tempDir.getAbsolutePath)
+
+        val actualOperationMetrics = deltaTable.history(1).select("operationMetrics")
+            .take(1)
+            .head
+            .getMap(0)
+            .asInstanceOf[Map[String, String]]
+
+        // File sizes are flaky due to differences in order of data (=> encoding size differences)
+        assert(actualOperationMetrics.get("tableSizeAfterRestore").isDefined)
+        assert(actualOperationMetrics.get("numOfFilesAfterRestore").get == "2")
+        assert(actualOperationMetrics.get("numRemovedFiles").get == "2")
+        assert(actualOperationMetrics.get("numRestoredFiles").get == "0")
+        // File sizes are flaky due to differences in order of data (=> encoding size differences)
+        assert(actualOperationMetrics.get("removedFilesSize").isDefined)
+        assert(actualOperationMetrics.get("restoredFilesSize").get == "0")
+      }
+    }
+  }
+
+  test("restore command output metrics") {
+    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+      withTempDir { tempDir =>
+        val df1 = Seq(1, 2, 3).toDF("id")
+        val df2 = Seq(4, 5, 6).toDF("id")
+        df1.write.format("delta").save(tempDir.getAbsolutePath)
+        val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+        df2.write.format("delta").mode("append").save(tempDir.getAbsolutePath)
+        assert(deltaLog.update().version == 1)
+
+        // we have two versions now, let's restore to version 0 first
+        val actualOutputMetrics = restoreTableToVersion(tempDir.getAbsolutePath, 0, false)
+
+        // verify the schema
+        val expectedRestoreOutputSchema = StructType(Seq(
+          StructField("table_size_after_restore", LongType),
+          StructField("num_of_files_after_restore", LongType),
+          StructField("num_removed_files", LongType),
+          StructField("num_restored_files", LongType),
+          StructField("removed_files_size", LongType),
+          StructField("restored_files_size", LongType)
+        ))
+        assert(actualOutputMetrics.schema == expectedRestoreOutputSchema)
+
+        val outputRow = actualOutputMetrics.take(1).head
+        // File sizes are flaky due to differences in order of data (=> encoding size differences)
+        assert(outputRow.getLong(0) > 0L) // table_size_after_restore
+        assert(outputRow.getLong(1) == 2L) // num_of_files_after_restore
+        assert(outputRow.getLong(2) == 2L) // num_removed_files
+        assert(outputRow.getLong(3) == 0L) // num_restored_files
+        // File sizes are flaky due to differences in order of data (=> encoding size differences)
+        assert(outputRow.getLong(4) > 0L) // removed_files_size
+        assert(outputRow.getLong(5) == 0L) // restored_files_size
+      }
     }
   }
 }

@@ -318,6 +318,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         latestMetadata.schema, spark.sessionState.conf).json
       latestMetadata.copy(schemaString = fixedSchema)
     }
+
+
     if (isCreatingNewTable) {
       // Check for the new protocol version after the removal of the unenforceable not null
       // constraints

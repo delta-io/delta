@@ -81,6 +81,15 @@ class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession  with Delta
 }
 
 
+class DeltaDDLNameColumnMappingSuite extends DeltaDDLSuite
+  with DeltaColumnMappingEnableNameMode {
+
+  override protected def runOnlyTests = Seq(
+    "create table with NOT NULL - check violation through file writing",
+    "ALTER TABLE CHANGE COLUMN with nullability change in struct type - relaxed"
+  )
+}
+
 
 abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
   import testImplicits._

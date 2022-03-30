@@ -60,7 +60,7 @@ class CheckConstraintsSuite extends QueryTest
       }
       // Make sure we're still getting a useful parse error, even though we do some complicated
       // internal stuff to persist the constraint. Unfortunately this test may be a bit fragile.
-      errorContains(e.getMessage, "mismatched input '<EOF>' expecting")
+      errorContains(e.getMessage, "Syntax error at or near end of input")
       errorContains(e.getMessage,
         """
           |== SQL ==

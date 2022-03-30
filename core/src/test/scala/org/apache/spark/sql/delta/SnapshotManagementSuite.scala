@@ -26,6 +26,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkException
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.storage.StorageLevel
 
 class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSparkSession {
 
@@ -302,6 +303,41 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
         versions = Array(3, 2, 1),
         expectedStartVersion = None,
         expectedEndVersion = None)
+    }
+  }
+
+  test("configurable snapshot cache storage level") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      spark.range(10).write.format("delta").save(path)
+      DeltaLog.clearCache()
+      assert(sparkContext.getPersistentRDDs.isEmpty)
+
+      withSQLConf(DeltaSQLConf.DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL.key -> "DISK_ONLY") {
+        spark.read.format("delta").load(path).collect()
+        val persistedRDDs = sparkContext.getPersistentRDDs
+        assert(persistedRDDs.size == 1)
+        assert(persistedRDDs.values.head.getStorageLevel == StorageLevel.DISK_ONLY)
+      }
+
+      DeltaLog.clearCache()
+      assert(sparkContext.getPersistentRDDs.isEmpty)
+
+      withSQLConf(DeltaSQLConf.DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL.key -> "NONE") {
+        spark.read.format("delta").load(path).collect()
+        val persistedRDDs = sparkContext.getPersistentRDDs
+        assert(persistedRDDs.size == 1)
+        assert(persistedRDDs.values.head.getStorageLevel == StorageLevel.NONE)
+      }
+
+      DeltaLog.clearCache()
+      assert(sparkContext.getPersistentRDDs.isEmpty)
+
+      withSQLConf(DeltaSQLConf.DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL.key -> "invalid") {
+        intercept[IllegalArgumentException] {
+          spark.read.format("delta").load(path).collect()
+        }
+      }
     }
   }
 }

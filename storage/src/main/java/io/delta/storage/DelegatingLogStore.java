@@ -37,11 +37,11 @@ public class DelegatingLogStore extends LogStore {
 
     private static final Logger LOG = LoggerFactory.getLogger(DelegatingLogStore.class);
 
-    public static final String DEFAULT_S3_LOG_STORE_CLASS_NAME = null;
-            // classOf[S3SingleDriverLogStore].getName();
+    public static final String DEFAULT_S3_LOG_STORE_CLASS_NAME =
+        S3SingleDriverLogStore.class.getName();
 
-    public static final String DEFAULT_AZURE_LOG_STORE_CLASS_NAME = null;
-            // classOf[AzureLogStore].getName();
+    public static final String DEFAULT_AZURE_LOG_STORE_CLASS_NAME =
+        AzureLogStore.class.getName();
 
     public static final String DEFAULT_HDFS_LOG_STORE_CLASS_NAME = HDFSLogStore.class.getName();
 
