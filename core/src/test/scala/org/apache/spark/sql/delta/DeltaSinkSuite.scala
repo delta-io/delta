@@ -21,6 +21,7 @@ import java.util.Locale
 
 import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.commons.io.FileUtils
 import org.scalatest.time.SpanSugar._
 
@@ -548,5 +549,18 @@ class DeltaSinkSuite extends StreamTest with DeltaColumnMappingTestUtils {
       }
     }
   }
+}
+
+
+class DeltaSinkNameColumnMappingSuite extends DeltaSinkSuite
+  with DeltaColumnMappingEnableNameMode {
+
+  override protected def runOnlyTests = Seq(
+    "append mode",
+    "complete mode",
+    "partitioned writing and batch reading",
+    "work with aggregation + watermark"
+  )
+
 }
 

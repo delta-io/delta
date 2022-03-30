@@ -18,7 +18,9 @@ package org.apache.spark.sql.delta.optimize
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.commands.optimize.{FileSizeStats, OptimizeMetrics}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import io.delta.tables.DeltaTable
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.functions.floor
@@ -102,6 +104,43 @@ trait OptimizeMetricsSuiteBase extends QueryTest
       spark.range(0, 10).write.format("delta").save(tempDir.toString)
       val res = sql(s"OPTIMIZE delta.`${tempDir.toString}`")
       assert(res.schema == optimizeSchema)
+    }
+  }
+
+  test("optimize operation metrics in Delta table history") {
+    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+      withTempDir { tempDir =>
+        val sampleData =
+          0.to(79).seq ++ 40.to(79).seq ++ 60.to(79).seq ++ 70.to(79).seq ++ 75.to(79).seq
+
+        // partition the data and write to test table
+        sampleData.toDF().withColumn("p", floor('value / 10)).repartition(4)
+            .write.partitionBy("p").format("delta").save(tempDir.toString)
+
+        spark.sql(s"OPTIMIZE delta.`${tempDir.toString}`") // run optimize on the table
+
+        val actualOperationMetrics = DeltaTable.forPath(spark, tempDir.getAbsolutePath)
+            .history(1)
+            .select("operationMetrics")
+            .take(1)
+            .head
+            .getMap(0)
+            .asInstanceOf[Map[String, String]]
+
+        // File sizes depend on the order of how they are merged (=> compression). In order to avoid
+        // flaky test, just test that the metric exists.
+        Seq(
+          "numAddedFiles",
+          "numAddedBytes",
+          "numRemovedBytes",
+          "numRemovedFiles",
+          "numRemovedBytes",
+          "minFileSize",
+          "maxFileSize",
+          "p25FileSize",
+          "p50FileSize",
+          "p75FileSize").foreach(metric => assert(actualOperationMetrics.get(metric).isDefined))
+      }
     }
   }
 

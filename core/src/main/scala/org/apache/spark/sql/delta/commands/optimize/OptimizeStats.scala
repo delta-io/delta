@@ -94,6 +94,42 @@ case class FileSizeStats(
   }
 }
 /**
+ * Percentiles on the file sizes in this batch.
+ * @param min Size of the smallest file
+ * @param p25 Size of the 25th percentile file
+ * @param p50 Size of the 50th percentile file
+ * @param p75 Size of the 75th percentile file
+ * @param max Size of the largest file
+ */
+case class FileSizeStatsWithHistogram(
+     min: Long,
+     p25: Long,
+     p50: Long,
+     p75: Long,
+     max: Long)
+
+object FileSizeStatsWithHistogram {
+
+  /**
+   * Creates a [[FileSizeStatsWithHistogram]] based on the passed sorted file sizes
+   * @return Some(fileSizeStatsWithHistogram) if sizes are non-empty, else returns None
+   */
+  def create(sizes: Seq[Long]): Option[FileSizeStatsWithHistogram] = {
+    if (sizes.isEmpty) {
+      return None
+    }
+    val count = sizes.length
+    Some(FileSizeStatsWithHistogram(
+      min = sizes.head,
+      // we do not need to ceil the computed index as arrays start at 0
+      p25 = sizes(count / 4),
+      p50 = sizes(count / 2),
+      p75 = sizes(count * 3 / 4),
+      max = sizes.last))
+  }
+}
+
+/**
  * Metrics returned by the optimize command.
  *
  * @param numFilesAdded number of files added by optimize

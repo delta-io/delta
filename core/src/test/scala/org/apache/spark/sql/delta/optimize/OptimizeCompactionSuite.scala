@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta.optimize
 
 import java.io.File
 
+import scala.collection.JavaConverters._
+
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -35,7 +37,8 @@ import org.apache.spark.sql.test.SharedSparkSession
  * Base class containing tests for Delta table Optimize (file compaction)
  */
 trait OptimizeCompactionSuiteBase extends QueryTest
-  with SharedSparkSession {
+  with SharedSparkSession
+  with DeltaColumnMappingTestUtils {
 
   import testImplicits._
 
@@ -75,6 +78,10 @@ trait OptimizeCompactionSuiteBase extends QueryTest
       deltaLog.update()
       assert(deltaLog.snapshot.version === versionBeforeOptimize + 1)
       checkDatasetUnorderly(data.toDF().as[Int], 1, 2, 3, 4, 5, 6)
+
+      // Make sure thread pool is shut down
+      assert(Thread.getAllStackTraces.keySet.asScala
+        .filter(_.getName.startsWith("OptimizeJob")).isEmpty)
     }
   }
 
@@ -115,9 +122,11 @@ trait OptimizeCompactionSuiteBase extends QueryTest
       val fileListBefore = txnBefore.filterFiles();
       val versionBefore = deltaLogBefore.snapshot.version
 
+      val id = "id".phy(deltaLogBefore)
+
       // Expect each partition have more than one file
       (0 to 1).foreach(partId =>
-        assert(fileListBefore.count(_.partitionValues === Map("id" -> partId.toString)) > 1))
+        assert(fileListBefore.count(_.partitionValues === Map(id -> partId.toString)) > 1))
 
       spark.sql(s"OPTIMIZE '$path'")
 
@@ -126,7 +135,7 @@ trait OptimizeCompactionSuiteBase extends QueryTest
       val fileListAfter = txnAfter.filterFiles();
 
       (0 to 1).foreach(partId =>
-        assert(fileListAfter.count(_.partitionValues === Map("id" -> partId.toString)) === 1))
+        assert(fileListAfter.count(_.partitionValues === Map(id -> partId.toString)) === 1))
 
       // version is incremented
       assert(deltaLogAfter.snapshot.version === versionBefore + 1)
@@ -156,8 +165,10 @@ trait OptimizeCompactionSuiteBase extends QueryTest
       val txnBefore = deltaLogBefore.startTransaction();
       val fileListBefore = txnBefore.filterFiles()
 
+      val id = "id".phy(deltaLogBefore)
+
       assert(fileListBefore.length >= 3)
-      assert(fileListBefore.count(_.partitionValues === Map("id" -> "0")) > 1)
+      assert(fileListBefore.count(_.partitionValues === Map(id -> "0")) > 1)
 
       val versionBefore = deltaLogBefore.snapshot.version
       spark.sql(s"OPTIMIZE '$path' WHERE id = 0")
@@ -167,12 +178,13 @@ trait OptimizeCompactionSuiteBase extends QueryTest
       val fileListAfter = txnAfter.filterFiles()
 
       assert(fileListBefore.length > fileListAfter.length)
+
       // Optimized partition should contain only one file
-      assert(fileListAfter.count(_.partitionValues === Map("id" -> "0")) === 1)
+      assert(fileListAfter.count(_.partitionValues === Map(id -> "0")) === 1)
 
       // File counts in partitions that are not part of the OPTIMIZE should remain the same
-      assert(fileListAfter.count(_.partitionValues === Map("id" -> "1")) ===
-                 fileListAfter.count(_.partitionValues === Map("id" -> "1")))
+      assert(fileListAfter.count(_.partitionValues === Map(id -> "1")) ===
+                 fileListAfter.count(_.partitionValues === Map(id -> "1")))
 
       // version is incremented
       assert(deltaLogAfter.snapshot.version === versionBefore + 1)
@@ -202,15 +214,18 @@ trait OptimizeCompactionSuiteBase extends QueryTest
       val fileListBefore = txnBefore.filterFiles()
       val versionBefore = deltaLogBefore.snapshot.version
 
-      val filesInEachPartitionBefore =
-        fileListBefore.groupBy(file => new Path(file.path).getParent.getName)
+      val partitionColumnPhysicalName = partitionColumn.phy(deltaLogBefore)
+
+      // we have only 1 partition here
+      val filesInEachPartitionBefore = groupInputFilesByPartition(
+        fileListBefore.map(_.path).toArray, deltaLogBefore)
 
       // There exist at least one file in each partition
       assert(filesInEachPartitionBefore.forall(_._2.length > 1))
 
       // And there is a partition for null values
       assert(filesInEachPartitionBefore.keys.exists(
-        _ === s"part=${ExternalCatalogUtils.DEFAULT_PARTITION_NAME}"))
+        _ === (partitionColumnPhysicalName, nullPartitionValue)))
 
       spark.sql(s"OPTIMIZE '$path'")
 
@@ -223,7 +238,7 @@ trait OptimizeCompactionSuiteBase extends QueryTest
 
       // Optimized partition should contain only one file in null partition
       assert(fileListAfter.count(
-        _.partitionValues === Map[String, String](partitionColumn -> null)) === 1)
+        _.partitionValues === Map[String, String](partitionColumnPhysicalName -> null)) === 1)
 
       // version is incremented
       assert(deltaLogAfter.snapshot.version === versionBefore + 1)
@@ -252,8 +267,12 @@ trait OptimizeCompactionSuiteBase extends QueryTest
       val txnBefore = deltaLogBefore.startTransaction();
       val fileListBefore = txnBefore.filterFiles()
       val versionBefore = deltaLogBefore.snapshot.version
+
+      val date = "date".phy(deltaLogBefore)
+      val part = "part".phy(deltaLogBefore)
+
       val fileCountInTestPartitionBefore = fileListBefore
-          .count(_.partitionValues === Map[String, String]("date" -> "2017-10-10", "part" -> "3"))
+          .count(_.partitionValues === Map[String, String](date -> "2017-10-10", part -> "3"))
 
       spark.sql(s"OPTIMIZE '$path' WHERE date = '2017-10-10' and part = 3")
 
@@ -267,7 +286,7 @@ trait OptimizeCompactionSuiteBase extends QueryTest
       // Optimized partition should contain only one file in null partition and less number
       // of files than before optimize
       val fileCountInTestPartitionAfter = fileListAfter
-          .count(_.partitionValues === Map[String, String]("date" -> "2017-10-10", "part" -> "3"))
+          .count(_.partitionValues === Map[String, String](date -> "2017-10-10", part -> "3"))
       assert(fileCountInTestPartitionAfter === 1L)
       assert(fileCountInTestPartitionBefore > fileCountInTestPartitionAfter,
              "Expected the partition to count less number of files after optimzie.")
@@ -352,3 +371,11 @@ trait OptimizeCompactionSuiteBase extends QueryTest
 class OptimizeCompactionSuite extends OptimizeCompactionSuiteBase
   with DeltaSQLCommandTest
 
+
+class OptimizeCompactionNameColumnMappingSuite extends OptimizeCompactionSuite
+  with DeltaColumnMappingEnableNameMode {
+  override protected def runOnlyTests = Seq(
+    "optimize command: on table with multiple partition columns",
+    "optimize command: on null partition columns"
+  )
+}

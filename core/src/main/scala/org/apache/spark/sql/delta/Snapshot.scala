@@ -94,44 +94,46 @@ class Snapshot(
   // We partition by path as it is likely the bulk of the data is add/remove.
   // Non-path based actions will be collocated to a single partition.
   private def stateReconstruction: Dataset[SingleAction] = {
-    recordFrameProfile("Delta", "snapshot.stateReconstruction") {
-      val implicits = spark.implicits
-      import implicits._
+    withDmqTag {
+      recordFrameProfile("Delta", "snapshot.stateReconstruction") {
+        val implicits = spark.implicits
+        import implicits._
 
-      // for serializability
-      val localMinFileRetentionTimestamp = minFileRetentionTimestamp
-      val localMinSetTransactionRetentionTimestamp = minSetTransactionRetentionTimestamp
-      val localLogPath = path.toUri
+        // for serializability
+        val localMinFileRetentionTimestamp = minFileRetentionTimestamp
+        val localMinSetTransactionRetentionTimestamp = minSetTransactionRetentionTimestamp
+        val localLogPath = path.toUri
 
-      val hadoopConf = spark.sparkContext.broadcast(
-        new SerializableConfiguration(deltaLog.newDeltaHadoopConf()))
-      var wrapPath = false
+        val hadoopConf = spark.sparkContext.broadcast(
+          new SerializableConfiguration(deltaLog.newDeltaHadoopConf()))
+        var wrapPath = false
 
-      val canonicalizePath = DeltaUDF.stringStringUdf((filePath: String) =>
-          Snapshot.canonicalizePath(filePath, hadoopConf.value.value)
-      )
-      val canonicalizedActions = loadActions
-        .withColumn(
-          "add",
-          when(
-            col("add").isNotNull,
-            col("add").withField("path", canonicalizePath(col("add.path")))))
-        .withColumn(
-          "remove",
-          when(
-            col("remove").isNotNull,
-            col("remove").withField("path", canonicalizePath(col("remove.path")))))
+        val canonicalizePath = DeltaUDF.stringStringUdf((filePath: String) =>
+            Snapshot.canonicalizePath(filePath, hadoopConf.value.value)
+        )
+        val canonicalizedActions = loadActions
+          .withColumn(
+            "add",
+            when(
+              col("add").isNotNull,
+              col("add").withField("path", canonicalizePath(col("add.path")))))
+          .withColumn(
+            "remove",
+            when(
+              col("remove").isNotNull,
+              col("remove").withField("path", canonicalizePath(col("remove.path")))))
 
-      repartitionAndSortActionsByVersion(canonicalizedActions)
-        .as[SingleAction]
-        .mapPartitions { iter =>
-          val state = new InMemoryLogReplay(
-            localMinFileRetentionTimestamp,
-            localMinSetTransactionRetentionTimestamp)
+        repartitionAndSortActionsByVersion(canonicalizedActions)
+          .as[SingleAction]
+          .mapPartitions { iter =>
+            val state = new InMemoryLogReplay(
+              localMinFileRetentionTimestamp,
+              localMinSetTransactionRetentionTimestamp)
 
-          state.append(0, iter.map(_.unwrap))
-          state.checkpoint.map(_.wrap)
-        }
+            state.append(0, iter.map(_.unwrap))
+            state.checkpoint.map(_.wrap)
+          }
+      }
     }
   }
 
@@ -148,14 +150,19 @@ class Snapshot(
   def redactedPath: String =
     Utils.redact(spark.sessionState.conf.stringRedactionPattern, path.toUri.toString)
 
-  private lazy val cachedState =
+  private lazy val cachedState = withDmqTag {
     cacheDS(stateReconstruction, s"Delta Table State #$version - $redactedPath")
+  }
 
   /** The current set of actions in this [[Snapshot]] as a typed Dataset. */
-  def stateDS: Dataset[SingleAction] = cachedState.getDS
+  def stateDS: Dataset[SingleAction] = withDmqTag {
+    cachedState.getDS
+  }
 
   /** The current set of actions in this [[Snapshot]] as plain Rows */
-  def stateDF: DataFrame = cachedState.getDF
+  def stateDF: DataFrame = withDmqTag {
+    cachedState.getDF
+  }
 
   /** Helper method to log missing actions when state reconstruction checks are not enabled */
   protected def logMissingActionWarning(action: String): Unit = {
@@ -194,36 +201,38 @@ class Snapshot(
    */
   protected lazy val computedState: State = {
     withStatusCode("DELTA", s"Compute snapshot for version: $version") {
-      recordFrameProfile("Delta", "snapshot.computedState") {
-        val startTime = System.nanoTime()
-        val aggregations =
-          aggregationsToComputeState.map { case (alias, agg) => agg.as(alias) }.toSeq
-        val _computedState = stateDF.select(aggregations: _*).as[State](stateEncoder).first()
-        val stateReconstructionCheck = spark.sessionState.conf.getConf(
-          DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED)
-        if (_computedState.protocol == null) {
-          recordDeltaEvent(
-            deltaLog,
-            opType = "delta.assertions.missingAction",
-            data = Map(
-              "version" -> version.toString, "action" -> "Protocol", "source" -> "Snapshot"))
-          if (stateReconstructionCheck) {
-            throw DeltaErrors.actionNotFoundException("protocol", version)
+      withDmqTag {
+        recordFrameProfile("Delta", "snapshot.computedState") {
+          val startTime = System.nanoTime()
+          val aggregations =
+            aggregationsToComputeState.map { case (alias, agg) => agg.as(alias) }.toSeq
+          val _computedState = stateDF.select(aggregations: _*).as[State](stateEncoder).first()
+          val stateReconstructionCheck = spark.sessionState.conf.getConf(
+            DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED)
+          if (_computedState.protocol == null) {
+            recordDeltaEvent(
+              deltaLog,
+              opType = "delta.assertions.missingAction",
+              data = Map(
+                "version" -> version.toString, "action" -> "Protocol", "source" -> "Snapshot"))
+            if (stateReconstructionCheck) {
+              throw DeltaErrors.actionNotFoundException("protocol", version)
+            }
           }
-        }
-        if (_computedState.metadata == null) {
-          recordDeltaEvent(
-            deltaLog,
-            opType = "delta.assertions.missingAction",
-            data = Map(
-              "version" -> version.toString, "action" -> "Metadata", "source" -> "Metadata"))
-          if (stateReconstructionCheck) {
-            throw DeltaErrors.actionNotFoundException("metadata", version)
+          if (_computedState.metadata == null) {
+            recordDeltaEvent(
+              deltaLog,
+              opType = "delta.assertions.missingAction",
+              data = Map(
+                "version" -> version.toString, "action" -> "Metadata", "source" -> "Metadata"))
+            if (stateReconstructionCheck) {
+              throw DeltaErrors.actionNotFoundException("metadata", version)
+            }
+            logMissingActionWarning("metadata")
+            _computedState.copy(metadata = Metadata())
+          } else {
+            _computedState
           }
-          logMissingActionWarning("metadata")
-          _computedState.copy(metadata = Metadata())
-        } else {
-          _computedState
         }
       }
     }

@@ -73,6 +73,16 @@ private[delta] case class IndexedFile(
       cdc
     }
   }
+
+  def getFileSize: Long = {
+    if (add != null) {
+      add.size
+    } else if (remove != null) {
+      remove.size.getOrElse(0)
+    } else {
+      cdc.size
+    }
+  }
 }
 
 /**
@@ -126,18 +136,34 @@ trait DeltaSourceBase extends Source
       val fileActionsIter = changes.takeWhile { case IndexedFile(version, index, _, _, _, _) =>
         version < endOffset.reservoirVersion ||
           (version == endOffset.reservoirVersion && index <= endOffset.index)
-      }.collect { case indexedFile: IndexedFile if indexedFile.getFileAction != null =>
-        (indexedFile.version, indexedFile.getFileAction)
       }
-      val fileActions =
-        fileActionsIter.filter(a => excludeRegex.forall(_.findFirstIn(a._2.path).isEmpty))
-      val addFiles = fileActions.map(_._2)
-        .filter(_.isInstanceOf[AddFile]).asInstanceOf[Iterator[AddFile]]
 
-      deltaLog.createDataFrame(deltaLog.snapshot, addFiles.toArray[AddFile], isStreaming = true)
+      val filteredIndexedFiles = fileActionsIter.filter { indexedFile =>
+        indexedFile.getFileAction != null &&
+          excludeRegex.forall(_.findFirstIn(indexedFile.getFileAction.path).isEmpty)
+      }
+
+      createDataFrame(filteredIndexedFiles)
     } finally {
       changes.close()
     }
+  }
+
+  /**
+   * Given an iterator of file actions, create a DataFrame representing the files added to a table
+   * Only AddFile actions will be used to create the DataFrame.
+   * @param indexedFiles actions iterator from which to generate the DataFrame.
+   */
+  protected def createDataFrame(indexedFiles: Iterator[IndexedFile]): DataFrame = {
+    val addFilesList = indexedFiles
+        .map(_.getFileAction)
+        .filter(_.isInstanceOf[AddFile])
+        .asInstanceOf[Iterator[AddFile]].toArray
+
+    deltaLog.createDataFrame(
+      deltaLog.snapshot,
+      addFilesList,
+      isStreaming = true)
   }
 
 }

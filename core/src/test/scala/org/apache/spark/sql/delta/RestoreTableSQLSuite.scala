@@ -77,3 +77,52 @@ class RestoreTableSQLSuite extends RestoreTableSuiteBase {
     }
   }
 }
+
+
+class RestoreTableSQLNameColumnMappingSuite extends RestoreTableSQLSuite
+  with DeltaColumnMappingEnableNameMode {
+
+  import testImplicits._
+
+  override protected def runOnlyTests = Seq(
+    "path based table",
+    "metastore based table"
+  )
+
+  test("restore prior to column mapping upgrade should fail") {
+    withTempDir { tempDir =>
+      val df1 = Seq(1, 2, 3).toDF("id")
+      val df2 = Seq(4, 5, 6).toDF("id")
+
+      def deltaLog: DeltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+
+      withColumnMappingConf("none") {
+        df1.write.format("delta").save(tempDir.getAbsolutePath)
+        require(deltaLog.update().version == 0)
+
+        df2.write.format("delta").mode("append").save(tempDir.getAbsolutePath)
+        assert(deltaLog.update().version == 1)
+      }
+
+      // upgrade to column mapping mode
+      sql(
+        s"""
+           |ALTER TABLE delta.`$tempDir`
+           |SET TBLPROPERTIES (
+           |  ${DeltaConfigs.COLUMN_MAPPING_MODE.key} = '$columnMappingModeString',
+           |  ${DeltaConfigs.MIN_READER_VERSION.key} = '2',
+           |  ${DeltaConfigs.MIN_WRITER_VERSION.key} = '5'
+           |)
+           |""".stripMargin)
+
+      assert(deltaLog.update().version == 2)
+
+      // try restore back to version 1 before column mapping should fail
+      intercept[ColumnMappingUnsupportedException] {
+        restoreTableToVersion(tempDir.getAbsolutePath, version = 1, isTable = false)
+      }
+    }
+  }
+
+}
+
