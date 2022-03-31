@@ -60,7 +60,7 @@ num_rows = int(os.environ.get("DELTA_NUM_ROWS", 16))
 delta_storage = os.environ.get("DELTA_STORAGE", "io.delta.storage.DynamoDBLogStore")
 dynamo_table_name = os.environ.get("DELTA_DYNAMO_TABLE", "delta_log_test")
 dynamo_region = os.environ.get("DELTA_DYNAMO_REGION", "us-west-2")
-dynamo_error_rates = os.environ.get("DELTA_DYNAMO_ERROR_RATES", "write_copy_temp_file=0.2,write_put_db_entry=0.2,fix_delta_log_copy_temp_file=0.2, fix_delta_log_put_db_entry=0.2")
+dynamo_error_rates = os.environ.get("DELTA_DYNAMO_ERROR_RATES", "")
 
 if delta_table_path is None:
     print(f"\nSkipping Python test {os.path.basename(__file__)} due to the missing env variable "
@@ -75,6 +75,7 @@ concurrent readers: {concurrent_readers}
 number of rows: {num_rows}
 delta storage: {delta_storage}
 dynamo table name: {dynamo_table_name}
+{"dynamo_error_rates: {}".format(dynamo_error_rates) if dynamo_error_rates else ""}
 =====================
 """
 print(test_log)
