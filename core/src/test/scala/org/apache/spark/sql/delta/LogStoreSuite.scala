@@ -240,6 +240,7 @@ trait GCSLogStoreSuiteBase extends LogStoreSuiteBase {
       }
     }
   }
+
   test("runInNewThread") {
     import io.delta.storage.internal.ThreadUtils.runInNewThread
 
@@ -280,7 +281,6 @@ trait GCSLogStoreSuiteBase extends LogStoreSuiteBase {
     assert(fileAlreadyExistsException.getMessage === fileAlreadyExistsExceptionMessage)
     assert(fileAlreadyExistsException.getStackTrace.mkString("\n")
       .contains("... run in separate thread using ThreadUtils"))
-
   }
 }
 
