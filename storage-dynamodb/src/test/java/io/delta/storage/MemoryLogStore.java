@@ -19,6 +19,7 @@ package io.delta.storage;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import java.io.IOException;
+import java.util.Comparator;
 import java.util.concurrent.ConcurrentHashMap;
 
 import java.util.Optional;
@@ -63,8 +64,7 @@ public class MemoryLogStore extends BaseExternalLogStore {
             .values()
             .stream()
             .filter(item -> item.tablePath.equals(tablePath))
-            .sorted((a, b) -> b.absoluteFilePath().compareTo(a.absoluteFilePath()))
-            .findFirst();
+            .max(Comparator.comparing(ExternalCommitEntry::absoluteFilePath));
     }
 
     static String createKey(String tablePath, String fileName) {
