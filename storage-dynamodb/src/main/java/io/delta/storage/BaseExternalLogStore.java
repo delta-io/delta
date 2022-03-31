@@ -165,7 +165,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
             writePutCompleteDbEntry(entry);
         } catch (Throwable e) {
             LOG.info(
-                "{}: ignoring recoverable error: {}", e.getClass().getSimpleName(), e
+                "{}: ignoring recoverable error", e.getClass().getSimpleName(), e
             );
         }
     }
@@ -300,7 +300,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
                 LOG.info("fixed {}", entry.fileName);
                 return;
             } catch(Throwable e) {
-                LOG.info("{}: {}", e.getClass().getSimpleName(), e);
+                LOG.info("{}:", e.getClass().getSimpleName(), e);
                 if (retry >= 3) {
                     throw e;
                 }
