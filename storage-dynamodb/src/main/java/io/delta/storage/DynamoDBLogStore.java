@@ -71,10 +71,10 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
     private static final Logger LOG = LoggerFactory.getLogger(DynamoDBLogStore.class);
 
     /**
-     * Configuration keys for the DynamoDB client
+     * Configuration keys for the DynamoDB client, with prefix `spark.delta.DynamoDBLogStore.`
      */
-    private static final String DBB_CLIENT_TABLE = "tableName";
-    private static final String DBB_CLIENT_REGION = "region";
+    private static final String DBB_CLIENT_TABLE = "ddb.tableName";
+    private static final String DBB_CLIENT_REGION = "ddb.region";
     private static final String DBB_CLIENT_CREDENTIALS_PROVIDER = "credentials.provider";
 
     /**
