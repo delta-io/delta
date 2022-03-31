@@ -178,16 +178,12 @@ lazy val storage = (project in file("storage"))
   )
 
 lazy val storageDynamodb = (project in file("storage-dynamodb"))
-  // TODO: uncomment after refactoring from scala -> java
-  // .dependsOn(storage % "compile->compile;test->test;provided->provided")
-  // .dependsOn(core % "test->test")
-
-  // TODO: delete after refactoring from scala -> java. Keep delta-core dependency for now.
-  .dependsOn(core % "compile->compile;test->test;provided->provided")
+  .dependsOn(storage % "compile->compile;test->test;provided->provided")
+  .dependsOn(core % "test->test")
   .settings (
     name := "delta-storage-dynamodb",
     commonSettings,
-    releaseSettings, // TODO: proper artifact name
+    releaseSettings, // TODO: proper artifact name with no scala version
     libraryDependencies ++= Seq(
       "com.amazonaws" % "aws-java-sdk" % "1.7.4" % "provided"
     )
