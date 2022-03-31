@@ -86,11 +86,13 @@ spark = SparkSession \
     .master("local[*]") \
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
     .config("spark.delta.logStore.class", delta_storage) \
-    .config("spark.delta.DynamoDBLogStore.tableName", dynamo_table_name) \
-    .config("spark.delta.DynamoDBLogStore.region", dynamo_region) \
+    .config("spark.delta.DynamoDBLogStore.ddb.tableName", dynamo_table_name) \
+    .config("spark.delta.DynamoDBLogStore.ddb.region", dynamo_region) \
     .config("spark.delta.DynamoDBLogStore.errorRates", dynamo_error_rates) \
     .getOrCreate()
-spark.sparkContext.setLogLevel("INFO")
+
+# spark.sparkContext.setLogLevel("INFO")
+
 data = spark.createDataFrame([], "id: int, a: int")
 data.write.format("delta").mode("overwrite").partitionBy("id").save(delta_table_path)
 
