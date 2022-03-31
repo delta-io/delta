@@ -28,13 +28,43 @@ import org.apache.spark.sql.delta.util.DeltaFileOperations.absolutePath
 
 import org.apache.spark.sql.{Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.expressions.Literal
+import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Literal}
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.IGNORE_MISSING_FILES
+import org.apache.spark.sql.types.LongType
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.SerializableConfiguration
+
+/** Base trait class for RESTORE. Defines command output schema and metrics. */
+trait RestoreTableCommandBase {
+
+  // RESTORE operation metrics
+  val TABLE_SIZE_AFTER_RESTORE = "tableSizeAfterRestore"
+  val NUM_OF_FILES_AFTER_RESTORE = "numOfFilesAfterRestore"
+  val NUM_REMOVED_FILES = "numRemovedFiles"
+  val NUM_RESTORED_FILES = "numRestoredFiles"
+  val REMOVED_FILES_SIZE = "removedFilesSize"
+  val RESTORED_FILES_SIZE = "restoredFilesSize"
+
+  // SQL way column names for RESTORE command output
+  private val COLUMN_TABLE_SIZE_AFTER_RESTORE = "table_size_after_restore"
+  private val COLUMN_NUM_OF_FILES_AFTER_RESTORE = "num_of_files_after_restore"
+  private val COLUMN_NUM_REMOVED_FILES = "num_removed_files"
+  private val COLUMN_NUM_RESTORED_FILES = "num_restored_files"
+  private val COLUMN_REMOVED_FILES_SIZE = "removed_files_size"
+  private val COLUMN_RESTORED_FILES_SIZE = "restored_files_size"
+
+  val outputSchema: Seq[Attribute] = Seq(
+    AttributeReference(COLUMN_TABLE_SIZE_AFTER_RESTORE, LongType)(),
+    AttributeReference(COLUMN_NUM_OF_FILES_AFTER_RESTORE, LongType)(),
+    AttributeReference(COLUMN_NUM_REMOVED_FILES, LongType)(),
+    AttributeReference(COLUMN_NUM_RESTORED_FILES, LongType)(),
+    AttributeReference(COLUMN_REMOVED_FILES_SIZE, LongType)(),
+    AttributeReference(COLUMN_RESTORED_FILES_SIZE, LongType)()
+  )
+}
 
 /**
  * Perform restore of delta table to a specified version or timestamp
@@ -55,7 +85,10 @@ import org.apache.spark.util.SerializableConfiguration
  */
 case class RestoreTableCommand(
     sourceTable: DeltaTableV2,
-    targetIdent: TableIdentifier) extends LeafRunnableCommand with DeltaCommand {
+    targetIdent: TableIdentifier)
+  extends LeafRunnableCommand with DeltaCommand with RestoreTableCommandBase {
+
+  override val output: Seq[Attribute] = outputSchema
 
   override def run(spark: SparkSession): Seq[Row] = {
     val deltaLog = sourceTable.deltaLog
@@ -129,10 +162,16 @@ case class RestoreTableCommand(
           addActions ++ removeActions,
           DeltaOperations.Restore(version, timestamp),
           Map.empty,
-          metrics)
-      }
+          metrics.mapValues(_.toString).toMap)
 
-      Seq.empty[Row]
+        Seq(Row(
+          metrics.get(TABLE_SIZE_AFTER_RESTORE),
+          metrics.get(NUM_OF_FILES_AFTER_RESTORE),
+          metrics.get(NUM_REMOVED_FILES),
+          metrics.get(NUM_RESTORED_FILES),
+          metrics.get(REMOVED_FILES_SIZE),
+          metrics.get(RESTORED_FILES_SIZE)))
+      }
     }
   }
 
@@ -159,7 +198,7 @@ case class RestoreTableCommand(
     toAdd: Dataset[AddFile],
     toRemove: Dataset[RemoveFile],
     snapshot: Snapshot
-  ): Map[String, String] = {
+  ): Map[String, Long] = {
     import toAdd.sparkSession.implicits._
 
     val (numRestoredFiles, restoredFilesSize) = toAdd
@@ -169,13 +208,13 @@ case class RestoreTableCommand(
       .agg("size" -> "count", "size" -> "sum").as[(Long, Option[Long])].head()
 
     Map(
-      "numRestoredFiles" -> numRestoredFiles,
-      "restoredFilesSize" -> restoredFilesSize.getOrElse(0),
-      "numRemovedFiles" -> numRemovedFiles,
-      "removedFilesSize" -> removedFilesSize.getOrElse(0),
-      "numOfFilesAfterRestore" -> snapshot.numOfFiles,
-      "tableSizeAfterRestore" -> snapshot.sizeInBytes
-    ).mapValues(_.toString).toMap
+      NUM_RESTORED_FILES -> numRestoredFiles,
+      RESTORED_FILES_SIZE -> restoredFilesSize.getOrElse(0),
+      NUM_REMOVED_FILES -> numRemovedFiles,
+      REMOVED_FILES_SIZE -> removedFilesSize.getOrElse(0),
+      NUM_OF_FILES_AFTER_RESTORE -> snapshot.numOfFiles,
+      TABLE_SIZE_AFTER_RESTORE -> snapshot.sizeInBytes
+    )
   }
 
   /* Prevent users from running restore to table version with missed
