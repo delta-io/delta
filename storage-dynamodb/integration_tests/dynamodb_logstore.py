@@ -131,3 +131,14 @@ assert actual == num_rows
 
 t = time.time() - start_t
 print(f"{num_rows / t:.02f} tx / sec")
+
+import boto3
+from botocore.config import Config
+my_config = Config(
+    region_name=dynamo_region,
+)
+dynamodb = boto3.resource('dynamodb',  config=my_config)
+table = dynamodb.Table(dynamo_table_name)  # this ensures we actually used/created the input table
+response = table.scan()
+items = response['Items']
+print(items[0])  # print for manual validation
