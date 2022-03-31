@@ -18,20 +18,19 @@ package org.apache.spark.sql.delta
 
 import java.io.{File, IOException}
 import java.net.URI
-
 import scala.collection.mutable.ArrayBuffer
-
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.storage._
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileSystem, Path, RawLocalFileSystem}
-
+import org.apache.hadoop.fs.{FileAlreadyExistsException, FileSystem, Path, RawLocalFileSystem}
 import org.apache.spark.{SparkConf, SparkFunSuite}
 import org.apache.spark.sql.{LocalSparkSession, QueryTest, SparkSession}
 import org.apache.spark.sql.LocalSparkSession.withSparkSession
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
+
+import scala.util.Random
 
 /////////////////////
 // Base Test Suite //
@@ -344,6 +343,74 @@ trait LocalLogStoreSuiteBase extends LogStoreSuiteBase {
   protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 
+trait GCSLogStoreSuiteBase extends LogStoreSuiteBase {
+
+  testHadoopConf(
+    expectedErrMsg = ".*No FileSystem for scheme.*fake.*",
+    "fs.fake.impl" -> classOf[FakeFileSystem].getName,
+    "fs.fake.impl.disable.cache" -> "true")
+
+  protected def shouldUseRenameToWriteCheckpoint: Boolean = false
+
+  test("gcs write should happen in a new thread") {
+    withTempDir { tempDir =>
+      // Use `FakeGCSFileSystem` to verify we write in the correct thread.
+      withSQLConf(
+        "fs.gs.impl" -> classOf[FakeGCSFileSystem].getName,
+        "fs.gs.impl.disable.cache" -> "true") {
+        val store = createLogStore(spark)
+        store.write(
+          new Path(s"gs://${tempDir.getCanonicalPath}", "1.json"),
+          Iterator("foo"),
+          overwrite = false,
+          sessionHadoopConf)
+      }
+    }
+  }
+  test("runInNewThread") {
+    import io.delta.storage.internal.ThreadUtils.runInNewThread
+
+    assert(runInNewThread("thread-name",
+      true,
+      () => {Thread.currentThread().getName}) === "thread-name")
+    assert(runInNewThread("thread-name",
+      true,
+      () => {
+        Thread.currentThread().isDaemon
+      }))
+    assert(runInNewThread("thread-name",
+      false,
+      () => {
+        Thread.currentThread().isDaemon
+      }) == false)
+
+    val ioExceptionMessage = "test" + Random.nextInt()
+    val ioException = intercept[IOException] {
+      runInNewThread("thread-name",
+        true,
+        () => {
+          throw new IOException(ioExceptionMessage)
+        })
+    }
+    assert(ioException.getMessage === ioExceptionMessage)
+    assert(ioException.getStackTrace.mkString("\n")
+      .contains("... run in separate thread using ThreadUtils"))
+
+    val fileAlreadyExistsExceptionMessage = "test" + Random.nextInt()
+    val fileAlreadyExistsException = intercept[FileAlreadyExistsException] {
+      runInNewThread("thread-name",
+        true,
+        () => {
+          throw new FileAlreadyExistsException(fileAlreadyExistsExceptionMessage)
+        })
+    }
+    assert(fileAlreadyExistsException.getMessage === fileAlreadyExistsExceptionMessage)
+    assert(fileAlreadyExistsException.getStackTrace.mkString("\n")
+      .contains("... run in separate thread using ThreadUtils"))
+
+  }
+}
+
 ////////////////////////////////
 // Concrete child test suites //
 ////////////////////////////////
@@ -506,4 +573,9 @@ class PublicAzureLogStoreSuite extends PublicLogStoreSuite with AzureLogStoreSui
 class PublicLocalLogStoreSuite extends PublicLogStoreSuite with LocalLogStoreSuiteBase {
   override protected val publicLogStoreClassName: String =
     classOf[io.delta.storage.LocalLogStore].getName
+}
+
+class PublicGCSLogStoreSuite extends PublicLogStoreSuite with GCSLogStoreSuiteBase {
+  override protected val publicLogStoreClassName: String =
+    classOf[io.delta.storage.GCSLogStore].getName
 }

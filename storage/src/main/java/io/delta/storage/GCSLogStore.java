@@ -18,7 +18,6 @@ package io.delta.storage;
 
 import com.google.common.base.Throwables;
 import io.delta.storage.internal.ThreadUtils;
-import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileSystem;
