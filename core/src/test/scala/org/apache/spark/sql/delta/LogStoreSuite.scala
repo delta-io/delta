@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.io.{File, IOException}
 import java.net.URI
+import scala.util.Random
 import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.AddFile
@@ -29,8 +30,6 @@ import org.apache.spark.sql.{LocalSparkSession, QueryTest, SparkSession}
 import org.apache.spark.sql.LocalSparkSession.withSparkSession
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
-
-import scala.util.Random
 
 /////////////////////
 // Base Test Suite //
@@ -372,17 +371,16 @@ trait GCSLogStoreSuiteBase extends LogStoreSuiteBase {
 
     assert(runInNewThread("thread-name",
       true,
-      () => {Thread.currentThread().getName}) === "thread-name")
+      () => { Thread.currentThread().getName}) === "thread-name"
+    )
     assert(runInNewThread("thread-name",
       true,
-      () => {
-        Thread.currentThread().isDaemon
-      }))
+      () => { Thread.currentThread().isDaemon })
+    )
     assert(runInNewThread("thread-name",
       false,
-      () => {
-        Thread.currentThread().isDaemon
-      }) == false)
+      () => { Thread.currentThread().isDaemon }) == false
+    )
 
     val ioExceptionMessage = "test" + Random.nextInt()
     val ioException = intercept[IOException] {
