@@ -20,16 +20,22 @@ import java.io.{File, IOException}
 import java.net.URI
 
 import scala.collection.mutable.ArrayBuffer
-import scala.util.Random
 
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.storage._
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileAlreadyExistsException, FileSystem, Path, RawLocalFileSystem}
-import org.apache.spark.sql.QueryTest
+import org.apache.hadoop.fs.{FileSystem, Path, RawLocalFileSystem}
+
+import org.apache.spark.{SparkConf, SparkFunSuite}
+import org.apache.spark.sql.{LocalSparkSession, QueryTest, SparkSession}
+import org.apache.spark.sql.LocalSparkSession.withSparkSession
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
+
+/////////////////////
+// Base Test Suite //
+/////////////////////
 
 abstract class LogStoreSuiteBase extends QueryTest
   with LogStoreProvider
@@ -48,7 +54,7 @@ abstract class LogStoreSuiteBase extends QueryTest
   protected def testInitFromSparkConf(): Unit = {
     test("instantiation through SparkConf") {
       assert(spark.sparkContext.getConf.get(logStoreClassConfKey) == logStoreClassName)
-      assert(LogStore(spark.sparkContext).getClass.getName == logStoreClassName)
+      assert(LogStore(spark).getClass.getName == logStoreClassName)
     }
   }
 
@@ -206,6 +212,10 @@ abstract class LogStoreSuiteBase extends QueryTest
   }
 }
 
+///////////////////////////
+// Child-specific traits //
+///////////////////////////
+
 trait AzureLogStoreSuiteBase extends LogStoreSuiteBase {
 
   testHadoopConf(
@@ -214,74 +224,6 @@ trait AzureLogStoreSuiteBase extends LogStoreSuiteBase {
     "fs.fake.impl.disable.cache" -> "true")
 
   protected def shouldUseRenameToWriteCheckpoint: Boolean = true
-}
-
-trait GCSLogStoreSuiteBase extends LogStoreSuiteBase {
-
-  testHadoopConf(
-    expectedErrMsg = ".*No FileSystem for scheme.*fake.*",
-    "fs.fake.impl" -> classOf[FakeFileSystem].getName,
-    "fs.fake.impl.disable.cache" -> "true")
-
-  protected def shouldUseRenameToWriteCheckpoint: Boolean = false
-
-  test("gcs write should happen in a new thread") {
-    withTempDir { tempDir =>
-      // Use `FakeGCSFileSystem` to verify we write in the correct thread.
-      withSQLConf(
-        "fs.gs.impl" -> classOf[FakeGCSFileSystem].getName,
-        "fs.gs.impl.disable.cache" -> "true") {
-        val store = createLogStore(spark)
-        store.write(
-          new Path(s"gs://${tempDir.getCanonicalPath}", "1.json"),
-          Iterator("foo"),
-          overwrite = false,
-          sessionHadoopConf)
-      }
-    }
-  }
-
-  test("runInNewThread") {
-    import io.delta.storage.internal.ThreadUtils.runInNewThread
-
-    assert(runInNewThread("thread-name",
-      true,
-      () => {Thread.currentThread().getName}) === "thread-name")
-    assert(runInNewThread("thread-name",
-      true,
-      () => {
-        Thread.currentThread().isDaemon
-      }))
-    assert(runInNewThread("thread-name",
-      false,
-      () => {
-        Thread.currentThread().isDaemon
-      }) == false)
-
-    val ioExceptionMessage = "test" + Random.nextInt()
-    val ioException = intercept[IOException] {
-      runInNewThread("thread-name",
-        true,
-        () => {
-          throw new IOException(ioExceptionMessage)
-        })
-    }
-    assert(ioException.getMessage === ioExceptionMessage)
-    assert(ioException.getStackTrace.mkString("\n")
-      .contains("... run in separate thread using ThreadUtils"))
-
-    val fileAlreadyExistsExceptionMessage = "test" + Random.nextInt()
-    val fileAlreadyExistsException = intercept[FileAlreadyExistsException] {
-      runInNewThread("thread-name",
-        true,
-        () => {
-          throw new FileAlreadyExistsException(fileAlreadyExistsExceptionMessage)
-        })
-    }
-    assert(fileAlreadyExistsException.getMessage === fileAlreadyExistsExceptionMessage)
-    assert(fileAlreadyExistsException.getStackTrace.mkString("\n")
-      .contains("... run in separate thread using ThreadUtils"))
-  }
 }
 
 trait HDFSLogStoreSuiteBase extends LogStoreSuiteBase {
@@ -367,6 +309,29 @@ trait HDFSLogStoreSuiteBase extends LogStoreSuiteBase {
     }
   }
 
+  test("Read after write consistency with msync") {
+     withTempDir { tempDir =>
+      val tsFSLocation = s"ts://${tempDir.getCanonicalFile}"
+      // Use the file scheme so that it uses a different FileSystem cached object
+      withSQLConf(
+        ("fs.ts.impl", classOf[TimestampLocalFileSystem].getCanonicalName),
+        ("fs.AbstractFileSystem.ts.impl",
+          classOf[TimestampAbstractFileSystem].getCanonicalName)) {
+        val store = createLogStore(spark)
+        val path = new Path(tsFSLocation, "1.json")
+
+        // Initialize the TimestampLocalFileSystem object which will be reused later due to the
+        // FileSystem cache
+        assert(store.listFrom(path, sessionHadoopConf).length == 0)
+
+        store.write(path, Iterator("zero", "none"), overwrite = false, sessionHadoopConf)
+        // Verify `msync` is called by checking whether `listFrom` returns the latest result.
+        // Without the `msync` call, the TimestampLocalFileSystem would not see this file.
+        assert(store.listFrom(path, sessionHadoopConf).length == 1)
+      }
+    }
+  }
+
   protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 
@@ -378,6 +343,10 @@ trait LocalLogStoreSuiteBase extends LogStoreSuiteBase {
 
   protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
+
+////////////////////////////////
+// Concrete child test suites //
+////////////////////////////////
 
 class HDFSLogStoreSuite extends HDFSLogStoreSuiteBase {
   override val logStoreClassName: String = classOf[HDFSLogStore].getName
@@ -391,10 +360,13 @@ class LocalLogStoreSuite extends LocalLogStoreSuiteBase {
   override val logStoreClassName: String = classOf[LocalLogStore].getName
 }
 
+////////////////////////////////
+// File System Helper Classes //
+////////////////////////////////
+
 /** A fake file system to test whether session Hadoop configuration will be picked up. */
 class FakeFileSystem extends RawLocalFileSystem {
   override def getScheme: String = FakeFileSystem.scheme
-
   override def getUri: URI = FakeFileSystem.uri
 }
 
@@ -451,6 +423,40 @@ class FailingRenameAbstractFileSystem(uri: URI, conf: org.apache.hadoop.conf.Con
   }
 }
 
+///////////////////////////////////////////////////////////////////////////////
+// Fake LogStore class & test suite to check that hadoopConf is set properly //
+///////////////////////////////////////////////////////////////////////////////
+
+class FakePublicLogStore(initHadoopConf: Configuration)
+  extends io.delta.storage.HDFSLogStore(initHadoopConf) {
+
+  assert(initHadoopConf.get("spark.delta.storage.custom.key") == "foo")
+}
+
+/**
+ * We want to ensure that, to set configuration values for the Java LogStore implementations,
+ * users can simply use `--conf $key=$value`, instead of `--conf spark.hadoop.$key=$value`
+ */
+class CorrectHadoopConfLogStoreSuite
+  extends SparkFunSuite
+  with LocalSparkSession
+  with LogStoreProvider {
+
+  test("java LogStore is instantiated with hadoopConf with SQLConf values") {
+    val sparkConf = new SparkConf()
+      .setMaster("local")
+      // equivalent to --conf spark.delta.storage.custom.key=foo
+      .set("spark.delta.storage.custom.key", "foo")
+      .set("spark.delta.logStore.class", classOf[FakePublicLogStore].getName)
+
+    withSparkSession(SparkSession.builder.config(sparkConf).getOrCreate()) { spark =>
+      // this will instantiate the FakePublicLogStore above. If its assertion fails,
+      // then this test will fail
+      createLogStore(spark)
+    }
+  }
+}
+
 ////////////////////////////////////////////////////////////////////
 // Public LogStore (Java) suite tests from delta-storage artifact //
 ////////////////////////////////////////////////////////////////////
@@ -469,8 +475,8 @@ abstract class PublicLogStoreSuite extends LogStoreSuiteBase {
   protected override def testInitFromSparkConf(): Unit = {
     test("instantiation through SparkConf") {
       assert(spark.sparkContext.getConf.get(logStoreClassConfKey) == publicLogStoreClassName)
-      assert(LogStore(spark.sparkContext).getClass.getName == logStoreClassName)
-      assert(LogStore(spark.sparkContext).asInstanceOf[LogStoreAdaptor]
+      assert(LogStore(spark).getClass.getName == logStoreClassName)
+      assert(LogStore(spark).asInstanceOf[LogStoreAdaptor]
         .logStoreImpl.getClass.getName == publicLogStoreClassName)
 
     }
@@ -482,6 +488,16 @@ class PublicHDFSLogStoreSuite extends PublicLogStoreSuite with HDFSLogStoreSuite
     classOf[io.delta.storage.HDFSLogStore].getName
 }
 
+class PublicS3SingleDriverLogStoreSuite
+  extends PublicLogStoreSuite
+  with S3SingleDriverLogStoreSuiteBase {
+
+  override protected val publicLogStoreClassName: String =
+    classOf[io.delta.storage.S3SingleDriverLogStore].getName
+
+  override protected def canInvalidateCache: Boolean = false
+}
+
 class PublicAzureLogStoreSuite extends PublicLogStoreSuite with AzureLogStoreSuiteBase {
   override protected val publicLogStoreClassName: String =
     classOf[io.delta.storage.AzureLogStore].getName
@@ -490,9 +506,4 @@ class PublicAzureLogStoreSuite extends PublicLogStoreSuite with AzureLogStoreSui
 class PublicLocalLogStoreSuite extends PublicLogStoreSuite with LocalLogStoreSuiteBase {
   override protected val publicLogStoreClassName: String =
     classOf[io.delta.storage.LocalLogStore].getName
-}
-
-class PublicGCSLogStoreSuite extends PublicLogStoreSuite with GCSLogStoreSuiteBase {
-  override protected val publicLogStoreClassName: String =
-    classOf[io.delta.storage.GCSLogStore].getName
 }

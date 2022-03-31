@@ -43,16 +43,6 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
 
   import testImplicits._
 
-  private def withTempDirs(f: (File, File, File) => Unit): Unit = {
-    withTempDir { file1 =>
-      withTempDir { file2 =>
-        withTempDir { file3 =>
-          f(file1, file2, file3)
-        }
-      }
-    }
-  }
-
   test("no schema should throw an exception") {
     withTempDir { inputDir =>
       new File(inputDir, "_delta_log").mkdir()
@@ -1425,6 +1415,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
           .queryName("startingVersionLatest")
         val log = DeltaLog.forTable(spark, path)
         val originalSnapshot = log.snapshot
+        val timestamp = System.currentTimeMillis()
 
         // We write out some new data, and then do a dirty reflection hack to produce an un-updated
         // Delta log. The stream should still update when started and not produce any data.
@@ -1433,7 +1424,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
         // exist in the JVM DeltaLog is where it ends up in reflection.
         val snapshotField = classOf[DeltaLog].getDeclaredField("currentSnapshot")
         snapshotField.setAccessible(true)
-        snapshotField.set(log, originalSnapshot)
+        snapshotField.set(log, CapturedSnapshot(originalSnapshot, timestamp))
 
         val q = streamDef.start()
 

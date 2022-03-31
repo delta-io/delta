@@ -135,7 +135,7 @@ trait Checkpoints extends DeltaLogging {
    * Note that this function captures and logs all exceptions, since the checkpoint shouldn't fail
    * the overall commit operation.
    */
-  def checkpoint(snapshotToCheckpoint: Snapshot): Unit =
+  def checkpoint(snapshotToCheckpoint: Snapshot): Unit = withDmqTag {
     recordDeltaOperation(this, "delta.checkpoint") {
       try {
         if (snapshotToCheckpoint.version < 0) {
@@ -173,6 +173,7 @@ trait Checkpoints extends DeltaLogging {
           }
       }
     }
+  }
 
   protected def writeCheckpointFiles(snapshotToCheckpoint: Snapshot): CheckpointMetaData = {
     Checkpoints.writeCheckpoint(spark, this, snapshotToCheckpoint)
@@ -184,7 +185,7 @@ trait Checkpoints extends DeltaLogging {
   }
 
   /** Loads the checkpoint metadata from the _last_checkpoint file. */
-  private def loadMetadataFromFile(tries: Int): Option[CheckpointMetaData] = {
+  private def loadMetadataFromFile(tries: Int): Option[CheckpointMetaData] = withDmqTag {
     recordFrameProfile("Delta", "Checkpoints.loadMetadataFromFile") {
       try {
         val checkpointMetadataJson = store.read(LAST_CHECKPOINT, newDeltaHadoopConf())
@@ -274,7 +275,7 @@ object Checkpoints extends DeltaLogging {
   private[delta] def writeCheckpoint(
       spark: SparkSession,
       deltaLog: DeltaLog,
-      snapshot: Snapshot): CheckpointMetaData = {
+      snapshot: Snapshot): CheckpointMetaData = withDmqTag {
     import SingleAction._
 
     val hadoopConf = deltaLog.newDeltaHadoopConf()

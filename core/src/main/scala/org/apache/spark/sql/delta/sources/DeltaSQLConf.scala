@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit
 
 import org.apache.spark.internal.config.ConfigBuilder
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.storage.StorageLevel
 
 /**
  * [[SQLConf]] entries for Delta features.
@@ -108,6 +109,14 @@ trait DeltaSQLConfBase {
       .intConf
       .checkValue(n => n >= 0, "must not be negative.")
       .createWithDefault(2)
+
+  val DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL =
+    buildConf("snapshotCache.storageLevel")
+      .internal()
+      .doc("StorageLevel to use for caching the DeltaLog Snapshot. In general, this should not " +
+        "be used unless you are pretty sure that caching has a negative impact.")
+      .stringConf
+      .createWithDefault("MEMORY_AND_DISK_SER")
 
   val DELTA_PARTITION_COLUMN_CHECK_ENABLED =
     buildConf("partitionColumnValidity.enabled")

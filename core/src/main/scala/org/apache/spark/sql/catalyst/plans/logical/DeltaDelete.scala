@@ -29,3 +29,4 @@ case class DeltaDelete(
   override protected def withNewChildInternal(newChild: LogicalPlan): DeltaDelete =
     copy(child = newChild)
 }
+

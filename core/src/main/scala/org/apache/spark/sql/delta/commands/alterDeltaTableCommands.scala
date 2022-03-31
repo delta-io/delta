@@ -525,9 +525,10 @@ case class AlterTableSetLocationDeltaCommand(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val catalog = sparkSession.sessionState.catalog
-    val identifier = sparkSession.sessionState.sqlParser
-      .parseTableIdentifier(table.tableIdentifier.get)
-    val catalogTable = catalog.getTableMetadata(identifier)
+    if (table.catalogTable.isEmpty) {
+      throw DeltaErrors.setLocationNotSupportedOnPathIdentifiers()
+    }
+    val catalogTable = table.catalogTable.get
     val locUri = CatalogUtils.stringToURI(location)
     val oldTable = table.deltaLog.update()
     if (oldTable.version == -1) {
