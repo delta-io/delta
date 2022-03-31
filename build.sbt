@@ -184,6 +184,7 @@ lazy val storageDynamodb = (project in file("storage-dynamodb"))
     name := "delta-storage-dynamodb",
     commonSettings,
     releaseSettings, // TODO: proper artifact name with no scala version
+    // Test / publishArtifact := true, // uncomment only when testing FailingDynamoDBLogStore
     libraryDependencies ++= Seq(
       "com.amazonaws" % "aws-java-sdk" % "1.7.4" % "provided"
     )

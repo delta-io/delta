@@ -90,7 +90,7 @@ spark = SparkSession \
     .config("spark.delta.DynamoDBLogStore.region", dynamo_region) \
     .config("spark.delta.DynamoDBLogStore.errorRates", dynamo_error_rates) \
     .getOrCreate()
-
+spark.sparkContext.setLogLevel("INFO")
 data = spark.createDataFrame([], "id: int, a: int")
 data.write.format("delta").mode("overwrite").partitionBy("id").save(delta_table_path)
 
