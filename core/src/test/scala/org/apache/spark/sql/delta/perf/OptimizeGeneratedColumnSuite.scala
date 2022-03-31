@@ -1057,38 +1057,42 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
             sql(s"select (unix_timestamp('+20000-01', 'yyyy-MM')) as value"),
             Row(568971849600L)
           )
-          checkAnswer(
-            sql(s"select (unix_timestamp('20000-01', 'yyyy-MM')) as value"),
-            Row(null)
-          )
-          checkAnswer(
-            sql(s"select * from $table where " +
-              s"c1 >= '20000-01-01 12:00:00'"),
-            // 23456-07-20 18:30:00
-            Row(new Timestamp(678050098200000L), "+23456-07") ::
-              // 30000-12-30 20:00:00
-              Row(new Timestamp(884572891200000L), "30000-12") :: Nil
-          )
+          withSQLConf("spark.sql.ansi.enabled" -> "false") {
+            checkAnswer(
+              sql(s"select (unix_timestamp('20000-01', 'yyyy-MM')) as value"),
+              Row(null)
+            )
+            checkAnswer(
+              sql(s"select * from $table where " +
+                s"c1 >= '20000-01-01 12:00:00'"),
+              // 23456-07-20 18:30:00
+              Row(new Timestamp(678050098200000L), "+23456-07") ::
+                // 30000-12-30 20:00:00
+                Row(new Timestamp(884572891200000L), "30000-12") :: Nil
+            )
+          }
         }
 
         // read behaviors in LEGACY, we still can query correctly
         withSQLConf("spark.sql.legacy.timeParserPolicy" -> "LEGACY") {
           checkAnswer(
-            sql(s"select (unix_timestamp('+20000-01', 'yyyy-MM')) as value"),
-            Row(null)
-          )
-          checkAnswer(
             sql(s"select (unix_timestamp('20000-01', 'yyyy-MM')) as value"),
             Row(568971849600L)
           )
-          checkAnswer(
-            sql(s"select * from $table where " +
-              s"c1 >= '20000-01-01 12:00:00'"),
-            // 23456-07-20 18:30:00
-            Row(new Timestamp(678050098200000L), "+23456-07") ::
-              // 30000-12-30 20:00:00
-              Row(new Timestamp(884572891200000L), "30000-12") :: Nil
-          )
+          withSQLConf("spark.sql.ansi.enabled" -> "false") {
+            checkAnswer(
+              sql(s"select (unix_timestamp('+20000-01', 'yyyy-MM')) as value"),
+              Row(null)
+            )
+            checkAnswer(
+              sql(s"select * from $table where " +
+                s"c1 >= '20000-01-01 12:00:00'"),
+              // 23456-07-20 18:30:00
+              Row(new Timestamp(678050098200000L), "+23456-07") ::
+                // 30000-12-30 20:00:00
+                Row(new Timestamp(884572891200000L), "30000-12") :: Nil
+            )
+          }
         }
       }
     }

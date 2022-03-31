@@ -34,6 +34,12 @@ import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.util.ThreadUtils
 
 /**
+ * Wraps the most recently updated snapshot along with the timestamp the update was started.
+ * Defined outside the class since it's used in tests.
+ */
+case class CapturedSnapshot(snapshot: Snapshot, updateTimestamp: Long)
+
+/**
  * Manages the creation, computation, and access of Snapshot's for Delta tables. Responsibilities
  * include:
  *  - Figuring out the set of files that are required to compute a specific version of a table
@@ -44,10 +50,7 @@ trait SnapshotManagement { self: DeltaLog =>
 
   @volatile private[delta] var asyncUpdateTask: Future[Unit] = _
 
-  /** The timestamp when the last successful update action is finished. */
-  @volatile protected var lastUpdateTimestamp: Long = -1L
-
-  @volatile protected var currentSnapshot: Snapshot = getSnapshotAtInit
+  @volatile protected var currentSnapshot: CapturedSnapshot = getSnapshotAtInit
 
   /**
    * Get the LogSegment that will help in computing the Snapshot of the table at DeltaLog
@@ -239,26 +242,26 @@ trait SnapshotManagement { self: DeltaLog =>
    * file as a hint on where to start listing the transaction log directory. If the _delta_log
    * directory doesn't exist, this method will return an `InitialSnapshot`.
    */
-  protected def getSnapshotAtInit: Snapshot = {
+  protected def getSnapshotAtInit: CapturedSnapshot = {
     recordFrameProfile("Delta", "SnapshotManagement.getSnapshotAtInit") {
+      val currentTimestamp = clock.getTimeMillis()
       getLogSegmentFrom(lastCheckpoint).map { segment =>
         val startCheckpoint = segment.checkpointVersionOpt
           .map(v => s" starting from checkpoint $v.").getOrElse(".")
         logInfo(s"Loading version ${segment.version}$startCheckpoint")
         val snapshot = createSnapshot(segment, minFileRetentionTimestamp)
 
-        lastUpdateTimestamp = clock.getTimeMillis()
         logInfo(s"Returning initial snapshot $snapshot")
-        snapshot
+        CapturedSnapshot(snapshot, currentTimestamp)
       }.getOrElse {
         logInfo(s"Creating initial snapshot without metadata, because the directory is empty")
-        new InitialSnapshot(logPath, this)
+        CapturedSnapshot(new InitialSnapshot(logPath, this), currentTimestamp)
       }
     }
   }
 
   /** Returns the current snapshot. Note this does not automatically `update()`. */
-  def snapshot: Snapshot = currentSnapshot
+  def snapshot: Snapshot = Option(currentSnapshot).map(_.snapshot).orNull
 
   protected def createSnapshot(
       initSegment: LogSegment,
@@ -408,7 +411,7 @@ trait SnapshotManagement { self: DeltaLog =>
   }
 
   /** Checks if the snapshot of the table has surpassed our allowed staleness. */
-  private def isSnapshotStale: Boolean = {
+  private def isSnapshotStale(lastUpdateTimestamp: Long): Boolean = {
     val stalenessLimit = spark.sessionState.conf.getConf(
       DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT)
     stalenessLimit == 0L || lastUpdateTimestamp < 0 ||
@@ -426,11 +429,14 @@ trait SnapshotManagement { self: DeltaLog =>
    *                            and can return a stale snapshot in the meantime.
    */
   def update(stalenessAcceptable: Boolean = false): Snapshot = {
-    val doAsync = stalenessAcceptable && !isSnapshotStale
+    // currentSnapshot is volatile. Make a local copy of it at the start of the update call, so
+    // that there's no chance of a race condition changing the snapshot partway through the update.
+    val capturedSnapshot = currentSnapshot
+    val doAsync = stalenessAcceptable && !isSnapshotStale(capturedSnapshot.updateTimestamp)
     if (!doAsync) {
       recordFrameProfile("Delta", "SnapshotManagement.update") {
         lockInterruptibly {
-          updateInternal(isAsync = false)
+          updateInternal(capturedSnapshot.snapshot, isAsync = false)
         }
       }
     } else {
@@ -440,12 +446,12 @@ trait SnapshotManagement { self: DeltaLog =>
           spark.sparkContext.setLocalProperty("spark.scheduler.pool", "deltaStateUpdatePool")
           spark.sparkContext.setJobGroup(
             jobGroup,
-            s"Updating state of Delta table at ${currentSnapshot.path}",
+            s"Updating state of Delta table at ${capturedSnapshot.snapshot.path}",
             interruptOnCancel = true)
-          tryUpdate(isAsync = true)
+          tryUpdate(capturedSnapshot.snapshot, isAsync = true)
         }(SnapshotManagement.deltaLogAsyncUpdateThreadPool)
       }
-      currentSnapshot
+      currentSnapshot.snapshot
     }
   }
 
@@ -453,30 +459,33 @@ trait SnapshotManagement { self: DeltaLog =>
    * Try to update ActionLog. If another thread is updating ActionLog, then this method returns
    * at once and return the current snapshot. The return snapshot may be stale.
    */
-  private def tryUpdate(isAsync: Boolean): Snapshot = {
+  private def tryUpdate(previousSnapshot: Snapshot, isAsync: Boolean): Snapshot = {
     if (deltaLogLock.tryLock()) {
       try {
-        updateInternal(isAsync)
+        updateInternal(previousSnapshot, isAsync)
       } finally {
         deltaLogLock.unlock()
       }
     } else {
-      currentSnapshot
+      currentSnapshot.snapshot
     }
   }
 
   /**
    * Queries the store for new delta files and applies them to the current state.
    * Note: the caller should hold `deltaLogLock` before calling this method.
+   * previousSnapshot refers to the snapshot at the start of the update() call.
    */
-  protected def updateInternal(isAsync: Boolean): Snapshot =
+  protected def updateInternal(previousSnapshot: Snapshot, isAsync: Boolean): Snapshot =
     recordDeltaOperation(this, "delta.log.update", Map(TAG_ASYNC -> isAsync.toString)) {
-      val segmentOpt = getLogSegmentForVersion(currentSnapshot.logSegment.checkpointVersionOpt)
+      val updateTimestamp = clock.getTimeMillis()
+      val segmentOpt =
+        getLogSegmentForVersion(previousSnapshot.logSegment.checkpointVersionOpt)
       val newSnapshot = segmentOpt.map { segment =>
-        if (segment == currentSnapshot.logSegment) {
+        if (segment == previousSnapshot.logSegment) {
           // Exit early if there is no new file
-          lastUpdateTimestamp = clock.getTimeMillis()
-          return currentSnapshot
+          currentSnapshot = currentSnapshot.copy(updateTimestamp = updateTimestamp)
+          return currentSnapshot.snapshot
         }
 
         val startingFrom = segment.checkpointVersionOpt
@@ -485,14 +494,14 @@ trait SnapshotManagement { self: DeltaLog =>
 
         val newSnapshot = createSnapshot(segment, minFileRetentionTimestamp)
 
-        if (currentSnapshot.version > -1 &&
-          currentSnapshot.metadata.id != newSnapshot.metadata.id) {
+        if (previousSnapshot.version > -1 &&
+          previousSnapshot.metadata.id != newSnapshot.metadata.id) {
           val msg = s"Change in the table id detected while updating snapshot. " +
-            s"\nPrevious snapshot = $currentSnapshot\nNew snapshot = $newSnapshot."
+            s"\nPrevious snapshot = $previousSnapshot\nNew snapshot = $newSnapshot."
           logError(msg)
           recordDeltaEvent(self, "delta.metadataCheck.update", data = Map(
-            "prevSnapshotVersion" -> currentSnapshot.version,
-            "prevSnapshotMetadata" -> currentSnapshot.metadata,
+            "prevSnapshotVersion" -> previousSnapshot.version,
+            "prevSnapshotMetadata" -> previousSnapshot.metadata,
             "nextSnapshotVersion" -> newSnapshot.version,
             "nextSnapshotMetadata" -> newSnapshot.metadata))
         }
@@ -503,18 +512,18 @@ trait SnapshotManagement { self: DeltaLog =>
         logInfo(s"No delta log found for the Delta table at $logPath")
         new InitialSnapshot(logPath, this)
       }
-      replaceSnapshot(newSnapshot)
-      lastUpdateTimestamp = clock.getTimeMillis()
-      currentSnapshot
+      replaceSnapshot(newSnapshot, updateTimestamp)
+      currentSnapshot.snapshot
     }
 
   /** Replace the given snapshot with the provided one. */
-  protected def replaceSnapshot(newSnapshot: Snapshot): Unit = {
+  protected def replaceSnapshot(newSnapshot: Snapshot, updateTimestamp: Long): Unit = {
     if (!deltaLogLock.isHeldByCurrentThread) {
       recordDeltaEvent(this, "delta.update.unsafeReplace")
     }
-    currentSnapshot.uncache()
-    currentSnapshot = newSnapshot
+    val oldSnapshot = currentSnapshot.snapshot
+    currentSnapshot = CapturedSnapshot(newSnapshot, updateTimestamp)
+    oldSnapshot.uncache()
   }
 
   /** Get the snapshot at `version`. */

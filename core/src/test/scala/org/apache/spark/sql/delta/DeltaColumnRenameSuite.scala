@@ -239,8 +239,8 @@ class DeltaColumnRenameSuite extends QueryTest
 
       spark.sql("alter table t1 add constraint rangeABC check (concat(a, a) > 'str')")
       spark.sql("alter table t1 add constraint rangeBD check (`b`.`d` > 0)")
-      spark.sql("alter table t1" +
-        " add constraint mapValue check (map['k1'] = 'v1' or map['k1'] is null)")
+      spark.sql("alter table t1 add constraint" +
+        " mapValue check (not array_contains(map_keys(map), 'k1') or map['k1'] = 'v1')")
 
       spark.sql("alter table t1 add constraint arrValue check (arr[0] > 0)")
 

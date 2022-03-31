@@ -119,5 +119,9 @@ trait DeltaLogging
     // future work to capture runtime information ...
     thunk
   }
+
+  protected def withDmqTag[T](thunk: => T): T = {
+    thunk
+  }
 }
 

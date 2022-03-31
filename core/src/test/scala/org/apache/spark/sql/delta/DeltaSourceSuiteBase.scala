@@ -28,6 +28,20 @@ import org.apache.spark.sql.types.StructType
 trait DeltaSourceSuiteBase extends StreamTest {
 
   /**
+   * Creates 3 temporary directories for use within a function.
+   * @param f function to be run with created temp directories
+   */
+  protected def withTempDirs(f: (File, File, File) => Unit): Unit = {
+    withTempDir { file1 =>
+      withTempDir { file2 =>
+        withTempDir { file3 =>
+          f(file1, file2, file3)
+        }
+      }
+    }
+  }
+
+  /**
    * Copy metadata for fields in newSchema from currentSchema
    * @param newSchema new schema
    * @param currentSchema current schema to reference

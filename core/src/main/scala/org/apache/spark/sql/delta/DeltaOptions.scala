@@ -211,6 +211,7 @@ object DeltaOptions extends DeltaLogging {
     "versionAsOf"
   )
 
+
   /** Iterates over all user passed options and logs any that are not valid. */
   def verifyOptions(options: CaseInsensitiveMap[String]): Unit = {
     val invalidUserOptions = SQLConf.get.redactOptions(options --

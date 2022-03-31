@@ -93,8 +93,8 @@ class DelegatingLogStoreSuite
   private def testLogStoreClassConfNoSchemeConf(scheme: String) {
     val sparkConf = constructSparkConf(scheme, Some(customLogStoreClassName), None)
     withSparkSession(SparkSession.builder.config(sparkConf).getOrCreate()) { spark =>
-      assert(LogStore(spark.sparkContext).isInstanceOf[LogStoreAdaptor])
-      assert(LogStore(spark.sparkContext).asInstanceOf[LogStoreAdaptor]
+      assert(LogStore(spark).isInstanceOf[LogStoreAdaptor])
+      assert(LogStore(spark).asInstanceOf[LogStoreAdaptor]
         .logStoreImpl.getClass.getName == customLogStoreClassName)
     }
   }
@@ -133,7 +133,7 @@ class DelegatingLogStoreSuite
       Some(DelegatingLogStore.defaultAzureLogStoreClassName))
     val e = intercept[AnalysisException](
       withSparkSession(SparkSession.builder.config(sparkConf).getOrCreate()) { spark =>
-        LogStore(spark.sparkContext)
+        LogStore(spark)
       }
     )
     assert(e.getMessage.contains(
@@ -150,7 +150,7 @@ class DelegatingLogStoreSuite
       Some(DelegatingLogStore.defaultAzureLogStoreClassName))
     val e = intercept[AnalysisException](
       withSparkSession(SparkSession.builder.config(sparkConf).getOrCreate()) { spark =>
-        LogStore(spark.sparkContext)
+        LogStore(spark)
       }
     )
     assert(e.getMessage.contains(
