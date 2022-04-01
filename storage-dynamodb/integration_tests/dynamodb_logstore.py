@@ -86,9 +86,9 @@ spark = SparkSession \
     .master("local[*]") \
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
     .config("spark.delta.logStore.class", delta_storage) \
-    .config("spark.delta.DynamoDBLogStore.ddb.tableName", dynamo_table_name) \
-    .config("spark.delta.DynamoDBLogStore.ddb.region", dynamo_region) \
-    .config("spark.delta.DynamoDBLogStore.errorRates", dynamo_error_rates) \
+    .config("io.delta.storage.ddb.tableName", dynamo_table_name) \
+    .config("io.delta.storage.ddb.region", dynamo_region) \
+    .config("io.delta.storage.errorRates", dynamo_error_rates) \
     .getOrCreate()
 
 # spark.sparkContext.setLogLevel("INFO")
@@ -141,4 +141,4 @@ dynamodb = boto3.resource('dynamodb',  config=my_config)
 table = dynamodb.Table(dynamo_table_name)  # this ensures we actually used/created the input table
 response = table.scan()
 items = response['Items']
-print(items[0])  # print for manual validation
+print(items[-1])  # print for manual validation

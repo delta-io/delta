@@ -71,8 +71,9 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
     private static final Logger LOG = LoggerFactory.getLogger(DynamoDBLogStore.class);
 
     /**
-     * Configuration keys for the DynamoDB client, with prefix `spark.delta.DynamoDBLogStore.`
+     * Configuration keys for the DynamoDB client
      */
+    private static final String CONF_PREFIX = "io.delta.storage.";
     private static final String DBB_CLIENT_TABLE = "ddb.tableName";
     private static final String DBB_CLIENT_REGION = "ddb.region";
     private static final String DBB_CLIENT_CREDENTIALS_PROVIDER = "credentials.provider";
@@ -96,6 +97,7 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
 
     public DynamoDBLogStore(Configuration hadoopConf) throws IOException {
         super(hadoopConf);
+
         tableName = getParam(hadoopConf, DBB_CLIENT_TABLE, "delta_log");
         credentialsProviderName = getParam(
             hadoopConf,
@@ -103,6 +105,10 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
             "com.amazonaws.auth.DefaultAWSCredentialsProviderChain"
         );
         regionName = getParam(hadoopConf, DBB_CLIENT_REGION, "us-east-1");
+        LOG.info("DynamoDBLogStore using tableName {}", tableName);
+        LOG.info("DynamoDBLogStore using credentialsProviderName {}", credentialsProviderName);
+        LOG.info("DynamoDBLogStore using regionName {}", regionName);
+
         client = getClient();
         tryEnsureTableExists(hadoopConf);
     }
@@ -285,7 +291,7 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
 
     protected String getParam(Configuration config, String name, String defaultValue) {
         return config.get(
-            String.format("spark.delta.DynamoDBLogStore.%s", name),
+            String.format("%s%s", CONF_PREFIX, name),
             defaultValue
         );
     }
