@@ -28,7 +28,7 @@ utilizing [Delta Standalone JVM library](https://github.com/delta-io/connectors#
 - The current version only provides Delta Lake's transactional guarantees for tables stored on HDFS and Microsoft Azure Storage.
 
 ## Java API docs
-See the [Java API docs](https://delta-io.github.io/connectors/latest/flink-connector/api/java/index.html) here.
+See the [Java API docs](https://delta-io.github.io/connectors/latest/delta-flink/api/java/index.html) here.
 
 ### Usage
 
@@ -58,7 +58,7 @@ Scala 2.12:
     <dependencies>
         <dependency>
             <groupId>io.delta</groupId>
-            <artifactId>flink-connector</artifactId>
+            <artifactId>delta-flink</artifactId>
             <version>0.2.1-SNAPSHOT</version>
         </dependency>
         <dependency>
@@ -91,7 +91,7 @@ Please replace the versions of the dependencies with the ones you are using.
 
 ```
 libraryDependencies ++= Seq(
-  "io.delta" %% "flink-connector" % "0.2.1-SNAPSHOT",
+  "io.delta" %% "delta-flink" % "0.2.1-SNAPSHOT",
   "io.delta" %% "delta-standalone" % "0.2.1-SNAPSHOT",  
   "org.apache.flink" %% "flink-parquet" % flinkVersion,
   "org.apache.flink" % "flink-table-common" % flinkVersion,
@@ -109,9 +109,9 @@ The project is compiled using [SBT](https://www.scala-sbt.org/1.x/docs/Command-L
 
 ### Build commands
 
-- To compile the project, run `build/sbt flinkConnector/compile`
-- To test the project, run `build/sbt flinkConnector/test`
-- To publish the JAR, run `build/sbt flinkConnector/publishM2`
+- To compile the project, run `build/sbt flink/compile`
+- To test the project, run `build/sbt flink/test`
+- To publish the JAR, run `build/sbt flink/publishM2`
 
 ## Examples
 #### 1. Sink creation for non-partitioned tables
@@ -221,6 +221,6 @@ their compatibility. If this check fails (e.g. the change consisted of removing 
 
 ## Local Development & Testing
 
-- Before local debugging of `flink-connector` tests in IntelliJ, run all `flink-connectors` tests using SBT. It will
+- Before local debugging of `flink` tests in IntelliJ, run all `flink` tests using SBT. It will
   generate `Meta.java` object under your target directory that is providing the connector with correct version of the
   connector.

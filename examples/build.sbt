@@ -69,7 +69,7 @@ lazy val flinkExample = (project in file("flink-example")) settings (
   extraMavenRepo,
   resolvers += Resolver.mavenLocal,
   libraryDependencies ++= Seq(
-    "io.delta" % "flink-connector" % getStandaloneVersion(),
+    "io.delta" % "delta-flink" % getStandaloneVersion(),
     "io.delta" %% "delta-standalone" % getStandaloneVersion(),
     "org.apache.flink" %% "flink-parquet" % flinkVersion,
     "org.apache.flink" % "flink-table-common" % flinkVersion,

@@ -16,7 +16,7 @@ Please refer to the main [Delta Lake](https://github.com/delta-io/delta) reposit
 # API documentation
 
 - Delta Standalone [Java API docs](https://delta-io.github.io/connectors/latest/delta-standalone/api/java/index.html)
-- Flink/Delta Connector [Java API docs](https://delta-io.github.io/connectors/latest/flink-connector/api/java/index.html)
+- Flink/Delta Connector [Java API docs](https://delta-io.github.io/connectors/latest/delta-flink/api/java/index.html)
 
 # Delta Standalone
 
@@ -36,7 +36,7 @@ Read Delta tables directly from Apache Hive using the [Hive Connector](/hive/REA
 
 ## Flink/Delta Connector
 
-Use the [Flink/Delta Connector](flink-connector/README.md) to read and write Delta tables from Apache Flink applications. The connector includes a sink for writing to Delta tables from Apache Flink, and a source for reading Delta tables using Apache Flink (still in progress.) See the dedicated [README.md](/flink-connector/README.md) for more details.
+Use the [Flink/Delta Connector](flink/README.md) to read and write Delta tables from Apache Flink applications. The connector includes a sink for writing to Delta tables from Apache Flink, and a source for reading Delta tables using Apache Flink (still in progress.) See the dedicated [README.md](/flink/README.md) for more details.
 
 ## sql-delta-import
 

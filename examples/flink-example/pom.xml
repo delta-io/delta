@@ -43,7 +43,7 @@ limitations under the License.-->
     <dependencies>
         <dependency>
             <groupId>io.delta</groupId>
-            <artifactId>flink-connector</artifactId>
+            <artifactId>delta-flink</artifactId>
             <version>${connectors.version}</version>
         </dependency>
         <dependency>

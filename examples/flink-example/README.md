@@ -1,5 +1,5 @@
 # Introduction
-This is an example project that shows how to use `flink-connector` project to write data to a Delta table using Apache Flink.
+This is an example project that shows how to use `delta-flink` to write data to a Delta table using Apache Flink.
 
 ## Run example for non-partitioned Delta table
 To run example in-memory Flink job writing data a non-partitioned Delta table run:
