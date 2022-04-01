@@ -15,13 +15,21 @@
  */
 
 package io.delta.storage;
+
+import java.io.IOException;
+import java.util.concurrent.ConcurrentHashMap;
+
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import java.io.IOException;
-import java.util.stream.Stream;
-import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * An ExternalLogStore implementation that allows for easy, probability-based error injection during
+ * runtime.
+ *
+ * This is used to test the error handling capabilities of DynamoDBLogStore during integration
+ * tests.
+ */
 public class FailingDynamoDBLogStore extends DynamoDBLogStore {
 
     private static java.util.Random rng = new java.util.Random();
@@ -31,7 +39,7 @@ public class FailingDynamoDBLogStore extends DynamoDBLogStore {
         super(hadoopConf);
         errorRates = new ConcurrentHashMap<>();
         String errorRatesDef = getParam(hadoopConf, "errorRates", "");
-        for(String s: errorRatesDef.split(",")) {
+        for (String s: errorRatesDef.split(",")) {
             if(!s.contains("=")) continue;
             String[] parts = s.split("=", 2);
             if(parts.length == 2)
@@ -65,8 +73,8 @@ public class FailingDynamoDBLogStore extends DynamoDBLogStore {
 
     private void injectError(String name) throws IOException {
       float rate = errorRates.getOrDefault(name, 0.0f);
-      if(rng.nextFloat() < rate) {
-          throw new IOException(String.format("injected %s fail", name));
+      if (rng.nextFloat() < rate) {
+          throw new IOException(String.format("injected failure: %s", name));
       }
     }
 }
