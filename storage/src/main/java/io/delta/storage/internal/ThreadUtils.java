@@ -70,9 +70,8 @@ public final class ThreadUtils {
                     .map(e -> currentThreadStackTrace.indexOf(e))
                     .findFirst()
                     .orElse(-1);
-            int endIndex = currentThreadStackTrace.size();
             List<StackTraceElement> baseStackTrace;
-            if (startIndex == -1 || startIndex >= endIndex) {
+            if (startIndex == -1 || startIndex >= currentThreadStackTrace.size() - 1) {
                 baseStackTrace = Collections.emptyList();
             } else {
                 //startIndex + 1 to drop the stack element ThreadUtils.runInNewThread()
@@ -93,9 +92,8 @@ public final class ThreadUtils {
             List<StackTraceElement> placeHolderStackElem = Arrays.asList(
                     new StackTraceElement(
                             String.format(
-                                    "... run in separate thread using %s",
-                                    ThreadUtils.class.getSimpleName(),
-                                    " static method runInNewThread"), //Providing the helper class info.
+                                    "... run in separate thread using %s static method runInNewThread",
+                                    ThreadUtils.class.getSimpleName()), //Providing the helper class info.
                             "", //method name containing the execution point, not required here.
                             "",   //filename containing the execution point, not required here.
                             -1) //source line number also not required. -1 indicates unavailable.

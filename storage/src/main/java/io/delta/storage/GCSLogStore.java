@@ -31,7 +31,6 @@ import java.util.Iterator;
 import java.util.concurrent.Callable;
 
 /**
- * :: Unstable ::
  * <p>
  * The {@link LogStore} implementation for GCS, which uses gcs-connector to
  * provide the necessary atomic and durability guarantees:
