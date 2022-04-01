@@ -127,9 +127,6 @@ lazy val contribs = (project in file("contribs"))
     releaseSettings,
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
       listPythonFiles(baseDirectory.value.getParentFile / "python"),
-    libraryDependencies ++= Seq(
-      "com.amazonaws" % "aws-java-sdk" % "1.7.4"
-    ),
 
     Test / testOptions += Tests.Argument("-oDF"),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),

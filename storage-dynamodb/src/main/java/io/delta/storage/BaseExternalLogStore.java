@@ -25,6 +25,7 @@ import java.util.Optional;
 import java.util.regex.Pattern;
 
 import com.google.common.annotations.VisibleForTesting;
+import io.delta.storage.internal.FileNameUtils;
 import org.apache.commons.io.IOUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
@@ -52,7 +53,6 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
 
     public BaseExternalLogStore(Configuration hadoopConf) {
         super(hadoopConf);
-        deltaFilePattern = Pattern.compile("\\d+\\.json");
     }
 
     /**
@@ -107,11 +107,12 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
 
         // Step 0: Ensure that N-1.json exists
         final Path tablePath = getTablePath(resolvedPath);
-        if (isDeltaFile(path)) {
-            final long version = deltaVersion(path);
+        if (FileNameUtils.isDeltaFile(path)) {
+            final long version = FileNameUtils.deltaVersion(path);
             if (version > 0) {
                 final long prevVersion = version - 1;
-                final Path prevPath = deltaFile(tablePath, prevVersion);
+                final Path deltaLogPath = new Path(tablePath, "_delta_log");
+                final Path prevPath = FileNameUtils.deltaFile(deltaLogPath, prevVersion);
                 final String prevFileName = prevPath.getName();
                 final Optional<ExternalCommitEntry> prevEntry = getExternalEntry(
                     tablePath.toString(),
@@ -352,20 +353,4 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
             throw new IllegalArgumentException(e);
         }
     }
-
-    // TODO - use java version of FileNames utils?
-    private Pattern deltaFilePattern;
-
-    private boolean isDeltaFile(Path path) {
-        return deltaFilePattern.matcher(path.getName()).matches();
-    }
-
-    private Path deltaFile(Path tablePath, long version) {
-        return new Path(tablePath, String.format("_delta_log/%020d.json", version));
-    }
-
-    private long deltaVersion(Path path) {
-        return Long.parseLong(path.getName().split("\\.")[0]);
-    }
-
 }
