@@ -636,6 +636,7 @@ lazy val sqlDeltaImport = (project in file("sql-delta-import"))
   .settings (
     name := "sql-delta-import",
     commonSettings,
+    skipReleaseSettings,
     publishArtifact := scalaBinaryVersion.value != "2.11",
     Test / publishArtifact := false,
     libraryDependencies ++= Seq(
@@ -650,7 +651,6 @@ lazy val sqlDeltaImport = (project in file("sql-delta-import"))
       "org.apache.spark" % ("spark-sql_" + sqlDeltaImportScalaVersion(scalaBinaryVersion.value)) % "3.2.0" % "test"
     )
   )
-  .settings(releaseSettings)
 
 def flinkScalaVersion(scalaBinaryVersion: String): String = {
   scalaBinaryVersion match {
@@ -667,11 +667,11 @@ lazy val flinkConnector = (project in file("flink-connector"))
   .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin)
   .settings (
     name := "flink-connector",
-    scalaVersion := "2.12.8",
     commonSettings,
-    publishArtifact := scalaBinaryVersion.value != "2.13",
-    Test / publishArtifact := false,
     releaseSettings,
+    publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
+    autoScalaLibrary := false, // exclude scala-library from dependencies
+    Test / publishArtifact := false,
     pomExtra :=
       <url>https://github.com/delta-io/connectors</url>
         <scm>
