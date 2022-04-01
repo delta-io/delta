@@ -13,20 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+
 import os
 import sys
 import threading
 
-from pyspark import SparkContext
-from pyspark.sql import Column, DataFrame, SparkSession, SQLContext, functions
-from pyspark.sql.functions import *
-from py4j.java_collections import MapConverter
-from delta.tables import *
+from pyspark.sql import SparkSession
 from multiprocessing.pool import ThreadPool
 import time
 
 """
-create required dynamodb table with:
+Create required dynamodb table with:
 
 $ aws --region us-west-2 dynamodb create-table \
     --table-name delta_log_test \
@@ -36,7 +33,7 @@ $ aws --region us-west-2 dynamodb create-table \
                 AttributeName=fileName,KeyType=RANGE \
     --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5
 
-run this script in root dir of repository:
+Run this script in root dir of repository:
 
 export VERSION=$(cat version.sbt|cut -d '"' -f 2)
 export DELTA_CONCURRENT_WRITERS=2
@@ -44,7 +41,7 @@ export DELTA_CONCURRENT_READERS=2
 export DELTA_TABLE_PATH=s3a://test-bucket/delta-test/
 export DELTA_DYNAMO_TABLE=delta_log_test
 export DELTA_DYNAMO_REGION=us-west-2
-export DELTA_STORAGE=io.delta.storage.DynamoDBLogStoreScala # TODO: remove `Scala` when Java version finished
+export DELTA_STORAGE=io.delta.storage.DynamoDBLogStore
 export DELTA_NUM_ROWS=16
 
 ./run-integration-tests.py --run-storage-dynamodb-integration-tests \
@@ -59,8 +56,8 @@ concurrent_writers = int(os.environ.get("DELTA_CONCURRENT_WRITERS", 2))
 concurrent_readers = int(os.environ.get("DELTA_CONCURRENT_READERS", 2))
 num_rows = int(os.environ.get("DELTA_NUM_ROWS", 16))
 
-# TODO change back to default io.delta.storage.DynamoDBLogStore
-delta_storage = os.environ.get("DELTA_STORAGE", "io.delta.storage.DynamoDBLogStoreScala")
+# className to instantiate. io.delta.storage.DynamoDBLogStore or .FailingDynamoDBLogStore
+delta_storage = os.environ.get("DELTA_STORAGE", "io.delta.storage.DynamoDBLogStore")
 dynamo_table_name = os.environ.get("DELTA_DYNAMO_TABLE", "delta_log_test")
 dynamo_region = os.environ.get("DELTA_DYNAMO_REGION", "us-west-2")
 dynamo_error_rates = os.environ.get("DELTA_DYNAMO_ERROR_RATES", "")
@@ -78,11 +75,10 @@ concurrent readers: {concurrent_readers}
 number of rows: {num_rows}
 delta storage: {delta_storage}
 dynamo table name: {dynamo_table_name}
+{"dynamo_error_rates: {}".format(dynamo_error_rates) if dynamo_error_rates else ""}
 =====================
 """
 print(test_log)
-
-# TODO: update to spark.delta.DynamoDBLogStore.tableName (no `Scala`) when Java version finished
 
 spark = SparkSession \
     .builder \
@@ -90,10 +86,12 @@ spark = SparkSession \
     .master("local[*]") \
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
     .config("spark.delta.logStore.class", delta_storage) \
-    .config("spark.delta.DynamoDBLogStoreScala.tableName", dynamo_table_name) \
-    .config("spark.delta.DynamoDBLogStoreScala.region", dynamo_region) \
-    .config("spark.delta.DynamoDBLogStoreScala.errorRates", dynamo_error_rates) \
+    .config("spark.delta.DynamoDBLogStore.ddb.tableName", dynamo_table_name) \
+    .config("spark.delta.DynamoDBLogStore.ddb.region", dynamo_region) \
+    .config("spark.delta.DynamoDBLogStore.errorRates", dynamo_error_rates) \
     .getOrCreate()
+
+# spark.sparkContext.setLogLevel("INFO")
 
 data = spark.createDataFrame([], "id: int, a: int")
 data.write.format("delta").mode("overwrite").partitionBy("id").save(delta_table_path)
@@ -133,3 +131,14 @@ assert actual == num_rows
 
 t = time.time() - start_t
 print(f"{num_rows / t:.02f} tx / sec")
+
+import boto3
+from botocore.config import Config
+my_config = Config(
+    region_name=dynamo_region,
+)
+dynamodb = boto3.resource('dynamodb',  config=my_config)
+table = dynamodb.Table(dynamo_table_name)  # this ensures we actually used/created the input table
+response = table.scan()
+items = response['Items']
+print(items[0])  # print for manual validation

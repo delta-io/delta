@@ -33,18 +33,24 @@ import org.apache.hadoop.fs.Path;
 public class FailingDynamoDBLogStore extends DynamoDBLogStore {
 
     private static java.util.Random rng = new java.util.Random();
-    private ConcurrentHashMap<String, Float> errorRates;
+    private final ConcurrentHashMap<String, Float> errorRates;
 
     public FailingDynamoDBLogStore(Configuration hadoopConf) throws IOException {
         super(hadoopConf);
         errorRates = new ConcurrentHashMap<>();
+
+        // for each optional key in set { write_copy_temp_file, write_put_db_entry,
+        // fix_delta_log_copy_temp_file, fix_delta_log_put_db_entry }, `errorRates` string is
+        // expected to be of form key1=value1,key2=value2 etc where each value is a fraction
+        // indicating how often that method should fail (e.g. 0.10 ==> 10% failure rate).
         String errorRatesDef = getParam(hadoopConf, "errorRates", "");
         for (String s: errorRatesDef.split(",")) {
-            if(!s.contains("=")) continue;
+            if (!s.contains("=")) continue;
             String[] parts = s.split("=", 2);
-            if(parts.length == 2)
+            if (parts.length == 2) {
                 errorRates.put(parts[0], Float.parseFloat(parts[1]));
-        };
+            }
+        }
     }
 
     @Override
@@ -72,7 +78,7 @@ public class FailingDynamoDBLogStore extends DynamoDBLogStore {
     }
 
     private void injectError(String name) throws IOException {
-      float rate = errorRates.getOrDefault(name, 0.0f);
+      float rate = errorRates.getOrDefault(name, 0.1f);
       if (rng.nextFloat() < rate) {
           throw new IOException(String.format("injected failure: %s", name));
       }
