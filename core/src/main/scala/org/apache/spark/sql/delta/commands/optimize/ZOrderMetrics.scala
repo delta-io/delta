@@ -27,10 +27,11 @@ case class ZOrderFileStats(num: Long, size: Long)
 
 object ZOrderFileStats {
   def apply(v: Iterable[(Int, Long)]): ZOrderFileStats = {
-    v.foldLeft(ZOrderFileStats(0, 0)) { (a, b) =>
-      ZOrderFileStats(a.num + b._1, a.size + b._2)
+      val (is, ls) = v.foldLeft((0L, 0L)) {
+        case ((i0, l0), (i1, l1)) => (i0 + i1, l0 + l1)
+      }
+      ZOrderFileStats(is, ls)
     }
-  }
 }
 
 /**
