@@ -53,6 +53,9 @@ case class ShowDeltaPartitionsCommand(
       val projection = deltaLog.snapshot.metadata.partitionSchema.map{ field =>
         col(PARTITION_VALUES + "." + field.name).cast(field.dataType)
       }
+      if(projection.isEmpty) {
+        throw DeltaErrors.showPartitionsOnNonPartitionedTableException(basePath.toString)
+      }
 
       deltaLog.snapshot.allFiles
         .select(projection: _*)

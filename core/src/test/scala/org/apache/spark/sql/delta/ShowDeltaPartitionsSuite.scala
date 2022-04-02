@@ -45,7 +45,7 @@ trait ShowDeltaPartitionsSuiteBase extends QueryTest
       .write
       .format("delta")
       .partitionBy("column2")
-      .save(tempDir.toString())
+      .save(tempDir.toString)
 
     checkResult(
       sql(s"SHOW PARTITIONS ${f(tempDir)}"),
@@ -54,53 +54,11 @@ trait ShowDeltaPartitionsSuiteBase extends QueryTest
   }
 
   test("delta table: path") {
-    showDeltaPartitionsTest(f => s"'${f.toString()}'")
+    showDeltaPartitionsTest(f => s"'${f.toString}'")
   }
 
   test("delta table: delta table identifier") {
-    showDeltaPartitionsTest(f => s"delta.`${f.toString()}`")
-  }
-
-  ignore("non-delta table: table name") {
-    withTable("show_partitions") {
-      sql(
-        """
-          |CREATE TABLE show_partitions(column1 INT, column2 INT)
-          |USING parquet
-          |PARTITIONED BY (column1)
-          |COMMENT "this is a table comment"
-        """.stripMargin)
-      sql(
-        """
-          |INSERT INTO show_partitions PARTITION (column1 = 1) VALUES (1)
-        """.stripMargin
-      )
-
-      sql("SHOW PARTITIONS show_partitions").show()
-      /* checkResult(
-        sql("SHOW PARTITIONS show_partitions"),
-        Seq(Row("column1")),
-        Seq("column1")) */
-    }
-  }
-
-  ignore("parquet table partitions") {
-    val tempDir = Utils.createTempDir()
-
-    val spark = SparkSession
-      .builder()
-      .appName("test_app")
-      .master("local[*]")
-      .getOrCreate()
-
-    (1 to 10).toDF("column1")
-      .withColumn("column2", col("column1") % 2)
-      .write
-      .format("parquet")
-      .partitionBy("column2")
-      .saveAsTable("my_parquet_tab")
-
-    spark.sql("show partitions my_parquet_tab").show()
+    showDeltaPartitionsTest(f => s"delta.`${f.toString}`")
   }
 
   test("delta table: table name") {
@@ -147,6 +105,51 @@ trait ShowDeltaPartitionsSuiteBase extends QueryTest
       assert(e.getMessage.contains(
         "`detailTestView` is a view. SHOW PARTITIONS is only supported for tables."))
     }
+  }
+
+  test("show partitions of non-partitioned delta table") {
+    val tempDir = Utils.createTempDir().toString
+    val df = Seq(0, 1).toDF("id")
+    df.write
+      .format("delta")
+      .mode("overwrite")
+      .save(tempDir)
+
+    val e = intercept[AnalysisException] {
+      sql(s"SHOW PARTITIONS delta.`$tempDir`")
+    }
+    assert(e.getMessage.contains(
+      "SHOW PARTITIONS is not allowed on a table that is not partitioned."))
+  }
+
+  test("null and empty string as partition values") {
+    val tempDir = Utils.createTempDir().toString
+    val df = Seq((0, ""), (1, null)).toDF("id", "part")
+    df.write
+      .partitionBy("part")
+      .format("delta")
+      .mode("overwrite")
+      .save(tempDir)
+
+    checkResult(
+      sql(s"SHOW PARTITIONS delta.`$tempDir`"),
+      Seq(Row(null)),
+      Seq("part"))
+  }
+
+  test("more than one partitioning column") {
+    val tempDir = Utils.createTempDir().toString
+    val df = Seq((0, 0, "zero"), (1, 1, "one")).toDF("id", "part1", "part2")
+    df.write
+      .partitionBy("part1", "part2")
+      .format("delta")
+      .mode("overwrite")
+      .save(tempDir)
+
+    checkResult(
+      sql(s"SHOW PARTITIONS delta.`$tempDir`"),
+      Seq(Row(0, "zero"), Row(1, "one")),
+      Seq("part1", "part2"))
   }
 }
 
