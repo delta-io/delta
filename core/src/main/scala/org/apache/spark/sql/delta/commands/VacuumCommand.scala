@@ -131,10 +131,12 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
         .getOrElse(spark.sessionState.conf.numShufflePartitions)
       val relativizeIgnoreError =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR)
+
       val fileListingParallelism =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_FILE_LISTING_PARALLELISM)
-          .getOrElse(spark.sparkContext.defaultParallelism)
-
+          .getOrElse(
+            Option(spark.sessionState.conf.parallelPartitionDiscoveryParallelism).getOrElse(200)
+          )
 
       val validFiles = snapshot.stateDS
         .mapPartitions { actions =>
