@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, GeneratedColumn}
+import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, GeneratedColumn, OptimizablePartitionExpression}
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -480,6 +480,13 @@ case class Metadata(
   lazy val fixedTypeColumns: Set[String] =
     GeneratedColumn.getGeneratedColumnsAndColumnsUsedByGeneratedColumns(schema)
 
+  /**
+   * Store non-partition columns and their corresponding [[OptimizablePartitionExpression]] which
+   * can be used to create partition filters from data filters of these non-partition columns.
+   */
+  @JsonIgnore
+  lazy val optimizablePartitionExpressions: Map[String, Seq[OptimizablePartitionExpression]]
+  = GeneratedColumn.getOptimizablePartitionExpressions(schema, partitionSchema)
 
   override def wrap: SingleAction = SingleAction(metaData = this)
 }

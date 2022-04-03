@@ -25,15 +25,18 @@ import scala.collection.parallel.immutable.ParVector
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, OptimisticTransaction}
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, RemoveFile}
-import org.apache.spark.sql.delta.commands.optimize.{FileSizeStats, OptimizeMetrics, OptimizeStats, ZOrderStats}
+import org.apache.spark.sql.delta.commands.optimize.{FileSizeStatsWithHistogram, OptimizeMetrics, OptimizeStats}
 import org.apache.spark.sql.delta.files.SQLMetricsReporting
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
+import org.apache.spark.SparkContext
 import org.apache.spark.SparkContext.SPARK_JOB_GROUP_ID
 import org.apache.spark.sql.{Encoders, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Expression, Literal}
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
+import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.util.{SystemClock, ThreadUtils}
 
@@ -118,20 +121,26 @@ class OptimizeExecutor(
       val parallelJobCollection = new ParVector(jobs.toVector)
 
       // Create a task pool to parallelize the submission of optimization jobs to Spark.
-      val forkJoinPoolTaskSupport = new ForkJoinTaskSupport(ThreadUtils.newForkJoinPool(
+      val threadPool = ThreadUtils.newForkJoinPool(
         "OptimizeJob",
-        sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_THREADS)))
+        sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_THREADS))
 
-      parallelJobCollection.tasksupport = forkJoinPoolTaskSupport
+      val updates = try {
+        val forkJoinPoolTaskSupport = new ForkJoinTaskSupport(threadPool)
+        parallelJobCollection.tasksupport = forkJoinPoolTaskSupport
 
-      val updates = parallelJobCollection.flatMap(
-        partitionBinGroup => runCompactBinJob(txn, partitionBinGroup._1, partitionBinGroup._2)).seq
+        parallelJobCollection.flatMap(partitionBinGroup =>
+          runCompactBinJob(txn, partitionBinGroup._1, partitionBinGroup._2)).seq
+      } finally {
+        threadPool.shutdownNow()
+      }
 
       val addedFiles = updates.collect { case a: AddFile => a }
       val removedFiles = updates.collect { case r: RemoveFile => r }
       if (addedFiles.size > 0) {
         val operation = DeltaOperations.Optimize(partitionPredicate.map(_.sql))
-        commitAndRetry(txn, operation, updates) { newTxn =>
+        val metrics = createMetrics(sparkSession.sparkContext, addedFiles, removedFiles)
+        commitAndRetry(txn, operation, updates, metrics) { newTxn =>
           val newPartitionSchema = newTxn.metadata.partitionSchema
           val candidateSetOld = candidateFiles.map(_.path).toSet
           val candidateSetNew = newTxn.filterFiles(partitionPredicate).map(_.path).toSet
@@ -252,20 +261,61 @@ class OptimizeExecutor(
   private def commitAndRetry(
       txn: OptimisticTransaction,
       optimizeOperation: Operation,
-      actions: Seq[Action])(
-      f: OptimisticTransaction => Boolean): Unit = {
+      actions: Seq[Action],
+      metrics: Map[String, SQLMetric])(f: OptimisticTransaction => Boolean): Unit = {
     try {
+      txn.registerSQLMetrics(sparkSession, metrics)
       txn.commit(actions, optimizeOperation)
     } catch {
       case e: ConcurrentModificationException =>
         val newTxn = txn.deltaLog.startTransaction()
         if (f(newTxn)) {
           logInfo("Retrying commit after checking for semantic conflicts with concurrent updates.")
-          commitAndRetry(newTxn, optimizeOperation, actions)(f)
+          commitAndRetry(newTxn, optimizeOperation, actions, metrics)(f)
         } else {
           logWarning("Semantic conflicts detected. Aborting operation.")
           throw e
         }
     }
+  }
+
+  /** Create a map of SQL metrics for adding to the commit history. */
+  private def createMetrics(
+      sparkContext: SparkContext,
+      addedFiles: Seq[AddFile],
+      removedFiles: Seq[RemoveFile]): Map[String, SQLMetric] = {
+
+    def setAndReturnMetric(description: String, value: Long) = {
+      val metric = createMetric(sparkContext, description)
+      metric.set(value)
+      metric
+    }
+
+    def totalSize(actions: Seq[FileAction]): Long = {
+      var totalSize = 0L
+      actions.foreach { file =>
+        val fileSize = file match {
+          case addFile: AddFile => addFile.size
+          case removeFile: RemoveFile => removeFile.size.getOrElse(0L)
+          case default =>
+            throw new IllegalArgumentException(s"Unknown FileAction type: ${default.getClass}")
+        }
+        totalSize += fileSize
+      }
+      totalSize
+    }
+
+    val sizeStats = FileSizeStatsWithHistogram.create(addedFiles.map(_.size).sorted)
+    Map[String, SQLMetric](
+      "minFileSize" -> setAndReturnMetric("minimum file size", sizeStats.get.min),
+      "p25FileSize" -> setAndReturnMetric("25th percentile file size", sizeStats.get.p25),
+      "p50FileSize" -> setAndReturnMetric("50th percentile file size", sizeStats.get.p50),
+      "p75FileSize" -> setAndReturnMetric("75th percentile file size", sizeStats.get.p75),
+      "maxFileSize" -> setAndReturnMetric("maximum file size", sizeStats.get.max),
+      "numAddedFiles" -> setAndReturnMetric("total number of files added.", addedFiles.size),
+      "numRemovedFiles" -> setAndReturnMetric("total number of files removed.", removedFiles.size),
+      "numAddedBytes" -> setAndReturnMetric("total number of bytes added", totalSize(addedFiles)),
+      "numRemovedBytes" ->
+        setAndReturnMetric("total number of bytes removed", totalSize(removedFiles)))
   }
 }

@@ -148,3 +148,12 @@ class DeltaDDLUsingPathSuite extends DeltaDDLUsingPathTests with DeltaSQLCommand
 }
 
 
+class DeltaDDLUsingPathNameColumnMappingSuite extends DeltaDDLUsingPathSuite
+  with DeltaColumnMappingEnableNameMode {
+
+  override protected def runOnlyTests = Seq(
+    "create table with NOT NULL - check violation through file writing",
+    "ALTER TABLE CHANGE COLUMN with nullability change in struct type - relaxed"
+  )
+}
+

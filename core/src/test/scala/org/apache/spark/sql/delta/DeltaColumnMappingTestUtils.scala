@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.File
 
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.test.DeltaColumnMappingSelectedTestMixin
 import io.delta.tables.{DeltaTable => OSSDeltaTable}
 import org.apache.hadoop.fs.Path
 
@@ -375,10 +376,13 @@ trait DeltaColumnMappingEnableIdMode extends SharedSparkSession
  * Include this trait to enable Name column mapping mode for a suite
  */
 trait DeltaColumnMappingEnableNameMode extends SharedSparkSession
-  with DeltaColumnMappingTestUtils {
+  with DeltaColumnMappingTestUtils
+  with DeltaColumnMappingSelectedTestMixin {
+
+  protected override def columnMappingMode: String = NameMapping.name
 
   protected override def sparkConf: SparkConf =
-    super.sparkConf.set(DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey, "name")
+    super.sparkConf.set(DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey, columnMappingMode)
 
   /**
    * CONVERT TO DELTA can be possible under name mode in tests

@@ -324,3 +324,12 @@ class DeltaCheckpointV2Suite
   }
 }
 
+
+class DeltaCheckpointV2NameColumnMappingSuite extends DeltaCheckpointV2Suite
+  with DeltaColumnMappingEnableNameMode {
+
+  override protected def runOnlyTests = Seq(
+    "unpartitioned table",
+    "partitioned table"
+  )
+}

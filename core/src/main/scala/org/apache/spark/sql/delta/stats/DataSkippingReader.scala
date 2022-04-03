@@ -689,7 +689,7 @@ trait DataSkippingReaderBase
    * @param keepNumRecords Also select `stats.numRecords` in the query.
    *                       This may slow down the query as it has to parse json.
    */
-  protected def getAllFiles(keepNumRecords: Boolean): Seq[AddFile] = {
+  protected def getAllFiles(keepNumRecords: Boolean): Seq[AddFile] = withDmqTag {
     recordFrameProfile("Delta", "DataSkippingReader.getAllFiles") {
       val implicits = spark.implicits
       import implicits._
@@ -728,7 +728,7 @@ trait DataSkippingReaderBase
    */
   protected def filterOnPartitions(
       partitionFilters: Seq[Expression],
-      keepNumRecords: Boolean): (Seq[AddFile], DataSize) = {
+      keepNumRecords: Boolean): (Seq[AddFile], DataSize) = withDmqTag {
     recordFrameProfile("Delta", "DataSkippingReader.filterOnPartitions") {
       val implicits = spark.implicits
       import implicits._
@@ -768,7 +768,7 @@ trait DataSkippingReaderBase
   protected def getDataSkippedFiles(
       partitionFilters: Column,
       dataFilters: DataSkippingPredicate,
-      keepNumRecords: Boolean): (Seq[AddFile], Seq[DataSize]) = {
+      keepNumRecords: Boolean): (Seq[AddFile], Seq[DataSize]) = withDmqTag {
     recordFrameProfile("Delta", "DataSkippingReader.getDataSkippedFiles") {
       val implicits = spark.implicits
       import implicits._
@@ -918,10 +918,12 @@ trait DataSkippingReaderBase
    * @return a sequence of addFiles for the given `paths`
    */
   def getSpecificFilesWithStats(paths: Seq[String]): Seq[AddFile] = {
-    val implicits = spark.implicits
-    import implicits._
-    val right = paths.toDF("path")
-    allFiles.join(right, Seq("path"), "leftsemi").as(SingleAction.addFileEncoder).collect()
+    withDmqTag {
+      val implicits = spark.implicits
+      import implicits._
+      val right = paths.toDF("path")
+      allFiles.join(right, Seq("path"), "leftsemi").as(SingleAction.addFileEncoder).collect()
+    }
   }
 }
 

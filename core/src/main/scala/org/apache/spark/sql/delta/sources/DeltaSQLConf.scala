@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit
 
 import org.apache.spark.internal.config.ConfigBuilder
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.storage.StorageLevel
 
 /**
  * [[SQLConf]] entries for Delta features.
@@ -108,6 +109,14 @@ trait DeltaSQLConfBase {
       .intConf
       .checkValue(n => n >= 0, "must not be negative.")
       .createWithDefault(2)
+
+  val DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL =
+    buildConf("snapshotCache.storageLevel")
+      .internal()
+      .doc("StorageLevel to use for caching the DeltaLog Snapshot. In general, this should not " +
+        "be used unless you are pretty sure that caching has a negative impact.")
+      .stringConf
+      .createWithDefault("MEMORY_AND_DISK_SER")
 
   val DELTA_PARTITION_COLUMN_CHECK_ENABLED =
     buildConf("partitionColumnValidity.enabled")
@@ -564,6 +573,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val GENERATED_COLUMN_PARTITION_FILTER_OPTIMIZATION_ENABLED =
+    buildConf("generatedColumn.partitionFilterOptimization.enabled")
+      .internal()
+      .doc(
+      "Whether to extract partition filters automatically from data filters for a partition" +
+        " generated column if possible")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_OPTIMIZE_MIN_FILE_SIZE =
     buildConf("optimize.minFileSize")
         .internal()
@@ -595,6 +613,21 @@ trait DeltaSQLConfBase {
         .intConf
         .checkValue(_ > 0, "'optimize.maxThreads' must be positive.")
         .createWithDefault(15)
+
+  val DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS =
+    buildConf("alterTable.changeColumn.checkExpressions")
+      .internal()
+      .doc(
+        """
+          |Given an ALTER TABLE command that changes columns, check if there are expressions used
+          | in Check Constraints and Generated Columns that reference this column and thus will
+          | be affected by this change.
+          |
+          |This is a safety switch - we should only turn this off when there is an issue with
+          |expression checking logic that prevents a valid column change from going through.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase
