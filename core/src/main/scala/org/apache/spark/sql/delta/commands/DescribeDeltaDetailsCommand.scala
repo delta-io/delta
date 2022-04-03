@@ -25,13 +25,11 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
-import org.apache.spark.sql.catalyst.{CatalystTypeConverters, ScalaReflection, TableIdentifier}
-import org.apache.spark.sql.catalyst.ScalaReflection.Schema
+import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.sql.catalyst.{ScalaReflection, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchTableException}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.types.StructType
 
@@ -51,18 +49,6 @@ case class TableDetail(
     minReaderVersion: java.lang.Integer,
     minWriterVersion: java.lang.Integer)
 
-object TableDetail {
-  val schema = ScalaReflection.schemaFor[TableDetail].dataType.asInstanceOf[StructType]
-
-  private lazy val converter: TableDetail => Row = {
-    val toInternalRow = CatalystTypeConverters.createToCatalystConverter(schema)
-    val toExternalRow = CatalystTypeConverters.createToScalaConverter(schema)
-    toInternalRow.andThen(toExternalRow).asInstanceOf[TableDetail => Row]
-  }
-
-  def toRow(table: TableDetail): Row = converter(table)
-}
-
 /**
  * A command for describing the details of a table such as the format, name, and size.
  */
@@ -70,7 +56,8 @@ case class DescribeDeltaDetailCommand(
     path: Option[String],
     tableIdentifier: Option[TableIdentifier]) extends LeafRunnableCommand with DeltaLogging {
 
-  override val output: Seq[Attribute] = TableDetail.schema.toAttributes
+  override val output: Seq[Attribute] =
+    ScalaReflection.schemaFor[TableDetail].dataType.asInstanceOf[StructType].toAttributes
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val (basePath, tableMetadata) = getPathAndTableMetadata(sparkSession, path, tableIdentifier)
@@ -85,9 +72,9 @@ case class DescribeDeltaDetailCommand(
           if (!fs.exists(new Path(path.get))) {
             throw new FileNotFoundException(path.get)
           }
-          describeNonDeltaPath(path.get)
+          describeNonDeltaPath(sparkSession, path.get)
         } else {
-          describeNonDeltaTable(tableMetadata.get)
+          describeNonDeltaTable(sparkSession, tableMetadata.get)
         }
       } else {
         describeDeltaTable(sparkSession, deltaLog, snapshot, tableMetadata)
@@ -134,11 +121,13 @@ case class DescribeDeltaDetailCommand(
     }
   }
 
-  private def toRows(detail: TableDetail): Seq[Row] = TableDetail.toRow(detail) :: Nil
+  private def describeNonDeltaTable(
+           sparkSession: SparkSession,
+           table: CatalogTable): Seq[Row] = {
+    import sparkSession.implicits._
 
-  private def describeNonDeltaTable(table: CatalogTable): Seq[Row] = {
     var location = table.storage.locationUri.map(uri => CatalogUtils.URIToString(uri))
-    toRows(
+    Seq(
       TableDetail(
         table.provider.orNull,
         null,
@@ -153,11 +142,15 @@ case class DescribeDeltaDetailCommand(
         table.properties,
         null,
         null
-      ))
+      )
+    ).toDF()
+     .collect()
+     .toSeq
   }
 
-  private def describeNonDeltaPath(path: String): Seq[Row] = {
-    toRows(
+  private def describeNonDeltaPath(sparkSession: SparkSession, path: String): Seq[Row] = {
+    import sparkSession.implicits._
+    Seq(
       TableDetail(
         null,
         null,
@@ -171,7 +164,10 @@ case class DescribeDeltaDetailCommand(
         null,
         Map.empty,
         null,
-        null))
+        null)
+    ).toDF()
+     .collect()
+     .toSeq
   }
 
   private def describeDeltaTable(
@@ -179,11 +175,13 @@ case class DescribeDeltaDetailCommand(
       deltaLog: DeltaLog,
       snapshot: Snapshot,
       tableMetadata: Option[CatalogTable]): Seq[Row] = {
+    import sparkSession.implicits._
+
     val currentVersionPath = FileNames.deltaFile(deltaLog.logPath, snapshot.version)
     val fs = currentVersionPath.getFileSystem(deltaLog.newDeltaHadoopConf())
     val tableName = tableMetadata.map(_.qualifiedName).getOrElse(snapshot.metadata.name)
     var location = deltaLog.dataPath.toString
-    toRows(
+    Seq(
       TableDetail(
         "delta",
         snapshot.metadata.id,
@@ -197,6 +195,9 @@ case class DescribeDeltaDetailCommand(
         snapshot.sizeInBytes,
         snapshot.metadata.configuration,
         snapshot.protocol.minReaderVersion,
-        snapshot.protocol.minWriterVersion))
+        snapshot.protocol.minWriterVersion)
+    ).toDF()
+     .collect()
+     .toSeq
   }
 }
