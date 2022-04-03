@@ -68,7 +68,7 @@ trait ShowDeltaPartitionsSuiteBase extends QueryTest
           |CREATE TABLE show_partitions(column1 INT, column2 INT)
           |USING delta
           |PARTITIONED BY (column1)
-          |COMMENT "describe a non delta table"
+          |COMMENT "show partitions delta table"
         """.stripMargin)
       sql(
         """
