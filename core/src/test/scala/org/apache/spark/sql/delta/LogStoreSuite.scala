@@ -431,11 +431,15 @@ class FakePublicLogStore(initHadoopConf: Configuration)
   extends io.delta.storage.HDFSLogStore(initHadoopConf) {
 
   assert(initHadoopConf.get("spark.delta.storage.custom.key") == "foo")
+  assert(initHadoopConf.get("this.is.a.non.spark.prefix.key") == "bar")
 }
 
 /**
  * We want to ensure that, to set configuration values for the Java LogStore implementations,
- * users can simply use `--conf $key=$value`, instead of `--conf spark.hadoop.$key=$value`
+ * users can simply use `--conf $key=$value`, instead of `--conf spark.hadoop.$key=$value`.
+ *
+ * We also want to test that users can use a non-Spark prefix, so that our public, Java LogStore
+ * implementations are not coupled to Spark-related conf keys.
  */
 class CorrectHadoopConfLogStoreSuite
   extends SparkFunSuite
@@ -448,6 +452,7 @@ class CorrectHadoopConfLogStoreSuite
       // equivalent to --conf spark.delta.storage.custom.key=foo
       .set("spark.delta.storage.custom.key", "foo")
       .set("spark.delta.logStore.class", classOf[FakePublicLogStore].getName)
+      .set("this.is.a.non.spark.prefix.key", "bar")
 
     withSparkSession(SparkSession.builder.config(sparkConf).getOrCreate()) { spark =>
       // this will instantiate the FakePublicLogStore above. If its assertion fails,
