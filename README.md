@@ -4,9 +4,7 @@
 [![License](https://img.shields.io/badge/license-Apache%202-brightgreen.svg)](https://github.com/delta-io/delta/blob/master/LICENSE.txt)
 [![PyPI](https://img.shields.io/pypi/v/delta-spark.svg)](https://pypi.org/project/delta-spark/)
 
-Delta Lake is a storage layer that brings scalable, ACID transactions to [Apache Spark](https://spark.apache.org) and other big-data engines.
-
-See the [Delta Lake Documentation](https://docs.delta.io) for details.
+Delta Lake is an open-source storage framework that enables building a [Lakehouse architecture](http://cidrdb.org/cidr2021/papers/cidr2021_paper17.pdf) with compute engines including Spark, PrestoDB, Flink, Trino, and Hive and APIs for Scala, Java, Rust, Ruby, and Python. See the [Delta Lake Documentation](https://docs.delta.io) for details.
 
 See the [Quick Start Guide](https://docs.delta.io/latest/quick-start.html) to get started with Scala, Java and Python.
 
@@ -21,17 +19,26 @@ See the [online documentation](https://docs.delta.io/latest/) for the latest rel
 * [Python API docs](https://docs.delta.io/latest/api/python/index.html)
 
 ## Compatibility
+Delta Standalone library is a single-node Java library that can be used to read from and write to Delta tables. Specifically, this library provides APIs to interact with a table’s metadata in the transaction log, implementing the Delta Transaction Log Protocol to achieve the transactional guarantees of the Delta Lake format.
 
-### Compatibility with Apache Spark Versions
+### Integrations with Delta Lake:
+See the online documentation for the Delta lake integration with big data ecosystem.
 
-See the [online documentation](https://docs.delta.io/latest/releases.html) for the releases and their compatibility with Apache Spark versions.
+* [Apache Spark](https://docs.delta.io/latest/releases.html)
+* [PrestoDb](https://github.com/prestodb/presto/tree/master/presto-delta)
+* [Trino](https://trino.io/docs/current/connector/delta-lake.html)
+* [Rust API](https://github.com/delta-io/delta-rs)
+* [Kafka Delta Ingest](https://github.com/delta-io/kafka-delta-ingest)
+* [Apache Hive](https://github.com/delta-io/connectors/tree/master/hive)
+* [Apache Flink](https://github.com/delta-io/connectors/tree/master/flink)
 
 ### API Compatibility
 
 There are two types of APIs provided by the Delta Lake project. 
 
-- Spark-based APIs - You can read Delta tables through the `DataFrameReader`/`Writer` (i.e. `spark.read`, `df.write`, `spark.readStream` and `df.writeStream`). Options to these APIs will remain stable within a major release of Delta Lake (e.g., 1.x.x).
 - Direct Java/Scala/Python APIs - The classes and methods documented in the [API docs](https://docs.delta.io/latest/delta-apidoc.html) are considered as stable public APIs. All other classes, interfaces, methods that may be directly accessible in code are considered internal, and they are subject to change across releases.
+- Spark-based APIs - You can read Delta tables through the `DataFrameReader`/`Writer` (i.e. `spark.read`, `df.write`, `spark.readStream` and `df.writeStream`). Options to these APIs will remain stable within a major release of Delta Lake (e.g., 1.x.x).
+
 
 ### Data Storage Compatibility
 
@@ -100,3 +107,5 @@ There are two mediums of communication within the Delta Lake community.
   - [Login here](https://delta-users.slack.com/)
 
 - Public [Mailing list](https://groups.google.com/forum/#!forum/delta-users)
+- [Linkedin page](https://www.linkedin.com/company/deltalake
+- [Youtube channel](https://www.youtube.com/c/deltalake)
