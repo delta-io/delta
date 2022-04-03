@@ -366,47 +366,6 @@ trait GCSLogStoreSuiteBase extends LogStoreSuiteBase {
       }
     }
   }
-  test("runInNewThread") {
-    import io.delta.storage.internal.ThreadUtils.runInNewThread
-
-    assert(runInNewThread("thread-name",
-      true,
-      () => { Thread.currentThread().getName}) === "thread-name"
-    )
-    assert(runInNewThread("thread-name",
-      true,
-      () => { Thread.currentThread().isDaemon })
-    )
-    assert(runInNewThread("thread-name",
-      false,
-      () => { Thread.currentThread().isDaemon }) == false
-    )
-
-    val ioExceptionMessage = "test" + Random.nextInt()
-    val ioException = intercept[IOException] {
-      runInNewThread("thread-name",
-        true,
-        () => {
-          throw new IOException(ioExceptionMessage)
-        })
-    }
-    assert(ioException.getMessage === ioExceptionMessage)
-    assert(ioException.getStackTrace.mkString("\n")
-      .contains("... run in separate thread using ThreadUtils"))
-
-    val fileAlreadyExistsExceptionMessage = "test" + Random.nextInt()
-    val fileAlreadyExistsException = intercept[FileAlreadyExistsException] {
-      runInNewThread("thread-name",
-        true,
-        () => {
-          throw new FileAlreadyExistsException(fileAlreadyExistsExceptionMessage)
-        })
-    }
-    assert(fileAlreadyExistsException.getMessage === fileAlreadyExistsExceptionMessage)
-    assert(fileAlreadyExistsException.getStackTrace.mkString("\n")
-      .contains("... run in separate thread using ThreadUtils"))
-
-  }
 }
 
 ////////////////////////////////

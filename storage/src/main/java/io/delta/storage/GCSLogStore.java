@@ -31,7 +31,6 @@ import java.util.Iterator;
 import java.util.concurrent.Callable;
 
 /**
- * <p>
  * The {@link LogStore} implementation for GCS, which uses gcs-connector to
  * provide the necessary atomic and durability guarantees:
  *
@@ -45,6 +44,7 @@ import java.util.concurrent.Callable;
  *
  *   <li>Mutual Exclusion: Preconditions are used to handle race conditions.</li>
  * </ol>
+ *
  * Regarding file creation, this implementation:
  * <ul>
  *    <li>Opens a stream to write to GCS otherwise.</li>
@@ -64,10 +64,11 @@ public class GCSLogStore extends HadoopFileSystemLogStore {
     }
 
     @Override
-    public void write(Path path,
-                      Iterator<String> actions,
-                      Boolean overwrite,
-                      Configuration hadoopConf) throws IOException {
+    public void write(
+            Path path,
+            Iterator<String> actions,
+            Boolean overwrite,
+            Configuration hadoopConf) throws IOException {
         final FileSystem fs = path.getFileSystem(hadoopConf);
 
         // This is needed for the tests to throw error with local file system.
@@ -111,12 +112,10 @@ public class GCSLogStore extends HadoopFileSystemLogStore {
 
     private boolean isPreconditionFailure(Throwable x) {
         return Throwables.getCausalChain(x)
-                .stream()
-                .filter(p -> p != null)
-                .filter(p -> p.getMessage() != null)
-                .filter(p -> p.getMessage().contains(preconditionFailedExceptionMessage))
-                .findFirst()
-                .isPresent();
+            .stream()
+            .filter(p -> p != null)
+            .filter(p -> p.getMessage() != null)
+            .anyMatch(p -> p.getMessage().contains(preconditionFailedExceptionMessage));
     }
 
     @Override
