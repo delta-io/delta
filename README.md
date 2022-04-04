@@ -13,18 +13,40 @@ Delta Lake is an open-source storage framework that enables building a [Lakehous
 [delta-rs](https://github.com/delta-io/delta-rs),
 [delta-sharing](https://github.com/delta-io/delta-sharing),
 [kafka-delta-ingest](https://github.com/delta-io/kafka-delta-ingest), and
-[website](https://github.com/delta-io/website)
+[website](https://github.com/delta-io/website).
 
 ## Integrations with Delta Lake:
-The following are some of the more popular Delta Lake integrations, refer to [delta.io/integrations](https://delta.io/integrations/) for the complete list.
+The following are some of the more popular Delta Lake integrations, refer to [delta.io/integrations](https://delta.io/integrations/) for the complete list:
 
 * [Apache Spark™](https://docs.delta.io/): This connector allows Apache Spark™ to read from and write to Delta Lake.
-* [Apache Flink (Preview)](https://github.com/delta-io/connectors/tree/master/flink-connector): This connector allows Apache Flink to write to Delta Lake.
+* [Apache Flink (Preview)](https://github.com/delta-io/connectors/tree/master/flink): This connector allows Apache Flink to write to Delta Lake.
 * [PrestoDB](https://prestodb.io/docs/current/connector/deltalake.html): This connector allows PrestoDB to read from Delta Lake.
 * [Trino](https://trino.io/docs/current/connector/delta-lake.html): This connector allows Trino to read from and write to Delta Lake.
 * [Delta Standalone](https://docs.delta.io/latest/delta-standalone.html): This library allows Scala and Java-based projects (including Apache Flink, Apache Hive, Apache Beam, and PrestoDB) to read from and write to Delta Lake.
 * [Apache Hive](https://docs.delta.io/latest/hive-integration.html): This connector allows Apache Hive to read from Delta Lake.
 * [Delta Rust API](https://docs.rs/deltalake/latest/deltalake/): This library allows Rust (with Python and Ruby bindings) low level access to Delta tables and is intended to be used with data processing frameworks like datafusion, ballista, rust-dataframe, vega, etc.
+
+<br/>
+
+<details>
+<summary><strong><em>Table of Contents</em></strong></summary>
+
+* [Latest binaries](#latest-binaries)
+* [API Documentation](#api-documentation)
+* [Compatibility](#compatibility)
+  * [API Compatibility](#api-compatibility)
+  * [Data Storage Compatibility](#data-storage-compatibility)
+* [Roadmap](#roadmap)
+* [Building](#building)
+* [Transaction Protocol](#transaction-protocol)
+* [Requirements for Underlying Storage Systems](#requirements-for-underlying-storage-systems)
+* [Concurrency Control](#concurrency-control)
+* [Reporting issues](#reporting-issues)
+* [Contributing](#contributing)
+* [License](#license)
+* [Community](#community)
+</details>
+
 
 ## Latest Binaries
 
@@ -46,13 +68,14 @@ There are two types of APIs provided by the Delta Lake project.
 
 - Direct Java/Scala/Python APIs - The classes and methods documented in the [API docs](https://docs.delta.io/latest/delta-apidoc.html) are considered as stable public APIs. All other classes, interfaces, methods that may be directly accessible in code are considered internal, and they are subject to change across releases.
 - Spark-based APIs - You can read Delta tables through the `DataFrameReader`/`Writer` (i.e. `spark.read`, `df.write`, `spark.readStream` and `df.writeStream`). Options to these APIs will remain stable within a major release of Delta Lake (e.g., 1.x.x).
+- See the [online documentation](https://docs.delta.io/latest/releases.html) for the releases and their compatibility with Apache Spark versions.
 
 
 ### Data Storage Compatibility
 
 Delta Lake guarantees backward compatibility for all Delta Lake tables (i.e., newer versions of Delta Lake will always be able to read tables written by older versions of Delta Lake). However, we reserve the right to break forward compatibility as new features are introduced to the transaction protocol (i.e., an older version of Delta Lake may not be able to read a table produced by a newer version).
 
-Breaking changes in the protocol are indicated by incrementing the minimum reader/writer version in the `Protocol` [action](https://github.com/delta-io/delta/blob/master/src/main/scala/org/apache/spark/sql/delta/actions/actions.scala).
+Breaking changes in the protocol are indicated by incrementing the minimum reader/writer version in the `Protocol` [action](https://github.com/delta-io/delta/blob/master/core/src/test/scala/org/apache/spark/sql/delta/ActionSerializerSuite.scala).
 
 ## Roadmap
 
@@ -114,6 +137,6 @@ There are two mediums of communication within the Delta Lake community.
 * Public Slack Channel
   - [Register here](https://join.slack.com/t/delta-users/shared_invite/zt-165gcm2g7-0Sc57w7dX0FbfilR9EPwVQ)
   - [Login here](https://delta-users.slack.com/)
-* Public [Mailing list](https://groups.google.com/forum/#!forum/delta-users)
 * [Linkedin page](https://www.linkedin.com/company/deltalake)
 * [Youtube channel](https://www.youtube.com/c/deltalake)
+* Public [Mailing list](https://groups.google.com/forum/#!forum/delta-users)
