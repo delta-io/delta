@@ -16,6 +16,78 @@
 
 package io.delta.storage;
 
-public class ExternalCommitEntry {
+import org.apache.hadoop.fs.Path;
 
+/**
+ * Wrapper class representing an entry in an external store for a given commit into the Delta log.
+ *
+ * Contains relevant fields and helper methods.
+ */
+public final class ExternalCommitEntry {
+
+    /**
+     * Absolute path to this delta table
+     */
+    public final Path tablePath;
+
+    /**
+     * File name of this commit, e.g. "000000N.json"
+     */
+    public final String fileName;
+
+    /**
+     * Path to temp file for this commit, relative to the `_delta_log
+     */
+    public final String tempPath;
+
+    /**
+     * true if delta json file is successfully copied to its destination location, else false
+     */
+    public final boolean complete;
+
+    /**
+     * epoch seconds of time of commit if complete=true, else null
+     */
+    public final Long commitTime;
+
+    public ExternalCommitEntry(
+            Path tablePath,
+            String fileName,
+            String tempPath,
+            boolean complete,
+            Long commitTime) {
+        this.tablePath = tablePath;
+        this.fileName = fileName;
+        this.tempPath = tempPath;
+        this.complete = complete;
+        this.commitTime = commitTime;
+    }
+
+    /**
+     * @return this entry with `complete=true`
+     */
+    public ExternalCommitEntry asComplete() {
+        return new ExternalCommitEntry(
+            this.tablePath,
+            this.fileName,
+            this.tempPath,
+            true,
+            System.currentTimeMillis() / 1000L
+        );
+    }
+
+    /**
+     * @return the absolute path to the file for this entry.
+     * e.g. $tablePath/_delta_log/0000000N.json
+     */
+    public Path absoluteFilePath() {
+        return new Path(new Path(tablePath, "_delta_log"), fileName);
+    }
+
+    /**
+     * @return the absolute path to the temp file for this entry
+     */
+    public Path absoluteTempPath() {
+        return new Path(new Path(tablePath, "_delta_log"), tempPath);
+    }
 }
