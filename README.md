@@ -1,12 +1,31 @@
-<img src="https://docs.delta.io/latest/_static/delta-lake-white.png" width="400" alt="Delta Lake Logo"></img>
+<img src="https://docs.delta.io/latest/_static/delta-lake-white.png" width="200" alt="Delta Lake Logo"></img>
 
 [![Test](https://github.com/delta-io/delta/actions/workflows/test.yaml/badge.svg)](https://github.com/delta-io/delta/actions/workflows/test.yaml)
 [![License](https://img.shields.io/badge/license-Apache%202-brightgreen.svg)](https://github.com/delta-io/delta/blob/master/LICENSE.txt)
 [![PyPI](https://img.shields.io/pypi/v/delta-spark.svg)](https://pypi.org/project/delta-spark/)
 
-Delta Lake is an open-source storage framework that enables building a [Lakehouse architecture](http://cidrdb.org/cidr2021/papers/cidr2021_paper17.pdf) with compute engines including Spark, PrestoDB, Flink, Trino, and Hive and APIs for Scala, Java, Rust, Ruby, and Python. See the [Delta Lake Documentation](https://docs.delta.io) for details.
+Delta Lake is an open-source storage framework that enables building a [Lakehouse architecture](http://cidrdb.org/cidr2021/papers/cidr2021_paper17.pdf) with compute engines including Spark, PrestoDB, Flink, Trino, and Hive and APIs for Scala, Java, Rust, Ruby, and Python. 
+* See the [Delta Lake Documentation](https://docs.delta.io) for details.
+* See the [Quick Start Guide](https://docs.delta.io/latest/quick-start.html) to get started with Scala, Java and Python.
 
-See the [Quick Start Guide](https://docs.delta.io/latest/quick-start.html) to get started with Scala, Java and Python.
+### Note, this repo is one of many Delta Lake repositories in the [delta.io](https://github.com/delta-io) organizations including 
+[connectors](https://github.com/delta-io/connectors),
+[delta](https://github.com/delta-io/delta), 
+[delta-rs](https://github.com/delta-io/delta-rs),
+[delta-sharing](https://github.com/delta-io/delta-sharing),
+[kafka-delta-ingest](https://github.com/delta-io/kafka-delta-ingest), and
+[website](https://github.com/delta-io/website)
+
+## Integrations with Delta Lake:
+The following are some of the more popular Delta Lake integrations, refer to [delta.io/integrations](https://delta.io/integrations/) for the complete list.
+
+* [Apache Spark™](https://docs.delta.io/): This connector allows Apache Spark™ to read from and write to Delta Lake.
+* [Apache Flink (Preview)](https://github.com/delta-io/connectors/tree/master/flink-connector): This connector allows Apache Flink to write to Delta Lake.
+* [PrestoDB](https://prestodb.io/docs/current/connector/deltalake.html): This connector allows PrestoDB to read from Delta Lake.
+* [Trino](https://trino.io/docs/current/connector/delta-lake.html): This connector allows Trino to read from and write to Delta Lake.
+* [Delta Standalone](https://docs.delta.io/latest/delta-standalone.html): This library allows Scala and Java-based projects (including Apache Flink, Apache Hive, Apache Beam, and PrestoDB) to read from and write to Delta Lake.
+* [Apache Hive](https://docs.delta.io/latest/hive-integration.html): This connector allows Apache Hive to read from Delta Lake.
+* [Delta Rust API](https://docs.rs/deltalake/latest/deltalake/): This library allows Rust (with Python and Ruby bindings) low level access to Delta tables and is intended to be used with data processing frameworks like datafusion, ballista, rust-dataframe, vega, etc.
 
 ## Latest Binaries
 
@@ -21,16 +40,6 @@ See the [online documentation](https://docs.delta.io/latest/) for the latest rel
 ## Compatibility
 [Delta Standalone](https://www.youtube.com/c/deltalake) library is a single-node Java library that can be used to read from and write to Delta tables. Specifically, this library provides APIs to interact with a table’s metadata in the transaction log, implementing the Delta Transaction Log Protocol to achieve the transactional guarantees of the Delta Lake format.
 
-### Integrations with Delta Lake:
-See the online documentation for the Delta lake integration with big data ecosystem.
-
-* [Apache Spark](https://docs.delta.io/latest/releases.html)
-* [PrestoDb](https://github.com/prestodb/presto/tree/master/presto-delta)
-* [Trino](https://trino.io/docs/current/connector/delta-lake.html)
-* [Rust API](https://github.com/delta-io/delta-rs)
-* [Kafka Delta Ingest](https://github.com/delta-io/kafka-delta-ingest)
-* [Apache Hive](https://github.com/delta-io/connectors/tree/master/hive)
-* [Apache Flink](https://github.com/delta-io/connectors/tree/master/flink)
 
 ### API Compatibility
 
@@ -48,7 +57,8 @@ Breaking changes in the protocol are indicated by incrementing the minimum reade
 
 ## Roadmap
 
-For detailed detailed timeline, see the [project roadmap](https://github.com/delta-io/delta/milestones).
+* For the high-level Delta Lake roadmap, see [Delta Lake 2022H1 roadmap](http://delta.io/roadmap).  
+* For the detailed timeline, see the [project roadmap](https://github.com/delta-io/delta/milestones). 
 
 # Building
 
@@ -103,7 +113,7 @@ Apache License 2.0, see [LICENSE](https://github.com/delta-io/delta/blob/master/
 There are two mediums of communication within the Delta Lake community.
 
 * Public Slack Channel
-  - [Register here](https://dbricks.co/delta-users-slack)
+  - [Register here](https://join.slack.com/t/delta-users/shared_invite/zt-165gcm2g7-0Sc57w7dX0FbfilR9EPwVQ)
   - [Login here](https://delta-users.slack.com/)
 * Public [Mailing list](https://groups.google.com/forum/#!forum/delta-users)
 * [Linkedin page](https://www.linkedin.com/company/deltalake)
