@@ -16,7 +16,6 @@
 
 package io.delta.storage.internal;
 
-import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -27,26 +26,26 @@ import java.util.concurrent.Callable;
 public final class ThreadUtils {
 
     /**
-     * Based out of sparks ThreadUtils.runInNewThread
+     * Based on Apache Spark's ThreadUtils.runInNewThread
      * Run a piece of code in a new thread and return the result.
-     * RuntimeException is thrown to avoid the calling interfaces
-     * from handling any Exceptions other than IOExceptions
      */
     public static <T> T runInNewThread(
             String threadName,
             boolean isDaemon,
-            Callable<T> body) throws IOException {
-        //Using a single element list to hold the exception and result,
-        //since T exception or T result cannot be used in static method
-        List<Exception> exceptionHolder = new ArrayList<>(1);
+            Callable<T> body) throws Throwable {
+        // Using a single-element list to hold the throwable and result,
+        // since values used in static method must be final
+        List<Throwable> exceptionHolder = new ArrayList<>(1);
         List<T> resultHolder = new ArrayList<>(1);
         Thread thread = new Thread(threadName) {
             @Override
             public void run() {
                 try {
                     resultHolder.add(body.call());
-                } catch (Exception ex) {
-                    exceptionHolder.add(ex);
+                } catch (Throwable t) {
+                    if (LogStoreErrors.isNonFatal(t)) {
+                        exceptionHolder.add(t);
+                    }
                 }
             }
         };
@@ -58,7 +57,7 @@ public final class ThreadUtils {
             throw new InterruptedIOException(e.getMessage());
         }
         if (!exceptionHolder.isEmpty()) {
-            Exception realException = exceptionHolder.get(0);
+            Throwable realException = exceptionHolder.get(0);
             // Remove the part of the stack that shows method calls into this helper method
             // This means drop everything from the top until the stack element
             // ThreadUtils.runInNewThread(), and then drop that as well (hence the + 1 to start index).
@@ -106,16 +105,7 @@ public final class ThreadUtils {
             finalStackTrace.addAll(baseStackTrace);
 
             realException.setStackTrace(finalStackTrace.toArray(new StackTraceElement[0]));
-            if (realException instanceof org.apache.hadoop.fs.FileAlreadyExistsException) {
-                throw (org.apache.hadoop.fs.FileAlreadyExistsException) realException;
-            } else if (realException instanceof IOException) {
-                throw (IOException) realException;
-            } else {
-                // Throwing RuntimeException to avoid the calling interfaces from throwing Exception
-                RuntimeException ex = new RuntimeException(realException.getMessage());
-                ex.setStackTrace(finalStackTrace.toArray(new StackTraceElement[0]));
-                throw ex;
-            }
+            throw realException;
         } else {
             return resultHolder.get(0);
         }
