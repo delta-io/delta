@@ -7,8 +7,7 @@
 Delta Lake is an open-source storage framework that enables building a [Lakehouse architecture](http://cidrdb.org/cidr2021/papers/cidr2021_paper17.pdf) with compute engines including Spark, PrestoDB, Flink, Trino, and Hive and APIs for Scala, Java, Rust, Ruby, and Python. 
 * See the [Delta Lake Documentation](https://docs.delta.io) for details.
 * See the [Quick Start Guide](https://docs.delta.io/latest/quick-start.html) to get started with Scala, Java and Python.
-
-### Note, this repo is one of many Delta Lake repositories in the [delta.io](https://github.com/delta-io) organizations including 
+* Note, this repo is one of many Delta Lake repositories in the [delta.io](https://github.com/delta-io) organizations including 
 [connectors](https://github.com/delta-io/connectors),
 [delta](https://github.com/delta-io/delta), 
 [delta-rs](https://github.com/delta-io/delta-rs),
