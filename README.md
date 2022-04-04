@@ -15,7 +15,6 @@ Delta Lake is an open-source storage framework that enables building a [Lakehous
 [kafka-delta-ingest](https://github.com/delta-io/kafka-delta-ingest), and
 [website](https://github.com/delta-io/website).
 
-## Integrations with Delta Lake:
 The following are some of the more popular Delta Lake integrations, refer to [delta.io/integrations](https://delta.io/integrations/) for the complete list:
 
 * [Apache Spark™](https://docs.delta.io/): This connector allows Apache Spark™ to read from and write to Delta Lake.
