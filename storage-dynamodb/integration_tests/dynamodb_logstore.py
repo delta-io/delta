@@ -17,22 +17,14 @@
 import os
 import sys
 import threading
+import random
+import uuid
 
-from pyspark.sql import SparkSession
+from pyspark.sql import SparkSession, functions as F
 from multiprocessing.pool import ThreadPool
 import time
 
 """
-Create required dynamodb table with:
-
-$ aws --region us-west-2 dynamodb create-table \
-    --table-name delta_log_test \
-    --attribute-definitions AttributeName=tablePath,AttributeType=S \
-                            AttributeName=fileName,AttributeType=S \
-    --key-schema AttributeName=tablePath,KeyType=HASH \
-                AttributeName=fileName,KeyType=RANGE \
-    --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5
-
 Run this script in root dir of repository:
 
 export VERSION=$(cat version.sbt|cut -d '"' -f 2)
@@ -91,21 +83,36 @@ spark = SparkSession \
     .config("io.delta.storage.errorRates", dynamo_error_rates) \
     .getOrCreate()
 
-# spark.sparkContext.setLogLevel("INFO")
+SCHEMA = "run_id: string, id: int, a: int"
 
-data = spark.createDataFrame([], "id: int, a: int")
-data.write.format("delta").mode("overwrite").partitionBy("id").save(delta_table_path)
+RUN_ID = str(uuid.uuid4())
+
+data = spark.createDataFrame([], SCHEMA)
+
+# create table if not exist
+data.write.format("delta").mode("append").partitionBy("run_id", "id").save(delta_table_path)
+
 
 def write_tx(n):
-    data = spark.createDataFrame([[n, n]], "id: int, a: int")
-    data.write.format("delta").mode("append").partitionBy("id").save(delta_table_path)
+    data = spark.createDataFrame([[RUN_ID, random.randrange(2**16), n]], SCHEMA)
+    data.write.format("delta").mode("append").partitionBy("run_id", "id").save(delta_table_path)
+
+
+def count():
+    return (
+        spark.read.format("delta")
+        .load(delta_table_path)
+        .filter(F.col("run_id") == RUN_ID)
+        .count()
+    )
 
 
 stop_reading = threading.Event()
 
 def read_data():
     while not stop_reading.is_set():
-        print("Reading {:d} rows ...".format(spark.read.format("delta").load(delta_table_path).distinct().count()))
+        cnt = count()
+        print(f"Reading {cnt} rows ...")
         time.sleep(1)
 
 
@@ -125,7 +132,7 @@ stop_reading.set()
 for thread in read_threads:
     thread.join()
 
-actual = spark.read.format("delta").load(delta_table_path).distinct().count()
+actual = count()
 print("Number of written rows:", actual)
 assert actual == num_rows
 
