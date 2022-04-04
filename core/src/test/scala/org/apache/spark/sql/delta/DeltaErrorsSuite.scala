@@ -165,20 +165,6 @@ trait DeltaErrorsSuiteBase
         "column is currently unsupported: c0")
     }
     {
-      val e = intercept[DeltaIllegalArgumentException] {
-        throw DeltaErrors.copyIntoEncryptionSseCRequired()
-      }
-      assert(e.getMessage == "Invalid encryption type. COPY INTO source encryption " +
-        "must specify 'TYPE' = 'AWS_SSE_C'.")
-    }
-    {
-      val e = intercept[DeltaIllegalArgumentException] {
-        throw DeltaErrors.copyIntoEncryptionMasterKeyRequired()
-      }
-      assert(e.getMessage == "Invalid encryption arguments. COPY INTO source encryption " +
-        "must specify a MASTER_KEY.")
-    }
-    {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.generatedColumnsReferToWrongColumns(
           new AnalysisException("analysis exception"))

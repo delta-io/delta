@@ -1029,52 +1029,6 @@ object DeltaErrors
     new AnalysisException(s"Operation $operationName can not be performed on a view")
   }
 
-  def copyIntoEncryptionNotAllowedOn(scheme: String): Throwable = {
-    // TODO: add `wasbs` once supported
-    new IllegalArgumentException(
-      s"Invalid scheme $scheme. " +
-        s"COPY INTO source encryption currently only supports s3/s3n/s3a/abfss.")
-  }
-
-  def copyIntoEncryptionSseCRequired(): Throwable = {
-    new DeltaIllegalArgumentException(
-      errorClass = "INVALID_COPY_ENCRYPTION",
-      messageParameters = Array("encryption type", "encryption must specify 'TYPE' = 'AWS_SSE_C'"))
-  }
-
-  def copyIntoEncryptionMasterKeyRequired(): Throwable = {
-    new DeltaIllegalArgumentException(
-      errorClass = "INVALID_COPY_ENCRYPTION",
-      messageParameters = Array("encryption arguments", "encryption must specify a MASTER_KEY"))
-  }
-
-  def copyIntoCredentialsNotAllowedOn(scheme: String): Throwable = {
-     new IllegalArgumentException(
-      s"Invalid scheme $scheme. " +
-        s"COPY INTO source encryption currently only supports s3/s3n/s3a/wasbs/abfss.")
-  }
-
-  def copyIntoEncryptionRequired(
-      requiredKey: String, expectedValue: Option[String] = None): Throwable = {
-    new IllegalArgumentException(
-      if (expectedValue.nonEmpty) {
-        s"Invalid encryption option $requiredKey. " +
-          s"COPY INTO source encryption must specify '$requiredKey' = '${expectedValue.get}'."
-      } else {
-        s"COPY INTO source encryption must specify '$requiredKey'."
-      }
-    )
-  }
-
-  def copyIntoCredentialsRequired(keys: String*): Throwable = {
-    new IllegalArgumentException(s"COPY INTO source credentials must " +
-      s"specify ${keys.mkString(", ")}.")
-  }
-
-  def copyIntoEncryptionNotSupportedForAzure: Throwable = {
-    new IllegalArgumentException(
-      "COPY INTO encryption only supports ADLS Gen2, or abfss:// file scheme")
-  }
 
   def postCommitHookFailedException(
       failedHook: PostCommitHook,

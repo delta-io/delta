@@ -22,10 +22,6 @@
     "message" : [ "Attribute name \"%s\" contains invalid character(s) among \" ,;{}()\\\\n\\\\t=\". Please use alias to rename it." ],
     "sqlState" : "42000"
   },
-  "INVALID_COPY_ENCRYPTION" : {
-    "message" : [ "Invalid %s. COPY INTO source %s." ],
-    "sqlState" : "42000"
-  },
   "INVALID_GENERATED_COLUMN_REFERENCES" : {
     "message" : [ "A generated column cannot use a non-existent column or another generated column" ],
     "sqlState" : "42000"
