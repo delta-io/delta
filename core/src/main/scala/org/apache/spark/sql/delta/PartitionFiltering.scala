@@ -43,12 +43,14 @@ trait PartitionFiltering { self: Snapshot =>
       files = files,
       total = DataSize(),
       partition = DataSize(),
-      scanned = DataSize())(
+      scanned = DataSize()
+    )(
       projection = AttributeSet(Nil),
       partitionFilters = ExpressionSet(Nil),
       dataFilters = ExpressionSet(Nil),
       unusedFilters = ExpressionSet(Nil),
       scanDurationMs = 0,
-      dataSkippingType = null)
+      dataSkippingType = null
+    )
   }
 }

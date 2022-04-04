@@ -90,10 +90,7 @@ trait StateCache extends DeltaLogging {
       if (cached.synchronized(isCached) && cachedDs.isDefined) {
         cachedDs.get.get
       } else {
-        Dataset.ofRows(
-          spark,
-          ds.queryExecution.logical
-        )
+        Dataset.ofRows(spark, ds.queryExecution.logical)
       }
     }
 

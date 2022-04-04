@@ -94,7 +94,9 @@ trait ScanReportHelper extends SharedSparkSession with AdaptiveSparkPlanHelper {
                 usedPartitionColumns = usedPartitionColumns,
                 numUsedPartitionColumns = usedPartitionColumns.size,
                 allPartitionColumns = deltaTable.deltaLog.snapshot.metadata.partitionColumns,
-                numAllPartitionColumns = deltaTable.deltaLog.snapshot.metadata.partitionColumns.size
+                numAllPartitionColumns =
+                  deltaTable.deltaLog.snapshot.metadata.partitionColumns.size,
+                parentFilterOutputRows = None
               )
 
               scans += report
