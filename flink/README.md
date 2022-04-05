@@ -91,13 +91,8 @@ Please replace the versions of the dependencies with the ones you are using.
 
 ```
 libraryDependencies ++= Seq(
-<<<<<<< HEAD:flink-connector/README.md
-  "io.delta" %% "flink-connector" % "0.4.0",
+  "io.delta" %% "delta-flink" % "0.4.0",
   "io.delta" %% "delta-standalone" % "0.4.0",  
-=======
-  "io.delta" %% "delta-flink" % "0.2.1-SNAPSHOT",
-  "io.delta" %% "delta-standalone" % "0.2.1-SNAPSHOT",  
->>>>>>> delta-io/master:flink/README.md
   "org.apache.flink" %% "flink-parquet" % flinkVersion,
   "org.apache.flink" % "flink-table-common" % flinkVersion,
   "org.apache.hadoop" % "hadoop-client" % hadoopVersion)
