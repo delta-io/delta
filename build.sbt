@@ -300,8 +300,16 @@ lazy val unidocSettings = Seq(
 
   ScalaUnidoc / unidoc / unidocAllSources := {
     (ScalaUnidoc / unidoc / unidocAllSources).value
-      // io.delta.storage public APIs are Java-only
-      .map(_.filterNot(_.getCanonicalPath.contains("io/delta/storage")))
+      // ignore Scala (non-public) io.delta.storage classes
+      .map(_.filterNot(_.getCanonicalPath.contains("io/delta/storage"))) ++
+
+    // include public io.delta.storage classes
+    (JavaUnidoc / unidoc / unidocAllSources).value
+      .map { _.filter { f =>
+          f.getCanonicalPath.contains("io/delta/storage") &&
+          (f.getName == "LogStore.java" || f.getName == "CloseableIterator.java")
+        }
+      }
   },
 
   // Configure Java unidoc
