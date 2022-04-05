@@ -81,24 +81,6 @@ Breaking changes in the protocol are indicated by incrementing the minimum reade
 * For the high-level Delta Lake roadmap, see [Delta Lake 2022H1 roadmap](http://delta.io/roadmap).  
 * For the detailed timeline, see the [project roadmap](https://github.com/delta-io/delta/milestones). 
 
-## Building
-
-Delta Lake is compiled using [SBT](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.html).
-
-To compile, run
-
-    build/sbt compile
-
-To generate artifacts, run
-
-    build/sbt package
-
-To execute tests, run
-
-    build/sbt test
-
-Refer to [SBT docs](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.html) for more commands.
-
 ## Transaction Protocol
 
 [Delta Transaction Log Protocol](PROTOCOL.md) document provides a specification of the transaction protocol.
@@ -125,6 +107,24 @@ We use [GitHub Issues](https://github.com/delta-io/delta/issues) to track commun
 We welcome contributions to Delta Lake. See our [CONTRIBUTING.md](https://github.com/delta-io/delta/blob/master/CONTRIBUTING.md) for more details.
 
 We also adhere to the [Delta Lake Code of Conduct](https://github.com/delta-io/delta/blob/master/CODE_OF_CONDUCT.md).
+
+## Building
+
+Delta Lake is compiled using [SBT](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.html).
+
+To compile, run
+
+    build/sbt compile
+
+To generate artifacts, run
+
+    build/sbt package
+
+To execute tests, run
+
+    build/sbt test
+
+Refer to [SBT docs](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.html) for more commands.
 
 ## IntelliJ Setup
 
