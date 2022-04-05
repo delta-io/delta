@@ -174,14 +174,14 @@ lazy val storage = (project in file("storage"))
     )
   )
 
-lazy val storageDynamodb = (project in file("storage-dynamodb"))
+lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
   .dependsOn(storage % "compile->compile;test->test;provided->provided")
   .dependsOn(core % "test->test")
   .settings (
-    name := "delta-storage-dynamodb",
+    name := "delta-storage-s3-dynamodb",
     commonSettings,
     javaOnlyReleaseSettings,
-    // Test / publishArtifact := true, // uncomment only when testing FailingDynamoDBLogStore
+    // Test / publishArtifact := true, // uncomment only when testing FailingS3DynamoDBLogStore
     libraryDependencies ++= Seq(
       "com.amazonaws" % "aws-java-sdk" % "1.7.4" % "provided"
     )

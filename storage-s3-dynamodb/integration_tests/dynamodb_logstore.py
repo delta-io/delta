@@ -44,7 +44,7 @@ export DELTA_DYNAMO_REGION=us-west-2
 export DELTA_STORAGE=io.delta.storage.S3DynamoDBLogStore
 export DELTA_NUM_ROWS=16
 
-./run-integration-tests.py --run-storage-dynamodb-integration-tests \
+./run-integration-tests.py --run-storage-s3-dynamodb-integration-tests \
     --dbb-packages org.apache.hadoop:hadoop-aws:3.3.1,com.amazonaws:aws-java-sdk-bundle:1.12.142 \
     --dbb-conf spark.jars.ivySettings=/workspace/ivy.settings \
         spark.driver.extraJavaOptions=-Dlog4j.configuration=file:debug/log4j.properties
