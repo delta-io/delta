@@ -84,13 +84,10 @@ public class GCSLogStore extends HadoopFileSystemLogStore {
         // This should be mapped to java.nio.file.FileAlreadyExistsException.
         Callable body = () -> {
             FSDataOutputStream stream = fs.create(path, overwrite);
-            try {
-                while (actions.hasNext()) {
-                    stream.write((actions.next() + "\n").getBytes(StandardCharsets.UTF_8));
-                }
-            } finally {
-                stream.close();
+            while (actions.hasNext()) {
+                stream.write((actions.next() + "\n").getBytes(StandardCharsets.UTF_8));
             }
+            stream.close();
             return "";
         };
 
@@ -98,17 +95,23 @@ public class GCSLogStore extends HadoopFileSystemLogStore {
             ThreadUtils.runInNewThread("delta-gcs-logstore-write", true, body);
         } catch (org.apache.hadoop.fs.FileAlreadyExistsException e) {
             throw new FileAlreadyExistsException(path.toString());
+        } catch (IOException e) {
             // GCS uses preconditions to handle race conditions for multiple writers.
             // If path gets created between fs.create and stream.close by an external
             // agent or race conditions. Then this block will execute.
             // Reference: https://cloud.google.com/storage/docs/generations-preconditions
-        } catch (IOException e) {
-            if (isPreconditionFailure(e) && !overwrite) {
-                throw new FileAlreadyExistsException(path.toString());
+            if (isPreconditionFailure(e)) {
+                if (!overwrite) {
+                    throw new FileAlreadyExistsException(path.toString());
+                }
+            } else {
+                throw e; // will be caught and re-cast downstream
             }
+        } catch (Error | RuntimeException t) {
+            throw t;
         } catch (Throwable t) {
             // Throw RuntimeException to avoid the calling interfaces from throwing Throwable
-            throw new RuntimeException(t.getMessage(), t.getCause());
+            throw new RuntimeException(t.getMessage(), t);
         }
     }
 

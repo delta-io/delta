@@ -16,7 +16,6 @@
 
 package io.delta.storage.internal;
 
-import java.io.InterruptedIOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -43,68 +42,60 @@ public final class ThreadUtils {
                 try {
                     resultHolder.add(body.call());
                 } catch (Throwable t) {
-                    if (LogStoreErrors.isNonFatal(t)) {
-                        exceptionHolder.add(t);
-                    }
+                    exceptionHolder.add(t);
                 }
             }
         };
         thread.setDaemon(isDaemon);
         thread.start();
-        try {
-            thread.join();
-        } catch (InterruptedException e) {
-            throw new InterruptedIOException(e.getMessage());
-        }
+        thread.join();
+
         if (!exceptionHolder.isEmpty()) {
             Throwable realException = exceptionHolder.get(0);
+
             // Remove the part of the stack that shows method calls into this helper method
             // This means drop everything from the top until the stack element
-            // ThreadUtils.runInNewThread(), and then drop that as well (hence the + 1 to start index).
-            List<StackTraceElement> currentThreadStackTrace =
-                Arrays.asList(Thread.currentThread().getStackTrace());
-            // index of the stack element pointing to ThreadUtils.runInNewThread()
-            int startIndex = currentThreadStackTrace.stream()
-                .filter(e -> e.getClassName().contains(ThreadUtils.class.getSimpleName()))
-                .map(currentThreadStackTrace::indexOf)
-                .findFirst()
-                .orElse(-1);
-            List<StackTraceElement> baseStackTrace;
-            if (startIndex == -1 || startIndex >= currentThreadStackTrace.size() - 1) {
-                baseStackTrace = Collections.emptyList();
-            } else {
-                // startIndex + 1 to drop the stack element ThreadUtils.runInNewThread()
-                baseStackTrace =
-                    currentThreadStackTrace.subList(startIndex + 1, currentThreadStackTrace.size());
-            }
-            // Remove the part of the new thread stack that shows methods call from this helper method
-            // This means take everything from the top until the stack element
-            StackTraceElement[] realExceptionStackTrace = realException.getStackTrace();
-            List<StackTraceElement> extraStackTrace = new ArrayList<>();
-            for (StackTraceElement st : realExceptionStackTrace) {
-                if (!st.getClassName().contains(ThreadUtils.class.getSimpleName())) {
-                    extraStackTrace.add(st);
+            // ThreadUtils.runInNewThread(), and then drop that as well (hence the `drop(1)`).
+            List<StackTraceElement> baseStackTrace = new ArrayList<>();
+            boolean shouldDrop = true;
+            for (StackTraceElement st : Thread.currentThread().getStackTrace()) {
+                if (!shouldDrop) {
+                    baseStackTrace.add(st);
+                } else if (st.getClassName().contains(ThreadUtils.class.getSimpleName())){
+                    shouldDrop = false;
                 }
             }
-            // Combine the two stack traces, with a place holder just specifying that there
-            // was a helper method used, without any further details of the helper
-            List<StackTraceElement> placeHolderStackElem = Arrays.asList(
-                new StackTraceElement(
-                    String.format( // Providing the helper class info.
-                        "... run in separate thread using %s static method runInNewThread",
-                        ThreadUtils.class.getSimpleName()
-                    ),
-                "", // method name containing the execution point, not required here.
-                "", // filename containing the execution point, not required here.
-                -1) // source line number also not required. -1 indicates unavailable.
-            );
 
+            // Remove the part of the new thread stack that shows methods call from this helper
+            // method. This means take everything from the top until the stack element
+            List<StackTraceElement> extraStackTrace = new ArrayList<>();
+            for (StackTraceElement st : realException.getStackTrace()) {
+                if (!st.getClassName().contains(ThreadUtils.class.getSimpleName())) {
+                    extraStackTrace.add(st);
+                } else {
+                    break;
+                }
+            }
+
+            // Combine the two stack traces, with a placeholder just specifying that there
+            // was a helper method used, without any further details of the helper
+            StackTraceElement placeHolderStackElem = new StackTraceElement(
+                String.format( // Providing the helper class info.
+                    "... run in separate thread using %s static method runInNewThread",
+                    ThreadUtils.class.getSimpleName()
+                ),
+                " ", // method name containing the execution point, not required here.
+                "", // filename containing the execution point, not required here.
+                -1); // source line number also not required. -1 indicates unavailable.
             List<StackTraceElement> finalStackTrace = new ArrayList<>();
             finalStackTrace.addAll(extraStackTrace);
-            finalStackTrace.addAll(placeHolderStackElem);
+            finalStackTrace.add(placeHolderStackElem);
             finalStackTrace.addAll(baseStackTrace);
 
-            realException.setStackTrace(finalStackTrace.toArray(new StackTraceElement[0]));
+            // Update the stack trace and rethrow the exception in the caller thread
+            realException.setStackTrace(
+                finalStackTrace.toArray(new StackTraceElement[finalStackTrace.size()])
+            );
             throw realException;
         } else {
             return resultHolder.get(0);
