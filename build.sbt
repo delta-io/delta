@@ -280,6 +280,13 @@ def ignoreUndocumentedPackages(packages: Seq[Seq[java.io.File]]): Seq[Seq[java.i
     .map(_.filterNot(_.getName.contains("$")))
     .map(_.filterNot(_.getCanonicalPath.contains("io/delta/sql")))
     .map(_.filterNot(_.getCanonicalPath.contains("io/delta/tables/execution")))
+    .map { _.filterNot { f =>
+        // LogStore.java and CloseableIterator.java are the only public io.delta.storage APIs
+        f.getCanonicalPath.contains("io/delta/storage") &&
+        f.getName != "LogStore.java" &&
+        f.getName != "CloseableIterator.java"
+      }
+    }
     .map(_.filterNot(_.getCanonicalPath.contains("spark")))
 }
 
@@ -290,6 +297,12 @@ lazy val unidocSettings = Seq(
     "-skip-packages", "org:com:io.delta.sql:io.delta.tables.execution",
     "-doc-title", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " ScalaDoc"
   ),
+
+  ScalaUnidoc / unidoc / unidocAllSources := {
+    (ScalaUnidoc / unidoc / unidocAllSources).value
+      // io.delta.storage public APIs are Java-only
+      .map(_.filterNot(_.getCanonicalPath.contains("io/delta/storage")))
+  },
 
   // Configure Java unidoc
   JavaUnidoc / unidoc / javacOptions := Seq(
