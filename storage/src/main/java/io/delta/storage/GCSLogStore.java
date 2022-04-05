@@ -25,6 +25,7 @@ import org.apache.hadoop.fs.LocalFileSystem;
 import org.apache.hadoop.fs.Path;
 
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.util.Iterator;
@@ -107,6 +108,8 @@ public class GCSLogStore extends HadoopFileSystemLogStore {
             } else {
                 throw e; // will be caught and re-cast downstream
             }
+        } catch (InterruptedException e) {
+            throw new InterruptedIOException(e.getMessage());
         } catch (Error | RuntimeException t) {
             throw t;
         } catch (Throwable t) {
