@@ -41,7 +41,7 @@ export DELTA_CONCURRENT_READERS=2
 export DELTA_TABLE_PATH=s3a://test-bucket/delta-test/
 export DELTA_DYNAMO_TABLE=delta_log_test
 export DELTA_DYNAMO_REGION=us-west-2
-export DELTA_STORAGE=io.delta.storage.DynamoDBLogStore
+export DELTA_STORAGE=io.delta.storage.S3DynamoDBLogStore
 export DELTA_NUM_ROWS=16
 
 ./run-integration-tests.py --run-storage-dynamodb-integration-tests \
@@ -56,8 +56,8 @@ concurrent_writers = int(os.environ.get("DELTA_CONCURRENT_WRITERS", 2))
 concurrent_readers = int(os.environ.get("DELTA_CONCURRENT_READERS", 2))
 num_rows = int(os.environ.get("DELTA_NUM_ROWS", 16))
 
-# className to instantiate. io.delta.storage.DynamoDBLogStore or .FailingDynamoDBLogStore
-delta_storage = os.environ.get("DELTA_STORAGE", "io.delta.storage.DynamoDBLogStore")
+# className to instantiate. io.delta.storage.S3DynamoDBLogStore or .FailingS3DynamoDBLogStore
+delta_storage = os.environ.get("DELTA_STORAGE", "io.delta.storage.S3DynamoDBLogStore")
 dynamo_table_name = os.environ.get("DELTA_DYNAMO_TABLE", "delta_log_test")
 dynamo_region = os.environ.get("DELTA_DYNAMO_REGION", "us-west-2")
 dynamo_error_rates = os.environ.get("DELTA_DYNAMO_ERROR_RATES", "")
