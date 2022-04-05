@@ -69,6 +69,10 @@ case class DeltaTableV2(
     }
   }
 
+  // This MUST be initialized before the deltaLog object is created, in order to accurately
+  // bound the creation time of the table.
+  private val creationTimeMs = System.currentTimeMillis()
+
   // The loading of the DeltaLog is lazy in order to reduce the amount of FileSystem calls,
   // in cases where we will fallback to the V1 behavior.
   lazy val deltaLog: DeltaLog = DeltaLog.forTable(spark, rootPath, options)
@@ -99,7 +103,9 @@ case class DeltaTableV2(
         "accessType" -> accessType
       ))
       deltaLog.getSnapshotAt(version)
-    }.getOrElse(deltaLog.update(stalenessAcceptable = true))
+    }.getOrElse(
+      deltaLog.update(stalenessAcceptable = true, checkIfUpdatedSinceTs = Some(creationTimeMs))
+    )
   }
 
   private lazy val tableSchema: StructType =

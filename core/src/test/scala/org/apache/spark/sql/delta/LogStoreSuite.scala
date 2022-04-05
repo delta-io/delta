@@ -58,6 +58,15 @@ abstract class LogStoreSuiteBase extends QueryTest
 
   testInitFromSparkConf()
 
+  protected def withTempLogDir(f: File => Unit): Unit = {
+    val dir = Utils.createTempDir()
+    val deltaLogDir = new File(dir, "_delta_log")
+    deltaLogDir.mkdir()
+    try f(deltaLogDir) finally {
+      Utils.deleteRecursively(dir)
+    }
+  }
+
   test("read / write") {
     def assertNoLeakedCrcFiles(dir: File): Unit = {
       // crc file should not be leaked when origin file doesn't exist.
@@ -76,55 +85,60 @@ abstract class LogStoreSuiteBase extends QueryTest
           s"expected origin files: $originFileNamesForExistingCrcFiles / actual files: $fileNames")
     }
 
-    val tempDir = Utils.createTempDir()
-    val store = createLogStore(spark)
+    withTempLogDir { tempLogDir =>
+      val store = createLogStore(spark)
+      val deltas = Seq(0, 1)
+        .map(i => new File(tempLogDir, i.toString)).map(_.toURI).map(new Path(_))
+      store.write(deltas.head, Iterator("zero", "none"), overwrite = false, sessionHadoopConf)
+      store.write(deltas(1), Iterator("one"), overwrite = false, sessionHadoopConf)
 
-    val deltas = Seq(0, 1).map(i => new File(tempDir, i.toString)).map(_.toURI).map(new Path(_))
-    store.write(deltas.head, Iterator("zero", "none"), overwrite = false, sessionHadoopConf)
-    store.write(deltas(1), Iterator("one"), overwrite = false, sessionHadoopConf)
+      assert(store.read(deltas.head, sessionHadoopConf) == Seq("zero", "none"))
+      assert(store.readAsIterator(deltas.head, sessionHadoopConf).toSeq == Seq("zero", "none"))
+      assert(store.read(deltas(1), sessionHadoopConf) == Seq("one"))
+      assert(store.readAsIterator(deltas(1), sessionHadoopConf).toSeq == Seq("one"))
 
-    assert(store.read(deltas.head, sessionHadoopConf) == Seq("zero", "none"))
-    assert(store.readAsIterator(deltas.head, sessionHadoopConf).toSeq == Seq("zero", "none"))
-    assert(store.read(deltas(1), sessionHadoopConf) == Seq("one"))
-    assert(store.readAsIterator(deltas(1), sessionHadoopConf).toSeq == Seq("one"))
+      assertNoLeakedCrcFiles(tempLogDir)
+    }
 
-    assertNoLeakedCrcFiles(tempDir)
   }
 
   test("detects conflict") {
-    val tempDir = Utils.createTempDir()
-    val store = createLogStore(spark)
+    withTempLogDir { tempLogDir =>
+      val store = createLogStore(spark)
+      val deltas = Seq(0, 1)
+        .map(i => new File(tempLogDir, i.toString)).map(_.toURI).map(new Path(_))
+      store.write(deltas.head, Iterator("zero"), overwrite = false, sessionHadoopConf)
+      store.write(deltas(1), Iterator("one"), overwrite = false, sessionHadoopConf)
 
-    val deltas = Seq(0, 1).map(i => new File(tempDir, i.toString)).map(_.toURI).map(new Path(_))
-    store.write(deltas.head, Iterator("zero"), overwrite = false, sessionHadoopConf)
-    store.write(deltas(1), Iterator("one"), overwrite = false, sessionHadoopConf)
-
-    intercept[java.nio.file.FileAlreadyExistsException] {
-      store.write(deltas(1), Iterator("uno"), overwrite = false, sessionHadoopConf)
+      intercept[java.nio.file.FileAlreadyExistsException] {
+        store.write(deltas(1), Iterator("uno"), overwrite = false, sessionHadoopConf)
+      }
     }
+
   }
 
   test("listFrom") {
-    val tempDir = Utils.createTempDir()
-    val store = createLogStore(spark)
+    withTempLogDir { tempLogDir =>
+      val store = createLogStore(spark)
 
-    val deltas =
-      Seq(0, 1, 2, 3, 4).map(i => new File(tempDir, i.toString)).map(_.toURI).map(new Path(_))
-    store.write(deltas(1), Iterator("zero"), overwrite = false, sessionHadoopConf)
-    store.write(deltas(2), Iterator("one"), overwrite = false, sessionHadoopConf)
-    store.write(deltas(3), Iterator("two"), overwrite = false, sessionHadoopConf)
+      val deltas =
+        Seq(0, 1, 2, 3, 4).map(i => new File(tempLogDir, i.toString)).map(_.toURI).map(new Path(_))
+      store.write(deltas(1), Iterator("zero"), overwrite = false, sessionHadoopConf)
+      store.write(deltas(2), Iterator("one"), overwrite = false, sessionHadoopConf)
+      store.write(deltas(3), Iterator("two"), overwrite = false, sessionHadoopConf)
 
-    assert(
-      store.listFrom(deltas.head, sessionHadoopConf)
-        .map(_.getPath.getName).toArray === Seq(1, 2, 3).map(_.toString))
-    assert(
-      store.listFrom(deltas(1), sessionHadoopConf)
-        .map(_.getPath.getName).toArray === Seq(1, 2, 3).map(_.toString))
-    assert(store.listFrom(deltas(2), sessionHadoopConf)
-      .map(_.getPath.getName).toArray === Seq(2, 3).map(_.toString))
-    assert(store.listFrom(deltas(3), sessionHadoopConf)
-      .map(_.getPath.getName).toArray === Seq(3).map(_.toString))
-    assert(store.listFrom(deltas(4), sessionHadoopConf).map(_.getPath.getName).toArray === Nil)
+      assert(
+        store.listFrom(deltas.head, sessionHadoopConf)
+          .map(_.getPath.getName).toArray === Seq(1, 2, 3).map(_.toString))
+      assert(
+        store.listFrom(deltas(1), sessionHadoopConf)
+          .map(_.getPath.getName).toArray === Seq(1, 2, 3).map(_.toString))
+      assert(store.listFrom(deltas(2), sessionHadoopConf)
+        .map(_.getPath.getName).toArray === Seq(2, 3).map(_.toString))
+      assert(store.listFrom(deltas(3), sessionHadoopConf)
+        .map(_.getPath.getName).toArray === Seq(3).map(_.toString))
+      assert(store.listFrom(deltas(4), sessionHadoopConf).map(_.getPath.getName).toArray === Nil)
+    }
   }
 
   test("simple log store test") {
@@ -185,9 +199,9 @@ abstract class LogStoreSuiteBase extends QueryTest
   }
 
   test("readAsIterator should be lazy") {
-    withTempDir { tempDir =>
+    withTempLogDir { tempLogDir =>
       val store = createLogStore(spark)
-      val testFile = new File(tempDir, "readAsIterator").getCanonicalPath
+      val testFile = new File(tempLogDir, "readAsIterator").getCanonicalPath
       store.write(new Path(testFile), Iterator("foo", "bar"), overwrite = false, sessionHadoopConf)
 
       withSQLConf(
@@ -455,11 +469,15 @@ class FakePublicLogStore(initHadoopConf: Configuration)
   extends io.delta.storage.HDFSLogStore(initHadoopConf) {
 
   assert(initHadoopConf.get("spark.delta.storage.custom.key") == "foo")
+  assert(initHadoopConf.get("this.is.a.non.spark.prefix.key") == "bar")
 }
 
 /**
  * We want to ensure that, to set configuration values for the Java LogStore implementations,
- * users can simply use `--conf $key=$value`, instead of `--conf spark.hadoop.$key=$value`
+ * users can simply use `--conf $key=$value`, instead of `--conf spark.hadoop.$key=$value`.
+ *
+ * We also want to test that users can use a non-Spark prefix, so that our public, Java LogStore
+ * implementations are not coupled to Spark-related conf keys.
  */
 class CorrectHadoopConfLogStoreSuite
   extends SparkFunSuite
@@ -472,6 +490,7 @@ class CorrectHadoopConfLogStoreSuite
       // equivalent to --conf spark.delta.storage.custom.key=foo
       .set("spark.delta.storage.custom.key", "foo")
       .set("spark.delta.logStore.class", classOf[FakePublicLogStore].getName)
+      .set("this.is.a.non.spark.prefix.key", "bar")
 
     withSparkSession(SparkSession.builder.config(sparkConf).getOrCreate()) { spark =>
       // this will instantiate the FakePublicLogStore above. If its assertion fails,

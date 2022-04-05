@@ -419,6 +419,25 @@ trait SnapshotManagement { self: DeltaLog =>
   }
 
   /**
+   * Checks if the snapshot has already been updated since the specified timestamp.
+   *
+   * Note that this should be used differently from isSnapshotStale. Staleness is
+   * used to allow async updates if the table has been updated within the staleness
+   * window, which allows for better perf in exchange for possibly using a slightly older
+   * view of the table. For eg, if a table is queried multiple times in quick succession.
+   *
+   * On the other hand, isSnapshotFresh is used to identify duplicate updates within a
+   * single transaction. For eg, if a table isn't cached and the snapshot was fetched from the
+   * logstore, then updating the snapshot again in the same transaction is superfluous. We can
+   * use this function to detect and skip such an update.
+   */
+  private def isSnapshotFresh(
+      capturedSnapshot: CapturedSnapshot,
+      checkIfUpdatedSinceTs: Option[Long]): Boolean = {
+    checkIfUpdatedSinceTs.exists(_ < capturedSnapshot.updateTimestamp)
+  }
+
+  /**
    * Update ActionLog by applying the new delta files if any.
    *
    * @param stalenessAcceptable Whether we can accept working with a stale version of the table. If
@@ -427,11 +446,19 @@ trait SnapshotManagement { self: DeltaLog =>
    *                            acceptable, and the table hasn't passed the staleness tolerance, we
    *                            will kick off a job in the background to update the table state,
    *                            and can return a stale snapshot in the meantime.
+   * @param checkIfUpdatedSinceTs Skip the update if we've already updated the snapshot since the
+   *                              specified timestamp.
    */
-  def update(stalenessAcceptable: Boolean = false): Snapshot = {
+  def update(
+      stalenessAcceptable: Boolean = false,
+      checkIfUpdatedSinceTs: Option[Long] = None): Snapshot = {
     // currentSnapshot is volatile. Make a local copy of it at the start of the update call, so
     // that there's no chance of a race condition changing the snapshot partway through the update.
     val capturedSnapshot = currentSnapshot
+    // Eagerly exit if the snapshot is already new enough to satisfy the caller
+    if (isSnapshotFresh(capturedSnapshot, checkIfUpdatedSinceTs)) {
+      return capturedSnapshot.snapshot
+    }
     val doAsync = stalenessAcceptable && !isSnapshotStale(capturedSnapshot.updateTimestamp)
     if (!doAsync) {
       recordFrameProfile("Delta", "SnapshotManagement.update") {

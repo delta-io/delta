@@ -166,7 +166,7 @@ lazy val storage = (project in file("storage"))
   .settings (
     name := "delta-storage",
     commonSettings,
-    releaseSettings,
+    releaseSettings, // TODO: proper artifact name
     libraryDependencies ++= Seq(
       // User can provide any 2.x or 3.x version. We don't use any new fancy APIs. Watch out for
       // versions with known vulnerabilities.
@@ -183,10 +183,10 @@ lazy val storageDynamodb = (project in file("storage-dynamodb"))
   .settings (
     name := "delta-storage-dynamodb",
     commonSettings,
-    skipReleaseSettings,
-    // releaseSettings,
+    releaseSettings, // TODO: proper artifact name with no scala version
+    // Test / publishArtifact := true, // uncomment only when testing FailingDynamoDBLogStore
     libraryDependencies ++= Seq(
-      "com.amazonaws" % "aws-java-sdk" % "1.7.4"
+      "com.amazonaws" % "aws-java-sdk" % "1.7.4" % "provided"
     )
   )
 
@@ -287,7 +287,7 @@ def ignoreUndocumentedPackages(packages: Seq[Seq[java.io.File]]): Seq[Seq[java.i
 }
 
 lazy val unidocSettings = Seq(
-  
+
   // Configure Scala unidoc
   ScalaUnidoc / unidoc / scalacOptions ++= Seq(
     "-skip-packages", "org:com:io.delta.sql:io.delta.tables.execution",
