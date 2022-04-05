@@ -166,7 +166,7 @@ lazy val storage = (project in file("storage"))
   .settings (
     name := "delta-storage",
     commonSettings,
-    releaseSettings, // TODO: proper artifact name
+    javaOnlyReleaseSettings,
     libraryDependencies ++= Seq(
       // User can provide any 2.x or 3.x version. We don't use any new fancy APIs. Watch out for
       // versions with known vulnerabilities.
@@ -180,7 +180,7 @@ lazy val storageDynamodb = (project in file("storage-dynamodb"))
   .settings (
     name := "delta-storage-dynamodb",
     commonSettings,
-    releaseSettings, // TODO: proper artifact name with no scala version
+    javaOnlyReleaseSettings,
     // Test / publishArtifact := true, // uncomment only when testing FailingDynamoDBLogStore
     libraryDependencies ++= Seq(
       "com.amazonaws" % "aws-java-sdk" % "1.7.4" % "provided"
@@ -320,6 +320,12 @@ import ReleaseTransformations._
 lazy val skipReleaseSettings = Seq(
   publishArtifact := false,
   publish / skip := true
+)
+
+lazy val javaOnlyReleaseSettings = releaseSettings ++ Seq(
+  crossPaths := false, // drop off Scala suffix from artifact names
+  publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
+  autoScalaLibrary := false, // exclude scala-library from dependencies
 )
 
 lazy val releaseSettings = Seq(
