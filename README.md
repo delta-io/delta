@@ -126,6 +126,39 @@ We welcome contributions to Delta Lake. See our [CONTRIBUTING.md](https://github
 
 We also adhere to the [Delta Lake Code of Conduct](https://github.com/delta-io/delta/blob/master/CODE_OF_CONDUCT.md).
 
+## IntelliJ Setup
+
+IntelliJ is the recommended IDE to use when developing Delta Lake. To import Delta Lake as a new project:
+1. Clone Delta Lake into, for example, `~/delta`.
+2. In IntelliJ, select `File` > `New Project` > `Project from Existing Sources...` and select `~/delta`.
+3. Under `Import project from external model` select `sbt`. Click `Next`.
+4. Under `Project JDK` specify a valid Java `1.8` JDK and opt to use SBT shell for `project reload` and `builds`.
+5. Click `Finish`.
+
+### Setup Verification
+
+After waiting for IntelliJ to index, verify your setup by running a test suite in IntelliJ.
+1. Search for and open `DeltaLogSuite`
+2. Next to the class declaration, right click on the two green arrows and select `Run 'DeltaLogSuite'`
+
+### Troubleshooting
+
+If you see errors of the form
+
+```
+Error:(46, 28) object DeltaSqlBaseParser is not a member of package io.delta.sql.parser
+import io.delta.sql.parser.DeltaSqlBaseParser._
+...
+Error:(91, 22) not found: type DeltaSqlBaseParser
+    val parser = new DeltaSqlBaseParser(tokenStream)
+```
+
+then follow these steps:
+1. Compile using the SBT CLI: `build/sbt compile`.
+2. Go to `File` > `Project Structure...` > `Modules` > `delta-core`.
+3. In the right panel under `Source Folders` remove any `target` folders, e.g. `target/scala-2.12/src_managed/main [generated]`
+4. Click `Apply` and then re-run your test.
+
 ## License
 Apache License 2.0, see [LICENSE](https://github.com/delta-io/delta/blob/master/LICENSE.txt).
 
