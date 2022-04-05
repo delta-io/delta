@@ -77,10 +77,9 @@ public class RowDataDeltaSinkBuilder {
      * @param conf          Hadoop's conf object
      * @param rowType       Flink's logical type to indicate the structure of the events in
      *                      the stream
-     * @param mergeSchema   indicator whether we should try to update table's schema with
-     *                      stream's schema in case those will not match. The update is not
-     *                      guaranteed as there will be still some checks performed whether
-     *                      the updates to the schema are compatible.
+     * @param mergeSchema   whether we should try to update the Delta table's schema with
+     *                      the stream's schema in case of a mismatch. This is not guaranteed
+     *                      since it checks for compatible schemas.
      */
     public RowDataDeltaSinkBuilder(
         Path tableBasePath,
@@ -94,15 +93,14 @@ public class RowDataDeltaSinkBuilder {
     }
 
     /**
-     * Sets the sink's option whether in case of any differences between stream's schema and Delta
-     * table's schema we should try to update it during commit to the
-     * {@link io.delta.standalone.DeltaLog}. The update is not guaranteed as there will be some
-     * compatibility checks performed.
+     * Sets the sink's option whether we should try to update the Delta table's schema with
+     * the stream's schema in case of a mismatch during a commit to the
+     * {@link io.delta.standalone.DeltaLog}. The update is not guaranteed since it checks for
+     * compatible schemas.
      *
-     * @param mergeSchema indicator whether we should try to update table's schema with stream's
-     *                    schema in case those will not match. The update is not guaranteed as there
-     *                    will be still some checks performed whether the updates to the schema are
-     *                    compatible.
+     * @param mergeSchema whether we should try to update the Delta table's schema with
+     *                    the stream's schema in case of a mismatch. This is not guaranteed
+     *                    since it requires compatible schemas.
      * @return builder for {@link DeltaSink}
      */
     public RowDataDeltaSinkBuilder withMergeSchema(final boolean mergeSchema) {
@@ -111,7 +109,7 @@ public class RowDataDeltaSinkBuilder {
     }
 
     /**
-     * Sets list of partition fields that will be extracted of incoming {@link RowData} events.
+     * Sets list of partition fields that will be extracted from incoming {@link RowData} events.
      * <p>
      * Provided fields' names must correspond to the names provided in the {@link RowType} object
      * for this sink and must be in the same order as expected order of occurrence in the partition

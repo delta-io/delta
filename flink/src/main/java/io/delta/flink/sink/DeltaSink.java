@@ -87,9 +87,9 @@ public class DeltaSink<IN> extends DeltaSinkInternal<IN> {
 
     /**
      * Convenience method for creating a {@link RowDataDeltaSinkBuilder} for {@link DeltaSink} to a
-     * DeltaLake's table.
+     * Delta table.
      *
-     * @param basePath root path of the DeltaLake's table
+     * @param basePath root path of the Delta table
      * @param conf     Hadoop's conf object that will be used for creating instances of
      *                 {@link io.delta.standalone.DeltaLog} and will be also passed to the
      *                 {@link ParquetRowDataBuilder} to create {@link ParquetWriterFactory}
