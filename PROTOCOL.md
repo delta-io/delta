@@ -516,6 +516,7 @@ Writer Version 3 | Enforce:<br>- `delta.checkpoint.writeStatsAsJson`<br>- `delta
 Writer Version 4 | - Support Change Data Feed<br>- Support [Generated Columns](#generated-columns)
 Writer Version 5 | Respect [Column Mapping](#column-mapping)
 Writer Version 6 | Support [Identity Columns](#identity-columns)
+Writer Version 7 | Support `timestamp without time zone` type
 
 # Requirements for Readers
 
@@ -524,6 +525,7 @@ The requirements of the readers according to the protocol versions are summarize
 <br> | Requirements
 -|-
 Reader Version 2 | Respect [Column Mapping](#column-mapping)
+Reader Version 3 | Support `timestamp without time zone` type
 
 # Appendix
 
@@ -577,9 +579,12 @@ Type | Serialization Format
 string | No translation required
 numeric types | The string representation of the number
 date | Encoded as `{year}-{month}-{day}`. For example, `1970-01-01`
-timestamp | Encoded as `{year}-{month}-{day} {hour}:{minute}:{second}` For example: `1970-01-01 00:00:00`
+timestamp | Encoded as `{year}-{month}-{day} {hour}:{minute}:{second}` or `{year}-{month}-{day} {hour}:{minute}:{second}.{microsecond}` For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456`
+timestamp without timezone | Encoded as `{year}-{month}-{day} {hour}:{minute}:{second}` or `{year}-{month}-{day} {hour}:{minute}:{second}.{microsecond}` For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456`
 boolean | Encoded as the string "true" or "false"
 binary | Encoded as a string of escaped binary values. For example, `"\u0001\u0002\u0003"`
+
+Note: A `timestamp` value in a partition value doesn't store the time zone due to historical reasons. It means its behavior looks similar to `timestamp without time zone` when it's used in a partition column. Using `timestamp` or `timestamp without time zone` in a partition column is discouraged because they usually have a high cardinality.
 
 ## Schema Serialization Format
 
@@ -601,7 +606,10 @@ decimal| signed decimal number with fixed precision (maximum number of digits) a
 boolean| `true` or `false`
 binary| A sequence of binary data.
 date| A calendar date, represented as a year-month-day triple without a timezone.
-timestamp| Microsecond precision timestamp without a timezone.
+timestamp| Microsecond precision timestamp elapsed since the Unix epoch, 1970-01-01 00:00:00 UTC. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `true`.
+timestamp without time zone | Microsecond precision timestamp in a local timezone elapsed since the Unix epoch, 1970-01-01 00:00:00. It doesn't have the timezone information, and a value of this type can map to multiple physical time instants. It should always be displayed in the same way, regardless of the local time zone in effect. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `false`. Using this type requires [readerVersion >= 3](#requirements-for-readers) and [writerVersion >= 7](#writer-version-requirements).
+
+See Parquet [timestamp type](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#timestamp) for more details about timestamp and `isAdjustedToUTC`.
 
 ### Struct Type
 
