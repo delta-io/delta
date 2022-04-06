@@ -17,6 +17,7 @@
 import java.nio.file.Files
 
 val sparkVersion = "3.2.0"
+val scala212_major_minor = "2.12" // this is used by java projects to make sure we publish only once
 val scala212 = "2.12.14"
 val scala213 = "2.13.5"
 
@@ -181,7 +182,11 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
     name := "delta-storage-s3-dynamodb",
     commonSettings,
     javaOnlyReleaseSettings,
-    // Test / publishArtifact := true, // uncomment only when testing FailingS3DynamoDBLogStore
+
+    // uncomment only when testing FailingS3DynamoDBLogStore. this will include test sources in
+    // a separate test jar.
+    // Test / publishArtifact := true,
+
     libraryDependencies ++= Seq(
       "com.amazonaws" % "aws-java-sdk" % "1.7.4" % "provided"
     )
@@ -302,7 +307,6 @@ lazy val unidocSettings = Seq(
     (ScalaUnidoc / unidoc / unidocAllSources).value
       // ignore Scala (non-public) io.delta.storage classes
       .map(_.filterNot(_.getCanonicalPath.contains("io/delta/storage"))) ++
-
     // include public io.delta.storage classes
     (JavaUnidoc / unidoc / unidocAllSources).value
       .map { _.filter { f =>
@@ -343,10 +347,18 @@ lazy val skipReleaseSettings = Seq(
   publish / skip := true
 )
 
+/**
+ * Release settings for artifact that contains only Java source code
+ */
 lazy val javaOnlyReleaseSettings = releaseSettings ++ Seq(
-  crossPaths := false, // drop off Scala suffix from artifact names
-  publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
-  autoScalaLibrary := false, // exclude scala-library from dependencies
+  // drop off Scala suffix from artifact names
+  crossPaths := false,
+
+  // regardless of scala versions used in `crossScalaVersions`, will only publish jars once
+  publishArtifact := scalaBinaryVersion.value == scala212_major_minor,
+
+  // exclude scala-library from dependencies in generated pom.xml
+  autoScalaLibrary := false,
 )
 
 lazy val releaseSettings = Seq(
