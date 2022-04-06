@@ -106,10 +106,12 @@ public class GCSLogStore extends HadoopFileSystemLogStore {
                     throw new FileAlreadyExistsException(path.toString());
                 }
             } else {
-                throw e; // will be caught and re-cast downstream
+                throw e;
             }
         } catch (InterruptedException e) {
-            throw new InterruptedIOException(e.getMessage());
+            InterruptedIOException iio = new InterruptedIOException(e.getMessage());
+            iio.initCause(e);
+            throw iio;
         } catch (Error | RuntimeException t) {
             throw t;
         } catch (Throwable t) {

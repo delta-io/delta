@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta
 import java.io.{File, IOException}
 import java.net.URI
 
-import scala.util.Random
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
