@@ -30,7 +30,7 @@ import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.util.StateCache
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileSystem, Path}
+import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
@@ -142,7 +142,7 @@ class Snapshot(
     val implicits = spark.implicits
     import implicits._
     actions
-      .withColumn("file", assertLogBelongsToTable(path.toUri)(input_file_name()))
+      .withColumn("file", input_file_name())
       .repartition(getNumPartitions, coalesce($"add.path", $"remove.path"))
       .sortWithinPartitions("file")
   }
@@ -293,10 +293,12 @@ class Snapshot(
   // a DataFrame and short-circuit the many file existence and partition schema inference checks
   // that exist in DataSource.resolveRelation().
   protected lazy val deltaFileIndexOpt: Option[DeltaLogFileIndex] = {
+    assertLogFilesBelongToTable(path, logSegment.deltas)
     DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT, logSegment.deltas)
   }
 
   protected lazy val checkpointFileIndexOpt: Option[DeltaLogFileIndex] = {
+    assertLogFilesBelongToTable(path, logSegment.checkpoint)
     DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT, logSegment.checkpoint)
   }
 
@@ -380,21 +382,16 @@ object Snapshot extends DeltaLogging {
     }
   }
 
-  /**
-   * Make sure that the delta file we're reading belongs to this table. Cached snapshots from
-   * the previous states will contain empty strings as the file name.
-   */
-  private def assertLogBelongsToTable(logBasePath: URI): UserDefinedFunction = {
-    DeltaUDF.stringStringUdf((filePath: String) => {
-      if (filePath.isEmpty || new Path(new URI(filePath)).getParent == new Path(logBasePath)) {
-        filePath
-      } else {
+  /** Verifies that a set of delta or checkpoint files to be read actually belongs to this table. */
+  private def assertLogFilesBelongToTable(logBasePath: Path, files: Seq[FileStatus]): Unit = {
+    files.map(_.getPath).foreach { filePath =>
+      if (new Path(filePath.toUri).getParent != new Path(logBasePath.toUri)) {
         // scalastyle:off throwerror
         throw new AssertionError(s"File ($filePath) doesn't belong in the " +
           s"transaction log at $logBasePath. Please contact Databricks Support.")
         // scalastyle:on throwerror
       }
-    })
+    }
   }
 
   /**
