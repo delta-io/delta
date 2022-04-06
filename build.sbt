@@ -17,19 +17,20 @@
 import java.nio.file.Files
 
 val sparkVersion = "3.2.0"
-val scala212_major_minor = "2.12" // this is used by java projects to make sure we publish only once
 val scala212 = "2.12.14"
 val scala213 = "2.13.5"
+val default_scala_version = scala212
+val all_scala_versions = Seq(scala212, scala213)
 
-scalaVersion := scala212
+scalaVersion := default_scala_version
 
 // crossScalaVersions must be set to Nil on the root project
 crossScalaVersions := Nil
 
 lazy val commonSettings = Seq(
   organization := "io.delta",
-  scalaVersion := scala212,
-  crossScalaVersions := Seq(scala212, scala213),
+  scalaVersion := default_scala_version,
+  crossScalaVersions := all_scala_versions,
   fork := true
 )
 
@@ -237,20 +238,27 @@ lazy val scalaStyleSettings = Seq(
  *  MIMA settings   *
  ********************
  */
-def getPrevVersion(currentVersion: String): String = {
+
+/**
+ * @return tuple of (major, minor, patch) versions extracted from a version string.
+ *         e.g. "1.2.3" would return (1, 2, 3)
+ */
+def getMajorMinorPatch(versionStr: String): (Int, Int, Int) = {
   implicit def extractInt(str: String): Int = {
     """\d+""".r.findFirstIn(str).map(java.lang.Integer.parseInt).getOrElse {
       throw new Exception(s"Could not extract version number from $str in $version")
     }
   }
 
-  val (major, minor, patch): (Int, Int, Int) = {
-    currentVersion.split("\\.").toList match {
-      case majorStr :: minorStr :: patchStr :: _ =>
-        (majorStr, minorStr, patchStr)
-      case _ => throw new Exception(s"Could not find previous version for $version.")
-    }
+  versionStr.split("\\.").toList match {
+    case majorStr :: minorStr :: patchStr :: _ =>
+      (majorStr, minorStr, patchStr)
+    case _ => throw new Exception(s"Could not parse version for $version.")
   }
+}
+
+def getPrevVersion(currentVersion: String): String = {
+  val (major, minor, patch) = getMajorMinorPatch(currentVersion)
 
   val majorToLastMinorVersions = Map(
     0 -> 8
@@ -354,8 +362,12 @@ lazy val javaOnlyReleaseSettings = releaseSettings ++ Seq(
   // drop off Scala suffix from artifact names
   crossPaths := false,
 
-  // regardless of scala versions used in `crossScalaVersions`, will only publish jars once
-  publishArtifact := scalaBinaryVersion.value == scala212_major_minor,
+  // we publish jars for each scalaVersion in crossScalaVersions. however, we only need to publish
+  // one java jar. thus, only do so when the current scala version == default scala version
+  publishArtifact := {
+    val (expMaj, expMin, _) = getMajorMinorPatch(default_scala_version)
+    s"$expMaj.$expMin" == scalaBinaryVersion.value
+  },
 
   // exclude scala-library from dependencies in generated pom.xml
   autoScalaLibrary := false,

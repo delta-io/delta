@@ -16,8 +16,6 @@
 
 package io.delta.storage.internal;
 
-import scala.util.control.ControlThrowable;
-
 import java.io.IOException;
 
 public class LogStoreErrors {
@@ -31,8 +29,7 @@ public class LogStoreErrors {
         if (t instanceof VirtualMachineError ||
             t instanceof ThreadDeath ||
             t instanceof InterruptedException ||
-            t instanceof LinkageError ||
-            t instanceof ControlThrowable) {
+            t instanceof LinkageError) {
             return false;
         }
 
