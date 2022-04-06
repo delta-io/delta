@@ -69,7 +69,7 @@ case class CreateDeltaTableCommand(
       // Early exit on ignore
       return Nil
     } else if (mode == SaveMode.ErrorIfExists && tableExists) {
-      throw new AnalysisException(s"Table ${table.identifier.quotedString} already exists.")
+      throw DeltaErrors.tableAlreadyExists(table)
     }
 
     var tableWithLocation = if (tableExists) {

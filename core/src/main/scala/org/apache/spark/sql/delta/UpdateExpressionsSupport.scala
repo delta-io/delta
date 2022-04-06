@@ -234,8 +234,7 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
                 generatedColumns = Nil)
                 .map(_.getOrElse {
                   // Should not happen
-                  throw new IllegalStateException("Calling without generated columns should " +
-                    "always return a update expression for each column")
+                  throw DeltaErrors.cannotGenerateUpdateExpressions()
                 })
               // Reconstruct the expression for targetCol using its possibly updated children
               val namedStructExprs = fields
