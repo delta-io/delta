@@ -67,8 +67,8 @@ import org.slf4j.LoggerFactory;
  * -- complete (STRING, representing boolean, "true" or "false")
  * -- commitTime (NUMBER, epoch seconds)
  */
-public class DynamoDBLogStore extends BaseExternalLogStore {
-    private static final Logger LOG = LoggerFactory.getLogger(DynamoDBLogStore.class);
+public class S3DynamoDBLogStore extends BaseExternalLogStore {
+    private static final Logger LOG = LoggerFactory.getLogger(S3DynamoDBLogStore.class);
 
     /**
      * Configuration keys for the DynamoDB client
@@ -95,7 +95,7 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
     private final String credentialsProviderName;
     private final String regionName;
 
-    public DynamoDBLogStore(Configuration hadoopConf) throws IOException {
+    public S3DynamoDBLogStore(Configuration hadoopConf) throws IOException {
         super(hadoopConf);
 
         tableName = getParam(hadoopConf, DBB_CLIENT_TABLE, "delta_log");
@@ -105,9 +105,9 @@ public class DynamoDBLogStore extends BaseExternalLogStore {
             "com.amazonaws.auth.DefaultAWSCredentialsProviderChain"
         );
         regionName = getParam(hadoopConf, DBB_CLIENT_REGION, "us-east-1");
-        LOG.info("DynamoDBLogStore using tableName {}", tableName);
-        LOG.info("DynamoDBLogStore using credentialsProviderName {}", credentialsProviderName);
-        LOG.info("DynamoDBLogStore using regionName {}", regionName);
+        LOG.info("using tableName {}", tableName);
+        LOG.info("using credentialsProviderName {}", credentialsProviderName);
+        LOG.info("using regionName {}", regionName);
 
         client = getClient();
         tryEnsureTableExists(hadoopConf);
