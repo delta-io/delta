@@ -201,9 +201,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
   def writeFiles(
       data: Dataset[_],
-      writeOptions: Option[DeltaOptions],
       additionalConstraints: Seq[Constraint]): Seq[FileAction] = {
-    writeFiles(data, additionalConstraints)
+    writeFiles(data, None, additionalConstraints)
   }
 
   def writeFiles(
@@ -222,6 +221,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
    */
   def writeFiles(
       data: Dataset[_],
+      writeOptions: Option[DeltaOptions],
       additionalConstraints: Seq[Constraint]): Seq[FileAction] = {
     if (DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(metadata)) {
       throw DeltaErrors.cdcWriteNotAllowedInThisVersion()
@@ -295,6 +295,16 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         statsTrackers.append(basicWriteJobStatsTracker)
       }
 
+      // Retain only a minimal selection of Spark writer options to avoid any potential
+      // compatibility issues
+      val options = writeOptions match {
+        case None => Map.empty[String, String]
+        case Some(writeOptions) =>
+          writeOptions.options.filterKeys(key =>
+            key.equalsIgnoreCase("maxRecordsPerFile")
+          ).toMap
+      }
+
       try {
         FileFormatWriter.write(
           sparkSession = spark,
@@ -309,7 +319,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
           partitionColumns = partitioningColumns,
           bucketSpec = None,
           statsTrackers = optionalStatsTracker.toSeq ++ statsTrackers,
-          options = Map.empty)
+          options = options)
       } catch {
         case s: SparkException =>
           // Pull an InvariantViolationException up to the top level if it was the root cause.
