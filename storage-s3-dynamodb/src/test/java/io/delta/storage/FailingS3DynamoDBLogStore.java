@@ -27,15 +27,15 @@ import org.apache.hadoop.fs.Path;
  * An ExternalLogStore implementation that allows for easy, probability-based error injection during
  * runtime.
  *
- * This is used to test the error handling capabilities of DynamoDBLogStore during integration
+ * This is used to test the error-handling capabilities of S3DynamoDBLogStore during integration
  * tests.
  */
-public class FailingDynamoDBLogStore extends DynamoDBLogStore {
+public class FailingS3DynamoDBLogStore extends S3DynamoDBLogStore {
 
     private static java.util.Random rng = new java.util.Random();
     private final ConcurrentHashMap<String, Float> errorRates;
 
-    public FailingDynamoDBLogStore(Configuration hadoopConf) throws IOException {
+    public FailingS3DynamoDBLogStore(Configuration hadoopConf) throws IOException {
         super(hadoopConf);
         errorRates = new ConcurrentHashMap<>();
 
