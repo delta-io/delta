@@ -111,19 +111,38 @@ class Snapshot(
         val canonicalizePath = DeltaUDF.stringStringUdf((filePath: String) =>
             Snapshot.canonicalizePath(filePath, hadoopConf.value.value)
         )
-        val canonicalizedActions = loadActions
-          .withColumn(
-            "add",
-            when(
-              col("add").isNotNull,
-              col("add").withField("path", canonicalizePath(col("add.path")))))
-          .withColumn(
-            "remove",
-            when(
-              col("remove").isNotNull,
-              col("remove").withField("path", canonicalizePath(col("remove.path")))))
 
-        repartitionAndSortActionsByVersion(canonicalizedActions)
+        // Canonicalize the paths so we can repartition the actions correctly, but only rewrite the
+        // add/remove actions themselves after partitioning and sorting are complete. Otherwise, the
+        // optimizer can generate a really bad plan that re-evaluates _EVERY_ field of the rewritten
+        // struct(...)  projection every time we touch _ANY_ field of the rewritten struct.
+        //
+        // NOTE: We sort by [[ACTION_SORT_COL_NAME]] (provided by [[loadActions]]), to ensure that
+        // actions are presented to InMemoryLogReplay in the ascending version order it expects.
+        val ADD_PATH_CANONICAL_COL_NAME = "add_path_canonical"
+        val REMOVE_PATH_CANONICAL_COL_NAME = "remove_path_canonical"
+        loadActions
+          .withColumn(ADD_PATH_CANONICAL_COL_NAME, when(
+            col("add.path").isNotNull, canonicalizePath(col("add.path"))))
+          .withColumn(REMOVE_PATH_CANONICAL_COL_NAME, when(
+            col("remove.path").isNotNull, canonicalizePath(col("remove.path"))))
+          .repartition(
+            getNumPartitions,
+            coalesce(col(ADD_PATH_CANONICAL_COL_NAME), col(REMOVE_PATH_CANONICAL_COL_NAME)))
+          .sortWithinPartitions(ACTION_SORT_COL_NAME)
+          .withColumn("add", when(
+            col("add.path").isNotNull,
+            struct(
+              col(ADD_PATH_CANONICAL_COL_NAME).as("path"),
+              col("add.partitionValues"),
+              col("add.size"),
+              col("add.modificationTime"),
+              col("add.dataChange"),
+              col(ADD_STATS_TO_USE_COL_NAME).as("stats"),
+              col("add.tags"))))
+          .withColumn("remove", when(
+            col("remove.path").isNotNull,
+            col("remove").withField("path", col(REMOVE_PATH_CANONICAL_COL_NAME))))
           .as[SingleAction]
           .mapPartitions { iter =>
             val state = new InMemoryLogReplay(
@@ -135,16 +154,6 @@ class Snapshot(
           }
       }
     }
-  }
-
-  /** Helper method to repartition and sort actions by version for the In-Memory log replay */
-  protected def repartitionAndSortActionsByVersion(actions: DataFrame): DataFrame = {
-    val implicits = spark.implicits
-    import implicits._
-    actions
-      .withColumn("file", input_file_name())
-      .repartition(getNumPartitions, coalesce($"add.path", $"remove.path"))
-      .sortWithinPartitions("file")
   }
 
   def redactedPath: String =
@@ -324,11 +333,19 @@ class Snapshot(
   }
 
   /**
-   * Loads the file indices into a Dataset that can be used for LogReplay.
+   * Loads the file indices into a DataFrame that can be used for LogReplay.
+   *
+   * In addition to the usual nested columns provided by the SingleAction schema, it should provide
+   * two additional columns to simplify the log replay process: [[ACTION_SORT_COL_NAME]] (which,
+   * when sorted in ascending order, will order older actions before newer ones, as required by
+   * [[InMemoryLogReplay]]); and [[ADD_STATS_TO_USE_COL_NAME]] (to handle certain combinations of
+   * config settings for delta.checkpoint.writeStatsAsJson and delta.checkpoint.writeStatsAsStruct).
    */
   protected def loadActions: DataFrame = {
     val dfs = fileIndices.map { index => Dataset.ofRows(spark, indexToRelation(index)) }
     dfs.reduceOption(_.union(_)).getOrElse(emptyDF)
+      .withColumn(ACTION_SORT_COL_NAME, input_file_name())
+      .withColumn(ADD_STATS_TO_USE_COL_NAME, col("add.stats"))
   }
 
   protected def emptyDF: DataFrame =
@@ -364,6 +381,10 @@ class Snapshot(
 }
 
 object Snapshot extends DeltaLogging {
+
+  // Used by [[loadActions]] and [[stateReconstruction]]
+  val ACTION_SORT_COL_NAME = "action_sort_column"
+  val ADD_STATS_TO_USE_COL_NAME = "add_stats_to_use"
 
   private val defaultNumSnapshotPartitions: Int = 50
 
