@@ -16,10 +16,10 @@
 
 package io.delta.storage
 
+import java.io.File
 import java.net.URI
 
 import org.apache.hadoop.fs._
-
 import org.apache.spark.sql.delta.FakeFileSystem
 import org.apache.spark.sql.delta.util.FileNames
 
@@ -33,10 +33,18 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
     "fs.fake.impl.disable.cache" -> "true"
   )
 
+  def getDeltaVersionPath(logDir: File, version: Int): Path = {
+    FileNames.deltaFile(new Path(logDir.toURI), version)
+  }
+
+  def getFailingDeltaVersionPath(logDir: File, version: Int): Path = {
+    FileNames.deltaFile(new Path(s"failing:${logDir.getCanonicalPath}"), 0)
+  }
+
   test("single write") {
-    withTempDir { tempDir =>
+    withTempLogDir { tempLogDir =>
       val store = createLogStore(spark)
-      val path = FileNames.deltaFile(new Path(new Path(tempDir.toURI), "_delta_log"), 0)
+      val path = getDeltaVersionPath(tempLogDir, 0)
       store.write(path, Iterator("foo", "bar"), overwrite = false, sessionHadoopConf)
       val entry = MemoryLogStore.get(path);
       assert(entry != null)
@@ -45,9 +53,9 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
   }
 
   test("double write") {
-    withTempDir { tempDir =>
+    withTempLogDir { tempLogDir =>
       val store = createLogStore(spark)
-      val path = FileNames.deltaFile(new Path(new Path(tempDir.toURI), "_delta_log"), 0)
+      val path = getDeltaVersionPath(tempLogDir, 0)
       store.write(path, Iterator("foo", "bar"), overwrite = false, sessionHadoopConf)
       assert(MemoryLogStore.containsKey(path))
       assertThrows[java.nio.file.FileSystemException] {
@@ -57,9 +65,9 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
   }
 
   test("overwrite") {
-    withTempDir { tempDir =>
+    withTempLogDir { tempLogDir =>
       val store = createLogStore(spark)
-      val path = FileNames.deltaFile(new Path(new Path(tempDir.toURI), "_delta_log"), 0)
+      val path = getDeltaVersionPath(tempLogDir, 0)
       store.write(path, Iterator("foo", "bar"), overwrite = false, sessionHadoopConf)
       assert(MemoryLogStore.containsKey(path))
       store.write(path, Iterator("foo", "bar"), overwrite = true, sessionHadoopConf)
@@ -67,51 +75,82 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
     }
   }
 
-  test("recovery") {
+  test("write N+1 recovers version N") {
     withSQLConf(
       "fs.failing.impl" -> classOf[FailingFileSystem].getName,
       "fs.failing.impl.disable.cache" -> "true"
     ) {
-      withTempDir { tempDir =>
+      withTempLogDir { tempLogDir =>
         val store = createLogStore(spark)
-        val path = FileNames.deltaFile(
-          new Path(new Path(s"failing:${tempDir.getCanonicalPath}"), "_delta_log"),
-          0
-        )
+
+        val delta0_normal = getDeltaVersionPath(tempLogDir, 0)
+        val delta0_fail = getFailingDeltaVersionPath(tempLogDir, 0)
+        val delta1 = getDeltaVersionPath(tempLogDir, 1)
+
+        // Case 1: write N+1 fails
+        // - entry for delta0 doesn't exist in external store or in file system
+        val e = intercept[java.nio.file.FileSystemException] {
+          store.write(delta1, Iterator("one"), overwrite = false, sessionHadoopConf)
+        }
+        assert(e.getMessage == s"previous commit $delta0_normal doesn't exist")
+
+        // Case 2: write N+1 succeeds
+        // - entry for delta0 does exist in external store but not in file system
+        FailingFileSystem.failOnSuffix = Some(delta0_fail.getName)
+        store.write(delta0_fail, Iterator("zero"), overwrite = false, sessionHadoopConf)
+        assert(!delta0_fail.getFileSystem(sessionHadoopConf).exists(delta0_fail))
+        assert(!MemoryLogStore.get(delta0_fail).complete)
+        assert(MemoryLogStore.get(delta0_fail) == MemoryLogStore.get(delta0_normal))
+
+        store.write(delta1, Iterator("one"), overwrite = false, sessionHadoopConf)
+        assert(delta0_fail.getFileSystem(sessionHadoopConf).exists(delta0_fail))
+        assert(MemoryLogStore.get(delta0_fail).complete)
+        assert(MemoryLogStore.get(delta1).complete)
+      }
+    }
+  }
+
+  test("listFrom performs recovery") {
+    withSQLConf(
+      "fs.failing.impl" -> classOf[FailingFileSystem].getName,
+      "fs.failing.impl.disable.cache" -> "true"
+    ) {
+      withTempLogDir { tempLogDir =>
+        val store = createLogStore(spark)
+        val delta0_normal = getDeltaVersionPath(tempLogDir, 0)
+        val delta0_fail = getFailingDeltaVersionPath(tempLogDir, 0)
 
         // fail to write to FileSystem when we try to commit 0000.json
-        FailingFileSystem.failOnSuffix = Some(path.getName)
+        FailingFileSystem.failOnSuffix = Some(delta0_fail.getName)
 
         // try and commit 0000.json
-        store.write(path, Iterator("foo", "bar"), overwrite = false, sessionHadoopConf)
+        store.write(delta0_fail, Iterator("foo", "bar"), overwrite = false, sessionHadoopConf)
 
         // check that entry was written to external store and that it doesn't exist in FileSystem
-        val entry = MemoryLogStore.get(path)
+        val entry = MemoryLogStore.get(delta0_fail)
         assert(entry != null)
         assert(!entry.complete)
         assert(entry.tempPath.nonEmpty)
-        assertThrows[java.io.FileNotFoundException] {
-          store.read(path)
-        }
+        assert(!delta0_fail.getFileSystem(sessionHadoopConf).exists(delta0_fail))
 
         // Now perform a `listFrom` read, which should fix the transaction log
         val contents = store.read(entry.absoluteTempPath()).toList
         FailingFileSystem.failOnSuffix = None
-        store.listFrom(path.toString)
-        val entry2 = MemoryLogStore.get(path)
+        store.listFrom(delta0_normal, sessionHadoopConf)
+        val entry2 = MemoryLogStore.get(delta0_normal)
         assert(entry2 != null)
         assert(entry2.complete)
-        assert(store.read(entry2.absoluteFilePath()).toList == contents)
+        assert(store.read(entry2.absoluteFilePath(), sessionHadoopConf).toList == contents)
       }
     }
   }
 
   test("write to new Delta table but a DynamoDB entry for it already exists") {
-    withTempDir { tempDir =>
+    withTempLogDir { tempLogDir =>
       val store = createLogStore(spark)
 
       // write 0000.json
-      val path = FileNames.deltaFile(new Path(new Path(tempDir.toURI), "_delta_log"), 0)
+      val path = getDeltaVersionPath(tempLogDir, 0)
       store.write(path, Iterator("foo"), overwrite = false, sessionHadoopConf)
 
       // delete 0000.json from FileSystem

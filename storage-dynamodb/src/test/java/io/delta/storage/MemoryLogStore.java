@@ -38,12 +38,21 @@ public class MemoryLogStore extends BaseExternalLogStore {
             ExternalCommitEntry entry,
             boolean overwrite) throws IOException {
         final String key = createKey(entry.tablePath.toString(), entry.fileName);
+        final ExternalCommitEntry correctedEntry = new ExternalCommitEntry(
+            // some tests use "failing:" scheme to inject errors, but we want to store normal paths
+            new Path(fixPathSchema(entry.tablePath.toString())),
+            entry.fileName,
+            entry.tempPath,
+            entry.complete,
+            entry.commitTime
+        );
+
         if (overwrite) {
-            hashMap.put(key, entry);
+            hashMap.put(key, correctedEntry);
         } else if (hashMap.containsKey(key)) { // and overwrite=false
             throw new java.nio.file.FileAlreadyExistsException("already exists");
         } else {
-            hashMap.put(key, entry);
+            hashMap.put(key, correctedEntry);
         }
     }
 
@@ -60,15 +69,25 @@ public class MemoryLogStore extends BaseExternalLogStore {
 
     @Override
     protected Optional<ExternalCommitEntry> getLatestExternalEntry(Path tablePath) {
+        final Path fixedTablePath = new Path(fixPathSchema(tablePath.toString()));
         return hashMap
             .values()
             .stream()
-            .filter(item -> item.tablePath.equals(tablePath))
+            .filter(item -> item.tablePath.equals(fixedTablePath))
             .max(Comparator.comparing(ExternalCommitEntry::absoluteFilePath));
     }
 
+    /**
+     * ExternalLogStoreSuite sometimes uses "failing:" scheme prefix to inject errors during tests
+     * However, we want lookups for the same $tablePath to return the same result, regardless of
+     * scheme.
+     */
+    static String fixPathSchema(String tablePath) {
+        return tablePath.replace("failing:", "file:");
+    }
+
     static String createKey(String tablePath, String fileName) {
-        return String.format("%s-%s", tablePath, fileName);
+        return String.format("%s-%s", fixPathSchema(tablePath), fileName);
     }
 
     static ExternalCommitEntry get(Path path) {
