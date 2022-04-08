@@ -51,7 +51,7 @@ import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.sources.{BaseRelation, InsertableRelation}
 import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
-import org.apache.spark.util.{Clock, SystemClock}
+import org.apache.spark.util.{Clock, SystemClock, Utils}
 
 /**
  * Used to query the current state of the log as well as modify it by adding
@@ -557,8 +557,9 @@ object DeltaLog extends DeltaLogging {
     // scalastyle:off deltahadoopconfiguration
     val hadoopConf = spark.sessionState.newHadoopConfWithOptions(fileSystemOptions)
     // scalastyle:on deltahadoopconfiguration
-    val fs = rawPath.getFileSystem(hadoopConf)
-    val path = fs.makeQualified(rawPath)
+    var path = rawPath
+    val fs = path.getFileSystem(hadoopConf)
+    path = fs.makeQualified(path)
     def createDeltaLog(): DeltaLog = recordDeltaOperation(
       null,
       "delta.log.create",

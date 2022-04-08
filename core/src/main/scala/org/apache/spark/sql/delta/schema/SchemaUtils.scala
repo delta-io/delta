@@ -208,8 +208,7 @@ object SchemaUtils {
         val originalCase: String = baseFields.get(field.name) match {
           case Some(original) => original.name
           case None =>
-            throw new AnalysisException(
-              s"Can't resolve column ${field.name} in ${baseSchema.treeString}")
+            throw DeltaErrors.cannotResolveColumn(field, baseSchema)
         }
         if (originalCase != field.name) {
           fieldToColumn(field).as(originalCase)
@@ -697,8 +696,7 @@ object SchemaUtils {
     }
     val length = schema.length
     if (slicePosition >= length) {
-      throw new AnalysisException(
-        s"Index $slicePosition to drop column equals to or is larger than struct length: $length")
+      throw DeltaErrors.indexLargerOrEqualThanStruct(slicePosition, length)
     }
     val pre = schema.take(slicePosition)
     if (position.length > 1) {
@@ -727,7 +725,7 @@ object SchemaUtils {
       columnPath: Seq[String] = Seq.empty): Option[String] = {
     def verify(cond: Boolean, err: => String): Unit = {
       if (!cond) {
-        throw new AnalysisException(err)
+        throw DeltaErrors.cannotChangeDataType(err)
       }
     }
 
@@ -770,7 +768,7 @@ object SchemaUtils {
         case (fromDataType, toDataType) =>
           verify(fromDataType == toDataType,
             s"changing data type of ${UnresolvedAttribute(columnPath).name} " +
-            s"from $fromDataType to $toDataType")
+              s"from $fromDataType to $toDataType")
       }
     }
 

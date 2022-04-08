@@ -163,8 +163,10 @@ object SchemaMergingUtils {
                     currentField.metadata)
                 } catch {
                   case NonFatal(e) =>
-                    throw new AnalysisException(s"Failed to merge fields '${currentField.name}' " +
-                        s"and '${updateField.name}'. " + e.getMessage)
+                    throw new DeltaAnalysisException(
+                      errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
+                      messageParameters = Array(currentField.name, updateField.name, e.getMessage)
+                    )
                 }
               case None =>
                 // Retain the old field.

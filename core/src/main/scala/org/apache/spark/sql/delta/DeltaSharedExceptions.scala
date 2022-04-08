@@ -26,3 +26,22 @@ class DeltaAnalysisException(
     messageParameters = messageParameters,
     cause = cause)
   with DeltaThrowable
+
+class DeltaIllegalArgumentException(
+    errorClass: String,
+    messageParameters: Array[String] = Array.empty,
+    cause: Throwable = null)
+  extends IllegalArgumentException(
+      DeltaThrowableHelper.getMessage(errorClass, messageParameters), cause)
+    with DeltaThrowable {
+    override def getErrorClass: String = errorClass
+}
+
+class DeltaUnsupportedOperationException(
+    errorClass: String,
+    messageParameters: Array[String] = Array.empty)
+  extends UnsupportedOperationException(
+      DeltaThrowableHelper.getMessage(errorClass, messageParameters))
+    with DeltaThrowable {
+    override def getErrorClass: String = errorClass
+}

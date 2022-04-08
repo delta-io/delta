@@ -20,16 +20,25 @@ import java.io.{PrintWriter, StringWriter}
 
 import scala.sys.process.Process
 
-import org.apache.spark.sql.delta.actions.Protocol
+// scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.actions.{Action, Protocol}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.Constraints.NotNull
-import org.apache.spark.sql.delta.schema.InvariantViolationException
+import org.apache.spark.sql.delta.constraints.Invariants
+import org.apache.spark.sql.delta.constraints.Invariants.PersistedRule
+import org.apache.spark.sql.delta.hooks.PostCommitHook
+import org.apache.spark.sql.delta.schema.{InvariantViolationException, SchemaMergingUtils, SchemaUtils}
+import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 import org.scalatest.GivenWhenThen
 
-import org.apache.spark.sql.{AnalysisException, QueryTest}
+import org.apache.spark.sql.{AnalysisException, QueryTest, SparkSession}
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.dsl.expressions._
+import org.apache.spark.sql.catalyst.expressions.Uuid
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
-import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
+import org.apache.spark.sql.types.{IntegerType, MetadataBuilder, NullType, StringType, StructField, StructType}
 
 trait DeltaErrorsSuiteBase
     extends QueryTest
@@ -165,20 +174,6 @@ trait DeltaErrorsSuiteBase
         "column is currently unsupported: c0")
     }
     {
-      val e = intercept[DeltaIllegalArgumentException] {
-        throw DeltaErrors.copyIntoEncryptionSseCRequired()
-      }
-      assert(e.getMessage == "Invalid encryption type. COPY INTO source encryption " +
-        "must specify 'TYPE' = 'AWS_SSE_C'.")
-    }
-    {
-      val e = intercept[DeltaIllegalArgumentException] {
-        throw DeltaErrors.copyIntoEncryptionMasterKeyRequired()
-      }
-      assert(e.getMessage == "Invalid encryption arguments. COPY INTO source encryption " +
-        "must specify a MASTER_KEY.")
-    }
-    {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.generatedColumnsReferToWrongColumns(
           new AnalysisException("analysis exception"))
@@ -256,6 +251,165 @@ trait DeltaErrorsSuiteBase
            |Schema changes are not allowed during the change of column mapping mode.
            |
            |""".stripMargin)
+    }
+    {
+      val e = intercept[AnalysisException] {
+        throw DeltaErrors.cannotChangeDataType("example message")
+      }
+      assert(e.getErrorClass == "DELTA_CANNOT_CHANGE_DATA_TYPE")
+      assert(e.getSqlState == "22000")
+      assert(e.message == "Cannot change data type: example message")
+    }
+    {
+      val table = CatalogTable(TableIdentifier("my table"), null, null, null)
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.tableAlreadyExists(table)
+      }
+      assert(e.getErrorClass == "DELTA_TABLE_ALREADY_EXISTS")
+      assert(e.getSqlState == "42000")
+      assert(e.message == "Table `my table` already exists.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.nonDeterministicNotSupportedException("op", Uuid())
+      }
+      assert(e.getErrorClass == "DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Non-deterministic functions " +
+        "are not supported in the op (condition = uuid()).")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.tableNotSupportedException("someOp")
+      }
+      assert(e.getErrorClass == "DELTA_TABLE_NOT_SUPPORTED_IN_OP")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Table is not supported in someOp. Please use a path instead.")
+    }
+    {
+      val e = intercept[DeltaRuntimeException] {
+        throw DeltaErrors.postCommitHookFailedException(new PostCommitHook() {
+          override val name: String = "DummyPostCommitHook"
+          override def run(spark: SparkSession, txn: OptimisticTransactionImpl,
+            committedActions: Seq[Action]): Unit = {}
+        }, 0, "msg", null)
+      }
+      assert(e.getErrorClass == "DELTA_POST_COMMIT_HOOK_FAILED")
+      assert(e.getSqlState == "2D000")
+      assert(e.getMessage == "Committing to the Delta table version 0 " +
+        "succeeded but error while executing post-commit hook DummyPostCommitHook: msg")
+    }
+    {
+      val e = intercept[DeltaRuntimeException] {
+        throw DeltaErrors.postCommitHookFailedException(new PostCommitHook() {
+          override val name: String = "DummyPostCommitHook"
+          override def run(spark: SparkSession, txn: OptimisticTransactionImpl,
+            committedActions: Seq[Action]): Unit = {}
+        }, 0, null, null)
+      }
+      assert(e.getErrorClass == "DELTA_POST_COMMIT_HOOK_FAILED")
+      assert(e.getSqlState == "2D000")
+      assert(e.getMessage == "Committing to the Delta table version 0 " +
+        "succeeded but error while executing post-commit hook DummyPostCommitHook")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.indexLargerOrEqualThanStruct(1, 1)
+      }
+      assert(e.getErrorClass == "DELTA_INDEX_LARGER_OR_EQUAL_THAN_STRUCT")
+      assert(e.getSqlState == "2F000")
+      assert(e.getMessage == "Index 1 to drop column equals to or is larger " +
+        "than struct length: 1")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.invalidV1TableCall("v1Table", "DeltaTableV2")
+      }
+      assert(e.getErrorClass == "DELTA_INVALID_V1_TABLE_CALL")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "v1Table call is not expected with path based DeltaTableV2")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.cannotGenerateUpdateExpressions()
+      }
+      assert(e.getErrorClass == "DELTA_CANNOT_GENERATE_UPDATE_EXPRESSIONS")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Calling without generated columns should always return a update " +
+        "expression for each column")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        val s1 = StructType(Seq(StructField("c0", IntegerType)))
+        val s2 = StructType(Seq(StructField("c0", StringType)))
+        SchemaMergingUtils.mergeSchemas(s1, s2)
+      }
+      assert(e.getErrorClass == "DELTA_FAILED_TO_MERGE_FIELDS")
+      assert(e.getSqlState == "22005")
+      assert(e.getMessage == "Failed to merge fields 'c0' and 'c0'. Failed to merge " +
+        "incompatible data types IntegerType and StringType")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.describeViewHistory
+      }
+      assert(e.getErrorClass == "DELTA_CANNOT_DESCRIBE_VIEW_HISTORY")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Cannot describe the history of a view.")
+    }
+    {
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.unrecognizedInvariant()
+      }
+      assert(e.getErrorClass == "DELTA_UNRECOGNIZED_INVARIANT")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Unrecognized invariant. Please upgrade your Spark version.")
+    }
+    {
+      val baseSchema = StructType(Seq(StructField("c0", StringType)))
+      val field = StructField("id", IntegerType)
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotResolveColumn(field, baseSchema)
+      }
+      assert(e.getErrorClass == "DELTA_CANNOT_RESOLVE_COLUMN")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        """Can't resolve column id in root
+         | |-- c0: string (nullable = true)
+         |""".stripMargin
+        )
+    }
+    {
+      val s1 = StructType(Seq(StructField("c0", IntegerType)))
+      val s2 = StructType(Seq(StructField("c0", StringType)))
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.alterTableReplaceColumnsException(s1, s2, "incompatible")
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage ==
+        """Unsupported ALTER TABLE REPLACE COLUMNS operation. Reason: incompatible
+          |
+          |Failed to change schema from:
+          |root
+          | |-- c0: integer (nullable = true)
+          |
+          |to:
+          |root
+          | |-- c0: string (nullable = true)
+          |""".stripMargin
+      )
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        val schemeConf = Seq(("key", "val"))
+        throw DeltaErrors.logStoreConfConflicts(schemeConf)
+      }
+      assert(e.getErrorClass == "DELTA_INVALID_LOGSTORE_CONF")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "(`spark.delta.logStore.class`) and " +
+        "(`spark.delta.logStore.key`) cannot " +
+        "be set at the same time. Please set only one group of them.")
     }
   }
 }

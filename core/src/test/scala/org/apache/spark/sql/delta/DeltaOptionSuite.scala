@@ -17,14 +17,16 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Action, FileAction}
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
+import org.apache.commons.io.FileUtils
 
 import org.apache.spark.sql.{AnalysisException, QueryTest}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
 class DeltaOptionSuite extends QueryTest
-  with SharedSparkSession {
+  with SharedSparkSession  with DeltaSQLCommandTest {
 
   import testImplicits._
 
@@ -131,4 +133,48 @@ class DeltaOptionSuite extends QueryTest
     }
   }
 
+
+  test("support the maxRecordsPerFile write option: path") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withTable("maxRecordsPerFile") {
+        spark.range(100)
+          .write
+          .format("delta")
+          .option("maxRecordsPerFile", 5)
+          .save(path)
+        assert(FileUtils.listFiles(tempDir, Array("parquet"), false).size === 20)
+      }
+    }
+  }
+
+  test("support the maxRecordsPerFile write option: external table") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withTable("maxRecordsPerFile") {
+        spark.range(100)
+          .write
+          .format("delta")
+          .option("maxRecordsPerFile", 5)
+          .option("path", path)
+          .saveAsTable("maxRecordsPerFile")
+        assert(FileUtils.listFiles(tempDir, Array("parquet"), false).size === 20)
+      }
+    }
+  }
+
+  test("support the maxRecordsPerFile write option: v2 write") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withTable("maxRecordsPerFile") {
+        spark.range(100)
+          .writeTo(s"maxRecordsPerFile")
+          .using("delta")
+          .option("maxRecordsPerFile", 5)
+          .tableProperty("location", path)
+          .create()
+        assert(FileUtils.listFiles(tempDir, Array("parquet"), false).size === 20)
+      }
+    }
+  }
 }

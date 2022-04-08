@@ -7,12 +7,76 @@
     "message" : [ "There is a conflict from these SET columns: %s." ],
     "sqlState" : "42000"
   },
+  "DELTA_CANNOT_CHANGE_DATA_TYPE" : {
+    "message" : [ "Cannot change data type: %s" ],
+    "sqlState" : "22000"
+  },
+  "DELTA_CANNOT_DESCRIBE_VIEW_HISTORY" : {
+    "message" : [ "Cannot describe the history of a view." ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_CANNOT_GENERATE_CODE_FOR_EXPRESSION" : {
+    "message" : [ "Cannot generate code for expression: %s" ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_CANNOT_GENERATE_UPDATE_EXPRESSIONS" : {
+    "message" : [ "Calling without generated columns should always return a update expression for each column" ],
+    "sqlState" : "42000"
+  },
+  "DELTA_CANNOT_RESOLVE_COLUMN" : {
+    "message" : [ "Can't resolve column %s in %s" ],
+    "sqlState" : "42000"
+  },
+  "DELTA_CANNOT_RESOLVE_SOURCE_COLUMN" : {
+    "message" : [ "Couldn't resolve qualified source column %s within the source query." ],
+    "sqlState" : "42000"
+  },
+  "DELTA_FAILED_TO_MERGE_FIELDS" : {
+    "message" : [ "Failed to merge fields '%s' and '%s'. %s" ],
+    "sqlState" : "22005"
+  },
+  "DELTA_INDEX_LARGER_OR_EQUAL_THAN_STRUCT" : {
+    "message" : [ "Index %s to drop column equals to or is larger than struct length: %s" ],
+    "sqlState" : "2F000"
+  },
+  "DELTA_INVALID_LOGSTORE_CONF" : {
+    "message" : [ "(`spark.delta.logStore.class`) and (`%s`) cannot be set at the same time. Please set only one group of them." ],
+    "sqlState" : "42000"
+  },
+  "DELTA_INVALID_V1_TABLE_CALL" : {
+    "message" : [ "%s call is not expected with path based %s" ],
+    "sqlState" : "42000"
+  },
   "DELTA_MERGE_UNEXPECTED_ASSIGNMENT_KEY" : {
     "message" : [ "Unexpected assignment key: %s - %s" ],
     "sqlState" : "22005"
   },
+  "DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED" : {
+    "message" : [ "Non-deterministic functions are not supported in the %s %s" ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_POST_COMMIT_HOOK_FAILED" : {
+    "message" : [ "Committing to the Delta table version %s succeeded but error while executing post-commit hook %s%s" ],
+    "sqlState" : "2D000"
+  },
+  "DELTA_TABLE_ALREADY_EXISTS" : {
+    "message" : [ "Table %s already exists." ],
+    "sqlState" : "42000"
+  },
+  "DELTA_TABLE_NOT_SUPPORTED_IN_OP" : {
+    "message" : [ "Table is not supported in %s. Please use a path instead." ],
+    "sqlState" : "0A000"
+  },
   "DELTA_TABLE_ONLY_OPERATION" : {
     "message" : [ "%s is not a Delta table. %s is only supported for Delta tables." ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_UNRECOGNIZED_INVARIANT" : {
+    "message" : [ "Unrecognized invariant. Please upgrade your Spark version." ],
+    "sqlState" : "42000"
+  },
+  "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP" : {
+    "message" : [ "Unsupported ALTER TABLE REPLACE COLUMNS operation. Reason: %s", "", "Failed to change schema from:", "%s", "to:", "%s" ],
     "sqlState" : "0A000"
   },
   "FAILED_CHECKPOINT" : {
@@ -20,10 +84,6 @@
   },
   "INVALID_CHARACTERS_IN_COLUMN_NAME" : {
     "message" : [ "Attribute name \"%s\" contains invalid character(s) among \" ,;{}()\\\\n\\\\t=\". Please use alias to rename it." ],
-    "sqlState" : "42000"
-  },
-  "INVALID_COPY_ENCRYPTION" : {
-    "message" : [ "Invalid %s. COPY INTO source %s." ],
     "sqlState" : "42000"
   },
   "INVALID_GENERATED_COLUMN_REFERENCES" : {

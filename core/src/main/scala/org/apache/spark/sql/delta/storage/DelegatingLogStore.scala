@@ -147,9 +147,12 @@ class DelegatingLogStore(hadoopConf: Configuration)
 
 object DelegatingLogStore {
 
-  val defaultS3LogStoreClassName = classOf[S3SingleDriverLogStore].getName
-  val defaultAzureLogStoreClassName = classOf[AzureLogStore].getName
-  val defaultHDFSLogStoreClassName = classOf[HDFSLogStore].getName
+  /**
+   * Java LogStore (io.delta.storage) implementations are now the default.
+   */
+  val defaultS3LogStoreClassName = classOf[io.delta.storage.S3SingleDriverLogStore].getName
+  val defaultAzureLogStoreClassName = classOf[io.delta.storage.AzureLogStore].getName
+  val defaultHDFSLogStoreClassName = classOf[io.delta.storage.HDFSLogStore].getName
 
   // Supported schemes with default.
   val s3Schemes = Set("s3", "s3a", "s3n")

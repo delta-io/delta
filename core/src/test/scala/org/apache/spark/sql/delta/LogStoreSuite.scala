@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.storage._
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileSystem, Path, RawLocalFileSystem}
+import org.apache.hadoop.fs.{FileSystem, FSDataOutputStream, Path, RawLocalFileSystem}
 
 import org.apache.spark.{SparkConf, SparkFunSuite}
 import org.apache.spark.sql.{LocalSparkSession, QueryTest, SparkSession}
@@ -358,6 +358,56 @@ trait LocalLogStoreSuiteBase extends LogStoreSuiteBase {
   protected def shouldUseRenameToWriteCheckpoint: Boolean = true
 }
 
+trait GCSLogStoreSuiteBase extends LogStoreSuiteBase {
+
+  testHadoopConf(
+    expectedErrMsg = ".*No FileSystem for scheme.*fake.*",
+    "fs.fake.impl" -> classOf[FakeFileSystem].getName,
+    "fs.fake.impl.disable.cache" -> "true")
+
+  protected def shouldUseRenameToWriteCheckpoint: Boolean = false
+
+  test("gcs write should happen in a new thread") {
+    withTempDir { tempDir =>
+      // Use `FakeGCSFileSystem` to verify we write in the correct thread.
+      withSQLConf(
+        "fs.gs.impl" -> classOf[FakeGCSFileSystem].getName,
+        "fs.gs.impl.disable.cache" -> "true") {
+        val store = createLogStore(spark)
+        store.write(
+          new Path(s"gs://${tempDir.getCanonicalPath}", "1.json"),
+          Iterator("foo"),
+          overwrite = false,
+          sessionHadoopConf)
+      }
+    }
+  }
+
+  test("handles precondition failure") {
+    withTempDir { tempDir =>
+      withSQLConf(
+        "fs.gs.impl" -> classOf[FailingGCSFileSystem].getName,
+        "fs.gs.impl.disable.cache" -> "true") {
+        val store = createLogStore(spark)
+
+        assertThrows[java.nio.file.FileAlreadyExistsException] {
+          store.write(
+            new Path(s"gs://${tempDir.getCanonicalPath}", "1.json"),
+            Iterator("foo"),
+            overwrite = false,
+            sessionHadoopConf)
+        }
+
+        store.write(
+          new Path(s"gs://${tempDir.getCanonicalPath}", "1.json"),
+          Iterator("foo"),
+          overwrite = true,
+          sessionHadoopConf)
+      }
+    }
+  }
+}
+
 ////////////////////////////////
 // Concrete child test suites //
 ////////////////////////////////
@@ -377,6 +427,16 @@ class LocalLogStoreSuite extends LocalLogStoreSuiteBase {
 ////////////////////////////////
 // File System Helper Classes //
 ////////////////////////////////
+
+/** A fake file system to test whether GCSLogStore properly handles precondition failures. */
+class FailingGCSFileSystem extends RawLocalFileSystem {
+  override def getScheme: String = "gs"
+  override def getUri: URI = URI.create("gs:/")
+
+  override def create(f: Path, overwrite: Boolean): FSDataOutputStream = {
+    throw new IOException("412 Precondition Failed");
+  }
+}
 
 /** A fake file system to test whether session Hadoop configuration will be picked up. */
 class FakeFileSystem extends RawLocalFileSystem {
@@ -525,4 +585,9 @@ class PublicAzureLogStoreSuite extends PublicLogStoreSuite with AzureLogStoreSui
 class PublicLocalLogStoreSuite extends PublicLogStoreSuite with LocalLogStoreSuiteBase {
   override protected val publicLogStoreClassName: String =
     classOf[io.delta.storage.LocalLogStore].getName
+}
+
+class PublicGCSLogStoreSuite extends PublicLogStoreSuite with GCSLogStoreSuiteBase {
+  override protected val publicLogStoreClassName: String =
+    classOf[io.delta.storage.GCSLogStore].getName
 }

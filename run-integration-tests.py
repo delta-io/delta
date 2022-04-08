@@ -107,7 +107,7 @@ def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_
     if use_local:
         run_cmd(["build/sbt", "publishM2"])
 
-    test_dir = path.join(root_dir, path.join("storage-dynamodb", "integration_tests"))
+    test_dir = path.join(root_dir, path.join("storage-s3-dynamodb", "integration_tests"))
     test_files = [path.join(test_dir, f) for f in os.listdir(test_dir)
                   if path.isfile(path.join(test_dir, f)) and
                   f.endswith(".py") and not f.startswith("_")]
@@ -115,8 +115,7 @@ def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
     packages = "io.delta:delta-core_2.12:" + version
-    # TODO: update this with proper delta-storage artifact ID (i.e. no _2.12 scala version)
-    packages += "," + "io.delta:delta-storage-dynamodb_2.12:" + version
+    packages += "," + "io.delta:delta-storage-s3-dynamodb:" + version
     if extra_packages:
         packages += "," + extra_packages
 
@@ -293,7 +292,7 @@ if __name__ == "__main__":
         action="store_true",
         help="Generate JARs from local source code and use to run tests")
     parser.add_argument(
-        "--run-storage-dynamodb-integration-tests",
+        "--run-storage-s3-dynamodb-integration-tests",
         required=False,
         default=False,
         action="store_true",
@@ -326,7 +325,7 @@ if __name__ == "__main__":
     run_scala = not args.python_only and not args.pip_only
     run_pip = not args.python_only and not args.scala_only and not args.no_pip
 
-    if args.run_storage_dynamodb_integration_tests:
+    if args.run_storage_s3_dynamodb_integration_tests:
         run_dynamodb_logstore_integration_tests(root_dir, args.version, args.test, args.maven_repo,
                                                 args.dbb_packages, args.dbb_conf, args.use_local)
         quit()
