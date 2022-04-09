@@ -339,13 +339,11 @@ trait DeltaErrorsSuiteBase
         "expression for each column")
     }
     {
-      val e = intercept[DeltaAnalysisException] {
+      val e = intercept[AnalysisException] {
         val s1 = StructType(Seq(StructField("c0", IntegerType)))
         val s2 = StructType(Seq(StructField("c0", StringType)))
         SchemaMergingUtils.mergeSchemas(s1, s2)
       }
-      assert(e.getErrorClass == "DELTA_FAILED_TO_MERGE_FIELDS")
-      assert(e.getSqlState == "22005")
       assert(e.getMessage == "Failed to merge fields 'c0' and 'c0'. Failed to merge " +
         "incompatible data types IntegerType and StringType")
     }
