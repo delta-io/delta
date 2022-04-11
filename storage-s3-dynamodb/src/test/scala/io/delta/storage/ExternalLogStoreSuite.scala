@@ -20,8 +20,13 @@ import java.io.File
 import java.net.URI
 
 import org.apache.hadoop.fs._
+
 import org.apache.spark.sql.delta.FakeFileSystem
 import org.apache.spark.sql.delta.util.FileNames
+
+/////////////////////
+// Base Test Suite //
+/////////////////////
 
 class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSuite {
   override protected val publicLogStoreClassName: String =
@@ -38,7 +43,7 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
   }
 
   def getFailingDeltaVersionPath(logDir: File, version: Int): Path = {
-    FileNames.deltaFile(new Path(s"failing:${logDir.getCanonicalPath}"), 0)
+    FileNames.deltaFile(new Path(s"failing:${logDir.getCanonicalPath}"), version)
   }
 
   test("single write") {
@@ -75,7 +80,38 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
     }
   }
 
-  test("write N+1 recovers version N") {
+  test("write N+1 fails if N doesn't exist in external store or FileSystem") {
+    withTempLogDir { tempLogDir =>
+      val store = createLogStore(spark)
+
+      val delta0 = getDeltaVersionPath(tempLogDir, 0)
+      val delta1 = getDeltaVersionPath(tempLogDir, 1)
+      val e = intercept[java.nio.file.FileSystemException] {
+        store.write(delta1, Iterator("one"), overwrite = false, sessionHadoopConf)
+      }
+      assert(e.getMessage == s"previous commit $delta0 doesn't exist")
+    }
+  }
+
+  // scalastyle:off line.size.limit
+  test("write N+1 fails if N is marked as complete in external store but doesn't exist in FileSystem") {
+    // scalastyle:on line.size.limit
+    withTempLogDir { tempLogDir =>
+      val store = createLogStore(spark)
+
+      val delta0 = getDeltaVersionPath(tempLogDir, 0)
+      val delta1 = getDeltaVersionPath(tempLogDir, 1)
+
+      store.write(delta0, Iterator("one"), overwrite = false, sessionHadoopConf)
+      delta0.getFileSystem(sessionHadoopConf).delete(delta0, true)
+      val e = intercept[java.nio.file.FileSystemException] {
+        store.write(delta1, Iterator("one"), overwrite = false, sessionHadoopConf)
+      }
+      assert(e.getMessage == s"previous commit $delta0 doesn't exist")
+    }
+  }
+
+  test("write N+1 succeeds and recovers version N if N is incomplete in external store") {
     withSQLConf(
       "fs.failing.impl" -> classOf[FailingFileSystem].getName,
       "fs.failing.impl.disable.cache" -> "true"
@@ -87,21 +123,13 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
         val delta0_fail = getFailingDeltaVersionPath(tempLogDir, 0)
         val delta1 = getDeltaVersionPath(tempLogDir, 1)
 
-        // Case 1: write N+1 fails
-        // - entry for delta0 doesn't exist in external store or in file system
-        val e = intercept[java.nio.file.FileSystemException] {
-          store.write(delta1, Iterator("one"), overwrite = false, sessionHadoopConf)
-        }
-        assert(e.getMessage == s"previous commit $delta0_normal doesn't exist")
-
-        // Case 2: write N+1 succeeds
-        // - entry for delta0 does exist in external store but not in file system
+        // Create N (incomplete) in external store, with no N in FileSystem
         FailingFileSystem.failOnSuffix = Some(delta0_fail.getName)
         store.write(delta0_fail, Iterator("zero"), overwrite = false, sessionHadoopConf)
         assert(!delta0_fail.getFileSystem(sessionHadoopConf).exists(delta0_fail))
         assert(!MemoryLogStore.get(delta0_fail).complete)
-        assert(MemoryLogStore.get(delta0_fail) == MemoryLogStore.get(delta0_normal))
 
+        // Write N + 1 and check that recovery was performed
         store.write(delta1, Iterator("one"), overwrite = false, sessionHadoopConf)
         assert(delta0_fail.getFileSystem(sessionHadoopConf).exists(delta0_fail))
         assert(MemoryLogStore.get(delta0_fail).complete)
@@ -128,17 +156,15 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
 
         // check that entry was written to external store and that it doesn't exist in FileSystem
         val entry = MemoryLogStore.get(delta0_fail)
-        assert(entry != null)
         assert(!entry.complete)
-        assert(entry.tempPath.nonEmpty)
         assert(!delta0_fail.getFileSystem(sessionHadoopConf).exists(delta0_fail))
 
         // Now perform a `listFrom` read, which should fix the transaction log
-        val contents = store.read(entry.absoluteTempPath()).toList
+        val contents = store.read(entry.absoluteTempPath(), sessionHadoopConf).toList
         FailingFileSystem.failOnSuffix = None
         store.listFrom(delta0_normal, sessionHadoopConf)
+
         val entry2 = MemoryLogStore.get(delta0_normal)
-        assert(entry2 != null)
         assert(entry2.complete)
         assert(store.read(entry2.absoluteFilePath(), sessionHadoopConf).toList == contents)
       }
@@ -163,7 +189,7 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
       }.getMessage
 
       val tablePath = path.getParent.getParent
-      assert(e == s"Old entries for table ${tablePath} still exist in the external store")
+      assert(e == s"Old entries for table $tablePath still exist in the external store")
     }
   }
 
@@ -174,8 +200,28 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
     }
   }
 
+  test("MemoryLogStore ignores failing scheme") {
+    withSQLConf(
+      "fs.failing.impl" -> classOf[FailingFileSystem].getName,
+      "fs.failing.impl.disable.cache" -> "true"
+    ) {
+      withTempLogDir { tempLogDir =>
+        val store = createLogStore(spark)
+        val delta0_normal = getDeltaVersionPath(tempLogDir, 0)
+        val delta0_fail = getFailingDeltaVersionPath(tempLogDir, 0)
+
+        store.write(delta0_fail, Iterator("zero"), overwrite = false, sessionHadoopConf)
+        assert(MemoryLogStore.get(delta0_fail) eq MemoryLogStore.get(delta0_normal))
+      }
+    }
+  }
+
   protected def shouldUseRenameToWriteCheckpoint: Boolean = false
 }
+
+////////////////////////////////
+// File System Helper Classes //
+////////////////////////////////
 
 /**
  * This utility enables failure simulation on file system.
