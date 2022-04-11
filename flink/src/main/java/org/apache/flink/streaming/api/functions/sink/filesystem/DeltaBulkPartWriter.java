@@ -22,6 +22,7 @@ import java.io.IOException;
 
 import org.apache.flink.api.common.serialization.BulkWriter;
 import org.apache.flink.core.fs.RecoverableFsDataOutputStream;
+import org.apache.flink.util.IOUtils;
 import org.apache.flink.util.Preconditions;
 
 /**
@@ -59,11 +60,17 @@ import org.apache.flink.util.Preconditions;
  *         automatically transformed ("rolled") into a {@link DeltaPendingFile} instance</li>
  * </ol>
  *
+ * <p>
+ * This class is almost exact copy of {@link OutputStreamBasedPartFileWriter}. The only modified
+ * behaviour is extending {@link this#closeWriter()} method with flushing of the internal buffer.
+ *
  * @param <IN>       The type of input elements.
  * @param <BucketID> The type of bucket identifier
  */
 public class DeltaBulkPartWriter<IN, BucketID>
-    extends OutputStreamBasedPartFileWriter<IN, BucketID> {
+    extends AbstractPartFileWriter<IN, BucketID> {
+
+    final RecoverableFsDataOutputStream currentPartStream;
 
     private final BulkWriter<IN> writer;
 
@@ -74,7 +81,8 @@ public class DeltaBulkPartWriter<IN, BucketID>
         final RecoverableFsDataOutputStream currentPartStream,
         final BulkWriter<IN> writer,
         final long creationTime) {
-        super(bucketId, currentPartStream, creationTime);
+        super(bucketId, creationTime);
+        this.currentPartStream = currentPartStream;
         this.writer = Preconditions.checkNotNull(writer);
     }
 
@@ -105,6 +113,19 @@ public class DeltaBulkPartWriter<IN, BucketID>
         if (!closed) {
             closeWriter();
         }
-        return super.closeForCommit();
+        return new OutputStreamBasedPartFileWriter.OutputStreamBasedPendingFileRecoverable(
+            currentPartStream.closeForCommit().getRecoverable());
+    }
+
+    @Override
+    public void dispose() {
+        // we can suppress exceptions here, because we do not rely on close() to
+        // flush or persist any data
+        IOUtils.closeQuietly(currentPartStream);
+    }
+
+    @Override
+    public long getSize() throws IOException {
+        return currentPartStream.getPos();
     }
 }
