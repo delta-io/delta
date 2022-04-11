@@ -82,5 +82,5 @@ private[delta] object FileSizeHistogram {
     )
   }
 
-  val schema: StructType = ExpressionEncoder[FileSizeHistogram]().schema
+  lazy val schema: StructType = ExpressionEncoder[FileSizeHistogram]().schema
 }
