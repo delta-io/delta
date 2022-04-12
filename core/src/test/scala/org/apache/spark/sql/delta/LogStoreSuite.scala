@@ -21,6 +21,7 @@ import java.net.URI
 
 import scala.collection.mutable.ArrayBuffer
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaTestUtils.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.storage._
@@ -184,7 +185,8 @@ abstract class LogStoreSuiteBase extends QueryTest
    */
   protected def shouldUseRenameToWriteCheckpoint: Boolean
 
-  test("use isPartialWriteVisible to decide whether use rename") {
+  test(
+    "use isPartialWriteVisible to decide whether use rename") {
     withTempDir { tempDir =>
       import testImplicits._
       Seq(1, 2, 4).toDF().write.format("delta").save(tempDir.getCanonicalPath)
@@ -283,7 +285,8 @@ trait HDFSLogStoreSuiteBase extends LogStoreSuiteBase {
     }
   }
 
-  test("No AbstractFileSystem - end to end test using data frame") {
+  test(
+    "No AbstractFileSystem - end to end test using data frame") {
     // Writes to the fake file system will fail
     withTempDir { tempDir =>
       val fakeFSLocation = s"fake://${tempDir.getCanonicalFile}"
