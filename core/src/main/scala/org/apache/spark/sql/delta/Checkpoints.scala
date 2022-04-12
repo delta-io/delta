@@ -37,7 +37,7 @@ import org.apache.hadoop.mapreduce.{Job, TaskType}
 
 import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.expressions.{ElementAt, Literal}
+import org.apache.spark.sql.catalyst.expressions.{Cast, ElementAt, Literal}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.functions.{col, struct, when}
 import org.apache.spark.sql.internal.SQLConf
@@ -467,11 +467,14 @@ object CheckpointV2 {
   def extractPartitionValues(partitionSchema: StructType): Option[Column] = {
     val partitionValues = partitionSchema.map { field =>
       val physicalName = DeltaColumnMapping.getPhysicalName(field)
-      new Column(ElementAt(
-        UnresolvedAttribute("add" :: "partitionValues" :: Nil),
-        Literal(physicalName),
-        failOnError = false)
-      ).cast(field.dataType).as(physicalName)
+      new Column(Cast(
+        ElementAt(
+          UnresolvedAttribute("add" :: "partitionValues" :: Nil),
+          Literal(physicalName),
+          failOnError = false),
+        field.dataType,
+        ansiEnabled = false)
+      ).as(physicalName)
     }
     if (partitionValues.isEmpty) None else Some(struct(partitionValues: _*).as(PARTITIONS_COL_NAME))
   }
