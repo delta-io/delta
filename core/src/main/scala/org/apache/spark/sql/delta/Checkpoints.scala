@@ -20,6 +20,7 @@ import java.io.FileNotFoundException
 import java.util.UUID
 
 import scala.collection.mutable
+import scala.math.Ordering.Implicits._
 import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
@@ -71,8 +72,10 @@ case class CheckpointInstance(
    */
   def isEarlierThan(other: CheckpointInstance): Boolean = {
     if (other == CheckpointInstance.MaxValue) return true
-    version < other.version ||
-        (version == other.version && numParts.forall(_ < other.numParts.getOrElse(1)))
+    // numParts is set to None if the checkpoint is made up of a single
+    // file ($version%020d.checkpoint.parquet). None < Some(x) for all x, which means
+    // we'll break ties in favor of multi-part checkpoints (because they appear "larger").
+    (version, numParts) < (other.version, other.numParts)
   }
 
   def isNotLaterThan(other: CheckpointInstance): Boolean = {
