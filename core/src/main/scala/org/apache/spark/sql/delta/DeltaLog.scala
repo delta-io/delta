@@ -462,6 +462,7 @@ object DeltaLog extends DeltaLogging {
     builder.build[DeltaLogCacheKey, DeltaLog]()
   }
 
+
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: String): DeltaLog = {
     apply(spark, new Path(dataPath, "_delta_log"), Map.empty, new SystemClock)

@@ -23,7 +23,7 @@ import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
@@ -43,6 +43,7 @@ import org.apache.spark.util.Utils
  * @param numFiles Number of `AddFile` actions in the snapshot
  * @param numMetadata Number of `Metadata` actions in the snapshot
  * @param numProtocol Number of `Protocol` actions in the snapshot
+ * @param histogramOpt Optional file size histogram
  */
 case class VersionChecksum(
     tableSizeBytes: Long,
@@ -107,7 +108,7 @@ trait ReadChecksum extends DeltaLogging { self: DeltaLog =>
   val logPath: Path
   private[delta] def store: LogStore
 
-  protected def readChecksum(version: Long): Option[VersionChecksum] = {
+  private[delta] def readChecksum(version: Long): Option[VersionChecksum] = {
     recordFrameProfile("Delta", "ReadChecksum.readChecksum") {
       val checksumFile = FileNames.checksumFile(logPath, version)
 

@@ -200,7 +200,6 @@ case class WriteIntoDelta(
     fileActions
   }
 
-
   private def extractConstraints(
       sparkSession: SparkSession,
       expr: Seq[Expression]): Seq[Constraint] = {

@@ -422,4 +422,5 @@ trait DeltaCommand extends DeltaLogging {
     }
     deltaLog
   }
+
 }

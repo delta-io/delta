@@ -355,10 +355,10 @@ case class RemoveFile(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     deletionTimestamp: Option[Long],
     dataChange: Boolean = true,
-    extendedFileMetadata: Option[Boolean] = Some(false),
+    extendedFileMetadata: Option[Boolean] = None,
     partitionValues: Map[String, String] = null,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
-    size: Option[Long] = Some(0L),
+    size: Option[Long] = None,
     tags: Map[String, String] = null,
     numRecords: Option[Long] = None) extends FileAction {
   override def wrap: SingleAction = SingleAction(remove = this)
