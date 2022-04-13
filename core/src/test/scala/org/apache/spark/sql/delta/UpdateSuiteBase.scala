@@ -44,7 +44,11 @@ abstract class UpdateSuiteBase
 
   protected def tempPath = tempDir.getCanonicalPath
 
-  protected def readDeltaTable(path: String): DataFrame = {
+  protected def readDeltaTable(table: String): DataFrame = {
+    spark.read.format("delta").table(table)
+  }
+
+  protected def readDeltaTableByPath(path: String): DataFrame = {
     spark.read.format("delta").load(path)
   }
 
@@ -87,7 +91,9 @@ abstract class UpdateSuiteBase
       expectedResults: Seq[Row],
       tableName: Option[String] = None): Unit = {
     executeUpdate(tableName.getOrElse(s"delta.`$tempPath`"), setClauses, where = condition.orNull)
-    checkAnswer(readDeltaTable(tempPath), expectedResults)
+    checkAnswer(
+      tableName.map(readDeltaTable(_)).getOrElse(readDeltaTableByPath(tempPath)),
+      expectedResults)
   }
 
   test("basic case") {
@@ -764,7 +770,7 @@ abstract class UpdateSuiteBase
           toDF(source).createOrReplaceTempView("source")
         }
         executeUpdate(s"delta.`$dir`", set, updateWhere)
-        checkAnswer(readDeltaTable(dir.toString), toDF(expected))
+        checkAnswer(readDeltaTableByPath(dir.toString), toDF(expected))
       }
     }
   }
