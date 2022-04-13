@@ -197,7 +197,7 @@ class DeltaTable private[tables](
    * {{{
    *    deltaTable
    *     .optimize()
-   *     .partitionFilter("date='2021-11-18')
+   *     .partitionFilter("date='2021-11-18'")
    *     .executeCompaction();
    * }}}
    *
@@ -206,8 +206,8 @@ class DeltaTable private[tables](
    * {{{
    *    deltaTable
    *     .optimize()
-   *     .partitionFilter("date='2021-11-18')
-   *     .executeZOrderBy("city", ");
+   *     .partitionFilter("date='2021-11-18'")
+   *     .executeZOrderBy("city", "state");
    * }}}
    *
    * @since 1.3.0

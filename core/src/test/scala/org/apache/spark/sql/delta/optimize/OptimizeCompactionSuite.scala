@@ -84,6 +84,10 @@ trait OptimizeCompactionSuiteBase extends QueryTest
       deltaLog.update()
       assert(deltaLog.snapshot.version === versionBeforeOptimize + 1)
       checkDatasetUnorderly(data.toDF().as[Int], 1, 2, 3, 4, 5, 6)
+
+      // Make sure thread pool is shut down
+      assert(Thread.getAllStackTraces.keySet.asScala
+        .filter(_.getName.startsWith("OptimizeJob")).isEmpty)
     }
   }
 

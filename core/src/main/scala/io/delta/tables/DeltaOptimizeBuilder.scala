@@ -16,7 +16,7 @@
 
 package io.delta.tables
 
-import org.apache.spark.sql.{SparkSession, DataFrame, Dataset}
+import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.delta.commands.OptimizeTableCommand
 import org.apache.spark.sql.delta.util.AnalysisHelper
@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.util.AnalysisHelper
  * @param sparkSession [[SparkSession]] to use for execution
  * @param tableIdentifier Id of the table on which to
  *        execute the optimize
+ * @since 1.3.0
  */
 class DeltaOptimizeBuilder(
     sparkSession: SparkSession,
