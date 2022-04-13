@@ -183,40 +183,39 @@ class DeltaTable private[tables](
   }
 
   /**
-   * Optimize data in the table that match the given `condition`. The condition must only
-   * container filters on partition columns, otherwise an `AnalysisException` is thrown.
+   * Optimize the data layout of the table. This returns
+   * a [[DeltaOptimizeBuilder]] object that can be used to specify
+   * the partition filter to limit the scope of optimize and
+   * also execute different optimization techniques such as file
+   * compaction or order data using Z-Order curves.
    *
-   * @param condition Boolean SQL expression
+   * See the [[DeltaOptimizeBuilder]] for a full description
+   * of this operation.
    *
-   * @since 1.2.0
+   * Scala example to run file compaction on a subset of
+   * partitions in the table:
+   * {{{
+   *    deltaTable
+   *     .optimize()
+   *     .partitionFilter("date='2021-11-18')
+   *     .executeCompaction();
+   * }}}
+   *
+   * Scala example to Z-Order data using given columns on a
+   * subset of partitions in the table:
+   * {{{
+   *    deltaTable
+   *     .optimize()
+   *     .partitionFilter("date='2021-11-18')
+   *     .executeZOrderBy("city", ");
+   * }}}
+   *
+   * @since 1.3.0
    */
-  def optimize(condition: String): Unit = {
-    val tableId = table.tableIdentifier.getOrElse(s"delta.`${deltaLog.dataPath.toString}`")
-    executeOptimize(tableId, Some(condition))
+  def optimize(): DeltaOptimizeBuilder = {
+    new DeltaOptimizeBuilder(sparkSession,
+      table.tableIdentifier.getOrElse(s"delta.`${deltaLog.dataPath.toString}`"))
   }
-
-  /**
-   * Optimize data in the table that match the given `condition`. The condition must only
-   * container filters on partition columns, otherwise an `AnalysisException` is thrown.
-   *
-   * @param condition Boolean SQL expression
-   *
-   * @since 1.2.0
-   */
-  def optimize(condition: Column): Unit = {
-    optimize(condition.expr.sql)
-  }
-
-  /**
-   * Optimize data in the table.
-   *
-   * @since 1.2.0
-   */
-  def optimize(): Unit = {
-    val tableId = table.tableIdentifier.getOrElse(s"delta.`${deltaLog.dataPath.toString}`")
-    executeOptimize(tableId, None)
-  }
-
 
   /**
    * Update rows in the table based on the rules defined by `set`.

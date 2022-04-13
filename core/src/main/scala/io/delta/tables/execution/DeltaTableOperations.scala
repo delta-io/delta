@@ -97,17 +97,6 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
     toDataset(sparkSession, restore)
   }
 
-  protected def executeOptimize(
-      tblIdentifier: String,
-      condition: Option[String]): DataFrame = {
-    val tableId: TableIdentifier = sparkSession
-      .sessionState
-      .sqlParser
-      .parseTableIdentifier(tblIdentifier)
-    val optimize = OptimizeTableCommand(None, Some(tableId), condition)
-    toDataset(sparkSession, optimize)
-  }
-
   protected def toStrColumnMap(map: Map[String, String]): Map[String, Column] = {
     map.toSeq.map { case (k, v) => k -> functions.expr(v) }.toMap
   }

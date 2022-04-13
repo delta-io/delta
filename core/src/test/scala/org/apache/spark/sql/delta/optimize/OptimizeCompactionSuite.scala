@@ -22,6 +22,7 @@ import scala.collection.JavaConverters._
 
 // scalastyle:off import.ordering.noEmptyLine
 import io.delta.tables.DeltaTable
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.Path
@@ -31,7 +32,7 @@ import org.scalatest.time.SpanSugar._
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.catalog.ExternalCatalogUtils
 import org.apache.spark.sql.catalyst.parser.ParseException
-import org.apache.spark.sql.functions.{expr, lit}
+import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.test.SharedSparkSession
 
 /**
@@ -180,11 +181,11 @@ trait OptimizeCompactionSuiteBase extends QueryTest
 
       assert(fileListBefore.length > fileListAfter.length)
       // Optimized partition should contain only one file
-      assert(fileListAfter.count(_.partitionValues === Map("id" -> "0")) === 1)
+      assert(fileListAfter.count(_.partitionValues === Map(id -> "0")) === 1)
 
       // File counts in partitions that are not part of the OPTIMIZE should remain the same
-      assert(fileListAfter.count(_.partitionValues === Map("id" -> "1")) ===
-                 fileListAfter.count(_.partitionValues === Map("id" -> "1")))
+      assert(fileListAfter.count(_.partitionValues === Map(id -> "1")) ===
+                 fileListAfter.count(_.partitionValues === Map(id -> "1")))
 
       // version is incremented
       assert(deltaLogAfter.snapshot.version === versionBefore + 1)
@@ -384,22 +385,22 @@ class OptimizeCompactionScalaSuite extends OptimizeCompactionSuiteBase
     with DeltaSQLCommandTest {
   def executeOptimizeTable(table: String, condition: Option[String] = None): Unit = {
     if (condition.isDefined) {
-      DeltaTable.forName(table).optimize(expr(condition.get))
+      DeltaTable.forName(table).optimize().partitionFilter(condition.get).executeCompaction()
     } else {
-      DeltaTable.forName(table).optimize()
+      DeltaTable.forName(table).optimize().executeCompaction()
     }
   }
 
   def executeOptimizePath(path: String, condition: Option[String] = None): Unit = {
     if (condition.isDefined) {
-      DeltaTable.forPath(path).optimize(expr(condition.get))
+      DeltaTable.forPath(path).optimize().partitionFilter(condition.get).executeCompaction()
     } else {
-      DeltaTable.forPath(path).optimize()
+      DeltaTable.forPath(path).optimize().executeCompaction()
     }
   }
 }
 
-class OptimizeCompactionNameColumnMappingSuite extends OptimizeCompactionSuite
+class OptimizeCompactionNameColumnMappingSuite extends OptimizeCompactionSQLSuite
   with DeltaColumnMappingEnableNameMode {
   override protected def runOnlyTests = Seq(
     "optimize command: on table with multiple partition columns",
