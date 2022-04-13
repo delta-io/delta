@@ -97,7 +97,8 @@ trait DocsPath {
     "concurrentModificationExceptionMsg",
     "incorrectLogStoreImplementationException",
     "columnRenameNotSupported",
-    "sourceNotDeterministicInMergeException"
+    "sourceNotDeterministicInMergeException",
+    "foundInvalidCharsInColumnNames"
   )
 }
 
@@ -1362,6 +1363,7 @@ object DeltaErrors
         formatSchema(newSchema)))
 
   def foundInvalidCharsInColumnNames(cause: Throwable): Throwable = {
+    // scalastyle:off line.size.limit
     var adviceMsg = "Please use alias to rename it."
 
     new AnalysisException(
@@ -1369,6 +1371,7 @@ object DeltaErrors
         |Found invalid character(s) among " ,;{}()\\n\\t=" in the column names of your
         |schema. $adviceMsg
         |""".stripMargin, cause = Some(cause))
+    // scalastyle:on line.size.limit
   }
 
   def foundViolatingConstraintsForColumnChange(

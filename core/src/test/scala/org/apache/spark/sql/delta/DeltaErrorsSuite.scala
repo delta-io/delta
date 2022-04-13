@@ -37,6 +37,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.Uuid
+import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{IntegerType, MetadataBuilder, NullType, StringType, StructField, StructType}
 
@@ -64,7 +65,9 @@ trait DeltaErrorsSuiteBase
       DeltaErrors.createManagedTableWithoutSchemaException("tableName", spark),
     "multipleSourceRowMatchingTargetRowInMergeException" ->
       DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(spark),
-    "concurrentModificationException" -> new ConcurrentWriteException(None))
+    "concurrentModificationException" -> new ConcurrentWriteException(None),
+    "foundInvalidCharsInColumnNames" -> DeltaErrors.foundInvalidCharsInColumnNames(
+      QueryCompilationErrors.columnNameContainsInvalidCharactersError("tableName")))
 
   def otherMessagesToTest: Map[String, String] = Map(
     "deltaFileNotFoundHint" ->
