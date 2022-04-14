@@ -111,9 +111,6 @@ class DeltaLog private(
    |  Configuration  |
    * --------------- */
 
-  /** Returns the checkpoint interval for this log. Not transactional. */
-  def checkpointInterval: Int = DeltaConfigs.CHECKPOINT_INTERVAL.fromMetaData(metadata)
-
   /**
    * The max lineage length of a Snapshot before Delta forces to build a Snapshot from scratch.
    * Delta will build a Snapshot on top of the previous one if it doesn't see a checkpoint.

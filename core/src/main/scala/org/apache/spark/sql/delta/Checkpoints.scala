@@ -125,6 +125,9 @@ trait Checkpoints extends DeltaLogging {
   /** Used to clean up stale log files. */
   protected def doLogCleanup(): Unit
 
+  /** Returns the checkpoint interval for this log. Not transactional. */
+  def checkpointInterval: Int = DeltaConfigs.CHECKPOINT_INTERVAL.fromMetaData(metadata)
+
   /** The path to the file that holds metadata about the most recent checkpoint. */
   val LAST_CHECKPOINT = new Path(logPath, "_last_checkpoint")
 

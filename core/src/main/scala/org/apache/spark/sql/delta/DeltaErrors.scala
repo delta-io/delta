@@ -1364,6 +1364,7 @@ object DeltaErrors
 
   def foundInvalidCharsInColumnNames(cause: Throwable): Throwable = {
     // scalastyle:off line.size.limit
+    val spark = SparkSession.active
     var adviceMsg = "Please use alias to rename it."
 
     new AnalysisException(
