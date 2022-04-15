@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.util.AnalysisHelper
 /**
  * Builder class for constructing OPTIMIZE command and executing.
  *
- * @param sparkSession [[SparkSession]] to use for execution
+ * @param sparkSession SparkSession to use for execution
  * @param tableIdentifier Id of the table on which to
  *        execute the optimize
  * @since 1.3.0
@@ -50,7 +50,7 @@ class DeltaOptimizeBuilder(
    * Z-Order the data in the table using the given columns.
    * @param columns Zero or more columns to order the data
    *                using Z-Order curves
-   * @return [[DataFrame]] containing the OPTIMIZE execution metrics
+   * @return DataFrame containing the OPTIMIZE execution metrics
    */
   def executeZOrderBy(columns: String *): DataFrame = {
     throw new UnsupportedOperationException("Z ordering is not yet supported")
@@ -58,7 +58,7 @@ class DeltaOptimizeBuilder(
 
   /**
    * Compact the small files in selected partitions.
-   * @return [[DataFrame]] containing the OPTIMIZE execution metrics
+   * @return DataFrame containing the OPTIMIZE execution metrics
    */
   def executeCompaction(): DataFrame = {
     val tableId: TableIdentifier = sparkSession
