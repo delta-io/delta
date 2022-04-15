@@ -546,36 +546,35 @@ case class DateFormatPartitionExpr(
 }
 
 /**
- * The rules for the generation expression `SUBSTRING(col, pos, len)`. Note:
+ * The rules for the generation of identity expressions, used for partitioning on a nested column.
+ * Note:
  * - Writing an empty string to a partition column would become `null` (SPARK-24438) so generated
  *   partition filters always pick up the `null` partition for safety.
- * - When `pos` is 0, we also support optimizations for comparison operators. When `pos` is not 0,
- *   we only support optimizations for EqualTo.
  *
- * @param partitionColumn the partition column name using SUBSTRING in its generation expression.
+ * @param partitionColumn the partition column name used in the generation expression.
  */
-case class AliasPartitionExpr(
+case class IdentityPartitionExpr(
     partitionColumn: String) extends OptimizablePartitionExpression {
 
   override def lessThan(lit: Literal): Option[Expression] = {
     // As the partition column has truncated information, we need to turn "<" to "<=".
-    Some(partitionColumn.toCol < lit)
+    Some(partitionColumn.toCol.isNull || partitionColumn.toCol < lit)
   }
 
   override def lessThanOrEqual(lit: Literal): Option[Expression] = {
-    Some(partitionColumn.toCol <= lit)
+    Some(partitionColumn.toCol.isNull || partitionColumn.toCol <= lit)
   }
 
   override def equalTo(lit: Literal): Option[Expression] = {
-    Some(partitionColumn.toCol == lit)
+    Some(partitionColumn.toCol.isNull || partitionColumn.toCol === lit)
   }
 
   override def greaterThan(lit: Literal): Option[Expression] = {
-    Some(partitionColumn.toCol > lit)
+    Some(partitionColumn.toCol.isNull || partitionColumn.toCol > lit)
   }
 
   override def greaterThanOrEqual(lit: Literal): Option[Expression] = {
-    Some(partitionColumn.toCol >= lit)
+    Some(partitionColumn.toCol.isNull || partitionColumn.toCol >= lit)
   }
 
   override def isNull(): Option[Expression] = Some(partitionColumn.toCol.isNull)
