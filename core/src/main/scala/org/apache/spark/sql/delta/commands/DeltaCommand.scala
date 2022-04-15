@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit.NANOSECONDS
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{CommitStats, DeltaErrors, DeltaLog, DeltaOperations, DeltaTableIdentifier, OptimisticTransaction, Serializable}
+import org.apache.spark.sql.delta.{CommitStats, DeltaErrors, DeltaLog, DeltaOperations, DeltaTableIdentifier, OptimisticTransaction, Serializable, Snapshot}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -223,7 +223,7 @@ trait DeltaCommand extends DeltaLogging {
       spark: SparkSession,
       deltaLog: DeltaLog,
       commitSize: Int,
-      attemptVersion: Long): Unit = {
+      attemptVersion: Long): Snapshot = {
     val currentSnapshot = deltaLog.update()
     if (currentSnapshot.version != attemptVersion) {
       throw new IllegalStateException(
@@ -234,6 +234,7 @@ trait DeltaCommand extends DeltaLogging {
     logInfo(s"Committed delta #$attemptVersion to ${deltaLog.logPath}. Wrote $commitSize actions.")
 
     deltaLog.checkpoint(currentSnapshot)
+    currentSnapshot
   }
 
   /**
@@ -311,8 +312,7 @@ trait DeltaCommand extends DeltaLogging {
         Some(attemptVersion))
       val commitTime = System.nanoTime()
 
-      updateAndCheckpoint(spark, deltaLog, commitSize, attemptVersion)
-      val postCommitSnapshot = deltaLog.snapshot
+      val postCommitSnapshot = updateAndCheckpoint(spark, deltaLog, commitSize, attemptVersion)
       val postCommitReconstructionTime = System.nanoTime()
       var stats = CommitStats(
         startVersion = txn.readVersion,
