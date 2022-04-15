@@ -39,7 +39,6 @@ import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, DateType, DoubleType, FloatType, IntegerType, Metadata => FieldMetadata, MetadataBuilder, StringType, StructField, StructType, TimestampType}
-import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 
 /**
  * Provide utility methods to implement Generated Columns for Delta. Users can use the following
@@ -367,9 +366,6 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
         logDebug(s"Optimizable partition expressions for column $name:")
         mergedExprs.foreach(expr => logDebug(expr.toString))
       }
-      // scalastyle:off println
-      // println(name, mergedExprs)
-      // scalastyle:on println
       name -> mergedExprs
     }
   }
@@ -523,12 +519,11 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
 object AttributeOrNested {
   def unapply(e: Expression): Option[(String, DataType)] = e match {
     case AttributeReference(name, dataType, _, _) =>
-      Some(escapeName(name), dataType)
+      Some((escapeName(name), dataType))
     case g @ GetStructField(child, ordinal, _) => child match {
-      case AttributeOrNested(name) =>
+      case AttributeOrNested(name, _) =>
         val fieldName = child.dataType.asInstanceOf[StructType].fieldNames(ordinal)
-        Some(Seq(name, escapeName(fieldName)).mkString("."),
-          g.dataType)
+        Some((Seq(name, escapeName(fieldName)).mkString("."), g.dataType))
       case _ => None
     }
     case _ => None

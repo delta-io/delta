@@ -69,6 +69,7 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
       generatedColumns: Map[String, String],
       expectedPartitionExpr: OptimizablePartitionExpression,
       auxiliaryTestName: Option[String] = None,
+      expressionKey: Option[String] = None,
       filterTestCases: Seq[(String, Seq[String])]): Unit = {
     test(expectedPartitionExpr.toString + auxiliaryTestName.getOrElse("")) {
       val normalCol = dataSchema.split(" ")(0)
@@ -83,8 +84,8 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
         )
 
         val metadata = DeltaLog.forTable(spark, TableIdentifier(table)).snapshot.metadata
-        // assert(metadata.optimizablePartitionExpressions(normalCol.toLowerCase(Locale.ROOT)) ==
-        //   expectedPartitionExpr :: Nil)
+        assert(metadata.optimizablePartitionExpressions(expressionKey.getOrElse(
+          normalCol).toLowerCase(Locale.ROOT)) == expectedPartitionExpr :: Nil)
         filterTestCases.foreach { filterTestCase =>
           val partitionFilters = getPushedPartitionFilters(
             sql(s"SELECT * from $table where ${filterTestCase._1}").queryExecution)
@@ -97,7 +98,7 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
       val normalCol = dataSchema.split(" ")(0)
       val nestedSchema = s"nested struct<${dataSchema.replace(" ", ": ")}>"
       val updatedGeneratedColumns =
-        generatedColumns.mapValues(v => v.replaceAll(s"(?i)($normalCol)", "nested.$1"))
+        generatedColumns.mapValues(v => v.replaceAll(s"(?i)($normalCol)", "nested.$1")).toMap
 
       withTableName("optimizable_partition_expression") { table =>
         createTable(
@@ -109,8 +110,6 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
         )
 
         val metadata = DeltaLog.forTable(spark, TableIdentifier(table)).snapshot.metadata
-        // assert(metadata.optimizablePartitionExpressions(normalCol.toLowerCase(Locale.ROOT)) ==
-        //   expectedPartitionExpr :: Nil)
         filterTestCases.foreach { filterTestCase =>
           val updatedFilter = filterTestCase._1.replaceAll(s"(?i)($normalCol)", "nested.$1")
           val partitionFilters = getPushedPartitionFilters(
@@ -697,6 +696,22 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
       "value > 'foo'" -> Seq("((substr IS NULL) OR (substr >= substring('foo', 1, 3)))"),
       "value >= 'foo'" -> Seq("((substr IS NULL) OR (substr >= substring('foo', 1, 3)))"),
       "value is null" -> Seq("(substr IS NULL)")
+    )
+  )
+
+  testOptimizablePartitionExpression(
+    "nested struct<value:STRING>",
+    "part STRING",
+    Map("part" -> "nested.value"),
+    expectedPartitionExpr = IdentityPartitionExpr("part"),
+    expressionKey = Some("nested.value"),
+    filterTestCases = Seq(
+      "nested.value < 'foo'" -> Seq("((part IS NULL) OR (part < 'foo'))"),
+      "nested.value <= 'foo'" -> Seq("((part IS NULL) OR (part <= 'foo'))"),
+      "nested.value = 'foo'" -> Seq("((part IS NULL) OR (part = 'foo'))"),
+      "nested.value > 'foo'" -> Seq("((part IS NULL) OR (part > 'foo'))"),
+      "nested.value >= 'foo'" -> Seq("((part IS NULL) OR (part >= 'foo'))"),
+      "nested.value is null" -> Seq("(part IS NULL)")
     )
   )
 
