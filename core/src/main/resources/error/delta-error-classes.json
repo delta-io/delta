@@ -126,6 +126,18 @@
     "message" : [ "Writing data with column mapping mode is not supported." ],
     "sqlState" : "0A000"
   },
+  "UNSUPPORTED_DROP_COLUMN" : {
+    "message" : [ "DROP COLUMN is not supported for your Delta table. %s" ],
+    "sqlState" : "0A000"
+  },
+  "UNSUPPORTED_DROP_PARTITION_COLUMN" : {
+    "message" : [ "Dropping partition columns is not allowed." ],
+    "sqlState" : "0A000"
+  },
+  "UNSUPPORTED_INVALID_CHARACTERS_IN_COLUMN_NAME" : {
+    "message" : [ "Found invalid character(s) among ' ,;{}()\\n\\t=' in the column names of your schema. %s" ],
+    "sqlState" : "0A000"
+  },
   "UNSUPPORTED_MANIFEST_GENERATION_WITH_COLUMN_MAPPING" : {
     "message" : [ "Manifest generation is not supported for tables that leverage column mapping, as external readers cannot read these Delta tables. See Databricks documentation for more details." ],
     "sqlState" : "0A000"

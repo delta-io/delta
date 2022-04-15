@@ -29,12 +29,6 @@ class DeltaColumnRenameSuite extends QueryTest
   with DeltaArbitraryColumnNameSuiteBase
   with GivenWhenThen {
 
-  private def assertException(message: String)(block: => Unit): Unit = {
-    val e = intercept[Exception](block)
-
-    assert(e.getMessage.contains(message))
-  }
-
   testColumnMapping("rename in column mapping mode") { mode =>
     withTable("t1") {
       createTableWithSQLAPI("t1",
@@ -261,7 +255,7 @@ class DeltaColumnRenameSuite extends QueryTest
         spark.sql("alter table t1 rename column b to b1")
       }
 
-      // can still rename map because it's referenced by a null constraint
+      // can still rename b.c because it's referenced by a null constraint
       spark.sql("alter table t1 rename column b.c to c1")
 
       spark.sql("insert into t1 " +
