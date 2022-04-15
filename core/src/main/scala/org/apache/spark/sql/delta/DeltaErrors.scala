@@ -1700,6 +1700,7 @@ class MetadataMismatchErrorBuilder {
   }
 }
 
+
 class DeltaColumnMappingUnsupportedException(
     errorClass: String,
     messageParameters: Array[String] = Array.empty)
