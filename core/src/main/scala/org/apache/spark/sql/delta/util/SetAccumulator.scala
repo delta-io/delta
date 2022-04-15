@@ -22,10 +22,10 @@ import org.apache.spark.util.AccumulatorV2
  * Accumulator to collect distinct elements as a set.
  */
 class SetAccumulator[T] extends AccumulatorV2[T, java.util.Set[T]] {
-  private var _set: java.util.HashSet[T] = _
+  private var _set: java.util.Set[T] = _
 
   private def getOrCreate = {
-    _set = Option(_set).getOrElse(new java.util.HashSet[T]())
+    _set = Option(_set).getOrElse(java.util.Collections.synchronizedSet(new java.util.HashSet[T]()))
     _set
   }
 
