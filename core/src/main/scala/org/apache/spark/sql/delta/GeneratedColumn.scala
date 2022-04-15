@@ -39,6 +39,7 @@ import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, DateType, DoubleType, FloatType, IntegerType, Metadata => FieldMetadata, MetadataBuilder, StringType, StructField, StructType, TimestampType}
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 
 /**
  * Provide utility methods to implement Generated Columns for Delta. Users can use the following
@@ -308,8 +309,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
       Option[(String, OptimizablePartitionExpression)] = {
       // Technically, we should only refer to a column in the table schema. Check the column name
       // here just for safety.
-      if (a.dataType == expectedType &&
-          schema.exists(f => nameEquality(f.name, a.name) && f.dataType == expectedType)) {
+      if (a.dataType == expectedType) {
         // `a.name` comes from the generation expressions which users may use different cases. We
         // need to normalize it to the same case so that we can group expressions for the same
         // column name together.
@@ -319,6 +319,30 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
       }
     }
 
+    def checkTypeAndCreateExpr2(
+        name: String,
+        dataType: DataType,
+        expectedType: DataType)(
+        func: => OptimizablePartitionExpression):
+      Option[(String, OptimizablePartitionExpression)] = {
+      // Technically, we should only refer to a column in the table schema. Check the column name
+      // here just for safety.
+      if (dataType == expectedType) {
+        // `a.name` comes from the generation expressions which users may use different cases. We
+        // need to normalize it to the same case so that we can group expressions for the same
+        // column name together.
+        Some(nameNormalizer(name) -> func)
+      } else {
+        None
+      }
+    }
+
+    def createExpr(name: String)(
+        func: => OptimizablePartitionExpression):
+      (String, OptimizablePartitionExpression) = {
+      nameNormalizer(name) -> func
+    }
+
     val df = Dataset.ofRows(SparkSession.active, new LocalRelation(schema.toAttributes))
     val extractedPartitionExprs =
       df.select(partitionGenerationExprs: _*).queryExecution.analyzed match {
@@ -326,9 +350,10 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
           exprs.flatMap {
             case Alias(expr, partColName) =>
               expr match {
-                case Cast(a: AttributeReference, DateType, _, _) =>
-                  checkTypeAndCreateExpr(a, TimestampType)(DatePartitionExpr(partColName)).orElse(
-                    checkTypeAndCreateExpr(a, DateType)(DatePartitionExpr(partColName)))
+                case Cast(AttributeOrNested(name, TimestampType), DateType, _, _) =>
+                  Some(createExpr(name)(DatePartitionExpr(partColName)))
+                case Cast(AttributeOrNested(name, DateType), DateType, _, _) =>
+                  Some(createExpr(name)(DatePartitionExpr(partColName)))
                 case Year(a: AttributeReference) =>
                   checkTypeAndCreateExpr(a, DateType)(YearPartitionExpr(partColName))
                 case Year(Cast(a: AttributeReference, DateType, _, _)) =>
@@ -379,6 +404,9 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
         logDebug(s"Optimizable partition expressions for column $name:")
         mergedExprs.foreach(expr => logDebug(expr.toString))
       }
+      // scalastyle:off println
+      // println(name, mergedExprs)
+      // scalastyle:on println
       name -> mergedExprs
     }
   }
@@ -527,4 +555,17 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
 
   private val DATE_FORMAT_YEAR_MONTH = "yyyy-MM"
   private val DATE_FORMAT_YEAR_MONTH_DAY_HOUR = "yyyy-MM-dd-HH"
+}
+
+object AttributeOrNested {
+  def unapply(e: Expression): Option[(String, DataType)] = e match {
+    case AttributeReference(name, dataType, _, _) => Some(name, dataType)
+    case g @ GetStructField(child, ordinal, _) => child match {
+      case AttributeOrNested(name) =>
+        Some(Seq(name, child.dataType.asInstanceOf[StructType].fieldNames(ordinal)).mkString("."),
+          g.dataType)
+      case _ => None
+    }
+    case _ => None
+  }
 }
