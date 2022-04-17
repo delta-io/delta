@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.io.FileNotFoundException
 import java.net.URL
 
 import scala.collection.immutable.SortedMap
@@ -34,29 +35,42 @@ import org.apache.spark.util.Utils
  */
 object DeltaThrowableHelper
 {
-  private val mapper: JsonMapper = JsonMapper.builder().addModule(DefaultScalaModule).build()
+  private lazy val mapper: JsonMapper = JsonMapper.builder().addModule(DefaultScalaModule).build()
 
-  val sparkErrorClassSource: URL =
-    Utils.getSparkClassLoader.getResource("error/error-classes.json")
+  /**
+   * Try to find the error class source file and throw exception if it is no found.
+   */
+  private def safeGetErrorClassesSource(sourceFile: String): URL = {
+    val classLoader = Utils.getContextOrSparkClassLoader
+    Option(classLoader.getResource(sourceFile)).getOrElse {
+      throw new FileNotFoundException(
+        s"""Cannot find the error class definition file on path $sourceFile" through the """ +
+          s"class loader ${classLoader.toString}")
+    }
+  }
+
+  lazy val sparkErrorClassSource: URL = {
+    safeGetErrorClassesSource("error/error-classes.json")
+  }
 
   def deltaErrorClassSource: URL = {
-    Utils.getSparkClassLoader.getResource("error/delta-error-classes.json")
+    safeGetErrorClassesSource("error/delta-error-classes.json")
   }
 
   /** The error classes of spark. */
-  val sparkErrorClassesMap: SortedMap[String, ErrorInfo] = {
+  lazy val sparkErrorClassesMap: SortedMap[String, ErrorInfo] = {
     mapper.readValue(sparkErrorClassSource, new TypeReference[SortedMap[String, ErrorInfo]]() {})
   }
 
   /** The error classes of delta. */
-  val deltaErrorClassToInfoMap: SortedMap[String, ErrorInfo] = {
+  lazy val deltaErrorClassToInfoMap: SortedMap[String, ErrorInfo] = {
     mapper.readValue(deltaErrorClassSource, new TypeReference[SortedMap[String, ErrorInfo]]() {})
   }
   /**
    * Combined error classes from delta and spark. There should not be same error classes between
    * deltaErrorClassesMap and sparkErrorClassesMap.
    */
-  private val errorClassToInfoMap: SortedMap[String, ErrorInfo] = {
+  private lazy val errorClassToInfoMap: SortedMap[String, ErrorInfo] = {
     deltaErrorClassToInfoMap ++ sparkErrorClassesMap
   }
 
