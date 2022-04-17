@@ -35,27 +35,27 @@ class DeltaDropColumnSuite extends QueryTest with DeltaArbitraryColumnNameSuiteB
         simpleNestedData,
         Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))
 
-      val schemaAfterDelete = StructType(simpleNestedSchema.fields.filter(_.name != "arr"))
-
-      // alter table replace columns
-      spark.sql(s"alter table t1 replace columns (${schemaAfterDelete.toDDL})")
+      // drop single column
+      spark.sql(s"alter table t1 drop column arr")
       checkAnswer(spark.table("t1"), simpleNestedData.drop("arr"))
 
-      // alter table drop column
+      // drop multiple columns
       spark.sql("alter table t1 drop columns (a, b.c)")
       checkAnswer(spark.table("t1"),
         Seq(
           Row(Row(1), Map("k1" -> "v1")),
           Row(Row(2), Map("k2" -> "v2"))))
 
-      // column cannot be queried anymore - even metadata-only queries
-      assert(intercept[AnalysisException] {
+      // dropped column cannot be queried anymore
+      val err1 = intercept[AnalysisException] {
         spark.table("t1").where("a = 'str1'").collect()
-      }.getMessage.contains("does not exist"))
+      }.getMessage
+      assert(err1.contains("does not exist") || err1.contains("cannot resolve"))
 
-      assert(intercept[AnalysisException] {
+      val err2 = intercept[AnalysisException] {
         spark.table("t1").select("min(a)").collect()
-      }.getMessage.contains("does not exist"))
+      }.getMessage
+      assert(err2.contains("does not exist") || err2.contains("cannot resolve"))
 
       checkAnswer(
         spark.sql("describe history t1")
@@ -253,4 +253,5 @@ class DeltaDropColumnSuite extends QueryTest with DeltaArbitraryColumnNameSuiteB
       assert(e.getMessage.contains("Dropping partition columns is not allowed"))
     }
   }
+
 }

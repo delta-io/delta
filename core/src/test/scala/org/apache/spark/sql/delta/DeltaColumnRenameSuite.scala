@@ -219,6 +219,7 @@ class DeltaColumnRenameSuite extends QueryTest
     withTable("t1") {
       val schemaWithNotNull =
         simpleNestedData.schema.toDDL.replace("c: STRING", "c: STRING NOT NULL")
+          .replace("`c`: STRING", "`c`: STRING NOT NULL")
 
       withTable("source") {
         spark.sql(
@@ -271,6 +272,10 @@ class DeltaColumnRenameSuite extends QueryTest
           "values ('str3', struct('str1.3', -1), map('k3', 'v3'), array(3, 33))")
       }
 
+      assertException("NOT NULL constraint violated for column: b.c1") {
+        spark.sql("insert into t1 " +
+          "values ('str3', struct(null, 3), map('k3', 'v3'), array(3, 33))")
+      }
 
       // this is a safety flag - it won't error when you turn it off
       withSQLConf(DeltaSQLConf.DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS.key -> "false") {
