@@ -16,9 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import java.net.URL
-
-import org.apache.spark.sql.delta.DeltaThrowableHelper.{deltaErrorClassSource, deltaErrorClassToInfoMap}
+import org.apache.spark.sql.delta.DeltaThrowableHelper.{deltaErrorClassSource, deltaErrorClassToInfoMap, sparkErrorClassesMap}
 import com.fasterxml.jackson.annotation.JsonInclude.Include
 import com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION
 import com.fasterxml.jackson.core.`type`.TypeReference
@@ -28,7 +26,6 @@ import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import org.apache.commons.io.IOUtils
 
 import org.apache.spark.{ErrorInfo, SparkFunSuite}
-import org.apache.spark.util.Utils
 
 /** Test suite for Delta Throwables. */
 class DeltaThrowableSuite extends SparkFunSuite {
@@ -53,12 +50,7 @@ class DeltaThrowableSuite extends SparkFunSuite {
   }
 
   test("No error classes are shared by Delta and Spark") {
-    val mapper = JsonMapper.builder().addModule(DefaultScalaModule).build()
-    val sparkErrorClassSource: URL =
-      Utils.getSparkClassLoader.getResource("error/error-classes.json")
-    val sparkErrorClasses = mapper.readValue(
-      sparkErrorClassSource, new TypeReference[Map[String, ErrorInfo]]() {})
-    assert(deltaErrorClassToInfoMap.keySet.intersect(sparkErrorClasses.keySet).isEmpty)
+    assert(deltaErrorClassToInfoMap.keySet.intersect(sparkErrorClassesMap.keySet).isEmpty)
   }
 
   test("Delta error classes are correctly formatted") {
