@@ -20,19 +20,15 @@ package org.apache.spark.sql.delta.commands
 import java.io.FileNotFoundException
 import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier, Snapshot}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
+import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, ScalaReflection, TableIdentifier}
-import org.apache.spark.sql.catalyst.ScalaReflection.Schema
-import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchTableException}
-import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogUtils}
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.types.StructType
 
 /** The result returned by the `describe detail` command. */
@@ -68,12 +64,13 @@ object TableDetail {
  */
 case class DescribeDeltaDetailCommand(
     path: Option[String],
-    tableIdentifier: Option[TableIdentifier]) extends LeafRunnableCommand with DeltaLogging {
+    tableIdentifier: Option[TableIdentifier])
+  extends DeltaCommandWithoutViewsSupport(path, tableIdentifier) with DeltaLogging {
 
   override val output: Seq[Attribute] = TableDetail.schema.toAttributes
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    val (basePath, tableMetadata) = getPathAndTableMetadata(sparkSession, path, tableIdentifier)
+    val (basePath, tableMetadata) = getPathAndTableMetadata(sparkSession, "DESCRIBE DETAIL")
 
     val deltaLog = DeltaLog.forTable(sparkSession, basePath)
     recordDeltaOperation(deltaLog, "delta.ddl.describeDetails") {
@@ -95,43 +92,8 @@ case class DescribeDeltaDetailCommand(
     }
   }
 
-  /**
-   * Resolve `path` and `tableIdentifier` to get the underlying storage path, and its `CatalogTable`
-   * if it's a table. The caller will make sure either `path` or `tableIdentifier` is set but not
-   * both.
-   *
-   * If `path` is set, return it and an empty `CatalogTable` since it's a physical path. If
-   * `tableIdentifier` is set, we will try to see if it's a Delta data source path (such as
-   * `delta.<a table path>`). If so, we will return the path and an empty `CatalogTable`. Otherwise,
-   * we will use `SessionCatalog` to resolve `tableIdentifier`.
-   */
-  protected def getPathAndTableMetadata(
-      spark: SparkSession,
-      path: Option[String],
-      tableIdentifier: Option[TableIdentifier]): (Path, Option[CatalogTable]) = {
-    path.map(new Path(_) -> None).orElse {
-      tableIdentifier.map { i =>
-        DeltaTableIdentifier(spark, tableIdentifier.get) match {
-          case Some(id) if id.path.isDefined => new Path(id.path.get) -> None
-          case _ =>
-            // This should be a catalog table.
-            try {
-              val metadata = spark.sessionState.catalog.getTableMetadata(i)
-              if (metadata.tableType == CatalogTableType.VIEW) {
-                throw DeltaErrors.viewInDescribeDetailException(i)
-              }
-              new Path(metadata.location) -> Some(metadata)
-            } catch {
-              // Better error message if the user tried to DESCRIBE DETAIL a temp view.
-              case _: NoSuchTableException | _: NoSuchDatabaseException
-                  if spark.sessionState.catalog.getTempView(i.table).isDefined =>
-                throw DeltaErrors.viewInDescribeDetailException(i)
-            }
-        }
-      }
-    }.getOrElse {
-      throw DeltaErrors.missingTableIdentifierException("DESCRIBE DETAIL")
-    }
+  override def viewNotSupportedException(view: TableIdentifier): Throwable = {
+    DeltaErrors.viewInDescribeDetailException(view)
   }
 
   private def toRows(detail: TableDetail): Seq[Row] = TableDetail.toRow(detail) :: Nil

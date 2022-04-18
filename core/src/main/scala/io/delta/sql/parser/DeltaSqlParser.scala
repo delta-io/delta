@@ -190,6 +190,12 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       Option(ctx.table).map(visitTableIdentifier))
   }
 
+  override def visitShowPartitions(ctx: ShowPartitionsContext): LogicalPlan = withOrigin(ctx) {
+    val path = Option(ctx.path).map(string)
+    val tableIdentifier = Option(ctx.table).map(visitTableIdentifier)
+    ShowDeltaPartitionsCommand(path, tableIdentifier)
+  }
+
   override def visitDescribeDeltaHistory(
       ctx: DescribeDeltaHistoryContext): LogicalPlan = withOrigin(ctx) {
     DescribeDeltaHistoryCommand(
