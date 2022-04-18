@@ -20,7 +20,7 @@ package org.apache.spark.sql.delta.commands
 import java.io.FileNotFoundException
 import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier, Snapshot}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaFileNotFoundException, DeltaLog, DeltaTableIdentifier, Snapshot}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
@@ -83,7 +83,7 @@ case class DescribeDeltaDetailCommand(
           val fs = new Path(path.get).getFileSystem(deltaLog.newDeltaHadoopConf())
           // Throw FileNotFoundException when the path doesn't exist since there may be a typo
           if (!fs.exists(new Path(path.get))) {
-            throw new FileNotFoundException(path.get)
+            throw DeltaErrors.fileNotFoundException(path.get)
           }
           describeNonDeltaPath(path.get)
         } else {

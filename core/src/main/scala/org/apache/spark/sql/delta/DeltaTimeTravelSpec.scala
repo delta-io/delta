@@ -130,9 +130,7 @@ object DeltaTimeTravelSpec {
       PreciseTimestampConversion(Literal(sqlTs), LongType, TimestampType)
     } catch {
       case e: java.text.ParseException =>
-        throw new AnalysisException(
-          s"The provided timestamp $ts doesn't match the expected syntax $TIMESTAMP_FORMAT.",
-          cause = Some(e))
+        throw DeltaErrors.invalidTimestampFormat(ts, TIMESTAMP_FORMAT, Some(e))
     }
   }
 }

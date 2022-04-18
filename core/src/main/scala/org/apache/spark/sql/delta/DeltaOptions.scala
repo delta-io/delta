@@ -125,8 +125,7 @@ trait DeltaReadOptions extends DeltaOptionParser {
 
   val excludeRegex: Option[Regex] = try options.get(EXCLUDE_REGEX_OPTION).map(_.r) catch {
     case e: PatternSyntaxException =>
-      throw new IllegalArgumentException(
-        s"Please recheck your syntax for '$EXCLUDE_REGEX_OPTION'", e)
+      throw DeltaErrors.excludeRegexOptionException(EXCLUDE_REGEX_OPTION, e)
   }
 
   val startingVersion: Option[DeltaStartingVersion] = options.get(STARTING_VERSION_OPTION).map {

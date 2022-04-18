@@ -602,7 +602,8 @@ object SchemaUtils {
     require(position.nonEmpty, s"Don't know where to add the column $column")
     val slicePosition = position.head
     if (slicePosition < 0) {
-      throw new AnalysisException(s"Index $slicePosition to add column $column is lower than 0")
+      throw DeltaErrors.addColumnAtIndexLessThanZeroException(
+        slicePosition.toString, column.toString)
     }
     val length = schema.length
     if (slicePosition > length) {
@@ -638,10 +639,7 @@ object SchemaUtils {
           }
 
           if (posTail.head != ARRAY_ELEMENT_INDEX) {
-            throw new AnalysisException(
-              s"""Incorrectly accessing an ArrayType. Use arrayname.element.elementname position to
-                 |add to an array.
-               """.stripMargin)
+            throw DeltaErrors.incorrectArrayAccess()
           }
 
           StructField(

@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.constraints.Invariants
 import org.apache.spark.sql.delta.constraints.Invariants.PersistedRule
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.schema.{InvariantViolationException, SchemaMergingUtils, SchemaUtils}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 import org.scalatest.GivenWhenThen
@@ -254,6 +255,114 @@ trait DeltaErrorsSuiteBase
            |Schema changes are not allowed during the change of column mapping mode.
            |
            |""".stripMargin)
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.notEnoughColumnsInInsert(
+          "table", 1, 2, Some("nestedField"))
+      }
+      assert(e.getMessage == "Cannot write to 'table', not enough nested fields in nestedField; " +
+        s"target table has 2 column(s) but the inserted data has " +
+        s"1 column(s)")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotInsertIntoColumn(
+          "tableName", "source", "target", "targetType")
+      }
+      assert(e.getMessage == "Struct column source cannot be inserted into a " +
+        "targetType field target in tableName.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.partitionPathParseException("fragment")
+      }
+      assert(e.getMessage == "A partition path fragment should be the form like " +
+        "`part1=foo/part2=bar`. The partition path: fragment")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.replaceWhereMismatchException("replaceWhere", "badPartitions")
+      }
+      assert(e.getMessage == """Data written out does not match replaceWhere 'replaceWhere'.
+           |Invalid data would be written to partitions badPartitions.""".stripMargin)
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.actionNotFoundException("action", 0)
+      }
+      val msg = s"""The action of your Delta table could not be recovered while Reconstructing
+        |version: 0. Did you manually delete files in the _delta_log directory?
+        |Set ${DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED.key} to "false"
+        |to skip validation.""".stripMargin
+      assert(e.getMessage == msg)
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.restoreVersionNotExistException(0, 0, 0)
+      }
+      assert(e.getMessage == "Cannot restore table to version 0. " +
+        "Available versions: [0, 0].")
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.unsupportedGenerateModeException("modeName")
+      }
+      import org.apache.spark.sql.delta.commands.DeltaGenerateCommand
+      val supportedModes = DeltaGenerateCommand.modeNameToGenerationFunc.keys.toSeq.mkString(", ")
+      assert(e.getMessage == s"Specified mode 'modeName' is not supported. " +
+        s"Supported modes are: $supportedModes")
+    }
+    {
+      import org.apache.spark.sql.delta.DeltaOptions.EXCLUDE_REGEX_OPTION
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.excludeRegexOptionException(EXCLUDE_REGEX_OPTION)
+      }
+      assert(e.getMessage == s"Please recheck your syntax for '$EXCLUDE_REGEX_OPTION'")
+    }
+    {
+      val e = intercept[DeltaFileNotFoundException] {
+        throw DeltaErrors.fileNotFoundException("path")
+      }
+      assert(e.getMessage == s"File path path")
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.invalidIsolationLevelException("level")
+      }
+      assert(e.getMessage == "invalid isolation level 'level'")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.columnNameNotFoundException("a", "b")
+      }
+      assert(e.getMessage == "Unable to find the column `a` given [b]")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.addColumnAtIndexLessThanZeroException("1", "a")
+      }
+      assert(e.getMessage == "Index 1 to add column a is lower than 0")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.incorrectArrayAccess()
+      }
+      assert(e.getMessage ==
+        s"""Incorrectly accessing an ArrayType. Use arrayname.element.elementname position to
+            |add to an array.""".stripMargin)
+    }
+    {
+      val e = intercept[DeltaRuntimeException] {
+        throw DeltaErrors.partitionColumnCastFailed("Value", "Type", "Name")
+      }
+      assert(e.getMessage == "Failed to cast value `Value` to `Type` for partition column `Name`")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.invalidTimestampFormat("ts", "format")
+      }
+      assert(e.getMessage == "The provided timestamp ts does not match the expected syntax format.")
     }
     {
       val e = intercept[AnalysisException] {

@@ -46,6 +46,7 @@ import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.Try
 
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaRuntimeException}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.AnalysisException
@@ -359,8 +360,8 @@ private[delta] object PartitionUtils {
         val columnValue = columnValueLiteral.eval()
         val castedValue = Cast(columnValueLiteral, dataType, Option(timeZone.getID)).eval()
         if (validatePartitionColumns && columnValue != null && castedValue == null) {
-          throw new RuntimeException(s"Failed to cast value `$columnValue` to `$dataType` " +
-            s"for partition column `$columnName`")
+          throw DeltaErrors.partitionColumnCastFailed(
+            columnValue.toString, dataType.toString, columnName)
         }
         Literal.create(castedValue, dataType)
       } else {

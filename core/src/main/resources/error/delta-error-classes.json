@@ -1,4 +1,24 @@
 {
+  "ADD_COLUMN_AT_INDEX_LESS_THAN_ZERO" : {
+    "message" : [ "Index %s to add column %s is lower than 0" ],
+    "sqlState" : "2F000"
+  },
+  "ALTER_TABLE_CHANGE_COL_NOT_SUPPORTED" : {
+    "message" : [ "ALTER TABLE CHANGE COLUMN is not supported for changing column %s to %s" ],
+    "sqlState" : "0A000"
+  },
+  "CANNOT_RESTORE_TABLE_VERSION" : {
+    "message" : [ "Cannot restore table to version %s. Available versions: [%s, %s]." ],
+    "sqlState" : "22000"
+  },
+  "COLUMN_NAME_NOT_FOUND" : {
+    "message" : [ "Unable to find the column `%s` given [%s]" ],
+    "sqlState" : "26000"
+  },
+  "COLUMN_STRUCT_TYPE_MISMATCH" : {
+    "message" : [ "Struct column %s cannot be inserted into a %s field %s in %s." ],
+    "sqlState" : "2200G"
+  },
   "COMPLEX_TYPE_COLUMN_CANNOT_CONTAIN_NULL_TYPE" : {
     "message" : [ " Found nested NullType in column %s which is of %s. Delta doesn't support writing NullType in complex types." ],
     "sqlState" : "22005"
@@ -43,6 +63,10 @@
     "message" : [ "(`spark.delta.logStore.class`) and (`%s`) cannot be set at the same time. Please set only one group of them." ],
     "sqlState" : "42000"
   },
+  "DELTA_INVALID_TIMESTAMP_FORMAT" : {
+    "message" : [ "The provided timestamp %s does not match the expected syntax %s." ],
+    "sqlState" : "22000"
+  },
   "DELTA_INVALID_V1_TABLE_CALL" : {
     "message" : [ "%s call is not expected with path based %s" ],
     "sqlState" : "42000"
@@ -82,13 +106,41 @@
   "FAILED_CHECKPOINT" : {
     "message" : [ "Cannot rename %s to %s" ]
   },
+  "FILE_NOT_FOUND" : {
+    "message" : [ "File path %s" ],
+    "sqlState" : "22000"
+  },
+  "INCORRECT_ARRAY_ACCESS" : {
+    "message" : [ "Incorrectly accessing an ArrayType. Use arrayname.element.elementname position to", "add to an array." ],
+    "sqlState" : "42000"
+  },
+  "INSERT_COLUMN_ARITY_MISMATCH" : {
+    "message" : [ "Cannot write to '%s', %s; target table has %s column(s) but the inserted data has %s column(s)" ],
+    "sqlState" : "22000"
+  },
   "INVALID_CHARACTERS_IN_COLUMN_NAME" : {
     "message" : [ "Attribute name \"%s\" contains invalid character(s) among \" ,;{}()\\\\n\\\\t=\". Please use alias to rename it." ],
     "sqlState" : "42000"
   },
+  "INVALID_COPY_ENCRYPTION" : {
+    "message" : [ "Invalid %s. COPY INTO source %s." ],
+    "sqlState" : "42000"
+  },
+  "INVALID_DATA_WRITE_TO_PARTITION" : {
+    "message" : [ "Data written out does not match replaceWhere '%s'.", "Invalid data would be written to partitions %s." ],
+    "sqlState" : "22000"
+  },
   "INVALID_GENERATED_COLUMN_REFERENCES" : {
     "message" : [ "A generated column cannot use a non-existent column or another generated column" ],
     "sqlState" : "42000"
+  },
+  "INVALID_ISOLATION_LEVEL" : {
+    "message" : [ "invalid isolation level '%s'" ],
+    "sqlState" : "25000"
+  },
+  "INVALID_PARTITION_PATH" : {
+    "message" : [ "A partition path fragment should be the form like `part1=foo/part2=bar`. The partition path: %s" ],
+    "sqlState" : "22000"
   },
   "MERGE_INCOMPATIBLE_DECIMAL_TYPE" : {
     "message" : [ "Failed to merge decimal types with incompatible %s" ],
@@ -105,6 +157,22 @@
   "MISSING_SET_COLUMN" : {
     "message" : [ "SET column %s not found given columns: %s." ],
     "sqlState" : "42000"
+  },
+  "MODE_NOT_SUPPORTED" : {
+    "message" : [ "Specified mode '%s' is not supported. Supported modes are: %s" ],
+    "sqlState" : "0A000"
+  },
+  "PARTITION_COLUMN_CAST_FAILED" : {
+    "message" : [ "Failed to cast value `%s` to `%s` for partition column `%s`" ],
+    "sqlState" : "22000"
+  },
+  "REGEX_OPT_SYNTAX_ERROR" : {
+    "message" : [ "Please recheck your syntax for '%s'" ],
+    "sqlState" : "42000"
+  },
+  "STATE_RECOVER_ERROR" : {
+    "message" : [ "The %s of your Delta table could not be recovered while Reconstructing", "version: %s. Did you manually delete files in the _delta_log directory?", "Set %s to \"false\"", "to skip validation." ],
+    "sqlState" : "22000"
   },
   "UNSUPPORTED_COLUMN_MAPPING_CONVERT_TO_DELTA" : {
     "message" : [ "The configuration '%s' cannot be set to `%s` when using CONVERT TO DELTA." ],
