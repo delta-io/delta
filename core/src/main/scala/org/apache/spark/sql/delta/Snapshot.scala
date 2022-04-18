@@ -65,7 +65,6 @@ class Snapshot(
     val checksumOpt: Option[VersionChecksum],
     val minSetTransactionRetentionTimestamp: Option[Long] = None)
   extends StateCache
-  with PartitionFiltering
   with StatisticsCollection
   with DataSkippingReader
   with DeltaLogging {
