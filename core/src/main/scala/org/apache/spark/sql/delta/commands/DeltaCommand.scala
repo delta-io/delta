@@ -223,7 +223,8 @@ trait DeltaCommand extends DeltaLogging {
       spark: SparkSession,
       deltaLog: DeltaLog,
       commitSize: Int,
-      attemptVersion: Long): Snapshot = {
+      attemptVersion: Long,
+      txnId: String): Snapshot = {
     val currentSnapshot = deltaLog.update()
     if (currentSnapshot.version != attemptVersion) {
       throw new IllegalStateException(
@@ -312,7 +313,8 @@ trait DeltaCommand extends DeltaLogging {
         Some(attemptVersion))
       val commitTime = System.nanoTime()
 
-      val postCommitSnapshot = updateAndCheckpoint(spark, deltaLog, commitSize, attemptVersion)
+      val postCommitSnapshot =
+        updateAndCheckpoint(spark, deltaLog, commitSize, attemptVersion, txn.txnId)
       val postCommitReconstructionTime = System.nanoTime()
       var stats = CommitStats(
         startVersion = txn.readVersion,

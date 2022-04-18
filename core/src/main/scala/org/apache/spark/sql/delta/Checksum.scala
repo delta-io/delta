@@ -44,6 +44,7 @@ import org.apache.spark.util.Utils
  * @param numMetadata Number of `Metadata` actions in the snapshot
  * @param numProtocol Number of `Protocol` actions in the snapshot
  * @param histogramOpt Optional file size histogram
+ * @param txnId Optional transaction identifier
  */
 case class VersionChecksum(
     tableSizeBytes: Long,
@@ -52,7 +53,8 @@ case class VersionChecksum(
     numProtocol: Long,
     protocol: Protocol,
     metadata: Metadata,
-    histogramOpt: Option[FileSizeHistogram])
+    histogramOpt: Option[FileSizeHistogram],
+    txnId: Option[String])
 
 /**
  * Record the state of the table as a checksum file along with a commit.
@@ -64,7 +66,7 @@ trait RecordChecksum extends DeltaLogging {
   private lazy val writer =
     CheckpointFileManager.create(deltaLog.logPath, deltaLog.newDeltaHadoopConf())
 
-  protected def writeChecksumFile(snapshot: Snapshot): Unit = {
+  protected def writeChecksumFile(txnId: String, snapshot: Snapshot): Unit = {
     if (!spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED)) {
       return
     }
@@ -77,7 +79,8 @@ trait RecordChecksum extends DeltaLogging {
       numProtocol = snapshot.numOfProtocol,
       protocol = snapshot.protocol,
       metadata = snapshot.metadata,
-      histogramOpt = snapshot.fileSizeHistogram)
+      histogramOpt = snapshot.fileSizeHistogram,
+      txnId = Some(txnId))
     try {
       recordDeltaOperation(deltaLog, "delta.checksum.write") {
         val stream = writer.createAtomic(
