@@ -153,10 +153,12 @@ object DelegatingLogStore {
   val defaultS3LogStoreClassName = classOf[io.delta.storage.S3SingleDriverLogStore].getName
   val defaultAzureLogStoreClassName = classOf[io.delta.storage.AzureLogStore].getName
   val defaultHDFSLogStoreClassName = classOf[io.delta.storage.HDFSLogStore].getName
+  val defaultGCSLogStoreClassName = classOf[io.delta.storage.GCSLogStore].getName
 
   // Supported schemes with default.
   val s3Schemes = Set("s3", "s3a", "s3n")
   val azureSchemes = Set("abfs", "abfss", "adl", "wasb", "wasbs")
+  val gsSchemes = Set("gs")
 
   // Returns the default LogStore class name for `scheme`.
   // None if we do not have a default for it.
@@ -165,6 +167,8 @@ object DelegatingLogStore {
       return Some(defaultS3LogStoreClassName)
     } else if (DelegatingLogStore.azureSchemes(scheme: String)) {
       return Some(defaultAzureLogStoreClassName)
+    } else if (DelegatingLogStore.gsSchemes(scheme: String)) {
+      return Some(defaultGCSLogStoreClassName)
     }
     None
   }
