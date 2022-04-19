@@ -39,13 +39,16 @@ spark = SparkSession.builder \
 filepath = "/tmp/table_exists"
 
 # Verify table doesn't exist yet
+print(f"Verifying table does not exist at {filepath}")
 assert not exists(spark, filepath)
 
 # Create a delta table at filepath
+print(f"Creating delta table at {filepath}")
 data = spark.range(0, 5)
 data.write.format("delta").save(filepath)
 
 # Verify table now exists
+print(f"Verifying table exists at {filepath}")
 assert exists(spark, filepath)
 
 # Clean up
