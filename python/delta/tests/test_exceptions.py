@@ -70,6 +70,16 @@ class DeltaExceptionTests(DeltaTestCase):
         self.assertRaises(exceptions.ConcurrentTransactionException,
                           lambda: self._raise_concurrent_exception(e))
 
+    def test_capture_delta_analysis_exception(self) -> None:
+        e = self.jvm.org.apache.spark.sql.delta.DeltaAnalysisException
+        self.assertRaises(exceptions.AnalysisException,
+                          lambda: self._raise_concurrent_exception(e))
+
+    def test_capture_delta_illegal_argument_exception(self) -> None:
+        e = self.jvm.org.apache.spark.sql.delta.DeltaIllegalArgumentException
+        self.assertRaises(exceptions.IllegalArgumentException,
+                          lambda: self._raise_concurrent_exception(e))
+
 
 if __name__ == "__main__":
     try:

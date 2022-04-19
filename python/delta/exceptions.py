@@ -137,6 +137,10 @@ def _convert_delta_exception(e: "JavaObject") -> Optional[CapturedException]:
         return ConcurrentDeleteDeleteException(s.split(': ', 1)[1], stacktrace, c)
     if s.startswith('io.delta.exceptions.ConcurrentTransactionException: '):
         return ConcurrentTransactionException(s.split(': ', 1)[1], stacktrace, c)
+    if s.startswith('org.apache.spark.sql.delta.DeltaAnalysisException: '):
+        return AnalysisException(s.split(': ', 1)[1], stacktrace, c)
+    if s.startswith('org.apache.spark.sql.delta.DeltaIllegalArgumentException: '):
+        return IllegalArgumentException(s.split(': ', 1)[1], stacktrace, c)
     return None
 
 
