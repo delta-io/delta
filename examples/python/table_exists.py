@@ -15,14 +15,15 @@
 #
 
 from pyspark.sql import SparkSession
+from pyspark.sql.utils import AnalysisException
 import shutil
 
 def exists(spark, filepath):
     """Checks if a delta table exists at `filepath`"""
     try:
         spark.read.load(path=filepath, format="delta")
-    except Exception as exception:
-        if "is not a Delta table" in str(exception):
+    except AnalysisException as exception:
+        if "is not a Delta table" in exception.desc:
             return False
         raise exception
     return True
