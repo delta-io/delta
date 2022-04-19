@@ -107,13 +107,13 @@ trait DeltaSourceBase extends Source
     val changes = getFileChanges(fromVersion, fromIndex, isStartingVersion)
     if (limits.isEmpty) return changes
 
-    // Take each change until we've seen the configured number of addFiles. Some changes don't
-    // represent file additions; we retain them for offset tracking, but they don't count towards
-    // the maxFilesPerTrigger conf.
+    // Take each change until we've seen the configured number of addFiles, and read until the end
+    // of the commit if set readAtomicCommits. Some changes don't represent file additions; we
+    // retain them for offset tracking, but they don't count towards the maxFilesPerTrigger conf.
     var admissionControl = limits.get
     changes.withClose { it =>
       it.takeWhile { index =>
-        admissionControl.admit(Option(index.add))
+        admissionControl.admit(Option(index.add), index.isLast)
       }
     }
   }
@@ -522,7 +522,7 @@ case class DeltaSource(
   trait DeltaSourceAdmissionBase { self: AdmissionLimits =>
 
     /** Whether to admit the next file */
-    def admit(fileAction: Option[FileAction]): Boolean = {
+    def admit(fileAction: Option[FileAction], isLast: Boolean): Boolean = {
       def getSize(action: FileAction): Long = {
         action match {
           case a: AddFile =>
@@ -534,11 +534,16 @@ case class DeltaSource(
         }
       }
 
-      if (fileAction.isEmpty) return true
-      val shouldAdmit = filesToTake > 0 && bytesToTake > 0
-      filesToTake -= 1
+      val shouldAdmit = filesToTake > 0 && bytesToTake > 0 || (readAtomic && withinCommit)
+      withinCommit = !isLast
 
-      bytesToTake -= getSize(fileAction.get)
+      if (fileAction.isEmpty) {
+        if (!readAtomic) return true
+      } else {
+        filesToTake -= 1
+        bytesToTake -= getSize(fileAction.get)
+      }
+
       shouldAdmit
     }
   }
@@ -548,7 +553,8 @@ case class DeltaSource(
    */
   class AdmissionLimits(
       maxFiles: Option[Int] = options.maxFilesPerTrigger,
-      var bytesToTake: Long = options.maxBytesPerTrigger.getOrElse(Long.MaxValue)
+      var bytesToTake: Long = options.maxBytesPerTrigger.getOrElse(Long.MaxValue),
+      val readAtomic: Boolean = options.readAtomicCommits
   ) extends DeltaSourceAdmissionBase {
 
     protected var filesToTake = maxFiles.getOrElse {
@@ -558,6 +564,8 @@ case class DeltaSource(
         Int.MaxValue - 8 // - 8 to prevent JVM Array allocation OOM
       }
     }
+
+    protected var withinCommit = false
 
     def toReadLimit: ReadLimit = {
       if (options.maxFilesPerTrigger.isDefined && options.maxBytesPerTrigger.isDefined) {
