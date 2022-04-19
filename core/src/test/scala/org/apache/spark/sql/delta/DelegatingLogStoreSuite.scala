@@ -120,6 +120,13 @@ class DelegatingLogStoreSuite
         expClassName = DelegatingLogStore.defaultAzureLogStoreClassName,
         expAdaptor = true)
     }
+    for (scheme <- DelegatingLogStore.gsSchemes) {
+      testDelegatingLogStore(
+        scheme,
+        schemeConf = None,
+        expClassName = DelegatingLogStore.defaultGCSLogStoreClassName,
+        expAdaptor = true)
+    }
     testDelegatingLogStore(
       scheme = fakeSchemeWithNoDefault,
       schemeConf = None,
