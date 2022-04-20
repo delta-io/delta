@@ -108,8 +108,8 @@ trait DeltaErrorsSuiteBase
     testUrls()
   }
 
-
-  test("test DeltaErrors OSS methods") {
+  // Disabled due to delta-io/delta/issue/1070
+  ignore("test DeltaErrors OSS methods") {
     {
       val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.failOnCheckpoint(new Path("path-1"), new Path("path-2"))

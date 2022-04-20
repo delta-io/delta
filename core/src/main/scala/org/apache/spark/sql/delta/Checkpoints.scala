@@ -377,7 +377,7 @@ object Checkpoints extends DeltaLogging {
         } else {
           // There should be only one writer writing the checkpoint file, so there must be
           // something wrong here.
-          throw DeltaErrors.failOnCheckpoint(src, dest)
+          throw new IllegalStateException(s"Cannot rename $src to $dest")
         }
       } finally {
         if (!renameDone) {

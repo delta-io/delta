@@ -277,16 +277,13 @@ object DeltaErrors
   }
 
   def notADeltaTableException(deltaTableIdentifier: DeltaTableIdentifier): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "MISSING_DELTA_TABLE",
-      messageParameters = Array(s"$deltaTableIdentifier"))
+    new AnalysisException(s"$deltaTableIdentifier is not a Delta table.")
   }
 
   def notADeltaTableException(
       operation: String, deltaTableIdentifier: DeltaTableIdentifier): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "DELTA_TABLE_ONLY_OPERATION",
-      messageParameters = Array(s"$deltaTableIdentifier", s"$operation"))
+    new AnalysisException(s"$deltaTableIdentifier is not a Delta table. " +
+      s"$operation is only supported for Delta tables.")
   }
 
   def notADeltaTableException(operation: String): Throwable = {
@@ -318,9 +315,10 @@ object DeltaErrors
   }
 
   def invalidColumnName(name: String): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "INVALID_CHARACTERS_IN_COLUMN_NAME",
-      messageParameters = Array(name))
+    new AnalysisException(
+      s"""Attribute name "$name" contains invalid character(s) among " ,;{}()\\n\\t=".
+         |Please use alias to rename it.
+      """.stripMargin.split("\n").mkString(" ").trim)
   }
 
   def invalidPartitionColumn(e: AnalysisException): Throwable = {
@@ -639,15 +637,13 @@ object DeltaErrors
   }
 
   def updateSetColumnNotFoundException(col: String, colList: Seq[String]): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "MISSING_SET_COLUMN",
-      messageParameters = Array(formatColumn(col), formatColumnList(colList)))
+    new AnalysisException(
+      s"SET column ${formatColumn(col)} not found given columns: ${formatColumnList(colList)}.")
   }
 
   def updateSetConflictException(cols: Seq[String]): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "CONFLICT_SET_COLUMN",
-      messageParameters = Array(formatColumnList(cols)))
+    new AnalysisException(
+      s"There is a conflict from these SET columns: ${formatColumnList(cols)}.")
   }
 
   def updateNonStructTypeFieldNotSupportedException(col: String, s: DataType): Throwable = {
@@ -668,9 +664,8 @@ object DeltaErrors
   }
 
   def bloomFilterOnNestedColumnNotSupportedException(name: String): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "UNSUPPORTED_NESTED_COLUMN_IN_BLOOM_FILTER",
-      messageParameters = Array(name))
+    new AnalysisException(
+      s"Creating a bloom filer index on a nested column is currently unsupported: $name")
   }
 
   def bloomFilterOnColumnTypeNotSupportedException(name: String, dataType: DataType): Throwable = {
@@ -1190,8 +1185,9 @@ object DeltaErrors
   }
 
   def generatedColumnsReferToWrongColumns(e: AnalysisException): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "INVALID_GENERATED_COLUMN_REFERENCES", Array.empty, cause = Some(e))
+    new AnalysisException(
+      "A generated column cannot use a non-existent column or another generated column",
+      cause = Some(e))
   }
 
   def generatedColumnsUpdateColumnType(current: StructField, update: StructField): Throwable = {
@@ -1278,9 +1274,8 @@ object DeltaErrors
   }
 
   def changeColumnMappingModeNotSupported(oldMode: String, newMode: String): Throwable = {
-    new DeltaColumnMappingUnsupportedException(
-      errorClass = "UNSUPPORTED_COLUMN_MAPPING_MODE_CHANGE",
-      messageParameters = Array(oldMode, newMode))
+    new ColumnMappingUnsupportedException("Changing column mapping mode from" +
+      s" '$oldMode' to '$newMode' is not supported.")
   }
 
   def writesWithColumnMappingNotSupported: Throwable = {
