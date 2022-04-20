@@ -217,7 +217,7 @@ trait DescribeDeltaHistorySuiteBase
         val e = intercept[AnalysisException] {
           sql(s"DESCRIBE HISTORY $viewName").collect()
         }
-        assert(e.getMessage.contains("not found in database"))
+        assert(e.getMessage.contains("not found"))
       }
     }
   }
