@@ -780,7 +780,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
 
   test("delta merge into clause with invalid data type.") {
     import org.apache.spark.sql.catalyst.dsl.expressions._
-    intercept[DeltaAnalysisException] {
+    intercept[AnalysisException] {
       DeltaMergeIntoClause.toActions(Seq(Assignment("1".expr, "1".expr)))
     }
   }
