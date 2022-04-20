@@ -94,7 +94,11 @@ trait OptimizeMetricsSuiteBase extends QueryTest
       StructField("numBatches", LongType, nullable = false),
       StructField("totalConsideredFiles", LongType, nullable = false),
       StructField("totalFilesSkipped", LongType, nullable = false),
-      StructField("preserveInsertionOrder", BooleanType, nullable = false)
+      StructField("preserveInsertionOrder", BooleanType, nullable = false),
+      StructField("numFilesSkippedToReduceWriteAmplification", LongType, nullable = false),
+      StructField("numBytesSkippedToReduceWriteAmplification", LongType, nullable = false),
+      StructField("startTimeMs", LongType, nullable = false),
+      StructField("endTimeMs", LongType, nullable = false)
     ))
     val optimizeSchema = StructType(Seq(
       StructField("path", StringType, nullable = true),
@@ -168,7 +172,9 @@ trait OptimizeMetricsSuiteBase extends QueryTest
         numBatches = 0,
         totalConsideredFiles = 1,
         totalFilesSkipped = 1,
-        preserveInsertionOrder = preserveInsertionOrder)
+        preserveInsertionOrder = preserveInsertionOrder,
+        startTimeMs = actMetrics.startTimeMs,
+        endTimeMs = actMetrics.endTimeMs)
 
       assert(actMetrics === expMetrics)
     }

@@ -31,7 +31,11 @@ case class OptimizeStats(
     var numBatches: Long = 0,
     var totalConsideredFiles: Long = 0,
     var totalFilesSkipped: Long = 0,
-    var preserveInsertionOrder: Boolean = false) {
+    var preserveInsertionOrder: Boolean = false,
+    var numFilesSkippedToReduceWriteAmplification: Long = 0,
+    var numBytesSkippedToReduceWriteAmplification: Long = 0,
+    startTimeMs: Long = System.currentTimeMillis(),
+    var endTimeMs: Long = 0) {
 
   def toOptimizeMetrics: OptimizeMetrics = {
     OptimizeMetrics(
@@ -44,7 +48,11 @@ case class OptimizeStats(
       numBatches = numBatches,
       totalConsideredFiles = totalConsideredFiles,
       totalFilesSkipped = totalFilesSkipped,
-      preserveInsertionOrder = preserveInsertionOrder
+      preserveInsertionOrder = preserveInsertionOrder,
+      numFilesSkippedToReduceWriteAmplification = numFilesSkippedToReduceWriteAmplification,
+      numBytesSkippedToReduceWriteAmplification = numBytesSkippedToReduceWriteAmplification,
+      startTimeMs = startTimeMs,
+      endTimeMs = endTimeMs
     )
   }
 }
@@ -142,6 +150,12 @@ object FileSizeStatsWithHistogram {
  * @param totalConsideredFiles Number of files considered for the Optimize operation.
  * @param totalFilesSkipped Number of files that are skipped from being Optimized.
  * @param preserveInsertionOrder If optimize was run with insertion preservation enabled.
+ * @param numFilesSkippedToReduceWriteAmplification Number of files skipped for reducing write
+ *                                                  amplification.
+ * @param numBytesSkippedToReduceWriteAmplification Number of bytes skipped for reducing write
+ *                                                  amplification.
+ * @param startTimeMs The start time of Optimize command.
+ * @param endTimeMs The end time of Optimize command.
  */
 case class OptimizeMetrics(
     numFilesAdded: Long,
@@ -155,7 +169,11 @@ case class OptimizeMetrics(
     numBatches: Long,
     totalConsideredFiles: Long,
     totalFilesSkipped: Long = 0,
-    preserveInsertionOrder: Boolean = false)
+    preserveInsertionOrder: Boolean = false,
+    numFilesSkippedToReduceWriteAmplification: Long = 0,
+    numBytesSkippedToReduceWriteAmplification: Long = 0,
+    startTimeMs: Long = 0,
+    endTimeMs: Long = 0)
 
 /**
  * Basic Stats on file sizes.
