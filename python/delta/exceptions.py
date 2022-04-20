@@ -18,8 +18,7 @@ from typing import TYPE_CHECKING, Optional
 
 from pyspark import SparkContext
 from pyspark.sql import utils
-from pyspark.sql.utils import CapturedException
-
+from pyspark.sql.utils import AnalysisException, CapturedException, IllegalArgumentException
 
 if TYPE_CHECKING:
     from py4j.java_gateway import JavaObject, JVMView  # type: ignore[import]
@@ -137,9 +136,11 @@ def _convert_delta_exception(e: "JavaObject") -> Optional[CapturedException]:
         return ConcurrentDeleteDeleteException(s.split(': ', 1)[1], stacktrace, c)
     if s.startswith('io.delta.exceptions.ConcurrentTransactionException: '):
         return ConcurrentTransactionException(s.split(': ', 1)[1], stacktrace, c)
-    if s.startswith('org.apache.spark.sql.delta.DeltaAnalysisException: '):
+    deltaAnalysisException = 'org.apache.spark.sql.delta.DeltaAnalysisException: '
+    if s.startswith(deltaAnalysisException):
         return AnalysisException(s.split(': ', 1)[1], stacktrace, c)
-    if s.startswith('org.apache.spark.sql.delta.DeltaIllegalArgumentException: '):
+    deltaIllegalArgumentException = 'org.apache.spark.sql.delta.DeltaIllegalArgumentException: '
+    if s.startswith(deltaIllegalArgumentException):
         return IllegalArgumentException(s.split(': ', 1)[1], stacktrace, c)
     return None
 

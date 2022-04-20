@@ -1527,6 +1527,12 @@ object DeltaErrors
       s"detected: $hasStart, $hasStep, $hasInsert")
   }
 
+  def throwDeltaIllegalArgumentException(name: String): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_UNSUPPORTED_STRATEGY_NAME",
+      messageParameters = Array(name)
+    )
+  }
 }
 
 /** The basic class for all Tahoe commit conflict exceptions. */
