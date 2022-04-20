@@ -27,6 +27,10 @@
     "message" : [ "There is a conflict from these SET columns: %s." ],
     "sqlState" : "42000"
   },
+  "CONSTRAINT_DOES_NOT_EXIST" : {
+    "message" : [ "Cannot drop nonexistent constraint %s from table %s. To avoid throwing an error, provide the parameter IF EXISTS or set the SQL session configuration %s to %s." ],
+    "sqlState" : "42000"
+  },
   "DELTA_CANNOT_CHANGE_DATA_TYPE" : {
     "message" : [ "Cannot change data type: %s" ],
     "sqlState" : "22000"

@@ -629,7 +629,8 @@ case class AlterTableAddConstraintDeltaCommand(
  */
 case class AlterTableDropConstraintDeltaCommand(
     table: DeltaTableV2,
-    name: String)
+    name: String,
+    ifExists: Boolean)
   extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -638,6 +639,14 @@ case class AlterTableDropConstraintDeltaCommand(
       val txn = startTransaction()
 
       val oldExprText = Constraints.getExprTextByName(name, txn.metadata, sparkSession)
+      if (oldExprText.isEmpty && !ifExists && !sparkSession.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS)) {
+        val quotedTableName = table.getTableIdentifierIfExists.map(_.quotedString)
+          .orElse(table.catalogTable.map(_.identifier.quotedString))
+          .getOrElse(table.name())
+        throw DeltaErrors.nonexistentConstraint(name, quotedTableName)
+      }
+
       val newMetadata = txn.metadata.copy(
         configuration = txn.metadata.configuration - Constraints.checkConstraintPropertyName(name))
 

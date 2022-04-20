@@ -284,6 +284,14 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS =
+    buildConf("constraints.assumesDropIfExists.enabled")
+      .doc("""If true, DROP CONSTRAINT quietly drops nonexistent constraints even without
+             |IF EXISTS.
+           """)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_STATE_CORRUPTION_IS_FATAL =
     buildConf("state.corruptionIsFatal")
       .internal()

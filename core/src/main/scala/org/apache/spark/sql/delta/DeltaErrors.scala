@@ -210,6 +210,16 @@ object DeltaErrors
     new AnalysisException(s"Cannot use '$name' as the name of a CHECK constraint.")
   }
 
+  def nonexistentConstraint(constraintName: String, tableName: String): AnalysisException = {
+    new DeltaAnalysisException(
+      errorClass = "CONSTRAINT_DOES_NOT_EXIST",
+      messageParameters = Array(
+        constraintName,
+        tableName,
+        DeltaSQLConf.DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS.key,
+        "true"))
+  }
+
   def checkConstraintNotBoolean(name: String, expr: String): AnalysisException = {
     new AnalysisException(s"CHECK constraint '$name' ($expr) should be a boolean expression.'")
   }

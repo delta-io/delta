@@ -34,8 +34,8 @@ case class AlterTableAddConstraint(
  * The logical plan of the ALTER TABLE ... DROP CONSTRAINT command.
  */
 case class AlterTableDropConstraint(
-    table: LogicalPlan, constraintName: String) extends AlterTableCommand {
-  override def changes: Seq[TableChange] = Seq(DropConstraint(constraintName))
+    table: LogicalPlan, constraintName: String, ifExists: Boolean) extends AlterTableCommand {
+  override def changes: Seq[TableChange] = Seq(DropConstraint(constraintName, ifExists))
 
   protected def withNewChildInternal(newChild: LogicalPlan): LogicalPlan = copy(table = newChild)
 }

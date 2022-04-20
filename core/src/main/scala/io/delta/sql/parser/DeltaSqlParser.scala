@@ -297,7 +297,8 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     AlterTableDropConstraint(
       createUnresolvedTable(ctx.table.identifier.asScala.map(_.getText).toSeq,
         "ALTER TABLE ... DROP CONSTRAINT"),
-      ctx.name.getText)
+      ctx.name.getText,
+      ifExists = ctx.EXISTS != null)
   }
 
   protected def typedVisit[T](ctx: ParseTree): T = {
