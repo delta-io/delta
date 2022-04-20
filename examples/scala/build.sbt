@@ -20,7 +20,7 @@ organizationName := "example"
 
 val scala212 = "2.12.15"
 val scala213 = "2.13.8"
-val deltaVersion = "1.2.0"
+val deltaVersion = "1.2.1"
 
 val lookupSparkVersion: PartialFunction[String, String] = {
   case v12x if v12x.startsWith("1.2") => "3.2.1"
@@ -71,7 +71,7 @@ getDeltaVersion := {
       println(s"Using Delta version $v")
       v
     case None =>
-      "1.2.0"
+      "1.2.1"
   }
 }
 
