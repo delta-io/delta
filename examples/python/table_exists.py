@@ -28,7 +28,6 @@ def exists(spark, filepath):
         raise exception
     return True
 
-
 spark = SparkSession.builder \
     .appName("table_exists") \
     .master("local[*]") \
@@ -37,6 +36,9 @@ spark = SparkSession.builder \
     .getOrCreate()
 
 filepath = "/tmp/table_exists"
+
+# Clear any previous runs
+shutil.rmtree(filepath, ignore_errors=True)
 
 # Verify table doesn't exist yet
 print(f"Verifying table does not exist at {filepath}")
