@@ -65,7 +65,13 @@ class DelegatingLogStore(hadoopConf: Configuration)
               .orElse(DelegatingLogStore.getDefaultLogStoreClassName(scheme))
             val logStore = logStoreClassNameOpt.map(createLogStore(_)).getOrElse(defaultLogStore)
             schemeToLogStoreMap += scheme -> logStore
-            logInfo(s"LogStore ${logStore.getClass.getName} is used for scheme ${scheme}")
+
+            val actualLogStoreClassName = logStore match {
+              case lsa: LogStoreAdaptor => s"LogStoreAdapter(${lsa.logStoreImpl.getClass.getName})"
+              case _ => logStore.getClass.getName
+            }
+            logInfo(s"LogStore `$actualLogStoreClassName` is used for scheme `$scheme`")
+
             logStore
           }
         }
