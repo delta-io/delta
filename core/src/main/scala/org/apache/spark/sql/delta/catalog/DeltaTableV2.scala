@@ -123,11 +123,7 @@ case class DeltaTableV2(
   override def properties(): ju.Map[String, String] = {
     val base = snapshot.getProperties
     base.put(TableCatalog.PROP_PROVIDER, "delta")
-    // DO NOT put the LOCATION property for MANAGED tables, so that the v2 SHOW CREATE TABLE command
-    // can omit the LOCATION clause properly.
-    if (catalogTable.isEmpty || catalogTable.get.tableType == CatalogTableType.EXTERNAL) {
-      base.put(TableCatalog.PROP_LOCATION, CatalogUtils.URIToString(path.toUri))
-    }
+    base.put(TableCatalog.PROP_LOCATION, CatalogUtils.URIToString(path.toUri))
     catalogTable.foreach { table =>
       if (table.owner != null && table.owner.nonEmpty) {
         base.put(TableCatalog.PROP_OWNER, table.owner)
