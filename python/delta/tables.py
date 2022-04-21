@@ -581,6 +581,14 @@ class DeltaTable(object):
             getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
         )
 
+    @since(1.3)  # type: ignore[arg-type]
+    def optimize(self) -> "DeltaOptimizeBuilder":
+        """
+        Optimize the data layout of the table.
+        """
+        jbuilder = self._jdt.optimize()
+        return DeltaOptimizeBuilder(self._spark, jbuilder)
+
     @staticmethod  # type: ignore[arg-type]
     def _verify_type_str(variable: str, name: str) -> None:
         if not isinstance(variable, str) or variable is None:
@@ -1145,3 +1153,30 @@ class DeltaTableBuilder(object):
         """
         jdt = self._jbuilder.execute()
         return DeltaTable(self._spark, jdt)
+
+
+@since(1.3)  # type: ignore[arg-type]
+class DeltaOptimizeBuilder(object):
+    def __init__(self, spark: SparkSession, jbuilder: "JavaObject"):
+        self._spark = spark
+        self._jbuilder = jbuilder
+
+    def partitionFilter(self, partitionFilter: str) -> "DeltaOptimizeBuilder":
+        """
+        Apply partition filter on this optimize command builder to limit
+        the operation on selected partitions.
+
+        :param partitionFilter: The partition filter to apply
+        :type partitionFilter: str
+        :return: DeltaOptimizeBuilder with partition filter applied
+        """
+        self._jbuilder = self._jbuilder.partitionFilter(partitionFilter)
+        return self
+
+    def executeCompaction(self) -> DataFrame:
+        """
+        Compact the small files in selected partitions.
+
+        :return: DataFrame containing the OPTIMIZE execution metrics
+        """
+        return self._jbuilder.executeCompaction()
