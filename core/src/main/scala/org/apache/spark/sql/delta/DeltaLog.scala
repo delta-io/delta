@@ -534,11 +534,10 @@ object DeltaLog extends DeltaLogging {
     }
   }
 
-  def apply(spark: SparkSession, rawPath: Path, clock: Clock = new SystemClock): DeltaLog = {
+  private def apply(spark: SparkSession, rawPath: Path, clock: Clock = new SystemClock): DeltaLog =
     apply(spark, rawPath, Map.empty, clock)
-  }
 
-  def apply(
+  private def apply(
       spark: SparkSession,
       rawPath: Path,
       options: Map[String, String],

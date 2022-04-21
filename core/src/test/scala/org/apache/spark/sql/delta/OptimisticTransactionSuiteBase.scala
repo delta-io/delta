@@ -120,7 +120,7 @@ trait OptimisticTransactionSuiteBase
     test(s"$name - $conflict") {
       withSQLConf(additionalSQLConfs: _*) {
         val tempDir = Utils.createTempDir()
-        val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath + "/_delta_log"))
+        val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
 
         // Setup the log
         initialSetup(log)

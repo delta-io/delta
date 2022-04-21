@@ -307,7 +307,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
   private def testActionSerDe(name: String, action: Action, expectedJson: String): Unit = {
     test(name) {
       withTempDir { tempDir =>
-        val deltaLog = DeltaLog(spark, new Path(tempDir.getAbsolutePath))
+        val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getAbsolutePath))
         // Disable different delta validations so that the passed action can be committed in
         // all cases.
         withSQLConf(

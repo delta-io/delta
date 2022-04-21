@@ -581,7 +581,7 @@ trait DataSkippingDeltaTestsBase extends QueryTest
   test("data skipping with missing stats") {
     val tempDir = Utils.createTempDir()
     Seq(1, 2, 3).toDF().write.format("delta").save(tempDir.toString)
-    val log = DeltaLog(spark, new Path(tempDir.toString + "/_delta_log"))
+    val log = DeltaLog.forTable(spark, new Path(tempDir.toString))
     val txn = log.startTransaction()
     val noStats = txn.filterFiles(Nil).map(_.copy(stats = null))
     txn.commit(noStats, DeltaOperations.ComputeStats(Nil))
