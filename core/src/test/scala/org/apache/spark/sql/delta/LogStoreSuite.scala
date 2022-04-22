@@ -500,45 +500,6 @@ class FailingRenameAbstractFileSystem(uri: URI, conf: org.apache.hadoop.conf.Con
   }
 }
 
-///////////////////////////////////////////////////////////////////////////////
-// Fake LogStore class & test suite to check that hadoopConf is set properly //
-///////////////////////////////////////////////////////////////////////////////
-
-class FakePublicLogStore(initHadoopConf: Configuration)
-  extends io.delta.storage.HDFSLogStore(initHadoopConf) {
-
-  assert(initHadoopConf.get("spark.delta.storage.custom.key") == "foo")
-  assert(initHadoopConf.get("this.is.a.non.spark.prefix.key") == "bar")
-}
-
-/**
- * We want to ensure that, to set configuration values for the Java LogStore implementations,
- * users can simply use `--conf $key=$value`, instead of `--conf spark.hadoop.$key=$value`.
- *
- * We also want to test that users can use a non-Spark prefix, so that our public, Java LogStore
- * implementations are not coupled to Spark-related conf keys.
- */
-class CorrectHadoopConfLogStoreSuite
-  extends SparkFunSuite
-  with LocalSparkSession
-  with LogStoreProvider {
-
-  test("java LogStore is instantiated with hadoopConf with SQLConf values") {
-    val sparkConf = new SparkConf()
-      .setMaster("local")
-      // equivalent to --conf spark.delta.storage.custom.key=foo
-      .set("spark.delta.storage.custom.key", "foo")
-      .set("spark.delta.logStore.class", classOf[FakePublicLogStore].getName)
-      .set("this.is.a.non.spark.prefix.key", "bar")
-
-    withSparkSession(SparkSession.builder.config(sparkConf).getOrCreate()) { spark =>
-      // this will instantiate the FakePublicLogStore above. If its assertion fails,
-      // then this test will fail
-      createLogStore(spark)
-    }
-  }
-}
-
 ////////////////////////////////////////////////////////////////////
 // Public LogStore (Java) suite tests from delta-storage artifact //
 ////////////////////////////////////////////////////////////////////
