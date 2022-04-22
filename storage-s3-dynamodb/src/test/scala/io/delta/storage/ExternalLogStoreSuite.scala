@@ -21,9 +21,10 @@ import java.net.URI
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs._
+import org.scalatest.funsuite.AnyFunSuite
+
 import org.apache.spark.sql.delta.FakeFileSystem
 import org.apache.spark.sql.delta.util.FileNames
-import org.scalatest.funsuite.AnyFunSuite
 
 /////////////////////
 // Base Test Suite //
