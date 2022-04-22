@@ -60,6 +60,7 @@ num_rows = int(os.environ.get("DELTA_NUM_ROWS", 16))
 delta_storage = os.environ.get("DELTA_STORAGE", "io.delta.storage.S3DynamoDBLogStore")
 dynamo_table_name = os.environ.get("DELTA_DYNAMO_TABLE", "delta_log_test")
 dynamo_region = os.environ.get("DELTA_DYNAMO_REGION", "us-west-2")
+# used only by FailingS3DynamoDBLogStore
 dynamo_error_rates = os.environ.get("DELTA_DYNAMO_ERROR_RATES", "")
 
 if delta_table_path is None:
@@ -86,6 +87,8 @@ spark = SparkSession \
     .master("local[*]") \
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
     .config("spark.delta.logStore.s3.impl", delta_storage) \
+    .config("spark.delta.logStore.s3a.impl", delta_storage) \
+    .config("spark.delta.logStore.s3n.impl", delta_storage) \
     .config("io.delta.storage.S3DynamoDBLogStore.ddb.tableName", dynamo_table_name) \
     .config("io.delta.storage.S3DynamoDBLogStore.ddb.region", dynamo_region) \
     .config("io.delta.storage.S3DynamoDBLogStore.errorRates", dynamo_error_rates) \
@@ -93,7 +96,7 @@ spark = SparkSession \
     .config("io.delta.storage.S3DynamoDBLogStore.provisionedThroughput.wcu", 13) \
     .getOrCreate()
 
-# spark.sparkContext.setLogLevel("INFO")
+spark.sparkContext.setLogLevel("INFO")
 
 data = spark.createDataFrame([], "id: int, a: int")
 data.write.format("delta").mode("overwrite").partitionBy("id").save(delta_table_path)
