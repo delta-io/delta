@@ -22,7 +22,9 @@ import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.stats.DeltaDataSkippingType.DeltaDataSkippingType
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.types.StructType
 
 /**
  * DataSize describes following attributes for data that consists of a list of input files
@@ -91,4 +93,46 @@ case class DeltaScan(
 
   lazy val filtersUsedForSkipping: ExpressionSet = partitionFilters ++ dataFilters
   lazy val allFilters: ExpressionSet = filtersUsedForSkipping ++ unusedFilters
+
+  /**
+   * Compare a set of filters to the filters for this DeltaScan. Because these filters could
+   * be post optimization, nested fields may have different schemas due to schema pruning. To
+   * get around this, we convert any nested field to an UnresolvedAttribute for the comparison.
+   *
+   * @param other ExpressionSet to compare the filters against
+   * @return Whether the expressions match with nested schemas ignored
+   */
+  def filtersMatch(other: ExpressionSet): Boolean = {
+    DeltaScan.filtersMatch(allFilters, other) ||
+      DeltaScan.filtersMatch(filtersUsedForSkipping, other)
+  }
+}
+
+object DeltaScan {
+  private def pruneExpression(expr: Expression): Expression = expr transform {
+    case NestedFieldExtraction(nameParts) =>
+      new UnresolvedAttribute(nameParts)
+  }
+
+  private[delta] def filtersMatch(source: ExpressionSet, target: ExpressionSet): Boolean = {
+    val prunedSource = source.map(pruneExpression _)
+    val prunedTarget = target.map(pruneExpression _)
+    prunedSource == prunedTarget
+  }
+}
+
+object NestedFieldExtraction {
+  def unapply(e: Expression): Option[Seq[String]] = e match {
+    case g: GetStructField =>
+      val nested = g.child match {
+        case NestedFieldExtraction(nameParts) => Some(nameParts)
+        case _ => None
+      }
+      nested.map { nameParts =>
+        nameParts :+ g.extractFieldName
+      }
+    case a: AttributeReference if a.dataType.isInstanceOf[StructType] =>
+      Some(Seq(a.name))
+    case _ => None
+  }
 }
