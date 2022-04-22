@@ -1,25 +1,64 @@
+#
+# Copyright (2021) The Delta Lake Project Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
 # This example shows
-# 1 - how to load the TensorFlow Flowers Images into a dataframe
-# 2 - manipulate the dataframe
-# 3 - write the dataframe to a Delta Lake table
-# 4 - read the new Delta Lake table
+# 1 - How to load the TensorFlow Flowers Images into a dataframe
+# 2 - Manipulate the dataframe
+# 3 - Write the dataframe to a Delta Lake table
+# 4 - Read the new Delta Lake table
 
 import pyspark.sql.functions as fn
-import pyspark
+from pyspark.sql import SparkSession
 from delta import configure_spark_with_delta_pip
+import shutil
+from urllib import request
+import os
 
-builder = (
-  pyspark.sql.SparkSession.builder
-    .appName('quickstart')
-    .config('spark.sql.extensions', 'io.delta.sql.DeltaSparkSessionExtension')
-    .config('spark.sql.catalog.spark_catalog', 'org.apache.spark.sql.delta.catalog.DeltaCatalog')
-)
+# set up the spark session
+spark = SparkSession.builder \
+    .appName("image_storage") \
+    .master("local[*]") \
+    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
+    .config("spark.sql.sources.parallelPartitionDiscovery.parallelism", "4") \
+    .getOrCreate()
 
-spark = configure_spark_with_delta_pip(builder).getOrCreate()
+# If you are running this example directly, you can set up the spark session directly using the following 2 commands
+# builder = (
+#   SparkSession.builder
+#     .appName('image_storage')
+#     .config('spark.sql.extensions', 'io.delta.sql.DeltaSparkSessionExtension')
+#     .config('spark.sql.catalog.spark_catalog', 'org.apache.spark.sql.delta.catalog.DeltaCatalog')
+# )
+# spark = configure_spark_with_delta_pip(builder).getOrCreate()
 
 # Flowers dataset from the TensorFlow team - https://www.tensorflow.org/datasets/catalog/tf_flowers
-imagePath = "/path/to/flower_photos/"
-deltaPath = "/path/to/write/flower_photos_delta_table/"
+imageGzipUrl = "https://storage.googleapis.com/download.tensorflow.org/example_images/flower_photos.tgz"
+imageGzipPath = "/tmp/flower_photos.tgz"
+imagePath = "/tmp/image-folder"
+deltaPath = "/tmp/delta-table"
+
+# Clear previous run's zipper file, image folder and delta tables
+if os.path.exists(imageGzipPath):
+  os.remove(imageGzipPath)
+shutil.rmtree(imagePath, ignore_errors=True)
+shutil.rmtree(deltaPath, ignore_errors=True)
+
+request.urlretrieve(imageGzipUrl, imageGzipPath)
+shutil.unpack_archive(imageGzipPath, imagePath)
 
 # read the images from the flowers dataset
 images = spark.read.format("binaryFile").\
@@ -45,3 +84,9 @@ df.write.format("delta").mode("overwrite").save(deltaPath)
 # Reads the delta table that was just written
 dfDelta = spark.read.format("delta").load(deltaPath)
 dfDelta.show()
+
+# Cleanup
+if os.path.exists(imageGzipPath):
+  os.remove(imageGzipPath)
+shutil.rmtree(imagePath)
+shutil.rmtree(deltaPath)
