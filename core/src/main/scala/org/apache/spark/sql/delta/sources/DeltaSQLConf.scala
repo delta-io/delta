@@ -337,13 +337,6 @@ trait DeltaSQLConfBase {
       .stringConf
       .createWithDefault(".s3-optimization-")
 
-  val MERGE_MAX_INSERT_COUNT =
-    buildConf("merge.maxInsertCount")
-      .internal()
-      .doc("Max row count of inserts in each MERGE execution.")
-      .longConf
-      .createWithDefault(10000L)
-
   val MERGE_INSERT_ONLY_ENABLED =
     buildConf("merge.optimizeInsertOnlyMerge.enabled")
       .internal()
