@@ -45,7 +45,7 @@ export DELTA_STORAGE=io.delta.storage.S3DynamoDBLogStore
 export DELTA_NUM_ROWS=16
 
 ./run-integration-tests.py --run-storage-s3-dynamodb-integration-tests \
-    --dbb-packages org.apache.hadoop:hadoop-aws:3.3.1,com.amazonaws:aws-java-sdk-bundle:1.12.142 \
+    --dbb-packages org.apache.hadoop:hadoop-aws:3.3.1 \
     --dbb-conf spark.jars.ivySettings=/workspace/ivy.settings \
         spark.driver.extraJavaOptions=-Dlog4j.configuration=file:debug/log4j.properties
 """
@@ -89,21 +89,23 @@ spark = SparkSession \
     .config("spark.delta.logStore.s3.impl", delta_storage) \
     .config("spark.delta.logStore.s3a.impl", delta_storage) \
     .config("spark.delta.logStore.s3n.impl", delta_storage) \
-    .config("io.delta.storage.S3DynamoDBLogStore.ddb.tableName", dynamo_table_name) \
-    .config("io.delta.storage.S3DynamoDBLogStore.ddb.region", dynamo_region) \
-    .config("io.delta.storage.S3DynamoDBLogStore.errorRates", dynamo_error_rates) \
-    .config("io.delta.storage.S3DynamoDBLogStore.provisionedThroughput.rcu", 12) \
-    .config("io.delta.storage.S3DynamoDBLogStore.provisionedThroughput.wcu", 13) \
+    .config("spark.io.delta.storage.S3DynamoDBLogStore.ddb.tableName", dynamo_table_name) \
+    .config("spark.io.delta.storage.S3DynamoDBLogStore.ddb.region", dynamo_region) \
+    .config("spark.io.delta.storage.S3DynamoDBLogStore.errorRates", dynamo_error_rates) \
+    .config("spark.io.delta.storage.S3DynamoDBLogStore.provisionedThroughput.rcu", 12) \
+    .config("spark.io.delta.storage.S3DynamoDBLogStore.provisionedThroughput.wcu", 13) \
     .getOrCreate()
 
 spark.sparkContext.setLogLevel("INFO")
 
 data = spark.createDataFrame([], "id: int, a: int")
+print("writing:", data.collect())
 data.write.format("delta").mode("overwrite").partitionBy("id").save(delta_table_path)
 
 
 def write_tx(n):
     data = spark.createDataFrame([[n, n]], "id: int, a: int")
+    print("writing:", data.collect())
     data.write.format("delta").mode("append").partitionBy("id").save(delta_table_path)
 
 
