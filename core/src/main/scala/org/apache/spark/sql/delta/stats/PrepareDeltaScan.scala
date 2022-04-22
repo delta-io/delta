@@ -107,15 +107,14 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
   }
 
   /**
-   * Scan files using the given `filters` and return the snapshot object used to
-   * scan files and `DeltaScan`.
+   * Scan files using the given `filters` and return `DeltaScan`.
    */
   protected def filesForScan(
       scanGenerator: DeltaScanGenerator,
       limitOpt: Option[Int],
       projection: Seq[Attribute],
       filters: Seq[Expression],
-      delta: LogicalRelation): (Snapshot, DeltaScan) = {
+      delta: LogicalRelation): DeltaScan = {
     withStatusCode("DELTA", "Filtering files for query") {
       val filtersForScan =
         if (!GeneratedColumn.partitionFilterOptimizationEnabled(spark)) {
@@ -125,7 +124,7 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
             spark, scanGenerator.snapshotToScan, filters, delta)
           filters ++ generatedPartitionFilters
         }
-      scanGenerator.snapshotToScan -> scanGenerator.filesForScan(projection, filtersForScan)
+      scanGenerator.filesForScan(projection, filtersForScan)
     }
   }
 
@@ -134,9 +133,9 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
    */
   protected def prepareDeltaScan(plan: LogicalPlan): LogicalPlan = {
     // A map from the canonicalized form of a DeltaTableScan operator to its corresponding delta
-    // scan and the snapshot we use to scan the table. This map is used to avoid fetching duplicate
-    // delta indexes for structurally-equal delta scans.
-    val deltaScans = new mutable.HashMap[LogicalPlan, (Snapshot, DeltaScan)]()
+    // scan. This map is used to avoid fetching duplicate delta indexes for structurally-equal
+    // delta scans.
+    val deltaScans = new mutable.HashMap[LogicalPlan, DeltaScan]()
 
     /*
      * We need to first prepare the scans in the subqueries of a node. Otherwise, because of the
@@ -157,11 +156,11 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       transformSubqueries(plan) transform {
         case scan @ DeltaTableScan(projection, filters, fileIndex, limit, delta) =>
           val scanGenerator = getDeltaScanGenerator(fileIndex)
-          val (scannedSnapshot, preparedScan) = deltaScans.getOrElseUpdate(scan.canonicalized,
+          val preparedScan = deltaScans.getOrElseUpdate(scan.canonicalized,
               filesForScan(scanGenerator, limit, projection, filters, delta))
           val preparedIndex = getPreparedIndex(preparedScan, fileIndex)
           optimizeGeneratedColumns(
-            scannedSnapshot, scan, preparedIndex, filters, limit, delta)
+            preparedScan.scannedSnapshot, scan, preparedIndex, filters, limit, delta)
       }
 
     transform(plan)
@@ -329,7 +328,7 @@ case class PreparedDeltaFileIndex(
            |Prepared: ${preparedScan.allFilters}
            |Actual: ${actualFilters}
          """.stripMargin)
-      deltaLog.getSnapshotAt(preparedScan.version).filesForScan(
+      preparedScan.scannedSnapshot.filesForScan(
         projection = Nil, partitionFilters ++ dataFilters).files
     }
   }

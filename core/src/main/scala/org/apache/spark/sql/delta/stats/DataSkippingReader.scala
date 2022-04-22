@@ -831,6 +831,7 @@ trait DataSkippingReaderBase
           total = dataSize,
           partition = dataSize,
           scanned = dataSize)(
+          scannedSnapshot = snapshotToScan,
           projection = AttributeSet(projection),
           partitionFilters = ExpressionSet(Nil),
           dataFilters = ExpressionSet(Nil),
@@ -860,6 +861,7 @@ trait DataSkippingReaderBase
         total = DataSize(Some(sizeInBytes), None, Some(numOfFiles)),
         partition = scanSize,
         scanned = scanSize)(
+        scannedSnapshot = snapshotToScan,
         projection = AttributeSet(projection),
         partitionFilters = ExpressionSet(partitionFilters),
         dataFilters = ExpressionSet(Nil),
@@ -900,6 +902,7 @@ trait DataSkippingReaderBase
         total = sizes(0),
         partition = sizes(1),
         scanned = sizes(2))(
+        scannedSnapshot = snapshotToScan,
         projection = AttributeSet(projection),
         partitionFilters = ExpressionSet(partitionFilters),
         dataFilters = ExpressionSet(skippingFilters.map(_._1)),

@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.stats
 
+import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.stats.DeltaDataSkippingType.DeltaDataSkippingType
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
@@ -75,11 +76,13 @@ case class DeltaScan(
     // Moved to separate argument list, to not be part of case class equals check -
     // expressions can differ by exprId or ordering, but as long as same files are scanned, the
     // PreparedDeltaFileIndex and HadoopFsRelation should be considered equal for reuse purposes.
+    val scannedSnapshot: Snapshot,
     val partitionFilters: ExpressionSet,
     val dataFilters: ExpressionSet,
     val unusedFilters: ExpressionSet,
     val projection: AttributeSet,
     val scanDurationMs: Long,
     val dataSkippingType: DeltaDataSkippingType) {
+  assert(version == scannedSnapshot.version)
   def allFilters: ExpressionSet = partitionFilters ++ dataFilters ++ unusedFilters
 }
