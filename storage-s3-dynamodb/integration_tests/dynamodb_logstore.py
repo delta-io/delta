@@ -85,10 +85,12 @@ spark = SparkSession \
     .appName("utilities") \
     .master("local[*]") \
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
-    .config("spark.delta.logStore.class", delta_storage) \
-    .config("io.delta.storage.ddb.tableName", dynamo_table_name) \
-    .config("io.delta.storage.ddb.region", dynamo_region) \
-    .config("io.delta.storage.errorRates", dynamo_error_rates) \
+    .config("spark.delta.logStore.s3.impl", delta_storage) \
+    .config("io.delta.storage.S3DynamoDBLogStore.ddb.tableName", dynamo_table_name) \
+    .config("io.delta.storage.S3DynamoDBLogStore.ddb.region", dynamo_region) \
+    .config("io.delta.storage.S3DynamoDBLogStore.errorRates", dynamo_error_rates) \
+    .config("io.delta.storage.S3DynamoDBLogStore.provisionedThroughput.rcu", 12) \
+    .config("io.delta.storage.S3DynamoDBLogStore.provisionedThroughput.wcu", 13) \
     .getOrCreate()
 
 # spark.sparkContext.setLogLevel("INFO")

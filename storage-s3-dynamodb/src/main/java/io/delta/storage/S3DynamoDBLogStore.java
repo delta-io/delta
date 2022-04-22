@@ -71,12 +71,15 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
     private static final Logger LOG = LoggerFactory.getLogger(S3DynamoDBLogStore.class);
 
     /**
-     * Configuration keys for the DynamoDB client
+     * Configuration keys for the DynamoDB client. Keys are of the form $CONF_PREFIX.$CONF,
+     * e.g. io.delta.storage.S3DynamoDBLogStore.ddb.tableName
      */
-    private static final String CONF_PREFIX = "io.delta.storage.";
+    private static final String CONF_PREFIX = "io.delta.storage.S3DynamoDBLogStore";
     private static final String DBB_CLIENT_TABLE = "ddb.tableName";
     private static final String DBB_CLIENT_REGION = "ddb.region";
     private static final String DBB_CLIENT_CREDENTIALS_PROVIDER = "credentials.provider";
+    private static final String DDB_CREATE_TABLE_RCU = "provisionedThroughput.rcu";
+    private static final String DDB_CREATE_TABLE_WCU = "provisionedThroughput.wcu";
 
     /**
      * DynamoDB table attribute keys
@@ -221,8 +224,8 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
                 TableDescription descr = result.getTable();
                 status = descr.getTableStatus();
             } catch (ResourceNotFoundException e) {
-                final long rcu = Long.parseLong(getParam(hadoopConf, "provisionedThroughput.rcu", "5"));
-                final long wcu = Long.parseLong(getParam(hadoopConf, "provisionedThroughput.wcu", "5"));
+                final long rcu = Long.parseLong(getParam(hadoopConf, DDB_CREATE_TABLE_RCU, "5"));
+                final long wcu = Long.parseLong(getParam(hadoopConf, DDB_CREATE_TABLE_WCU, "5"));
 
                 LOG.info(
                     "DynamoDB table `{}` in region `{}` does not exist."
@@ -291,7 +294,7 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
 
     protected String getParam(Configuration config, String name, String defaultValue) {
         return config.get(
-            String.format("%s%s", CONF_PREFIX, name),
+            String.format("%s.%s", CONF_PREFIX, name),
             defaultValue
         );
     }
