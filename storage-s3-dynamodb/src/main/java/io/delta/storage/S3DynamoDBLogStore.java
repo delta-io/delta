@@ -71,15 +71,19 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
     private static final Logger LOG = LoggerFactory.getLogger(S3DynamoDBLogStore.class);
 
     /**
-     * Configuration keys for the DynamoDB client. Keys are of the form $CONF_PREFIX.$CONF,
-     * e.g. io.delta.storage.S3DynamoDBLogStore.ddb.tableName
+     * Configuration keys for the DynamoDB client.
+     *
+     * Keys are either of the form $SPARK_CONF_PREFIX.$CONF or $BASE_CONF_PREFIX.$CONF,
+     * e.g. spark.io.delta.storage.S3DynamoDBLogStore.ddb.tableName
+     * or io.delta.storage.S3DynamoDBLogStore.ddb.tableName
      */
-    private static final String CONF_PREFIX = "io.delta.storage.S3DynamoDBLogStore";
-    private static final String DBB_CLIENT_TABLE = "ddb.tableName";
-    private static final String DBB_CLIENT_REGION = "ddb.region";
-    private static final String DBB_CLIENT_CREDENTIALS_PROVIDER = "credentials.provider";
-    private static final String DDB_CREATE_TABLE_RCU = "provisionedThroughput.rcu";
-    private static final String DDB_CREATE_TABLE_WCU = "provisionedThroughput.wcu";
+    public static final String SPARK_CONF_PREFIX = "spark.io.delta.storage.S3DynamoDBLogStore";
+    public static final String BASE_CONF_PREFIX = "io.delta.storage.S3DynamoDBLogStore";
+    public static final String DDB_CLIENT_TABLE = "ddb.tableName";
+    public static final String DDB_CLIENT_REGION = "ddb.region";
+    public static final String DDB_CLIENT_CREDENTIALS_PROVIDER = "credentials.provider";
+    public static final String DDB_CREATE_TABLE_RCU = "provisionedThroughput.rcu";
+    public static final String DDB_CREATE_TABLE_WCU = "provisionedThroughput.wcu";
 
     /**
      * DynamoDB table attribute keys
@@ -101,13 +105,13 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
     public S3DynamoDBLogStore(Configuration hadoopConf) throws IOException {
         super(hadoopConf);
 
-        tableName = getParam(hadoopConf, DBB_CLIENT_TABLE, "delta_log");
+        tableName = getParam(hadoopConf, DDB_CLIENT_TABLE, "delta_log");
         credentialsProviderName = getParam(
             hadoopConf,
-            DBB_CLIENT_CREDENTIALS_PROVIDER,
+            DDB_CLIENT_CREDENTIALS_PROVIDER,
             "com.amazonaws.auth.DefaultAWSCredentialsProviderChain"
         );
-        regionName = getParam(hadoopConf, DBB_CLIENT_REGION, "us-east-1");
+        regionName = getParam(hadoopConf, DDB_CLIENT_REGION, "us-east-1");
         LOG.info("using tableName {}", tableName);
         LOG.info("using credentialsProviderName {}", credentialsProviderName);
         LOG.info("using regionName {}", regionName);
@@ -292,10 +296,35 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
         }
     }
 
-    protected String getParam(Configuration config, String name, String defaultValue) {
-        return config.get(
-            String.format("%s.%s", CONF_PREFIX, name),
-            defaultValue
-        );
+    /**
+     * Get the hadoopConf param $name that is prefixed either with $SPARK_CONF_PREFIX or
+     * $BASE_CONF_PREFIX.
+     *
+     * If two parameters exist, one for each prefix, then an IllegalArgumentException is thrown.
+     *
+     * If no parameters exist, then the $defaultValue is returned.
+     */
+    protected static String getParam(Configuration hadoopConf, String name, String defaultValue) {
+        final String sparkPrefixKey = String.format("%s.%s", SPARK_CONF_PREFIX, name);
+        final String basePrefixKey = String.format("%s.%s", BASE_CONF_PREFIX, name);
+
+        final String sparkPrefixVal = hadoopConf.get(sparkPrefixKey);
+        final String basePrefixVal = hadoopConf.get(basePrefixKey);
+
+        if (sparkPrefixVal != null &&
+            basePrefixVal != null &&
+            !sparkPrefixVal.equals(basePrefixVal)) {
+            throw new IllegalArgumentException(
+                String.format(
+                    "Configuration properties `%s=%s` and `%s=%s` have different values. " +
+                    "Please set only one.",
+                    sparkPrefixKey, sparkPrefixVal, basePrefixKey, basePrefixVal
+                )
+            );
+        }
+
+        if (sparkPrefixVal != null) return sparkPrefixVal;
+        if (basePrefixVal != null) return basePrefixVal;
+        return defaultValue;
     }
 }

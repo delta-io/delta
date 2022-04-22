@@ -19,10 +19,11 @@ package io.delta.storage
 import java.io.File
 import java.net.URI
 
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs._
-
 import org.apache.spark.sql.delta.FakeFileSystem
 import org.apache.spark.sql.delta.util.FileNames
+import org.scalatest.funsuite.AnyFunSuite
 
 /////////////////////
 // Base Test Suite //
@@ -217,6 +218,60 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
   }
 
   protected def shouldUseRenameToWriteCheckpoint: Boolean = false
+}
+
+///////////////////////////////////
+// S3DynamoDBLogStore Test Suite //
+///////////////////////////////////
+
+class S3DynamoDBLogStoreSuite extends AnyFunSuite {
+  test("getParam") {
+    import S3DynamoDBLogStore._
+
+    val sparkPrefixKey = "spark.io.delta.storage.S3DynamoDBLogStore.ddb.tableName"
+    val basePrefixKey = "io.delta.storage.S3DynamoDBLogStore.ddb.tableName"
+
+    // Sanity check
+    assert(sparkPrefixKey == SPARK_CONF_PREFIX + "." + DDB_CLIENT_TABLE)
+    assert(basePrefixKey == BASE_CONF_PREFIX + "." + DDB_CLIENT_TABLE)
+
+    // Case 1: no parameters exist, should use default
+    assert(getParam(new Configuration(), DDB_CLIENT_TABLE, "default_table") == "default_table")
+
+    // Case 2: spark-prefix param only
+    {
+      val hadoopConf = new Configuration()
+      hadoopConf.set(sparkPrefixKey, "some_other_table_2")
+      assert(getParam(hadoopConf, DDB_CLIENT_TABLE, "default_table") == "some_other_table_2")
+    }
+
+    // Case 3: base-prefix param only
+    {
+      val hadoopConf = new Configuration()
+      hadoopConf.set(basePrefixKey, "some_other_table_3")
+      assert(getParam(hadoopConf, DDB_CLIENT_TABLE, "default_table") == "some_other_table_3")
+    }
+
+    // Case 4: both params set, same value
+    {
+      val hadoopConf = new Configuration()
+      hadoopConf.set(sparkPrefixKey, "some_other_table_4")
+      hadoopConf.set(basePrefixKey, "some_other_table_4")
+      assert(getParam(hadoopConf, DDB_CLIENT_TABLE, "default_table") == "some_other_table_4")
+    }
+
+    // Case 5: both param set, different value
+    {
+      val hadoopConf = new Configuration()
+      hadoopConf.set(sparkPrefixKey, "some_other_table_5a")
+      hadoopConf.set(basePrefixKey, "some_other_table_5b")
+      val e = intercept[IllegalArgumentException] {
+        getParam(hadoopConf, DDB_CLIENT_TABLE, "default_table")
+      }.getMessage
+      assert(e == (s"Configuration properties `$sparkPrefixKey=some_other_table_5a` and " +
+        s"`$basePrefixKey=some_other_table_5b` have different values. Please set only one."))
+    }
+  }
 }
 
 ////////////////////////////////
