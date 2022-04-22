@@ -232,8 +232,8 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
                 final long wcu = Long.parseLong(getParam(hadoopConf, DDB_CREATE_TABLE_WCU, "5"));
 
                 LOG.info(
-                    "DynamoDB table `{}` in region `{}` does not exist."
-                    + "Creating it now with provisioned throughput of {} RCUs and {} WCUs.",
+                    "DynamoDB table `{}` in region `{}` does not exist. " +
+                    "Creating it now with provisioned throughput of {} RCUs and {} WCUs.",
                     tableName, regionName, rcu, wcu);
                 try {
                     client.createTable(
