@@ -547,11 +547,10 @@ object DeltaErrors
       version: Long,
       metadata: Metadata): Throwable = {
     val logRetention = DeltaConfigs.LOG_RETENTION.fromMetaData(metadata)
-    val checkpointRetention = DeltaConfigs.CHECKPOINT_RETENTION_DURATION.fromMetaData(metadata)
-    new FileNotFoundException(s"$path: Unable to reconstruct state at version $version as the " +
+    val message = s"$path: Unable to reconstruct state at version $version as the " +
       s"transaction log has been truncated due to manual deletion or the log retention policy " +
-      s"(${DeltaConfigs.LOG_RETENTION.key}=$logRetention) and checkpoint retention policy " +
-      s"(${DeltaConfigs.CHECKPOINT_RETENTION_DURATION.key}=$checkpointRetention)")
+      s"(${DeltaConfigs.LOG_RETENTION.key}=$logRetention)"
+    new FileNotFoundException(message)
   }
 
   def logFileNotFoundExceptionForStreamingSource(e: FileNotFoundException): Throwable = {
