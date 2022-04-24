@@ -1185,4 +1185,7 @@ class DeltaOptimizeBuilder(object):
 
         :return: DataFrame containing the OPTIMIZE execution metrics
         """
-        return self._jbuilder.executeCompaction()
+        return DataFrame(
+            self._jbuilder.executeCompaction(),
+            getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
+        )
