@@ -1155,12 +1155,17 @@ class DeltaTableBuilder(object):
         return DeltaTable(self._spark, jdt)
 
 
-@since(1.3)  # type: ignore[arg-type]
 class DeltaOptimizeBuilder(object):
+    """
+    Builder class for constructing OPTIMIZE command and executing.
+
+    .. versionadded:: 1.3.0
+    """
     def __init__(self, spark: SparkSession, jbuilder: "JavaObject"):
         self._spark = spark
         self._jbuilder = jbuilder
 
+    @since(1.3)  # type: ignore[arg-type]
     def partitionFilter(self, partitionFilter: str) -> "DeltaOptimizeBuilder":
         """
         Apply partition filter on this optimize command builder to limit
@@ -1173,6 +1178,7 @@ class DeltaOptimizeBuilder(object):
         self._jbuilder = self._jbuilder.partitionFilter(partitionFilter)
         return self
 
+    @since(1.3)  # type: ignore[arg-type]
     def executeCompaction(self) -> DataFrame:
         """
         Compact the small files in selected partitions.
