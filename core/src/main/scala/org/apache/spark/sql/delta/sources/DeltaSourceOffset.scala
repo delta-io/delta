@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.sources
 
-import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.json4s._
 import org.json4s.jackson.JsonMethods.parse
@@ -98,7 +98,7 @@ object DeltaSourceOffset {
       case other => throw new IllegalStateException(s"sourceVersion($other) is invalid")
     }
     if (versionOpt.isEmpty) {
-      throw new IllegalStateException(s"Cannot find 'sourceVersion' in $json")
+      throw DeltaErrors.cannotFindSourceVersionException(json)
     }
     if (versionOpt.get > VERSION) {
       throw new IllegalStateException(

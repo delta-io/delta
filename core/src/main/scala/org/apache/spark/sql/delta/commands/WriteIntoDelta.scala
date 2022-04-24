@@ -190,9 +190,7 @@ case class WriteIntoDelta(
         deletedFiles.map {
           case add: AddFile => add.copy(dataChange = !rearrangeOnly)
           case remove: RemoveFile => remove.copy(dataChange = !rearrangeOnly)
-          case other =>
-            throw new IllegalStateException(
-              s"Illegal files found in a dataChange = false transaction. Files: $other")
+          case other => throw DeltaErrors.illegalFilesFound(other.toString)
         }
     } else {
       newFiles ++ deletedFiles

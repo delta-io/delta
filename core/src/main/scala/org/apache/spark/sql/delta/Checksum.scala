@@ -176,7 +176,7 @@ trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
       // We get the active SparkSession, which may be different than the SparkSession of the
       // Snapshot that was created, since we cache `DeltaLog`s.
       val spark = SparkSession.getActiveSession.getOrElse {
-        throw new IllegalStateException("Active SparkSession not set.")
+        throw DeltaErrors.sparkSessionNotSetException()
       }
       val conf = DeltaSQLConf.DELTA_STATE_CORRUPTION_IS_FATAL
       if (spark.sessionState.conf.getConf(conf)) {

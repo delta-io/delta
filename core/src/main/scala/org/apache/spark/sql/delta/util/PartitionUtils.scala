@@ -422,7 +422,7 @@ private[delta] object PartitionUtils {
       resolver: Resolver): Map[String, T] = {
     val normalizedPartSpec = partitionSpec.toSeq.map { case (key, value) =>
       val normalizedKey = partColNames.find(resolver(_, key)).getOrElse {
-        throw new AnalysisException(s"$key is not a valid partition column in table $tblName.")
+        throw DeltaErrors.invalidPartitionColumn(key, tblName)
       }
       normalizedKey -> value
     }

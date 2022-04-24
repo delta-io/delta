@@ -332,7 +332,7 @@ class DeltaLog private(
     val fs = logPath.getFileSystem(newDeltaHadoopConf())
     if (!fs.exists(logPath)) {
       if (!fs.mkdirs(logPath)) {
-        throw new IOException(s"Cannot create $logPath")
+        throw DeltaErrors.cannotCreateLogPathException(logPath.toString)
       }
     }
   }

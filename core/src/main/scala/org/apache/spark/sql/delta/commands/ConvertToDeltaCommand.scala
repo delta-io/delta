@@ -548,8 +548,8 @@ class ParquetTable(
               try {
                 mergedSchema = SchemaMergingUtils.mergeSchemas(mergedSchema, schema)
               } catch { case cause: AnalysisException =>
-                throw new SparkException(
-                  s"Failed to merge schema of file ${footer.getFile}:\n${schema.treeString}", cause)
+                throw DeltaErrors.failedMergeSchemaFile(
+                  footer.getFile.toString, schema.treeString, cause)
               }
             }
             Iterator.single(mergedSchema)

@@ -176,9 +176,7 @@ object Protocol {
   /** Cast the table property for the protocol version to an integer. */
   def getVersion(key: String, value: String): Int = {
     try value.toInt catch {
-      case n: NumberFormatException =>
-        throw new IllegalArgumentException(
-          s"Protocol property $key needs to be an integer. Found $value", n)
+      case n: NumberFormatException => throw DeltaErrors.protocolPropNotIntException(key, value)
     }
   }
 

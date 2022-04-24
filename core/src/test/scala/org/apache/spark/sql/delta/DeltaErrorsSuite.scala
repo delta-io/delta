@@ -21,6 +21,7 @@ import java.io.{PrintWriter, StringWriter}
 import scala.sys.process.Process
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.DeltaErrors.generateDocsLink
 import org.apache.spark.sql.delta.actions.{Action, Protocol}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.Constraints.NotNull
@@ -38,9 +39,11 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.Uuid
+import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{IntegerType, MetadataBuilder, NullType, StringType, StructField, StructType}
+
 
 trait DeltaErrorsSuiteBase
     extends QueryTest
@@ -202,7 +205,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.generateManifestWithColumnMappingNotSupported
       }
       assert(e.getMessage == "Manifest generation is not supported for tables that leverage " +
-        "column mapping, as external readers cannot read these Delta tables. See Databricks " +
+        "column mapping, as external readers cannot read these Delta tables. See Delta " +
         "documentation for more details.")
     }
     {
@@ -520,6 +523,132 @@ trait DeltaErrorsSuiteBase
       assert(e.getMessage == "(`spark.delta.logStore.class`) and " +
         "(`spark.delta.logStore.key`) cannot " +
         "be set at the same time. Please set only one group of them.")
+    }
+    {
+      val e = intercept[DeltaSparkException] {
+        throw DeltaErrors.failedMergeSchemaFile("file", "schema", null)
+      }
+      assert(e.getErrorClass == "FAILED_MERGE_SCHEMA_FILE")
+      assert(e.getMessage == "Failed to merge schema of file file:\nschema")
+    }
+    {
+      val id = TableIdentifier("id")
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.operationNotSupportedException("op", id)
+      }
+      assert(e.getErrorClass == "OPERATION_NOT_ALLOWED")
+      assert(e.getMessage == s"Operation not allowed: `op` is not supported " +
+        s"for Delta tables: $id")
+    }
+    {
+      val e = intercept[DeltaFileNotFoundException] {
+        throw DeltaErrors.fileOrDirectoryNotFoundException("path")
+      }
+      assert(e.getErrorClass == "FILE_OR_DIR_NOT_FOUND")
+      assert(e.getMessage == "No such file or directory: path")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.invalidPartitionColumn("col", "tbl")
+      }
+      assert(e.getErrorClass == "INVALID_PARTITION_COLUMN")
+      assert(e.getMessage == "col is not a valid partition column in table tbl.")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.cannotFindSourceVersionException("json")
+      }
+      assert(e.getErrorClass == "CANNOT_FIND_VERSION")
+      assert(e.getMessage == "Cannot find 'sourceVersion' in json")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.unknownConfigurationKeyException("confKey")
+      }
+      assert(e.getErrorClass == "UNKNOWN_CONFIGURATION")
+      assert(e.getMessage == "Unknown configuration was specified: confKey")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.pathNotExistsException("path")
+      }
+      assert(e.getErrorClass == "PATH_DOES_NOT_EXIST")
+      assert(e.getMessage == "path doesn't exist")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.illegalFilesFound("file")
+      }
+      assert(e.getErrorClass == "ILLEGAL_FILE_FOUND")
+      assert(e.getMessage == "Illegal files found in a dataChange = false transaction. Files: file")
+    }
+    {
+      val path = new Path("parent", "child")
+      val specifiedSchema = StructType(Seq(StructField("a", IntegerType)))
+      val existingSchema = StructType(Seq(StructField("b", StringType)))
+      val diffs = Seq("a", "b")
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.createTableWithDifferentSchemaException(
+          path, specifiedSchema, existingSchema, diffs)
+      }
+      assert(e.getErrorClass == "CREATE_TABLE_SCHEME_MISMATCH")
+    }
+    {
+      val path = new Path("parent", "child")
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.noHistoryFound(path)
+      }
+      assert(e.getErrorClass == "NO_COMMITS_FOUND")
+      assert(e.getMessage == s"No commits found at $path")
+    }
+    {
+      val e = intercept[DeltaRuntimeException] {
+        throw DeltaErrors.castPartitionValueException("partitionValue", StringType)
+      }
+      assert(e.getErrorClass == "FAILED_CAST_PARTITION_VALUE")
+      assert(e.getMessage == s"Failed to cast partition value `partitionValue` to $StringType")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.sparkSessionNotSetException()
+      }
+      assert(e.getErrorClass == "SPARK_SESSION_NOT_SET")
+      assert(e.getMessage == "Active SparkSession not set.")
+    }
+    {
+      val id = Identifier.of(Array("namespace"), "name")
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotReplaceMissingTableException(id)
+      }
+      assert(e.getErrorClass == "CANNOT_REPLACE_MISSING_TABLE")
+      assert(e.getMessage == s"Table $id cannot be replaced as it does not exist. " +
+        s"Use CREATE OR REPLACE TABLE to create the table.")
+    }
+    {
+      val e = intercept[DeltaIOException] {
+        throw DeltaErrors.cannotCreateLogPathException("logPath")
+      }
+      assert(e.getErrorClass == "CANNOT_CREATE_LOG_PATH")
+      assert(e.getMessage == "Cannot create logPath")
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.protocolPropNotIntException("key", "value")
+      }
+      assert(e.getErrorClass == "PROTOCOL_PROPERTY_NOT_INT")
+      assert(e.getMessage == "Protocol property key needs to be an integer. Found value")
+    }
+    {
+      val path = new Path("parent", "child")
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.createExternalTableWithoutLogException(path, "tableName", spark)
+      }
+      val msg = s"""You are trying to create an external table tableName
+        |from `$path` using Delta, but there is no transaction log present at
+        |`$path/_delta_log`. Check the upstream job to make sure that it is writing using
+        |format("delta") and that the path is the root of the table.""".stripMargin
+      assert(e.getErrorClass == "CREATE_EXTERNAL_TABLE_WITHOUT_LOG")
+      assert(e.getMessage.startsWith(msg))
     }
   }
 }
