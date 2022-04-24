@@ -161,7 +161,7 @@ class DeltaSuite extends QueryTest
         spark.read.format("delta").load(tempDir.toString).collect()
       }
     }.getMessage
-    assert(e2.contains("is not a Delta table"))
+    assert(e2.contains("Path does not exist"))
   }
 
   test("SC-70676: directory deleted before first DataFrame is defined") {
@@ -177,7 +177,7 @@ class DeltaSuite extends QueryTest
     val e = intercept[AnalysisException] {
       spark.read.format("delta").load(tempDir.toString).collect()
     }.getMessage
-    assert(e.contains("is not a Delta table"))
+    assert(e.contains("Path does not exist"))
   }
 
   test("append then read") {
@@ -674,7 +674,7 @@ class DeltaSuite extends QueryTest
           .show()
       }
 
-      assert(e.getMessage.contains("is not a Delta table"))
+      assert(e.getMessage.contains("Path does not exist"))
       assert(e.getMessage.contains(tempDir.getCanonicalPath))
 
       assert(!tempDir.exists())

@@ -36,6 +36,7 @@ import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.expressions._
 import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsOverwrite, SupportsTruncate, V1Write, WriteBuilder}
+import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.sources.{BaseRelation, Filter, InsertableRelation}
 import org.apache.spark.sql.types.StructType
@@ -160,6 +161,12 @@ case class DeltaTableV2(
     // force update() if necessary in DataFrameReader.load code
     snapshot
     if (!deltaLog.tableExists) {
+      // special error handling for path based tables
+      if (catalogTable.isEmpty
+        && !rootPath.getFileSystem(deltaLog.newDeltaHadoopConf()).exists(rootPath)) {
+        throw QueryCompilationErrors.dataPathNotExistError(rootPath.toString)
+      }
+
       val id = catalogTable.map(ct => DeltaTableIdentifier(table = Some(ct.identifier)))
         .getOrElse(DeltaTableIdentifier(path = Some(path.toString)))
       throw DeltaErrors.notADeltaTableException(id)
