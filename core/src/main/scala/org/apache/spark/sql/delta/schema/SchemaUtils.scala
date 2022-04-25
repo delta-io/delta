@@ -970,6 +970,10 @@ object SchemaUtils {
     col(UnresolvedAttribute.quoted(field.name).name)
   }
 
+  /**  converting field name to column type with quoted back-ticks */
+  def fieldNameToColumn(field: String): Column = {
+    col(quoteIdentifier(field))
+  }
   // Escapes back-ticks within the identifier name with double-back-ticks, and then quote the
   // identifier with back-ticks.
   def quoteIdentifier(part: String): String = s"`${part.replace("`", "``")}`"
