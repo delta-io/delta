@@ -27,6 +27,16 @@ utilizing [Delta Standalone JVM library](https://github.com/delta-io/connectors#
 - The current version only supports Flink `Datastream` API. Support for Flink Table API / SQL, along with Flink Catalog's implementation for storing Delta table's metadata in an external metastore, are planned to be added in the next releases.
 - The current version only provides Delta Lake's transactional guarantees for tables stored on HDFS and Microsoft Azure Storage.
 
+### Flink metrics
+#### Delta Sink
+Delta Sink currently exposes following Flink metrics:
+
+| metric name |                                        description                                        | update interval |
+|:-----------:|:-----------------------------------------------------------------------------------------:|:---------------:|
+|    DeltaSinkRecordsOut    |                  Counter for how many records were processed by the sink                  | on every record |
+|    DeltaSinkRecordsWritten    |     Counter for how many records were written to the actual files on the file system      |  on checkpoint  |
+|    DeltaSinkBytesWritten    | Counter for how many bytes were written to the actual files on the underlying file system |  on checkpoint  |
+
 ## Java API docs
 See the [Java API docs](https://delta-io.github.io/connectors/latest/delta-flink/api/java/index.html) here.
 

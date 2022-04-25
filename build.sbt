@@ -695,6 +695,7 @@ lazy val flink = (project in file("flink"))
       "org.apache.flink" % "flink-connector-test-utils" % flinkVersion % "test",
       "org.apache.flink" % ("flink-clients_" + flinkScalaVersion(scalaBinaryVersion.value)) % flinkVersion % "test",
       "com.github.sbt" % "junit-interface" % "0.12" % Test,
+      "org.mockito" % "mockito-core" % "4.5.1" % Test,
 
       // Compiler plugins
       // -- Bump up the genjavadoc version explicitly to 0.18 to work with Scala 2.12

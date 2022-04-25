@@ -33,6 +33,8 @@ import org.apache.flink.api.connector.sink.Sink;
 import org.apache.flink.api.connector.sink.SinkWriter;
 import org.apache.flink.connector.file.sink.writer.FileWriter;
 import org.apache.flink.core.fs.Path;
+import org.apache.flink.metrics.Counter;
+import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.streaming.api.functions.sink.filesystem.BucketAssigner;
 import org.apache.flink.streaming.api.functions.sink.filesystem.DeltaBulkBucketWriter;
 import org.apache.flink.streaming.api.functions.sink.filesystem.OutputFileConfig;
@@ -73,6 +75,8 @@ public class DeltaWriter<IN> implements SinkWriter<IN, DeltaCommittable, DeltaWr
                                             Sink.ProcessingTimeService.ProcessingTimeCallback {
 
     private static final Logger LOG = LoggerFactory.getLogger(DeltaWriter.class);
+
+    public static final String RECORDS_OUT_METRIC_NAME = "DeltaSinkRecordsOut";
 
     /**
      * Value used as a bucket id for noop bucket states. It will be used to snapshot and indicate
@@ -133,6 +137,22 @@ public class DeltaWriter<IN> implements SinkWriter<IN, DeltaCommittable, DeltaWr
 
     private final OutputFileConfig outputFileConfig;
 
+    ///////////////////////////////////////////////////
+    // metrics
+    ///////////////////////////////////////////////////
+
+    /**
+     * Metric group for the current sink.
+     */
+    private final MetricGroup metricGroup;
+
+    /**
+     * Counter for how many records were processed by the sink.
+     *
+     * NOTE: it is not the same as how many records were written to the actual file
+     */
+    private final Counter recordsOutCounter;
+
     /**
      * A constructor creating a new empty bucket (DeltaLake table's partitions) manager.
      *
@@ -150,6 +170,7 @@ public class DeltaWriter<IN> implements SinkWriter<IN, DeltaCommittable, DeltaWr
      *                              current processing time and register timers that will execute
      *                              the given Sink.ProcessingTimeService.ProcessingTimeCallback when
      *                              firing.
+     * @param metricGroup           metric group object for the current Sink
      * @param bucketCheckInterval   interval for invoking the {@link Sink.ProcessingTimeService}'s
      *                              callback.
      * @param appId                 Unique identifier of the current Flink app. This identifier
@@ -166,6 +187,7 @@ public class DeltaWriter<IN> implements SinkWriter<IN, DeltaCommittable, DeltaWr
         final CheckpointRollingPolicy<IN, String> rollingPolicy,
         final OutputFileConfig outputFileConfig,
         final Sink.ProcessingTimeService processingTimeService,
+        final MetricGroup metricGroup,
         final long bucketCheckInterval,
         final String appId,
         final long nextCheckpointId) {
@@ -181,6 +203,10 @@ public class DeltaWriter<IN> implements SinkWriter<IN, DeltaCommittable, DeltaWr
         this.bucketerContext = new BucketerContext();
 
         this.processingTimeService = checkNotNull(processingTimeService);
+
+        this.metricGroup = metricGroup;
+        this.recordsOutCounter = metricGroup.counter(RECORDS_OUT_METRIC_NAME);
+
         checkArgument(
             bucketCheckInterval > 0,
             "Bucket checking interval for processing time should be positive.");
@@ -257,6 +283,7 @@ public class DeltaWriter<IN> implements SinkWriter<IN, DeltaCommittable, DeltaWr
         final String bucketId = bucketAssigner.getBucketId(element, bucketerContext);
         final DeltaWriterBucket<IN> bucket = getOrCreateBucketForBucketId(bucketId);
         bucket.write(element, processingTimeService.getCurrentProcessingTime());
+        recordsOutCounter.inc();
     }
 
     /**
@@ -321,7 +348,7 @@ public class DeltaWriter<IN> implements SinkWriter<IN, DeltaCommittable, DeltaWr
 
             DeltaWriterBucket<IN> restoredBucket =
                 DeltaWriterBucket.DeltaWriterBucketFactory.restoreBucket(
-                    bucketWriter, rollingPolicy, state, outputFileConfig);
+                    bucketWriter, rollingPolicy, state, outputFileConfig, metricGroup);
 
             updateActiveBucketId(bucketId, restoredBucket);
         }
@@ -361,9 +388,14 @@ public class DeltaWriter<IN> implements SinkWriter<IN, DeltaCommittable, DeltaWr
         DeltaWriterBucket<IN> bucket = activeBuckets.get(bucketId);
         if (bucket == null) {
             final Path bucketPath = assembleBucketPath(bucketId);
-            bucket =
-                DeltaWriterBucket.DeltaWriterBucketFactory.getNewBucket(
-                    bucketId, bucketPath, bucketWriter, rollingPolicy, outputFileConfig);
+            bucket = DeltaWriterBucket.DeltaWriterBucketFactory.getNewBucket(
+                bucketId,
+                bucketPath,
+                bucketWriter,
+                rollingPolicy,
+                outputFileConfig,
+                metricGroup);
+
             activeBuckets.put(bucketId, bucket);
         }
         return bucket;

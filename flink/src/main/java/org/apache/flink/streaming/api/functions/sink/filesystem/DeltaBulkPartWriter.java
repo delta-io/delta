@@ -62,7 +62,8 @@ import org.apache.flink.util.Preconditions;
  *
  * <p>
  * This class is almost exact copy of {@link OutputStreamBasedPartFileWriter}. The only modified
- * behaviour is extending {@link this#closeWriter()} method with flushing of the internal buffer.
+ * behaviour is extending {@link DeltaBulkPartWriter#closeWriter()} method with flushing of the
+ * internal buffer.
  *
  * @param <IN>       The type of input elements.
  * @param <BucketID> The type of bucket identifier

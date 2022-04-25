@@ -25,8 +25,10 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.PriorityQueue;
 import java.util.Queue;
 
@@ -39,6 +41,9 @@ import org.apache.flink.api.connector.sink.SinkWriter;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.connector.file.sink.writer.FileWriterTest;
 import org.apache.flink.core.fs.Path;
+import org.apache.flink.metrics.Counter;
+import org.apache.flink.metrics.MetricGroup;
+import org.apache.flink.metrics.groups.UnregisteredMetricsGroup;
 import org.apache.flink.streaming.api.functions.sink.filesystem.BucketAssigner;
 import org.apache.flink.streaming.api.functions.sink.filesystem.OutputFileConfig;
 import org.apache.flink.streaming.api.functions.sink.filesystem.bucketassigners.BasePathBucketAssigner;
@@ -50,6 +55,7 @@ import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 /**
  * Tests for {@link DeltaWriter}.
@@ -77,6 +83,8 @@ public class DeltaWriterTest {
 
     // counter for the records produced by given test instance
     private int testRecordsCount = 0;
+
+    private Map<String, Counter> testCounters = new HashMap<>();
 
     @Test
     public void testPreCommit() throws Exception {
@@ -210,6 +218,35 @@ public class DeltaWriterTest {
         // no error - test passed
     }
 
+    @Test
+    public void testMetrics() throws Exception {
+        // GIVEN
+        File outDir = TEMP_FOLDER.newFolder();
+        Path path = new Path(outDir.toURI());
+        int rowsCount = 5;
+        List<RowData> testRows = DeltaSinkTestUtils.getTestRowData(rowsCount);
+        DeltaWriter<RowData> writer = createNewWriter(path);
+
+        // WHEN
+        writeData(writer, testRows);
+
+        // THEN
+        assertEquals(rowsCount, testCounters.get(DeltaWriter.RECORDS_OUT_METRIC_NAME).getCount());
+        // no data flushed to the actual files yet
+        assertEquals(0, testCounters.get(DeltaWriterBucket.RECORDS_WRITTEN_METRIC_NAME).getCount());
+        assertEquals(0, testCounters.get(DeltaWriterBucket.BYTES_WRITTEN_METRIC_NAME).getCount());
+
+        // AND WHEN
+        writer.prepareCommit(true);
+
+        // THEN
+        // records flushed to the files on the file system
+        assertEquals(
+            rowsCount,
+            testCounters.get(DeltaWriterBucket.RECORDS_WRITTEN_METRIC_NAME).getCount());
+        assertTrue(testCounters.get(DeltaWriterBucket.BYTES_WRITTEN_METRIC_NAME).getCount() > 0);
+    }
+
     ///////////////////////////////////////////////////////////////////////////
     // Utility Methods
     ///////////////////////////////////////////////////////////////////////////
@@ -241,6 +278,17 @@ public class DeltaWriterTest {
     }
 
     private DeltaWriter<RowData> createNewWriter(Path basePath) throws IOException {
+        MetricGroup metricGroup =
+            new UnregisteredMetricsGroup() {
+                @Override
+                public Counter counter(String name) {
+                    if (!testCounters.containsKey(name)){
+                        testCounters.put(name, super.counter(name));
+                    }
+                    return testCounters.get(name);
+                }
+            };
+
         BucketAssigner<RowData, String> bucketAssigner =
             isPartitioned ? getTestPartitionAssigner() : new BasePathBucketAssigner<>();
         return new DeltaWriter<>(
@@ -250,6 +298,7 @@ public class DeltaWriterTest {
             DeltaSinkTestUtils.ON_CHECKPOINT_ROLLING_POLICY,
             OutputFileConfig.builder().withPartSuffix(".snappy.parquet").build(),
             new ManuallyTriggeredProcessingTimeService(),
+            metricGroup,
             10,
             APP_ID,
             1

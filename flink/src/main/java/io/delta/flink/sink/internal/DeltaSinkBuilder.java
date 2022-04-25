@@ -311,6 +311,7 @@ public class DeltaSinkBuilder<IN> implements Serializable {
             rollingPolicy,
             outputFileConfig,
             context.getProcessingTimeService(),
+            context.metricGroup(),
             bucketCheckInterval,
             appId,
             nextCheckpointId);

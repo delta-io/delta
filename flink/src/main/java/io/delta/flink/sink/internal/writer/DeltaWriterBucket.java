@@ -28,6 +28,8 @@ import javax.annotation.Nullable;
 
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
 import org.apache.flink.core.fs.Path;
+import org.apache.flink.metrics.Counter;
+import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.streaming.api.functions.sink.filesystem.DeltaBulkBucketWriter;
 import org.apache.flink.streaming.api.functions.sink.filesystem.DeltaBulkPartWriter;
 import org.apache.flink.streaming.api.functions.sink.filesystem.DeltaInProgressPart;
@@ -93,6 +95,9 @@ public class DeltaWriterBucket<IN> {
 
     private static final Logger LOG = LoggerFactory.getLogger(DeltaWriterBucket.class);
 
+    public static final String RECORDS_WRITTEN_METRIC_NAME = "DeltaSinkRecordsWritten";
+    public static final String BYTES_WRITTEN_METRIC_NAME = "DeltaSinkBytesWritten";
+
     private final String bucketId;
 
     private final Path bucketPath;
@@ -117,6 +122,16 @@ public class DeltaWriterBucket<IN> {
     private DeltaInProgressPart<IN> deltaInProgressPart;
 
     /**
+     * Counter for how many records were written to the files on the underlying file system.
+     */
+    private final Counter recordsWrittenCounter;
+
+    /**
+     * Counter for how many bytes were written to the files on the underlying file system.
+     */
+    private final Counter bytesWrittenCounter;
+
+    /**
      * Constructor to create a new empty bucket.
      */
     private DeltaWriterBucket(
@@ -124,7 +139,8 @@ public class DeltaWriterBucket<IN> {
         Path bucketPath,
         DeltaBulkBucketWriter<IN, String> bucketWriter,
         CheckpointRollingPolicy<IN, String> rollingPolicy,
-        OutputFileConfig outputFileConfig) {
+        OutputFileConfig outputFileConfig,
+        MetricGroup metricGroup) {
         this.bucketId = checkNotNull(bucketId);
         this.bucketPath = checkNotNull(bucketPath);
         this.bucketWriter = checkNotNull(bucketWriter);
@@ -135,6 +151,9 @@ public class DeltaWriterBucket<IN> {
         this.uniqueId = UUID.randomUUID().toString();
         this.partCounter = 0;
         this.inProgressPartRecordCount = 0;
+
+        this.recordsWrittenCounter = metricGroup.counter(RECORDS_WRITTEN_METRIC_NAME);
+        this.bytesWrittenCounter = metricGroup.counter(BYTES_WRITTEN_METRIC_NAME);
     }
 
     /**
@@ -144,14 +163,16 @@ public class DeltaWriterBucket<IN> {
         DeltaBulkBucketWriter<IN, String> partFileFactory,
         CheckpointRollingPolicy<IN, String> rollingPolicy,
         DeltaWriterBucketState bucketState,
-        OutputFileConfig outputFileConfig) {
+        OutputFileConfig outputFileConfig,
+        MetricGroup metricGroup) {
 
         this(
             bucketState.getBucketId(),
             bucketState.getBucketPath(),
             partFileFactory,
             rollingPolicy,
-            outputFileConfig);
+            outputFileConfig,
+            metricGroup);
     }
 
     /**
@@ -304,6 +325,9 @@ public class DeltaWriterBucket<IN> {
             pendingFiles.add(pendingFile);
             deltaInProgressPart = null;
             inProgressPartRecordCount = 0;
+
+            recordsWrittenCounter.inc(pendingFile.getRecordCount());
+            bytesWrittenCounter.inc(fileSize);
         }
     }
 
@@ -422,18 +446,20 @@ public class DeltaWriterBucket<IN> {
             final Path bucketPath,
             final DeltaBulkBucketWriter<IN, String> bucketWriter,
             final CheckpointRollingPolicy<IN, String> rollingPolicy,
-            final OutputFileConfig outputFileConfig) {
+            final OutputFileConfig outputFileConfig,
+            final MetricGroup metricGroup) {
             return new DeltaWriterBucket<>(
-                bucketId, bucketPath, bucketWriter, rollingPolicy, outputFileConfig);
+                bucketId, bucketPath, bucketWriter, rollingPolicy, outputFileConfig, metricGroup);
         }
 
         static <IN> DeltaWriterBucket<IN> restoreBucket(
             final DeltaBulkBucketWriter<IN, String> bucketWriter,
             final CheckpointRollingPolicy<IN, String> rollingPolicy,
             final DeltaWriterBucketState bucketState,
-            final OutputFileConfig outputFileConfig) {
+            final OutputFileConfig outputFileConfig,
+            final MetricGroup metricGroup) {
             return new DeltaWriterBucket<>(
-                bucketWriter, rollingPolicy, bucketState, outputFileConfig);
+                bucketWriter, rollingPolicy, bucketState, outputFileConfig, metricGroup);
         }
     }
 }

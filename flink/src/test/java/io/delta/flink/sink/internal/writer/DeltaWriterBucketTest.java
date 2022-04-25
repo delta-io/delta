@@ -21,7 +21,9 @@ package io.delta.flink.sink.internal.writer;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -30,6 +32,9 @@ import io.delta.flink.sink.internal.committer.DeltaCommitter;
 import io.delta.flink.sink.utils.DeltaSinkTestUtils;
 import io.delta.flink.sink.utils.TestParquetReader;
 import org.apache.flink.core.fs.Path;
+import org.apache.flink.metrics.Counter;
+import org.apache.flink.metrics.MetricGroup;
+import org.apache.flink.metrics.SimpleCounter;
 import org.apache.flink.streaming.api.functions.sink.filesystem.OutputFileConfig;
 import org.apache.flink.streaming.api.functions.sink.filesystem.PartFileInfo;
 import org.apache.flink.streaming.api.functions.sink.filesystem.rollingpolicies.CheckpointRollingPolicy;
@@ -37,7 +42,9 @@ import org.apache.flink.table.data.RowData;
 import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.mockito.Mockito;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 /**
  * Tests for {@link DeltaWriterBucket}.
@@ -48,6 +55,8 @@ public class DeltaWriterBucketTest {
     public static final TemporaryFolder TEMP_FOLDER = new TemporaryFolder();
     private static final String BUCKET_ID = "testing-bucket";
     private static final String APP_ID = "1";
+
+    private Map<String, Counter> testCounters = new HashMap<>();
 
     @Test
     public void testOnCheckpointNoPendingRecoverable() throws IOException {
@@ -197,23 +206,62 @@ public class DeltaWriterBucketTest {
         assertBucketStateEquals(bucketState, deserialized);
     }
 
+    @Test
+    public void testMetrics() throws Exception {
+        // GIVEN
+        File outDir = TEMP_FOLDER.newFolder();
+        Path bucketPath = new Path(outDir.toURI());
+        int rowsCount = 2;
+        List<RowData> testRows = DeltaSinkTestUtils.getTestRowData(rowsCount);
+
+        DeltaWriterBucket<RowData> bucketWriter = getBucketWriter(bucketPath);
+
+        // WHEN
+        writeData(bucketWriter, testRows);
+        List<DeltaCommittable> deltaCommittables = onCheckpointActions(
+            bucketWriter,
+            bucketPath,
+            false // doCommit
+        );
+
+        // THEN
+        assertEquals(
+            rowsCount,
+            testCounters.get(DeltaWriterBucket.RECORDS_WRITTEN_METRIC_NAME).getCount());
+        assertTrue(testCounters.get(DeltaWriterBucket.BYTES_WRITTEN_METRIC_NAME).getCount() > 0);
+    }
+
     ///////////////////////////////////////////////////////////////////////////
     // Utility Methods
     ///////////////////////////////////////////////////////////////////////////
 
-    private static DeltaWriterBucket<RowData> getBucketWriter(
+    private DeltaWriterBucket<RowData> getBucketWriter(
         Path bucketPath,
         CheckpointRollingPolicy<RowData, String> rollingPolicy) throws IOException {
+
+        // need to mock the metric group here since it's complicated to initialize a Flink's
+        // MetricGroup without the context object
+        MetricGroup metricGroupMock = Mockito.mock(MetricGroup.class);
+        Mockito.when(metricGroupMock.counter(Mockito.anyString())).thenAnswer(
+            invocation -> {
+                String metricName = invocation.getArgument(0, String.class);
+                if (!testCounters.containsKey(metricName)) {
+                    testCounters.put(metricName, new SimpleCounter());
+                }
+                return testCounters.get(metricName);
+            });
+
         return DeltaWriterBucket.DeltaWriterBucketFactory.getNewBucket(
             BUCKET_ID,
             bucketPath,
             DeltaSinkTestUtils.createBucketWriter(bucketPath),
             rollingPolicy,
-            OutputFileConfig.builder().withPartSuffix(".snappy.parquet").build()
+            OutputFileConfig.builder().withPartSuffix(".snappy.parquet").build(),
+            metricGroupMock
         );
     }
 
-    private static DeltaWriterBucket<RowData> getBucketWriter(Path bucketPath) throws IOException {
+    private DeltaWriterBucket<RowData> getBucketWriter(Path bucketPath) throws IOException {
         return getBucketWriter(bucketPath, DeltaSinkTestUtils.ON_CHECKPOINT_ROLLING_POLICY);
     }
 
