@@ -22,6 +22,7 @@ import java.util.Locale
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraints}
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
@@ -51,6 +52,37 @@ trait AlterDeltaTableCommand extends DeltaCommand {
       throw DeltaErrors.notADeltaTableException(table.name())
     }
     txn
+  }
+
+  /**
+   * Check if the column to change has any dependent expressions:
+   *   - generated column expressions
+   *   - check constraints
+   */
+  protected def checkDependentExpressions(
+      sparkSession: SparkSession,
+      columnParts: Seq[String],
+      newMetadata: actions.Metadata,
+      protocol: Protocol,
+      operationName: String): Unit = {
+    if (!sparkSession.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS)) {
+      return
+    }
+    // check if the column to change is referenced by check constraints
+    val dependentConstraints =
+      Constraints.findDependentConstraints(sparkSession, columnParts, newMetadata)
+    if (dependentConstraints.nonEmpty) {
+      throw DeltaErrors.foundViolatingConstraintsForColumnChange(
+        operationName, UnresolvedAttribute(columnParts).name, dependentConstraints)
+    }
+    // check if the column to change is referenced by any generated columns
+    val dependentGenCols = SchemaUtils.findDependentGeneratedColumns(
+      sparkSession, columnParts, protocol, newMetadata.schema)
+    if (dependentGenCols.nonEmpty) {
+      throw DeltaErrors.foundViolatingGeneratedColumnsForColumnChange(
+        operationName, UnresolvedAttribute(columnParts).name, dependentGenCols.toList)
+    }
   }
 }
 
@@ -248,15 +280,16 @@ case class AlterTableDropColumnsDeltaCommand(
   override def run(sparkSession: SparkSession): Seq[Row] = {
     if (!sparkSession.sessionState.conf.getConf(
       DeltaSQLConf.DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED)) {
-      val errorMessage = "Drop Column is not enabled in Delta."
-
-      throw new AnalysisException(errorMessage)
+      // this featue is still behind the flag and not ready for release.
+      throw DeltaErrors.dropColumnNotSupported(suggestUpgrade = false)
     }
-
     val deltaLog = table.deltaLog
     recordDeltaOperation(deltaLog, "delta.ddl.alter.dropColumns") {
       val txn = startTransaction()
       val metadata = txn.metadata
+      if (txn.metadata.columnMappingMode == NoMapping) {
+        throw DeltaErrors.dropColumnNotSupported(suggestUpgrade = true)
+      }
       val newSchema = columnsToDrop.foldLeft(metadata.schema) { case (schema, columnPath) =>
         val (parentPosition, _) =
           SchemaUtils.findColumnPosition(
@@ -266,32 +299,15 @@ case class AlterTableDropColumnsDeltaCommand(
 
       // in case any of the dropped column is partition columns
       val droppedColumnSet = columnsToDrop.map(UnresolvedAttribute(_).name).toSet
-      val droppingPartitionCols = metadata.partitionColumns.exists(droppedColumnSet.contains(_))
-      if (droppingPartitionCols) {
-        throw DeltaErrors.dropPartitionColumnNotSupported
+      val droppingPartitionCols = metadata.partitionColumns.filter(droppedColumnSet.contains(_))
+      if (droppingPartitionCols.nonEmpty) {
+        throw DeltaErrors.dropPartitionColumnNotSupported(droppingPartitionCols)
       }
 
       val newMetadata = metadata.copy(schemaString = newSchema.json)
 
-      if (sparkSession.sessionState.conf.getConf(
-          DeltaSQLConf.DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS)) {
-        columnsToDrop.foreach { columnParts =>
-          // need to check if the column to rename is referenced by check constraints
-          val dependentConstraints =
-            Constraints.findDependentConstraints(sparkSession, columnParts, newMetadata)
-          if (dependentConstraints.nonEmpty) {
-            throw DeltaErrors.foundViolatingConstraintsForColumnChange(
-              "drop", UnresolvedAttribute(columnParts).name, dependentConstraints)
-          }
-
-          // need to check if the renaming the column would affect any generated columns
-          val dependentGenCols = SchemaUtils.findDependentGeneratedColumns(
-            sparkSession, columnParts, txn.protocol, newMetadata.schema)
-          if (dependentGenCols.nonEmpty) {
-            throw DeltaErrors.foundViolatingGeneratedColumnsForColumnChange(
-              "drop", UnresolvedAttribute(columnParts).name, dependentGenCols)
-          }
-        }
+      columnsToDrop.foreach { columnParts =>
+        checkDependentExpressions(sparkSession, columnParts, newMetadata, txn.protocol, "drop")
       }
 
       txn.updateMetadata(newMetadata)
@@ -375,26 +391,10 @@ case class AlterTableChangeColumnDeltaCommand(
       val newMetadata = metadata.copy(
         schemaString = newSchema.json, partitionColumns = newPartitionColumns)
 
-      // need to validate the changes if there is a column rename
-      if (newColumn.name != columnName &&
-        sparkSession.sessionState.conf.getConf(
-          DeltaSQLConf.DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS)) {
-        val columnParts = columnPath :+ columnName
-        // need to check if the column to rename is referenced by check constraints
-        val dependentConstraints =
-          Constraints.findDependentConstraints(sparkSession, columnParts, newMetadata)
-        if (dependentConstraints.nonEmpty) {
-          throw DeltaErrors.foundViolatingConstraintsForColumnChange(
-            "rename", UnresolvedAttribute(columnParts).name, dependentConstraints)
-        }
-
-        // need to check if the renaming the column would affect any generated columns
-        val dependentGenCols = SchemaUtils.findDependentGeneratedColumns(
-          sparkSession, columnParts, txn.protocol, newMetadata.schema)
-        if (dependentGenCols.nonEmpty) {
-          throw DeltaErrors.foundViolatingGeneratedColumnsForColumnChange(
-            "rename", UnresolvedAttribute(columnParts).name, dependentGenCols.toList)
-        }
+      if (newColumn.name != columnName) {
+        // need to validate the changes if the column is renamed
+        checkDependentExpressions(
+          sparkSession, columnPath :+ columnName, newMetadata, txn.protocol, "rename")
       }
 
       txn.updateMetadata(newMetadata)

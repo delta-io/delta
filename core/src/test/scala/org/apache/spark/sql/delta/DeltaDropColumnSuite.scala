@@ -25,10 +25,35 @@ import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.types.{ArrayType, IntegerType, MapType, StringType, StructType}
 
 class DeltaDropColumnSuite extends QueryTest with DeltaArbitraryColumnNameSuiteBase {
+
   override protected val sparkConf: SparkConf =
     super.sparkConf.set(DeltaSQLConf.DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED.key, "true")
 
-  test("drop column") {
+  test("drop column disallowed with sql flag off") {
+    withSQLConf(DeltaSQLConf.DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED.key -> "false") {
+      withTable("t1") {
+        createTableWithSQLAPI("t1",
+          simpleNestedData,
+          Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))
+
+        assertException("DROP COLUMN is not supported for your Delta table") {
+          spark.sql(s"alter table t1 drop column arr")
+        }
+      }
+    }
+  }
+
+  test("drop column disallowed with no mapping mode") {
+    withTable("t1") {
+      createTableWithSQLAPI("t1", simpleNestedData)
+
+      assertException("DROP COLUMN is not supported for your Delta table") {
+        spark.sql(s"alter table t1 drop column arr")
+      }
+    }
+  }
+
+  test("drop column - basic") {
     withTable("t1") {
       createTableWithSQLAPI("t1",
         simpleNestedData,
@@ -45,6 +70,24 @@ class DeltaDropColumnSuite extends QueryTest with DeltaArbitraryColumnNameSuiteB
           Row(Row(1), Map("k1" -> "v1")),
           Row(Row(2), Map("k2" -> "v2"))))
 
+      // check delta history
+      checkAnswer(
+        spark.sql("describe history t1")
+          .select("operation", "operationParameters")
+          .where("version = 3"),
+        Seq(
+          Row("DROP COLUMNS", Map("columns" -> """["a","b.c"]"""))))
+    }
+  }
+
+  test("dropped columns can no longer be queried") {
+    withTable("t1") {
+      createTableWithSQLAPI("t1",
+        simpleNestedData,
+        Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))
+
+      spark.sql("alter table t1 drop columns (a, b.c, arr)")
+
       // dropped column cannot be queried anymore
       val err1 = intercept[AnalysisException] {
         spark.table("t1").where("a = 'str1'").collect()
@@ -55,13 +98,16 @@ class DeltaDropColumnSuite extends QueryTest with DeltaArbitraryColumnNameSuiteB
         spark.table("t1").select("min(a)").collect()
       }.getMessage
       assert(err2.contains("does not exist") || err2.contains("cannot resolve"))
+    }
+  }
 
-      checkAnswer(
-        spark.sql("describe history t1")
-          .select("operation", "operationParameters")
-          .where("version = 3"),
-        Seq(
-          Row("DROP COLUMNS", Map("columns" -> """["a","b.c"]"""))))
+  test("drop column - corner cases") {
+    withTable("t1") {
+      createTableWithSQLAPI("t1",
+        simpleNestedData,
+        Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))
+
+      spark.sql("alter table t1 drop columns (a, b.c, arr)")
 
       // dropping non-existent field would fail
       assertException("Missing field a") {
@@ -84,14 +130,18 @@ class DeltaDropColumnSuite extends QueryTest with DeltaArbitraryColumnNameSuiteB
 
       spark.sql("alter table t1 add column (e struct<e1 string, e2 string>)")
 
-      // rename column to contain arbitrary chars
+      // can drop a column with arbitrary chars
       spark.sql(s"alter table t1 rename column map to `${colName("map")}`")
-
-      // try drop map after rename to arbitrary chars now
       spark.sql(s"alter table t1 drop columns `${colName("map")}`")
 
-      // corner-case test - can drop a nested column when the top-level column is the only column
+      // only column e is left now
+      assert(spark.table("t1").schema.map(_.name) == Seq("e"))
+
+      // can drop a nested column when the top-level column is the only column
       spark.sql("alter table t1 drop column e.e1")
+      val resultSchema = spark.table("t1").schema
+      assert(resultSchema.findNestedField("e" :: "e2" :: Nil).isDefined)
+      assert(resultSchema.findNestedField("e" :: "e1" :: Nil).isEmpty)
     }
   }
 
@@ -117,20 +167,20 @@ class DeltaDropColumnSuite extends QueryTest with DeltaArbitraryColumnNameSuiteB
 
       spark.sql("alter table t1 add constraint arrValue check (arr[0] > 0)")
 
-      assertException("Cannot drop column a") {
+      assertException("Cannot drop column a because this column is referenced by") {
         spark.sql("alter table t1 drop column a")
       }
 
-      assertException("Cannot drop column arr") {
+      assertException("Cannot drop column arr because this column is referenced by") {
         spark.sql("alter table t1 drop column arr")
       }
 
-      assertException("Cannot drop column map") {
+      assertException("Cannot drop column map because this column is referenced by") {
         spark.sql("alter table t1 drop column map")
       }
 
       // cannot drop b because its child is referenced
-      assertException("Cannot drop column b") {
+      assertException("Cannot drop column b because this column is referenced by") {
         spark.sql("alter table t1 drop column b")
       }
 
@@ -176,19 +226,19 @@ class DeltaDropColumnSuite extends QueryTest with DeltaArbitraryColumnNameSuiteB
 
         simpleNestedData.write.format("delta").mode("append").saveAsTable("t1")
 
-        assertException("Cannot drop column a") {
+        assertException("Cannot drop column a because this column is referenced by") {
           spark.sql("alter table t1 drop column a")
         }
 
-        assertException("Cannot drop column b") {
+        assertException("Cannot drop column b because this column is referenced by") {
           spark.sql("alter table t1 drop column b")
         }
 
-        assertException("Cannot drop column b.d") {
+        assertException("Cannot drop column b.d because this column is referenced by") {
           spark.sql("alter table t1 drop column b.d")
         }
 
-        assertException("Cannot drop column arr") {
+        assertException("Cannot drop column arr because this column is referenced by") {
           spark.sql("alter table t1 drop column arr")
         }
 
@@ -249,7 +299,7 @@ class DeltaDropColumnSuite extends QueryTest with DeltaArbitraryColumnNameSuiteB
       val e = intercept[AnalysisException] {
         sql("alter table t1 drop columns (a)")
       }
-      assert(e.getMessage.contains("Dropping partition columns is not allowed"))
+      assert(e.getMessage.contains("Dropping partition columns (a) is not allowed"))
     }
   }
 

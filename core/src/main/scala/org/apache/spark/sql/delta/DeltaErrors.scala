@@ -1328,7 +1328,7 @@ object DeltaErrors
   private def columnMappingAdviceMessage: String = {
     s"""
        |Please upgrade your Delta table to reader version 2 and writer version 5
-       | and change the column mapping mode to name mapping. You can use the following command:
+       | and change the column mapping mode to 'name' mapping. You can use the following command:
        |
        | ALTER TABLE <table_name> SET TBLPROPERTIES (
        |   'delta.columnMapping.mode' = 'name',
@@ -1340,19 +1340,17 @@ object DeltaErrors
 
   def columnRenameNotSupported: Throwable = {
     val adviceMsg = columnMappingAdviceMessage
-    new AnalysisException(
-      s"""
-         |Column rename is not supported for your Delta table. $adviceMsg
-         |""".stripMargin)
+    new DeltaAnalysisException("UNSUPPORTED_RENAME_COLUMN", Array(adviceMsg))
   }
 
-  def dropColumnNotSupported: Throwable = {
-    val adviceMsg = columnMappingAdviceMessage
+  def dropColumnNotSupported(suggestUpgrade: Boolean): Throwable = {
+    val adviceMsg = if (suggestUpgrade) columnMappingAdviceMessage else ""
     new DeltaAnalysisException("UNSUPPORTED_DROP_COLUMN", Array(adviceMsg))
   }
 
-  def dropPartitionColumnNotSupported: Throwable = {
-    new DeltaAnalysisException("UNSUPPORTED_DROP_PARTITION_COLUMN", Array())
+  def dropPartitionColumnNotSupported(droppingPartCols: Seq[String]): Throwable = {
+    new DeltaAnalysisException("UNSUPPORTED_DROP_PARTITION_COLUMN",
+      Array(droppingPartCols.mkString(",")))
   }
 
   def schemaChangeDuringMappingModeChangeNotSupported(

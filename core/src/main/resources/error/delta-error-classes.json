@@ -131,7 +131,11 @@
     "sqlState" : "0A000"
   },
   "UNSUPPORTED_DROP_PARTITION_COLUMN" : {
-    "message" : [ "Dropping partition columns is not allowed." ],
+    "message" : [ "Dropping partition columns (%s) is not allowed." ],
+    "sqlState" : "0A000"
+  },
+  "UNSUPPORTED_RENAME_COLUMN" : {
+    "message" : [ "Column rename is not supported for your Delta table. %s" ],
     "sqlState" : "0A000"
   },
   "UNSUPPORTED_INVALID_CHARACTERS_IN_COLUMN_NAME" : {
