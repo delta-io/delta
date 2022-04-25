@@ -318,19 +318,44 @@ case class PreparedDeltaFileIndex(
   override def matchingFiles(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): Seq[AddFile] = {
-    val actualFilters = ExpressionSet(partitionFilters ++ dataFilters)
-    if (preparedScan.allFilters == actualFilters) {
-      preparedScan.files.distinct
+    val currentFilters = ExpressionSet(partitionFilters ++ dataFilters)
+    val (addFiles, eventData) = if (currentFilters == preparedScan.allFilters ||
+        currentFilters == preparedScan.filtersUsedForSkipping) {
+      // [[DeltaScan]] was created using `allFilters` out of which only `filtersUsedForSkipping`
+      // filters were used for skipping while creating the DeltaScan.
+      // If currentFilters is same as allFilters, then no need to recalculate files and we can use
+      // previous results.
+      // If currentFilters is same as filtersUsedForSkipping, then also we don't need to recalculate
+      // files as [[DeltaScan.files]] were calculates using filtersUsedForSkipping only. So if we
+      // recalculate, we will get same result. So we should use previous result in this case also.
+      val eventData = Map(
+        "reused" -> true,
+        "currentFiltersSameAsPreparedAllFilters" -> (currentFilters == preparedScan.allFilters),
+        "currentFiltersSameAsPreparedFiltersUsedForSkipping" ->
+          (currentFilters == preparedScan.filtersUsedForSkipping)
+      )
+      (preparedScan.files.distinct, eventData)
     } else {
       logInfo(
         s"""
            |Prepared scan does not match actual filters. Reselecting files to query.
            |Prepared: ${preparedScan.allFilters}
-           |Actual: ${actualFilters}
+           |Actual: ${currentFilters}
          """.stripMargin)
-      preparedScan.scannedSnapshot.filesForScan(
+      val eventData = Map(
+        "reused" -> false,
+        "preparedAllFilters" -> preparedScan.allFilters.mkString(","),
+        "preparedFiltersUsedForSkipping" -> preparedScan.filtersUsedForSkipping.mkString(","),
+        "currentFilters" -> currentFilters.mkString(",")
+      )
+      val files = preparedScan.scannedSnapshot.filesForScan(
         projection = Nil, partitionFilters ++ dataFilters).files
+      (files, eventData)
     }
+    recordDeltaEvent(deltaLog,
+      opType = "delta.preparedDeltaFileIndex.reuseSkippingResult",
+      data = eventData)
+    addFiles
   }
 
   /**

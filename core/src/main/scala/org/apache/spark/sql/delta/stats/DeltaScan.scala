@@ -84,5 +84,7 @@ case class DeltaScan(
     val scanDurationMs: Long,
     val dataSkippingType: DeltaDataSkippingType) {
   assert(version == scannedSnapshot.version)
-  def allFilters: ExpressionSet = partitionFilters ++ dataFilters ++ unusedFilters
+
+  lazy val filtersUsedForSkipping: ExpressionSet = partitionFilters ++ dataFilters
+  lazy val allFilters: ExpressionSet = filtersUsedForSkipping ++ unusedFilters
 }
