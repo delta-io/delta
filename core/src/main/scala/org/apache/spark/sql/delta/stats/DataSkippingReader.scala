@@ -445,8 +445,8 @@ trait DataSkippingReaderBase
       val minCol = StatsColumn(MIN, a)
       val maxCol = StatsColumn(MAX, a)
       val nullCountCol = StatsColumn(NULL_COUNT, a)
-      // since `Literal(null, _) <=> NotNullLiteral(v, _)` returns true, means we can't skipping
-      // the file which has stats with `nullCount > 0`.
+      // since `Not(Literal(null, _) <=> NotNullLiteral(v, _))` returns true, means we can't
+      // skipping the file which has stats with `nullCount > 0`.
       getStatsColumnOpt(nullCountCol).flatMap { nullCount =>
         getStatsColumnOpt(minCol).flatMap { min =>
           getStatsColumnOpt(maxCol).map { max =>
