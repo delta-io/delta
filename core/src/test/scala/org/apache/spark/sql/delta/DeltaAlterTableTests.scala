@@ -1439,7 +1439,8 @@ trait DeltaAlterTableByNameTests extends DeltaAlterTableTests {
     }
   }
 
-  test("SET LOCATION - negative cases") {
+  test(
+      "SET LOCATION - negative cases") {
     withTable("delta_table") {
       spark.range(1).write.format("delta").saveAsTable("delta_table")
       withTempDir { dir =>
