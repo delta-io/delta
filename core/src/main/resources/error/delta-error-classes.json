@@ -134,10 +134,6 @@
     "message" : [ "Dropping partition columns (%s) is not allowed." ],
     "sqlState" : "0A000"
   },
-  "UNSUPPORTED_RENAME_COLUMN" : {
-    "message" : [ "Column rename is not supported for your Delta table. %s" ],
-    "sqlState" : "0A000"
-  },
   "UNSUPPORTED_INVALID_CHARACTERS_IN_COLUMN_NAME" : {
     "message" : [ "Found invalid character(s) among ' ,;{}()\\n\\t=' in the column names of your schema. %s" ],
     "sqlState" : "0A000"
@@ -148,6 +144,10 @@
   },
   "UNSUPPORTED_NESTED_COLUMN_IN_BLOOM_FILTER" : {
     "message" : [ "Creating a bloom filer index on a nested column is currently unsupported: %s" ],
+    "sqlState" : "0A000"
+  },
+  "UNSUPPORTED_RENAME_COLUMN" : {
+    "message" : [ "Column rename is not supported for your Delta table. %s" ],
     "sqlState" : "0A000"
   }
 }
