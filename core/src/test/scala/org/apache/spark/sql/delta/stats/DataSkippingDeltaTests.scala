@@ -595,46 +595,6 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     )
   )
 
-  testSkipping(
-    "nulls - EqualNullSafe(_, Literal(null, _)) always hit when only not-null in the file",
-    """
-      |{"a": "1"}
-      |""".stripMargin,
-    schema = new StructType().add(new StructField("a", StringType)),
-    hits = Seq(
-      "a <=> NULL",
-      "NOT a <=> NULL",
-      "a = NULL",
-      "a != NULL"
-    ),
-    misses = Seq.empty,
-    sqlConfs = Seq(
-      "spark.sql.optimizer.excludedRules" ->
-        ("org.apache.spark.sql.catalyst.optimizer.NullPropagation," +
-        "org.apache.spark.sql.catalyst.optimizer.InferFiltersFromConstraints")
-    )
-  )
-
-  testSkipping(
-    "nulls - EqualNullSafe(_, Literal(null, _)) always hit when only null in the file",
-    """
-      |{"a": null}
-      |""".stripMargin,
-    schema = new StructType().add(new StructField("a", StringType)),
-    hits = Seq(
-      "a <=> NULL",
-      "NOT a <=> NULL",
-      "a = NULL",
-      "a != NULL"
-    ),
-    misses = Seq.empty,
-    sqlConfs = Seq(
-      "spark.sql.optimizer.excludedRules" ->
-        ("org.apache.spark.sql.catalyst.optimizer.NullPropagation," +
-        "org.apache.spark.sql.catalyst.optimizer.InferFiltersFromConstraints")
-    )
-  )
-
   test("data skipping with missing stats") {
     val tempDir = Utils.createTempDir()
     Seq(1, 2, 3).toDF().write.format("delta").save(tempDir.toString)
