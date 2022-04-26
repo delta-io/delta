@@ -557,7 +557,6 @@ case class IdentityPartitionExpr(
     partitionColumn: String) extends OptimizablePartitionExpression {
 
   override def lessThan(lit: Literal): Option[Expression] = {
-    // As the partition column has truncated information, we need to turn "<" to "<=".
     Some(partitionColumn.toCol.isNull || partitionColumn.toCol < lit)
   }
 

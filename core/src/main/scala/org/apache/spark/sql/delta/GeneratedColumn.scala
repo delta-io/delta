@@ -293,12 +293,19 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
 
     val spark = SparkSession.active
     val nameEquality = spark.sessionState.analyzer.resolver
+
+    // `a.name` comes from the generation expressions which users may use different cases. We
+    // need to normalize it to the same case so that we can group expressions for the same
+    // column name together.
     val nameNormalizer: String => String =
       if (spark.sessionState.conf.caseSensitiveAnalysis) x => x else _.toLowerCase(Locale.ROOT)
 
+    /**
+     * Returns a normalized column name with its `OptimizablePartitionExpression`
+     */
     def createExpr(name: String)(func: => OptimizablePartitionExpression):
-      (String, OptimizablePartitionExpression) = {
-      nameNormalizer(name) -> func
+      Option[(String, OptimizablePartitionExpression)] = {
+      Some(nameNormalizer(name) -> func)
     }
 
     val df = Dataset.ofRows(SparkSession.active, new LocalRelation(schema.toAttributes))
@@ -309,46 +316,46 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
             case Alias(expr, partColName) =>
               expr match {
                 case Cast(AttributeOrNested(name, TimestampType), DateType, _, _) =>
-                  Some(createExpr(name)(DatePartitionExpr(partColName)))
+                  createExpr(name)(DatePartitionExpr(partColName))
                 case Cast(AttributeOrNested(name, DateType), DateType, _, _) =>
-                  Some(createExpr(name)(DatePartitionExpr(partColName)))
+                  createExpr(name)(DatePartitionExpr(partColName))
                 case Year(AttributeOrNested(name, DateType)) =>
-                  Some(createExpr(name)(YearPartitionExpr(partColName)))
+                  createExpr(name)(YearPartitionExpr(partColName))
                 case Year(Cast(AttributeOrNested(name, TimestampType), DateType, _, _)) =>
-                  Some(createExpr(name)(YearPartitionExpr(partColName)))
+                  createExpr(name)(YearPartitionExpr(partColName))
                 case Year(Cast(AttributeOrNested(name, DateType), DateType, _, _)) =>
-                  Some(createExpr(name)(YearPartitionExpr(partColName)))
+                  createExpr(name)(YearPartitionExpr(partColName))
                 case Month(Cast(AttributeOrNested(name, TimestampType), DateType, _, _)) =>
-                  Some(createExpr(name)(MonthPartitionExpr(partColName)))
+                  createExpr(name)(MonthPartitionExpr(partColName))
                 case DateFormatClass(
                   Cast(AttributeOrNested(name, DateType), TimestampType, _, _),
                       StringLiteral(format), _) =>
                     format match {
                       case DATE_FORMAT_YEAR_MONTH =>
-                        Some(createExpr(name)(
-                          DateFormatPartitionExpr(partColName, DATE_FORMAT_YEAR_MONTH)))
+                        createExpr(name)(
+                          DateFormatPartitionExpr(partColName, DATE_FORMAT_YEAR_MONTH))
                       case _ => None
                     }
                 case DateFormatClass(AttributeOrNested(name, TimestampType),
                     StringLiteral(format), _) =>
                   format match {
                     case DATE_FORMAT_YEAR_MONTH =>
-                      Some(createExpr(name)(
-                        DateFormatPartitionExpr(partColName, DATE_FORMAT_YEAR_MONTH)))
+                      createExpr(name)(
+                        DateFormatPartitionExpr(partColName, DATE_FORMAT_YEAR_MONTH))
                     case DATE_FORMAT_YEAR_MONTH_DAY_HOUR =>
-                      Some(createExpr(name)(
-                        DateFormatPartitionExpr(partColName, DATE_FORMAT_YEAR_MONTH_DAY_HOUR)))
+                      createExpr(name)(
+                        DateFormatPartitionExpr(partColName, DATE_FORMAT_YEAR_MONTH_DAY_HOUR))
                     case _ => None
                   }
                 case DayOfMonth(Cast(AttributeOrNested(name, TimestampType), DateType, _, _)) =>
-                  Some(createExpr(name)(DayPartitionExpr(partColName)))
+                  createExpr(name)(DayPartitionExpr(partColName))
                 case Hour(AttributeOrNested(name, TimestampType), _) =>
-                  Some(createExpr(name)(HourPartitionExpr(partColName)))
+                  createExpr(name)(HourPartitionExpr(partColName))
                 case Substring(AttributeOrNested(name, StringType), IntegerLiteral(pos),
                     IntegerLiteral(len)) =>
-                  Some(createExpr(name)(SubstringPartitionExpr(partColName, pos, len)))
+                  createExpr(name)(SubstringPartitionExpr(partColName, pos, len))
                 case AttributeOrNested(name, _) =>
-                  Some(createExpr(name)(IdentityPartitionExpr(partColName)))
+                  createExpr(name)(IdentityPartitionExpr(partColName))
                 case _ => None
               }
             case other =>
@@ -516,18 +523,27 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
   private val DATE_FORMAT_YEAR_MONTH_DAY_HOUR = "yyyy-MM-dd-HH"
 }
 
+/**
+ * Used to find field extractions and find the full path to a field. For attributes
+ * just return the name. For nested fields, return the dot separated path to the field,
+ * as well as the data type for both.
+ */
 object AttributeOrNested {
   def unapply(e: Expression): Option[(String, DataType)] = e match {
     case AttributeReference(name, dataType, _, _) =>
       Some((escapeName(name), dataType))
-    case g @ GetStructField(child, ordinal, _) => child match {
+    case g: GetStructField => g.child match {
       case AttributeOrNested(name, _) =>
-        val fieldName = child.dataType.asInstanceOf[StructType].fieldNames(ordinal)
-        Some((Seq(name, escapeName(fieldName)).mkString("."), g.dataType))
+        g.extractFieldName
+        Some((Seq(name, escapeName(g.extractFieldName)).mkString("."), g.dataType))
       case _ => None
     }
     case _ => None
   }
 
+  /**
+   * Copied from UnresolvedAttribute's behavior. Periods are ambiguous if they exist inside a
+   * field name, therefore escape any fields with a period in it.
+   */
   def escapeName(colName: String): String = if (colName.contains(".")) s"`$colName`" else colName
 }
