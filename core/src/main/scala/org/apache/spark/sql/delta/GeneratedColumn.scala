@@ -315,20 +315,20 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
           exprs.flatMap {
             case Alias(expr, partColName) =>
               expr match {
-                case Cast(AttributeOrNested(name, TimestampType), DateType, _, _) =>
+                case Cast(GeneratedColumnExtraction(name, TimestampType), DateType, _, _) =>
                   createExpr(name)(DatePartitionExpr(partColName))
-                case Cast(AttributeOrNested(name, DateType), DateType, _, _) =>
+                case Cast(GeneratedColumnExtraction(name, DateType), DateType, _, _) =>
                   createExpr(name)(DatePartitionExpr(partColName))
-                case Year(AttributeOrNested(name, DateType)) =>
+                case Year(GeneratedColumnExtraction(name, DateType)) =>
                   createExpr(name)(YearPartitionExpr(partColName))
-                case Year(Cast(AttributeOrNested(name, TimestampType), DateType, _, _)) =>
+                case Year(Cast(GeneratedColumnExtraction(name, TimestampType), DateType, _, _)) =>
                   createExpr(name)(YearPartitionExpr(partColName))
-                case Year(Cast(AttributeOrNested(name, DateType), DateType, _, _)) =>
+                case Year(Cast(GeneratedColumnExtraction(name, DateType), DateType, _, _)) =>
                   createExpr(name)(YearPartitionExpr(partColName))
-                case Month(Cast(AttributeOrNested(name, TimestampType), DateType, _, _)) =>
+                case Month(Cast(GeneratedColumnExtraction(name, TimestampType), DateType, _, _)) =>
                   createExpr(name)(MonthPartitionExpr(partColName))
                 case DateFormatClass(
-                  Cast(AttributeOrNested(name, DateType), TimestampType, _, _),
+                  Cast(GeneratedColumnExtraction(name, DateType), TimestampType, _, _),
                       StringLiteral(format), _) =>
                     format match {
                       case DATE_FORMAT_YEAR_MONTH =>
@@ -336,7 +336,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
                           DateFormatPartitionExpr(partColName, DATE_FORMAT_YEAR_MONTH))
                       case _ => None
                     }
-                case DateFormatClass(AttributeOrNested(name, TimestampType),
+                case DateFormatClass(GeneratedColumnExtraction(name, TimestampType),
                     StringLiteral(format), _) =>
                   format match {
                     case DATE_FORMAT_YEAR_MONTH =>
@@ -347,14 +347,15 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
                         DateFormatPartitionExpr(partColName, DATE_FORMAT_YEAR_MONTH_DAY_HOUR))
                     case _ => None
                   }
-                case DayOfMonth(Cast(AttributeOrNested(name, TimestampType), DateType, _, _)) =>
+                case DayOfMonth(Cast(GeneratedColumnExtraction(name, TimestampType),
+                    DateType, _, _)) =>
                   createExpr(name)(DayPartitionExpr(partColName))
-                case Hour(AttributeOrNested(name, TimestampType), _) =>
+                case Hour(GeneratedColumnExtraction(name, TimestampType), _) =>
                   createExpr(name)(HourPartitionExpr(partColName))
-                case Substring(AttributeOrNested(name, StringType), IntegerLiteral(pos),
+                case Substring(GeneratedColumnExtraction(name, StringType), IntegerLiteral(pos),
                     IntegerLiteral(len)) =>
                   createExpr(name)(SubstringPartitionExpr(partColName, pos, len))
-                case AttributeOrNested(name, _) =>
+                case GeneratedColumnExtraction(name, _) =>
                   createExpr(name)(IdentityPartitionExpr(partColName))
                 case _ => None
               }
@@ -479,17 +480,17 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
 
     val partitionFilters = dataFilters.flatMap { filter =>
       preprocess(filter) match {
-        case LessThan(AttributeOrNested(name, _), lit: Literal) =>
+        case LessThan(GeneratedColumnExtraction(name, _), lit: Literal) =>
           toPartitionFilter(name, _.lessThan(lit))
-        case LessThanOrEqual(AttributeOrNested(name, _), lit: Literal) =>
+        case LessThanOrEqual(GeneratedColumnExtraction(name, _), lit: Literal) =>
           toPartitionFilter(name, _.lessThanOrEqual(lit))
-        case EqualTo(AttributeOrNested(name, _), lit: Literal) =>
+        case EqualTo(GeneratedColumnExtraction(name, _), lit: Literal) =>
           toPartitionFilter(name, _.equalTo(lit))
-        case GreaterThan(AttributeOrNested(name, _), lit: Literal) =>
+        case GreaterThan(GeneratedColumnExtraction(name, _), lit: Literal) =>
           toPartitionFilter(name, _.greaterThan(lit))
-        case GreaterThanOrEqual(AttributeOrNested(name, _), lit: Literal) =>
+        case GreaterThanOrEqual(GeneratedColumnExtraction(name, _), lit: Literal) =>
           toPartitionFilter(name, _.greaterThanOrEqual(lit))
-        case IsNull(AttributeOrNested(name, _)) =>
+        case IsNull(GeneratedColumnExtraction(name, _)) =>
           toPartitionFilter(name, _.isNull)
         case _ => Nil
       }
@@ -524,16 +525,15 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
 }
 
 /**
- * Used to find field extractions and find the full path to a field. For attributes
- * just return the name. For nested fields, return the dot separated path to the field,
- * as well as the data type for both.
+ * Finds the full dot-separated path to a field and the data type of the field. This unifies
+ * handling of nested and non-nested fields, and allows pattern matching on the data type.
  */
-object AttributeOrNested {
+object GeneratedColumnExtraction {
   def unapply(e: Expression): Option[(String, DataType)] = e match {
     case AttributeReference(name, dataType, _, _) =>
       Some((escapeName(name), dataType))
     case g: GetStructField => g.child match {
-      case AttributeOrNested(name, _) =>
+      case GeneratedColumnExtraction(name, _) =>
         g.extractFieldName
         Some((Seq(name, escapeName(g.extractFieldName)).mkString("."), g.dataType))
       case _ => None
