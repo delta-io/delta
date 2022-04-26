@@ -431,13 +431,31 @@ trait DataSkippingReaderBase
       constructDataFilters(EqualNullSafe(a, v))
 
     // Match any file whose min/max range contains anything other than the rejected point.
-    case Not(Equality(SkippingEligibleColumn(a), lit @ SkippingEligibleLiteral(v)))
+    case Not(EqualTo(SkippingEligibleColumn(a), lit @ SkippingEligibleLiteral(v)))
         if lit.value != null =>
       val minCol = StatsColumn(MIN, a)
       val maxCol = StatsColumn(MAX, a)
       getStatsColumnOpt(minCol).flatMap { min =>
         getStatsColumnOpt(maxCol).map { max =>
           DataSkippingPredicate(!(min === v && max === v), minCol, maxCol)
+        }
+      }
+    case Not(EqualNullSafe(SkippingEligibleColumn(a), lit @ SkippingEligibleLiteral(v)))
+        if lit.value != null =>
+      val minCol = StatsColumn(MIN, a)
+      val maxCol = StatsColumn(MAX, a)
+      val nullCountCol = StatsColumn(NULL_COUNT, a)
+      // since `Literal(null, _) <=> NotNullLiteral(v, _)` returns true, means we can't skipping
+      // the file which has stats with `nullCount > 0`.
+      getStatsColumnOpt(nullCountCol).flatMap { nullCount =>
+        getStatsColumnOpt(minCol).flatMap { min =>
+          getStatsColumnOpt(maxCol).map { max =>
+            DataSkippingPredicate(
+              !(min === v && max === v && nullCount === 0),
+              minCol,
+              maxCol,
+              nullCountCol)
+          }
         }
       }
     case Not(EqualTo(v: Literal, a)) =>

@@ -67,7 +67,8 @@ trait DataSkippingDeltaTestsBase extends QueryTest
       "1 <= a",
       "1 >= a",
       "2 >= a",
-      "0 <= a"
+      "0 <= a",
+      "NOT a <=> 2"
     ),
     misses = Seq(
       "NOT a = 1",
@@ -549,7 +550,8 @@ trait DataSkippingDeltaTestsBase extends QueryTest
       "a <=> NULL", // This is optimized to `IsNull(a)` by NullPropagation
       "TRUE",
       "FALSE",     // Ideally this should not hit, but its correct to not skip
-      "NULL AND a = 1" // This is optimized to FALSE by ReplaceNullWithFalse, so it's same as above
+      "NULL AND a = 1", // This is optimized to FALSE by ReplaceNullWithFalse, so it's same as above
+      "NOT a <=> 1"
     ),
     misses = Seq(
       // stats tell us a is always NULL, so any predicate that requires non-NULL a should skip
@@ -560,8 +562,7 @@ trait DataSkippingDeltaTestsBase extends QueryTest
       "a > 1",
       "a < 1",
       "a <> 1",
-      "a <=> 1",
-      "NOT a <=> 1"
+      "a <=> 1"
     )
   )
 
@@ -583,14 +584,14 @@ trait DataSkippingDeltaTestsBase extends QueryTest
       "a <=> 1",
       "TRUE",
       "FALSE",    // Ideally this should not hit, but its correct to not skip
-      "NULL AND a = 1" // This is optimized to FALSE by ReplaceNullWithFalse, so it's same as above
+      "NULL AND a = 1", // This is optimized to FALSE by ReplaceNullWithFalse, so it's same as above
+      "NOT a <=> 1"
     ),
     misses = Seq(
       "a <> 1",
       "a > 1",
       "a < 1",
-      "NOT a = 1",
-      "NOT a <=> 1"
+      "NOT a = 1"
     )
   )
 
