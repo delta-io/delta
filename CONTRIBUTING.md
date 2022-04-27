@@ -8,7 +8,7 @@ Delta Lake is supported by a wide set of developers from over 50 organizations a
 For more information, please refer to the [founding technical charter](https://delta.io/pdfs/delta-charter.pdf).
 
 # Communication
-- Before starting work on a major feature, please reach out to us via [GitHub](https://github.com/delta-io/delta/issues), [Slack](https://delta-users.slack.com/join/shared_invite/zt-165gcm2g7-0Sc57w7dX0FbfilR9EPwVQ#/shared-invite/email), [email](https://groups.google.com/g/delta-users), etc. We will make sure no one else is already working on it and ask you to open a GitHub issue.
+- Before starting work on a major feature, please reach out to us via [GitHub](https://github.com/delta-io/delta/issues), [Slack](https://go.delta.io/delta-users), [email](https://groups.google.com/g/delta-users), etc. We will make sure no one else is already working on it and ask you to open a GitHub issue.
 - A "major feature" is defined as any change that is > 100 LOC altered (not including tests), or changes any user-facing behavior.
 - We will use the GitHub issue to discuss the feature and come to agreement.
 - This is to prevent your time being wasted, as well as ours.
