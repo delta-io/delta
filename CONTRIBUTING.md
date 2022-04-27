@@ -15,7 +15,7 @@ For more information, please refer to the [founding technical charter](https://d
 - The GitHub review process for major features is also important so that organizations with commit access can come to agreement on design.
 - If it is appropriate to write a design document, the document must be hosted either in the GitHub tracking issue, or linked to from the issue and hosted in a world-readable location. Examples of design documents include [sample 1](https://docs.google.com/document/d/16S7xoAmXpSax7W1OWYYHo5nZ71t5NvrQ-F79pZF6yb8), [sample 2](https://docs.google.com/document/d/1MJhmW_H7doGWY2oty-I78vciziPzBy_nzuuB-Wv5XQ8), and [sample 3](https://docs.google.com/document/d/19CU4eJuBXOwW7FC58uSqyCbcLTsgvQ5P1zoPOPgUSpI).
 - Specifically, if the goal is to add a new extension, please read the extension policy.
-- Small patches and bug fixes don't need prior communication. If you have identified a bug and have ways to solve it, please create an [issue](https://github.com/delta-io/delta/issues).
+- Small patches and bug fixes don't need prior communication. If you have identified a bug and have ways to solve it, please create an [issue](https://github.com/delta-io/delta/issues) or create a [pull request](https://github.com/delta-io/delta/pulls).
 - If you have an example code that explains a use case or a feature, create a pull request to post under [examples](https://github.com/delta-io/delta/tree/master/examples). 
 
 
