@@ -84,8 +84,7 @@ object DeltaSourceOffset {
         validateSourceVersion(s.json)
         val o = JsonUtils.mapper.readValue[DeltaSourceOffset](s.json)
         if (o.reservoirId != reservoirId) {
-          throw new IllegalStateException(s"Delta table ${o.reservoirId} doesn't exist. " +
-              s"Please delete your streaming query checkpoint and restart.")
+          throw DeltaErrors.nonExistentDeltaTable(o.reservoirId)
         }
         o
     }

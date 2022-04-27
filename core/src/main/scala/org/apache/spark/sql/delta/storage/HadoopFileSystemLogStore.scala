@@ -23,6 +23,8 @@ import java.util.UUID
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.DeltaErrors
+import org.apache.spark.sql.delta.DeltaIllegalStateException
 import org.apache.commons.io.IOUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
@@ -146,7 +148,7 @@ abstract class HadoopFileSystemLogStore(
             if (fs.exists(path)) {
               throw new FileAlreadyExistsException(path.toString)
             } else {
-              throw new IllegalStateException(s"Cannot rename $tempPath to $path")
+              throw DeltaErrors.cannotRenamePath(tempPath.toString, path.toString)
             }
           }
         } catch {

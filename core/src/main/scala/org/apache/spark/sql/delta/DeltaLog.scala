@@ -230,8 +230,7 @@ class DeltaLog private(
       SchemaMergingUtils.checkColumnNameDuplication(txn.metadata.schema, "in the table schema")
     } catch {
       case e: AnalysisException =>
-        throw new AnalysisException(
-          e.getMessage + "\nPlease remove duplicate columns before you update your table.")
+        throw DeltaErrors.duplicateColumnsOnUpdateTable(e)
     }
     txn.commit(Seq(newVersion), DeltaOperations.UpgradeProtocol(newVersion))
     logConsole(s"Upgraded table at $dataPath to $newVersion.")

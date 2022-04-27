@@ -172,7 +172,7 @@ object DeltaErrors
 
   def failOnCheckpoint(src: String, dest: String): DeltaIllegalStateException = {
     new DeltaIllegalStateException(
-      errorClass = "FAILED_CHECKPOINT",
+      errorClass = "CANNOT_RENAME_PATH",
       messageParameters = Array(s"$src", s"$dest"))
   }
 
@@ -435,6 +435,10 @@ object DeltaErrors
       + newColumns)
   }
 
+  def notADeltaTable(table: String): Throwable = {
+    new DeltaAnalysisException(errorClass = "NOT_A_DELTA_TABLE", messageParameters = Array(table))
+  }
+
   def notEnoughColumnsInInsert(
       table: String,
       query: Int,
@@ -445,6 +449,12 @@ object DeltaErrors
     new DeltaAnalysisException(
       errorClass = "INSERT_COLUMN_ARITY_MISMATCH",
       messageParameters = Array(table, nestedFieldStr, target.toString, query.toString))
+  }
+
+  def notFoundFileToBeRewritten(absolutePath: String, candidates: Iterable[String]): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "NOT_FOUND_FILE_TO_BE_REWRITTEN",
+      messageParameters = Array(absolutePath, candidates.mkString("\n")))
   }
 
   def cannotFindSourceVersionException(json: String): Throwable = {
@@ -789,8 +799,9 @@ object DeltaErrors
   }
 
   def bloomFilterDropOnNonIndexedColumnException(name: String): Throwable = {
-    new AnalysisException(
-      s"Cannot drop bloom filter index on a non indexed column: $name")
+    new DeltaAnalysisException(
+      errorClass = "CANNOT_DROP_BLOOM_FILTER_ON_NON_INDEXED_COLUMN",
+      messageParameters = Array(name))
   }
 
   def bloomFilterDropOnNonExistingColumnsException(unknownColumns: Seq[String]): Throwable = {
@@ -798,6 +809,33 @@ object DeltaErrors
       "Cannot drop bloom filter indices for the following non-existent column(s): "
         + unknownColumns.mkString(", "))
   }
+
+  def cannotRenamePath(tempPath: String, path: String): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "CANNOT_RENAME_PATH", messageParameters = Array(tempPath, path))
+  }
+
+  def cannotSpecifyBothFileListAndPatternString(): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "CANNOT_SPECIFY_BOTH_FILE_LIST_AND_PATTERN_STRING",
+      messageParameters = null)
+  }
+
+  def cannotUpdateArrayField(table: String, field: String): Throwable = {
+    new DeltaAnalysisException(errorClass = "CANNOT_UPDATE_ARRAY_FIELD",
+      messageParameters = Array(table, field))
+  }
+
+  def cannotUpdateMapField(table: String, field: String): Throwable = {
+    new DeltaAnalysisException(errorClass = "CANNOT_UPDATE_MAP_FIELD",
+      messageParameters = Array(table, field))
+  }
+
+  def cannotUpdateStructField(table: String, field: String): Throwable = {
+    new DeltaAnalysisException(errorClass = "CANNOT_UPDATE_STRUCT_FIELD",
+      messageParameters = Array(table, field))
+  }
+
 
   def multipleSourceRowMatchingTargetRowInMergeException(spark: SparkSession): Throwable = {
     new UnsupportedOperationException(
@@ -863,22 +901,17 @@ object DeltaErrors
   def createExternalTableWithoutLogException(
       path: Path, tableName: String, spark: SparkSession): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "CREATE_EXTERNAL_TABLE_WITHOUT_LOG",
-      messageParameters = Array(tableName, path.toString, path.toString,
-        generateDocsLink(spark.sparkContext.getConf, "/index.html")))
+      errorClass = "CREATE_EXTERNAL_TABLE_WITHOUT_TXN_LOG",
+      messageParameters = Array(tableName, path.toString,
+      generateDocsLink(spark.sparkContext.getConf, "/index.html")))
   }
 
   def createExternalTableWithoutSchemaException(
       path: Path, tableName: String, spark: SparkSession): Throwable = {
-    new AnalysisException(
-      s"""
-         |You are trying to create an external table $tableName
-         |from `$path` using Delta Lake, but the schema is not specified when the
-         |input path is empty.
-         |
-         |To learn more about Delta, see ${generateDocsLink(spark.sparkContext.getConf,
-        "/index.html")}
-       """.stripMargin)
+    new DeltaAnalysisException(
+      errorClass = "CREATE_EXTERNAL_TABLE_WITHOUT_SCHEMA",
+      messageParameters = Array(tableName, path.toString,
+        generateDocsLink(spark.sparkContext.getConf, "/index.html")))
   }
 
   def createManagedTableWithoutSchemaException(
@@ -1027,9 +1060,19 @@ object DeltaErrors
     new AnalysisException("Cannot specify time travel in multiple formats.")
   }
 
+  def nonExistentDeltaTable(table: String): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "NON_EXISTENT_DELTA_TABLE", messageParameters = Array(table))
+  }
+
+  def nonExistentColumnInSchema(column: String, schema: String): Throwable = {
+    new DeltaAnalysisException("NON_EXISTENT_COLUMN_IN_SCHEMA",
+      Array(column, schema))
+  }
+
   def provideOneOfInTimeTravel: Throwable = {
-    new IllegalArgumentException(
-      "Please either provide 'timestampAsOf' or 'versionAsOf' for time travel.")
+    new DeltaIllegalArgumentException(
+      errorClass = "ONEOF_IN_TIMETRAVEL", messageParameters = null)
   }
 
   def deltaLogAlreadyExistsException(path: String): Throwable = {
@@ -1227,22 +1270,23 @@ object DeltaErrors
       cause = Some(originalException))
   }
 
+  def duplicateColumnsOnUpdateTable(originalException: Throwable): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DUPLICATE_COLUMNS_ON_UPDATE_TABLE",
+      messageParameters = Array(originalException.getMessage),
+      cause = Some(originalException))
+  }
+
   def maxCommitRetriesExceededException(
       attemptNumber: Int,
       attemptVersion: Long,
       initAttemptVersion: Long,
       numActions: Int,
       totalCommitAttemptTime: Long): Throwable = {
-    new IllegalStateException(
-      s"""This commit has failed as it has been tried $attemptNumber times but did not succeed.
-         |This can be caused by the Delta table being committed continuously by many concurrent
-         |commits.
-         |
-         |Commit started at version: $initAttemptVersion
-         |Commit failed at version: $attemptVersion
-         |Number of actions attempted to commit: $numActions
-         |Total time spent attempting this commit: $totalCommitAttemptTime ms
-       """.stripMargin)
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_MAX_COMMIT_RETRIES_EXCEEDED",
+      messageParameters = Array(s"$attemptNumber", s"$initAttemptVersion", s"$attemptVersion",
+        s"$numActions", s"$totalCommitAttemptTime"))
   }
 
   def generatedColumnsNonDeltaFormatError(): Throwable = {
@@ -1496,7 +1540,9 @@ object DeltaErrors
 
 
   def missingColumnsInInsertInto(column: String): Throwable = {
-    new AnalysisException(s"Column $column is not specified in INSERT")
+    new DeltaAnalysisException(
+      errorClass = "INSERT_COLUMN_MISMATCH",
+      messageParameters = Array(column))
   }
 
   def logStoreConfConflicts(schemeConf: Seq[(String, String)]): Throwable = {
@@ -1614,6 +1660,15 @@ object DeltaErrors
          | To disable check update option ${SQLConf.IGNORE_MISSING_FILES.key}"""
         .stripMargin
     )
+
+  def unexpectedAttributeReference(ref: String): Throwable = {
+    new DeltaIllegalStateException(errorClass = "UNEXPECTED_ATTRIBUTE_REFERENCE",
+      messageParameters = Array(ref))
+  }
+
+  def unsetNonExistentProperty(key: String, table: String): Throwable = {
+    new DeltaAnalysisException(errorClass = "UNSET_NON_EXISTENT_PROPERTY", Array(key, table))
+  }
 
 
   def identityColumnNotSupported(): Throwable = {

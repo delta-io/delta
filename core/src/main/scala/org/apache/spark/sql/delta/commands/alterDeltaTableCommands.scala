@@ -125,8 +125,7 @@ case class AlterTableUnsetPropertiesDeltaCommand(
       if (!ifExists) {
         normalizedKeys.foreach { k =>
           if (!metadata.configuration.contains(k)) {
-            throw new AnalysisException(
-              s"Attempted to unset non-existent property '$k' in table ${table.name()}")
+            throw DeltaErrors.unsetNonExistentProperty(k, table.name())
           }
         }
       }
@@ -412,19 +411,13 @@ case class AlterTableChangeColumnDeltaCommand(
       // just changing comment or position so this is fine
       case s: StructType if s != newColumn.dataType =>
         val fieldName = UnresolvedAttribute(columnPath :+ columnName).name
-        throw new AnalysisException(
-          s"Cannot update ${table.name()} field $fieldName type: " +
-            s"update a struct by adding, deleting, or updating its fields")
+        throw DeltaErrors.cannotUpdateStructField(table.name(), fieldName)
       case m: MapType if m != newColumn.dataType =>
         val fieldName = UnresolvedAttribute(columnPath :+ columnName).name
-        throw new AnalysisException(
-          s"Cannot update ${table.name()} field $fieldName type: " +
-            s"update a map by updating $fieldName.key or $fieldName.value")
+        throw DeltaErrors.cannotUpdateMapField(table.name(), fieldName)
       case a: ArrayType if a != newColumn.dataType =>
         val fieldName = UnresolvedAttribute(columnPath :+ columnName).name
-        throw new AnalysisException(
-          s"Cannot update ${table.name()} field $fieldName type: " +
-            s"update the element by updating $fieldName.element")
+        throw DeltaErrors.cannotUpdateArrayField(table.name(), fieldName)
       case _: AtomicType =>
       // update is okay
       case o =>

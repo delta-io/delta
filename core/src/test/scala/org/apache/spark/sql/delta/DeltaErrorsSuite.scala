@@ -182,6 +182,109 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.bloomFilterDropOnNonIndexedColumnException("c0")
+      }
+      assert(e.getMessage == "Cannot drop bloom filter index on a non indexed column: c0")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.cannotRenamePath("a", "b")
+      }
+      assert(e.getMessage == "Cannot rename a to b")
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.cannotSpecifyBothFileListAndPatternString()
+      }
+      assert(e.getMessage == "Cannot specify both file list and pattern string.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotUpdateArrayField("t", "f")
+      }
+      assert(
+        e.getMessage == "Cannot update t field f type: update the element by updating f.element")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotUpdateMapField("t", "f")
+      }
+      assert(
+        e.getMessage == "Cannot update t field f type: update a map by updating f.key or f.value")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotUpdateStructField("t", "f")
+      }
+      assert(e.getMessage == "Cannot update t field f type: update struct by adding, deleting, " +
+        "or updating its fields")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.duplicateColumnsOnUpdateTable(originalException = new Exception("123"))
+      }
+      assert(e.getMessage == "123\nPlease remove duplicate columns before you update your table.")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.maxCommitRetriesExceededException(0, 1, 2, 3, 4)
+      }
+      assert(e.getMessage ==
+        s"""This commit has failed as it has been tried 0 times but did not succeed.
+           |This can be caused by the Delta table being committed continuously by many concurrent
+           |commits.
+           |
+           |Commit started at version: 2
+           |Commit failed at version: 1
+           |Number of actions attempted to commit: 3
+           |Total time spent attempting this commit: 4 ms""".stripMargin)
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.missingColumnsInInsertInto("c")
+      }
+      assert(e.getMessage == "Column c is not specified in INSERT")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.missingColumnsInInsertInto("c")
+      }
+      assert(e.getMessage == "Column c is not specified in INSERT")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.nonExistentDeltaTable("t")
+      }
+      assert(e.getMessage == "Delta table t doesn't exist. Please delete your streaming query " +
+        "checkpoint and restart.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.nonExistentColumnInSchema("c", "s")
+      }
+      assert(e.getMessage == "Couldn't find column c in:\ns")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.notADeltaTable("t")
+      }
+      assert(e.getMessage == "t is not a Delta table. Please drop this table first if you would " +
+        "like to recreate it with Delta Lake.")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.notFoundFileToBeRewritten("f", Seq("a", "b"))
+      }
+      assert(e.getMessage == "File (f) to be rewritten not found among candidate files:\na\nb")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.unsetNonExistentProperty("k", "t")
+      }
+      assert(e.getMessage == "Attempted to unset non-existent property 'k' in table t")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.generatedColumnsReferToWrongColumns(
           new AnalysisException("analysis exception"))
       }
@@ -643,11 +746,12 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.createExternalTableWithoutLogException(path, "tableName", spark)
       }
-      val msg = s"""You are trying to create an external table tableName
+      val msg = s"""
+        |You are trying to create an external table tableName
         |from `$path` using Delta, but there is no transaction log present at
         |`$path/_delta_log`. Check the upstream job to make sure that it is writing using
         |format("delta") and that the path is the root of the table.""".stripMargin
-      assert(e.getErrorClass == "CREATE_EXTERNAL_TABLE_WITHOUT_LOG")
+      assert(e.getErrorClass == "CREATE_EXTERNAL_TABLE_WITHOUT_TXN_LOG")
       assert(e.getMessage.startsWith(msg))
     }
   }

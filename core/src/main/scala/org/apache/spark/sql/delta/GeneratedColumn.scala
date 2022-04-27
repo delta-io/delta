@@ -256,7 +256,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
                 case a: AttributeReference => a.name
                 case other =>
                   // Should not happen since the columns should be resolved
-                throw new IllegalStateException(s"Expected AttributeReference but got $other")
+                  throw DeltaErrors.unexpectedAttributeReference(s"$other")
               }.toSeq :+ column
             case other =>
               // Should not happen since we use `Alias` expressions.

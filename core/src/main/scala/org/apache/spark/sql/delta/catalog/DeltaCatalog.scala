@@ -330,8 +330,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
           s"$table is a view. You may not write data into a view.")
       }
       if (!DeltaSourceUtils.isDeltaTable(oldTable.provider)) {
-        throw new AnalysisException(s"$table is not a Delta table. Please drop this " +
-          "table first if you would like to recreate it with Delta Lake.")
+        throw DeltaErrors.notADeltaTable(table.table)
       }
       Some(oldTable)
     } else {
@@ -484,8 +483,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
               spark.sessionState.conf.resolver)
               .map(_._2)
             val field = fieldOpt.getOrElse {
-              throw new AnalysisException(
-                s"Couldn't find column $colName in:\n${schema.treeString}")
+              throw DeltaErrors.nonExistentColumnInSchema(colName, schema.treeString)
             }
             field -> None
           })

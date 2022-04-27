@@ -165,8 +165,7 @@ trait DeltaCommand extends DeltaLogging {
       nameToAddFileMap: Map[String, AddFile]): AddFile = {
     val absolutePath = DeltaFileOperations.absolutePath(basePath.toString, filePath).toString
     nameToAddFileMap.getOrElse(absolutePath, {
-      throw new IllegalStateException(s"File ($absolutePath) to be rewritten not found " +
-        s"among candidate files:\n${nameToAddFileMap.keys.mkString("\n")}")
+      throw DeltaErrors.notFoundFileToBeRewritten(absolutePath, nameToAddFileMap.keys)
     })
   }
 

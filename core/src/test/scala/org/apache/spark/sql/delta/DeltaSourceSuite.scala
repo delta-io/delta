@@ -625,7 +625,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
           true
         },
         StartStream(),
-        ExpectFailure[IllegalStateException] { e =>
+        ExpectFailure[DeltaIllegalStateException] { e =>
           for (msg <- Seq("delete", "checkpoint", "restart")) {
             assert(e.getMessage.contains(msg))
           }

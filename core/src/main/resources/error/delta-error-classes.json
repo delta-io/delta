@@ -11,8 +11,16 @@
     "message" : [ "Cannot create %s" ],
     "sqlState" : "42000"
   },
+  "CANNOT_DROP_BLOOM_FILTER_ON_NON_INDEXED_COLUMN" : {
+    "message" : [ "Cannot drop bloom filter index on a non indexed column: %s" ],
+    "sqlState" : "42000"
+  },
   "CANNOT_FIND_VERSION" : {
     "message" : [ "Cannot find 'sourceVersion' in %s" ],
+    "sqlState" : "42000"
+  },
+  "CANNOT_RENAME_PATH" : {
+    "message" : [ "Cannot rename %s to %s" ],
     "sqlState" : "42000"
   },
   "CANNOT_REPLACE_MISSING_TABLE" : {
@@ -22,6 +30,21 @@
   "CANNOT_RESTORE_TABLE_VERSION" : {
     "message" : [ "Cannot restore table to version %s. Available versions: [%s, %s]." ],
     "sqlState" : "22000"
+  },
+  "CANNOT_SPECIFY_BOTH_FILE_LIST_AND_PATTERN_STRING" : {
+    "message" : [ "Cannot specify both file list and pattern string." ]
+  },
+  "CANNOT_UPDATE_ARRAY_FIELD" : {
+    "message" : [ "Cannot update %1$s field %2$s type: update the element by updating %2$s.element" ],
+    "sqlState" : "42000"
+  },
+  "CANNOT_UPDATE_MAP_FIELD" : {
+    "message" : [ "Cannot update %1$s field %2$s type: update a map by updating %2$s.key or %2$s.value" ],
+    "sqlState" : "42000"
+  },
+  "CANNOT_UPDATE_STRUCT_FIELD" : {
+    "message" : [ "Cannot update %s field %s type: update struct by adding, deleting, or updating its fields" ],
+    "sqlState" : "42000"
   },
   "COLUMN_NAME_NOT_FOUND" : {
     "message" : [ "Unable to find the column `%s` given [%s]" ],
@@ -43,8 +66,12 @@
     "message" : [ "Cannot drop nonexistent constraint %s from table %s. To avoid throwing an error, provide the parameter IF EXISTS or set the SQL session configuration %s to %s." ],
     "sqlState" : "42000"
   },
-  "CREATE_EXTERNAL_TABLE_WITHOUT_LOG" : {
-    "message" : [ "You are trying to create an external table %s", "from `%s` using Delta, but there is no transaction log present at", "`%s/_delta_log`. Check the upstream job to make sure that it is writing using", "format(\"delta\") and that the path is the root of the table.", "", "To learn more about Delta, see %s" ],
+  "CREATE_EXTERNAL_TABLE_WITHOUT_SCHEMA" : {
+    "message" : [ "", "You are trying to create an external table %s", "from `%s` using Delta, but the schema is not specified when the", "input path is empty.", "", "To learn more about Delta, see %s" ],
+    "sqlState" : "42000"
+  },
+  "CREATE_EXTERNAL_TABLE_WITHOUT_TXN_LOG" : {
+    "message" : [ "", "You are trying to create an external table %s", "from `%2$s` using Delta, but there is no transaction log present at", "`%2$s/_delta_log`. Check the upstream job to make sure that it is writing using", "format(\"delta\") and that the path is the root of the table.", "", "To learn more about Delta, see %s" ],
     "sqlState" : "42000"
   },
   "CREATE_TABLE_SCHEME_MISMATCH" : {
@@ -95,6 +122,10 @@
     "message" : [ "%s call is not expected with path based %s" ],
     "sqlState" : "42000"
   },
+  "DELTA_MAX_COMMIT_RETRIES_EXCEEDED" : {
+    "message" : [ "This commit has failed as it has been tried %s times but did not succeed.", "This can be caused by the Delta table being committed continuously by many concurrent", "commits.", "", "Commit started at version: %s", "Commit failed at version: %s", "Number of actions attempted to commit: %s", "Total time spent attempting this commit: %s ms" ],
+    "sqlState" : "40000"
+  },
   "DELTA_MERGE_UNEXPECTED_ASSIGNMENT_KEY" : {
     "message" : [ "Unexpected assignment key: %s - %s" ],
     "sqlState" : "22005"
@@ -127,12 +158,13 @@
     "message" : [ "Unsupported ALTER TABLE REPLACE COLUMNS operation. Reason: %s", "", "Failed to change schema from:", "%s", "to:", "%s" ],
     "sqlState" : "0A000"
   },
+  "DUPLICATE_COLUMNS_ON_UPDATE_TABLE" : {
+    "message" : [ "%s\nPlease remove duplicate columns before you update your table." ],
+    "sqlState" : "42000"
+  },
   "FAILED_CAST_PARTITION_VALUE" : {
     "message" : [ "Failed to cast partition value `%s` to %s" ],
     "sqlState" : "22000"
-  },
-  "FAILED_CHECKPOINT" : {
-    "message" : [ "Cannot rename %s to %s" ]
   },
   "FAILED_MERGE_SCHEMA_FILE" : {
     "message" : [ "Failed to merge schema of file %s:", "%s" ],
@@ -156,6 +188,10 @@
   "INSERT_COLUMN_ARITY_MISMATCH" : {
     "message" : [ "Cannot write to '%s', %s; target table has %s column(s) but the inserted data has %s column(s)" ],
     "sqlState" : "22000"
+  },
+  "INSERT_COLUMN_MISMATCH" : {
+    "message" : [ "Column %s is not specified in INSERT" ],
+    "sqlState" : "42000"
   },
   "INVALID_CHARACTERS_IN_COLUMN_NAME" : {
     "message" : [ "Attribute name \"%s\" contains invalid character(s) among \" ,;{}()\\\\n\\\\t=\". Please use alias to rename it." ],
@@ -209,8 +245,32 @@
     "message" : [ "Specified mode '%s' is not supported. Supported modes are: %s" ],
     "sqlState" : "0A000"
   },
+  "NON_EXISTENT_COLUMN_IN_SCHEMA" : {
+    "message" : [ "Couldn't find column %s in:\n%s" ],
+    "sqlState" : "42000"
+  },
+  "NON_EXISTENT_DELTA_TABLE" : {
+    "message" : [ "Delta table %s doesn't exist. Please delete your streaming query checkpoint and restart." ],
+    "sqlState" : "42000"
+  },
+  "NON_PARSABLE_TAG" : {
+    "message" : [ "Could not parse tag %s.", "File tags are: %s" ],
+    "sqlState" : "42000"
+  },
+  "NOT_A_DELTA_TABLE" : {
+    "message" : [ "%s is not a Delta table. Please drop this table first if you would like to recreate it with Delta Lake." ],
+    "sqlState" : "42000"
+  },
+  "NOT_FOUND_FILE_TO_BE_REWRITTEN" : {
+    "message" : [ "File (%s) to be rewritten not found among candidate files:\n%s" ],
+    "sqlState" : "42000"
+  },
   "NO_COMMITS_FOUND" : {
     "message" : [ "No commits found at %s" ],
+    "sqlState" : "42000"
+  },
+  "ONEOF_IN_TIMETRAVEL" : {
+    "message" : [ "Please either provide 'timestampAsOf' or 'versionAsOf' for time travel." ],
     "sqlState" : "42000"
   },
   "OPERATION_NOT_ALLOWED" : {
@@ -240,9 +300,17 @@
     "message" : [ "The %s of your Delta table could not be recovered while Reconstructing", "version: %s. Did you manually delete files in the _delta_log directory?", "Set %s to \"false\"", "to skip validation." ],
     "sqlState" : "22000"
   },
+  "UNEXPECTED_ATTRIBUTE_REFERENCE" : {
+    "message" : [ "Expected AttributeReference but got %s" ],
+    "sqlState" : "42000"
+  },
   "UNKNOWN_CONFIGURATION" : {
     "message" : [ "Unknown configuration was specified: %s" ],
     "sqlState" : "0A000"
+  },
+  "UNSET_NON_EXISTENT_PROPERTY" : {
+    "message" : [ "Attempted to unset non-existent property '%s' in table %s" ],
+    "sqlState" : "42000"
   },
   "UNSUPPORTED_COLUMN_MAPPING_CONVERT_TO_DELTA" : {
     "message" : [ "The configuration '%s' cannot be set to `%s` when using CONVERT TO DELTA." ],
