@@ -33,7 +33,8 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
-import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, ExternalCatalogUtils, SessionCatalog}
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType,
+  ExternalCatalogUtils, SessionCatalog}
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, Table, TableCatalog}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
@@ -103,7 +104,8 @@ trait DeltaTableCreationTests
   }
 
   protected def verifyTableInCatalog(catalog: SessionCatalog, table: String): Unit = {
-    val externalTable = catalog.externalCatalog.getTable("default", table)
+    val externalTable =
+        catalog.externalCatalog.getTable("default", table)
     assertEqual(externalTable.schema, new StructType())
     assert(externalTable.partitionColumnNames.isEmpty)
   }
