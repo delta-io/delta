@@ -410,6 +410,8 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
       val path = tempDir.getCanonicalPath
       spark.range(10).write.format("delta").save(path)
       DeltaLog.clearCache()
+      // Corrupted snapshot tests leave a cached snapshot not tracked by the DeltaLog cache
+      sparkContext.getPersistentRDDs.foreach(_._2.unpersist())
       assert(sparkContext.getPersistentRDDs.isEmpty)
 
       withSQLConf(DeltaSQLConf.DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL.key -> "DISK_ONLY") {
