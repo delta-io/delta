@@ -103,7 +103,8 @@ Delta Lake ensures _serializability_ for concurrent reads and writes. Please see
 
 We use [GitHub Issues](https://github.com/delta-io/delta/issues) to track community reported issues. You can also [contact](#community) the community for getting answers.
 
-## Contributing 
+## Contributing
+
 We welcome contributions to Delta Lake. See our [CONTRIBUTING.md](https://github.com/delta-io/delta/blob/master/CONTRIBUTING.md) for more details.
 
 We also adhere to the [Delta Lake Code of Conduct](https://github.com/delta-io/delta/blob/master/CODE_OF_CONDUCT.md).
@@ -123,6 +124,14 @@ To generate artifacts, run
 To execute tests, run
 
     build/sbt test
+
+To execute a single test suite, run
+
+    build/sbt 'testOnly org.apache.spark.sql.delta.optimize.OptimizeCompactionSuite'
+
+To execute a single test within and a single test suite, run
+
+    build/sbt 'testOnly *.OptimizeCompactionSuite -- -z "optimize command: on partitioned table - all partitions"'
 
 Refer to [SBT docs](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.html) for more commands.
 
