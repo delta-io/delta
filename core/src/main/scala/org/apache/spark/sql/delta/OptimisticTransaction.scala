@@ -142,7 +142,7 @@ object OptimisticTransaction {
    */
   private[delta] def setActive(txn: OptimisticTransaction): Unit = {
     if (active.get != null) {
-      throw new IllegalStateException("Cannot set a new txn as active when one is already active")
+      throw DeltaErrors.activeTransactionAlreadySet()
     }
     active.set(txn)
   }

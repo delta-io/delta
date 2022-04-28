@@ -177,8 +177,19 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.bloomFilterOnNestedColumnNotSupportedException("c0")
       }
+      assert(e.getErrorClass == "UNSUPPORTED_NESTED_COLUMN_IN_BLOOM_FILTER")
+      assert(e.getSqlState == "0A000")
       assert(e.getMessage == "Creating a bloom filer index on a nested " +
         "column is currently unsupported: c0")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.bloomFilterOnPartitionColumnNotSupportedException("c0")
+      }
+      assert(e.getErrorClass == "UNSUPPORTED_PARTITION_COLUMN_IN_BLOOM_FILTER")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Creating a bloom filter index on a partitioning column " +
+        "is unsupported: c0")
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -299,12 +310,6 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaColumnMappingUnsupportedException] {
-        throw DeltaErrors.writesWithColumnMappingNotSupported
-      }
-      assert(e.getMessage == "Writing data with column mapping mode is not supported.")
-    }
-    {
-      val e = intercept[DeltaColumnMappingUnsupportedException] {
         throw DeltaErrors.generateManifestWithColumnMappingNotSupported
       }
       assert(e.getMessage == "Manifest generation is not supported for tables that leverage " +
@@ -388,10 +393,22 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.replaceWhereMismatchException("replaceWhere",
+          new InvariantViolationException("Invariant violated."))
+      }
+      assert(e.getErrorClass == "DELTA_REPLACE_WHERE_MISMATCH")
+      assert(e.getSqlState == "22000")
+      assert(e.getMessage == """Data written out does not match replaceWhere 'replaceWhere'.
+        |Invariant violated.""".stripMargin)
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.replaceWhereMismatchException("replaceWhere", "badPartitions")
       }
+      assert(e.getErrorClass == "DELTA_REPLACE_WHERE_MISMATCH")
+      assert(e.getSqlState == "22000")
       assert(e.getMessage == """Data written out does not match replaceWhere 'replaceWhere'.
-           |Invalid data would be written to partitions badPartitions.""".stripMargin)
+        |Invalid data would be written to partitions badPartitions.""".stripMargin)
     }
     {
       val e = intercept[DeltaIllegalStateException] {
@@ -529,6 +546,15 @@ trait DeltaErrorsSuiteBase
       assert(e.getSqlState == "2D000")
       assert(e.getMessage == "Committing to the Delta table version 0 " +
         "succeeded but error while executing post-commit hook DummyPostCommitHook")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.indexLargerThanStruct(1, StructField("col1", IntegerType), 1)
+      }
+      assert(e.getErrorClass == "DELTA_INDEX_LARGER_THAN_STRUCT")
+      assert(e.getSqlState == "2F000")
+      assert(e.getMessage == "Index 1 to add column StructField(col1,IntegerType,true) is larger " +
+        "than struct length: 1")
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -753,6 +779,102 @@ trait DeltaErrorsSuiteBase
         |format("delta") and that the path is the root of the table.""".stripMargin
       assert(e.getErrorClass == "CREATE_EXTERNAL_TABLE_WITHOUT_TXN_LOG")
       assert(e.getMessage.startsWith(msg))
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.ambiguousPathsInCreateTableException("loc1", "loc2")
+      }
+      assert(e.getErrorClass == "DELTA_AMBIGUOUS_PATHS_IN_CREATE_TABLE")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == s"""CREATE TABLE contains two different locations: loc1 and loc2.
+        |You can remove the LOCATION clause from the CREATE TABLE statement, or set
+        |${DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS.key} to true to skip this check.
+        |""".stripMargin)
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.illegalUsageException("overwriteSchema", "replacing")
+      }
+      assert(e.getErrorClass == "DELTA_ILLEGAL_USAGE")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage ==
+        "The usage of overwriteSchema is not allowed when replacing a Delta table.")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.expressionsNotFoundInGeneratedColumn("col1")
+      }
+      assert(e.getErrorClass == "DELTA_EXPRESSIONS_NOT_FOUND_IN_GENERATED_COLUMN")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Cannot find the expressions in the generated column col1")
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.activeSparkSessionNotFound()
+      }
+      assert(e.getErrorClass == "DELTA_ACTIVE_SPARK_SESSION_NOT_FOUND")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Could not find active SparkSession")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.operationOnTempViewWithGenerateColsNotSupported("UPDATE")
+      }
+      assert(e.getErrorClass == "DELTA_OPERATION_ON_TEMP_VIEW_WITH_GENERATED_COLS_NOT_SUPPORTED")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "UPDATE command on a temp view referring to a Delta table that " +
+        "contains generated columns is not supported. Please run the UPDATE command on the Delta " +
+        "table directly")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.missingProviderForConvertException("parquet_path")
+      }
+      assert(e.getErrorClass == "DELTA_MISSING_PROVIDER_FOR_CONVERT")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "CONVERT TO DELTA only supports parquet tables. Please rewrite your " +
+        "target as parquet.`parquet_path` if it's a parquet directory.")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.iteratorAlreadyClosed()
+      }
+      assert(e.getErrorClass == "DELTA_ITERATOR_ALREADY_CLOSED")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Iterator is closed")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.activeTransactionAlreadySet()
+      }
+      assert(e.getErrorClass == "DELTA_ACTIVE_TRANSACTION_ALREADY_SET")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Cannot set a new txn as active when one is already active")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.bloomFilterMultipleConfForSingleColumnException("col1")
+      }
+      assert(e.getErrorClass == "MULTIPLE_CONF_FOR_SINGLE_COLUMN_IN_BLOOM_FILTER")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Multiple bloom filter index configurations passed to " +
+        "command for column: col1")
+    }
+    {
+      val e = intercept[DeltaIOException] {
+        throw DeltaErrors.incorrectLogStoreImplementationException(sparkConf, null)
+      }
+      val docsLink = DeltaErrors.generateDocsLink(
+        sparkConf, "/delta-storage.html", skipValidation = true)
+      assert(e.getErrorClass == "DELTA_INCORRECT_LOG_STORE_IMPLEMENTATION")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage ==
+        s"""The error typically occurs when the default LogStore implementation, that
+           |is, HDFSLogStore, is used to write into a Delta table on a non-HDFS storage system.
+           |In order to get the transactional ACID guarantees on table updates, you have to use the
+           |correct implementation of LogStore that is appropriate for your storage system.
+           |See $docsLink for details.
+           |""".stripMargin)
     }
   }
 }

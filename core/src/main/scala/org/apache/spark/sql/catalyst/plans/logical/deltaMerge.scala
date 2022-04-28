@@ -288,8 +288,9 @@ object DeltaMergeInto {
 
     // check that only last NOT MATCHED clause omits the condition
     if (insertClauses.length > 1 && !insertClauses.init.forall(_.condition.nonEmpty)) {
-      throw new AnalysisException("When there are more than one NOT MATCHED clauses in a MERGE " +
-        "statement, only the last NOT MATCHED clause can omit the condition.")
+      throw new DeltaAnalysisException(
+        errorClass = "DELTA_NON_LAST_NOT_MATCHED_CLAUSE_OMIT_CONDITION",
+        messageParameters = Array.empty)
     }
 
     DeltaMergeInto(

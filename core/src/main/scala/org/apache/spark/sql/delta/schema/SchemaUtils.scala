@@ -607,8 +607,7 @@ object SchemaUtils {
     }
     val length = schema.length
     if (slicePosition > length) {
-      throw new AnalysisException(
-        s"Index $slicePosition to add column $column is larger than struct length: $length")
+      throw DeltaErrors.indexLargerThanStruct(slicePosition, column, length)
     }
     if (slicePosition == length) {
       if (position.length > 1) {

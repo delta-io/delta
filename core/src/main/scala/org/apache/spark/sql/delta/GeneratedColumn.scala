@@ -189,8 +189,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
           new Column(expr).alias(f.name)
         case None =>
           // Should not happen
-          throw new IllegalStateException(
-            s"Cannot find the expressions in the generated column ${f.name}")
+          throw DeltaErrors.expressionsNotFoundInGeneratedColumn(f.name)
       }
     }
     val dfWithExprs = try {

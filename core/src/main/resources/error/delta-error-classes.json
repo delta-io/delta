@@ -78,6 +78,18 @@
     "message" : [ "The specified schema does not match the existing schema at %s.", "", "== Specified ==", "%s", "", "== Existing ==", "%s", "", "== Differences ==", "%s", "", "If your intention is to keep the existing schema, you can omit the", "schema from the create table command. Otherwise please ensure that", "the schema matches." ],
     "sqlState" : "42000"
   },
+  "DELTA_ACTIVE_SPARK_SESSION_NOT_FOUND" : {
+    "message" : [ "Could not find active SparkSession" ],
+    "sqlState" : "42000"
+  },
+  "DELTA_ACTIVE_TRANSACTION_ALREADY_SET" : {
+    "message" : [ "Cannot set a new txn as active when one is already active" ],
+    "sqlState" : "42000"
+  },
+  "DELTA_AMBIGUOUS_PATHS_IN_CREATE_TABLE" : {
+    "message" : [ "CREATE TABLE contains two different locations: %s and %s.", "You can remove the LOCATION clause from the CREATE TABLE statement, or set", "%s to true to skip this check.", "" ],
+    "sqlState" : "42000"
+  },
   "DELTA_CANNOT_CHANGE_DATA_TYPE" : {
     "message" : [ "Cannot change data type: %s" ],
     "sqlState" : "22000"
@@ -102,12 +114,28 @@
     "message" : [ "Couldn't resolve qualified source column %s within the source query." ],
     "sqlState" : "42000"
   },
+  "DELTA_EXPRESSIONS_NOT_FOUND_IN_GENERATED_COLUMN" : {
+    "message" : [ "Cannot find the expressions in the generated column %s" ],
+    "sqlState" : "42000"
+  },
   "DELTA_FAILED_TO_MERGE_FIELDS" : {
     "message" : [ "Failed to merge fields '%s' and '%s'. %s" ],
     "sqlState" : "22005"
   },
+  "DELTA_ILLEGAL_USAGE" : {
+    "message" : [ "The usage of %s is not allowed when %s a Delta table." ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_INCORRECT_LOG_STORE_IMPLEMENTATION" : {
+    "message" : [ "The error typically occurs when the default LogStore implementation, that", "is, HDFSLogStore, is used to write into a Delta table on a non-HDFS storage system.", "In order to get the transactional ACID guarantees on table updates, you have to use the", "correct implementation of LogStore that is appropriate for your storage system.", "See %s for details.", "" ],
+    "sqlState" : "0A000"
+  },
   "DELTA_INDEX_LARGER_OR_EQUAL_THAN_STRUCT" : {
     "message" : [ "Index %s to drop column equals to or is larger than struct length: %s" ],
+    "sqlState" : "2F000"
+  },
+  "DELTA_INDEX_LARGER_THAN_STRUCT" : {
+    "message" : [ "Index %s to add column %s is larger than struct length: %s" ],
     "sqlState" : "2F000"
   },
   "DELTA_INVALID_LOGSTORE_CONF" : {
@@ -122,6 +150,10 @@
     "message" : [ "%s call is not expected with path based %s" ],
     "sqlState" : "42000"
   },
+  "DELTA_ITERATOR_ALREADY_CLOSED" : {
+    "message" : [ "Iterator is closed" ],
+    "sqlState" : "42000"
+  },
   "DELTA_MAX_COMMIT_RETRIES_EXCEEDED" : {
     "message" : [ "This commit has failed as it has been tried %s times but did not succeed.", "This can be caused by the Delta table being committed continuously by many concurrent", "commits.", "", "Commit started at version: %s", "Commit failed at version: %s", "Number of actions attempted to commit: %s", "Total time spent attempting this commit: %s ms" ],
     "sqlState" : "40000"
@@ -130,13 +162,29 @@
     "message" : [ "Unexpected assignment key: %s - %s" ],
     "sqlState" : "22005"
   },
+  "DELTA_MISSING_PROVIDER_FOR_CONVERT" : {
+    "message" : [ "CONVERT TO DELTA only supports parquet tables. Please rewrite your target as parquet.`%s` if it's a parquet directory." ],
+    "sqlState" : "42000"
+  },
   "DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED" : {
     "message" : [ "Non-deterministic functions are not supported in the %s %s" ],
     "sqlState" : "0A000"
   },
+  "DELTA_NON_LAST_NOT_MATCHED_CLAUSE_OMIT_CONDITION" : {
+    "message" : [ "When there are more than one NOT MATCHED clauses in a MERGE statement, only the last NOT MATCHED clause can omit the condition" ],
+    "sqlState" : "42000"
+  },
+  "DELTA_OPERATION_ON_TEMP_VIEW_WITH_GENERATED_COLS_NOT_SUPPORTED" : {
+    "message" : [ "%s command on a temp view referring to a Delta table that contains generated columns is not supported. Please run the %s command on the Delta table directly" ],
+    "sqlState" : "42000"
+  },
   "DELTA_POST_COMMIT_HOOK_FAILED" : {
     "message" : [ "Committing to the Delta table version %s succeeded but error while executing post-commit hook %s%s" ],
     "sqlState" : "2D000"
+  },
+  "DELTA_REPLACE_WHERE_MISMATCH" : {
+    "message" : [ "Data written out does not match replaceWhere '%s'.", "%s" ],
+    "sqlState" : "22000"
   },
   "DELTA_TABLE_ALREADY_EXISTS" : {
     "message" : [ "Table %s already exists." ],
@@ -201,10 +249,6 @@
     "message" : [ "Invalid %s. COPY INTO source %s." ],
     "sqlState" : "42000"
   },
-  "INVALID_DATA_WRITE_TO_PARTITION" : {
-    "message" : [ "Data written out does not match replaceWhere '%s'.", "Invalid data would be written to partitions %s." ],
-    "sqlState" : "22000"
-  },
   "INVALID_GENERATED_COLUMN_REFERENCES" : {
     "message" : [ "A generated column cannot use a non-existent column or another generated column" ],
     "sqlState" : "42000"
@@ -243,6 +287,10 @@
   },
   "MODE_NOT_SUPPORTED" : {
     "message" : [ "Specified mode '%s' is not supported. Supported modes are: %s" ],
+    "sqlState" : "0A000"
+  },
+  "MULTIPLE_CONF_FOR_SINGLE_COLUMN_IN_BLOOM_FILTER" : {
+    "message" : [ "Multiple bloom filter index configurations passed to command for column: %s" ],
     "sqlState" : "0A000"
   },
   "NON_EXISTENT_COLUMN_IN_SCHEMA" : {
@@ -328,16 +376,16 @@
     "message" : [ "", "Schema change is detected:", "", "old schema:", "%s", "", "new schema:", "%s", "", "Schema changes are not allowed during the change of column mapping mode.", "", "" ],
     "sqlState" : "0A000"
   },
-  "UNSUPPORTED_COLUMN_MAPPING_WRITE" : {
-    "message" : [ "Writing data with column mapping mode is not supported." ],
-    "sqlState" : "0A000"
-  },
   "UNSUPPORTED_MANIFEST_GENERATION_WITH_COLUMN_MAPPING" : {
     "message" : [ "Manifest generation is not supported for tables that leverage column mapping, as external readers cannot read these Delta tables. See Delta documentation for more details." ],
     "sqlState" : "0A000"
   },
   "UNSUPPORTED_NESTED_COLUMN_IN_BLOOM_FILTER" : {
     "message" : [ "Creating a bloom filer index on a nested column is currently unsupported: %s" ],
+    "sqlState" : "0A000"
+  },
+  "UNSUPPORTED_PARTITION_COLUMN_IN_BLOOM_FILTER" : {
+    "message" : [ "Creating a bloom filter index on a partitioning column is unsupported: %s" ],
     "sqlState" : "0A000"
   }
 }

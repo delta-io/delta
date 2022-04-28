@@ -249,12 +249,10 @@ object DeltaErrors
   def incorrectLogStoreImplementationException(
       sparkConf: SparkConf,
       cause: Throwable): Throwable = {
-    new IOException(s"""The error typically occurs when the default LogStore implementation, that
-      | is, HDFSLogStore, is used to write into a Delta table on a non-HDFS storage system.
-      | In order to get the transactional ACID guarantees on table updates, you have to use the
-      | correct implementation of LogStore that is appropriate for your storage system.
-      | See ${generateDocsLink(sparkConf, "/delta-storage.html")} " for details.
-      """.stripMargin, cause)
+    new DeltaIOException(
+      errorClass = "DELTA_INCORRECT_LOG_STORE_IMPLEMENTATION",
+      messageParameters = Array(generateDocsLink(sparkConf, "/delta-storage.html")),
+      cause = cause)
   }
 
   def failOnDataLossException(expectedVersion: Long, seenVersion: Long): Throwable = {
@@ -641,16 +639,17 @@ object DeltaErrors
   def replaceWhereMismatchException(
       replaceWhere: String,
       invariantViolation: InvariantViolationException): Throwable = {
-    new AnalysisException(
-      s"Data written out does not match replaceWhere '$replaceWhere'.\n" +
-        invariantViolation.getMessage,
+    new DeltaAnalysisException(
+      errorClass = "DELTA_REPLACE_WHERE_MISMATCH",
+      messageParameters = Array(replaceWhere, invariantViolation.getMessage),
       cause = Some(invariantViolation))
   }
 
   def replaceWhereMismatchException(replaceWhere: String, badPartitions: String): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "INVALID_DATA_WRITE_TO_PARTITION",
-      messageParameters = Array(replaceWhere, badPartitions))
+      errorClass = "DELTA_REPLACE_WHERE_MISMATCH",
+      messageParameters = Array(replaceWhere,
+        s"Invalid data would be written to partitions $badPartitions."))
   }
 
   def illegalFilesFound(file: String): Throwable = {
@@ -766,8 +765,9 @@ object DeltaErrors
   }
 
   def bloomFilterOnPartitionColumnNotSupportedException(name: String): Throwable = {
-    new AnalysisException(
-      s"Creating a bloom filter index on a partitioning column is unsupported: $name")
+    new DeltaAnalysisException(
+      errorClass = "UNSUPPORTED_PARTITION_COLUMN_IN_BLOOM_FILTER",
+      messageParameters = Array(name))
   }
 
   def bloomFilterOnNestedColumnNotSupportedException(name: String): Throwable = {
@@ -783,8 +783,9 @@ object DeltaErrors
   }
 
   def bloomFilterMultipleConfForSingleColumnException(name: String): Throwable = {
-    new AnalysisException(
-      s"Multiple bloom filter index configurations passed to command for column: $name")
+    new DeltaAnalysisException(
+      errorClass = "MULTIPLE_CONF_FOR_SINGLE_COLUMN_IN_BLOOM_FILTER",
+      messageParameters = Array(name))
   }
 
   def bloomFilterCreateOnNonExistingColumnsException(unknownColumns: Seq[String]): Throwable = {
@@ -867,10 +868,6 @@ object DeltaErrors
       s"Multi-column In predicates are not supported in the $operation condition.")
   }
 
-  def nestedSubqueryNotSupportedException(operation: String): Throwable = {
-    new AnalysisException(
-      s"Nested subquery is not supported in the $operation condition.")
-  }
 
   def nestedFieldNotSupported(operation: String, field: String): Throwable = {
     new AnalysisException(s"Nested field is not supported in the $operation (field = $field).")
@@ -1086,8 +1083,9 @@ object DeltaErrors
   }
 
   def missingProviderForConvertException(path: String): Throwable = {
-    new AnalysisException("CONVERT TO DELTA only supports parquet tables. " +
-      s"Please rewrite your target as parquet.`$path` if it's a parquet directory.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_MISSING_PROVIDER_FOR_CONVERT",
+      messageParameters = Array(path))
   }
 
   def convertNonParquetTablesException(ident: TableIdentifier, sourceName: String): Throwable = {
@@ -1200,8 +1198,9 @@ object DeltaErrors
   }
 
   def illegalUsageException(option: String, operation: String): Throwable = {
-    new IllegalArgumentException(
-      s"The usage of $option is not allowed when $operation a Delta table.")
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_ILLEGAL_USAGE",
+      messageParameters = Array(option, operation))
   }
 
   def columnNotInSchemaException(column: String, schema: StructType): Throwable = {
@@ -1334,6 +1333,13 @@ object DeltaErrors
         s"but the column type is ${columnType.sql}")
   }
 
+  def expressionsNotFoundInGeneratedColumn(column: String): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_EXPRESSIONS_NOT_FOUND_IN_GENERATED_COLUMN",
+      messageParameters = Array(column)
+    )
+  }
+
   def cannotChangeDataType(msg: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_CANNOT_CHANGE_DATA_TYPE",
@@ -1345,6 +1351,13 @@ object DeltaErrors
     new DeltaAnalysisException(
       errorClass = "DELTA_TABLE_ALREADY_EXISTS",
       messageParameters = Array(s"${table.identifier.quotedString}")
+    )
+  }
+
+  def indexLargerThanStruct(pos: Int, column: StructField, len: Int): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_INDEX_LARGER_THAN_STRUCT",
+      messageParameters = Array(s"$pos", s"$column", s"$len")
     )
   }
 
@@ -1385,9 +1398,9 @@ object DeltaErrors
 
 
   def operationOnTempViewWithGenerateColsNotSupported(op: String): Throwable = {
-    new AnalysisException(
-      s"${op} command on a temp view referring to a Delta table that contains generated columns " +
-        s"is not supported. Please run the ${op} command on the Delta table directly")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_OPERATION_ON_TEMP_VIEW_WITH_GENERATED_COLS_NOT_SUPPORTED",
+      messageParameters = Array(op, op))
   }
 
   def cannotModifyTableProperty(prop: String): Throwable =
@@ -1435,11 +1448,6 @@ object DeltaErrors
     new DeltaColumnMappingUnsupportedException(
       errorClass = "UNSUPPORTED_COLUMN_MAPPING_MODE_CHANGE",
       messageParameters = Array(oldMode, newMode))
-  }
-
-  def writesWithColumnMappingNotSupported: Throwable = {
-    new DeltaColumnMappingUnsupportedException(
-      errorClass = "UNSUPPORTED_COLUMN_MAPPING_WRITE")
   }
 
   def generateManifestWithColumnMappingNotSupported: Throwable = {
@@ -1554,12 +1562,10 @@ object DeltaErrors
   }
 
   def ambiguousPathsInCreateTableException(identifier: String, location: String): Throwable = {
-    new AnalysisException(
-      s"""
-         |CREATE TABLE contains two different locations: ${identifier} and ${location}.
-         |You can remove the LOCATION clause from the CREATE TABLE statement, or set
-         |${DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS.key} to true to skip this check.
-         |""".stripMargin)
+    new DeltaAnalysisException(
+      errorClass = "DELTA_AMBIGUOUS_PATHS_IN_CREATE_TABLE",
+      messageParameters = Array(identifier, location,
+        DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS.key))
   }
 
   def concurrentWriteException(
@@ -1682,6 +1688,19 @@ object DeltaErrors
       hasInsert: Boolean): Throwable = {
     new AnalysisException(s"Inconsistent IDENTITY metadata for column $colName " +
       s"detected: $hasStart, $hasStep, $hasInsert")
+  }
+
+  def activeSparkSessionNotFound(): Throwable = {
+    new DeltaIllegalArgumentException(errorClass = "DELTA_ACTIVE_SPARK_SESSION_NOT_FOUND")
+  }
+
+  def iteratorAlreadyClosed(): Throwable = {
+    new DeltaIllegalStateException(errorClass = "DELTA_ITERATOR_ALREADY_CLOSED")
+  }
+
+
+  def activeTransactionAlreadySet(): Throwable = {
+    new DeltaIllegalStateException(errorClass = "DELTA_ACTIVE_TRANSACTION_ALREADY_SET")
   }
 
 }
@@ -1891,7 +1910,7 @@ class DeltaIllegalStateException(
     cause: Throwable = null)
   extends IllegalStateException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters), cause)
-  with DeltaThrowable {
+    with DeltaThrowable {
   override def getErrorClass: String = errorClass
 }
 

@@ -603,7 +603,7 @@ object DeltaTable {
    */
   def forPath(path: String): DeltaTable = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
+      throw DeltaErrors.activeSparkSessionNotFound()
     }
     forPath(sparkSession, path)
   }
@@ -632,7 +632,7 @@ object DeltaTable {
    */
   def forName(tableOrViewName: String): DeltaTable = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
+      throw DeltaErrors.activeSparkSessionNotFound()
     }
     forName(sparkSession, tableOrViewName)
   }
@@ -692,7 +692,7 @@ object DeltaTable {
    */
   def isDeltaTable(identifier: String): Boolean = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
+      throw DeltaErrors.activeSparkSessionNotFound()
     }
     isDeltaTable(sparkSession, identifier)
   }
@@ -713,7 +713,7 @@ object DeltaTable {
   @Evolving
   def create(): DeltaTableBuilder = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
+      throw DeltaErrors.activeSparkSessionNotFound()
     }
     create(sparkSession)
   }
@@ -749,7 +749,7 @@ object DeltaTable {
   @Evolving
   def createIfNotExists(): DeltaTableBuilder = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
+      throw DeltaErrors.activeSparkSessionNotFound()
     }
     createIfNotExists(sparkSession)
   }
@@ -785,7 +785,7 @@ object DeltaTable {
   @Evolving
   def replace(): DeltaTableBuilder = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
+      throw DeltaErrors.activeSparkSessionNotFound()
     }
     replace(sparkSession)
   }
@@ -821,7 +821,7 @@ object DeltaTable {
   @Evolving
   def createOrReplace(): DeltaTableBuilder = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
+      throw DeltaErrors.activeSparkSessionNotFound()
     }
     createOrReplace(sparkSession)
   }
@@ -857,7 +857,7 @@ object DeltaTable {
   @Evolving
   def columnBuilder(colName: String): DeltaColumnBuilder = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
+      throw DeltaErrors.activeSparkSessionNotFound()
     }
     columnBuilder(sparkSession, colName)
   }
