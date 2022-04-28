@@ -37,7 +37,9 @@ Delta Sink currently exposes following Flink metrics:
 |    DeltaSinkRecordsWritten    |     Counter for how many records were written to the actual files on the file system      |  on checkpoint  |
 |    DeltaSinkBytesWritten    | Counter for how many bytes were written to the actual files on the underlying file system |  on checkpoint  |
 
-## Java API docs
+
+### Java API docs
+
 See the [Java API docs](https://delta-io.github.io/connectors/latest/delta-flink/api/java/index.html) here.
 
 ### Usage
@@ -78,18 +80,30 @@ Scala 2.12:
         </dependency>
         <dependency>
             <groupId>org.apache.flink</groupId>
-            <artifactId>flink-parquet_${scala.main.version}</artifactId>
+            <artifactId>flink-clients_${scala.main.version}</artifactId>
             <version>${flink-version}</version>
         </dependency>
         <dependency>
             <groupId>org.apache.flink</groupId>
-            <artifactId>flink-table-common</artifactId>
+            <artifactId>flink-parquet_${scala.main.version}</artifactId>
             <version>${flink-version}</version>
         </dependency>
         <dependency>
             <groupId>org.apache.hadoop</groupId>
             <artifactId>hadoop-client</artifactId>
             <version>${hadoop-version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-table-common</artifactId>
+            <version>${flink-version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-table-runtime-blink_${scala.main.version}</artifactId>
+            <version>${flink-version}</version>
+            <scope>provided</scope>
         </dependency>
     </dependencies>
 </project>
@@ -103,9 +117,11 @@ Please replace the versions of the dependencies with the ones you are using.
 libraryDependencies ++= Seq(
   "io.delta" %% "delta-flink" % "0.4.0",
   "io.delta" %% "delta-standalone" % "0.4.0",  
+  "org.apache.flink" %% "flink-clients" % flinkVersion,
   "org.apache.flink" %% "flink-parquet" % flinkVersion,
-  "org.apache.flink" % "flink-table-common" % flinkVersion,
-  "org.apache.hadoop" % "hadoop-client" % hadoopVersion)
+  "org.apache.hadoop" % "hadoop-client" % hadoopVersion,
+  "org.apache.flink" % "flink-table-common" % flinkVersion % "provided",
+  "org.apache.flink" %% "flink-table-runtime-blink" % flinkVersion % "provided")
 ```
 
 ## Building
@@ -246,7 +262,7 @@ their compatibility. If this check fails (e.g. the change consisted of removing 
   ```
   Caused by: java.lang.IllegalAccessError: tried to access method org.apache.flink.streaming.api.functions.sink.filesystem.OutputStreamBasedPartFileWriter.<init>(Ljava/lang/Object;Lorg/apache/flink/core/fs/RecoverableFsDataOutputStream;J)V from class org.apache.flink.streaming.api.functions.sink.filesystem.DeltaBulkPartWriter
   ```
-  
+
   Here is an example configuration for achieving this:
 
   ```xml

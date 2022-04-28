@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
- package example;
+package org.example;
 
 import java.io.File;
 import java.io.IOException;
@@ -52,7 +52,7 @@ public abstract class DeltaSinkExampleBase implements DeltaSinkLocalJobRunner {
         new RowType.RowField("f3", new IntType())
     ));
 
-    void run(String tablePath) throws IOException, InterruptedException {
+    void run(String tablePath) throws Exception {
         System.out.println("Will use table path: " + tablePath);
         File tableDir = new File(tablePath);
         if (tableDir.exists()) {
@@ -60,20 +60,23 @@ public abstract class DeltaSinkExampleBase implements DeltaSinkLocalJobRunner {
         } else {
             tableDir.mkdirs();
         }
-        StreamExecutionEnvironment env = getFlinkStreamExecutionEnvironment(tablePath);
+        StreamExecutionEnvironment env = getFlinkStreamExecutionEnvironment(tablePath, 2, 3);
         runFlinkJobInBackground(env);
         printDeltaTableRows(tablePath);
     }
 
     abstract DeltaSink<RowData> getDeltaSink(String tablePath);
 
-    private StreamExecutionEnvironment getFlinkStreamExecutionEnvironment(String tablePath) {
+    StreamExecutionEnvironment getFlinkStreamExecutionEnvironment(String tablePath,
+                                                                  int sourceParallelism,
+                                                                  int sinkParallelism) {
         DeltaSink<RowData> deltaSink = getDeltaSink(tablePath);
         StreamExecutionEnvironment env = getStreamExecutionEnvironment();
         env.addSource(new DeltaSinkExampleSourceFunction())
-            .setParallelism(2)
+            .setParallelism(sourceParallelism)
             .sinkTo(deltaSink)
-            .setParallelism(3);
+            .name("MyDeltaSink")
+            .setParallelism(sinkParallelism);
         return env;
     }
 
