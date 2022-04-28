@@ -25,10 +25,10 @@ import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
-import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.execution.command.LeafRunnableCommand
 
 case class DeltaGenerateCommand(modeName: String, tableId: TableIdentifier)
-  extends RunnableCommand {
+  extends LeafRunnableCommand {
 
   import DeltaGenerateCommand._
 
@@ -52,8 +52,6 @@ case class DeltaGenerateCommand(modeName: String, tableId: TableIdentifier)
     generationFunc(sparkSession, deltaLog)
     Seq.empty
   }
-
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 object DeltaGenerateCommand {

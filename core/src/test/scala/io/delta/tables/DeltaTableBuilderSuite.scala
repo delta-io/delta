@@ -356,13 +356,14 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
   test("errors if use parquet path as identifier") {
     withTempDir { dir =>
       val path = dir.getAbsolutePath
-      val e = intercept[NoSuchDatabaseException] {
+      val e = intercept[AnalysisException] {
         io.delta.tables.DeltaTable.create().tableName(s"parquet.`$path`")
           .addColumn("c1", "int")
           .location(path)
           .execute()
       }
-      assert(e.getMessage.equals("Database 'parquet' not found"))
+      assert(e.getMessage.equals("Database 'parquet' not found") ||
+        e.getMessage.contains("is not a valid name"))
     }
   }
 

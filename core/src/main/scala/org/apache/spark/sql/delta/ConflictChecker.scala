@@ -28,40 +28,37 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionSet}
 
 /**
- * A trait representing different attributes of current transaction needed for conflict detection.
+ * A class representing different attributes of current transaction needed for conflict detection.
+ *
+ * @param readPredicates partition predicates by which files have been queried by the transaction
+ * @param readFiles files that have been seen by the transaction
+ * @param readWholeTable whether the whole table was read during the transaction
+ * @param readAppIds appIds that have been seen by the transaction
+ * @param metadata table metadata for the transaction
+ * @param actions delta log actions that the transaction wants to commit
+ * @param readSnapshot read [[Snapshot]] used for the transaction
+ * @param commitInfo [[CommitInfo]] for the commit
  */
-private[delta] trait CurrentTransactionInfoBase {
-  /** partition predicates by which files have been queried by the transaction */
-  val readPredicates: Seq[Expression]
-  /** files that have been seen by the transaction */
-  val readFiles: Set[AddFile]
-  /** whether the whole table was read during the transaction */
-  val readWholeTable: Boolean
-  /** appIds that have been seen by the transaction */
-  val readAppIds: Set[String]
-  /** table metadata for the transaction */
-  val metadata: Metadata
-  /** delta log actions that the transaction wants to commit */
-  val actions: Seq[Action]
-  /** read [[Snapshot]] used for the transaction */
-  val readSnapshot: Snapshot
-  /** [[CommitInfo]] for the commit */
-  val commitInfo: Option[CommitInfo]
+private[delta] class CurrentTransactionInfo(
+    val txnId: String,
+    val readPredicates: Seq[Expression],
+    val readFiles: Set[AddFile],
+    val readWholeTable: Boolean,
+    val readAppIds: Set[String],
+    val metadata: Metadata,
+    val actions: Seq[Action],
+    val readSnapshot: Snapshot,
+    val commitInfo: Option[CommitInfo]) {
 
   /** Final actions to commit - including the [[CommitInfo]] */
   lazy val finalActionsToCommit: Seq[Action] = actions ++ commitInfo
-}
 
-private[delta] case class CurrentTransactionInfo(
-    readPredicates: Seq[Expression],
-    readFiles: Set[AddFile],
-    readWholeTable: Boolean,
-    readAppIds: Set[String],
-    metadata: Metadata,
-    actions: Seq[Action],
-    readSnapshot: Snapshot,
-    commitInfo: Option[CommitInfo])
-  extends CurrentTransactionInfoBase
+  /** Whether this transaction wants to make any [[Metadata]] update */
+  lazy val metadataChanged: Boolean = actions.exists {
+    case _: Metadata => true
+    case _ => false
+  }
+}
 
 /**
  * Summary of the Winning commit against which we want to check the conflict
@@ -97,12 +94,13 @@ private[delta] class ConflictChecker(
     spark: SparkSession,
     initialCurrentTransactionInfo: CurrentTransactionInfo,
     winningCommitVersion: Long,
-    isolationLevel: IsolationLevel,
-    logPrefixStr: String) extends DeltaLogging {
+    isolationLevel: IsolationLevel) extends DeltaLogging {
 
+  protected val startTimeMs = System.currentTimeMillis()
   protected val timingStats = mutable.HashMap[String, Long]()
   protected val deltaLog = initialCurrentTransactionInfo.readSnapshot.deltaLog
-  protected var currentTransactionInfo: CurrentTransactionInfo = initialCurrentTransactionInfo
+
+  def currentTransactionInfo: CurrentTransactionInfo = initialCurrentTransactionInfo
   protected val winningCommitSummary: WinningCommitSummary = createWinningCommitSummary()
 
   /**
@@ -117,7 +115,7 @@ private[delta] class ConflictChecker(
     checkForDeletedFilesAgainstCurrentTxnReadFiles()
     checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
     checkForUpdatedApplicationTransactionIdsThatCurrentTxnDependsOn()
-    reportMetrics()
+    logMetrics()
     currentTransactionInfo
   }
 
@@ -171,10 +169,10 @@ private[delta] class ConflictChecker(
     recordTime("checked-appends") {
       // Fail if new files have been added that the txn should have read.
       val addedFilesToCheckForConflicts = isolationLevel match {
-        case Serializable =>
-          winningCommitSummary.changedDataAddedFiles ++ winningCommitSummary.blindAppendAddedFiles
-        case WriteSerializable =>
+        case WriteSerializable if !currentTransactionInfo.metadataChanged =>
           winningCommitSummary.changedDataAddedFiles // don't conflict with blind appends
+        case Serializable | WriteSerializable =>
+          winningCommitSummary.changedDataAddedFiles ++ winningCommitSummary.blindAppendAddedFiles
         case SnapshotIsolation =>
           Seq.empty
       }
@@ -289,8 +287,16 @@ private[delta] class ConflictChecker(
     ret
   }
 
-  protected def reportMetrics(): Unit = {
+  protected def logMetrics(): Unit = {
+    val totalTimeTakenMs = System.currentTimeMillis() - startTimeMs
     val timingStr = timingStats.keys.toSeq.sorted.map(k => s"$k=${timingStats(k)}").mkString(",")
-    logInfo(s"[$logPrefixStr] Timing stats against $winningCommitVersion [$timingStr]")
+    logInfo(s"[$logPrefix] Timing stats against $winningCommitVersion " +
+      s"[$timingStr, totalTimeTakenMs: $totalTimeTakenMs]")
+  }
+
+  protected lazy val logPrefix: String = {
+    def truncate(uuid: String): String = uuid.split("-").head
+    s"[tableId=${truncate(initialCurrentTransactionInfo.readSnapshot.metadata.id)}," +
+      s"txnId=${truncate(initialCurrentTransactionInfo.txnId)}] "
   }
 }

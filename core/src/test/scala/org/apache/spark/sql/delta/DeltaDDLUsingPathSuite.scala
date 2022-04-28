@@ -23,14 +23,16 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.Tag
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.connector.catalog.{CatalogV2Util, TableCatalog}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.StructType
 
 trait DeltaDDLUsingPathTests extends QueryTest
-  with SharedSparkSession with DeltaColumnMappingTestUtils {
+    with SharedSparkSession with DeltaColumnMappingTestUtils {
 
   import testImplicits._
 
@@ -96,9 +98,7 @@ trait DeltaDDLUsingPathTests extends QueryTest
   }
 
   private def errorContains(errMsg: String, str: String): Unit = {
-    val actual = errMsg.replaceAll("`", "")
-    val expected = str.replaceAll("`", "")
-    assert(actual.contains(expected))
+    assert(errMsg.contains(str))
   }
 
   testUsingPath("SELECT") { (table, path) =>
@@ -114,7 +114,7 @@ trait DeltaDDLUsingPathTests extends QueryTest
     val ex = intercept[AnalysisException] {
       spark.table(s"delta.`/path/to/delta`")
     }
-    assert(ex.getMessage.contains("/path/to/delta` is not a Delta table"))
+    assert(ex.getMessage.matches("Path does not exist: (file:)?/path/to/delta"))
 
     withSQLConf(SQLConf.RUN_SQL_ON_FILES.key -> "false") {
       val ex = intercept[AnalysisException] {
@@ -147,4 +147,13 @@ trait DeltaDDLUsingPathTests extends QueryTest
 class DeltaDDLUsingPathSuite extends DeltaDDLUsingPathTests with DeltaSQLCommandTest {
 }
 
+
+class DeltaDDLUsingPathNameColumnMappingSuite extends DeltaDDLUsingPathSuite
+  with DeltaColumnMappingEnableNameMode {
+
+  override protected def runOnlyTests = Seq(
+    "create table with NOT NULL - check violation through file writing",
+    "ALTER TABLE CHANGE COLUMN with nullability change in struct type - relaxed"
+  )
+}
 

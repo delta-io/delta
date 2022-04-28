@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 
 import org.apache.spark.sql.{AnalysisException, Row}
 import org.apache.spark.sql.catalyst.analysis.{Analyzer, ResolveSessionCatalog}
@@ -192,12 +192,8 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
       Seq((1, 1), (0, 3)).toDF("srcKey", "srcValue").write.saveAsTable("source")
       append(Seq((2, 2), (1, 4)).toDF("trgKey", "trgValue"))
 
-      // TODO: In DBR we throw AnalysisException, but in OSS Delta we throw ParseException.
-      //       The error message is also slightly different. Here we just catch general Exception.
-      //       We should update this test when OSS delta upgrades to Spark 3.1.
-
       // only the last NOT MATCHED clause can omit the condition
-      val e = intercept[Exception](
+      val e = intercept[AnalysisException](
         sql(s"""
           |MERGE INTO delta.`$tempPath`
           |USING source
@@ -207,31 +203,83 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
           |WHEN NOT MATCHED THEN
           |  INSERT (trgValue, trgKey) VALUES (srcValue, srcKey)
         """.stripMargin))
-      assert(e.getMessage.contains("only the last NOT MATCHED clause can omit the condition") ||
-        e.getMessage.contains("There should be at most 1 'WHEN NOT MATCHED' clause"))
+      assert(e.getMessage.contains("only the last NOT MATCHED clause can omit the condition"))
     }
   }
 
+  def testNondeterministicOrder: Unit = {
+    withTable("target") {
+      sql("CREATE TABLE target(`trgKey` INT, `trgValue` INT) using delta")
+      sql("INSERT INTO target VALUES (1,2), (3,4)")
+      // This generates two different data sets if the executions of the source view are within
+      // 100 seconds (100,000 milliseconds) apart.
+      val sourceSql =
+      s"""
+         |(SELECT r.id AS srcKey, r.id AS srcValue
+         |FROM range(1, 100000) as r
+         |     JOIN (SELECT unix_millis(current_timestamp()) % 100000 AS bound)
+         |       ON r.id < bound) AS source
+         |""".stripMargin
 
-  // This test is to capture the incorrect behavior caused by
-  // https://github.com/delta-io/delta/issues/618 .
-  // If this test fails then the issue has been fixed. Replace this test with a correct test
-  test("merge into a dataset temp views with star gives incorrect results") {
+      sql(
+        s"""
+           |MERGE INTO target
+           |USING ${sourceSql}
+           |ON srcKey = trgKey
+           |WHEN MATCHED THEN
+           |  UPDATE SET trgValue = srcValue
+           |WHEN NOT MATCHED THEN
+           |  INSERT (trgValue, trgKey) VALUES (srcValue, srcKey)
+      """.stripMargin)
+    }
+  }
+
+  test("detect nondeterministic source - flag on") {
+    withSQLConf(DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "true") {
+      val e = intercept[UnsupportedOperationException](
+        testNondeterministicOrder
+      )
+      assert(e.getMessage.contains("source dataset is not deterministic"))
+    }
+  }
+
+  test("detect nondeterministic source - flag off") {
+    withSQLConf(DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "false") {
+      testNondeterministicOrder
+    }
+  }
+
+  test("merge into a dataset temp views with star") {
     withTempView("v") {
-      withTempView("src") {
-        append(Seq((0, 0), (1, 1)).toDF("key", "value"))
-        readDeltaTable(tempPath).createOrReplaceTempView("v")
-        sql("CREATE TEMP VIEW src AS SELECT * FROM VALUES (10, 1) AS t(value, key)")
-        sql(s"""MERGE INTO v USING src
-             |ON src.key = v.key
-             |WHEN MATCHED THEN
-             |  UPDATE SET *
-             |WHEN NOT MATCHED THEN
-             |  INSERT *
-             |""".stripMargin)
-        val result = readDeltaTable(tempPath).as[(Long, Long)].collect().toSet
-        // This is expected to fail until the issue mentioned above is resolved.
-        assert(result != Set((0, 0), (1, 10)))
+      def testMergeWithView(testClue: String): Unit = {
+        withClue(testClue) {
+          withTempView("src") {
+            sql("CREATE TEMP VIEW src AS SELECT * FROM VALUES (10, 1), (20, 2) AS t(value, key)")
+            sql(
+              s"""
+                 |MERGE INTO v
+                 |USING src
+                 |ON src.key = v.key
+                 |WHEN MATCHED THEN
+                 |  UPDATE SET *
+                 |WHEN NOT MATCHED THEN
+                 |  INSERT *
+                 |""".stripMargin)
+            checkAnswer(spark.sql(s"select * from v"), Seq(Row(0, 0), Row(1, 10), Row(2, 20)))
+          }
+        }
+      }
+
+      // View on path-based table
+      append(Seq((0, 0), (1, 1)).toDF("key", "value"))
+      readDeltaTable(tempPath).createOrReplaceTempView("v")
+      testMergeWithView("with path-based table")
+
+      // View on catalog table
+      withTable("tab") {
+        Seq((0, 0), (1, 1)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+        spark.table("tab").as("name").createOrReplaceTempView("v")
+        testMergeWithView(s"delta.`$tempPath`")
       }
     }
   }
@@ -245,7 +293,7 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
       createTempViewFromTable(targetName, isSQLTempView)
       val fieldNames = spark.table(targetName).schema.fieldNames
       val fieldNamesStr = fieldNames.mkString("`", "`, `", "`")
-      val e = intercept[AnalysisException] {
+      val e = intercept[DeltaAnalysisException] {
         executeMerge(
           target = "v t",
           source = s"$sourceName s",
@@ -279,3 +327,13 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with DeltaSQLCommandTest
   }
 }
 
+
+class MergeIntoSQLNameColumnMappingSuite extends MergeIntoSQLSuite
+  with DeltaColumnMappingEnableNameMode {
+
+  override protected def columnMappingMode: String = NameMapping.name
+
+  override protected def runOnlyTests: Seq[String] =
+    Seq("schema evolution - new nested column with update non-* and insert * - " +
+      "array of struct - longer target")
+}

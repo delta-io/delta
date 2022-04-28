@@ -34,8 +34,7 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructType}
 
-class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession
-  with DeltaSQLCommandTest {
+class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession  with DeltaSQLCommandTest {
 
   override protected def verifyDescribeTable(tblName: String): Unit = {
     val res = sql(s"DESCRIBE TABLE $tblName").collect()
@@ -81,6 +80,15 @@ class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession
   }
 }
 
+
+class DeltaDDLNameColumnMappingSuite extends DeltaDDLSuite
+  with DeltaColumnMappingEnableNameMode {
+
+  override protected def runOnlyTests = Seq(
+    "create table with NOT NULL - check violation through file writing",
+    "ALTER TABLE CHANGE COLUMN with nullability change in struct type - relaxed"
+  )
+}
 
 
 abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
@@ -432,9 +440,13 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
   }
 
   /**
-   * SHOW CREATE TABLE is NOT supported in spark 3.1 for v2 tables.
+   * Although Spark 3.2 adds the support for SHOW CREATE TABLE for v2 tables, it doesn't work
+   * properly for Delta. For example, table properties, constraints and generated columns are not
+   * showed properly.
+   *
+   * TODO Implement Delta's own ShowCreateTableCommand to show the Delta table definition correctly
    */
-  test("SHOW CREATE TABLE should not include OPTIONS except for path - not supported") {
+  test("SHOW CREATE TABLE is not supported") {
     withTable("delta_test") {
       sql(
         s"""
@@ -445,7 +457,7 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
       val e = intercept[AnalysisException] {
         sql("SHOW CREATE TABLE delta_test").collect()(0).getString(0)
       }
-      assert(e.message.equals("SHOW CREATE TABLE is not supported for v2 tables."))
+      assert(e.message.contains("`SHOW CREATE TABLE` is not supported for Delta table"))
     }
 
     withTempDir { dir =>
@@ -461,7 +473,7 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
         val e = intercept[AnalysisException] {
           sql("SHOW CREATE TABLE delta_test").collect()(0).getString(0)
         }
-        assert(e.message.equals("SHOW CREATE TABLE is not supported for v2 tables."))
+        assert(e.message.contains("`SHOW CREATE TABLE` is not supported for Delta table"))
       }
     }
   }

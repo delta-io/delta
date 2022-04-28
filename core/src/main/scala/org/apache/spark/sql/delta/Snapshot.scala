@@ -25,10 +25,12 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.DataSkippingReader
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
+import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.util.StateCache
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileSystem, Path}
+import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
@@ -63,8 +65,8 @@ class Snapshot(
     val checksumOpt: Option[VersionChecksum],
     val minSetTransactionRetentionTimestamp: Option[Long] = None)
   extends StateCache
-  with PartitionFiltering
-  with DeltaFileFormat
+  with StatisticsCollection
+  with DataSkippingReader
   with DeltaLogging {
 
   import Snapshot._
@@ -73,6 +75,9 @@ class Snapshot(
 
   protected def spark = SparkSession.active
 
+
+  /** Snapshot to scan by the DeltaScanGenerator for metadata query optimizations */
+  override val snapshotToScan: Snapshot = this
 
   protected def getNumPartitions: Int = {
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS)
@@ -88,47 +93,84 @@ class Snapshot(
   // We partition by path as it is likely the bulk of the data is add/remove.
   // Non-path based actions will be collocated to a single partition.
   private def stateReconstruction: Dataset[SingleAction] = {
-      val implicits = spark.implicits
-      import implicits._
+    withDmqTag {
+      recordFrameProfile("Delta", "snapshot.stateReconstruction") {
+        val implicits = spark.implicits
+        import implicits._
 
-      // for serializability
-      val localMinFileRetentionTimestamp = minFileRetentionTimestamp
-      val localMinSetTransactionRetentionTimestamp = minSetTransactionRetentionTimestamp
-      val localLogPath = path.toUri
+        // for serializability
+        val localMinFileRetentionTimestamp = minFileRetentionTimestamp
+        val localMinSetTransactionRetentionTimestamp = minSetTransactionRetentionTimestamp
+        val localLogPath = path.toUri
 
-      val hadoopConf = spark.sparkContext.broadcast(
-        new SerializableConfiguration(deltaLog.newDeltaHadoopConf()))
-      var wrapPath = false
+        val hadoopConf = spark.sparkContext.broadcast(
+          new SerializableConfiguration(deltaLog.newDeltaHadoopConf()))
+        var wrapPath = false
 
-      loadActions.mapPartitions { actions =>
-        val hdpConf = hadoopConf.value.value
-        actions.flatMap(canonicalizePath(_, hdpConf, wrapPath))
+        val canonicalizePath = DeltaUDF.stringStringUdf((filePath: String) =>
+            Snapshot.canonicalizePath(filePath, hadoopConf.value.value)
+        )
+
+        // Canonicalize the paths so we can repartition the actions correctly, but only rewrite the
+        // add/remove actions themselves after partitioning and sorting are complete. Otherwise, the
+        // optimizer can generate a really bad plan that re-evaluates _EVERY_ field of the rewritten
+        // struct(...)  projection every time we touch _ANY_ field of the rewritten struct.
+        //
+        // NOTE: We sort by [[ACTION_SORT_COL_NAME]] (provided by [[loadActions]]), to ensure that
+        // actions are presented to InMemoryLogReplay in the ascending version order it expects.
+        val ADD_PATH_CANONICAL_COL_NAME = "add_path_canonical"
+        val REMOVE_PATH_CANONICAL_COL_NAME = "remove_path_canonical"
+        loadActions
+          .withColumn(ADD_PATH_CANONICAL_COL_NAME, when(
+            col("add.path").isNotNull, canonicalizePath(col("add.path"))))
+          .withColumn(REMOVE_PATH_CANONICAL_COL_NAME, when(
+            col("remove.path").isNotNull, canonicalizePath(col("remove.path"))))
+          .repartition(
+            getNumPartitions,
+            coalesce(col(ADD_PATH_CANONICAL_COL_NAME), col(REMOVE_PATH_CANONICAL_COL_NAME)))
+          .sortWithinPartitions(ACTION_SORT_COL_NAME)
+          .withColumn("add", when(
+            col("add.path").isNotNull,
+            struct(
+              col(ADD_PATH_CANONICAL_COL_NAME).as("path"),
+              col("add.partitionValues"),
+              col("add.size"),
+              col("add.modificationTime"),
+              col("add.dataChange"),
+              col(ADD_STATS_TO_USE_COL_NAME).as("stats"),
+              col("add.tags"))))
+          .withColumn("remove", when(
+            col("remove.path").isNotNull,
+            col("remove").withField("path", col(REMOVE_PATH_CANONICAL_COL_NAME))))
+          .as[SingleAction]
+          .mapPartitions { iter =>
+            val state = new InMemoryLogReplay(
+              localMinFileRetentionTimestamp,
+              localMinSetTransactionRetentionTimestamp)
+
+            state.append(0, iter.map(_.unwrap))
+            state.checkpoint.map(_.wrap)
+          }
       }
-        .withColumn("file", assertLogBelongsToTable(localLogPath)(input_file_name()))
-        .repartition(getNumPartitions, coalesce($"add.path", $"remove.path"))
-        .sortWithinPartitions("file")
-        .as[SingleAction]
-        .mapPartitions { iter =>
-          val state = new InMemoryLogReplay(
-            localMinFileRetentionTimestamp,
-            localMinSetTransactionRetentionTimestamp)
-
-          state.append(0, iter.map(_.unwrap))
-          state.checkpoint.map(_.wrap)
-        }
+    }
   }
 
   def redactedPath: String =
     Utils.redact(spark.sessionState.conf.stringRedactionPattern, path.toUri.toString)
 
-  private lazy val cachedState =
+  private lazy val cachedState = withDmqTag {
     cacheDS(stateReconstruction, s"Delta Table State #$version - $redactedPath")
+  }
 
   /** The current set of actions in this [[Snapshot]] as a typed Dataset. */
-  def stateDS: Dataset[SingleAction] = cachedState.getDS
+  def stateDS: Dataset[SingleAction] = withDmqTag {
+    cachedState.getDS
+  }
 
   /** The current set of actions in this [[Snapshot]] as plain Rows */
-  def stateDF: DataFrame = cachedState.getDF
+  def stateDF: DataFrame = withDmqTag {
+    cachedState.getDF
+  }
 
   /** Helper method to log missing actions when state reconstruction checks are not enabled */
   protected def logMissingActionWarning(action: String): Unit = {
@@ -167,36 +209,41 @@ class Snapshot(
    */
   protected lazy val computedState: State = {
     withStatusCode("DELTA", s"Compute snapshot for version: $version") {
-        val aggregations =
-          aggregationsToComputeState.map { case (alias, agg) => agg.as(alias) }.toSeq
-        val _computedState = stateDF.select(aggregations: _*).as[State](stateEncoder).first()
-        val stateReconstructionCheck = spark.sessionState.conf.getConf(
-          DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED)
-        if (_computedState.protocol == null) {
-          recordDeltaEvent(
-            deltaLog,
-            opType = "delta.assertions.missingAction",
-            data = Map(
-              "version" -> version.toString, "action" -> "Protocol", "source" -> "Snapshot"))
-          if (stateReconstructionCheck) {
-            throw DeltaErrors.actionNotFoundException("protocol", version)
+      withDmqTag {
+        recordFrameProfile("Delta", "snapshot.computedState") {
+          val startTime = System.nanoTime()
+          val aggregations =
+            aggregationsToComputeState.map { case (alias, agg) => agg.as(alias) }.toSeq
+          val _computedState = stateDF.select(aggregations: _*).as[State](stateEncoder).first()
+          val stateReconstructionCheck = spark.sessionState.conf.getConf(
+            DeltaSQLConf.DELTA_STATE_RECONSTRUCTION_VALIDATION_ENABLED)
+          if (_computedState.protocol == null) {
+            recordDeltaEvent(
+              deltaLog,
+              opType = "delta.assertions.missingAction",
+              data = Map(
+                "version" -> version.toString, "action" -> "Protocol", "source" -> "Snapshot"))
+            if (stateReconstructionCheck) {
+              throw DeltaErrors.actionNotFoundException("protocol", version)
+            }
           }
-        }
-        if (_computedState.metadata == null) {
-          recordDeltaEvent(
-            deltaLog,
-            opType = "delta.assertions.missingAction",
-            data = Map(
-              "version" -> version.toString, "action" -> "Metadata", "source" -> "Metadata"))
-          if (stateReconstructionCheck) {
-            throw DeltaErrors.actionNotFoundException("metadata", version)
+          if (_computedState.metadata == null) {
+            recordDeltaEvent(
+              deltaLog,
+              opType = "delta.assertions.missingAction",
+              data = Map(
+                "version" -> version.toString, "action" -> "Metadata", "source" -> "Metadata"))
+            if (stateReconstructionCheck) {
+              throw DeltaErrors.actionNotFoundException("metadata", version)
+            }
+            logMissingActionWarning("metadata")
+            _computedState.copy(metadata = Metadata())
+          } else {
+            _computedState
           }
-          logMissingActionWarning("metadata")
-          _computedState.copy(metadata = Metadata())
-        } else {
-          _computedState
         }
       }
+    }
   }
 
   def protocol: Protocol = computedState.protocol
@@ -254,13 +301,17 @@ class Snapshot(
   // a DataFrame and short-circuit the many file existence and partition schema inference checks
   // that exist in DataSource.resolveRelation().
   protected lazy val deltaFileIndexOpt: Option[DeltaLogFileIndex] = {
+    assertLogFilesBelongToTable(path, logSegment.deltas)
     DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT, logSegment.deltas)
   }
 
   protected lazy val checkpointFileIndexOpt: Option[DeltaLogFileIndex] = {
+    assertLogFilesBelongToTable(path, logSegment.checkpoint)
     DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT, logSegment.checkpoint)
   }
 
+  def deltaFileSizeInBytes(): Long = deltaFileIndexOpt.map(_.sizeInBytes).getOrElse(0L)
+  def checkpointSizeInBytes(): Long = checkpointFileIndexOpt.map(_.sizeInBytes).getOrElse(0L)
 
   protected lazy val fileIndices: Seq[DeltaLogFileIndex] = {
     checkpointFileIndexOpt.toSeq ++ deltaFileIndexOpt.toSeq
@@ -281,15 +332,23 @@ class Snapshot(
   }
 
   /**
-   * Loads the file indices into a Dataset that can be used for LogReplay.
+   * Loads the file indices into a DataFrame that can be used for LogReplay.
+   *
+   * In addition to the usual nested columns provided by the SingleAction schema, it should provide
+   * two additional columns to simplify the log replay process: [[ACTION_SORT_COL_NAME]] (which,
+   * when sorted in ascending order, will order older actions before newer ones, as required by
+   * [[InMemoryLogReplay]]); and [[ADD_STATS_TO_USE_COL_NAME]] (to handle certain combinations of
+   * config settings for delta.checkpoint.writeStatsAsJson and delta.checkpoint.writeStatsAsStruct).
    */
-  protected def loadActions: Dataset[SingleAction] = {
-    val dfs = fileIndices.map { index => Dataset[SingleAction](spark, indexToRelation(index)) }
-    dfs.reduceOption(_.union(_)).getOrElse(emptyActions)
+  protected def loadActions: DataFrame = {
+    val dfs = fileIndices.map { index => Dataset.ofRows(spark, indexToRelation(index)) }
+    dfs.reduceOption(_.union(_)).getOrElse(emptyDF)
+      .withColumn(ACTION_SORT_COL_NAME, input_file_name())
+      .withColumn(ADD_STATS_TO_USE_COL_NAME, col("add.stats"))
   }
 
-  protected def emptyActions: Dataset[SingleAction] =
-    spark.createDataFrame(spark.sparkContext.emptyRDD[Row], logSchema).as[SingleAction]
+  protected def emptyDF: DataFrame =
+    spark.createDataFrame(spark.sparkContext.emptyRDD[Row], logSchema)
 
 
   override def logInfo(msg: => String): Unit = {
@@ -322,21 +381,11 @@ class Snapshot(
 
 object Snapshot extends DeltaLogging {
 
-  private val defaultNumSnapshotPartitions: Int = 50
+  // Used by [[loadActions]] and [[stateReconstruction]]
+  val ACTION_SORT_COL_NAME = "action_sort_column"
+  val ADD_STATS_TO_USE_COL_NAME = "add_stats_to_use"
 
-  private def canonicalizePath(
-      action: SingleAction,
-      hdpConf: Configuration,
-      wrapPath: Boolean): Option[SingleAction] = {
-    action.unwrap match {
-      case add: AddFile =>
-        Some(add.copy(path = canonicalizePath(add.path, hdpConf)).wrap)
-      case rm: RemoveFile =>
-        Some(rm.copy(path = canonicalizePath(rm.path, hdpConf)).wrap)
-      case other if other == null => None
-      case other => Some(other.wrap)
-    }
-  }
+  private val defaultNumSnapshotPartitions: Int = 50
 
 
   /** Canonicalize the paths for Actions */
@@ -353,21 +402,16 @@ object Snapshot extends DeltaLogging {
     }
   }
 
-  /**
-   * Make sure that the delta file we're reading belongs to this table. Cached snapshots from
-   * the previous states will contain empty strings as the file name.
-   */
-  private def assertLogBelongsToTable(logBasePath: URI): UserDefinedFunction = {
-    udf((filePath: String) => {
-      if (filePath.isEmpty || new Path(new URI(filePath)).getParent == new Path(logBasePath)) {
-        filePath
-      } else {
+  /** Verifies that a set of delta or checkpoint files to be read actually belongs to this table. */
+  private def assertLogFilesBelongToTable(logBasePath: Path, files: Seq[FileStatus]): Unit = {
+    files.map(_.getPath).foreach { filePath =>
+      if (new Path(filePath.toUri).getParent != new Path(logBasePath.toUri)) {
         // scalastyle:off throwerror
         throw new AssertionError(s"File ($filePath) doesn't belong in the " +
           s"transaction log at $logBasePath. Please contact Databricks Support.")
         // scalastyle:on throwerror
       }
-    })
+    }
   }
 
   /**
@@ -429,8 +473,8 @@ class InitialSnapshot(
       SparkSession.active.sessionState.conf, Map.empty))
   )
 
-  override def stateDS: Dataset[SingleAction] = emptyActions
-  override def stateDF: DataFrame = emptyActions.toDF
+  override def stateDS: Dataset[SingleAction] = emptyDF.as[SingleAction]
+  override def stateDF: DataFrame = emptyDF
   override protected lazy val computedState: Snapshot.State = initialState
   private def initialState: Snapshot.State = {
     val protocol = Protocol.forNewTable(spark, metadata)

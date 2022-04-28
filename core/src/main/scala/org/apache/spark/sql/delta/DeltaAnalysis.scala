@@ -19,8 +19,10 @@ package org.apache.spark.sql.delta
 import scala.collection.JavaConverters._
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.catalyst.TimeTravel
 import org.apache.spark.sql.delta.DeltaErrors.{TemporallyUnstableInputException, TimestampEarlierThanCommitRetentionException}
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.catalog.{DeltaCatalog, DeltaTableV2}
+import org.apache.spark.sql.delta.commands.RestoreTableCommand
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -46,6 +48,7 @@ import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
+import org.apache.spark.util.Utils
 
 /**
  * Analysis rules for Delta. Currently, these rules enable schema enforcement / evolution with
@@ -95,6 +98,50 @@ class DeltaAnalysis(session: SparkSession)
         DeltaTableUtils.replaceFileIndex(l, index.copy(partitionFilters = Nil)))
 
 
+    case restoreStatement @ RestoreTableStatement(target) =>
+      EliminateSubqueryAliases(target) match {
+        // Pass the traveled table if a previous version is to be cloned
+        case tt @ TimeTravel(DataSourceV2Relation(tbl: DeltaTableV2, _, _, _, _), _, _, _)
+            if tt.expressions.forall(_.resolved) =>
+          val ttSpec = DeltaTimeTravelSpec(tt.timestamp, tt.version, tt.creationSource)
+          val traveledTable = tbl.copy(timeTravelOpt = Some(ttSpec))
+          val tblIdent = tbl.catalogTable match {
+            case Some(existingCatalog) => existingCatalog.identifier
+            case None => TableIdentifier(tbl.path.toString, Some("delta"))
+          }
+          // restoring to same version as latest should be a no-op.
+          val sourceSnapshot = try {
+            traveledTable.snapshot
+          } catch {
+            case v: VersionNotFoundException =>
+              throw DeltaErrors.restoreVersionNotExistException(v.userVersion, v.earliest, v.latest)
+            case tEarlier: TimestampEarlierThanCommitRetentionException =>
+              throw DeltaErrors.restoreTimestampBeforeEarliestException(
+                tEarlier.userTimestamp.toString,
+                tEarlier.commitTs.toString
+              )
+            case tUnstable: TemporallyUnstableInputException =>
+              throw DeltaErrors.restoreTimestampGreaterThanLatestException(
+                tUnstable.userTimestamp.toString,
+                tUnstable.commitTs.toString
+              )
+          }
+          if (sourceSnapshot.version == traveledTable.deltaLog.snapshot.version) {
+            return LocalRelation(restoreStatement.output)
+          }
+
+          RestoreTableCommand(traveledTable, tblIdent)
+
+        case u: UnresolvedRelation =>
+          u.failAnalysis(s"Table not found: ${u.multipartIdentifier.quoted}")
+
+        case TimeTravel(u: UnresolvedRelation, _, _, _) =>
+          u.failAnalysis(s"Table not found: ${u.multipartIdentifier.quoted}")
+
+        case _ =>
+          throw DeltaErrors.notADeltaTableException("RESTORE")
+      }
+
     // This rule falls back to V1 nodes, since we don't have a V2 reader for Delta right now
     case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, options) =>
       DeltaRelation.fromV2Relation(d, dsv2, options)
@@ -135,17 +182,21 @@ class DeltaAnalysis(session: SparkSession)
           DeltaMergeIntoUpdateClause(
             update.condition,
             DeltaMergeIntoClause.toActions(update.assignments))
+        case update: UpdateStarAction =>
+          DeltaMergeIntoUpdateClause(update.condition, DeltaMergeIntoClause.toActions(Nil))
         case delete: DeleteAction =>
           DeltaMergeIntoDeleteClause(delete.condition)
-        case insert =>
+        case other =>
           throw new AnalysisException(
-            "Insert clauses cannot be part of the WHEN MATCHED clause in MERGE INTO.")
+            s"${other.prettyName} clauses cannot be part of the WHEN MATCHED clause in MERGE INTO.")
       }
       val notMatchedActions = notMatched.map {
         case insert: InsertAction =>
           DeltaMergeIntoInsertClause(
             insert.condition,
             DeltaMergeIntoClause.toActions(insert.assignments))
+        case insert: InsertStarAction =>
+          DeltaMergeIntoInsertClause(insert.condition, DeltaMergeIntoClause.toActions(Nil))
         case other =>
           throw new AnalysisException(s"${other.prettyName} clauses cannot be part of the " +
             s"WHEN NOT MATCHED clause in MERGE INTO.")
@@ -165,23 +216,6 @@ class DeltaAnalysis(session: SparkSession)
         DeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(tryResolveReferences(session))
       } else deltaMerge
       d.copy(target = stripTempViewForMergeWrapper(d.target))
-
-    // TODO: remove the 2 cases below after OSS 3.2 is released.
-    case AlterTableAddConstraint(t: ResolvedTable, constraintName, expr)
-        if t.table.isInstanceOf[DeltaTableV2] =>
-      CatalogV2Util.createAlterTable(
-        t.catalog.name +: t.identifier.asMultipartIdentifier,
-        t.catalog,
-        t.identifier.asMultipartIdentifier,
-        Seq(AddConstraint(constraintName, expr)))
-
-    case AlterTableDropConstraint(t: ResolvedTable, constraintName)
-        if t.table.isInstanceOf[DeltaTableV2] =>
-      CatalogV2Util.createAlterTable(
-        t.catalog.name +: t.identifier.asMultipartIdentifier,
-        t.catalog,
-        t.identifier.asMultipartIdentifier,
-        Seq(DropConstraint(constraintName)))
 
   }
 
@@ -298,7 +332,8 @@ class DeltaAnalysis(session: SparkSession)
   private def getCastFunction: CastFunction = {
     val timeZone = conf.sessionLocalTimeZone
     conf.storeAssignmentPolicy match {
-      case SQLConf.StoreAssignmentPolicy.LEGACY => Cast(_, _, Option(timeZone))
+      case SQLConf.StoreAssignmentPolicy.LEGACY =>
+        Cast(_, _, Option(timeZone), ansiEnabled = false)
       case SQLConf.StoreAssignmentPolicy.ANSI => AnsiCast(_, _, Option(timeZone))
       case SQLConf.StoreAssignmentPolicy.STRICT => UpCast(_, _)
     }
@@ -356,7 +391,7 @@ class DeltaAnalysis(session: SparkSession)
 }
 
 /** Matchers for dealing with a Delta table. */
-object DeltaRelation {
+object DeltaRelation extends DeltaLogging {
   def unapply(plan: LogicalPlan): Option[LogicalRelation] = plan match {
     case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, options) =>
       Some(fromV2Relation(d, dsv2, options))
@@ -368,6 +403,7 @@ object DeltaRelation {
       d: DeltaTableV2,
       v2Relation: DataSourceV2Relation,
       options: CaseInsensitiveStringMap): LogicalRelation = {
+    recordFrameProfile("DeltaAnalysis", "fromV2Relation") {
       val relation = d.withOptions(options.asScala.toMap).toBaseRelation
       var output = v2Relation.output
 
@@ -377,6 +413,7 @@ object DeltaRelation {
         None
       }
       LogicalRelation(relation, output, catalogTable, isStreaming = false)
+    }
   }
 }
 

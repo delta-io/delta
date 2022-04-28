@@ -24,7 +24,7 @@ import scala.util.{Failure, Success, Try}
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -34,8 +34,9 @@ import org.apache.spark.sql.catalyst.expressions.{And, AttributeReference, Expre
 import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform}
-import org.apache.spark.sql.execution.datasources.{FileIndex, HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.StructType
 
 /**
  * Extractor Object for pulling out the table scan of a Delta table. It could be a full scan
@@ -85,10 +86,11 @@ object DeltaTableUtils extends PredicateHelper
    */
   def isDeltaTable(spark: SparkSession, tableName: TableIdentifier): Boolean = {
     val catalog = spark.sessionState.catalog
-    val tableIsNotTemporaryTable = !catalog.isTemporaryTable(tableName)
-    val tableExists =
-      (tableName.database.isEmpty || catalog.databaseExists(tableName.database.get)) &&
-      catalog.tableExists(tableName)
+    val tableIsNotTemporaryTable = !catalog.isTempView(tableName)
+    val tableExists = {
+        (tableName.database.isEmpty || catalog.databaseExists(tableName.database.get)) &&
+        catalog.tableExists(tableName)
+    }
     tableIsNotTemporaryTable && tableExists && isDeltaTable(catalog.getTableMetadata(tableName))
   }
 
@@ -134,7 +136,11 @@ object DeltaTableUtils extends PredicateHelper
   private def dbExistsAndAssumePath(
       catalog: SessionCatalog,
       ident: TableIdentifier): (Boolean, Boolean) = {
-    Try(ident.database.forall(catalog.databaseExists)) match {
+    def databaseExists = {
+          ident.database.forall(catalog.databaseExists)
+    }
+
+    Try(databaseExists) match {
       // DB exists, check table exists only if path is not valid
       case Success(true) => (true, false)
       // DB does not exist, check table exists only if path does not exist
@@ -164,6 +170,13 @@ object DeltaTableUtils extends PredicateHelper
     // scalastyle:off deltahadoopconfiguration
     val fs = path.getFileSystem(spark.sessionState.newHadoopConfWithOptions(options))
     // scalastyle:on deltahadoopconfiguration
+
+
+    findDeltaTableRoot(fs, path)
+  }
+
+  /** Finds the root of a Delta table given a path if it exists. */
+  def findDeltaTableRoot(fs: FileSystem, path: Path): Option[Path] = {
     var currentPath = path
     while (currentPath != null && currentPath.getName != "_delta_log" &&
         currentPath.getName != "_samples") {
@@ -315,6 +328,23 @@ object DeltaTableUtils extends PredicateHelper
     }
   }
 
+
+  /**
+   * Update FileFormat for a plan and return the updated plan
+   *
+   * @param target Target plan to update
+   * @param updatedFileFormat Updated file format
+   * @return Updated logical plan
+   */
+  def replaceFileFormat(
+      target: LogicalPlan,
+      updatedFileFormat: FileFormat): LogicalPlan = {
+    target transform {
+      case l @ LogicalRelation(hfsr: HadoopFsRelation, _, _, _) =>
+        l.copy(
+          relation = hfsr.copy(fileFormat = updatedFileFormat)(hfsr.sparkSession))
+    }
+  }
 
   /**
    * Check if the given path contains time travel syntax with the `@`. If the path genuinely exists,

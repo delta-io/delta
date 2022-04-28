@@ -23,6 +23,7 @@ import java.util.concurrent.{ConcurrentHashMap, TimeUnit}
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.util.FileNames
 import com.google.common.cache.CacheBuilder
 import com.google.common.io.CountingOutputStream
@@ -118,7 +119,7 @@ class S3SingleDriverLogStore(
   private def listFromInternal(fs: FileSystem, resolvedPath: Path, useCache: Boolean = true) = {
     val parentPath = resolvedPath.getParent
     if (!fs.exists(parentPath)) {
-      throw new FileNotFoundException(s"No such file or directory: $parentPath")
+      throw DeltaErrors.fileOrDirectoryNotFoundException(parentPath.toString)
     }
     val listedFromFs =
       fs.listStatus(parentPath).filter(_.getPath.getName >= resolvedPath.getName).iterator

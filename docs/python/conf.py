@@ -79,6 +79,3 @@ master_doc = 'index'
 
 # Display the classes in the generated in the same order as the classes appear in the source files.`
 autodoc_member_order = 'bysource'
-
-# Ignore 'import pyspark' if pyspark is not installed.
-autodoc_mock_imports = ["pyspark"]

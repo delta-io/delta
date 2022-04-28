@@ -22,7 +22,7 @@ import java.util.Objects
 import scala.collection.mutable.ArrayBuffer
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, NoMapping, Snapshot}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.actions.SingleAction.addFileEncoder
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -78,7 +78,8 @@ abstract class TahoeFileIndex(
       case (partitionValues, files) =>
         val rowValues: Array[Any] = partitionSchema.map { p =>
           val colName = DeltaColumnMapping.getPhysicalName(p)
-          Cast(Literal(partitionValues(colName)), p.dataType, Option(timeZone)).eval()
+          val partValue = Literal(partitionValues.get(colName).orNull)
+          Cast(partValue, p.dataType, Option(timeZone), ansiEnabled = false).eval()
         }.toArray
 
 
@@ -164,16 +165,17 @@ case class TahoeLogFileIndex(
 
   def getSnapshot: Snapshot = {
     val snapshotToScan = getSnapshotToScan
-    if (checkSchemaOnRead) {
+    if (checkSchemaOnRead || snapshotToScan.metadata.columnMappingMode != NoMapping) {
       // Ensure that the schema hasn't changed in an incompatible manner since analysis time
       val snapshotSchema = snapshotToScan.metadata.schema
       if (!SchemaUtils.isReadCompatible(snapshotAtAnalysis.schema, snapshotSchema)) {
         throw DeltaErrors.schemaChangedSinceAnalysis(
             snapshotAtAnalysis.schema,
             snapshotSchema,
-            mentionLegacyFlag = true)
+            mentionLegacyFlag = snapshotToScan.metadata.columnMappingMode == NoMapping)
       }
     }
+
     snapshotToScan
   }
 

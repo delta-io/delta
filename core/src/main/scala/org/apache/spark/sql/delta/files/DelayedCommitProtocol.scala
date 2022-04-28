@@ -150,7 +150,7 @@ class DelayedCommitProtocol(
         val stat = fs.getFileStatus(filePath)
 
         buildActionFromAddedFile(f, stat, taskContext)
-      }
+      }.toSeq
 
       new TaskCommitMessage(statuses)
     } else {

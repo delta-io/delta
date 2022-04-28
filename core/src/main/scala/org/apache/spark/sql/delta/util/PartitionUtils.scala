@@ -46,6 +46,7 @@ import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.Try
 
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaRuntimeException}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.AnalysisException
@@ -324,7 +325,7 @@ private[delta] object PartitionUtils {
       (None, Some(path))
     } else {
       val (columnNames, values) = columns.reverse.unzip
-      (Some(PartitionValues(columnNames, values)), Some(currentPath))
+      (Some(PartitionValues(columnNames.toSeq, values.toSeq)), Some(currentPath))
     }
   }
 
@@ -359,8 +360,8 @@ private[delta] object PartitionUtils {
         val columnValue = columnValueLiteral.eval()
         val castedValue = Cast(columnValueLiteral, dataType, Option(timeZone.getID)).eval()
         if (validatePartitionColumns && columnValue != null && castedValue == null) {
-          throw new RuntimeException(s"Failed to cast value `$columnValue` to `$dataType` " +
-            s"for partition column `$columnName`")
+          throw DeltaErrors.partitionColumnCastFailed(
+            columnValue.toString, dataType.toString, columnName)
         }
         Literal.create(castedValue, dataType)
       } else {
@@ -421,7 +422,7 @@ private[delta] object PartitionUtils {
       resolver: Resolver): Map[String, T] = {
     val normalizedPartSpec = partitionSpec.toSeq.map { case (key, value) =>
       val normalizedKey = partColNames.find(resolver(_, key)).getOrElse {
-        throw new AnalysisException(s"$key is not a valid partition column in table $tblName.")
+        throw DeltaErrors.invalidPartitionColumn(key, tblName)
       }
       normalizedKey -> value
     }
@@ -471,7 +472,7 @@ private[delta] object PartitionUtils {
     val distinctPartColNames = pathWithPartitionValues.map(_._2.columnNames).distinct
 
     def groupByKey[K, V](seq: Seq[(K, V)]): Map[K, Iterable[V]] =
-      seq.groupBy { case (key, _) => key }.mapValues(_.map { case (_, value) => value })
+      seq.groupBy { case (key, _) => key }.mapValues(_.map { case (_, value) => value }).toMap
 
     val partColNamesToPaths = groupByKey(pathWithPartitionValues.map {
       case (path, partValues) => partValues.columnNames -> path

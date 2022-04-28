@@ -14,51 +14,59 @@
 # limitations under the License.
 #
 
+from typing import Any, Callable, TYPE_CHECKING
 import unittest
 
 import delta.exceptions as exceptions
 
 from delta.testing.utils import DeltaTestCase
 
+if TYPE_CHECKING:
+    from py4j.java_gateway import JVMView  # type: ignore[import]
+
 
 class DeltaExceptionTests(DeltaTestCase):
 
-    def _raise_concurrent_exception(self, exception_type):
-        e = exception_type("")
-        self.spark.sparkContext._jvm.scala.util.Failure(e).get()
+    def setUp(self) -> None:
+        super(DeltaExceptionTests, self).setUp()
+        self.jvm: "JVMView" = self.spark.sparkContext._jvm  # type: ignore[attr-defined]
 
-    def test_capture_concurrent_write_exception(self):
-        e = self.spark._jvm.io.delta.exceptions.ConcurrentWriteException
+    def _raise_concurrent_exception(self, exception_type: Callable[[Any], Any]) -> None:
+        e = exception_type("")
+        self.jvm.scala.util.Failure(e).get()
+
+    def test_capture_concurrent_write_exception(self) -> None:
+        e = self.jvm.io.delta.exceptions.ConcurrentWriteException
         self.assertRaises(exceptions.ConcurrentWriteException,
                           lambda: self._raise_concurrent_exception(e))
 
-    def test_capture_metadata_changed_exception(self):
-        e = self.spark._jvm.io.delta.exceptions.MetadataChangedException
+    def test_capture_metadata_changed_exception(self) -> None:
+        e = self.jvm.io.delta.exceptions.MetadataChangedException
         self.assertRaises(exceptions.MetadataChangedException,
                           lambda: self._raise_concurrent_exception(e))
 
-    def test_capture_protocol_changed_exception(self):
-        e = self.spark._jvm.io.delta.exceptions.ProtocolChangedException
+    def test_capture_protocol_changed_exception(self) -> None:
+        e = self.jvm.io.delta.exceptions.ProtocolChangedException
         self.assertRaises(exceptions.ProtocolChangedException,
                           lambda: self._raise_concurrent_exception(e))
 
-    def test_capture_concurrent_append_exception(self):
-        e = self.spark._jvm.io.delta.exceptions.ConcurrentAppendException
+    def test_capture_concurrent_append_exception(self) -> None:
+        e = self.jvm.io.delta.exceptions.ConcurrentAppendException
         self.assertRaises(exceptions.ConcurrentAppendException,
                           lambda: self._raise_concurrent_exception(e))
 
-    def test_capture_concurrent_delete_read_exception(self):
-        e = self.spark._jvm.io.delta.exceptions.ConcurrentDeleteReadException
+    def test_capture_concurrent_delete_read_exception(self) -> None:
+        e = self.jvm.io.delta.exceptions.ConcurrentDeleteReadException
         self.assertRaises(exceptions.ConcurrentDeleteReadException,
                           lambda: self._raise_concurrent_exception(e))
 
-    def test_capture_concurrent_delete_delete_exception(self):
-        e = self.spark._jvm.io.delta.exceptions.ConcurrentDeleteDeleteException
+    def test_capture_concurrent_delete_delete_exception(self) -> None:
+        e = self.jvm.io.delta.exceptions.ConcurrentDeleteDeleteException
         self.assertRaises(exceptions.ConcurrentDeleteDeleteException,
                           lambda: self._raise_concurrent_exception(e))
 
-    def test_capture_concurrent_transaction_exception(self):
-        e = self.spark._jvm.io.delta.exceptions.ConcurrentTransactionException
+    def test_capture_concurrent_transaction_exception(self) -> None:
+        e = self.jvm.io.delta.exceptions.ConcurrentTransactionException
         self.assertRaises(exceptions.ConcurrentTransactionException,
                           lambda: self._raise_concurrent_exception(e))
 

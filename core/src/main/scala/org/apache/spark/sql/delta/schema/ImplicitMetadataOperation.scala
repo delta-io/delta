@@ -29,6 +29,8 @@ import org.apache.spark.sql.types.{MetadataBuilder, StructType}
  */
 trait ImplicitMetadataOperation extends DeltaLogging {
 
+  import ImplicitMetadataOperation._
+
   protected val canMergeSchema: Boolean
   protected val canOverwriteSchema: Boolean
 
@@ -59,20 +61,7 @@ trait ImplicitMetadataOperation extends DeltaLogging {
     // so that all the column mapping related properties can be reinitialized in
     // OptimisticTransaction.updateMetadata
     val dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(schema.asNullable)
-    val mergedSchema = if (isOverwriteMode && canOverwriteSchema) {
-      dataSchema
-    } else {
-      val fixedTypeColumns =
-        if (GeneratedColumn.satisfyGeneratedColumnProtocol(txn.protocol)) {
-          txn.metadata.fixedTypeColumns
-        } else {
-          Set.empty[String]
-        }
-      SchemaMergingUtils.mergeSchemas(
-        txn.metadata.schema,
-        dataSchema,
-        fixedTypeColumns = fixedTypeColumns)
-    }
+    val mergedSchema = mergeSchema(txn, dataSchema, isOverwriteMode, canOverwriteSchema)
     val normalizedPartitionCols =
       normalizePartitionColumns(spark, partitionColumns, dataSchema)
     // Merged schema will contain additional columns at the end
@@ -98,7 +87,7 @@ trait ImplicitMetadataOperation extends DeltaLogging {
         throw DeltaErrors.unexpectedDataChangeException("Create a Delta table")
       }
       val description = configuration.get("comment").orNull
-      val cleanedConfs = configuration.filterKeys(_ != "comment")
+      val cleanedConfs = configuration.filterKeys(_ != "comment").toMap
       txn.updateMetadata(
         Metadata(
           description = description,
@@ -139,4 +128,37 @@ trait ImplicitMetadataOperation extends DeltaLogging {
       errorBuilder.finalizeAndThrow(spark.sessionState.conf)
     }
   }
+}
+
+object ImplicitMetadataOperation {
+
+  /**
+   * Merge schemas based on transaction state and delta options
+   * @param txn Target transaction
+   * @param dataSchema New data schema
+   * @param isOverwriteMode Whether we are overwriting
+   * @param canOverwriteSchema Whether we can overwrite
+   * @return Merged schema
+   */
+  private[delta] def mergeSchema(
+      txn: OptimisticTransaction,
+      dataSchema: StructType,
+      isOverwriteMode: Boolean,
+      canOverwriteSchema: Boolean): StructType = {
+    if (isOverwriteMode && canOverwriteSchema) {
+      dataSchema
+    } else {
+      val fixedTypeColumns =
+        if (GeneratedColumn.satisfyGeneratedColumnProtocol(txn.protocol)) {
+          txn.metadata.fixedTypeColumns
+        } else {
+          Set.empty[String]
+        }
+      SchemaMergingUtils.mergeSchemas(
+        txn.metadata.schema,
+        dataSchema,
+        fixedTypeColumns = fixedTypeColumns)
+    }
+  }
+
 }

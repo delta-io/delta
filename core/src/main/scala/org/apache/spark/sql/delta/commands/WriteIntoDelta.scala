@@ -29,7 +29,8 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{And, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.{DeleteFromTable, LogicalPlan}
-import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.catalyst.util.CharVarcharUtils
+import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.types.StructType
 
@@ -62,7 +63,7 @@ case class WriteIntoDelta(
     configuration: Map[String, String],
     data: DataFrame,
     schemaInCatalog: Option[StructType] = None)
-  extends RunnableCommand
+  extends LeafRunnableCommand
   with ImplicitMetadataOperation
   with DeltaCommand {
 
@@ -84,6 +85,21 @@ case class WriteIntoDelta(
     Seq.empty
   }
 
+  // TODO: replace the method below with `CharVarcharUtils.replaceCharWithVarchar`, when 3.3 is out.
+  import org.apache.spark.sql.types.{ArrayType, CharType, DataType, MapType, VarcharType}
+  private def replaceCharWithVarchar(dt: DataType): DataType = dt match {
+    case ArrayType(et, nullable) =>
+      ArrayType(replaceCharWithVarchar(et), nullable)
+    case MapType(kt, vt, nullable) =>
+      MapType(replaceCharWithVarchar(kt), replaceCharWithVarchar(vt), nullable)
+    case StructType(fields) =>
+      StructType(fields.map { field =>
+        field.copy(dataType = replaceCharWithVarchar(field.dataType))
+      })
+    case CharType(length) => VarcharType(length)
+    case _ => dt
+  }
+
   def write(txn: OptimisticTransaction, sparkSession: SparkSession): Seq[Action] = {
     import sparkSession.implicits._
     if (txn.readVersion > -1) {
@@ -97,7 +113,12 @@ case class WriteIntoDelta(
       }
     }
     val rearrangeOnly = options.rearrangeOnly
-    updateMetadata(data.sparkSession, txn, schemaInCatalog.getOrElse(data.schema),
+    // Delta does not support char padding and we should only have varchar type. This does not
+    // change the actual behavior, but makes DESC TABLE to show varchar instead of char.
+    val dataSchema = CharVarcharUtils.replaceCharVarcharWithStringInSchema(
+      replaceCharWithVarchar(CharVarcharUtils.getRawSchema(data.schema)).asInstanceOf[StructType])
+    var finalSchema = schemaInCatalog.getOrElse(dataSchema)
+    updateMetadata(data.sparkSession, txn, finalSchema,
       partitionColumns, configuration, isOverwriteOperation, rearrangeOnly)
 
     val replaceOnDataColsEnabled =
@@ -169,16 +190,13 @@ case class WriteIntoDelta(
         deletedFiles.map {
           case add: AddFile => add.copy(dataChange = !rearrangeOnly)
           case remove: RemoveFile => remove.copy(dataChange = !rearrangeOnly)
-          case other =>
-            throw new IllegalStateException(
-              s"Illegal files found in a dataChange = false transaction. Files: $other")
+          case other => throw DeltaErrors.illegalFilesFound(other.toString)
         }
     } else {
       newFiles ++ deletedFiles
     }
     fileActions
   }
-
 
   private def extractConstraints(
       sparkSession: SparkSession,

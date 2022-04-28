@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
 
+import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta._
@@ -27,7 +28,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraints}
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.schema.SchemaUtils.transformColumnsStructs
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 
 import org.apache.spark.sql.{AnalysisException, Column, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -37,7 +38,7 @@ import org.apache.spark.sql.catalyst.expressions.{Expression, IsNotNull, IsNull,
 import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, LogicalPlan, QualifiedColType}
 import org.apache.spark.sql.connector.catalog.TableCatalog
 import org.apache.spark.sql.connector.catalog.TableChange.{After, ColumnPosition, First}
-import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.types._
 
 /**
@@ -67,7 +68,7 @@ trait AlterDeltaTableCommand extends DeltaCommand {
 case class AlterTableSetPropertiesDeltaCommand(
     table: DeltaTableV2,
     configuration: Map[String, String])
-  extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
@@ -84,8 +85,6 @@ case class AlterTableSetPropertiesDeltaCommand(
           false
         case k if k == TableCatalog.PROP_PROVIDER =>
           throw DeltaErrors.cannotChangeProvider()
-        case k if k == DeltaConfigs.COLUMN_MAPPING_MODE.key =>
-          throw DeltaErrors.changeColumnMappingModeNotSupported
         case _ =>
           true
       }
@@ -98,8 +97,6 @@ case class AlterTableSetPropertiesDeltaCommand(
       Seq.empty[Row]
     }
   }
-
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 /**
@@ -116,7 +113,7 @@ case class AlterTableUnsetPropertiesDeltaCommand(
     table: DeltaTableV2,
     propKeys: Seq[String],
     ifExists: Boolean)
-  extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
@@ -149,8 +146,6 @@ case class AlterTableUnsetPropertiesDeltaCommand(
       Seq.empty[Row]
     }
   }
-
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 /**
@@ -164,7 +159,7 @@ case class AlterTableUnsetPropertiesDeltaCommand(
 case class AlterTableAddColumnsDeltaCommand(
     table: DeltaTableV2,
     colsToAddWithPosition: Seq[QualifiedColType])
-  extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
@@ -225,7 +220,7 @@ case class AlterTableAddColumnsDeltaCommand(
   object QualifiedColTypeWithPosition {
 
     private def toV2Position(input: Any): ColumnPosition = {
-      input.asInstanceOf[ColumnPosition]
+      input.asInstanceOf[org.apache.spark.sql.catalyst.analysis.FieldPosition].position
     }
 
     def unapply(
@@ -238,8 +233,6 @@ case class AlterTableAddColumnsDeltaCommand(
       Some((col.name.init, field, col.position.map(toV2Position)))
     }
   }
-
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 /**
@@ -258,8 +251,9 @@ case class AlterTableChangeColumnDeltaCommand(
     columnPath: Seq[String],
     columnName: String,
     newColumn: StructField,
-    colPosition: Option[ColumnPosition])
-  extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+    colPosition: Option[ColumnPosition],
+    syncIdentity: Boolean)
+  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
@@ -272,21 +266,28 @@ case class AlterTableChangeColumnDeltaCommand(
       // Verify that the columnName provided actually exists in the schema
       SchemaUtils.findColumnPosition(columnPath :+ columnName, oldSchema, resolver)
 
-      val newSchema = transformColumnsStructs(oldSchema, columnName) {
+      val newSchema = transformColumnsStructs(oldSchema, Some(columnName)) {
         case (`columnPath`, struct @ StructType(fields), _) =>
           val oldColumn = struct(columnName)
-          verifyColumnChange(struct(columnName), resolver, txn)
+          verifyColumnChange(sparkSession, struct(columnName), resolver, txn)
 
-          // Take the comment, nullability and data type from newField
-          val newField = newColumn.getComment().map(oldColumn.withComment).getOrElse(oldColumn)
-            .copy(
-              dataType =
-                SchemaUtils.changeDataType(oldColumn.dataType, newColumn.dataType, resolver),
-              nullable = newColumn.nullable)
+          val newField =
+            // Take the name, comment, nullability and data type from newField
+            // It's crucial to keep the old column's metadata, which may contain column mapping
+            // metadata.
+            newColumn.getComment().map(oldColumn.withComment).getOrElse(oldColumn)
+              .copy(
+                name = newColumn.name,
+                dataType =
+                  SchemaUtils.changeDataType(oldColumn.dataType, newColumn.dataType, resolver),
+                nullable = newColumn.nullable)
 
           // Replace existing field with new field
           val newFieldList = fields.map { field =>
-            if (field.name == columnName) newField else field
+            if (DeltaColumnMapping.getPhysicalName(field) ==
+              DeltaColumnMapping.getPhysicalName(newField)) {
+              newField
+            } else field
           }
 
           // Reorder new field to correct position if necessary
@@ -297,7 +298,53 @@ case class AlterTableChangeColumnDeltaCommand(
         case (_, _ @ StructType(fields), _) => fields
       }
 
-      val newMetadata = metadata.copy(schemaString = newSchema.json)
+      // update `partitionColumns` if the changed column is a partition column
+      val newPartitionColumns = if (columnPath.isEmpty) {
+        metadata.partitionColumns.map { partCol =>
+          if (partCol == columnName) newColumn.name else partCol
+        }
+      } else metadata.partitionColumns
+
+      val newMetadata = metadata.copy(
+        schemaString = newSchema.json, partitionColumns = newPartitionColumns)
+
+      // need to validate the changes if there is a column rename
+      if (newColumn.name != columnName &&
+        sparkSession.sessionState.conf.getConf(
+          DeltaSQLConf.DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS)) {
+        val columnParts = columnPath :+ columnName
+        // if renaming column, need to check if the column is referenced by check constraints
+        val dependentConstraints = newMetadata.configuration.filter {
+          case (key, constraint) if key.toLowerCase(Locale.ROOT).startsWith("delta.constraints.") =>
+            SchemaUtils.containsDependentExpression(sparkSession, columnParts, constraint, resolver)
+          case _ => false
+        }
+
+        if (dependentConstraints.nonEmpty) {
+          throw DeltaErrors.foundViolatingConstraintsForColumnChange(
+            "rename", UnresolvedAttribute(columnParts).name, dependentConstraints)
+        }
+
+        // if renaming column, need to check if the change affects any generated columns
+        if (GeneratedColumn.satisfyGeneratedColumnProtocol(txn.protocol) &&
+          GeneratedColumn.hasGeneratedColumns(newMetadata.schema)) {
+
+          val dependentGenCols = ArrayBuffer[StructField]()
+          SchemaMergingUtils.transformColumns(newMetadata.schema) { (_, field, _) =>
+            GeneratedColumn.getGenerationExpressionStr(field.metadata).foreach { exprStr =>
+              val needsToChangeExpr = SchemaUtils.containsDependentExpression(
+                sparkSession, columnParts, exprStr, resolver)
+              if (needsToChangeExpr) dependentGenCols += field
+            }
+            field
+          }
+          if (dependentGenCols.nonEmpty) {
+            throw DeltaErrors.foundViolatingGeneratedColumnsForColumnChange(
+              "rename", UnresolvedAttribute(columnParts).name, dependentGenCols.toList)
+          }
+        }
+      }
+
       txn.updateMetadata(newMetadata)
       txn.commit(Nil, DeltaOperations.ChangeColumn(
         columnPath, columnName, newColumn, colPosition.map(_.toString)))
@@ -355,6 +402,7 @@ case class AlterTableChangeColumnDeltaCommand(
    * @param originalField The existing column
    */
   private def verifyColumnChange(
+      spark: SparkSession,
       originalField: StructField,
       resolver: Resolver,
       txn: OptimisticTransaction): Unit = {
@@ -383,8 +431,7 @@ case class AlterTableChangeColumnDeltaCommand(
         throw new AnalysisException(s"Cannot update ${table.name()} field of type $o")
     }
 
-    if (columnName != newColumn.name ||
-      SchemaUtils.canChangeDataType(originalField.dataType, newColumn.dataType, resolver,
+    if (SchemaUtils.canChangeDataType(originalField.dataType, newColumn.dataType, resolver,
         columnPath :+ originalField.name).nonEmpty) {
       throw DeltaErrors.alterTableChangeColumnException(
         s"'${UnresolvedAttribute(columnPath :+ originalField.name).name}' with type " +
@@ -393,6 +440,12 @@ case class AlterTableChangeColumnDeltaCommand(
         s"'${UnresolvedAttribute(Seq(newColumn.name)).name}' with type " +
           s"'${newColumn.dataType}" +
           s" (nullable = ${newColumn.nullable})'")
+    }
+
+    if (columnName != newColumn.name) {
+      if (txn.metadata.columnMappingMode == NoMapping) {
+        throw DeltaErrors.columnRenameNotSupported(spark, txn.protocol)
+      }
     }
 
     if (originalField.nullable && !newColumn.nullable) {
@@ -405,8 +458,6 @@ case class AlterTableChangeColumnDeltaCommand(
           s" (nullable = ${newColumn.nullable})'")
     }
   }
-
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 /**
@@ -421,7 +472,7 @@ case class AlterTableChangeColumnDeltaCommand(
 case class AlterTableReplaceColumnsDeltaCommand(
     table: DeltaTableV2,
     columns: Seq[StructField])
-  extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
@@ -452,8 +503,6 @@ case class AlterTableReplaceColumnsDeltaCommand(
       Seq.empty[Row]
     }
   }
-
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 /**
@@ -472,13 +521,14 @@ case class AlterTableReplaceColumnsDeltaCommand(
 case class AlterTableSetLocationDeltaCommand(
     table: DeltaTableV2,
     location: String)
-  extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val catalog = sparkSession.sessionState.catalog
-    val identifier = sparkSession.sessionState.sqlParser
-      .parseTableIdentifier(table.tableIdentifier.get)
-    val catalogTable = catalog.getTableMetadata(identifier)
+    if (table.catalogTable.isEmpty) {
+      throw DeltaErrors.setLocationNotSupportedOnPathIdentifiers()
+    }
+    val catalogTable = table.catalogTable.get
     val locUri = CatalogUtils.stringToURI(location)
     val oldTable = table.deltaLog.update()
     if (oldTable.version == -1) {
@@ -511,8 +561,6 @@ case class AlterTableSetLocationDeltaCommand(
       dropColumnMappingMetadata(oldMetadata.partitionSchema) ==
         dropColumnMappingMetadata(newMetadata.partitionSchema)
   }
-
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 /**
@@ -528,7 +576,7 @@ case class AlterTableAddConstraintDeltaCommand(
     table: DeltaTableV2,
     name: String,
     exprText: String)
-  extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
@@ -568,8 +616,6 @@ case class AlterTableAddConstraintDeltaCommand(
     }
     Seq()
   }
-
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }
 
 /**
@@ -583,8 +629,9 @@ case class AlterTableAddConstraintDeltaCommand(
  */
 case class AlterTableDropConstraintDeltaCommand(
     table: DeltaTableV2,
-    name: String)
-  extends RunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+    name: String,
+    ifExists: Boolean)
+  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
@@ -592,6 +639,14 @@ case class AlterTableDropConstraintDeltaCommand(
       val txn = startTransaction()
 
       val oldExprText = Constraints.getExprTextByName(name, txn.metadata, sparkSession)
+      if (oldExprText.isEmpty && !ifExists && !sparkSession.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS)) {
+        val quotedTableName = table.getTableIdentifierIfExists.map(_.quotedString)
+          .orElse(table.catalogTable.map(_.identifier.quotedString))
+          .getOrElse(table.name())
+        throw DeltaErrors.nonexistentConstraint(name, quotedTableName)
+      }
+
       val newMetadata = txn.metadata.copy(
         configuration = txn.metadata.configuration - Constraints.checkConstraintPropertyName(name))
 
@@ -600,6 +655,4 @@ case class AlterTableDropConstraintDeltaCommand(
 
     Seq()
   }
-
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }

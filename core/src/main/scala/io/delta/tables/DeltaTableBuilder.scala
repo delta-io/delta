@@ -320,11 +320,12 @@ class DeltaTableBuilder private[tables](
       colNames.map(name => DeltaTableUtils.parseColToTransform(name))
     }.getOrElse(Seq.empty[Transform])
 
+
     val stmt = builderOption match {
       case CreateTableOptions(ifNotExists) =>
         CreateTableStatement(
           table,
-          StructType(columns),
+          StructType(columns.toSeq),
           partitioning,
           None,
           this.properties,
@@ -339,7 +340,7 @@ class DeltaTableBuilder private[tables](
       case ReplaceTableOptions(orCreate) =>
         ReplaceTableStatement(
           table,
-          StructType(columns),
+          StructType(columns.toSeq),
           partitioning,
           None,
           this.properties,

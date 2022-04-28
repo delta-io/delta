@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.sources
 
-import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.json4s._
 import org.json4s.jackson.JsonMethods.parse
@@ -49,6 +49,19 @@ case class DeltaSourceOffset(
     isStartingVersion: Boolean) extends Offset {
 
   override def json: String = JsonUtils.toJson(this)
+
+  /**
+   * Compare two DeltaSourceOffsets which are on the same table and source version.
+   * @return 0 for equivalent offsets. negative if this offset is less than `otherOffset`. Positive
+   *         if this offset is greater than `otherOffset`
+   */
+  def compare(otherOffset: DeltaSourceOffset): Int = {
+    assert(reservoirId == otherOffset.reservoirId &&
+      sourceVersion == otherOffset.sourceVersion, "Comparing offsets that do not refer to the" +
+      " same table is disallowed.")
+    implicitly[Ordering[(Long, Long)]].compare((reservoirVersion, index),
+      (otherOffset.reservoirVersion, otherOffset.index))
+  }
 }
 
 object DeltaSourceOffset {
@@ -85,7 +98,7 @@ object DeltaSourceOffset {
       case other => throw new IllegalStateException(s"sourceVersion($other) is invalid")
     }
     if (versionOpt.isEmpty) {
-      throw new IllegalStateException(s"Cannot find 'sourceVersion' in $json")
+      throw DeltaErrors.cannotFindSourceVersionException(json)
     }
     if (versionOpt.get > VERSION) {
       throw new IllegalStateException(

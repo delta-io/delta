@@ -42,8 +42,7 @@ import org.apache.spark.util.Utils
 
 trait DeltaTableCreationTests
   extends QueryTest
-  with SharedSparkSession
-  with DeltaColumnMappingTestUtils {
+  with SharedSparkSession  with DeltaColumnMappingTestUtils {
 
   import testImplicits._
 
@@ -364,27 +363,51 @@ trait DeltaTableCreationTests
     }
   }
 
-  testQuietly("cannot create delta table with an invalid column name") {
+  testQuietly("create delta table with spaces in column names") {
     val tableName = "delta_test"
-    withTable(tableName) {
-      val tableLoc =
-        new File(spark.sessionState.catalog.defaultTablePath(TableIdentifier(tableName)))
-      Utils.deleteRecursively(tableLoc)
-      val ex = intercept[AnalysisException] {
-        Seq(1, 2, 3).toDF("a column name with spaces")
-          .write
-          .format(format)
-          .mode(SaveMode.Overwrite)
-          .saveAsTable(tableName)
-      }
-      assert(ex.getMessage.contains("invalid character(s)"))
-      assert(!tableLoc.exists())
 
-      val ex2 = intercept[AnalysisException] {
-        sql(s"CREATE TABLE $tableName(`a column name with spaces` LONG, b String) USING delta")
+    val tableLoc =
+      new File(spark.sessionState.catalog.defaultTablePath(TableIdentifier(tableName)))
+    Utils.deleteRecursively(tableLoc)
+
+    def createTableUsingDF: Unit = {
+      Seq(1, 2, 3).toDF("a column name with spaces")
+        .write
+        .format(format)
+        .mode(SaveMode.Overwrite)
+        .saveAsTable(tableName)
+    }
+
+    def createTableUsingSQL: DataFrame = {
+      sql(s"CREATE TABLE $tableName(`a column name with spaces` LONG, b String) USING delta")
+    }
+
+    withTable(tableName) {
+      if (!columnMappingEnabled) {
+        val ex = intercept[AnalysisException] {
+          createTableUsingDF
+        }
+        assert(ex.getMessage.contains("invalid character(s)"))
+        assert(!tableLoc.exists())
+      } else {
+        // column mapping modes support creating table with arbitrary col names
+        createTableUsingDF
+        assert(tableLoc.exists())
       }
-      assert(ex2.getMessage.contains("invalid character(s)"))
-      assert(!tableLoc.exists())
+    }
+
+    withTable(tableName) {
+      if (!columnMappingEnabled) {
+        val ex2 = intercept[AnalysisException] {
+          createTableUsingSQL
+        }
+        assert(ex2.getMessage.contains("invalid character(s)"))
+        assert(!tableLoc.exists())
+      } else {
+        // column mapping modes support creating table with arbitrary col names
+        createTableUsingSQL
+        assert(tableLoc.exists())
+      }
     }
   }
 
@@ -774,7 +797,7 @@ trait DeltaTableCreationTests
 
       assertEqual(deltaLog.snapshot.schema, getSchema("delta_test"))
       assert(getPartitioningColumns("delta_test").isEmpty)
-      assert(getSchema("delta_test") == new StructType().add("a", "long").add("b", "string"))
+      assertEqual(getSchema("delta_test"), new StructType().add("a", "long").add("b", "string"))
 
       // External catalog does not contain the schema and partition column names.
       verifyTableInCatalog(catalog, "delta_test")
@@ -810,14 +833,14 @@ trait DeltaTableCreationTests
 
       assertEqual(deltaLog.snapshot.schema, getSchema("delta_test"))
       assert(getPartitioningColumns("delta_test") == Seq("a"))
-      assert(getSchema("delta_test") == new StructType().add("a", "long").add("b", "string"))
+      assertEqual(getSchema("delta_test"), new StructType().add("a", "long").add("b", "string"))
 
       // External catalog does not contain the schema and partition column names.
       verifyTableInCatalog(catalog, "delta_test")
 
       sql("INSERT INTO delta_test SELECT 1, 'a'")
 
-      assertPartitionExists("a", "1", deltaLog)
+      assertPartitionWithValueExists("a", "1", deltaLog)
 
       checkDatasetUnorderly(
         sql("SELECT * FROM delta_test").as[(Long, String)],
@@ -1125,10 +1148,12 @@ trait DeltaTableCreationTests
         // Query the data and the metadata directly via the DeltaLog
         val deltaLog2 = getDeltaLog(table)
 
-        assertEqual(
-          deltaLog2.snapshot.schema, new StructType().add("a", "long").add("b", "string"))
-        assertEqual(
-          deltaLog2.snapshot.metadata.partitionSchema, new StructType().add("b", "string"))
+        // Since we manually committed Metadata without schema, we won't have column metadata in
+        // the latest deltaLog snapshot
+        assert(
+          deltaLog2.snapshot.schema == new StructType().add("a", "long").add("b", "string"))
+        assert(
+          deltaLog2.snapshot.metadata.partitionSchema == new StructType().add("b", "string"))
 
         assert(getSchema("delta_test") === deltaLog2.snapshot.schema)
         assert(getPartitioningColumns("delta_test") === Seq("b"))
@@ -1171,7 +1196,7 @@ trait DeltaTableCreationTests
         checkAnswer(read, Seq(Row(1, 2)))
 
         val deltaLog = loadDeltaLog(table.location.toString)
-        assertPartitionExists("a", "1", deltaLog)
+        assertPartitionWithValueExists("a", "1", deltaLog)
       }
     }
   }
@@ -1416,7 +1441,7 @@ trait DeltaTableCreationTests
           spark.sql(s"INSERT INTO TABLE t SELECT 1, 2")
 
           val deltaLog = loadDeltaLog(dir.toString)
-          assertPartitionExists(specialChars, "2", deltaLog)
+          assertPartitionWithValueExists(specialChars, "2", deltaLog)
 
           checkAnswer(spark.table("t"), Row("1", "2") :: Nil)
         }
@@ -1480,25 +1505,19 @@ trait DeltaTableCreationTests
           if (columnMappingEnabled) {
            // column mapping always use random file prefixes so we can't compare path
             val deltaLog = loadDeltaLog(loc.getCanonicalPath)
-            val partPaths = getPartitionedFilePathsWithDeltaLog("b", "2", deltaLog)
+            val partPaths = getPartitionFilePathsWithValue("b", "2", deltaLog)
             assert(partPaths.nonEmpty)
             assert(partPaths.forall { p =>
-              val parentPath = new File(loc, p.split("/").head)
+              val parentPath = new File(p).getParentFile
               !parentPath.listFiles().forall(_.toString.contains("_delta_log"))
             })
 
+            // In column mapping mode, as we are using random file prefixes,
+            // this partition value is valid
             spark.sql("INSERT INTO TABLE t1 SELECT 1, '2017-03-03 12:13%3A14'")
-            assert(
-              getPartitionedFilePathsWithDeltaLog("b", "b=2017-03-03 12:13%3A14", deltaLog).isEmpty
-            )
-
-            if (!Utils.isWindows) {
-              // Actual path becomes "b=2017-03-03%2012%3A13%253A14" on Windows.
-              assert(getPartitionedFilePathsWithDeltaLog(
-                "b", "2017-03-03 12%3A13%253A14", deltaLog).isEmpty)
-              checkAnswer(
+            assertPartitionWithValueExists("b", "2017-03-03 12:13%3A14", deltaLog)
+            checkAnswer(
                 spark.table("t1"), Row("1", "2") :: Row("1", "2017-03-03 12:13%3A14") :: Nil)
-            }
           } else {
             val partFile = new File(loc, "b=2")
             assert(!partFile.listFiles().forall(_.toString.contains("_delta_log")))
@@ -1557,6 +1576,16 @@ trait DeltaTableCreationTests
   }
 
   testQuietly("CREATE TABLE with existing data path") {
+    // Re-use `filterV2TableProperties()` from `SQLTestUtils` as soon as it will be released.
+    def isReservedProperty(propName: String): Boolean = {
+      CatalogV2Util.TABLE_RESERVED_PROPERTIES.contains(propName) ||
+        propName.startsWith(TableCatalog.OPTION_PREFIX) ||
+        propName == TableCatalog.PROP_EXTERNAL
+    }
+    def filterV2TableProperties(properties: Map[String, String]): Map[String, String] = {
+      properties.filterNot(kv => isReservedProperty(kv._1))
+    }
+
     withTempPath { path =>
       withTable("src", "t1", "t2", "t3", "t4", "t5", "t6") {
         sql("CREATE TABLE src(i int, p string) USING delta PARTITIONED BY (p) " +
@@ -1573,7 +1602,7 @@ trait DeltaTableCreationTests
           s"LOCATION '${path.getAbsolutePath}'")
         checkAnswer(spark.table("t2"), Row(1, "a"))
         // Table properties should not be changed to empty.
-        assert(getTableProperties("t2").filter(_._1 != "Type") ==
+        assert(filterV2TableProperties(getTableProperties("t2")).filter(_._1 != "Type") ==
           Map("delta.randomizeFilePrefixes" -> "true"))
 
         // CREATE TABLE with the same schema but no partitioning fails.
@@ -1645,6 +1674,7 @@ class DeltaTableCreationSuite
       .filterKeys(!CatalogV2Util.TABLE_RESERVED_PROPERTIES.contains(_))
       .filterKeys(k =>
         k != Protocol.MIN_READER_VERSION_PROP &&  k != Protocol.MIN_WRITER_VERSION_PROP)
+      .toMap
   }
 
   testQuietly("REPLACE TABLE") {
@@ -1959,3 +1989,29 @@ class DeltaTableCreationSuite
   }
 }
 
+
+class DeltaTableCreationNameColumnMappingSuite extends DeltaTableCreationSuite
+  with DeltaColumnMappingEnableNameMode {
+
+  override protected def getTableProperties(tableName: String): Map[String, String] = {
+    // ignore comparing column mapping properties
+    dropColumnMappingConfigurations(super.getTableProperties(tableName))
+  }
+
+  override protected def runOnlyTests: Seq[String] = Seq(
+    "create table with schema and path",
+    "create external table without schema",
+    "REPLACE TABLE",
+    "CREATE OR REPLACE TABLE on non-empty directory"
+  ) ++ Seq("partitioned" -> Seq("v2"), "non-partitioned" -> Nil)
+    .flatMap { case (isPartitioned, cols) =>
+      SaveMode.values().flatMap { saveMode =>
+        Seq(
+          s"saveAsTable to a new table (managed) - $isPartitioned, saveMode: $saveMode",
+          s"saveAsTable to a new table (external) - $isPartitioned, saveMode: $saveMode")
+      }
+    } ++ Seq("a b", "a:b", "a%b").map { specialChars =>
+      s"location uri contains $specialChars for datasource table"
+    }
+
+}

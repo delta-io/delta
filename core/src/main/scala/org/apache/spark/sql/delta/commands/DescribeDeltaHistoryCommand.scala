@@ -28,7 +28,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTableType
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.{LeafNode, LogicalPlan, Statistics}
-import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.execution.command.LeafRunnableCommand
 
 /**
  * A logical placeholder for describing a Delta table's history, so that the history can be
@@ -53,7 +53,7 @@ case class DescribeDeltaHistoryCommand(
     tableIdentifier: Option[TableIdentifier],
     limit: Option[Int],
     override val output: Seq[Attribute] = ExpressionEncoder[DeltaHistory]().schema.toAttributes)
-  extends RunnableCommand with DeltaLogging {
+  extends LeafRunnableCommand with DeltaLogging {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val basePath =
@@ -93,6 +93,4 @@ case class DescribeDeltaHistoryCommand(
       deltaLog.history.getHistory(limit).toDF().collect().toSeq
     }
   }
-
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }

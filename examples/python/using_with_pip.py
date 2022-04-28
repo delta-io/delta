@@ -39,10 +39,7 @@ spark = configure_spark_with_delta_pip(builder).getOrCreate()
 
 
 # Clear previous run's delta-tables
-try:
-    shutil.rmtree("/tmp/delta-table")
-except:
-    pass
+shutil.rmtree("/tmp/delta-table", ignore_errors=True)
 
 print("########### Create a Parquet table ##############")
 data = spark.range(0, 5)

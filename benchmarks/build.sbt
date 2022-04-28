@@ -14,20 +14,19 @@
  * limitations under the License.
  */
 
-package io.delta.storage;
+name := "benchmarks"
+scalaVersion := "2.12.14"
 
-import org.apache.spark.annotation.DeveloperApi;
+lazy val root = (project in file("."))
+  .settings(
+    name := "benchmarks",
+    libraryDependencies += "org.apache.spark" %% "spark-sql" % "3.2.0" % "provided",
+    libraryDependencies += "com.github.scopt" %% "scopt" % "4.0.1",
+    libraryDependencies += "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.13.1",
 
-import java.io.Closeable;
-import java.util.Iterator;
-
-/**
- * :: DeveloperApi ::
- *
- * An iterator that may contain resources which should be released after use. Users of
- * CloseableIterator are responsible for closing the iterator if they are done with it.
- *
- * @since 1.0.0
- */
-@DeveloperApi
-public interface CloseableIterator<T> extends Iterator<T>, Closeable {}
+    assemblyMergeStrategy in assembly := {
+      case PathList("META-INF", xs @ _*) => MergeStrategy.discard
+      case x => MergeStrategy.first
+    }
+  )
+  

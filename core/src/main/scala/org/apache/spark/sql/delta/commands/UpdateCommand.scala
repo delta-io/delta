@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.commands
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, DeltaTableUtils, OptimisticTransaction}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkContext
@@ -27,7 +28,7 @@ import org.apache.spark.sql.catalyst.expressions.{Alias, Expression, If, Literal
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.SQLExecution
-import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.functions.{input_file_name, udf}
@@ -47,7 +48,7 @@ case class UpdateCommand(
     target: LogicalPlan,
     updateExpressions: Seq[Expression],
     condition: Option[Expression])
-  extends RunnableCommand with DeltaCommand {
+  extends LeafRunnableCommand with DeltaCommand {
 
   override def innerChildren: Seq[QueryPlan[_]] = Seq(target)
 
@@ -57,6 +58,7 @@ case class UpdateCommand(
     "numAddedFiles" -> createMetric(sc, "number of files added."),
     "numRemovedFiles" -> createMetric(sc, "number of files removed."),
     "numUpdatedRows" -> createMetric(sc, "number of rows updated."),
+    "numCopiedRows" -> createMetric(sc, "number of rows copied."),
     "executionTimeMs" -> createMetric(sc, "time taken to execute the entire operation"),
     "scanTimeMs" -> createMetric(sc, "time taken to scan the files for matches"),
     "rewriteTimeMs" -> createMetric(sc, "time taken to rewrite the matched files")
@@ -179,6 +181,7 @@ case class UpdateCommand(
       if (metrics("numUpdatedRows").value == 0 && outputRows != 0) {
         metrics("numUpdatedRows").set(outputRows)
       }
+      metrics("numCopiedRows").set(outputRows - metrics("numUpdatedRows").value)
       txn.registerSQLMetrics(sparkSession, metrics)
       txn.commit(actions, DeltaOperations.Update(condition.map(_.toString)))
       // This is needed to make the SQL metrics visible in the Spark UI
@@ -235,9 +238,6 @@ case class UpdateCommand(
       new Column(Alias(updated, original.name)())
     }
   }
-
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
-
 }
 
 object UpdateCommand {
@@ -266,4 +266,5 @@ case class UpdateMetric(
     numAddedChangeFiles: Long,
     changeFileBytes: Long,
     scanTimeMs: Long,
-    rewriteTimeMs: Long)
+    rewriteTimeMs: Long
+)

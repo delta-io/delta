@@ -102,6 +102,17 @@ def run_python_style_checks(root_dir):
     run_cmd([os.path.join(root_dir, "dev", "lint-python")], stream_output=True)
 
 
+def run_mypy_tests(root_dir):
+    print("##### Running mypy tests #####")
+    python_package_root = path.join(root_dir, path.join("python", "delta"))
+    mypy_config_path = path.join(root_dir, path.join("python", "mypy.ini"))
+    run_cmd([
+        "mypy",
+        "--config-file", mypy_config_path,
+        python_package_root
+    ], stream_output=True)
+
+
 def run_pypi_packaging_tests(root_dir):
     """
     We want to test that the PyPi artifact for this delta version can be generated,
@@ -161,5 +172,6 @@ if __name__ == "__main__":
     package = prepare(root_dir)
 
     run_python_style_checks(root_dir)
-    test(root_dir, package)
+    run_mypy_tests(root_dir)
     run_pypi_packaging_tests(root_dir)
+    test(root_dir, package)

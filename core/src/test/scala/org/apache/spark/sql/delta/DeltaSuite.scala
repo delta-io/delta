@@ -43,7 +43,7 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
 
 class DeltaSuite extends QueryTest
-  with SharedSparkSession  with SQLTestUtils
+  with SharedSparkSession  with DeltaColumnMappingTestUtils  with SQLTestUtils
   with DeltaSQLCommandTest {
 
   import testImplicits._
@@ -161,7 +161,7 @@ class DeltaSuite extends QueryTest
         spark.read.format("delta").load(tempDir.toString).collect()
       }
     }.getMessage
-    assert(e2.contains("is not a Delta table"))
+    assert(e2.contains("Path does not exist"))
   }
 
   test("SC-70676: directory deleted before first DataFrame is defined") {
@@ -177,7 +177,7 @@ class DeltaSuite extends QueryTest
     val e = intercept[AnalysisException] {
       spark.read.format("delta").load(tempDir.toString).collect()
     }.getMessage
-    assert(e.contains("is not a Delta table"))
+    assert(e.contains("Path does not exist"))
   }
 
   test("append then read") {
@@ -674,7 +674,7 @@ class DeltaSuite extends QueryTest
           .show()
       }
 
-      assert(e.getMessage.contains("is not a Delta table"))
+      assert(e.getMessage.contains("Path does not exist"))
       assert(e.getMessage.contains(tempDir.getCanonicalPath))
 
       assert(!tempDir.exists())
@@ -742,8 +742,9 @@ class DeltaSuite extends QueryTest
 
       val files = spark.read.format("delta").load(tempDir.toString).inputFiles
 
-      assert(files.forall(path => path.contains("by4=") && path.contains("/by8=")),
-        s"${files.toSeq.mkString("\n")}\ndidn't contain partition columns by4 and by8")
+      val deltaLog = loadDeltaLog(tempDir.getAbsolutePath)
+      assertPartitionExists("by4", deltaLog, files)
+      assertPartitionExists("by8", deltaLog, files)
     }
   }
 
@@ -783,18 +784,20 @@ class DeltaSuite extends QueryTest
         .format("delta")
         .partitionBy("by,4")
 
-      val e = intercept[AnalysisException] {
-        dfw.save(tempDir.toString)
+      // if in column mapping mode, we should not expect invalid character errors
+      if (!columnMappingEnabled) {
+        val e = intercept[AnalysisException] {
+          dfw.save(tempDir.toString)
+        }
+        assert(e.getMessage.contains("invalid character(s)"))
       }
-      assert(e.getMessage.contains("invalid character(s)"))
+
       withSQLConf(DeltaSQLConf.DELTA_PARTITION_COLUMN_CHECK_ENABLED.key -> "false") {
         dfw.save(tempDir.toString)
       }
 
-      val files = spark.read.format("delta").load(tempDir.toString).inputFiles
-
-      assert(files.forall(path => path.contains("by,4=")),
-        s"${files.toSeq.mkString("\n")}\ndidn't contain partition columns by,4")
+      // Note: although we are able to write, we cannot read the table with Spark 3.2+ with
+      // OSS Delta 1.1.0+ because SPARK-36271 adds a column name check in the read path.
     }
   }
 
@@ -858,8 +861,8 @@ class DeltaSuite extends QueryTest
 
       val files = spark.read.format("delta").load(tempDir.toString).inputFiles
 
-      assert(files.forall(path => path.contains("by4=")),
-        s"${files.toSeq.mkString("\n")}\ndidn't contain partition columns by4")
+      val deltaLog = loadDeltaLog(tempDir.getAbsolutePath)
+      assertPartitionExists("by4", deltaLog, files)
 
       spark.range(101, 200).select('id, 'id % 4 as 'by4, 'id % 8 as 'by8)
         .write
@@ -888,8 +891,8 @@ class DeltaSuite extends QueryTest
 
       val files = spark.read.format("delta").load(tempDir.toString).inputFiles
 
-      assert(files.forall(path => path.contains("by4=")),
-        s"${files.toSeq.mkString("\n")}\ndidn't contain partition columns by4")
+      val deltaLog = loadDeltaLog(tempDir.getAbsolutePath)
+      assertPartitionExists("by4", deltaLog, files)
 
       val e = intercept[AnalysisException] {
         spark.range(101, 200).select('id, 'id % 4 as 'by4, 'id % 8 as 'by8)
@@ -1389,9 +1392,13 @@ class DeltaSuite extends QueryTest
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath + "/table"
       spark.range(10).write.format("parquet").save(path)
-      sql(s"CONVERT TO DELTA parquet.`$path`")
+      convertToDelta(s"parquet.`$path`")
 
-      assert(spark.conf.get(DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION) === Some(0))
+      // In column mapping (name mode), we perform convertToDelta with a CONVERT and an ALTER,
+      // so the version has been updated
+      val commitVersion = if (columnMappingEnabled) 1 else 0
+      assert(spark.conf.get(DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION) ===
+        Some(commitVersion))
     }
   }
 
@@ -1485,12 +1492,19 @@ class DeltaSuite extends QueryTest
     val snapshot = deltaLog.snapshot
     val files = snapshot.allFiles.collect()
 
+    // assign physical name to new schema
+    val newMetadata = if (columnMappingEnabled) {
+      DeltaColumnMapping.assignColumnIdAndPhysicalName(
+        snapshot.metadata.copy(schemaString = new StructType().add("data", "bigint").json),
+        snapshot.metadata,
+        isChangingModeOnExistingTable = false)
+    } else {
+      snapshot.metadata.copy(schemaString = new StructType().add("data", "bigint").json)
+    }
+
     // Now make a commit that comes from an "external" writer that deletes existing data and
     // changes the schema
-    val actions = Seq(
-      Protocol(),
-      snapshot.metadata.copy(schemaString = new StructType().add("data", "bigint").json)
-    ) ++ files.map(_.remove)
+    val actions = Seq(Protocol(), newMetadata) ++ files.map(_.remove)
     deltaLog.store.write(
       FileNames.deltaFile(deltaLog.logPath, snapshot.version + 1),
       actions.map(_.json).iterator,
@@ -1695,4 +1709,19 @@ class DeltaSuite extends QueryTest
       assert(deltaLog.snapshot.metadata.configuration === expected)
     }
   }
+}
+
+
+class DeltaNameColumnMappingSuite extends DeltaSuite
+  with DeltaColumnMappingEnableNameMode {
+
+  override protected def runOnlyTests = Seq(
+    "handle partition filters and data filters",
+    "query with predicates should skip partitions",
+    "valid replaceWhere",
+    "batch write: append, overwrite where",
+    "get touched files for update, delete and merge",
+    "isBlindAppend with save and saveAsTable"
+  )
+
 }

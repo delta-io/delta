@@ -22,8 +22,7 @@ import java.{util => ju}
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, DeltaTimeTravelSpec, Snapshot}
-import org.apache.spark.sql.delta.GeneratedColumn
+import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaColumnMapping, DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, DeltaTimeTravelSpec, Snapshot}
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils}
@@ -31,11 +30,13 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogUtils}
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.connector.catalog.{SupportsWrite, Table, TableCapability, TableCatalog, V2TableWithV1Fallback}
+import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.expressions._
-import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsOverwrite, SupportsTruncate, V1WriteBuilder, WriteBuilder}
+import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsOverwrite, SupportsTruncate, V1Write, WriteBuilder}
+import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.sources.{BaseRelation, Filter, InsertableRelation}
 import org.apache.spark.sql.types.StructType
@@ -69,12 +70,17 @@ case class DeltaTableV2(
     }
   }
 
+  // This MUST be initialized before the deltaLog object is created, in order to accurately
+  // bound the creation time of the table.
+  private val creationTimeMs = System.currentTimeMillis()
+
   // The loading of the DeltaLog is lazy in order to reduce the amount of FileSystem calls,
   // in cases where we will fallback to the V1 behavior.
   lazy val deltaLog: DeltaLog = DeltaLog.forTable(spark, rootPath, options)
 
-  def getTableIdentifierIfExists: Option[TableIdentifier] = tableIdentifier.map(
-    spark.sessionState.sqlParser.parseTableIdentifier)
+  def getTableIdentifierIfExists: Option[TableIdentifier] = tableIdentifier.map { tableName =>
+    spark.sessionState.sqlParser.parseMultipartIdentifier(tableName).asTableIdentifier
+  }
 
   override def name(): String = catalogTable.map(_.identifier.unquotedString)
     .orElse(tableIdentifier)
@@ -98,12 +104,14 @@ case class DeltaTableV2(
         "accessType" -> accessType
       ))
       deltaLog.getSnapshotAt(version)
-    }.getOrElse(deltaLog.update(stalenessAcceptable = true))
+    }.getOrElse(
+      deltaLog.update(stalenessAcceptable = true, checkIfUpdatedSinceTs = Some(creationTimeMs))
+    )
   }
 
   private lazy val tableSchema: StructType =
     DeltaColumnMapping.dropColumnMappingMetadata(
-      GeneratedColumn.removeGenerationExpressions(snapshot.schema))
+      ColumnWithDefaultExprUtils.removeDefaultExpressions(snapshot.schema))
 
   override def schema(): StructType = tableSchema
 
@@ -120,6 +128,12 @@ case class DeltaTableV2(
     catalogTable.foreach { table =>
       if (table.owner != null && table.owner.nonEmpty) {
         base.put(TableCatalog.PROP_OWNER, table.owner)
+      }
+      v1Table.storage.properties.foreach { case (key, value) =>
+        base.put(TableCatalog.OPTION_PREFIX + key, value)
+      }
+      if (v1Table.tableType == CatalogTableType.EXTERNAL) {
+        base.put(TableCatalog.PROP_EXTERNAL, "true")
       }
     }
     Option(snapshot.metadata.description).foreach(base.put(TableCatalog.PROP_COMMENT, _))
@@ -147,6 +161,12 @@ case class DeltaTableV2(
     // force update() if necessary in DataFrameReader.load code
     snapshot
     if (!deltaLog.tableExists) {
+      // special error handling for path based tables
+      if (catalogTable.isEmpty
+        && !rootPath.getFileSystem(deltaLog.newDeltaHadoopConf()).exists(rootPath)) {
+        throw QueryCompilationErrors.dataPathNotExistError(rootPath.toString)
+      }
+
       val id = catalogTable.map(ct => DeltaTableIdentifier(table = Some(ct.identifier)))
         .getOrElse(DeltaTableIdentifier(path = Some(path.toString)))
       throw DeltaErrors.notADeltaTableException(id)
@@ -175,7 +195,7 @@ case class DeltaTableV2(
 
   override def v1Table: CatalogTable = {
     if (catalogTable.isEmpty) {
-      throw new IllegalStateException("v1Table call is not expected with path based DeltaTableV2")
+      throw DeltaErrors.invalidV1TableCall("v1Table", "DeltaTableV2")
     }
     if (timeTravelSpec.isDefined) {
       catalogTable.get.copy(stats = None)
@@ -188,7 +208,7 @@ case class DeltaTableV2(
 private class WriteIntoDeltaBuilder(
     log: DeltaLog,
     writeOptions: CaseInsensitiveStringMap)
-  extends WriteBuilder with V1WriteBuilder with SupportsOverwrite with SupportsTruncate {
+  extends WriteBuilder with SupportsOverwrite with SupportsTruncate {
 
   private var forceOverwrite = false
 
@@ -210,24 +230,26 @@ private class WriteIntoDeltaBuilder(
     this
   }
 
-  override def buildForV1Write(): InsertableRelation = {
-    new InsertableRelation {
-      override def insert(data: DataFrame, overwrite: Boolean): Unit = {
-        val session = data.sparkSession
+  override def build(): V1Write = new V1Write {
+    override def toInsertableRelation(): InsertableRelation = {
+      new InsertableRelation {
+        override def insert(data: DataFrame, overwrite: Boolean): Unit = {
+          val session = data.sparkSession
 
-        WriteIntoDelta(
-          log,
-          if (forceOverwrite) SaveMode.Overwrite else SaveMode.Append,
-          new DeltaOptions(options.toMap, session.sessionState.conf),
-          Nil,
-          log.snapshot.metadata.configuration,
-          data).run(session)
+          WriteIntoDelta(
+            log,
+            if (forceOverwrite) SaveMode.Overwrite else SaveMode.Append,
+            new DeltaOptions(options.toMap, session.sessionState.conf),
+            Nil,
+            log.snapshot.metadata.configuration,
+            data).run(session)
 
-        // TODO: Push this to Apache Spark
-        // Re-cache all cached plans(including this relation itself, if it's cached) that refer
-        // to this data source relation. This is the behavior for InsertInto
-        session.sharedState.cacheManager.recacheByPlan(
-          session, LogicalRelation(log.createRelation()))
+          // TODO: Push this to Apache Spark
+          // Re-cache all cached plans(including this relation itself, if it's cached) that refer
+          // to this data source relation. This is the behavior for InsertInto
+          session.sharedState.cacheManager.recacheByPlan(
+            session, LogicalRelation(log.createRelation()))
+        }
       }
     }
   }

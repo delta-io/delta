@@ -18,20 +18,23 @@ import unittest
 import tempfile
 import shutil
 import os
+from typing import List, Any
+
+from pyspark.sql import DataFrame
 
 from delta.testing.utils import DeltaTestCase
 
 
 class DeltaSqlTests(DeltaTestCase):
 
-    def setUp(self):
+    def setUp(self) -> None:
         super(DeltaSqlTests, self).setUp()
         # Create a simple Delta table inside the temp directory to test SQL commands.
         df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
         df.write.format("delta").save(self.tempFile)
         df.write.mode("overwrite").format("delta").save(self.tempFile)
 
-    def test_vacuum(self):
+    def test_vacuum(self) -> None:
         self.spark.sql("set spark.databricks.delta.retentionDurationCheck.enabled = false")
         try:
             deleted_files = self.spark.sql("VACUUM '%s' RETAIN 0 HOURS" % self.tempFile).collect()
@@ -40,10 +43,10 @@ class DeltaSqlTests(DeltaTestCase):
         finally:
             self.spark.sql("set spark.databricks.delta.retentionDurationCheck.enabled = true")
 
-    def test_describe_history(self):
+    def test_describe_history(self) -> None:
         assert(len(self.spark.sql("desc history delta.`%s`" % (self.tempFile)).collect()) > 0)
 
-    def test_generate(self):
+    def test_generate(self) -> None:
         # create a delta table
         temp_path = tempfile.mkdtemp()
         temp_file = os.path.join(temp_path, "delta_sql_test_table")
@@ -66,7 +69,7 @@ class DeltaSqlTests(DeltaTestCase):
         # the number of files we write should equal the number of lines in the manifest
         assert(len(files) == numFiles)
 
-    def test_convert(self):
+    def test_convert(self) -> None:
         df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
         temp_path2 = tempfile.mkdtemp()
         temp_path3 = tempfile.mkdtemp()
@@ -89,11 +92,11 @@ class DeltaSqlTests(DeltaTestCase):
         shutil.rmtree(temp_path2)
         shutil.rmtree(temp_path3)
 
-    def test_ddls(self):
+    def test_ddls(self) -> None:
         table = "deltaTable"
         table2 = "deltaTable2"
         try:
-            def read_table():
+            def read_table() -> DataFrame:
                 return self.spark.sql(f"SELECT * FROM {table}")
 
             self.spark.sql(f"DROP TABLE IF EXISTS {table}")
@@ -143,7 +146,9 @@ class DeltaSqlTests(DeltaTestCase):
             self.spark.sql(f"DROP TABLE IF EXISTS {table}")
             self.spark.sql(f"DROP TABLE IF EXISTS {table2}")
 
-    def __checkAnswer(self, df, expectedAnswer, schema=["key", "value"]):
+    def __checkAnswer(self, df: DataFrame,
+                      expectedAnswer: List[Any],
+                      schema: List[str] = ["key", "value"]) -> None:
         if not expectedAnswer:
             self.assertEqual(df.count(), 0)
             return

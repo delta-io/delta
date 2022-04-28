@@ -20,6 +20,8 @@ import java.util.Locale
 
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.DeltaAnalysisException
+
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.analysis.{Resolver, TypeCoercion, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.Literal
@@ -162,7 +164,7 @@ object SchemaMergingUtils {
                 } catch {
                   case NonFatal(e) =>
                     throw new AnalysisException(s"Failed to merge fields '${currentField.name}' " +
-                        s"and '${updateField.name}'. " + e.getMessage)
+                      s"and '${updateField.name}'. " + e.getMessage)
                 }
               case None =>
                 // Retain the old field.
@@ -202,14 +204,18 @@ object SchemaMergingUtils {
           if ((leftPrecision == rightPrecision) && (leftScale == rightScale)) {
             current
           } else if ((leftPrecision != rightPrecision) && (leftScale != rightScale)) {
-            throw new AnalysisException("Failed to merge decimal types with incompatible " +
-              s"precision $leftPrecision and $rightPrecision & scale $leftScale and $rightScale")
+            throw new DeltaAnalysisException(
+              errorClass = "MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+              messageParameters = Array(
+                s"precision $leftPrecision and $rightPrecision & scale $leftScale and $rightScale"))
           } else if (leftPrecision != rightPrecision) {
-            throw new AnalysisException("Failed to merge decimal types with incompatible " +
-              s"precision $leftPrecision and $rightPrecision")
+            throw new DeltaAnalysisException(
+              errorClass = "MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+              messageParameters = Array(s"precision $leftPrecision and $rightPrecision"))
           } else {
-            throw new AnalysisException("Failed to merge decimal types with incompatible " +
-              s"scale $leftScale and $rightScale")
+            throw new DeltaAnalysisException(
+              errorClass = "MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+              messageParameters = Array(s"scale $leftScale and $rightScale"))
           }
         case _ if current == update =>
           current
@@ -245,8 +251,7 @@ object SchemaMergingUtils {
    * there's no valid cast.
    */
   private def typeForImplicitCast(sourceType: DataType, targetType: DataType): Option[DataType] = {
-    TypeCoercion.ImplicitTypeCasts.implicitCast(Literal.default(sourceType), targetType)
-      .map(_.dataType)
+    TypeCoercion.implicitCast(Literal.default(sourceType), targetType).map(_.dataType)
   }
 
   def toFieldMap(fields: Seq[StructField]): Map[String, StructField] = {

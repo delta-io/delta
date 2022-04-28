@@ -21,10 +21,13 @@ import subprocess
 from os import path
 
 
-def run_sbt_tests(root_dir):
+def run_sbt_tests(root_dir, scala_version=None):
     print("##### Running SBT tests #####")
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
-    run_cmd([sbt_path, "clean", "test"], stream_output=True)
+    if scala_version is None:
+        run_cmd([sbt_path, "clean", "+test"], stream_output=True)
+    else:
+        run_cmd([sbt_path, "clean", "++ %s test" % scala_version], stream_output=True)
 
 
 def run_python_tests(root_dir):
@@ -63,14 +66,22 @@ def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
 
 if __name__ == "__main__":
     if os.getenv("USE_DOCKER") is not None:
-        prepare_docker_img = ["docker", "build", "--tag=pydeltalake", "."]
-        run_cmd(prepare_docker_img, stream_output=True)
-        # JENKINS_URL is passed here so that the Docker container
-        # can be in line with Jenkins build behavior(usage of sbt sources)
-        cmd = ["docker", "run", "-e", "JENKINS_URL",
-               "-e", "SBT_1_5_5_MIRROR_JAR_URL", "pydeltalake:latest"]
-        run_cmd(cmd, stream_output=True)
-    else:
+        # prepare_docker_img = ["docker", "build", "--tag=pydeltalake", "."]
+        # run_cmd(prepare_docker_img, stream_output=True)
+        # # JENKINS_URL is passed here so that the Docker container
+        # # can be in line with Jenkins build behavior(usage of sbt sources)
+        # cmd = ["docker", "run", "-e", "JENKINS_URL",
+        #        "-e", "SBT_1_5_5_MIRROR_JAR_URL", "pydeltalake:latest"]
+        # run_cmd(cmd, stream_output=True)
+
+        # The following code just runs SBT tests. Replace them with the above code when we figure
+        # out how to get the docker image without hitting docker.com rate limit.
         root_dir = os.path.dirname(os.path.dirname(__file__))
         run_sbt_tests(root_dir)
-        run_python_tests(root_dir)
+    else:
+        root_dir = os.path.dirname(os.path.dirname(__file__))
+        scala_version = os.getenv("SCALA_VERSION")
+        run_sbt_tests(root_dir, scala_version)
+        # Python tests are skipped when using Scala 2.13 as PySpark doesn't support it.
+        if scala_version is None or scala_version.startswith("2.12"):
+            run_python_tests(root_dir)

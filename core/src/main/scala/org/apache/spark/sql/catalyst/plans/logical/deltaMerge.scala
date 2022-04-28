@@ -18,6 +18,7 @@ package org.apache.spark.sql.catalyst.plans.logical
 
 import java.util.Locale
 
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaIllegalArgumentException, DeltaUnsupportedOperationException}
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -41,7 +42,10 @@ trait DeltaUnevaluable extends Expression {
     throw new UnsupportedOperationException(s"Cannot evaluate expression: $this")
 
   final override protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode =
-    throw new UnsupportedOperationException(s"Cannot generate code for expression: $this")
+    throw new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_CANNOT_GENERATE_CODE_FOR_EXPRESSION",
+      messageParameters = Array(s"$this")
+    )
 }
 
 /**
@@ -68,7 +72,8 @@ case class DeltaMergeAction(
   override def toString: String = s"$targetColString = $expr"
   private lazy val targetColString: String = targetColNameParts.mkString("`", "`.`", "`")
 
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+  override protected def withNewChildInternal(newChild: Expression): DeltaMergeAction =
+    copy(expr = newChild)
 }
 
 
@@ -149,7 +154,9 @@ object DeltaMergeIntoClause {
         case Assignment(key: UnresolvedAttribute, expr) => DeltaMergeAction(key.nameParts, expr)
         case Assignment(key: Attribute, expr) => DeltaMergeAction(Seq(key.name), expr)
         case other =>
-          throw new AnalysisException(s"Unexpected assignment key: ${other.getClass} - $other")
+          throw new DeltaAnalysisException(
+            errorClass = "DELTA_MERGE_UNEXPECTED_ASSIGNMENT_KEY",
+            messageParameters = Array(s"${other.getClass}", s"$other"))
       }
     }
   }
@@ -165,7 +172,14 @@ case class DeltaMergeIntoUpdateClause(condition: Option[Expression], actions: Se
   def this(cond: Option[Expression], cols: Seq[UnresolvedAttribute], exprs: Seq[Expression]) =
     this(cond, DeltaMergeIntoClause.toActions(cols, exprs))
 
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+  override protected def withNewChildrenInternal(
+      newChildren: IndexedSeq[Expression]): DeltaMergeIntoUpdateClause = {
+    if (condition.isDefined) {
+      copy(condition = Some(newChildren.head), actions = newChildren.tail)
+    } else {
+      copy(condition = None, actions = newChildren)
+    }
+  }
 }
 
 /** Represents the clause WHEN MATCHED THEN DELETE in MERGE. See [[DeltaMergeInto]]. */
@@ -175,7 +189,9 @@ case class DeltaMergeIntoDeleteClause(condition: Option[Expression])
   children
   override def actions: Seq[Expression] = Seq.empty
 
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+  override protected def withNewChildrenInternal(
+      newChildren: IndexedSeq[Expression]): DeltaMergeIntoDeleteClause =
+    copy(condition = if (condition.isDefined) Some(newChildren.head) else None)
 }
 
 /** Represents the clause WHEN NOT MATCHED THEN INSERT in MERGE. See [[DeltaMergeInto]]. */
@@ -185,7 +201,13 @@ case class DeltaMergeIntoInsertClause(condition: Option[Expression], actions: Se
   def this(cond: Option[Expression], cols: Seq[UnresolvedAttribute], exprs: Seq[Expression]) =
     this(cond, DeltaMergeIntoClause.toActions(cols, exprs))
 
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+  override protected def withNewChildrenInternal(
+      newChildren: IndexedSeq[Expression]): DeltaMergeIntoInsertClause =
+    if (condition.isDefined) {
+      copy(condition = Some(newChildren.head), actions = newChildren.tail)
+    } else {
+      copy(condition = None, actions = newChildren)
+    }
 }
 
 /**
@@ -237,7 +259,9 @@ case class DeltaMergeInto(
   // TODO: extend BinaryCommand once the new Spark version is released
   override def children: Seq[LogicalPlan] = Seq(target, source)
   override def output: Seq[Attribute] = Seq.empty
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
+  override protected def withNewChildrenInternal(
+      newChildren: IndexedSeq[LogicalPlan]): DeltaMergeInto =
+    copy(target = newChildren(0), source = newChildren(1))
 }
 
 object DeltaMergeInto {
@@ -355,10 +379,10 @@ object DeltaMergeInto {
                       val nameParts = qualifier :+ name
                       val sourceExpr = source.resolve(nameParts, conf.resolver).getOrElse {
                         // This shouldn't be able to happen - we're coming from within the source
-                        throw new IllegalArgumentException(
-                          s"Couldn't resolve qualified source column" +
-                            s"${UnresolvedAttribute(nameParts).name} within the source query. " +
-                            s"Please contact Databricks support.")
+                        throw new DeltaIllegalArgumentException(
+                          errorClass = "DELTA_CANNOT_RESOLVE_SOURCE_COLUMN",
+                          messageParameters = Array(s"${UnresolvedAttribute(nameParts).name}")
+                        )
                       }
                       Seq(DeltaMergeAction(nameParts, sourceExpr, targetColNameResolved = true))
                   }
@@ -377,9 +401,16 @@ object DeltaMergeInto {
             // If clause allows nested field to be target, then this will return the all the
             // parts of the name (e.g., "a.b" -> Seq("a", "b")). Otherwise, this will
             // return only one string.
-            val resolvedNameParts = DeltaUpdateTable.getTargetColNameParts(
-              resolveOrFail(unresolvedAttrib, fakeTargetPlan, s"$typ clause"),
-              resolutionErrorMsg)
+            val resolvedNameParts = {
+              try {
+                DeltaUpdateTable.getTargetColNameParts(
+                  resolveOrFail(unresolvedAttrib, fakeTargetPlan, s"$typ clause"),
+                  resolutionErrorMsg)
+              } catch {
+                case e: Throwable => throw e
+              }
+            }
+
             val resolvedExpr = resolveOrFail(expr, planToResolveAction, s"$typ clause")
             Seq(DeltaMergeAction(resolvedNameParts, resolvedExpr, targetColNameResolved = true))
 
@@ -408,7 +439,7 @@ object DeltaMergeInto {
     val containsStarAction =
       (matchedClauses ++ notMatchedClause).flatMap(_.actions).exists(_.isInstanceOf[UnresolvedStar])
 
-    val migrateSchema = canAutoMigrate && containsStarAction
+    var migrateSchema = canAutoMigrate && containsStarAction
 
     val finalSchema = if (migrateSchema) {
       // The implicit conversions flag allows any type to be merged from source to target if Spark

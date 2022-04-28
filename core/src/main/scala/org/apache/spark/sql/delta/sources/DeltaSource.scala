@@ -22,11 +22,13 @@ import java.sql.Timestamp
 
 import scala.util.matching.Regex
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTimeTravelSpec, GeneratedColumn, StartingVersion, StartingVersionLatest}
+import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaErrors, DeltaLog, DeltaOptions, DeltaTimeTravelSpec, GeneratedColumn, StartingVersion, StartingVersionLatest}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.storage.ClosableIterator
+import org.apache.spark.sql.delta.storage.ClosableIterator._
 import org.apache.spark.sql.delta.util.{DateTimeUtils, TimestampFormatter}
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
@@ -71,6 +73,16 @@ private[delta] case class IndexedFile(
       cdc
     }
   }
+
+  def getFileSize: Long = {
+    if (add != null) {
+      add.size
+    } else if (remove != null) {
+      remove.size.getOrElse(0)
+    } else {
+      cdc.size
+    }
+  }
 }
 
 /**
@@ -82,7 +94,7 @@ trait DeltaSourceBase extends Source
     with DeltaLogging { self: DeltaSource =>
 
   override val schema: StructType =
-    GeneratedColumn.removeGenerationExpressions(deltaLog.snapshot.metadata.schema)
+    ColumnWithDefaultExprUtils.removeDefaultExpressions(deltaLog.snapshot.metadata.schema)
 
   protected var lastOffsetForTriggerAvailableNow: DeltaSourceOffset = _
 
@@ -90,7 +102,8 @@ trait DeltaSourceBase extends Source
       fromVersion: Long,
       fromIndex: Long,
       isStartingVersion: Boolean,
-      limits: Option[AdmissionLimits] = Some(new AdmissionLimits())): Iterator[IndexedFile] = {
+      limits: Option[AdmissionLimits] = Some(new AdmissionLimits())):
+    ClosableIterator[IndexedFile] = {
     val changes = getFileChanges(fromVersion, fromIndex, isStartingVersion)
     if (limits.isEmpty) return changes
 
@@ -98,8 +111,10 @@ trait DeltaSourceBase extends Source
     // represent file additions; we retain them for offset tracking, but they don't count towards
     // the maxFilesPerTrigger conf.
     var admissionControl = limits.get
-    changes.takeWhile { index =>
-      admissionControl.admit(Option(index.add))
+    changes.withClose { it =>
+      it.takeWhile { index =>
+        admissionControl.admit(Option(index.add))
+      }
     }
   }
 
@@ -117,19 +132,38 @@ trait DeltaSourceBase extends Source
       isStartingVersion: Boolean,
       endOffset: DeltaSourceOffset): DataFrame = {
     val changes = getFileChanges(startVersion, startIndex, isStartingVersion)
-    val fileActionsIter = changes.takeWhile { case IndexedFile(version, index, _, _, _, _) =>
-      version < endOffset.reservoirVersion ||
-        (version == endOffset.reservoirVersion && index <= endOffset.index)
-    }.collect { case indexedFile: IndexedFile if indexedFile.getFileAction != null =>
-      (indexedFile.version, indexedFile.getFileAction)
-    }
-    val fileActions =
-      fileActionsIter.filter(a => excludeRegex.forall(_.findFirstIn(a._2.path).isEmpty)).toSeq
-    logDebug(s"Files: ${fileActions.toList}")
-    val addFiles = fileActions.map(_._2)
-      .filter(_.isInstanceOf[AddFile]).asInstanceOf[Seq[AddFile]]
+    try {
+      val fileActionsIter = changes.takeWhile { case IndexedFile(version, index, _, _, _, _) =>
+        version < endOffset.reservoirVersion ||
+          (version == endOffset.reservoirVersion && index <= endOffset.index)
+      }
 
-    deltaLog.createDataFrame(deltaLog.snapshot, addFiles, isStreaming = true)
+      val filteredIndexedFiles = fileActionsIter.filter { indexedFile =>
+        indexedFile.getFileAction != null &&
+          excludeRegex.forall(_.findFirstIn(indexedFile.getFileAction.path).isEmpty)
+      }
+
+      createDataFrame(filteredIndexedFiles)
+    } finally {
+      changes.close()
+    }
+  }
+
+  /**
+   * Given an iterator of file actions, create a DataFrame representing the files added to a table
+   * Only AddFile actions will be used to create the DataFrame.
+   * @param indexedFiles actions iterator from which to generate the DataFrame.
+   */
+  protected def createDataFrame(indexedFiles: Iterator[IndexedFile]): DataFrame = {
+    val addFilesList = indexedFiles
+        .map(_.getFileAction)
+        .filter(_.isInstanceOf[AddFile])
+        .asInstanceOf[Iterator[AddFile]].toArray
+
+    deltaLog.createDataFrame(
+      deltaLog.snapshot,
+      addFilesList,
+      isStreaming = true)
   }
 
 }
@@ -186,35 +220,75 @@ case class DeltaSource(
   protected def getFileChanges(
       fromVersion: Long,
       fromIndex: Long,
-      isStartingVersion: Boolean): Iterator[IndexedFile] = {
+      isStartingVersion: Boolean): ClosableIterator[IndexedFile] = {
 
     /** Returns matching files that were added on or after startVersion among delta logs. */
-    def filterAndIndexDeltaLogs(startVersion: Long): Iterator[IndexedFile] = {
-      deltaLog.getChanges(startVersion, options.failOnDataLoss).flatMap { case (version, actions) =>
-        val addFiles = verifyStreamHygieneAndFilterAddFiles(actions, version)
-        Iterator.single(IndexedFile(version, -1, null)) ++ addFiles
-          .map(_.asInstanceOf[AddFile])
-          .zipWithIndex.map { case (action, index) =>
-          IndexedFile(version, index.toLong, action, isLast = index + 1 == addFiles.size)
-        }
+    def filterAndIndexDeltaLogs(startVersion: Long): ClosableIterator[IndexedFile] = {
+      deltaLog.getChangeLogFiles(startVersion, options.failOnDataLoss).flatMapWithClose {
+        case (version, filestatus) =>
+          if (filestatus.getLen <
+            spark.sessionState.conf.getConf(DeltaSQLConf.LOG_SIZE_IN_MEMORY_THRESHOLD)) {
+            // entire file can be read into memory
+            val actions = deltaLog.store.read(filestatus.getPath, deltaLog.newDeltaHadoopConf())
+              .map(Action.fromJson)
+            val addFiles = verifyStreamHygieneAndFilterAddFiles(actions, version)
+
+            (Iterator.single(IndexedFile(version, -1, null)) ++ addFiles
+              .map(_.asInstanceOf[AddFile])
+              .zipWithIndex.map { case (action, index) =>
+              IndexedFile(version, index.toLong, action, isLast = index + 1 == addFiles.size)
+            }).toClosable
+
+          } else { // file too large to read into memory
+            var fileIterator = deltaLog.store.readAsIterator(
+              filestatus.getPath,
+              deltaLog.newDeltaHadoopConf())
+            try {
+              verifyStreamHygiene(fileIterator.map(Action.fromJson), version)
+            } finally {
+              fileIterator.close()
+            }
+            fileIterator = deltaLog.store.readAsIterator(
+              filestatus.getPath,
+              deltaLog.newDeltaHadoopConf())
+            fileIterator.withClose { it =>
+              val addFiles = it.map(Action.fromJson).filter {
+                case a: AddFile if a.dataChange => true
+                case _ => false
+              }
+              Iterator.single(IndexedFile(version, -1, null)) ++ addFiles
+                .map(_.asInstanceOf[AddFile])
+                .zipWithIndex
+                .map { case (action, index) =>
+                  IndexedFile(version, index.toLong, action, isLast = !addFiles.hasNext)
+                }
+            }
+          }
       }
     }
 
     var iter = if (isStartingVersion) {
-      getSnapshotAt(fromVersion) ++ filterAndIndexDeltaLogs(fromVersion + 1)
+      Iterator(1, 2).flatMapWithClose {  // so that the filterAndIndexDeltaLogs call is lazy
+        case 1 => getSnapshotAt(fromVersion).toClosable
+        case 2 => filterAndIndexDeltaLogs(fromVersion + 1)
+      }
     } else {
       filterAndIndexDeltaLogs(fromVersion)
     }
 
-    iter = iter.filter { case IndexedFile(version, index, _, _, _, _) =>
-      version > fromVersion || (index == -1 || index > fromIndex)
+    iter = iter.withClose { it =>
+      it.filter { case IndexedFile(version, index, _, _, _, _) =>
+        version > fromVersion || (index == -1 || index > fromIndex)
+      }
     }
 
     if (lastOffsetForTriggerAvailableNow != null) {
-      iter = iter.filter { case IndexedFile(version, index, _, _, _, _) =>
-        version < lastOffsetForTriggerAvailableNow.reservoirVersion ||
-          (version == lastOffsetForTriggerAvailableNow.reservoirVersion &&
-            index <= lastOffsetForTriggerAvailableNow.index)
+      iter = iter.withClose { it =>
+        it.filter { case IndexedFile(version, index, _, _, _, _) =>
+          version < lastOffsetForTriggerAvailableNow.reservoirVersion ||
+            (version == lastOffsetForTriggerAvailableNow.reservoirVersion &&
+              index <= lastOffsetForTriggerAvailableNow.index)
+        }
       }
     }
     iter
@@ -236,12 +310,16 @@ case class DeltaSource(
     initialState.iterator()
   }
 
-  protected def iteratorLast[T](iter: Iterator[T]): Option[T] = {
-    var last: Option[T] = None
-    while (iter.hasNext) {
-      last = Some(iter.next())
+  protected def iteratorLast[T](iter: ClosableIterator[T]): Option[T] = {
+    try {
+      var last: Option[T] = None
+      while (iter.hasNext) {
+        last = Some(iter.next())
+      }
+      last
+    } finally {
+      iter.close()
     }
-    last
   }
 
   private def getStartingOffset(
@@ -319,6 +397,35 @@ case class DeltaSource(
   override def getOffset: Option[Offset] = {
     throw new UnsupportedOperationException(
       "latestOffset(Offset, ReadLimit) should be called instead of this method")
+  }
+
+  protected def verifyStreamHygiene(
+      actions: Iterator[Action],
+      version: Long): Unit = {
+    var seenFileAdd = false
+    var removeFileActionPath: Option[String] = None
+    actions.foreach{
+      case a: AddFile if a.dataChange =>
+        seenFileAdd = true
+      case r: RemoveFile if r.dataChange =>
+        if (removeFileActionPath.isEmpty) {
+          removeFileActionPath = Some(r.path)
+        }
+      case m: Metadata =>
+        if (!SchemaUtils.isReadCompatible(m.schema, schema)) {
+          throw DeltaErrors.schemaChangedException(schema, m.schema, false)
+        }
+      case protocol: Protocol =>
+        deltaLog.protocolRead(protocol)
+      case _ => ()
+    }
+    if (removeFileActionPath.isDefined) {
+      if (seenFileAdd && !ignoreChanges) {
+        throw DeltaErrors.deltaSourceIgnoreChangesError(version, removeFileActionPath.get)
+      } else if (!seenFileAdd && !ignoreDeletes) {
+        throw DeltaErrors.deltaSourceIgnoreDeleteError(version, removeFileActionPath.get)
+      }
+    }
   }
 
   protected def verifyStreamHygieneAndFilterAddFiles(
@@ -421,7 +528,7 @@ case class DeltaSource(
           case a: AddFile =>
             a.size
           case r: RemoveFile =>
-            r.size
+            r.size.getOrElse(0L)
           case cdc: AddCDCFile =>
             cdc.size
         }

@@ -20,7 +20,7 @@ package org.apache.spark.sql.delta.commands
 import java.io.FileNotFoundException
 import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier, Snapshot}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaFileNotFoundException, DeltaLog, DeltaTableIdentifier, Snapshot}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
@@ -28,11 +28,11 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, ScalaReflection, TableIdentifier}
 import org.apache.spark.sql.catalyst.ScalaReflection.Schema
-import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
+import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchTableException}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.types.StructType
 
 /** The result returned by the `describe detail` command. */
@@ -68,7 +68,7 @@ object TableDetail {
  */
 case class DescribeDeltaDetailCommand(
     path: Option[String],
-    tableIdentifier: Option[TableIdentifier]) extends RunnableCommand with DeltaLogging {
+    tableIdentifier: Option[TableIdentifier]) extends LeafRunnableCommand with DeltaLogging {
 
   override val output: Seq[Attribute] = TableDetail.schema.toAttributes
 
@@ -83,7 +83,7 @@ case class DescribeDeltaDetailCommand(
           val fs = new Path(path.get).getFileSystem(deltaLog.newDeltaHadoopConf())
           // Throw FileNotFoundException when the path doesn't exist since there may be a typo
           if (!fs.exists(new Path(path.get))) {
-            throw new FileNotFoundException(path.get)
+            throw DeltaErrors.fileNotFoundException(path.get)
           }
           describeNonDeltaPath(path.get)
         } else {
@@ -123,7 +123,7 @@ case class DescribeDeltaDetailCommand(
               new Path(metadata.location) -> Some(metadata)
             } catch {
               // Better error message if the user tried to DESCRIBE DETAIL a temp view.
-              case _: NoSuchTableException
+              case _: NoSuchTableException | _: NoSuchDatabaseException
                   if spark.sessionState.catalog.getTempView(i.table).isDefined =>
                 throw DeltaErrors.viewInDescribeDetailException(i)
             }
@@ -199,6 +199,4 @@ case class DescribeDeltaDetailCommand(
         snapshot.protocol.minReaderVersion,
         snapshot.protocol.minWriterVersion))
   }
-
-  // TODO: remove when the new Spark version is releases that has the withNewChildInternal method
 }

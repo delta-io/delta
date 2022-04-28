@@ -50,9 +50,7 @@ class CheckConstraintsSuite extends QueryTest
   }
 
   private def errorContains(errMsg: String, str: String): Unit = {
-    val actual = errMsg.replaceAll("`", "")
-    val expected = str.replaceAll("`", "")
-    assert(actual.contains(expected))
+    errMsg.contains(str)
   }
 
   test("can't add unparseable constraint") {
@@ -62,7 +60,7 @@ class CheckConstraintsSuite extends QueryTest
       }
       // Make sure we're still getting a useful parse error, even though we do some complicated
       // internal stuff to persist the constraint. Unfortunately this test may be a bit fragile.
-      errorContains(e.getMessage, "mismatched input '<EOF>' expecting")
+      errorContains(e.getMessage, "Syntax error at or near end of input")
       errorContains(e.getMessage,
         """
           |== SQL ==
@@ -138,17 +136,36 @@ class CheckConstraintsSuite extends QueryTest
     }
   }
 
-  test("can drop constraint that doesn't exist") {
+  test("drop constraint that doesn't exist throws an exception") {
     withTestTable { table =>
-      sql(s"ALTER TABLE $table DROP CONSTRAINT IF EXISTS myConstraint")
+      intercept[AnalysisException] {
+        sql(s"ALTER TABLE $table DROP CONSTRAINT myConstraint")
+      }
+    }
+
+    withSQLConf((DeltaSQLConf.DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS.key, "false")) {
+      withTestTable { table =>
+        val e = intercept[AnalysisException] {
+          sql(s"ALTER TABLE $table DROP CONSTRAINT myConstraint")
+        }
+        assert(e.getErrorClass == "CONSTRAINT_DOES_NOT_EXIST")
+        errorContains(e.getMessage,
+          "nonexistent constraint myconstraint from table `default`.`checkconstraintstest`")
+        errorContains(e.getMessage,
+          "databricks.spark.delta.constraints.assumesDropIfExists.enabled to true")
+      }
     }
   }
 
-  // IF EXISTS is provided only for parallelism with existing DataSourceV2 commands that support it
-  // as a stub. It doesn't change any behavior.
   test("can drop constraint that doesn't exist with IF EXISTS") {
     withTestTable { table =>
       sql(s"ALTER TABLE $table DROP CONSTRAINT IF EXISTS myConstraint")
+    }
+
+    withSQLConf((DeltaSQLConf.DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS.key, "true")) {
+      withTestTable { table =>
+        sql(s"ALTER TABLE $table DROP CONSTRAINT myConstraint")
+      }
     }
   }
 
@@ -366,6 +383,33 @@ class CheckConstraintsSuite extends QueryTest
         errorContains(e.getMessage,
           s"violate the new CHECK constraint (nested . arr [ 0 ] < id)")
       }
+    }
+  }
+
+
+  // TODO: https://github.com/delta-io/delta/issues/831
+  test("SET NOT NULL constraint fails") {
+    withTable("my_table") {
+      sql("CREATE TABLE my_table (id INT) USING DELTA;")
+      sql("INSERT INTO my_table VALUES (1);")
+      val e = intercept[AnalysisException] {
+        sql("ALTER TABLE my_table CHANGE COLUMN id SET NOT NULL;")
+      }.getMessage()
+      assert(e.contains("Cannot change nullable column to non-nullable"))
+    }
+  }
+
+  testQuietly("ending semi-colons no longer makes ADD, DROP constraint commands fail") {
+    withTable("my_table") {
+      sql("CREATE TABLE my_table (birthday DATE) USING DELTA;")
+      sql("INSERT INTO my_table VALUES ('2021-11-11');")
+
+      sql("ALTER TABLE my_table ADD CONSTRAINT aaa CHECK (birthday > '1900-01-01')")
+      sql("ALTER TABLE my_table ADD CONSTRAINT bbb CHECK (birthday > '1900-02-02')")
+      sql("ALTER TABLE my_table ADD CONSTRAINT ccc CHECK (birthday > '1900-03-03');") // semi-colon
+
+      sql("ALTER TABLE my_table DROP CONSTRAINT aaa")
+      sql("ALTER TABLE my_table DROP CONSTRAINT bbb;") // semi-colon
     }
   }
 

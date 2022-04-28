@@ -17,7 +17,8 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.storage.{DelegatingLogStore, LogStore, LogStoreAdaptor}
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.{SparkConf, SparkFunSuite}
 import org.apache.spark.sql.AnalysisException
@@ -44,14 +45,19 @@ class DelegatingLogStoreSuite
     val sparkConf = new SparkConf().setMaster("local")
     val classConfKey = LogStore.logStoreClassConfKey
     val schemeConfKey = LogStore.logStoreSchemeConfKey(scheme)
+
+    // this will set/unset spark.delta.logStore.class -> $classConf
     classConf match {
       case Some(conf) => sparkConf.set(classConfKey, conf)
       case _ => sparkConf.remove(classConfKey)
     }
+
+    // this will set/unset spark.delta.logStore.${scheme}.impl -> $schemeConf
     schemeConf match {
       case Some(conf) => sparkConf.set(schemeConfKey, conf)
       case _ => sparkConf.remove(schemeConfKey)
     }
+
     sparkConf
   }
 
@@ -64,7 +70,7 @@ class DelegatingLogStoreSuite
    * @param expClassName Expected LogStore class name resolved by DelegatingLogStore.
    * @param expAdaptor True if DelegatingLogStore is expected to resolve to LogStore adaptor, for
    *                   which the actual implementation inside will be checked. This happens when
-   *                   LogStore is set to subclass of the new LogStore API.
+   *                   LogStore is set to subclass of the new [[io.delta.storage.LogStore]] API.
    */
   private def testDelegatingLogStore(
       scheme: String,
@@ -93,21 +99,39 @@ class DelegatingLogStoreSuite
   private def testLogStoreClassConfNoSchemeConf(scheme: String) {
     val sparkConf = constructSparkConf(scheme, Some(customLogStoreClassName), None)
     withSparkSession(SparkSession.builder.config(sparkConf).getOrCreate()) { spark =>
-      assert(LogStore(spark.sparkContext).isInstanceOf[LogStoreAdaptor])
-      assert(LogStore(spark.sparkContext).asInstanceOf[LogStoreAdaptor]
+      assert(LogStore(spark).isInstanceOf[LogStoreAdaptor])
+      assert(LogStore(spark).asInstanceOf[LogStoreAdaptor]
         .logStoreImpl.getClass.getName == customLogStoreClassName)
     }
   }
 
   test("DelegatingLogStore resolution using default scheme confs") {
     for (scheme <- DelegatingLogStore.s3Schemes) {
-      testDelegatingLogStore(scheme, None, DelegatingLogStore.defaultS3LogStoreClassName, false)
+      testDelegatingLogStore(
+        scheme,
+        schemeConf = None,
+        expClassName = DelegatingLogStore.defaultS3LogStoreClassName,
+        expAdaptor = true)
     }
     for (scheme <- DelegatingLogStore.azureSchemes) {
-      testDelegatingLogStore(scheme, None, DelegatingLogStore.defaultAzureLogStoreClassName, false)
+      testDelegatingLogStore(
+        scheme,
+        schemeConf = None,
+        expClassName = DelegatingLogStore.defaultAzureLogStoreClassName,
+        expAdaptor = true)
     }
-    testDelegatingLogStore(fakeSchemeWithNoDefault, None,
-      DelegatingLogStore.defaultHDFSLogStoreClassName, false)
+    for (scheme <- DelegatingLogStore.gsSchemes) {
+      testDelegatingLogStore(
+        scheme,
+        schemeConf = None,
+        expClassName = DelegatingLogStore.defaultGCSLogStoreClassName,
+        expAdaptor = true)
+    }
+    testDelegatingLogStore(
+      scheme = fakeSchemeWithNoDefault,
+      schemeConf = None,
+      expClassName = DelegatingLogStore.defaultHDFSLogStoreClassName,
+      expAdaptor = true)
   }
 
   test("DelegatingLogStore resolution using customized scheme confs") {
@@ -115,11 +139,22 @@ class DelegatingLogStoreSuite
       fakeSchemeWithNoDefault
     for (scheme <- allTestSchemes) {
       for (store <- Seq(
-        DelegatingLogStore.defaultS3LogStoreClassName,
-        DelegatingLogStore.defaultAzureLogStoreClassName,
-        DelegatingLogStore.defaultHDFSLogStoreClassName,
+        // default (java) classes (in io.delta.storage)
+        "io.delta.storage.S3SingleDriverLogStore",
+        "io.delta.storage.AzureLogStore",
+        "io.delta.storage.HDFSLogStore",
+        // deprecated (scala) classes
+        classOf[org.apache.spark.sql.delta.storage.S3SingleDriverLogStore].getName,
+        classOf[org.apache.spark.sql.delta.storage.AzureLogStore].getName,
+        classOf[org.apache.spark.sql.delta.storage.HDFSLogStore].getName,
         customLogStoreClassName)) {
-        testDelegatingLogStore(scheme, Some(store), store, store == customLogStoreClassName)
+
+        // we set spark.delta.logStore.${scheme}.impl -> $store
+        testDelegatingLogStore(
+          scheme,
+          schemeConf = Some(store),
+          expClassName = store,
+          expAdaptor = store.contains("io.delta.storage") || store == customLogStoreClassName)
       }
     }
   }
@@ -133,7 +168,7 @@ class DelegatingLogStoreSuite
       Some(DelegatingLogStore.defaultAzureLogStoreClassName))
     val e = intercept[AnalysisException](
       withSparkSession(SparkSession.builder.config(sparkConf).getOrCreate()) { spark =>
-        LogStore(spark.sparkContext)
+        LogStore(spark)
       }
     )
     assert(e.getMessage.contains(
@@ -150,11 +185,51 @@ class DelegatingLogStoreSuite
       Some(DelegatingLogStore.defaultAzureLogStoreClassName))
     val e = intercept[AnalysisException](
       withSparkSession(SparkSession.builder.config(sparkConf).getOrCreate()) { spark =>
-        LogStore(spark.sparkContext)
+        LogStore(spark)
       }
     )
     assert(e.getMessage.contains(
       "(`spark.delta.logStore.class`) and (`spark.delta.logStore.s3a.impl`) " +
         "cannot be set at the same time"))
+  }
+}
+
+//////////////////
+// Helper Class //
+//////////////////
+
+class CustomPublicLogStore(initHadoopConf: Configuration)
+  extends io.delta.storage.LogStore(initHadoopConf) {
+
+  private val logStoreInternal = new io.delta.storage.HDFSLogStore(initHadoopConf)
+
+  override def read(
+      path: Path,
+      hadoopConf: Configuration): io.delta.storage.CloseableIterator[String] = {
+    logStoreInternal.read(path, hadoopConf)
+  }
+
+  override def write(
+      path: Path,
+      actions: java.util.Iterator[String],
+      overwrite: java.lang.Boolean,
+      hadoopConf: Configuration): Unit = {
+    logStoreInternal.write(path, actions, overwrite, hadoopConf)
+  }
+
+  override def listFrom(
+      path: Path,
+      hadoopConf: Configuration): java.util.Iterator[FileStatus] = {
+    logStoreInternal.listFrom(path, hadoopConf)
+  }
+
+  override def resolvePathOnPhysicalStorage(
+      path: Path,
+      hadoopConf: Configuration): Path = {
+    logStoreInternal.resolvePathOnPhysicalStorage(path, hadoopConf)
+  }
+
+  override def isPartialWriteVisible(path: Path, hadoopConf: Configuration): java.lang.Boolean = {
+    logStoreInternal.isPartialWriteVisible(path, hadoopConf)
   }
 }

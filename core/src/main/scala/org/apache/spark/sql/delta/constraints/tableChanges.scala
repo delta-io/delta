@@ -32,5 +32,6 @@ case class AddConstraint(constraintName: String, expr: String) extends TableChan
  * will be thrown if the constraint doesn't exist.
  *
  * @param constraintName the name of the constraint to drop - case insensitive
+ * @param ifExists if false, throws an error if the constraint to be dropped does not exist
  */
-case class DropConstraint(constraintName: String) extends TableChange {}
+case class DropConstraint(constraintName: String, ifExists: Boolean) extends TableChange {}

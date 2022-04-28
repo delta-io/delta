@@ -94,8 +94,11 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
     assert(action2.json === json2.replaceAll("\\s", ""))
   }
 
-
-  test("removefile") {
+  // This is the same test as "removefile" in OSS, but due to a Jackson library upgrade the behavior
+  // has diverged between Spark 3.1 and Spark 3.2.
+  // We don't believe this is a practical issue because all extant versions of Delta explicitly
+  // write the dataChange field.
+  test("remove file deserialization") {
     val removeJson = RemoveFile("a", Some(2L)).json
     assert(removeJson.contains(""""deletionTimestamp":2"""))
     assert(!removeJson.contains("""delTimestamp"""))
@@ -104,7 +107,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
     val json4 = """{"remove":{"path":"a","deletionTimestamp":5}}"""
     assert(Action.fromJson(json1) === RemoveFile("a", Some(2L), dataChange = true))
     assert(Action.fromJson(json2) === RemoveFile("a", None, dataChange = false))
-    assert(Action.fromJson(json4) === RemoveFile("a", Some(5L), dataChange = false))
+    assert(Action.fromJson(json4) === RemoveFile("a", Some(5L), dataChange = true))
   }
 
   roundTripCompare("SetTransaction",
@@ -138,9 +141,10 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
       isBlindAppend = Some(true),
       operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
       userMetadata = Some("123"),
-      tags = None)
+      tags = None,
+      txnId = None).copy(engineInfo = None)
 
-    // json of commit info actions without tag field
+    // json of commit info actions without tag or engineInfo field
     val json1 =
       """{"commitInfo":{"timestamp":123,"operation":"CONVERT",""" +
         """"operationParameters":{},"readVersion":23,""" +
@@ -167,23 +171,23 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
   testActionSerDe(
     "AddFile (without tags) - json serialization/deserialization",
     AddFile("x=2/f1", partitionValues = Map("x" -> "2"),
-      size = 10, modificationTime = 1, dataChange = true, stats = "{rowCount: 2}"),
+      size = 10, modificationTime = 1, dataChange = true, stats = "{\"rowCount\": 2}"),
     expectedJson = """{"add":{"path":"x=2/f1","partitionValues":{"x":"2"},"size":10,""" +
-      """"modificationTime":1,"dataChange":true,"stats":"{rowCount: 2}"}}""".stripMargin)
+      """"modificationTime":1,"dataChange":true,"stats":"{\"rowCount\": 2}"}}""".stripMargin)
 
   testActionSerDe(
     "AddFile (with tags) - json serialization/deserialization",
     AddFile("part=p1/f1", partitionValues = Map("x" -> "2"), size = 10, modificationTime = 1,
-      dataChange = true, stats = "{rowCount: 2}", tags = Map("TAG1" -> "23")),
+      dataChange = true, stats = "{\"rowCount\": 2}", tags = Map("TAG1" -> "23")),
     expectedJson = """{"add":{"path":"part=p1/f1","partitionValues":{"x":"2"},"size":10""" +
-      ""","modificationTime":1,"dataChange":true,"stats":"{rowCount: 2}",""" +
+      ""","modificationTime":1,"dataChange":true,"stats":"{\"rowCount\": 2}",""" +
       """"tags":{"TAG1":"23"}}}"""
   )
 
   testActionSerDe(
     "RemoveFile (without tags) - json serialization/deserialization",
     AddFile("part=p1/f1", partitionValues = Map("x" -> "2"), size = 10, modificationTime = 1,
-      dataChange = true, stats = "{rowCount: 2}").removeWithTimestamp(timestamp = 11),
+      dataChange = true, stats = "{\"rowCount\": 2}").removeWithTimestamp(timestamp = 11),
     expectedJson = """{"remove":{"path":"part=p1/f1","deletionTimestamp":11,"dataChange":true,""" +
       """"extendedFileMetadata":true,"partitionValues":{"x":"2"},"size":10}}""".stripMargin)
 
@@ -200,6 +204,12 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
       size = 11, tags = Map("key1" -> "value1")),
     expectedJson = """{"cdc":{"path":"part=p2/f1","partitionValues":{"x":"2"},""" +
       """"size":11,"tags":{"key1":"value1"},"dataChange":false}}""".stripMargin)
+
+  testActionSerDe(
+    "AddCDCFile (without null value in partitionValues) - json serialization/deserialization",
+    AddCDCFile("part=p1/f1", partitionValues = Map("x" -> null), size = 10),
+    expectedJson = """{"cdc":{"path":"part=p1/f1","partitionValues":{"x":null},""" +
+      """"size":10,"dataChange":false}}""".stripMargin)
 
   testActionSerDe(
     "Metadata (with all defaults) - json serialization/deserialization",
@@ -237,7 +247,9 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
       isBlindAppend = Some(true),
       operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
       userMetadata = Some("123"),
-      tags = Some(Map("k1" -> "v1")))
+      tags = Some(Map("k1" -> "v1")),
+      txnId = Some("123")
+    ).copy(engineInfo = None)
 
     testActionSerDe(
       "CommitInfo (without operationParameters) - json serialization/deserialization",
@@ -246,7 +258,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
         """"operationParameters":{},"clusterId":"23","readVersion":23,""" +
         """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
         """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
-        """"tags":{"k1":"v1"}}}""".stripMargin)
+        """"tags":{"k1":"v1"},"txnId":"123"}}""".stripMargin)
 
     test("CommitInfo (with operationParameters) - json serialization/deserialization") {
       val operation = DeltaOperations.Convert(
@@ -262,7 +274,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
           """"collectStats":false,"catalogTable":"t1"},"clusterId":"23","readVersion":23,""" +
           """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
           """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
-          """"tags":{"k1":"v1"}}}""".stripMargin
+          """"tags":{"k1":"v1"},"txnId":"123"}}""".stripMargin
       assert(commitInfo1.json == expectedCommitInfoJson1)
       val newCommitInfo1 = Action.fromJson(expectedCommitInfoJson1).asInstanceOf[CommitInfo]
       // TODO: operationParameters serialization/deserialization is broken as it uses a custom
@@ -270,6 +282,16 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
       assert(newCommitInfo1.copy(operationParameters = Map.empty) ==
         commitInfo.copy(operationParameters = Map.empty))
     }
+
+    testActionSerDe(
+      "CommitInfo (with engineInfo) - json serialization/deserialization",
+      commitInfo.copy(engineInfo = Some("Apache-Spark/3.1.1 Delta-Lake/10.1.0")),
+      expectedJson = """{"commitInfo":{"timestamp":123,"operation":"CONVERT",""" +
+        """"operationParameters":{},"clusterId":"23","readVersion":23,""" +
+        """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
+        """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
+        """"tags":{"k1":"v1"},"engineInfo":"Apache-Spark/3.1.1 Delta-Lake/10.1.0",""" +
+        """"txnId":"123"}}""".stripMargin)
   }
 
   private def roundTripCompare(name: String, actions: Action*) = {
@@ -285,7 +307,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
   private def testActionSerDe(name: String, action: Action, expectedJson: String): Unit = {
     test(name) {
       withTempDir { tempDir =>
-        val deltaLog = DeltaLog(spark, new Path(tempDir.getAbsolutePath))
+        val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getAbsolutePath))
         // Disable different delta validations so that the passed action can be committed in
         // all cases.
         withSQLConf(
