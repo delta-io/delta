@@ -25,16 +25,18 @@ import org.scalatest.Tag
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.connector.catalog.{CatalogV2Util, TableCatalog}
+import org.apache.spark.sql.connector.catalog.{CatalogManager, CatalogV2Util, TableCatalog}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.util.Utils
 
 trait DeltaDDLUsingPathTests extends QueryTest
     with SharedSparkSession with DeltaColumnMappingTestUtils {
 
   import testImplicits._
+
 
   protected def testUsingPath(command: String, tags: Tag*)(f: (String, String) => Unit): Unit = {
     test(s"$command - using path", tags: _*) {
