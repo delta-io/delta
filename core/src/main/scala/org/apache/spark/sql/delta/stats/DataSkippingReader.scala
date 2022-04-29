@@ -416,6 +416,8 @@ trait DataSkippingReaderBase
       constructDataFilters(IsNull(e))
 
     // Match any file whose min/max range contains the requested point.
+    // `v = null` will be replaced with `false`, and `v <=> null` will be replaced with `isNull(v)`
+    // by Spark. So we don't need to handle `lit.value == null`.
     case Equality(SkippingEligibleColumn(a), lit @ SkippingEligibleLiteral(v))
         if lit.value != null =>
       val minCol = StatsColumn(MIN, a)
@@ -431,8 +433,7 @@ trait DataSkippingReaderBase
       constructDataFilters(EqualNullSafe(a, v))
 
     // Match any file whose min/max range contains anything other than the rejected point.
-    case Not(EqualTo(SkippingEligibleColumn(a), lit @ SkippingEligibleLiteral(v)))
-        if lit.value != null =>
+    case Not(EqualTo(SkippingEligibleColumn(a), SkippingEligibleLiteral(v))) =>
       val minCol = StatsColumn(MIN, a)
       val maxCol = StatsColumn(MAX, a)
       getStatsColumnOpt(minCol).flatMap { min =>
@@ -451,7 +452,8 @@ trait DataSkippingReaderBase
         getStatsColumnOpt(minCol).flatMap { min =>
           getStatsColumnOpt(maxCol).map { max =>
             DataSkippingPredicate(
-              !(min === v && max === v && nullCount === 0),
+              min.isNull || max.isNull || nullCount.isNull ||
+                !(min === v && max === v && nullCount === 0),
               minCol,
               maxCol,
               nullCountCol)
