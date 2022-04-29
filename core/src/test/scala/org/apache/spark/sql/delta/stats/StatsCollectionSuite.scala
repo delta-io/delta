@@ -315,10 +315,15 @@ class StatsCollectionSuite
       case FileScanExecNode(_) => true
       case _ => false
     }.get
-    if (scan.supportsColumnar) {
-      scan.executeColumnar().count()
-    } else {
-      scan.execute().count()
+
+    var executedScan = false
+
+    if (!executedScan) {
+      if (scan.supportsColumnar) {
+        scan.executeColumnar().count()
+      } else {
+        scan.execute().count()
+      }
     }
     scan.metrics.get("numOutputRows").get.value
   }
