@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.constraints
 import java.util.Locale
 
 import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.schema.SchemaUtils
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.Expression
@@ -85,5 +86,20 @@ object Constraints {
 
   def checkConstraintPropertyName(constraintName: String): String = {
     "delta.constraints." + constraintName.toLowerCase(Locale.ROOT)
+  }
+
+  /**
+   * Find all the check constraints that reference the given column name.
+   */
+  def findDependentConstraints(
+      sparkSession: SparkSession,
+      columnName: Seq[String],
+      metadata: Metadata): Map[String, String] = {
+    metadata.configuration.filter {
+      case (key, constraint) if key.toLowerCase(Locale.ROOT).startsWith("delta.constraints.") =>
+        SchemaUtils.containsDependentExpression(
+          sparkSession, columnName, constraint, sparkSession.sessionState.conf.resolver)
+      case _ => false
+    }
   }
 }

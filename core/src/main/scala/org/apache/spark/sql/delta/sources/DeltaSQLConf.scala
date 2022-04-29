@@ -622,6 +622,15 @@ trait DeltaSQLConfBase {
           |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED =
+    buildConf("alterTable.dropColumn.enabled")
+      .internal()
+      .doc(
+        "Whether to enable the drop column feature. This feature is behind this flag with default" +
+          " off until the physical deletion of dropped columns is supported")
+      .booleanConf
+      .createWithDefault(false)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

@@ -29,12 +29,6 @@ class DeltaColumnRenameSuite extends QueryTest
   with DeltaArbitraryColumnNameSuiteBase
   with GivenWhenThen {
 
-  private def assertException(message: String)(block: => Unit): Unit = {
-    val e = intercept[Exception](block)
-
-    assert(e.getMessage.contains(message))
-  }
-
   testColumnMapping("rename in column mapping mode") { mode =>
     withTable("t1") {
       createTableWithSQLAPI("t1",
@@ -225,6 +219,7 @@ class DeltaColumnRenameSuite extends QueryTest
     withTable("t1") {
       val schemaWithNotNull =
         simpleNestedData.schema.toDDL.replace("c: STRING", "c: STRING NOT NULL")
+          .replace("`c`: STRING", "`c`: STRING NOT NULL")
 
       withTable("source") {
         spark.sql(
@@ -261,7 +256,7 @@ class DeltaColumnRenameSuite extends QueryTest
         spark.sql("alter table t1 rename column b to b1")
       }
 
-      // can still rename map because it's referenced by a null constraint
+      // can still rename b.c because it's referenced by a null constraint
       spark.sql("alter table t1 rename column b.c to c1")
 
       spark.sql("insert into t1 " +
@@ -277,6 +272,10 @@ class DeltaColumnRenameSuite extends QueryTest
           "values ('str3', struct('str1.3', -1), map('k3', 'v3'), array(3, 33))")
       }
 
+      assertException("NOT NULL constraint violated for column: b.c1") {
+        spark.sql("insert into t1 " +
+          "values ('str3', struct(null, 3), map('k3', 'v3'), array(3, 33))")
+      }
 
       // this is a safety flag - it won't error when you turn it off
       withSQLConf(DeltaSQLConf.DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS.key -> "false") {

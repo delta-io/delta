@@ -17,23 +17,19 @@
 package org.apache.spark.sql.delta.schema
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.util.Locale
-
 import scala.collection.Set._
 import scala.collection.mutable
+import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, GeneratedColumn, NoMapping}
-import org.apache.spark.sql.delta.actions
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, GeneratedColumn, NoMapping}
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.analysis.{Resolver, TypeCoercion, UnresolvedAttribute}
-import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
-import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
-import org.apache.spark.sql.connector.catalog.Identifier
+import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.internal.SQLConf
@@ -706,6 +702,10 @@ object SchemaUtils {
       }
       (StructType(pre ++ Seq(mid) ++ schema.slice(slicePosition + 1, length)), original)
     } else {
+      if (length == 1) {
+        throw new AnalysisException(
+          "Cannot drop column from a struct type with a single field: " + schema)
+      }
       (StructType(pre ++ schema.slice(slicePosition + 1, length)), schema(slicePosition))
     }
   }
@@ -719,6 +719,7 @@ object SchemaUtils {
       from: DataType,
       to: DataType,
       resolver: Resolver,
+      columnMappingMode: DeltaColumnMappingMode,
       columnPath: Seq[String] = Seq.empty): Option[String] = {
     def verify(cond: Boolean, err: => String): Unit = {
       if (!cond) {
@@ -758,9 +759,11 @@ object SchemaUtils {
                   UnresolvedAttribute(columnPath :+ toField.name).name)
             }
           }
-          verify(remainingFields.isEmpty,
-            s"dropping column(s) [${remainingFields.map(_.name).mkString(", ")}]" +
-            (if (columnPath.nonEmpty) s" from ${UnresolvedAttribute(columnPath).name}" else ""))
+          if (columnMappingMode == NoMapping) {
+            verify(remainingFields.isEmpty,
+              s"dropping column(s) [${remainingFields.map(_.name).mkString(", ")}]" +
+                (if (columnPath.nonEmpty) s" from ${UnresolvedAttribute(columnPath).name}" else ""))
+          }
 
         case (fromDataType, toDataType) =>
           verify(fromDataType == toDataType,
@@ -887,7 +890,6 @@ object SchemaUtils {
 
   /**
    * Check if the schema contains invalid char in the column names depending on the mode.
-   * TODO: We can suggest the mapping mode flag when this feature is in public preview.
    */
   def checkSchemaFieldNames(schema: StructType, columnMappingMode: DeltaColumnMappingMode): Unit = {
     if (columnMappingMode != NoMapping) return
@@ -1000,5 +1002,31 @@ object SchemaUtils {
       case _ =>
     }
     false
+  }
+
+  /**
+   * Find all the generated columns that depend on the given target column.
+   */
+  def findDependentGeneratedColumns(
+      sparkSession: SparkSession,
+      targetColumn: Seq[String],
+      protocol: Protocol,
+      schema: StructType): Seq[StructField] = {
+    if (GeneratedColumn.satisfyGeneratedColumnProtocol(protocol) &&
+        GeneratedColumn.hasGeneratedColumns(schema)) {
+
+      val dependentGenCols = ArrayBuffer[StructField]()
+      SchemaMergingUtils.transformColumns(schema) { (_, field, _) =>
+        GeneratedColumn.getGenerationExpressionStr(field.metadata).foreach { exprStr =>
+          val needsToChangeExpr = SchemaUtils.containsDependentExpression(
+            sparkSession, targetColumn, exprStr, sparkSession.sessionState.conf.resolver)
+          if (needsToChangeExpr) dependentGenCols += field
+        }
+        field
+      }
+      dependentGenCols.toList
+    } else {
+      Seq.empty
+    }
   }
 }

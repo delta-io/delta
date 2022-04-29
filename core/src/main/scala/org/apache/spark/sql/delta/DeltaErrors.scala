@@ -1472,32 +1472,32 @@ object DeltaErrors
         s"$oldProtocol"))
   }
 
-  def columnRenameNotSupported(spark: SparkSession, protocol: Protocol): Throwable = {
-    // scalastyle:off line.size.limit
-    val adviceMsg = if (!DeltaColumnMapping.satisfyColumnMappingProtocol(protocol)) {
-      s"""
-         |Please upgrade your Delta table to reader version 2 and writer version 5 (Refer to table versioning at ${generateDocsLink(spark.sparkContext.getConf, "/versioning.html")})
-         | and change the column mapping mode to name mapping. You can use the following command:
-         |
-         | ALTER TABLE <table_name> SET TBLPROPERTIES (
-         |   'delta.columnMapping.mode' = 'name',
-         |   'delta.minReaderVersion' = '2',
-         |   'delta.minWriterVersion' = '5')
-         |
-      """.stripMargin
-    } else {
-      s"""
-         |Please change the column mapping mode to name mapping mode. You can use the following command:
-         |
-         | ALTER TABLE <table_name> SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
-      """.stripMargin
-    }
+  private def columnMappingAdviceMessage: String = {
+    s"""
+       |Please upgrade your Delta table to reader version 2 and writer version 5
+       | and change the column mapping mode to 'name' mapping. You can use the following command:
+       |
+       | ALTER TABLE <table_name> SET TBLPROPERTIES (
+       |   'delta.columnMapping.mode' = 'name',
+       |   'delta.minReaderVersion' = '2',
+       |   'delta.minWriterVersion' = '5')
+       |
+    """.stripMargin
+  }
 
-    new AnalysisException(
-      s"""
-         |Column rename is not supported for your Delta table. $adviceMsg
-         |""".stripMargin)
-    // scalastyle:on line.size.limit
+  def columnRenameNotSupported: Throwable = {
+    val adviceMsg = columnMappingAdviceMessage
+    new DeltaAnalysisException("UNSUPPORTED_RENAME_COLUMN", Array(adviceMsg))
+  }
+
+  def dropColumnNotSupported(suggestUpgrade: Boolean): Throwable = {
+    val adviceMsg = if (suggestUpgrade) columnMappingAdviceMessage else ""
+    new DeltaAnalysisException("UNSUPPORTED_DROP_COLUMN", Array(adviceMsg))
+  }
+
+  def dropPartitionColumnNotSupported(droppingPartCols: Seq[String]): Throwable = {
+    new DeltaAnalysisException("UNSUPPORTED_DROP_PARTITION_COLUMN",
+      Array(droppingPartCols.mkString(",")))
   }
 
   def schemaChangeDuringMappingModeChangeNotSupported(
@@ -1509,18 +1509,11 @@ object DeltaErrors
         formatSchema(oldSchema),
         formatSchema(newSchema)))
 
-  def foundInvalidCharsInColumnNames(cause: Throwable): Throwable = {
-    // scalastyle:off line.size.limit
-    val spark = SparkSession.active
-    var adviceMsg = "Please use alias to rename it."
-
-    new AnalysisException(
-      s"""
-        |Found invalid character(s) among " ,;{}()\\n\\t=" in the column names of your
-        |schema. $adviceMsg
-        |""".stripMargin, cause = Some(cause))
-    // scalastyle:on line.size.limit
-  }
+  def foundInvalidCharsInColumnNames(cause: Throwable): Throwable =
+    new DeltaAnalysisException(
+      errorClass = "UNSUPPORTED_INVALID_CHARACTERS_IN_COLUMN_NAME",
+      messageParameters = Array(columnMappingAdviceMessage),
+      cause = Some(cause))
 
   def foundViolatingConstraintsForColumnChange(
       operation: String,

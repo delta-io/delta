@@ -27,8 +27,7 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, DeltaTableUtils}
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
 import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
-import org.apache.spark.sql.delta.commands.{AlterTableAddColumnsDeltaCommand, AlterTableChangeColumnDeltaCommand, AlterTableSetLocationDeltaCommand, AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand, CreateDeltaTableCommand, TableCreationModes}
-import org.apache.spark.sql.delta.commands.{AlterTableAddConstraintDeltaCommand, AlterTableDropConstraintDeltaCommand, WriteIntoDelta}
+import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.hadoop.fs.Path
@@ -457,6 +456,10 @@ class DeltaCatalog extends DelegatingCatalogExtension
               Option(col.comment()),
               Option(col.position()).map(UnresolvedFieldPosition))
           }).run(spark)
+
+      case (t, deleteColumns) if t == classOf[DeleteColumn] =>
+        AlterTableDropColumnsDeltaCommand(
+          table, deleteColumns.asInstanceOf[Seq[DeleteColumn]].map(_.fieldNames().toSeq)).run(spark)
 
       case (t, newProperties) if t == classOf[SetProperty] =>
         AlterTableSetPropertiesDeltaCommand(

@@ -376,6 +376,22 @@
     "message" : [ "", "Schema change is detected:", "", "old schema:", "%s", "", "new schema:", "%s", "", "Schema changes are not allowed during the change of column mapping mode.", "", "" ],
     "sqlState" : "0A000"
   },
+  "UNSUPPORTED_COLUMN_MAPPING_WRITE" : {
+    "message" : [ "Writing data with column mapping mode is not supported." ],
+    "sqlState" : "0A000"
+  },
+  "UNSUPPORTED_DROP_COLUMN" : {
+    "message" : [ "DROP COLUMN is not supported for your Delta table. %s" ],
+    "sqlState" : "0A000"
+  },
+  "UNSUPPORTED_DROP_PARTITION_COLUMN" : {
+    "message" : [ "Dropping partition columns (%s) is not allowed." ],
+    "sqlState" : "0A000"
+  },
+  "UNSUPPORTED_INVALID_CHARACTERS_IN_COLUMN_NAME" : {
+    "message" : [ "Found invalid character(s) among ' ,;{}()\\n\\t=' in the column names of your schema. %s" ],
+    "sqlState" : "0A000"
+  },
   "UNSUPPORTED_MANIFEST_GENERATION_WITH_COLUMN_MAPPING" : {
     "message" : [ "Manifest generation is not supported for tables that leverage column mapping, as external readers cannot read these Delta tables. See Delta documentation for more details." ],
     "sqlState" : "0A000"
@@ -386,6 +402,10 @@
   },
   "UNSUPPORTED_PARTITION_COLUMN_IN_BLOOM_FILTER" : {
     "message" : [ "Creating a bloom filter index on a partitioning column is unsupported: %s" ],
+    "sqlState" : "0A000"
+  },
+  "UNSUPPORTED_RENAME_COLUMN" : {
+    "message" : [ "Column rename is not supported for your Delta table. %s" ],
     "sqlState" : "0A000"
   }
 }

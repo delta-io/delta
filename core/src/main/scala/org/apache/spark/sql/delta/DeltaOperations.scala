@@ -248,6 +248,15 @@ object DeltaOperations {
           ) ++ colPosition.map("position" -> _.toString)
       }))
   }
+
+  /** Recorded when columns are dropped. */
+  case class DropColumns(
+    colsToDrop: Seq[Seq[String]]) extends Operation("DROP COLUMNS") {
+
+    override val parameters: Map[String, Any] = Map(
+      "columns" -> JsonUtils.toJson(colsToDrop.map(UnresolvedAttribute(_).name)))
+  }
+
   /** Recorded when columns are changed. */
   case class ChangeColumn(
       columnPath: Seq[String],
