@@ -29,12 +29,12 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.SparkConf
+import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
-import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType,
-  ExternalCatalogUtils, SessionCatalog}
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, ExternalCatalogUtils, SessionCatalog}
+import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, Table, TableCatalog}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
@@ -48,6 +48,12 @@ trait DeltaTableCreationTests
   import testImplicits._
 
   val format = "delta"
+
+  override protected def sparkConf: SparkConf = {
+    super.sparkConf
+      // to make compatible with existing empty schema fail tests
+      .set(DeltaSQLConf.DELTA_ALLOW_CREATE_EMPTY_SCHEMA_TABLE.key, "false")
+  }
 
   private def createDeltaTableByPath(
       path: File,
@@ -644,10 +650,22 @@ trait DeltaTableCreationTests
     }
   }
 
+  protected def createTableWithEmptySchemaQuery(
+      tableName: String,
+      provider: String = "delta",
+      location: Option[String] = None): String = {
+    var query = s"CREATE TABLE $tableName USING $provider"
+    if (location.nonEmpty) {
+      query = s"$query LOCATION '${location.get}'"
+    }
+    query
+  }
+
   testQuietly("failed to create a table and then able to recreate it") {
     withTable("delta_test") {
+      val createEmptySchemaQuery = createTableWithEmptySchemaQuery("delta_test")
       val e = intercept[AnalysisException] {
-        sql("CREATE TABLE delta_test USING delta")
+        sql(createEmptySchemaQuery)
       }.getMessage
       assert(e.contains("but the schema is not specified"))
 
@@ -693,8 +711,9 @@ trait DeltaTableCreationTests
 
   testQuietly("create managed table without schema") {
     withTable("delta_test") {
+      val createEmptySchemaQuery = createTableWithEmptySchemaQuery("delta_test")
       val e = intercept[AnalysisException] {
-        sql("CREATE TABLE delta_test USING delta")
+        sql(createEmptySchemaQuery)
       }.getMessage
       assert(e.contains("but the schema is not specified"))
     }
@@ -724,8 +743,11 @@ trait DeltaTableCreationTests
       withTable("delta_test") {
         Seq(1L -> "a").toDF().selectExpr("_1 as v1", "_2 as v2").write
           .mode("append").partitionBy("v2").format("parquet").save(dir.getCanonicalPath)
+
+        val createEmptySchemaQuery = createTableWithEmptySchemaQuery(
+          "delta_test", location = Some(dir.getCanonicalPath))
         val e = intercept[AnalysisException] {
-          sql(s"CREATE TABLE delta_test USING delta LOCATION '${dir.getCanonicalPath}'")
+          sql(createEmptySchemaQuery)
         }.getMessage
         assert(e.contains("but there is no transaction log"))
       }
@@ -735,8 +757,10 @@ trait DeltaTableCreationTests
   testQuietly("create external table without schema and input files") {
     withTempDir { dir =>
       withTable("delta_test") {
+        val createEmptySchemaQuery = createTableWithEmptySchemaQuery(
+          "delta_test", location = Some(dir.getCanonicalPath))
         val e = intercept[AnalysisException] {
-          sql(s"CREATE TABLE delta_test USING delta LOCATION '${dir.getCanonicalPath}'")
+          sql(createEmptySchemaQuery)
         }.getMessage
         assert(e.contains("but the schema is not specified") && e.contains("input path is empty"))
       }
@@ -1774,6 +1798,280 @@ class DeltaTableCreationSuite
           Seq("delta", null),
           Seq("format", "description"))
       }
+    }
+  }
+
+  protected def withEmptyTable(emptyTableName: String)(f: => Unit): Unit = {
+    def getDeltaLog: DeltaLog =
+      DeltaLog.forTable(spark, TableIdentifier(emptyTableName))
+
+    // create using SQL API
+    withTable(emptyTableName) {
+      sql(s"CREATE TABLE $emptyTableName USING delta")
+      assert(getDeltaLog.snapshot.schema.isEmpty)
+      f
+
+      // just make sure this statement runs
+      sql(s"CREATE TABLE IF NOT EXISTS $emptyTableName USING delta")
+    }
+
+    // create using Delta table API (creates v1 table)
+    withTable(emptyTableName) {
+      io.delta.tables.DeltaTable
+        .create(spark)
+        .tableName(emptyTableName)
+        .execute()
+      assert(getDeltaLog.snapshot.schema.isEmpty)
+      f
+      io.delta.tables.DeltaTable
+        .createIfNotExists(spark)
+        .tableName(emptyTableName)
+        .execute()
+    }
+
+  }
+
+  test("Create an empty table without schema - unsupported cases") {
+    import testImplicits._
+
+    withSQLConf(DeltaSQLConf.DELTA_ALLOW_CREATE_EMPTY_SCHEMA_TABLE.key -> "true") {
+      val emptyTableName = "t1"
+
+      // TODO: support CREATE OR REPLACE code path if needed in the future
+      intercept[AnalysisException] {
+        sql(s"CREATE OR REPLACE TABLE $emptyTableName USING delta")
+      }
+
+      // similarly blocked using Delta Table API
+      withTable(emptyTableName) {
+        intercept[AnalysisException] {
+          io.delta.tables.DeltaTable
+            .createOrReplace(spark)
+            .tableName(emptyTableName)
+            .execute()
+        }
+      }
+
+      withTable(emptyTableName) {
+        io.delta.tables.DeltaTable
+          .create(spark)
+          .tableName(emptyTableName)
+          .execute()
+
+        intercept[AnalysisException] {
+          io.delta.tables.DeltaTable
+            .replace(spark)
+            .tableName(emptyTableName)
+            .execute()
+        }
+      }
+
+      // external table with an invalid location it shouldn't work (e.g. no transaction log present)
+      withTable(emptyTableName) {
+        withTempDir { dir =>
+          Seq(1, 2, 3).toDF().write.format("delta").save(dir.getAbsolutePath)
+          Utils.deleteRecursively(new File(dir, "_delta_log"))
+          intercept[AnalysisException] {
+            sql(s"CREATE TABLE $emptyTableName USING delta LOCATION '${dir.getAbsolutePath}'")
+          }
+        }
+      }
+
+      // CTAS from an empty schema dataframe should be blocked
+      intercept[AnalysisException] {
+        withTable(emptyTableName) {
+          val df = spark.emptyDataFrame
+          df.createOrReplaceTempView("empty_df")
+          sql(s"CREATE TABLE $emptyTableName USING delta AS SELECT * FROM empty_df")
+        }
+      }
+
+      // create empty schema table using dataframe api should be blocked
+      intercept[AnalysisException] {
+        withTable(emptyTableName) {
+          spark.emptyDataFrame
+            .write.format("delta")
+            .saveAsTable(emptyTableName)
+        }
+      }
+
+      intercept[AnalysisException] {
+        withTable(emptyTableName) {
+          spark.emptyDataFrame
+            .writeTo(emptyTableName)
+            .using("delta")
+            .create()
+        }
+      }
+
+      def assertFailToRead(f: => Any): Unit = {
+        try f catch {
+          case e: AnalysisException =>
+            assert(e.getMessage.contains("without columns"))
+        }
+      }
+
+      def assertSchemaEvolutionRequired(f: => Any): Unit = {
+        val e = intercept[AnalysisException] {
+          f
+        }
+        assert(e.getMessage.contains("A schema mismatch detected when writing to the Delta"))
+      }
+
+      // data reading or writing without mergeSchema should fail
+      withEmptyTable(emptyTableName) {
+        assertFailToRead {
+          spark.read.table(emptyTableName).collect()
+        }
+
+        assertFailToRead {
+          sql(s"SELECT * FROM $emptyTableName").collect()
+        }
+
+        assertSchemaEvolutionRequired {
+          sql(s"INSERT INTO $emptyTableName VALUES (1,2,3)")
+        }
+
+        // but enabling auto merge should make insert work
+        withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
+          sql(s"INSERT INTO $emptyTableName VALUES (1,2,3)")
+          checkAnswer(spark.read.table(emptyTableName), Seq(Row(1, 2, 3)))
+        }
+      }
+    }
+  }
+
+  test("Create an empty table without schema - supported cases") {
+    import testImplicits._
+
+    withSQLConf(DeltaSQLConf.DELTA_ALLOW_CREATE_EMPTY_SCHEMA_TABLE.key -> "true") {
+      val emptyTableName = "t1"
+
+      def getDeltaLog: DeltaLog = DeltaLog.forTable(spark, TableIdentifier(emptyTableName))
+
+      // yet CTAS should be allowed
+      withTable(emptyTableName) {
+        sql(s"CREATE TABLE $emptyTableName USING delta AS SELECT 1")
+        assert(getDeltaLog.snapshot.schema.size == 1)
+      }
+
+      // and create Delta table using existing valid location should work without ()
+      withTable(emptyTableName) {
+        withTempDir { dir =>
+          Seq(1, 2, 3).toDF().write.format("delta").save(dir.getAbsolutePath)
+          sql(s"CREATE TABLE $emptyTableName USING delta LOCATION '${dir.getAbsolutePath}'")
+          assert(getDeltaLog.snapshot.schema.size == 1)
+        }
+      }
+
+      // checkpointing should work
+      withEmptyTable(emptyTableName) {
+        getDeltaLog.checkpoint()
+        assert(getDeltaLog.lastCheckpoint.exists(_.version == 0))
+        // run some operations
+        withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
+          sql(s"INSERT INTO $emptyTableName VALUES (1,2,3)")
+          checkAnswer(spark.read.table(emptyTableName), Seq(Row(1, 2, 3)))
+        }
+        getDeltaLog.checkpoint()
+        assert(getDeltaLog.lastCheckpoint.exists(_.version == 1))
+      }
+
+      withEmptyTable(emptyTableName) {
+        // TODO: possibly support MERGE into the future
+        try {
+          val source = "t2"
+          withTable(source) {
+            sql(s"CREATE TABLE $source USING delta AS SELECT 1")
+            sql(
+              s"""
+                 |MERGE INTO $emptyTableName
+                 |USING $source
+                 |ON FALSE
+                 |WHEN NOT MATCHED
+                 |  THEN INSERT *
+                 |""".stripMargin)
+          }
+        } catch {
+            case _: AssertionError | _: SparkException =>
+        }
+      }
+
+      // Delta specific DMLs should work, though they should basically be noops
+      withEmptyTable(emptyTableName) {
+        sql(s"OPTIMIZE $emptyTableName")
+        sql(s"VACUUM $emptyTableName")
+
+        assert(getDeltaLog.snapshot.schema.isEmpty)
+      }
+
+      // metadata DDL should work
+      withEmptyTable(emptyTableName) {
+        sql(s"ALTER TABLE $emptyTableName SET TBLPROPERTIES ('a' = 'b')")
+        assert(DeltaLog.forTable(spark,
+          TableIdentifier(emptyTableName)).snapshot.metadata.configuration.contains("a"))
+
+        checkAnswer(
+          sql(s"COMMENT ON TABLE $emptyTableName IS 'My Empty Cool Table'"), Nil)
+        assert(sql(s"DESCRIBE TABLE $emptyTableName").collect().length == 3)
+        // create table, alter tbl property, tbl comment
+        assert(sql(s"DESCRIBE HISTORY $emptyTableName").collect().length == 3)
+
+      }
+
+      // schema evolution ddl should work
+      withEmptyTable(emptyTableName) {
+        sql(s"ALTER TABLE $emptyTableName ADD COLUMN (id long COMMENT 'haha')")
+        assert(getDeltaLog.snapshot.schema.size == 1)
+      }
+
+      withEmptyTable(emptyTableName) {
+        sql(s"ALTER TABLE $emptyTableName ADD COLUMNS (id long, id2 long)")
+        assert(getDeltaLog.snapshot.schema.size == 2)
+      }
+
+      // schema evolution through df should work
+      // - v1 api
+      withEmptyTable(emptyTableName) {
+        Seq(1, 2, 3).toDF()
+          .write.format("delta")
+          .mode("append")
+          .option("mergeSchema", "true")
+          .saveAsTable(emptyTableName)
+
+        assert(getDeltaLog.snapshot.schema.size == 1)
+      }
+
+      withEmptyTable(emptyTableName) {
+        Seq(1, 2, 3).toDF()
+          .write.format("delta")
+          .mode("overwrite")
+          .option("overwriteSchema", "true")
+          .saveAsTable(emptyTableName)
+
+        assert(getDeltaLog.snapshot.schema.size == 1)
+      }
+
+      // - v2 api
+      withEmptyTable(emptyTableName) {
+        Seq(1, 2, 3).toDF()
+            .writeTo(emptyTableName)
+            .option("mergeSchema", "true")
+            .append()
+
+        assert(getDeltaLog.snapshot.schema.size == 1)
+      }
+
+      withEmptyTable(emptyTableName) {
+        Seq(1, 2, 3).toDF()
+            .writeTo(emptyTableName)
+            .using("delta")
+            .replace()
+
+        assert(getDeltaLog.snapshot.schema.size == 1)
+      }
+
+
     }
   }
 

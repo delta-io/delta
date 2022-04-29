@@ -151,6 +151,21 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+    val DELTA_ALLOW_CREATE_EMPTY_SCHEMA_TABLE =
+    buildConf("createEmptySchemaTable.enabled")
+      .internal()
+      .doc(
+        s"""If enabled, creating a Delta table with an empty schema will be allowed through SQL API
+           |`CREATE TABLE table () USING delta ...`, or Delta table APIs.
+           |Creating a Delta table with empty schema table using dataframe operations or
+           |`CREATE OR REPLACE` syntax are not supported.
+           |The result Delta table can be updated using schema evolution operations such as
+           |`df.save()` with `mergeSchema = true`.
+           |Reading the empty schema table using DataframeReader or `SELECT` is not allowed.
+           |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_IMPORT_BATCH_SIZE_STATS_COLLECTION =
     buildConf("import.batchSize.statsCollection")
       .internal()

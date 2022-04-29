@@ -92,6 +92,7 @@ trait DocsPath {
     "createExternalTableWithoutLogException",
     "createExternalTableWithoutSchemaException",
     "createManagedTableWithoutSchemaException",
+    "createExternalTableWithoutSchemaPathNotExistException",
     "multipleSourceRowMatchingTargetRowInMergeException",
     "faqRelativePath",
     "ignoreStreamingUpdatesAndDeletesWarning",
@@ -921,6 +922,12 @@ object DeltaErrors
          |To learn more about Delta, see ${generateDocsLink(spark.sparkContext.getConf,
         "/index.html")}
        """.stripMargin)
+  }
+
+  def readTableWithoutSchemaException(identifier: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "READ_DELTA_TABLE_WITHOUT_COLUMNS",
+      messageParameters = Array(identifier))
   }
 
   def createTableWithDifferentSchemaException(

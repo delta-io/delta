@@ -337,6 +337,10 @@
     "message" : [ "Protocol property %s needs to be an integer. Found %s" ],
     "sqlState" : "22000"
   },
+  "READ_DELTA_TABLE_WITHOUT_COLUMNS" : {
+    "message" : [ "You are trying to read a table %s without columns using Delta.", "", "Write some data with option `mergeSchema = true` to enable subsequent read access." ],
+    "sqlState" : "42000"
+  },
   "REGEX_OPT_SYNTAX_ERROR" : {
     "message" : [ "Please recheck your syntax for '%s'" ],
     "sqlState" : "42000"
