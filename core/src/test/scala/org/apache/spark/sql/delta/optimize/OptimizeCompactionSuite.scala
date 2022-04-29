@@ -22,6 +22,7 @@ import scala.collection.JavaConverters._
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.Path
 import org.scalatest.concurrent.TimeLimits.failAfter
@@ -146,6 +147,84 @@ trait OptimizeCompactionSuiteBase extends QueryTest
         (1L to 6L): _*)
     }
   }
+
+  def appendRowsToDeltaTable(
+      path: String,
+      numFiles: Int,
+      numRowsPerFiles: Int,
+      partitionColumns: Option[Seq[String]],
+      partitionValues: Seq[Int]): Unit = {
+    partitionValues.foreach { partition =>
+      (0 until numFiles).foreach { _ =>
+        appendToDeltaTable(
+          (0 until numRowsPerFiles).toDF("value").withColumn("id", lit(partition)),
+          path,
+          partitionColumns)
+      }
+    }
+  }
+
+  def testOptimizeCompactWithLargeFile(
+      name: String, unCompactablePartitions: Seq[Int], compactablePartitions: Seq[Int]) {
+    test(name) {
+      withTempDir { tempDir =>
+          val path = new File(tempDir, "testTable").getCanonicalPath
+          val partitionColumns = Some(Seq("id"))
+          // Create un-compactable partitions.
+          appendRowsToDeltaTable(
+            path, numFiles = 1, numRowsPerFiles = 200, partitionColumns, unCompactablePartitions)
+          // Create compactable partitions with 5 files
+          appendRowsToDeltaTable(
+            path, numFiles = 5, numRowsPerFiles = 10, partitionColumns, compactablePartitions)
+
+          val deltaLogBefore = DeltaLog.forTable(spark, path)
+          val txnBefore = deltaLogBefore.startTransaction()
+          val fileListBefore = txnBefore.filterFiles()
+          val versionBefore = deltaLogBefore.snapshot.version
+
+          val id = "id".phy(deltaLogBefore)
+          unCompactablePartitions.foreach(partId =>
+            assert(fileListBefore.count(_.partitionValues === Map(id -> partId.toString)) == 1))
+          compactablePartitions.foreach(partId =>
+            assert(fileListBefore.count(_.partitionValues === Map(id -> partId.toString)) == 5))
+          // Optimize compact all partitions
+          spark.sql(s"OPTIMIZE '$path'")
+
+          val deltaLogAfter = DeltaLog.forTable(spark, path)
+          val txnAfter = deltaLogAfter.startTransaction();
+          val fileListAfter = txnAfter.filterFiles();
+          // All partitions should only contains single file.
+          (unCompactablePartitions ++ compactablePartitions).foreach(partId =>
+            assert(fileListAfter.count(_.partitionValues === Map(id -> partId.toString)) === 1))
+          // version is incremented
+          assert(deltaLogAfter.snapshot.version === versionBefore + 1)
+      }
+    }
+  }
+  testOptimizeCompactWithLargeFile(
+    "optimize command: interleaves compactable/un-compactable partitions",
+    unCompactablePartitions = Seq(1, 3, 5),
+    compactablePartitions = Seq(2, 4, 6))
+
+  testOptimizeCompactWithLargeFile(
+    "optimize command: first two and last two partitions are un-compactable",
+    unCompactablePartitions = Seq(1, 2, 5, 6),
+    compactablePartitions = Seq(3, 4))
+
+  testOptimizeCompactWithLargeFile(
+    "optimize command: only first and last partition are compactable",
+    unCompactablePartitions = Seq(2, 3, 4, 5),
+    compactablePartitions = Seq(1, 6))
+
+  testOptimizeCompactWithLargeFile(
+    "optimize command: only first partition is un-compactable",
+    unCompactablePartitions = Seq(1),
+    compactablePartitions = Seq(2, 3, 4, 5, 6))
+
+  testOptimizeCompactWithLargeFile(
+    "optimize command: only first partition is compactable",
+    unCompactablePartitions = Seq(2, 3, 4, 5, 6),
+    compactablePartitions = Seq(1))
 
   test("optimize command: on partitioned table - selected partitions") {
     withTempDir { tempDir =>
