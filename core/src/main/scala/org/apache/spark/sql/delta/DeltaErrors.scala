@@ -380,7 +380,6 @@ object DeltaErrors
       errorClass = "INCORRECT_ARRAY_ACCESS",
       messageParameters = Array.empty)
   }
-
   def invalidColumnName(name: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "INVALID_CHARACTERS_IN_COLUMN_NAME",
@@ -1703,6 +1702,10 @@ object DeltaErrors
     new DeltaIllegalStateException(errorClass = "DELTA_ACTIVE_TRANSACTION_ALREADY_SET")
   }
 
+  /** This is a method only used for testing Py4J exception handling. */
+  def throwDeltaIllegalArgumentException(): Throwable = {
+    new DeltaIllegalArgumentException(errorClass = "DELTA_UNRECOGNIZED_INVARIANT")
+  }
 }
 
 /** The basic class for all Tahoe commit conflict exceptions. */
