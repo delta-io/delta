@@ -133,7 +133,7 @@ trait DeltaTableCreationTests
             .saveAsTable(tbl)
 
           checkDatasetUnorderly(spark.table(tbl).as[(Long, String)], 1L -> "a")
-          assert(getTablePath(tbl) === getDefaultTablePath(tbl), "Table path is wrong")
+            assert(getTablePath(tbl) === getDefaultTablePath(tbl), "Table path is wrong")
           assert(getPartitioningColumns(tbl) === cols, "Partitioning columns don't match")
         }
       }
@@ -150,7 +150,7 @@ trait DeltaTableCreationTests
             .saveAsTable(tbl)
 
           checkDatasetUnorderly(spark.table(tbl).as[(Long, String)])
-          assert(getTablePath(tbl) === getDefaultTablePath(tbl), "Table path is wrong")
+            assert(getTablePath(tbl) === getDefaultTablePath(tbl), "Table path is wrong")
           assert(getPartitioningColumns(tbl) === cols, "Partitioning columns don't match")
         }
       }
@@ -394,7 +394,7 @@ trait DeltaTableCreationTests
       } else {
         // column mapping modes support creating table with arbitrary col names
         createTableUsingDF
-        assert(tableLoc.exists())
+          assert(tableLoc.exists())
       }
     }
 
@@ -408,7 +408,7 @@ trait DeltaTableCreationTests
       } else {
         // column mapping modes support creating table with arbitrary col names
         createTableUsingSQL
-        assert(tableLoc.exists())
+          assert(tableLoc.exists())
       }
     }
   }
@@ -812,7 +812,7 @@ trait DeltaTableCreationTests
       sql("DROP TABLE delta_test")
       intercept[NoSuchTableException](catalog.getTableMetadata(TableIdentifier("delta_test")))
       // Verify that the underlying location is deleted for a managed table
-      assert(!new File(table.location).exists())
+        assert(!new File(table.location).exists())
     }
   }
 
@@ -879,7 +879,8 @@ trait DeltaTableCreationTests
     }
   }
 
-  testQuietly("create a managed table with the existing non-empty directory") {
+  testQuietly(
+      "create a managed table with the existing non-empty directory") {
     withTable("tab1") {
       val tableLoc = new File(spark.sessionState.catalog.defaultTablePath(TableIdentifier("tab1")))
       try {
@@ -1746,7 +1747,8 @@ class DeltaTableCreationSuite
     }
   }
 
-  testQuietly("REPLACE TABLE on non-empty directory") {
+  testQuietly(
+      "REPLACE TABLE on non-empty directory") {
     withTempDir { dir =>
       spark.range(10).write.format("delta").save(dir.getCanonicalPath)
       withTable("delta_test") {
@@ -1907,7 +1909,7 @@ class DeltaTableCreationSuite
     } else {
       assert(catalogStorageProps.forall(table.storage.properties.contains),
         s"Catalog didn't contain properties: ${catalogStorageProps}.\n" +
-          "Catalog: ${table.storage.properties}")
+          s"Catalog: ${table.storage.properties}")
     }
     val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
 
@@ -1965,7 +1967,8 @@ class DeltaTableCreationSuite
     }
   }
 
-  test("do not store write options in the catalog - legacy flag") {
+  test(
+      "do not store write options in the catalog - legacy flag") {
     withTempDir { dir =>
       withTable("t") {
         withSQLConf(DeltaSQLConf.DELTA_LEGACY_STORE_WRITER_OPTIONS_AS_PROPS.key -> "true") {
