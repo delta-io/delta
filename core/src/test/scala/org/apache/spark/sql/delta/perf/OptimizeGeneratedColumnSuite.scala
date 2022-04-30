@@ -704,18 +704,18 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
   )
 
   testOptimizablePartitionExpression(
-    "nested struct<value:STRING>",
+    "value STRING",
     "part STRING",
-    Map("part" -> "nested.value"),
+    Map("part" -> "value"),
     expectedPartitionExpr = IdentityPartitionExpr("part"),
-    expressionKey = Some("nested.value"),
+    expressionKey = Some("value"),
     filterTestCases = Seq(
-      "nested.value < 'foo'" -> Seq("((part IS NULL) OR (part < 'foo'))"),
-      "nested.value <= 'foo'" -> Seq("((part IS NULL) OR (part <= 'foo'))"),
-      "nested.value = 'foo'" -> Seq("((part IS NULL) OR (part = 'foo'))"),
-      "nested.value > 'foo'" -> Seq("((part IS NULL) OR (part > 'foo'))"),
-      "nested.value >= 'foo'" -> Seq("((part IS NULL) OR (part >= 'foo'))"),
-      "nested.value is null" -> Seq("(part IS NULL)")
+      "value < 'foo'" -> Seq("((part IS NULL) OR (part < 'foo'))"),
+      "value <= 'foo'" -> Seq("((part IS NULL) OR (part <= 'foo'))"),
+      "value = 'foo'" -> Seq("((part IS NULL) OR (part = 'foo'))"),
+      "value > 'foo'" -> Seq("((part IS NULL) OR (part > 'foo'))"),
+      "value >= 'foo'" -> Seq("((part IS NULL) OR (part >= 'foo'))"),
+      "value is null" -> Seq("(part IS NULL)")
     )
   )
 

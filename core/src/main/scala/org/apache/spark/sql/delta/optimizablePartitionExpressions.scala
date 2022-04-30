@@ -553,8 +553,8 @@ case class DateFormatPartitionExpr(
  *
  * @param partitionColumn the partition column name used in the generation expression.
  */
-case class IdentityPartitionExpr(
-    partitionColumn: String) extends OptimizablePartitionExpression {
+case class IdentityPartitionExpr(partitionColumn: String)
+    extends OptimizablePartitionExpression {
 
   override def lessThan(lit: Literal): Option[Expression] = {
     Some(partitionColumn.toCol.isNull || partitionColumn.toCol < lit)

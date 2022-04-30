@@ -534,7 +534,6 @@ object GeneratedColumnExtraction {
       Some((escapeName(name), dataType))
     case g: GetStructField => g.child match {
       case GeneratedColumnExtraction(name, _) =>
-        g.extractFieldName
         Some((Seq(name, escapeName(g.extractFieldName)).mkString("."), g.dataType))
       case _ => None
     }
