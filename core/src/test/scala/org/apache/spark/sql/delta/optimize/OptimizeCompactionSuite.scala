@@ -24,12 +24,12 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.hadoop.fs.Path
+import io.delta.tables.DeltaTable
+
 import org.scalatest.concurrent.TimeLimits.failAfter
 import org.scalatest.time.SpanSugar._
 
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.catalog.ExternalCatalogUtils
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.test.SharedSparkSession
@@ -42,6 +42,9 @@ trait OptimizeCompactionSuiteBase extends QueryTest
   with DeltaColumnMappingTestUtils {
 
   import testImplicits._
+
+  def executeOptimizeTable(table: String, condition: Option[String] = None)
+  def executeOptimizePath(path: String, condition: Option[String] = None)
 
   test("optimize command: with database and table name") {
     withTempDir { tempDir =>
@@ -57,7 +60,8 @@ trait OptimizeCompactionSuiteBase extends QueryTest
 
           val deltaLog = DeltaLog.forTable(spark, tempDir)
           val versionBeforeOptimize = deltaLog.snapshot.version
-          spark.sql(s"OPTIMIZE $tableName")
+          executeOptimizeTable(tableName)
+
           deltaLog.update()
           assert(deltaLog.snapshot.version === versionBeforeOptimize + 1)
           checkDatasetUnorderly(spark.table(tableName).as[Int], 1, 2, 3, 4, 5, 6)
@@ -75,7 +79,7 @@ trait OptimizeCompactionSuiteBase extends QueryTest
 
       val deltaLog = DeltaLog.forTable(spark, tempDir)
       val versionBeforeOptimize = deltaLog.snapshot.version
-      spark.sql(s"OPTIMIZE '${tempDir.getCanonicalPath}'")
+      executeOptimizePath(tempDir.getCanonicalPath)
       deltaLog.update()
       assert(deltaLog.snapshot.version === versionBeforeOptimize + 1)
       checkDatasetUnorderly(data.toDF().as[Int], 1, 2, 3, 4, 5, 6)
@@ -97,7 +101,7 @@ trait OptimizeCompactionSuiteBase extends QueryTest
 
       val e = intercept[AnalysisException] {
         // Should fail when predicate is on a non-partition column
-        spark.sql(s"OPTIMIZE '$path' WHERE value < 4")
+        executeOptimizePath(path, Some("value < 4"))
       }
       assert(e.getMessage.contains("Predicate references non-partition column 'value'. " +
                                        "Only the partition columns may be referenced: [id]"))
@@ -129,7 +133,7 @@ trait OptimizeCompactionSuiteBase extends QueryTest
       (0 to 1).foreach(partId =>
         assert(fileListBefore.count(_.partitionValues === Map(id -> partId.toString)) > 1))
 
-      spark.sql(s"OPTIMIZE '$path'")
+      executeOptimizePath(path)
 
       val deltaLogAfter = DeltaLog.forTable(spark, path)
       val txnAfter = deltaLogAfter.startTransaction();
@@ -250,14 +254,13 @@ trait OptimizeCompactionSuiteBase extends QueryTest
       assert(fileListBefore.count(_.partitionValues === Map(id -> "0")) > 1)
 
       val versionBefore = deltaLogBefore.snapshot.version
-      spark.sql(s"OPTIMIZE '$path' WHERE id = 0")
+      executeOptimizePath(path, Some("id = 0"))
 
       val deltaLogAfter = DeltaLog.forTable(spark, path)
       val txnAfter = deltaLogBefore.startTransaction();
       val fileListAfter = txnAfter.filterFiles()
 
       assert(fileListBefore.length > fileListAfter.length)
-
       // Optimized partition should contain only one file
       assert(fileListAfter.count(_.partitionValues === Map(id -> "0")) === 1)
 
@@ -306,7 +309,7 @@ trait OptimizeCompactionSuiteBase extends QueryTest
       assert(filesInEachPartitionBefore.keys.exists(
         _ === (partitionColumnPhysicalName, nullPartitionValue)))
 
-      spark.sql(s"OPTIMIZE '$path'")
+      executeOptimizePath(path)
 
       val deltaLogAfter = DeltaLog.forTable(spark, path)
       val txnAfter = deltaLogBefore.startTransaction();
@@ -353,7 +356,7 @@ trait OptimizeCompactionSuiteBase extends QueryTest
       val fileCountInTestPartitionBefore = fileListBefore
           .count(_.partitionValues === Map[String, String](date -> "2017-10-10", part -> "3"))
 
-      spark.sql(s"OPTIMIZE '$path' WHERE date = '2017-10-10' and part = 3")
+      executeOptimizePath(path, Some("date = '2017-10-10' and part = 3"))
 
       val deltaLogAfter = DeltaLog.forTable(spark, path)
       val txnAfter = deltaLogBefore.startTransaction();
@@ -402,11 +405,40 @@ trait OptimizeCompactionSuiteBase extends QueryTest
         // block the first write until the second batch can attempt to write.
         BlockWritesLocalFileSystem.blockUntilConcurrentWrites(numPartitions)
         failAfter(60.seconds) {
-          sql(s"OPTIMIZE '$path'")
+          executeOptimizePath(path)
         }
         assert(deltaLog.snapshot.numOfFiles === numPartitions) // 1 file per partition
       }
     }
+  }
+
+  /**
+   * Utility method to append the given data to the Delta table located at the given path.
+   * Optionally partitions the data.
+   */
+  protected def appendToDeltaTable[T](
+      data: Dataset[T], tablePath: String, partitionColumns: Option[Seq[String]] = None): Unit = {
+    var df = data.repartition(1).write;
+    partitionColumns.map(columns => {
+      df = df.partitionBy(columns: _*)
+    })
+    df.format("delta").mode("append").save(tablePath)
+  }
+}
+
+/**
+ * Runs optimize compaction tests using OPTIMIZE SQL
+ */
+class OptimizeCompactionSQLSuite extends OptimizeCompactionSuiteBase
+    with DeltaSQLCommandTest {
+
+  def executeOptimizeTable(table: String, condition: Option[String] = None): Unit = {
+    val conditionClause = condition.map(c => s"WHERE $c").getOrElse("")
+    spark.sql(s"OPTIMIZE $table $conditionClause")
+  }
+
+  def executeOptimizePath(path: String, condition: Option[String] = None): Unit = {
+    executeOptimizeTable(s"'$path'", condition)
   }
 
   test("optimize command: missing path") {
@@ -429,29 +461,33 @@ trait OptimizeCompactionSuiteBase extends QueryTest
     }
     assert(e.getMessage.contains("OPTIMIZE"))
   }
-
-  /**
-   * Utility method to append the given data to the Delta table located at the given path.
-   * Optionally partitions the data.
-   */
-  protected def appendToDeltaTable[T](
-      data: Dataset[T], tablePath: String, partitionColumns: Option[Seq[String]] = None): Unit = {
-    var df = data.repartition(1).write;
-    partitionColumns.map(columns => {
-      df = df.partitionBy(columns: _*)
-    })
-    df.format("delta").mode("append").save(tablePath)
-  }
 }
 
 /**
- * Runs optimize compaction tests.
+ * Runs optimize compaction tests using OPTIMIZE Scala APIs
  */
-class OptimizeCompactionSuite extends OptimizeCompactionSuiteBase
-  with DeltaSQLCommandTest
+class OptimizeCompactionScalaSuite extends OptimizeCompactionSuiteBase
+    with DeltaSQLCommandTest {
+  def executeOptimizeTable(table: String, condition: Option[String] = None): Unit = {
+    if (condition.isDefined) {
+      DeltaTable.forName(table).optimize().where(condition.get).executeCompaction()
+    } else {
+      DeltaTable.forName(table).optimize().executeCompaction()
+    }
+  }
+
+  def executeOptimizePath(path: String, condition: Option[String] = None): Unit = {
+    if (condition.isDefined) {
+      DeltaTable.forPath(path).optimize().where(condition.get).executeCompaction()
+      DeltaTable.forPath(path).optimize().where(condition.get).executeCompaction()
+    } else {
+      DeltaTable.forPath(path).optimize().executeCompaction()
+    }
+  }
+}
 
 
-class OptimizeCompactionNameColumnMappingSuite extends OptimizeCompactionSuite
+class OptimizeCompactionNameColumnMappingSuite extends OptimizeCompactionSQLSuite
   with DeltaColumnMappingEnableNameMode {
   override protected def runOnlyTests = Seq(
     "optimize command: on table with multiple partition columns",
