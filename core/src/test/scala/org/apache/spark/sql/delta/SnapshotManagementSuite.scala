@@ -67,209 +67,169 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
     assert(deltaFile.delete(), s"Failed to delete $deltaFile")
   }
 
-  testQuietly("recover from a corrupt checkpoint: previous checkpoint doesn't exist") {
-    for (useMultipart <- Seq(true, false)) {
-      // Test the first part and not the first part
-      val partsToCorrupt = if (useMultipart) {
-        Some(1) :: Some(2) :: Nil
-      } else {
-        None :: Nil
+  private def testWithAndWithoutMultipartCheckpoint(name: String)(f: (Option[Int]) => Unit) = {
+    testQuietly(name) {
+      withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_MAX_ACTIONS_PER_FILE.key -> "1") {
+        f(Some(1))
+        f(Some(2))
       }
-      val maxActions = if (useMultipart) 1 else 10000
-      withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_MAX_ACTIONS_PER_FILE.key -> maxActions.toString) {
-        partsToCorrupt.foreach { partToCorrupt =>
-          withTempDir { tempDir =>
-            val path = tempDir.getCanonicalPath
-            spark.range(10).write.format("delta").save(path)
-            var deltaLog = DeltaLog.forTable(spark, path)
-            deltaLog.checkpoint()
+      f(None)
+    }
+  }
 
-            DeltaLog.clearCache()
-            deltaLog = DeltaLog.forTable(spark, path)
-            val checkpointParts = deltaLog.snapshot.logSegment.checkpoint.length
-            val multipart = partToCorrupt.map((_, checkpointParts))
+  testWithAndWithoutMultipartCheckpoint("recover from a corrupt checkpoint: previous checkpoint " +
+      "doesn't exist") { partToCorrupt =>
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      spark.range(10).write.format("delta").save(path)
+      var deltaLog = DeltaLog.forTable(spark, path)
+      deltaLog.checkpoint()
 
-            // We have different code paths for empty and non-empty checkpoints
-            for (testEmptyCheckpoint <- Seq(true, false)) {
-              makeCorruptCheckpointFile(path, checkpointVersion = 0,
-                shouldBeEmpty = testEmptyCheckpoint, multipart = multipart)
-              DeltaLog.clearCache()
-              // Checkpoint 0 is corrupted. Verify that we can still create the snapshot using
-              // existing json files.
-              DeltaLog.forTable(spark, path).snapshot
-            }
-          }
+      DeltaLog.clearCache()
+      deltaLog = DeltaLog.forTable(spark, path)
+      val checkpointParts = deltaLog.snapshot.logSegment.checkpoint.length
+      val multipart = partToCorrupt.map((_, checkpointParts))
+
+      // We have different code paths for empty and non-empty checkpoints
+      for (testEmptyCheckpoint <- Seq(true, false)) {
+        makeCorruptCheckpointFile(path, checkpointVersion = 0,
+          shouldBeEmpty = testEmptyCheckpoint, multipart = multipart)
+        DeltaLog.clearCache()
+        // Checkpoint 0 is corrupted. Verify that we can still create the snapshot using
+        // existing json files.
+        DeltaLog.forTable(spark, path).snapshot
+      }
+    }
+  }
+
+  testWithAndWithoutMultipartCheckpoint("recover from a corrupt checkpoint: previous checkpoint " +
+      "exists") { partToCorrupt =>
+    withTempDir { tempDir =>
+      // Create checkpoint 0 and 1
+      val path = tempDir.getCanonicalPath
+      spark.range(10).write.format("delta").save(path)
+      var deltaLog = DeltaLog.forTable(spark, path)
+      deltaLog.checkpoint()
+      spark.range(10).write.format("delta").mode("append").save(path)
+      deltaLog.update()
+      deltaLog.checkpoint()
+
+      DeltaLog.clearCache()
+      deltaLog = DeltaLog.forTable(spark, path)
+      val checkpointParts = deltaLog.snapshot.logSegment.checkpoint.length
+      val multipart = partToCorrupt.map((_, checkpointParts))
+
+      // We have different code paths for empty and non-empty checkpoints
+      for (testEmptyCheckpoint <- Seq(true, false)) {
+        makeCorruptCheckpointFile(path, checkpointVersion = 1,
+          shouldBeEmpty = testEmptyCheckpoint, multipart = multipart)
+        // Checkpoint 1 is corrupted. Verify that we can still create the snapshot using
+        // checkpoint 0.
+        DeltaLog.clearCache()
+        DeltaLog.forTable(spark, path).snapshot
+      }
+    }
+  }
+
+  testWithAndWithoutMultipartCheckpoint("should not recover when the current checkpoint is " +
+      "broken but we don't have the entire history") { partToCorrupt =>
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      spark.range(10).write.format("delta").save(path)
+      spark.range(10).write.format("delta").mode("append").save(path)
+      DeltaLog.forTable(spark, path).checkpoint()
+      deleteLogVersion(path, version = 0)
+      DeltaLog.clearCache()
+
+      val deltaLog = DeltaLog.forTable(spark, path)
+      val checkpointParts = deltaLog.snapshot.logSegment.checkpoint.length
+      val multipart = partToCorrupt.map((_, checkpointParts))
+
+      DeltaLog.clearCache()
+
+      // We have different code paths for empty and non-empty checkpoints, and also different
+      // code paths when listing with or without a checkpoint hint.
+      for (testEmptyCheckpoint <- Seq(true, false)) {
+        makeCorruptCheckpointFile(path, checkpointVersion = 1,
+          shouldBeEmpty = testEmptyCheckpoint, multipart = multipart)
+        // When finding a Delta log for the first time, we rely on _last_checkpoint hint
+        val e = intercept[Exception] { DeltaLog.forTable(spark, path).snapshot }
+        if (testEmptyCheckpoint) {
+          // - checkpoint 1 is NOT in the list result
+          // - try to get an alternative LogSegment in `getLogSegmentForVersion`
+          // - fail to get an alternative LogSegment
+          // - throw the below exception
+          assert(e.isInstanceOf[IllegalStateException] && e.getMessage.contains(
+            "Couldn't find all part files of the checkpoint version: 1"))
+        } else {
+          // - checkpoint 1 is in the list result
+          // - Snapshot creation triggers state reconstruction
+          // - fail to read protocol+metadata from checkpoint 1
+          // - throw FileReadException
+          // - fail to get an alternative LogSegment
+          // - cannot find log file 0 so throw the above checkpoint 1 read failure
+          // Guava cache wraps the root cause
+          assert(e.isInstanceOf[ExecutionException] &&
+            e.getCause.isInstanceOf[SparkException] &&
+            e.getMessage.contains("0001.checkpoint") &&
+            e.getMessage.contains(".parquet is not a Parquet file"))
         }
       }
     }
   }
 
-  testQuietly("recover from a corrupt checkpoint: previous checkpoint exists") {
-    for (useMultipart <- Seq(true, false)) {
-      // Test the first part and not the first part
-      val partsToCorrupt = if (useMultipart) {
-        Some(1) :: Some(2) :: Nil
-      } else {
-        None :: Nil
-      }
-      val maxActions = if (useMultipart) 1 else 10000
-      withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_MAX_ACTIONS_PER_FILE.key -> maxActions.toString) {
-        partsToCorrupt.foreach { partToCorrupt =>
-          withTempDir { tempDir =>
-            // Create checkpoint 0 and 1
-            val path = tempDir.getCanonicalPath
-            spark.range(10).write.format("delta").save(path)
-            var deltaLog = DeltaLog.forTable(spark, path)
-            deltaLog.checkpoint()
-            spark.range(10).write.format("delta").mode("append").save(path)
-            deltaLog.update()
-            deltaLog.checkpoint()
+  testWithAndWithoutMultipartCheckpoint("should not recover when both the current and previous " +
+      "checkpoints are broken") { partToCorrupt =>
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      val staleLog = DeltaLog.forTable(spark, path)
+      DeltaLog.clearCache()
 
-            DeltaLog.clearCache()
-            deltaLog = DeltaLog.forTable(spark, path)
-            val checkpointParts = deltaLog.snapshot.logSegment.checkpoint.length
-            val multipart = partToCorrupt.map((_, checkpointParts))
+      spark.range(10).write.format("delta").save(path)
+      val deltaLog = DeltaLog.forTable(spark, path)
+      deltaLog.checkpoint()
+      DeltaLog.clearCache()
+      val checkpointParts0 =
+        DeltaLog.forTable(spark, path).snapshot.logSegment.checkpoint.length
 
-            // We have different code paths for empty and non-empty checkpoints
-            for (testEmptyCheckpoint <- Seq(true, false)) {
-              makeCorruptCheckpointFile(path, checkpointVersion = 1,
-                shouldBeEmpty = testEmptyCheckpoint, multipart = multipart)
-              // Checkpoint 1 is corrupted. Verify that we can still create the snapshot using
-              // checkpoint 0.
-              DeltaLog.clearCache()
-              DeltaLog.forTable(spark, path).snapshot
-            }
-          }
-        }
-      }
-    }
-  }
+      spark.range(10).write.format("delta").mode("append").save(path)
+      deltaLog.update()
+      deltaLog.checkpoint()
+      deleteLogVersion(path, version = 0)
 
-  testQuietly("should not recover when the current checkpoint is broken but we don't have the " +
-    "entire history") {
-    for (useMultipart <- Seq(true, false)) {
-      // Test the first part and not the first part
-      val partsToCorrupt = if (useMultipart) {
-        Some(1) :: Some(2) :: Nil
-      } else {
-        None :: Nil
-      }
-      val maxActions = if (useMultipart) 1 else 10000
-      withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_MAX_ACTIONS_PER_FILE.key -> maxActions.toString) {
-        partsToCorrupt.foreach { partToCorrupt =>
-          withTempDir { tempDir =>
-            val path = tempDir.getCanonicalPath
-            spark.range(10).write.format("delta").save(path)
-            spark.range(10).write.format("delta").mode("append").save(path)
-            DeltaLog.forTable(spark, path).checkpoint()
-            deleteLogVersion(path, version = 0)
-            DeltaLog.clearCache()
+      DeltaLog.clearCache()
+      val checkpointParts1 =
+        DeltaLog.forTable(spark, path).snapshot.logSegment.checkpoint.length
 
-            val deltaLog = DeltaLog.forTable(spark, path)
-            val checkpointParts = deltaLog.snapshot.logSegment.checkpoint.length
-            val multipart = partToCorrupt.map((_, checkpointParts))
+      makeCorruptCheckpointFile(path, checkpointVersion = 0, shouldBeEmpty = false,
+        multipart = partToCorrupt.map((_, checkpointParts0)))
 
-            DeltaLog.clearCache()
+      val multipart = partToCorrupt.map((_, checkpointParts1))
 
-            // We have different code paths for empty and non-empty checkpoints, and also different
-            // code paths when listing with or without a checkpoint hint.
-            for (testEmptyCheckpoint <- Seq(true, false)) {
-              makeCorruptCheckpointFile(path, checkpointVersion = 1,
-                shouldBeEmpty = testEmptyCheckpoint, multipart = multipart)
-              // When finding a Delta log for the first time, we rely on _last_checkpoint hint
-              val e = intercept[Exception] { DeltaLog.forTable(spark, path).snapshot }
-              // DeltaLog.forTable(spark, path).snapshot
-              if (testEmptyCheckpoint) {
-                // - checkpoint 1 is NOT in the list result
-                // - try to get an alternative LogSegment in `getLogSegmentForVersion`
-                // - fail to get an alternative LogSegment
-                // - throw the below exception
-                assert(e.isInstanceOf[IllegalStateException] && e.getMessage.contains(
-                  "Couldn't find all part files of the checkpoint version: 1"))
-              } else {
-                // - checkpoint 1 is in the list result
-                // - Snapshot creation triggers state reconstruction
-                // - fail to read protocol+metadata from checkpoint 1
-                // - throw FileReadException
-                // - fail to get an alternative LogSegment
-                // - cannot find log file 0 so throw the above checkpoint 1 read failure
-                // Guava cache wraps the root cause
-                assert(e.isInstanceOf[ExecutionException] &&
-                  e.getCause.isInstanceOf[SparkException] &&
-                  e.getMessage.contains("0001.checkpoint") &&
-                  e.getMessage.contains(".parquet is not a Parquet file"))
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+      // We have different code paths for empty and non-empty checkpoints
+      for (testEmptyCheckpoint <- Seq(true, false)) {
+        makeCorruptCheckpointFile(path, checkpointVersion = 1,
+          shouldBeEmpty = testEmptyCheckpoint, multipart = multipart)
 
-  testQuietly("should not recover when both the current and previous checkpoints are broken") {
-    for (useMultipart <- Seq(true, false)) {
-      // Test the first part and not the first part
-      val partsToCorrupt = if (useMultipart) {
-        Some(1) :: Some(2) :: Nil
-      } else {
-        None :: Nil
-      }
-      val maxActions = if (useMultipart) 1 else 10000
-      withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_MAX_ACTIONS_PER_FILE.key -> maxActions.toString) {
-        partsToCorrupt.foreach { partToCorrupt =>
-          withTempDir { tempDir =>
-            val path = tempDir.getCanonicalPath
-            val staleLog = DeltaLog.forTable(spark, path)
-            DeltaLog.clearCache()
-
-            spark.range(10).write.format("delta").save(path)
-            val deltaLog = DeltaLog.forTable(spark, path)
-            deltaLog.checkpoint()
-            DeltaLog.clearCache()
-            val checkpointParts0 =
-              DeltaLog.forTable(spark, path).snapshot.logSegment.checkpoint.length
-
-            spark.range(10).write.format("delta").mode("append").save(path)
-            deltaLog.update()
-            deltaLog.checkpoint()
-            deleteLogVersion(path, version = 0)
-
-            DeltaLog.clearCache()
-            val checkpointParts1 =
-              DeltaLog.forTable(spark, path).snapshot.logSegment.checkpoint.length
-
-            makeCorruptCheckpointFile(path, checkpointVersion = 0, shouldBeEmpty = false,
-              multipart = partToCorrupt.map((_, checkpointParts0)))
-
-            val multipart = partToCorrupt.map((_, checkpointParts1))
-
-            // We have different code paths for empty and non-empty checkpoints
-            for (testEmptyCheckpoint <- Seq(true, false)) {
-              makeCorruptCheckpointFile(path, checkpointVersion = 1,
-                shouldBeEmpty = testEmptyCheckpoint, multipart = multipart)
-
-              // The code paths are different, but the error and message end up being the same:
-              //
-              // testEmptyCheckpoint = true:
-              // - checkpoint 1 is NOT in the list result.
-              // - fallback to load version 0 using checkpoint 0
-              // - fail to read checkpoint 0
-              // - cannot find log file 0 so throw the above checkpoint 0 read failure
-              //
-              // testEmptyCheckpoint = false:
-              // - checkpoint 1 is in the list result.
-              // - Snapshot creation triggers state reconstruction
-              // - fail to read protocol+metadata from checkpoint 1
-              // - fallback to load version 0 using checkpoint 0
-              // - fail to read checkpoint 0
-              // - cannot find log file 0 so throw the original checkpoint 1 read failure
-              val e = intercept[SparkException] { staleLog.update() }
-              val version = if (testEmptyCheckpoint) 0 else 1
-              assert(e.getMessage.contains(f"$version%020d.checkpoint") &&
-                e.getMessage.contains(".parquet is not a Parquet file"))
-            }
-          }
-        }
+        // The code paths are different, but the error and message end up being the same:
+        //
+        // testEmptyCheckpoint = true:
+        // - checkpoint 1 is NOT in the list result.
+        // - fallback to load version 0 using checkpoint 0
+        // - fail to read checkpoint 0
+        // - cannot find log file 0 so throw the above checkpoint 0 read failure
+        //
+        // testEmptyCheckpoint = false:
+        // - checkpoint 1 is in the list result.
+        // - Snapshot creation triggers state reconstruction
+        // - fail to read protocol+metadata from checkpoint 1
+        // - fallback to load version 0 using checkpoint 0
+        // - fail to read checkpoint 0
+        // - cannot find log file 0 so throw the original checkpoint 1 read failure
+        val e = intercept[SparkException] { staleLog.update() }
+        val version = if (testEmptyCheckpoint) 0 else 1
+        assert(e.getMessage.contains(f"$version%020d.checkpoint") &&
+          e.getMessage.contains(".parquet is not a Parquet file"))
       }
     }
   }

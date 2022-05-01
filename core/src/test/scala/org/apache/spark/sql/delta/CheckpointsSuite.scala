@@ -73,6 +73,17 @@ class CheckpointsSuite extends QueryTest
     }
   }
 
+  private def verifyCheckpoint(
+      checkpoint: Option[CheckpointMetaData],
+      version: Int,
+      parts: Option[Int]): Unit = {
+    assert(checkpoint.isDefined)
+    checkpoint.foreach { checkpointMetadata =>
+      assert(checkpointMetadata.version == version)
+      assert(checkpointMetadata.parts == parts)
+    }
+  }
+
   test("multipart checkpoints") {
      withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath
@@ -87,22 +98,15 @@ class CheckpointsSuite extends QueryTest
         // 4 total actions, 1 new file
         spark.range(1).repartition(1).write.format("delta").mode("append").save(path)
 
-        assert(deltaLog.lastCheckpoint.isDefined)
-        deltaLog.lastCheckpoint.foreach { checkpointMetadata =>
-          assert(checkpointMetadata.version == 1)
-          assert(checkpointMetadata.parts.isEmpty)
-        }
+        verifyCheckpoint(deltaLog.lastCheckpoint, 1, None)
+
         val checkpointPath =
           FileNames.checkpointFileSingular(deltaLog.logPath, deltaLog.snapshot.version).toUri
         assert(new File(checkpointPath).exists())
 
         // 11 total actions, 7 new files
         spark.range(30).repartition(7).write.format("delta").mode("append").save(path)
-        deltaLog.lastCheckpoint.foreach { checkpointMetadata =>
-          assert(checkpointMetadata.version == 2)
-          assert(checkpointMetadata.parts.isDefined)
-          assert(checkpointMetadata.parts.get == 2)
-        }
+        verifyCheckpoint(deltaLog.lastCheckpoint, 2, Some(2))
 
         var checkpointPaths =
           FileNames.checkpointFileWithParts(deltaLog.logPath, deltaLog.snapshot.version, 2)
@@ -110,11 +114,8 @@ class CheckpointsSuite extends QueryTest
 
         // 20 total actions, 9 new files
         spark.range(100).repartition(9).write.format("delta").mode("append").save(path)
-        deltaLog.lastCheckpoint.foreach { checkpointMetadata =>
-          assert(checkpointMetadata.version == 3)
-          assert(checkpointMetadata.parts.isDefined)
-          assert(checkpointMetadata.parts.get == 2)
-        }
+        verifyCheckpoint(deltaLog.lastCheckpoint, 3, Some(2))
+
         assert(deltaLog.snapshot.version == 3)
         checkpointPaths =
           FileNames.checkpointFileWithParts(deltaLog.logPath, deltaLog.snapshot.version, 2)
@@ -122,11 +123,8 @@ class CheckpointsSuite extends QueryTest
 
         // 31 total actions, 11 new files
         spark.range(100).repartition(11).write.format("delta").mode("append").save(path)
-        deltaLog.lastCheckpoint.foreach { checkpointMetadata =>
-          assert(checkpointMetadata.version == 4)
-          assert(checkpointMetadata.parts.isDefined)
-          assert(checkpointMetadata.parts.get == 4)
-        }
+        verifyCheckpoint(deltaLog.lastCheckpoint, 4, Some(4))
+
         assert(deltaLog.snapshot.version == 4)
         checkpointPaths =
           FileNames.checkpointFileWithParts(deltaLog.logPath, deltaLog.snapshot.version, 4)
@@ -138,21 +136,14 @@ class CheckpointsSuite extends QueryTest
         val deltaLog = DeltaLog.forTable(spark, path)
         // 100 total actions, 69 new files
         spark.range(1000).repartition(69).write.format("delta").mode("append").save(path)
-        deltaLog.lastCheckpoint.foreach { checkpointMetadata =>
-          assert(checkpointMetadata.version == 5)
-          assert(checkpointMetadata.parts.isEmpty)
-        }
+        verifyCheckpoint(deltaLog.lastCheckpoint, 5, None)
         val checkpointPath =
           FileNames.checkpointFileSingular(deltaLog.logPath, deltaLog.snapshot.version).toUri
         assert(new File(checkpointPath).exists())
 
         // 101 total actions, 1 new file
         spark.range(1).repartition(1).write.format("delta").mode("append").save(path)
-        deltaLog.lastCheckpoint.foreach { checkpointMetadata =>
-          assert(checkpointMetadata.version == 6)
-          assert(checkpointMetadata.parts.isDefined)
-          assert(checkpointMetadata.parts.get == 2)
-        }
+        verifyCheckpoint(deltaLog.lastCheckpoint, 6, Some(2))
          var checkpointPaths =
           FileNames.checkpointFileWithParts(deltaLog.logPath, deltaLog.snapshot.version, 2)
         checkpointPaths.foreach(p => assert(new File(p.toUri).exists()))
