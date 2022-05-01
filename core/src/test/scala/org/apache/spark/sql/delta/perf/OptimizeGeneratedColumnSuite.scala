@@ -70,6 +70,7 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
       expectedPartitionExpr: OptimizablePartitionExpression,
       auxiliaryTestName: Option[String] = None,
       expressionKey: Option[String] = None,
+      ignoreNested: Boolean = false,
       filterTestCases: Seq[(String, Seq[String])]): Unit = {
     test(expectedPartitionExpr.toString + auxiliaryTestName.getOrElse("")) {
       val normalCol = dataSchema.split(" ")(0)
@@ -94,31 +95,33 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
       }
     }
 
-    test(expectedPartitionExpr.toString + auxiliaryTestName.getOrElse("") + " nested") {
-      val normalCol = dataSchema.split(" ")(0)
-      val nestedSchema = s"nested struct<${dataSchema.replace(" ", ": ")}>"
-      val updatedGeneratedColumns =
-        generatedColumns.mapValues(v => v.replaceAll(s"(?i)($normalCol)", "nested.$1")).toMap
+    if (!ignoreNested) {
+      test(expectedPartitionExpr.toString + auxiliaryTestName.getOrElse("") + " nested") {
+        val normalCol = dataSchema.split(" ")(0)
+        val nestedSchema = s"nested struct<${dataSchema.replace(" ", ": ")}>"
+        val updatedGeneratedColumns =
+          generatedColumns.mapValues(v => v.replaceAll(s"(?i)($normalCol)", "nested.$1")).toMap
 
-      withTableName("optimizable_partition_expression") { table =>
-        createTable(
-          table,
-          None,
-          s"$nestedSchema, $partitionSchema",
-          updatedGeneratedColumns,
-          updatedGeneratedColumns.keys.toSeq
-        )
+        withTableName("optimizable_partition_expression") { table =>
+          createTable(
+            table,
+            None,
+            s"$nestedSchema, $partitionSchema",
+            updatedGeneratedColumns,
+            updatedGeneratedColumns.keys.toSeq
+          )
 
-        val metadata = DeltaLog.forTable(spark, TableIdentifier(table)).snapshot.metadata
-        val nestedColPath =
-          s"nested.${expressionKey.getOrElse(normalCol).toLowerCase(Locale.ROOT)}"
-        assert(metadata.optimizablePartitionExpressions(nestedColPath)
-          == expectedPartitionExpr :: Nil)
-        filterTestCases.foreach { filterTestCase =>
-          val updatedFilter = filterTestCase._1.replaceAll(s"(?i)($normalCol)", "nested.$1")
-          val partitionFilters = getPushedPartitionFilters(
-            sql(s"SELECT * from $table where $updatedFilter").queryExecution)
-          assert(partitionFilters.map(_.sql) == filterTestCase._2)
+          val metadata = DeltaLog.forTable(spark, TableIdentifier(table)).snapshot.metadata
+          val nestedColPath =
+            s"nested.${expressionKey.getOrElse(normalCol).toLowerCase(Locale.ROOT)}"
+          assert(metadata.optimizablePartitionExpressions(nestedColPath)
+            == expectedPartitionExpr :: Nil)
+          filterTestCases.foreach { filterTestCase =>
+            val updatedFilter = filterTestCase._1.replaceAll(s"(?i)($normalCol)", "nested.$1")
+            val partitionFilters = getPushedPartitionFilters(
+              sql(s"SELECT * from $table where $updatedFilter").queryExecution)
+            assert(partitionFilters.map(_.sql) == filterTestCase._2)
+          }
         }
       }
     }
@@ -716,6 +719,29 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
       "value > 'foo'" -> Seq("((part IS NULL) OR (part > 'foo'))"),
       "value >= 'foo'" -> Seq("((part IS NULL) OR (part >= 'foo'))"),
       "value is null" -> Seq("(part IS NULL)")
+    )
+  )
+
+  /**
+   * In order to distinguish between field names with periods and nested field names,
+   * fields with periods must be escaped. Otherwise in the example below, there's
+   * no way to tell whether a filter on nested.value should be applied to part1 or part2.
+   */
+  testOptimizablePartitionExpression(
+    "`nested.value` STRING, nested struct<value: STRING>",
+    "part1 STRING, part2 STRING",
+    Map("part1" -> "`nested.value`", "part2" -> "nested.value"),
+    auxiliaryTestName = Some(" escaped field names"),
+    expectedPartitionExpr = IdentityPartitionExpr("part1"),
+    expressionKey = Some("`nested.value`"),
+    ignoreNested = true,
+    filterTestCases = Seq(
+      "`nested.value` < 'foo'" -> Seq("((part1 IS NULL) OR (part1 < 'foo'))"),
+      "`nested.value` <= 'foo'" -> Seq("((part1 IS NULL) OR (part1 <= 'foo'))"),
+      "`nested.value` = 'foo'" -> Seq("((part1 IS NULL) OR (part1 = 'foo'))"),
+      "`nested.value` > 'foo'" -> Seq("((part1 IS NULL) OR (part1 > 'foo'))"),
+      "`nested.value` >= 'foo'" -> Seq("((part1 IS NULL) OR (part1 >= 'foo'))"),
+      "`nested.value` is null" -> Seq("(part1 IS NULL)")
     )
   )
 
