@@ -34,6 +34,8 @@ addSbtPlugin("com.typesafe" % "sbt-mima-plugin" % "1.0.1")
 
 addSbtPlugin("com.etsy" % "sbt-checkstyle-plugin" % "3.1.1")
 
+addSbtPlugin("net.aichler" % "sbt-jupiter-interface" % "0.9.1")
+
 // By default, sbt-checkstyle-plugin uses checkstyle version 6.15, but we should set it to use the
 // same version as Spark OSS (8.29)
 dependencyOverrides += "com.puppycrawl.tools" % "checkstyle" % "8.29"

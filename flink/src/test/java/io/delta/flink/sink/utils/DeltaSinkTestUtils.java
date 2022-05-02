@@ -127,10 +127,13 @@ public class DeltaSinkTestUtils {
             }};
     }
 
+    // TODO Refactor this by moving to DeltaTestUtils since Source tests are also using those
     public static final String TEST_DELTA_TABLE_INITIAL_STATE_NP_DIR =
         "/test-data/test-non-partitioned-delta-table-initial-state";
     public static final String TEST_DELTA_TABLE_INITIAL_STATE_P_DIR =
         "/test-data/test-partitioned-delta-table-initial-state";
+    public static final String TEST_DELTA_LARGE_TABLE_INITIAL_STATE_DIR =
+        "/test-data/test-non-partitioned-delta-table_1100_records";
 
     public static void initTestForNonPartitionedTable(String targetTablePath)
         throws IOException {
@@ -147,6 +150,16 @@ public class DeltaSinkTestUtils {
         File resourcesDirectory = new File("src/test/resources");
         String initialTablePath =
             resourcesDirectory.getAbsolutePath() + TEST_DELTA_TABLE_INITIAL_STATE_P_DIR;
+        FileUtils.copyDirectory(
+            new File(initialTablePath),
+            new File(targetTablePath));
+    }
+
+    public static void initTestForNonPartitionedLargeTable(String targetTablePath)
+        throws IOException {
+        File resourcesDirectory = new File("src/test/resources");
+        String initialTablePath =
+            resourcesDirectory.getAbsolutePath() + TEST_DELTA_LARGE_TABLE_INITIAL_STATE_DIR;
         FileUtils.copyDirectory(
             new File(initialTablePath),
             new File(targetTablePath));

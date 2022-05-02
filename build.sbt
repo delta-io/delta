@@ -661,7 +661,7 @@ def flinkScalaVersion(scalaBinaryVersion: String): String = {
   }
 }
 
-val flinkVersion = "1.12.0"
+val flinkVersion = "1.13.0"
 lazy val flink = (project in file("flink"))
   .dependsOn(standaloneCosmetic % "provided")
   .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin)
@@ -684,6 +684,11 @@ lazy val flink = (project in file("flink"))
             <name>Paweł Kubit</name>
             <url>https://github.com/pkubit-g</url>
           </developer>
+          <developer>
+            <id>kristoffSC</id>
+            <name>Krzysztof Chmielewski</name>
+            <url>https://github.com/kristoffSC</url>
+          </developer>
         </developers>,
     crossPaths := false,
     libraryDependencies ++= Seq(
@@ -691,11 +696,15 @@ lazy val flink = (project in file("flink"))
       "org.apache.flink" % "flink-table-common" % flinkVersion % "provided",
       "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided",
       "org.apache.flink" % "flink-connector-files" % flinkVersion % "test" classifier "tests",
-      "org.apache.flink" % ("flink-table-runtime-blink_" + flinkScalaVersion(scalaBinaryVersion.value)) % flinkVersion % "test",
+      "org.apache.flink" % ("flink-table-runtime-blink_" + flinkScalaVersion(scalaBinaryVersion.value)) % flinkVersion % "provided",
       "org.apache.flink" % "flink-connector-test-utils" % flinkVersion % "test",
       "org.apache.flink" % ("flink-clients_" + flinkScalaVersion(scalaBinaryVersion.value)) % flinkVersion % "test",
-      "com.github.sbt" % "junit-interface" % "0.12" % Test,
-      "org.mockito" % "mockito-core" % "4.5.1" % Test,
+      "org.apache.flink" % ("flink-test-utils_" + flinkScalaVersion(scalaBinaryVersion.value)) % flinkVersion % "test",
+      "org.mockito" % "mockito-inline" % "3.8.0" % "test",
+      "net.aichler" % "jupiter-interface" % JupiterKeys.jupiterVersion.value % Test,
+      "org.junit.vintage" % "junit-vintage-engine" % "5.8.2" % "test",
+      "org.mockito" % "mockito-junit-jupiter" % "4.5.0" % "test",
+      "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
 
       // Compiler plugins
       // -- Bump up the genjavadoc version explicitly to 0.18 to work with Scala 2.12
