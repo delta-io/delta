@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
@@ -53,11 +54,17 @@ import org.apache.spark.util.Utils
  * @param size the number of actions in the checkpoint
  * @param parts the number of parts when the checkpoint has multiple parts. None if this is a
  *              singular checkpoint
+ * @param sizeInBytes the number of bytes of the checkpoint
+ * @param numOfAddFiles the number of AddFile actions in the checkpoint
  */
 case class CheckpointMetaData(
     version: Long,
     size: Long,
-    parts: Option[Int])
+    parts: Option[Int],
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    sizeInBytes: Option[Long],
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    numOfAddFiles: Option[Long])
 
 /**
  * A class to help with comparing checkpoints with each other, where we may have had concurrent
@@ -219,7 +226,12 @@ trait Checkpoints extends DeltaLogging {
 
   /** Loads the given checkpoint manually to come up with the CheckpointMetaData */
   protected def manuallyLoadCheckpoint(cv: CheckpointInstance): CheckpointMetaData = {
-    CheckpointMetaData(cv.version, -1L, cv.numParts)
+    CheckpointMetaData(
+      version = cv.version,
+      size = -1,
+      parts = cv.numParts,
+      sizeInBytes = None,
+      numOfAddFiles = None)
   }
 
   /**
@@ -313,6 +325,8 @@ object Checkpoints extends DeltaLogging {
         new SerializableConfiguration(job.getConfiguration))
     }
 
+    val checkpointSizeInBytes = spark.sparkContext.longAccumulator("checkpointSizeInBytes")
+
     val writtenPath = chk
       .queryExecution // This is a hack to get spark to write directly to a file.
       .executedPlan
@@ -348,6 +362,10 @@ object Checkpoints extends DeltaLogging {
             // storage and create an incomplete file. A concurrent reader might see it and fail.
             // This would leak resources but we don't have a way to abort the storage request here.
             writer.close()
+
+            val filePath = new Path(writtenPath)
+            val stat = filePath.getFileSystem(serConf.value).getFileStatus(filePath)
+            checkpointSizeInBytes.add(stat.getLen)
           } catch {
             case e: org.apache.hadoop.fs.FileAlreadyExistsException if !useRename =>
               val p = new Path(writtenPath)
@@ -401,7 +419,8 @@ object Checkpoints extends DeltaLogging {
     if (checkpointRowCount.value == 0) {
       logWarning(DeltaErrors.EmptyCheckpointErrorMessage)
     }
-    CheckpointMetaData(snapshot.version, checkpointRowCount.value, None)
+    CheckpointMetaData(snapshot.version, checkpointRowCount.value, None,
+      Some(checkpointSizeInBytes.value), Some(snapshot.numOfFiles))
   }
 
   // scalastyle:off line.size.limit
