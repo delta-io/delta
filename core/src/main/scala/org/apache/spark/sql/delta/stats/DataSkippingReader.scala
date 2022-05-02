@@ -29,11 +29,11 @@ import org.apache.spark.sql.{DataFrame, _}
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.Literal.{FalseLiteral, TrueLiteral}
-import org.apache.spark.sql.catalyst.util.{GenericArrayData, TypeUtils}
+import org.apache.spark.sql.catalyst.util.TypeUtils
 import org.apache.spark.sql.execution.InSubqueryExec
 import org.apache.spark.sql.expressions.SparkUserDefinedFunction
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.types.{AtomicType, BooleanType, ByteType, CalendarIntervalType, DataType, DateType, DoubleType, FloatType, IntegerType, LongType, NumericType, ShortType, StringType, StructType, TimestampType}
+import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, NumericType, StringType, StructType, TimestampType}
 import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
 
 /**
@@ -416,7 +416,10 @@ trait DataSkippingReaderBase
       constructDataFilters(IsNull(e))
 
     // Match any file whose min/max range contains the requested point.
-    case EqualTo(SkippingEligibleColumn(a), SkippingEligibleLiteral(v)) =>
+    // `v = null` will be replaced with `false`, and `v <=> null` will be replaced with `isNull(v)`
+    // by Spark. So we don't need to handle `lit.value == null`.
+    case Equality(SkippingEligibleColumn(a), lit @ SkippingEligibleLiteral(v))
+        if lit.value != null =>
       val minCol = StatsColumn(MIN, a)
       val maxCol = StatsColumn(MAX, a)
       getStatsColumnOpt(minCol).flatMap { min =>
@@ -426,6 +429,8 @@ trait DataSkippingReaderBase
       }
     case EqualTo(v: Literal, a) =>
       constructDataFilters(EqualTo(a, v))
+    case EqualNullSafe(v: Literal, a) =>
+      constructDataFilters(EqualNullSafe(a, v))
 
     // Match any file whose min/max range contains anything other than the rejected point.
     case Not(EqualTo(SkippingEligibleColumn(a), SkippingEligibleLiteral(v))) =>
@@ -436,8 +441,29 @@ trait DataSkippingReaderBase
           DataSkippingPredicate(!(min === v && max === v), minCol, maxCol)
         }
       }
+    case Not(EqualNullSafe(SkippingEligibleColumn(a), lit @ SkippingEligibleLiteral(v)))
+        if lit.value != null =>
+      val minCol = StatsColumn(MIN, a)
+      val maxCol = StatsColumn(MAX, a)
+      val nullCountCol = StatsColumn(NULL_COUNT, a)
+      // since `Not(Literal(null, _) <=> NotNullLiteral(v, _))` returns true, means we can't
+      // skipping the file which has stats with `nullCount > 0`.
+      getStatsColumnOpt(nullCountCol).flatMap { nullCount =>
+        getStatsColumnOpt(minCol).flatMap { min =>
+          getStatsColumnOpt(maxCol).map { max =>
+            DataSkippingPredicate(
+              min.isNull || max.isNull || nullCount.isNull ||
+                !(min === v && max === v && nullCount === 0),
+              minCol,
+              maxCol,
+              nullCountCol)
+          }
+        }
+      }
     case Not(EqualTo(v: Literal, a)) =>
       constructDataFilters(Not(EqualTo(a, v)))
+    case Not(EqualNullSafe(v: Literal, a)) =>
+      constructDataFilters(Not(EqualNullSafe(a, v)))
 
     // Match any file whose min is less than the requested upper bound.
     case LessThan(SkippingEligibleColumn(a), SkippingEligibleLiteral(v)) =>
