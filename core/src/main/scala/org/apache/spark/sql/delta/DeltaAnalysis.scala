@@ -285,8 +285,7 @@ class DeltaAnalysis(session: SparkSession)
       val targetAttr = targetAttrs.find(t => session.sessionState.conf.resolver(t.name, attr.name))
         .getOrElse {
           // This is a sanity check. Spark should have done the check.
-          throw new AnalysisException(s"Cannot find ${attr.name} in table columns:" +
-            s" ${targetAttrs.map(_.name).mkString(", ")}")
+          throw DeltaErrors.missingColumn(attr, targetAttrs)
         }
       addCastToColumn(attr, targetAttr, deltaTable.name())
     }

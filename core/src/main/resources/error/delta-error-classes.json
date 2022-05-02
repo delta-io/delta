@@ -86,6 +86,10 @@
     "message" : [ "Cannot set a new txn as active when one is already active" ],
     "sqlState" : "42000"
   },
+  "DELTA_AGGREGATION_NOT_SUPPORTED" : {
+    "message" : [ "Aggregate functions are not supported in the %s %s." ],
+    "sqlState" : "0A000"
+  },
   "DELTA_AMBIGUOUS_PATHS_IN_CREATE_TABLE" : {
     "message" : [ "CREATE TABLE contains two different locations: %s and %s.", "You can remove the LOCATION clause from the CREATE TABLE statement, or set", "%s to true to skip this check.", "" ],
     "sqlState" : "42000"
@@ -93,6 +97,14 @@
   "DELTA_CANNOT_CHANGE_DATA_TYPE" : {
     "message" : [ "Cannot change data type: %s" ],
     "sqlState" : "22000"
+  },
+  "DELTA_CANNOT_CHANGE_LOCATION" : {
+    "message" : [ "Cannot change the 'location' of the Delta table using SET TBLPROPERTIES. Please use ALTER TABLE SET LOCATION instead." ],
+    "sqlState" : "2F000"
+  },
+  "DELTA_CANNOT_CHANGE_PROVIDER" : {
+    "message" : [ "'provider' is a reserved table property, and cannot be altered." ],
+    "sqlState" : "2F000"
   },
   "DELTA_CANNOT_DESCRIBE_VIEW_HISTORY" : {
     "message" : [ "Cannot describe the history of a view." ],
@@ -114,6 +126,10 @@
     "message" : [ "Couldn't resolve qualified source column %s within the source query." ],
     "sqlState" : "42000"
   },
+  "DELTA_CONSTRAINT_ALREADY_EXISTS" : {
+    "message" : [ "Constraint '%s' already exists as a CHECK constraint. Please delete the old constraint first.", "Old constraint:", "%s" ],
+    "sqlState" : "42000"
+  },
   "DELTA_EXPRESSIONS_NOT_FOUND_IN_GENERATED_COLUMN" : {
     "message" : [ "Cannot find the expressions in the generated column %s" ],
     "sqlState" : "42000"
@@ -121,6 +137,14 @@
   "DELTA_FAILED_TO_MERGE_FIELDS" : {
     "message" : [ "Failed to merge fields '%s' and '%s'. %s" ],
     "sqlState" : "22005"
+  },
+  "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH" : {
+    "message" : [ "Column %s is a generated column or a column used by a generated column. The data type is %s. It doesn't accept data type %s" ],
+    "sqlState" : "2200G"
+  },
+  "DELTA_GENERATED_COLUMNS_EXPR_TYPE_MISMATCH" : {
+    "message" : [ "The expression type of the generated column %s is %s, but the column type is %s" ],
+    "sqlState" : "2200G"
   },
   "DELTA_ILLEGAL_USAGE" : {
     "message" : [ "The usage of %s is not allowed when %s a Delta table." ],
@@ -138,9 +162,21 @@
     "message" : [ "Index %s to add column %s is larger than struct length: %s" ],
     "sqlState" : "2F000"
   },
+  "DELTA_INVALID_COMMITTED_VERSION" : {
+    "message" : [ "The committed version is %s but the current version is %s." ],
+    "sqlState" : "25000"
+  },
   "DELTA_INVALID_LOGSTORE_CONF" : {
     "message" : [ "(`spark.delta.logStore.class`) and (`%s`) cannot be set at the same time. Please set only one group of them." ],
     "sqlState" : "42000"
+  },
+  "DELTA_INVALID_PROTOCOL_DOWNGRADE" : {
+    "message" : [ "Protocol version cannot be downgraded from %s to %s" ],
+    "sqlState" : "42000"
+  },
+  "DELTA_INVALID_SOURCE_VERSION" : {
+    "message" : [ "sourceVersion(%s) is invalid" ],
+    "sqlState" : "22000"
   },
   "DELTA_INVALID_TIMESTAMP_FORMAT" : {
     "message" : [ "The provided timestamp %s does not match the expected syntax %s." ],
@@ -162,6 +198,14 @@
     "message" : [ "Unexpected assignment key: %s - %s" ],
     "sqlState" : "22005"
   },
+  "DELTA_MISSING_COLUMN" : {
+    "message" : [ "Cannot find %s in table columns: %s" ],
+    "sqlState" : "42000"
+  },
+  "DELTA_MISSING_PARTITION_COLUMN" : {
+    "message" : [ "Partition column `%s` not found in schema %s" ],
+    "sqlState" : "42000"
+  },
   "DELTA_MISSING_PROVIDER_FOR_CONVERT" : {
     "message" : [ "CONVERT TO DELTA only supports parquet tables. Please rewrite your target as parquet.`%s` if it's a parquet directory." ],
     "sqlState" : "42000"
@@ -170,9 +214,29 @@
     "message" : [ "Non-deterministic functions are not supported in the %s %s" ],
     "sqlState" : "0A000"
   },
+  "DELTA_NON_GENERATED_COLUMN_MISSING_UPDATE_EXPR" : {
+    "message" : [ "%s is not a generated column but is missing its update expression" ],
+    "sqlState" : "42000"
+  },
   "DELTA_NON_LAST_NOT_MATCHED_CLAUSE_OMIT_CONDITION" : {
     "message" : [ "When there are more than one NOT MATCHED clauses in a MERGE statement, only the last NOT MATCHED clause can omit the condition" ],
     "sqlState" : "42000"
+  },
+  "DELTA_NON_PARTITION_COLUMN_ABSENT" : {
+    "message" : [ "Data written into Delta needs to contain at least one non-partitioned column.%s" ],
+    "sqlState" : "42000"
+  },
+  "DELTA_NON_PARTITION_COLUMN_REFERENCE" : {
+    "message" : [ "Predicate references non-partition column '%s'. Only the partition columns may be referenced: [%s]" ],
+    "sqlState" : "2F000"
+  },
+  "DELTA_NOT_NULL_CONSTRAINT_VIOLATED" : {
+    "message" : [ "NOT NULL constraint violated for column: %s.", "" ],
+    "sqlState" : "22004"
+  },
+  "DELTA_NO_NEW_ATTRIBUTE_ID" : {
+    "message" : [ "Could not find a new attribute ID for column %s. This should have been checked earlier." ],
+    "sqlState" : "22000"
   },
   "DELTA_OPERATION_ON_TEMP_VIEW_WITH_GENERATED_COLS_NOT_SUPPORTED" : {
     "message" : [ "%s command on a temp view referring to a Delta table that contains generated columns is not supported. Please run the %s command on the Delta table directly" ],

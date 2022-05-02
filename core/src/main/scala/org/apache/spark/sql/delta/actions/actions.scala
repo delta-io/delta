@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, GeneratedColumn, OptimizablePartitionExpression}
+import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, DeltaThrowable, DeltaThrowableHelper, GeneratedColumn, OptimizablePartitionExpression}
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -47,8 +47,12 @@ class InvalidProtocolVersionException extends RuntimeException(
     "Please upgrade to a newer release.")
 
 class ProtocolDowngradeException(oldProtocol: Protocol, newProtocol: Protocol)
-  extends RuntimeException("Protocol version cannot be downgraded from " +
-    s"${oldProtocol.simpleString} to ${newProtocol.simpleString}")
+  extends RuntimeException(DeltaThrowableHelper.getMessage(
+    errorClass = "DELTA_INVALID_PROTOCOL_DOWNGRADE",
+    messageParameters = Array(oldProtocol.simpleString, newProtocol.simpleString)
+  )) with DeltaThrowable {
+  override def getErrorClass: String = "DELTA_INVALID_PROTOCOL_DOWNGRADE"
+}
 
 object Action {
   /** The maximum version of the protocol that this version of Delta understands. */

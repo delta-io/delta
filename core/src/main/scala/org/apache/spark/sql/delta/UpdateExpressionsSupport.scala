@@ -321,8 +321,7 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
               resolveReferencesForExpressions(SparkSession.active, expr :: Nil, fakePlan).head
             case None =>
               // Should not happen
-              throw new IllegalStateException(s"$targetCol is not a generated column " +
-                s"but is missing its update expression")
+              throw DeltaErrors.nonGeneratedColumnMissingUpdateExpression(targetCol)
           }
         // As `resolvedExpr` will refer to attributes in `fakePlan`, we need to manually replace
         // these attributes with their update expressions.

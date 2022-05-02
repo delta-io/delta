@@ -149,11 +149,11 @@ object SchemaMergingUtils {
                 if (fixedTypeColumnsSet.contains(currentField.name.toLowerCase(Locale.ROOT)) &&
                     !equalsIgnoreCaseAndCompatibleNullability(
                       currentField.dataType, updateField.dataType)) {
-                  throw new AnalysisException(
-                    s"Column ${currentField.name} is a generated column " +
-                      "or a column used by a generated column. " +
-                      s"The data type is ${currentField.dataType.sql}. " +
-                      s"It doesn't accept data type ${updateField.dataType.sql}")
+                  throw new DeltaAnalysisException(
+                    errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+                    messageParameters = Array(currentField.name, currentField.dataType.sql,
+                      updateField.dataType.sql)
+                  )
                 }
                 try {
                   StructField(

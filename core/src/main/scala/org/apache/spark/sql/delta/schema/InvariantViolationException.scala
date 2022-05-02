@@ -45,8 +45,10 @@ case class InvariantViolationException(
 
 object InvariantViolationException {
   def apply(constraint: Constraints.NotNull): InvariantViolationException = {
-    new InvariantViolationException(s"NOT NULL constraint violated for column: " +
-      s"${UnresolvedAttribute(constraint.column).name}.\n")
+    new InvariantViolationException(
+      errorClass = "DELTA_NOT_NULL_CONSTRAINT_VIOLATED",
+      messageParameters = Array(UnresolvedAttribute(constraint.column).name)
+    )
   }
 
   /**

@@ -30,13 +30,14 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.sql.DeltaSparkSessionExtension
 import org.apache.hadoop.fs.Path
+import org.json4s.JValue
 
 import org.apache.spark.{SparkConf, SparkEnv, SparkException}
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable}
-import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.internal.SQLConf
@@ -210,9 +211,10 @@ object DeltaErrors
   }
 
   def constraintAlreadyExists(name: String, oldExpr: String): AnalysisException = {
-    new AnalysisException(
-      s"Constraint '$name' already exists as a CHECK constraint. Please delete the old " +
-        s"constraint first.\nOld constraint:\n${oldExpr}")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CONSTRAINT_ALREADY_EXISTS",
+      messageParameters = Array(name, oldExpr)
+    )
   }
 
   def invalidConstraintName(name: String): AnalysisException = {
@@ -632,8 +634,10 @@ object DeltaErrors
     } else {
       ""
     }
-    new AnalysisException(
-      s"Data written into Delta needs to contain at least one non-partitioned column.$msg")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_NON_PARTITION_COLUMN_ABSENT",
+      messageParameters = Array(msg)
+    )
   }
 
   def replaceWhereMismatchException(
@@ -973,7 +977,10 @@ object DeltaErrors
 
   def aggsNotSupportedException(op: String, cond: Expression): Throwable = {
     val condStr = s"(condition = ${cond.sql})."
-    new AnalysisException(s"Aggregate functions are not supported in the $op $condStr.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_AGGREGATION_NOT_SUPPORTED",
+      messageParameters = Array(op, condStr)
+    )
   }
 
   def nonDeterministicNotSupportedException(op: String, cond: Expression): Throwable = {
@@ -1145,9 +1152,10 @@ object DeltaErrors
   }
 
   def useSetLocation(): Throwable = {
-    new AnalysisException(
-      "Cannot change the 'location' of the Delta table using SET TBLPROPERTIES. Please use " +
-      "ALTER TABLE SET LOCATION instead.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CANNOT_CHANGE_LOCATION",
+      messageParameters = Array.empty
+    )
   }
 
   def cannotReplaceMissingTableException(itableIdentifier: Identifier): Throwable = {
@@ -1163,7 +1171,10 @@ object DeltaErrors
   }
 
   def cannotChangeProvider(): Throwable = {
-    new AnalysisException("'provider' is a reserved table property, and cannot be altered.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CANNOT_CHANGE_PROVIDER",
+      messageParameters = Array.empty
+    )
   }
 
   def describeViewHistory: Throwable = {
@@ -1334,9 +1345,10 @@ object DeltaErrors
       column: String,
       columnType: DataType,
       exprType: DataType): Throwable = {
-    new AnalysisException(
-      s"The expression type of the generated column ${column} is ${exprType.sql}, " +
-        s"but the column type is ${columnType.sql}")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_GENERATED_COLUMNS_EXPR_TYPE_MISMATCH",
+      messageParameters = Array(column, exprType.sql, columnType.sql)
+    )
   }
 
   def expressionsNotFoundInGeneratedColumn(column: String): Throwable = {
@@ -1706,6 +1718,56 @@ object DeltaErrors
   def throwDeltaIllegalArgumentException(): Throwable = {
     new DeltaIllegalArgumentException(errorClass = "DELTA_UNRECOGNIZED_INVARIANT")
   }
+
+  def invalidSourceVersion(version: JValue): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_INVALID_SOURCE_VERSION",
+      messageParameters = Array(version.toString)
+    )
+  }
+
+  def invalidCommittedVersion(attemptVersion: Long, currentVersion: Long): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_INVALID_COMMITTED_VERSION",
+      messageParameters = Array(attemptVersion.toString, currentVersion.toString)
+    )
+  }
+
+  def nonPartitionColumnReference(colName: String, partitionColumns: Seq[String]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_NON_PARTITION_COLUMN_REFERENCE",
+      messageParameters = Array(colName, partitionColumns.mkString(", "))
+    )
+  }
+
+  def missingColumn(attr: Attribute, targetAttrs: Seq[Attribute]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_MISSING_COLUMN",
+      messageParameters = Array(attr.name, targetAttrs.map(_.name).mkString(", "))
+    )
+  }
+
+  def missingPartitionColumn(col: String, schemaCatalog: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_MISSING_PARTITION_COLUMN",
+      messageParameters = Array(col, schemaCatalog)
+    )
+  }
+
+  def noNewAttributeId(oldAttr: AttributeReference): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_NO_NEW_ATTRIBUTE_ID",
+      messageParameters = Array(oldAttr.qualifiedName)
+    )
+  }
+
+  def nonGeneratedColumnMissingUpdateExpression(column: Attribute): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_NON_GENERATED_COLUMN_MISSING_UPDATE_EXPR",
+      messageParameters = Array(column.toString)
+    )
+  }
+
 }
 
 /** The basic class for all Tahoe commit conflict exceptions. */

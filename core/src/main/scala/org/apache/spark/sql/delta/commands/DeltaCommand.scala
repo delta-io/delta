@@ -82,10 +82,7 @@ trait DeltaCommand extends DeltaLogging {
         }
         val nameEquality = spark.sessionState.conf.resolver
         partitionColumns.find(f => nameEquality(f, colName)).getOrElse {
-          throw new AnalysisException(
-            s"Predicate references non-partition column '$colName'. " +
-              "Only the partition columns may be referenced: " +
-              s"[${partitionColumns.mkString(", ")}]")
+          throw DeltaErrors.nonPartitionColumnReference(colName, partitionColumns)
         }
       }
     }
@@ -226,9 +223,7 @@ trait DeltaCommand extends DeltaLogging {
       txnId: String): Snapshot = {
     val currentSnapshot = deltaLog.update()
     if (currentSnapshot.version != attemptVersion) {
-      throw new IllegalStateException(
-        s"The committed version is $attemptVersion but the current version is " +
-          s"${currentSnapshot.version}. Please contact Databricks support.")
+      throw DeltaErrors.invalidCommittedVersion(attemptVersion, currentSnapshot.version)
     }
 
     logInfo(s"Committed delta #$attemptVersion to ${deltaLog.logPath}. Wrote $commitSize actions.")

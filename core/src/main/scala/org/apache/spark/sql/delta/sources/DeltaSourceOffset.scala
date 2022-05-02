@@ -94,7 +94,7 @@ object DeltaSourceOffset {
     val parsedJson = parse(json)
     val versionOpt = jsonOption(parsedJson \ "sourceVersion").map {
       case i: JInt => i.num.longValue
-      case other => throw new IllegalStateException(s"sourceVersion($other) is invalid")
+      case other => throw DeltaErrors.invalidSourceVersion(other)
     }
     if (versionOpt.isEmpty) {
       throw DeltaErrors.cannotFindSourceVersionException(json)

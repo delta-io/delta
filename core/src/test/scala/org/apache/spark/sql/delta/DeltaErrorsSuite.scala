@@ -22,8 +22,9 @@ import scala.sys.process.Process
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaErrors.generateDocsLink
-import org.apache.spark.sql.delta.actions.{Action, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, Protocol, ProtocolDowngradeException}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.constraints.Constraints.NotNull
 import org.apache.spark.sql.delta.constraints.Invariants
 import org.apache.spark.sql.delta.constraints.Invariants.PersistedRule
@@ -32,12 +33,15 @@ import org.apache.spark.sql.delta.schema.{InvariantViolationException, SchemaMer
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
+import org.json4s.JString
 import org.scalatest.GivenWhenThen
 
 import org.apache.spark.sql.{AnalysisException, QueryTest, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.dsl.expressions._
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, ExprId, SparkVersion}
 import org.apache.spark.sql.catalyst.expressions.Uuid
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.errors.QueryCompilationErrors
@@ -875,6 +879,163 @@ trait DeltaErrorsSuiteBase
            |correct implementation of LogStore that is appropriate for your storage system.
            |See $docsLink for details.
            |""".stripMargin)
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.invalidSourceVersion(JString("xyz"))
+      }
+      assert(e.getErrorClass == "DELTA_INVALID_SOURCE_VERSION")
+      assert(e.getSqlState == "22000")
+      assert(e.getMessage == "sourceVersion(JString(xyz)) is invalid")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.invalidCommittedVersion(1L, 2L)
+      }
+      assert(e.getErrorClass == "DELTA_INVALID_COMMITTED_VERSION")
+      assert(e.getSqlState == "25000")
+      assert(
+        e.getMessage == "The committed version is 1 but the current version is 2."
+      )
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.nonPartitionColumnReference("col1", Seq("col2", "col3"))
+      }
+      assert(e.getErrorClass == "DELTA_NON_PARTITION_COLUMN_REFERENCE")
+      assert(e.getSqlState == "2F000")
+      assert(e.getMessage == "Predicate references non-partition column 'col1'. Only the " +
+        "partition columns may be referenced: [col2, col3]")
+    }
+    {
+      val e = intercept[InvariantViolationException] {
+        throw InvariantViolationException(Constraints.NotNull(Seq("col1")))
+      }
+      assert(e.getErrorClass == "DELTA_NOT_NULL_CONSTRAINT_VIOLATED")
+      assert(e.getSqlState == "22004")
+      assert(e.getMessage == "NOT NULL constraint violated for column: col1.\n")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        val attr = UnresolvedAttribute("col1")
+        val attrs = Seq(UnresolvedAttribute("col2"), UnresolvedAttribute("col3"))
+        throw DeltaErrors.missingColumn(attr, attrs)
+      }
+      assert(e.getErrorClass == "DELTA_MISSING_COLUMN")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Cannot find col1 in table columns: col2, col3")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        val schema = StructType(Seq(StructField("c0", IntegerType)))
+        throw DeltaErrors.missingPartitionColumn("c1", schema.catalogString)
+      }
+      assert(e.getErrorClass == "DELTA_MISSING_PARTITION_COLUMN")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Partition column `c1` not found in schema struct<c0:int>"
+      )
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.aggsNotSupportedException("op", SparkVersion())
+      }
+      assert(e.getErrorClass == "DELTA_AGGREGATION_NOT_SUPPORTED")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Aggregate functions are not supported in the op " +
+        "(condition = version())..")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotChangeProvider()
+      }
+      assert(e.getErrorClass == "DELTA_CANNOT_CHANGE_PROVIDER")
+      assert(e.getSqlState == "2F000")
+      assert(e.getMessage == "'provider' is a reserved table property, and cannot be altered.")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.noNewAttributeId(AttributeReference("attr1", IntegerType)())
+      }
+      assert(e.getErrorClass == "DELTA_NO_NEW_ATTRIBUTE_ID")
+      assert(e.getSqlState == "22000")
+      assert(e.getMessage == "Could not find a new attribute ID for column attr1. This " +
+        "should have been checked earlier.")
+    }
+    {
+      val e = intercept[ProtocolDowngradeException] {
+        val p1 = new Protocol(1, 1)
+        val p2 = new Protocol(2, 2)
+        throw new ProtocolDowngradeException(p1, p2)
+      }
+      assert(e.getErrorClass == "DELTA_INVALID_PROTOCOL_DOWNGRADE")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Protocol version cannot be downgraded from (1,1) to (2,2)")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.generatedColumnsTypeMismatch("col1", IntegerType, StringType)
+      }
+      assert(e.getErrorClass == "DELTA_GENERATED_COLUMNS_EXPR_TYPE_MISMATCH")
+      assert(e.getSqlState == "2200G")
+      assert(e.getMessage == "The expression type of the generated column col1 is STRING, " +
+        "but the column type is INT")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.nonGeneratedColumnMissingUpdateExpression(
+          AttributeReference("attr1", IntegerType)(ExprId(1234567L)))
+      }
+      assert(e.getErrorClass == "DELTA_NON_GENERATED_COLUMN_MISSING_UPDATE_EXPR")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage.matches("attr1#1234567 is not a generated column but is missing " +
+        "its update expression"))
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        val s1 = StructType(Seq(StructField("c0", IntegerType, true)))
+        val s2 = StructType(Seq(StructField("c0", StringType, false)))
+        SchemaMergingUtils.mergeSchemas(s1, s2, false, false, Set("c0"))
+      }
+      assert(e.getErrorClass == "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH")
+      assert(e.getSqlState == "2200G")
+      assert(e.getMessage == "Column c0 is a generated column or a column used by a generated " +
+        "column. The data type is INT. It doesn't accept data type STRING")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.useSetLocation()
+      }
+      assert(e.getErrorClass == "DELTA_CANNOT_CHANGE_LOCATION")
+      assert(e.getSqlState == "2F000")
+      assert(e.getMessage == "Cannot change the 'location' of the Delta table using SET " +
+        "TBLPROPERTIES. Please use ALTER TABLE SET LOCATION instead.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.nonPartitionColumnAbsentException(false)
+      }
+      assert(e.getErrorClass == "DELTA_NON_PARTITION_COLUMN_ABSENT")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Data written into Delta needs to contain at least " +
+        "one non-partitioned column.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.nonPartitionColumnAbsentException(true)
+      }
+      assert(e.getErrorClass == "DELTA_NON_PARTITION_COLUMN_ABSENT")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Data written into Delta needs to contain at least " +
+        "one non-partitioned column. Columns which are of NullType have been dropped.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.constraintAlreadyExists("name", "oldExpr")
+      }
+      assert(e.getErrorClass == "DELTA_CONSTRAINT_ALREADY_EXISTS")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Constraint 'name' already exists as a CHECK constraint. Please " +
+        "delete the old constraint first.\nOld constraint:\noldExpr")
     }
   }
 }
