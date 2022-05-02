@@ -70,7 +70,12 @@ class EvolvabilitySuite extends EvolvabilitySuiteBase with DeltaSQLCommandTest {
 
   testQuietly("parse old version CheckpointMetaData") {
     assert(JsonUtils.mapper.readValue[CheckpointMetaData]("""{"version":1,"size":1}""")
-      == CheckpointMetaData(1, 1, None))
+      === CheckpointMetaData(1, 1, None, 0L, 0L))
+  }
+
+  test("parse partial version CheckpointMetaData") {
+    assert(JsonUtils.mapper.readValue[CheckpointMetaData](
+      """{"version":1,"size":1,"sizeInBytes":100}""") === CheckpointMetaData(1, 1, None, 100L, 0L))
   }
 
   // Following tests verify that operations on Delta table won't fail when there is an
