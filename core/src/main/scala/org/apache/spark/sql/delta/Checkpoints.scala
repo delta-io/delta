@@ -57,7 +57,9 @@ import org.apache.spark.util.Utils
 case class CheckpointMetaData(
     version: Long,
     size: Long,
-    parts: Option[Int])
+    parts: Option[Int],
+    sizeInBytes: Long,
+    numOfAddFiles: Long)
 
 /**
  * A class to help with comparing checkpoints with each other, where we may have had concurrent
@@ -219,7 +221,12 @@ trait Checkpoints extends DeltaLogging {
 
   /** Loads the given checkpoint manually to come up with the CheckpointMetaData */
   protected def manuallyLoadCheckpoint(cv: CheckpointInstance): CheckpointMetaData = {
-    CheckpointMetaData(cv.version, -1L, cv.numParts)
+    CheckpointMetaData(
+      version = cv.version,
+      size = -1,
+      parts = cv.numParts,
+      sizeInBytes = -1,
+      numOfAddFiles = -1)
   }
 
   /**
@@ -313,6 +320,8 @@ object Checkpoints extends DeltaLogging {
         new SerializableConfiguration(job.getConfiguration))
     }
 
+    val checkpointSizeInBytes = spark.sparkContext.longAccumulator("checkpointSizeInBytes")
+
     val writtenPath = chk
       .queryExecution // This is a hack to get spark to write directly to a file.
       .executedPlan
@@ -348,6 +357,10 @@ object Checkpoints extends DeltaLogging {
             // storage and create an incomplete file. A concurrent reader might see it and fail.
             // This would leak resources but we don't have a way to abort the storage request here.
             writer.close()
+
+            val filePath = new Path(writtenPath)
+            val stat = filePath.getFileSystem(serConf.value).getFileStatus(filePath)
+            checkpointSizeInBytes.add(stat.getLen)
           } catch {
             case e: org.apache.hadoop.fs.FileAlreadyExistsException if !useRename =>
               val p = new Path(writtenPath)
@@ -401,7 +414,8 @@ object Checkpoints extends DeltaLogging {
     if (checkpointRowCount.value == 0) {
       logWarning(DeltaErrors.EmptyCheckpointErrorMessage)
     }
-    CheckpointMetaData(snapshot.version, checkpointRowCount.value, None)
+    CheckpointMetaData(snapshot.version, checkpointRowCount.value, None,
+      checkpointSizeInBytes.value, snapshot.numOfFiles)
   }
 
   // scalastyle:off line.size.limit
