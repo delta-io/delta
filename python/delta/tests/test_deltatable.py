@@ -876,8 +876,8 @@ class DeltaTableTests(DeltaTestCase):
 
         # test non-partition column
         rgx_msg = (
-            "Predicate references non-partition column 'key'. "
-            "Only the partition columns may be referenced: \[\]"
+            r"Predicate references non-partition column 'key'. "
+            r"Only the partition columns may be referenced: \[\]"
         )
         with self.assertRaisesRegex(AnalysisException, rgx_msg):
             optimizer = dt.optimize().where("key = 'a'")
@@ -909,8 +909,8 @@ class DeltaTableTests(DeltaTestCase):
 
         # test non-partition column
         rgx_msg = (
-            "Predicate references non-partition column 'value'. "
-            "Only the partition columns may be referenced: \[key\]"
+            r"Predicate references non-partition column 'value'. "
+            r"Only the partition columns may be referenced: \[key\]"
         )
         with self.assertRaisesRegex(AnalysisException, rgx_msg):
             optimizer = dt.optimize().where("value = 1")
