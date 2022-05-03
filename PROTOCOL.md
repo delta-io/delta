@@ -151,9 +151,11 @@ This last checkpoint file is encoded as JSON and contains the following informat
 
 Field | Description
 -|-
-version | the version of the table when the last checkpoint was made.
+version | The version of the table when the last checkpoint was made.
 size | The number of actions that are stored in the checkpoint.
 parts | The number of fragments if the last checkpoint was written in multiple parts.
+sizeInBytes | The number of bytes of the checkpoint.
+numOfAddFiles | The number of AddFile actions in the checkpoint.
 
 ## Actions
 Actions modify the state of the table and they are stored both in delta files and in checkpoints.
