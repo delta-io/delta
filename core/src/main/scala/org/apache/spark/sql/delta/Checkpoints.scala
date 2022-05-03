@@ -60,8 +60,10 @@ case class CheckpointMetaData(
     version: Long,
     size: Long,
     parts: Option[Int],
-    sizeInBytes: Long,
-    numOfAddFiles: Long)
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    sizeInBytes: Option[Long],
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    numOfAddFiles: Option[Long])
 
 /**
  * A class to help with comparing checkpoints with each other, where we may have had concurrent
