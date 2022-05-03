@@ -875,13 +875,11 @@ class DeltaTableTests(DeltaTestCase):
         self.assertDictEqual({'predicate': '["true"]'}, op_params)
 
         # test non-partition column
-        rgx_msg = (
-            r"Predicate references non-partition column 'key'. "
-            r"Only the partition columns may be referenced: \[\]"
-        )
-        with self.assertRaisesRegex(AnalysisException, rgx_msg):
-            optimizer = dt.optimize().where("key = 'a'")
-            res = optimizer.executeCompaction()
+        def optimize() -> None:
+            dt.optimize().where("key = 'a'").executeCompaction()
+        self.__intercept(optimize,
+                         "Predicate references non-partition column 'key'. "
+                         "Only the partition columns may be referenced: []")
 
     def test_optimize_w_partition_filter(self) -> None:
         # write an unoptimized delta table
@@ -908,13 +906,11 @@ class DeltaTableTests(DeltaTestCase):
         self.assertDictEqual({'predicate': '["(key = \'a\')"]'}, op_params)
 
         # test non-partition column
-        rgx_msg = (
-            r"Predicate references non-partition column 'value'. "
-            r"Only the partition columns may be referenced: \[key\]"
-        )
-        with self.assertRaisesRegex(AnalysisException, rgx_msg):
-            optimizer = dt.optimize().where("value = 1")
-            res = optimizer.executeCompaction()
+        def optimize() -> None:
+            dt.optimize().where("value = 1").executeCompaction()
+        self.__intercept(optimize,
+                         "Predicate references non-partition column 'value'. "
+                         "Only the partition columns may be referenced: [key]")
 
     def __checkAnswer(self, df: DataFrame,
                       expectedAnswer: List[Any],
