@@ -35,6 +35,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
 import org.apache.hadoop.mapreduce.{Job, TaskType}
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 
 import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
@@ -53,13 +54,17 @@ import org.apache.spark.util.Utils
  * @param size the number of actions in the checkpoint
  * @param parts the number of parts when the checkpoint has multiple parts. None if this is a
  *              singular checkpoint
+ * @param sizeInBytes the number of bytes of the checkpoint. This field is optional.
+ * @param numOfAddFiles the number of AddFile actions in the checkpoint. This field is optional.
  */
 case class CheckpointMetaData(
     version: Long,
     size: Long,
     parts: Option[Int],
-    sizeInBytes: Long,
-    numOfAddFiles: Long)
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    sizeInBytes: Option[Long],
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    numOfAddFiles: Option[Long])
 
 /**
  * A class to help with comparing checkpoints with each other, where we may have had concurrent
@@ -225,8 +230,8 @@ trait Checkpoints extends DeltaLogging {
       version = cv.version,
       size = -1,
       parts = cv.numParts,
-      sizeInBytes = -1,
-      numOfAddFiles = -1)
+      sizeInBytes = None,
+      numOfAddFiles = None)
   }
 
   /**
@@ -415,7 +420,7 @@ object Checkpoints extends DeltaLogging {
       logWarning(DeltaErrors.EmptyCheckpointErrorMessage)
     }
     CheckpointMetaData(snapshot.version, checkpointRowCount.value, None,
-      checkpointSizeInBytes.value, snapshot.numOfFiles)
+      Some(checkpointSizeInBytes.value), Some(snapshot.numOfFiles))
   }
 
   // scalastyle:off line.size.limit
