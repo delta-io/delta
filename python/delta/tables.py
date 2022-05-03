@@ -584,7 +584,21 @@ class DeltaTable(object):
     @since(1.3)  # type: ignore[arg-type]
     def optimize(self) -> "DeltaOptimizeBuilder":
         """
-        Optimize the data layout of the table.
+        Optimize the data layout of the table. This returns
+        a :py:class:`~delta.tables.DeltaOptimizeBuilder` object that can
+        be used to specify the partition filter to limit the scope of
+        optimize and also execute different optimization techniques
+        such as file compaction or order data using Z-Order curves.
+
+        See the :py:class:`~delta.tables.DeltaOptimizeBuilder` for a
+        full description of this operation.
+
+        Example::
+
+            deltaTable.optimize().where("date='2021-11-18'").executeCompaction()
+
+        :return: an instance of DeltaOptimizeBuilder.
+        :rtype: :py:class:`~delta.tables.DeltaOptimizeBuilder`
         """
         jbuilder = self._jdt.optimize()
         return DeltaOptimizeBuilder(self._spark, jbuilder)
@@ -1159,6 +1173,8 @@ class DeltaOptimizeBuilder(object):
     """
     Builder class for constructing OPTIMIZE command and executing.
 
+    Use :py:meth:`delta.tables.DeltaTable.optimize` to create an instance of this class.
+
     .. versionadded:: 1.3.0
     """
     def __init__(self, spark: SparkSession, jbuilder: "JavaObject"):
@@ -1174,6 +1190,7 @@ class DeltaOptimizeBuilder(object):
         :param partitionFilter: The partition filter to apply
         :type partitionFilter: str
         :return: DeltaOptimizeBuilder with partition filter applied
+        :rtype: :py:class:`~delta.tables.DeltaOptimizeBuilder`
         """
         self._jbuilder = self._jbuilder.where(partitionFilter)
         return self
@@ -1184,6 +1201,7 @@ class DeltaOptimizeBuilder(object):
         Compact the small files in selected partitions.
 
         :return: DataFrame containing the OPTIMIZE execution metrics
+        :rtype: pyspark.sql.DataFrame
         """
         return DataFrame(
             self._jbuilder.executeCompaction(),
