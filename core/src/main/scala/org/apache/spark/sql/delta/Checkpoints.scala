@@ -54,8 +54,8 @@ import org.apache.spark.util.Utils
  * @param size the number of actions in the checkpoint
  * @param parts the number of parts when the checkpoint has multiple parts. None if this is a
  *              singular checkpoint
- * @param sizeInBytes the number of bytes of the checkpoint. This field is optional
- * @param numOfAddFiles the number of AddFile actions in the checkpoint. This field is optional
+ * @param sizeInBytes the number of bytes of the checkpoint
+ * @param numOfAddFiles the number of AddFile actions in the checkpoint
  */
 case class CheckpointMetaData(
     version: Long,
