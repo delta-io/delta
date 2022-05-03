@@ -874,6 +874,15 @@ class DeltaTableTests(DeltaTestCase):
         self.assertEqual(3, res.first().metrics.numFilesRemoved)
         self.assertDictEqual({'predicate': '["true"]'}, op_params)
 
+        # test non-partition column
+        rgx_msg = (
+            "Predicate references non-partition column 'key'. "
+            "Only the partition columns may be referenced: \[\]"
+        )
+        with self.assertRaisesRegex(AnalysisException, rgx_msg):
+            optimizer = dt.optimize().partitionFilter("key = 'a'")
+            res = optimizer.executeCompaction()
+
     def test_optimize_w_partition_filter(self) -> None:
         # write an unoptimized delta table
         df = self.spark.createDataFrame([("a", 1), ("a", 2)], ["key", "value"]).repartition(1)
@@ -897,6 +906,15 @@ class DeltaTableTests(DeltaTestCase):
         self.assertEqual(1, res.first().metrics.numFilesAdded)
         self.assertEqual(2, res.first().metrics.numFilesRemoved)
         self.assertDictEqual({'predicate': '["(key = \'a\')"]'}, op_params)
+
+        # test non-partition column
+        rgx_msg = (
+            "Predicate references non-partition column 'value'. "
+            "Only the partition columns may be referenced: \[key\]"
+        )
+        with self.assertRaisesRegex(AnalysisException, rgx_msg):
+            optimizer = dt.optimize().partitionFilter("value = 1")
+            res = optimizer.executeCompaction()
 
     def __checkAnswer(self, df: DataFrame,
                       expectedAnswer: List[Any],
