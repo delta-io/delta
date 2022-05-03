@@ -1166,7 +1166,7 @@ class DeltaOptimizeBuilder(object):
         self._jbuilder = jbuilder
 
     @since(1.3)  # type: ignore[arg-type]
-    def partitionFilter(self, partitionFilter: str) -> "DeltaOptimizeBuilder":
+    def where(self, partitionFilter: str) -> "DeltaOptimizeBuilder":
         """
         Apply partition filter on this optimize command builder to limit
         the operation on selected partitions.
@@ -1175,7 +1175,7 @@ class DeltaOptimizeBuilder(object):
         :type partitionFilter: str
         :return: DeltaOptimizeBuilder with partition filter applied
         """
-        self._jbuilder = self._jbuilder.partitionFilter(partitionFilter)
+        self._jbuilder = self._jbuilder.where(partitionFilter)
         return self
 
     @since(1.3)  # type: ignore[arg-type]

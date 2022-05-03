@@ -880,7 +880,7 @@ class DeltaTableTests(DeltaTestCase):
             "Only the partition columns may be referenced: \[\]"
         )
         with self.assertRaisesRegex(AnalysisException, rgx_msg):
-            optimizer = dt.optimize().partitionFilter("key = 'a'")
+            optimizer = dt.optimize().where("key = 'a'")
             res = optimizer.executeCompaction()
 
     def test_optimize_w_partition_filter(self) -> None:
@@ -896,7 +896,7 @@ class DeltaTableTests(DeltaTestCase):
         dt = DeltaTable.forPath(self.spark, self.tempFile)
 
         # execute bin compaction
-        optimizer = dt.optimize().partitionFilter("key = 'a'")
+        optimizer = dt.optimize().where("key = 'a'")
         res = optimizer.executeCompaction()
         op_params = dt.history().first().operationParameters
 
@@ -913,7 +913,7 @@ class DeltaTableTests(DeltaTestCase):
             "Only the partition columns may be referenced: \[key\]"
         )
         with self.assertRaisesRegex(AnalysisException, rgx_msg):
-            optimizer = dt.optimize().partitionFilter("value = 1")
+            optimizer = dt.optimize().where("value = 1")
             res = optimizer.executeCompaction()
 
     def __checkAnswer(self, df: DataFrame,
