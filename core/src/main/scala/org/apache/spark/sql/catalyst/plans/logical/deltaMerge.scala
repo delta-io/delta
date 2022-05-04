@@ -38,8 +38,12 @@ import org.apache.spark.sql.types.{DataType, StructField, StructType}
 trait DeltaUnevaluable extends Expression {
   final override def foldable: Boolean = false
 
-  final override def eval(input: InternalRow = null): Any =
-    throw new UnsupportedOperationException(s"Cannot evaluate expression: $this")
+  final override def eval(input: InternalRow = null): Any = {
+    throw new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_CANNOT_EVALUATE_EXPRESSION",
+      messageParameters = Array(s"$this")
+    )
+  }
 
   final override protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode =
     throw new DeltaUnsupportedOperationException(

@@ -93,7 +93,7 @@ trait DeltaConfigsBase extends DeltaLogging {
    */
   def parseCalendarInterval(s: String): CalendarInterval = {
     if (s == null || s.trim.isEmpty) {
-      throw new IllegalArgumentException("Interval cannot be null or blank.")
+      throw DeltaErrors.emptyCalendarInterval
     }
     val sInLowerCase = s.trim.toLowerCase(Locale.ROOT)
     val interval =

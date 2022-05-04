@@ -236,7 +236,10 @@ object DeltaErrors
   }
 
   def newCheckConstraintViolated(num: Long, tableName: String, expr: String): AnalysisException = {
-    new AnalysisException(s"$num rows in $tableName violate the new CHECK constraint ($expr)")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_NEW_CHECK_CONSTRAINT_VIOLATION",
+      messageParameters = Array(s"$num", tableName, expr)
+    )
   }
 
   def newNotNullViolated(
@@ -259,17 +262,10 @@ object DeltaErrors
   }
 
   def failOnDataLossException(expectedVersion: Long, seenVersion: Long): Throwable = {
-    new IllegalStateException(
-      s"""The stream from your Delta table was expecting process data from version $expectedVersion,
-         |but the earliest available version in the _delta_log directory is $seenVersion. The files
-         |in the transaction log may have been deleted due to log cleanup. In order to avoid losing
-         |data, we recommend that you restart your stream with a new checkpoint location and to
-         |increase your delta.logRetentionDuration setting, if you have explicitly set it below 30
-         |days.
-         |If you would like to ignore the missed data and continue your stream from where it left
-         |off, you can set the .option("${DeltaOptions.FAIL_ON_DATA_LOSS_OPTION}", "false") as part
-         |of your readStream statement.
-       """.stripMargin
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_MISSING_FILES_UNEXPECTED_VERSION",
+      messageParameters = Array(s"$expectedVersion", s"$seenVersion",
+        s"${DeltaOptions.FAIL_ON_DATA_LOSS_OPTION}")
     )
   }
 
@@ -781,9 +777,9 @@ object DeltaErrors
   }
 
   def bloomFilterOnColumnTypeNotSupportedException(name: String, dataType: DataType): Throwable = {
-    new AnalysisException(
-      "Creating a bloom filter index on a column with type " +
-        s"${dataType.catalogString} is unsupported: $name")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_COLUMN_TYPE_IN_BLOOM_FILTER",
+      messageParameters = Array(s"${dataType.catalogString}", name))
   }
 
   def bloomFilterMultipleConfForSingleColumnException(name: String): Throwable = {
@@ -874,7 +870,10 @@ object DeltaErrors
 
 
   def nestedFieldNotSupported(operation: String, field: String): Throwable = {
-    new AnalysisException(s"Nested field is not supported in the $operation (field = $field).")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_NESTED_FIELD_IN_OPERATION",
+      messageParameters = Array(operation, field)
+    )
   }
 
   def inSubqueryNotSupportedException(operation: String): Throwable = {
@@ -917,14 +916,11 @@ object DeltaErrors
 
   def createManagedTableWithoutSchemaException(
       tableName: String, spark: SparkSession): Throwable = {
-    new AnalysisException(
-      s"""
-         |You are trying to create a managed table $tableName
-         |using Delta Lake, but the schema is not specified.
-         |
-         |To learn more about Delta, see ${generateDocsLink(spark.sparkContext.getConf,
-        "/index.html")}
-       """.stripMargin)
+    new DeltaAnalysisException(
+      errorClass = "DELTA_INVALID_MANAGED_TABLE_SYNTAX_NO_SCHEMA",
+      messageParameters = Array(tableName, s"""${generateDocsLink(spark.sparkContext.getConf,
+        "/index.html")}""".stripMargin)
+    )
   }
 
   def readTableWithoutSchemaException(identifier: String): Throwable = {
@@ -1063,11 +1059,17 @@ object DeltaErrors
   }
 
   def timeTravelNotSupportedException: Throwable = {
-    new AnalysisException("Cannot time travel views, subqueries or streams.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_TIME_TRAVEL_VIEWS",
+      messageParameters = Array.empty
+    )
   }
 
   def multipleTimeTravelSyntaxUsed: Throwable = {
-    new AnalysisException("Cannot specify time travel in multiple formats.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_TIME_TRAVEL_MULTIPLE_FORMATS",
+      messageParameters = Array.empty
+    )
   }
 
   def nonExistentDeltaTable(table: String): Throwable = {
@@ -1083,6 +1085,20 @@ object DeltaErrors
   def provideOneOfInTimeTravel: Throwable = {
     new DeltaIllegalArgumentException(
       errorClass = "ONEOF_IN_TIMETRAVEL", messageParameters = null)
+  }
+
+  def emptyCalendarInterval: Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_INVALID_CALENDAR_INTERVAL_EMPTY",
+      messageParameters = Array.empty
+    )
+  }
+
+  def invalidMergeClauseWhenNotMatched(clause: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_MERGE_INVALID_WHEN_NOT_MATCHED_CLAUSE",
+      messageParameters = Array(clause)
+    )
   }
 
   def deltaLogAlreadyExistsException(path: String): Throwable = {
@@ -1239,15 +1255,14 @@ object DeltaErrors
   }
 
   def addFilePartitioningMismatchException(
-      addFilePartitions: Seq[String],
-      metadataPartitions: Seq[String]): Throwable = {
-    new IllegalStateException(
-      s"""
-        |The AddFile contains partitioning schema different from the table's partitioning schema
-        |expected: ${DeltaErrors.formatColumnList(metadataPartitions)}
-        |actual: ${DeltaErrors.formatColumnList(addFilePartitions)}
-        |To disable this check set ${DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key} to "false"
-      """.stripMargin)
+    addFilePartitions: Seq[String],
+    metadataPartitions: Seq[String]): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_INVALID_PARTITIONING_SCHEMA",
+      messageParameters = Array(s"${DeltaErrors.formatColumnList(metadataPartitions)}",
+        s"${DeltaErrors.formatColumnList(addFilePartitions)}",
+        s"${DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key}")
+    )
   }
 
   def concurrentModificationExceptionMsg(
@@ -1337,8 +1352,10 @@ object DeltaErrors
   }
 
   def generatedColumnsUnsupportedExpression(expr: Expression): Throwable = {
-    new AnalysisException(
-      s"${expr.sql} cannot be used in a generated column")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_EXPRESSION_GENERATED_COLUMN",
+      messageParameters = Array(s"${expr.sql}")
+    )
   }
 
   def generatedColumnsTypeMismatch(

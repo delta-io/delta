@@ -198,8 +198,7 @@ class DeltaAnalysis(session: SparkSession)
         case insert: InsertStarAction =>
           DeltaMergeIntoInsertClause(insert.condition, DeltaMergeIntoClause.toActions(Nil))
         case other =>
-          throw new AnalysisException(s"${other.prettyName} clauses cannot be part of the " +
-            s"WHEN NOT MATCHED clause in MERGE INTO.")
+          throw DeltaErrors.invalidMergeClauseWhenNotMatched(s"${other.prettyName}")
       }
       // rewrites Delta from V2 to V1
       val newTarget =
