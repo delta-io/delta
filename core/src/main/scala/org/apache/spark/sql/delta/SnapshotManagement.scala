@@ -50,7 +50,7 @@ trait SnapshotManagement { self: DeltaLog =>
 
   @volatile private[delta] var asyncUpdateTask: Future[Unit] = _
 
-  @volatile protected var currentSnapshot: CapturedSnapshot = getSnapshotAtInit
+  @volatile protected var currentSnapshot: CapturedSnapshot = getSnapshotAtInit(lastCheckpoint)
 
   /**
    * Get the LogSegment that will help in computing the Snapshot of the table at DeltaLog
@@ -251,15 +251,20 @@ trait SnapshotManagement { self: DeltaLog =>
    * Load the Snapshot for this Delta table at initialization. This method uses the `lastCheckpoint`
    * file as a hint on where to start listing the transaction log directory. If the _delta_log
    * directory doesn't exist, this method will return an `InitialSnapshot`.
+   *
+   * @param lastCheckpointOpt: checkpoint hint used to load checkpoint
    */
-  protected def getSnapshotAtInit: CapturedSnapshot = {
+  protected def getSnapshotAtInit(
+    lastCheckpointOpt: Option[CheckpointMetaData]): CapturedSnapshot = {
     recordFrameProfile("Delta", "SnapshotManagement.getSnapshotAtInit") {
       val currentTimestamp = clock.getTimeMillis()
-      getLogSegmentFrom(lastCheckpoint).map { segment =>
+      getLogSegmentFrom(lastCheckpointOpt).map { segment =>
         val startCheckpoint = segment.checkpointVersionOpt
           .map(v => s" starting from checkpoint $v.").getOrElse(".")
         logInfo(s"Loading version ${segment.version}$startCheckpoint")
-        val snapshot = createSnapshot(segment, minFileRetentionTimestamp)
+        val snapshot = createSnapshot(
+          initSegment = segment,
+          minFileRetentionTimestamp = minFileRetentionTimestamp)
 
         logInfo(s"Returning initial snapshot $snapshot")
         CapturedSnapshot(snapshot, currentTimestamp)
@@ -279,13 +284,14 @@ trait SnapshotManagement { self: DeltaLog =>
     val checksumOpt = readChecksum(initSegment.version)
     createSnapshotFromGivenOrEquivalentLogSegment(initSegment) { segment =>
       new Snapshot(
-        logPath,
-        segment.version,
-        segment,
-        minFileRetentionTimestamp,
-        this,
-        segment.lastCommitTimestamp,
-        checksumOpt)
+        path = logPath,
+        version = segment.version,
+        logSegment = segment,
+        minFileRetentionTimestamp = minFileRetentionTimestamp,
+        deltaLog = this,
+        timestamp = segment.lastCommitTimestamp,
+        checksumOpt = checksumOpt,
+        minSetTransactionRetentionTimestamp = None)
     }
   }
 
@@ -538,7 +544,9 @@ trait SnapshotManagement { self: DeltaLog =>
           .map(v => s" starting from checkpoint version $v.").getOrElse(".")
         logInfo(s"Loading version ${segment.version}$startingFrom")
 
-        val newSnapshot = createSnapshot(segment, minFileRetentionTimestamp)
+        val newSnapshot = createSnapshot(
+          initSegment = segment,
+          minFileRetentionTimestamp = minFileRetentionTimestamp)
 
         if (previousSnapshot.version > -1 &&
           previousSnapshot.metadata.id != newSnapshot.metadata.id) {
@@ -585,7 +593,9 @@ trait SnapshotManagement { self: DeltaLog =>
     val startingCheckpoint = lastCheckpointHint.collect { case ci if ci.version <= version => ci }
       .orElse(findLastCompleteCheckpoint(CheckpointInstance(version, None)))
     getLogSegmentForVersion(startingCheckpoint.map(_.version), Some(version)).map { segment =>
-      createSnapshot(segment, minFileRetentionTimestamp)
+      createSnapshot(
+        initSegment = segment,
+        minFileRetentionTimestamp = minFileRetentionTimestamp)
     }.getOrElse {
       // We can't return InitialSnapshot because our caller asked for a specific snapshot version.
       throw DeltaErrors.emptyDirectoryException(logPath.toString)

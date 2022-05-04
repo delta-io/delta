@@ -480,7 +480,15 @@ class InitialSnapshot(
     val logPath: Path,
     override val deltaLog: DeltaLog,
     override val metadata: Metadata)
-  extends Snapshot(logPath, -1, LogSegment.empty(logPath), -1, deltaLog, -1, None) {
+  extends Snapshot(
+    path = logPath,
+    version = -1,
+    logSegment = LogSegment.empty(logPath),
+    minFileRetentionTimestamp = -1,
+    deltaLog = deltaLog,
+    timestamp = -1,
+    checksumOpt = None,
+    minSetTransactionRetentionTimestamp = None) {
 
   def this(logPath: Path, deltaLog: DeltaLog) = this(
     logPath,
