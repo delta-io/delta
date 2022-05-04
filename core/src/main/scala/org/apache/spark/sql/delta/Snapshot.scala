@@ -257,6 +257,22 @@ class Snapshot(
   def numOfRemoves: Long = computedState.numOfRemoves
   def numOfSetTransactions: Long = computedState.numOfSetTransactions
 
+  /**
+   * Computes all the information that is needed by the checksum for the current snapshot.
+   * May kick off state reconstruction if needed by any of the underlying fields.
+   * Note that it's safe to set txnId to none, since the snapshot doesn't always have a txn
+   * attached. E.g. if a snapshot is created by reading a checkpoint, then no txnId is present.
+   */
+  def computeChecksum: VersionChecksum = VersionChecksum(
+    tableSizeBytes = sizeInBytes,
+    numFiles = numOfFiles,
+    numMetadata = numOfMetadata,
+    numProtocol = numOfProtocol,
+    protocol = protocol,
+    metadata = metadata,
+    histogramOpt = fileSizeHistogram,
+    txnId = None)
+
   /** A map to look up transaction version by appId. */
   lazy val transactions: Map[String, Long] = setTransactions.map(t => t.appId -> t.version).toMap
 
