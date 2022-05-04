@@ -302,29 +302,22 @@ object Checkpoints extends DeltaLogging {
     // log store and decide whether to use rename.
     val useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath, hadoopConf)
 
+    val checkpointRowCount = spark.sparkContext.longAccumulator("checkpointRowCount")
+    val numOfFiles = spark.sparkContext.longAccumulator("numOfFiles")
+
     val sessionConf = spark.sessionState.conf
-    val maxActionsPerFile = sessionConf.getConf(DeltaSQLConf.DELTA_CHECKPOINT_MAX_ACTIONS_PER_FILE)
-
-    val res = snapshot.stateDF
-      .groupBy()
-      .agg(count("*").alias("rowCount"), count("add").alias("numOfFiles"))
-      .collect()
-      .head
-
-    val checkpointRowCount = res.getLong(0)
-    val numOfFiles = res.getLong(1)
-
-    val numCheckpointFiles = maxActionsPerFile.map { maxActions =>
-      (checkpointRowCount - 1) / maxActions + 1
+    val checkpointPartSize = sessionConf.getConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE)
+    val numParts = checkpointPartSize.map { partSize =>
+      math.ceil((snapshot.numOfFiles + snapshot.numOfRemoves).toDouble / partSize).toLong
     }.getOrElse(1L)
 
-    val checkpointPaths = if (numCheckpointFiles > 1) {
-      checkpointFileWithParts(snapshot.path, snapshot.version, numCheckpointFiles.toInt)
+    val checkpointPaths = if (numParts > 1) {
+      checkpointFileWithParts(snapshot.path, snapshot.version, numParts.toInt)
     } else {
       checkpointFileSingular(snapshot.path, snapshot.version) :: Nil
     }
 
-    val numPartsOption = if (numCheckpointFiles > 1) {
+    val numPartsOption = if (numParts > 1) {
       Some(checkpointPaths.length)
     } else {
       None
@@ -334,6 +327,12 @@ object Checkpoints extends DeltaLogging {
     val paths = checkpointPaths.map(_.toString)
     val base = snapshot.stateDS
       .repartition(paths.length)
+      .map { action =>
+        if (action.add != null) {
+          numOfFiles.add(1)
+        }
+        action
+      }
       .drop("commitInfo", "cdc")
 
     val chk = buildCheckpoint(base, snapshot)
@@ -376,6 +375,7 @@ object Checkpoints extends DeltaLogging {
                 new TaskAttemptID("", 0, TaskType.REDUCE, 0, 0)))
 
             iter.foreach { row =>
+              checkpointRowCount.add(1)
               writer.write(row)
             }
             // Note: `writer.close()` is not put in a `finally` clause because we don't want to
@@ -412,34 +412,33 @@ object Checkpoints extends DeltaLogging {
       }.collect()
 
     if (useRename) {
-      writtenPaths.zipWithIndex.foreach { case (writtenPath, index) =>
+      val failedPaths = writtenPaths.zipWithIndex.flatMap { case (writtenPath, index) =>
         val src = new Path(writtenPath)
         val dest = new Path(paths(index))
         val fs = dest.getFileSystem(hadoopConf)
         var renameDone = false
-        try {
-          if (fs.rename(src, dest)) {
-            renameDone = true
-          } else {
-            // There should be only one writer writing the checkpoint file, so there must be
-            // something wrong here.
-            throw DeltaErrors.failOnCheckpoint(src, dest)
-          }
-        } finally {
-          if (!renameDone) {
-            fs.delete(src, false)
-          }
+        if (!fs.rename(src, dest)) {
+          fs.delete(src, false)
+          Some((src, dest))
+        } else {
+          None
         }
+      }
+      // Fail the checkpoint write after letting any failed renames cleanup
+      failedPaths.headOption.foreach { case (src, dest) =>
+        // There should be only one writer writing the checkpoint file, so there must be
+        // something wrong here.
+        throw DeltaErrors.failOnCheckpoint(src, dest)
       }
     }
 
-    if (numOfFiles != snapshot.numOfFiles) {
+    if (numOfFiles.value != snapshot.numOfFiles) {
       throw new IllegalStateException(
         "State of the checkpoint doesn't match that of the snapshot.")
     }
 
     // Attempting to write empty checkpoint
-    if (checkpointRowCount == 0) {
+    if (checkpointRowCount.value == 0) {
       logWarning(DeltaErrors.EmptyCheckpointErrorMessage)
     }
     CheckpointMetaData(snapshot.version, checkpointRowCount.value, numPartsOption,

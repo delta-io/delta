@@ -89,13 +89,13 @@ class CheckpointsSuite extends QueryTest
       val path = tempDir.getCanonicalPath
 
       withSQLConf(
-        DeltaSQLConf.DELTA_CHECKPOINT_MAX_ACTIONS_PER_FILE.key -> "10",
+        DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "10",
         DeltaConfigs.CHECKPOINT_INTERVAL.defaultTablePropertyKey -> "1") {
-        // 3 actions, protocol, metaData, and new file
+        // 1 file actions
         spark.range(1).repartition(1).write.format("delta").save(path)
         val deltaLog = DeltaLog.forTable(spark, path)
 
-        // 4 total actions, 1 new file
+        // 2 file actions, 1 new file
         spark.range(1).repartition(1).write.format("delta").mode("append").save(path)
 
         verifyCheckpoint(deltaLog.lastCheckpoint, 1, None)
@@ -104,8 +104,8 @@ class CheckpointsSuite extends QueryTest
           FileNames.checkpointFileSingular(deltaLog.logPath, deltaLog.snapshot.version).toUri
         assert(new File(checkpointPath).exists())
 
-        // 11 total actions, 7 new files
-        spark.range(30).repartition(7).write.format("delta").mode("append").save(path)
+        // 11 total file actions, 9 new files
+        spark.range(30).repartition(9).write.format("delta").mode("append").save(path)
         verifyCheckpoint(deltaLog.lastCheckpoint, 2, Some(2))
 
         var checkpointPaths =
@@ -132,7 +132,7 @@ class CheckpointsSuite extends QueryTest
       }
 
       // Increase max actions
-      withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_MAX_ACTIONS_PER_FILE.key -> "100") {
+      withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "100") {
         val deltaLog = DeltaLog.forTable(spark, path)
         // 100 total actions, 69 new files
         spark.range(1000).repartition(69).write.format("delta").mode("append").save(path)

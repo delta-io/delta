@@ -69,7 +69,7 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
 
   private def testWithAndWithoutMultipartCheckpoint(name: String)(f: (Option[Int]) => Unit) = {
     testQuietly(name) {
-      withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_MAX_ACTIONS_PER_FILE.key -> "1") {
+      withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "1") {
         f(Some(1))
         f(Some(2))
       }
