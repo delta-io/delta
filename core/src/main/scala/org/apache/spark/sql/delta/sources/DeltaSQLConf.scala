@@ -321,6 +321,7 @@ trait DeltaSQLConfBase {
           |on a synchronous state update before running the query.
         """.stripMargin)
       .timeConf(TimeUnit.MILLISECONDS)
+      .checkValue(_ >= 0, "Staleness limit cannot be negative")
       .createWithDefault(0L) // Don't let tables go stale
 
   val DELTA_ALTER_LOCATION_BYPASS_SCHEMA_CHECK =
