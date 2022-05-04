@@ -25,7 +25,8 @@ import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.types.{ArrayType, IntegerType, MapType, StringType, StructType}
 
-class DeltaDropColumnSuite extends QueryTest with DeltaArbitraryColumnNameSuiteBase {
+class DeltaDropColumnSuite extends QueryTest
+  with DeltaArbitraryColumnNameSuiteBase {
 
   override protected val sparkConf: SparkConf =
     super.sparkConf.set(DeltaSQLConf.DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED.key, "true")
@@ -167,8 +168,6 @@ class DeltaDropColumnSuite extends QueryTest with DeltaArbitraryColumnNameSuiteB
 
       spark.sql("alter table t1 add constraint rangeABC check (concat(a, a) > 'str')")
       spark.sql("alter table t1 add constraint rangeBD check (`b`.`d` > 0)")
-      spark.sql("alter table t1" +
-        " add constraint mapValue check (map['k1'] = 'v1' or map['k1'] is null)")
 
       spark.sql("alter table t1 add constraint arrValue check (arr[0] > 0)")
 
@@ -180,9 +179,6 @@ class DeltaDropColumnSuite extends QueryTest with DeltaArbitraryColumnNameSuiteB
         drop("t1", "arr" :: Nil)
       }
 
-      assertException("Cannot drop column map because this column is referenced by") {
-        drop("t1", "map" :: Nil)
-      }
 
       // cannot drop b because its child is referenced
       assertException("Cannot drop column b because this column is referenced by") {
@@ -195,6 +191,33 @@ class DeltaDropColumnSuite extends QueryTest with DeltaArbitraryColumnNameSuiteB
       // this is a safety flag - it won't error when you turn it off
       withSQLConf(DeltaSQLConf.DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS.key -> "false") {
         drop("t1", "b" :: "arr" :: Nil)
+      }
+    }
+  }
+
+  test("drop column with constraints - map element") {
+    def drop(table: String, columns: Seq[String]): Unit =
+      sql(s"alter table $table drop column (${columns.mkString(",")})")
+
+    withTable("t1") {
+      val schemaWithNotNull =
+        simpleNestedData.schema.toDDL.replace("c: STRING", "c: STRING NOT NULL")
+
+      withTable("source") {
+        spark.sql(
+          s"""
+             |CREATE TABLE t1 ($schemaWithNotNull)
+             |USING DELTA
+             |${propString(Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))}
+             |""".stripMargin)
+        simpleNestedData.write.format("delta").mode("append").saveAsTable("t1")
+      }
+
+      spark.sql("alter table t1 add constraint" +
+        " mapValue check (not array_contains(map_keys(map), 'k1') or map['k1'] = 'v1')")
+
+      assertException("Cannot drop column map because this column is referenced by") {
+        drop("t1", "map" :: Nil)
       }
     }
   }
