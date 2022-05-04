@@ -22,20 +22,20 @@ public class DeltaSourceException extends RuntimeException {
 
     public DeltaSourceException(String tablePath, Long snapshotVersion, Throwable cause) {
         super(cause);
-        this.tablePath = tablePath;
+        this.tablePath = String.valueOf(tablePath);
         this.snapshotVersion = snapshotVersion;
     }
 
     public DeltaSourceException(String tablePath, Long snapshotVersion, String message) {
         super(message);
-        this.tablePath = tablePath;
+        this.tablePath = String.valueOf(tablePath);
         this.snapshotVersion = snapshotVersion;
     }
 
     public DeltaSourceException(String tablePath, Long snapshotVersion, String message,
         Throwable cause) {
         super(message, cause);
-        this.tablePath = tablePath;
+        this.tablePath = String.valueOf(tablePath);
         this.snapshotVersion = snapshotVersion;
     }
 

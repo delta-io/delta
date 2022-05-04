@@ -81,8 +81,11 @@ public class BoundedDeltaSourceSplitEnumeratorTest extends DeltaSourceSplitEnume
 
     @Test
     public void shouldUseTimestampAsOfSnapshot() {
-        long timestampAsOf = System.currentTimeMillis();
-        sourceConfiguration.addOption(DeltaSourceOptions.TIMESTAMP_AS_OF.key(), timestampAsOf);
+        String timestampAsOfString = "2022-02-24T04:55:00.001Z";
+        long timestampAsOf = 1645678500001L;
+
+        sourceConfiguration.addOption(DeltaSourceOptions.TIMESTAMP_AS_OF.key(),
+            timestampAsOfString);
         when(deltaLog.getSnapshotForTimestampAsOf(timestampAsOf)).thenReturn(timestampAsOfSnapshot);
         when(timestampAsOfSnapshot.getVersion()).thenReturn(timestampAsOf);
 

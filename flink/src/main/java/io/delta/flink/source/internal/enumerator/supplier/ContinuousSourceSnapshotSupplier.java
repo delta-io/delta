@@ -50,8 +50,10 @@ public class ContinuousSourceSnapshotSupplier extends SnapshotSupplier {
             if (startingVersion.equalsIgnoreCase(DeltaSourceOptions.STARTING_VERSION_LATEST)) {
                 return TransitiveOptional.ofNullable(deltaLog.snapshot());
             } else {
-                return TransitiveOptional.ofNullable(deltaLog.getSnapshotForVersionAsOf(
-                    Long.parseLong(startingVersion)));
+                return TransitiveOptional.ofNullable(
+                    deltaLog.getSnapshotForVersionAsOf(
+                        Long.parseLong(startingVersion))
+                );
             }
         }
         return TransitiveOptional.empty();

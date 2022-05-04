@@ -9,16 +9,9 @@ import java.util.stream.Collectors;
 
 import io.delta.flink.DeltaTestUtils;
 import io.delta.flink.source.RecordCounterToFail.FailCheck;
-import io.delta.flink.source.internal.DeltaSourceConfiguration;
-import io.delta.flink.source.internal.enumerator.BoundedSplitEnumeratorProvider;
-import io.delta.flink.source.internal.file.DeltaFileEnumerator;
-import io.delta.flink.source.internal.state.DeltaSourceSplit;
-import org.apache.flink.connector.file.src.assigners.LocalityAwareSplitAssigner;
 import org.apache.flink.core.fs.Path;
-import org.apache.flink.formats.parquet.ParquetColumnarRowInputFormat;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.types.logical.LogicalType;
-import org.apache.flink.table.types.logical.RowType;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.After;
 import org.junit.Before;
@@ -64,7 +57,7 @@ public class DeltaSourceBoundedExecutionITCaseTest extends DeltaSourceITBase {
 
         DeltaSource<RowData> deltaSource =
             initBoundedSource(
-                Path.fromLocalFile(new File(nonPartitionedLargeTablePath)),
+                nonPartitionedLargeTablePath,
                 LARGE_TABLE_COLUMN_NAMES,
                 LARGE_TABLE_COLUMN_TYPES);
 
@@ -86,30 +79,16 @@ public class DeltaSourceBoundedExecutionITCaseTest extends DeltaSourceITBase {
 
     // TODO PR 8 ADD Partition tests in later PRs
 
-    // TODO PR 9 for future PRs
-    //  This is a temporary method for creating DeltaSource.
-    //  The Desired state is to use DeltaSourceBuilder which was not included in this PR.
-    //  For reference how DeltaSource creation will look like please go to:
-    //  https://github.com/delta-io/connectors/pull/256/files#:~:text=testWithoutPartitions()
-
-    private DeltaSource<RowData> initBoundedSource(Path nonPartitionedTablePath,
-        String[] columnNames, LogicalType[] columnTypes) {
+    private DeltaSource<RowData> initBoundedSource(
+        String tablePath, String[] columnNames, LogicalType[] columnTypes) {
 
         Configuration hadoopConf = DeltaTestUtils.getHadoopConf();
 
-        ParquetColumnarRowInputFormat<DeltaSourceSplit>
-            fileSourceSplitParquetColumnarRowInputFormat = new ParquetColumnarRowInputFormat<>(
-            hadoopConf,
-            RowType.of(columnTypes, columnNames),
-            2048, // Parquet Reader batchSize
-            true, // isUtcTimestamp
-            true);// isCaseSensitive
-
-        return DeltaSource.forBulkFileFormat(
-            nonPartitionedTablePath,
-            fileSourceSplitParquetColumnarRowInputFormat,
-            new BoundedSplitEnumeratorProvider(
-                LocalityAwareSplitAssigner::new, DeltaFileEnumerator::new),
-            hadoopConf, new DeltaSourceConfiguration());
+        return DeltaSource.forBoundedRowData(
+            Path.fromLocalFile(new File(tablePath)),
+            columnNames,
+            columnTypes,
+            hadoopConf
+        ).build();
     }
 }

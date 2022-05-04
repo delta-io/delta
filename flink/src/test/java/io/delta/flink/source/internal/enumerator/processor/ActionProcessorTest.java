@@ -21,7 +21,7 @@ import io.delta.standalone.actions.Action;
 import io.delta.standalone.actions.AddFile;
 import io.delta.standalone.actions.RemoveFile;
 
-public class ActionProcessorTest extends BaseActionProcessorParameterizedTest {
+public class ActionProcessorTest extends ActionProcessorParameterizedTestBase {
 
     ///////////////////////////////////////////////////////////////////////////////
     // test case & arguments for ignoreChanges = false and ignoreDeletes = false //

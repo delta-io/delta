@@ -12,7 +12,8 @@ import org.apache.flink.configuration.ConfigOptions;
  * used both by Streaming and Table source.
  *
  * @implNote This class is used as a dictionary to work with {@link DeltaSourceConfiguration} class
- * that contains an actual configuration options used for particular {@code DeltaSource} instance.
+ * that contains an actual configuration options used for particular {@code DeltaSourceInternal}
+ * instance.
  */
 public class DeltaSourceOptions {
 
@@ -24,8 +25,8 @@ public class DeltaSourceOptions {
     public static final String STARTING_VERSION_LATEST = "latest";
 
     /**
-     * A map of all valid {@code DeltaSource} options. This map can be used for example by {@code
-     * DeltaSourceBuilder} to do configuration sanity check.
+     * A map of all valid {@code DeltaSourceInternal} options. This map can be used for example by
+     * {@code BaseDeltaSourceStepBuilder} to do configuration sanity check.
      *
      * @implNote All {@code ConfigOption} defined in {@code DeltaSourceOptions} class must be added
      * to {@code VALID_SOURCE_OPTIONS} map.
@@ -52,8 +53,8 @@ public class DeltaSourceOptions {
      * <p>
      * The String representation for this option is <b>timestampAsOf</b>.
      */
-    public static final ConfigOption<Long> TIMESTAMP_AS_OF =
-        ConfigOptions.key("timestampAsOf").longType().noDefaultValue();
+    public static final ConfigOption<String> TIMESTAMP_AS_OF =
+        ConfigOptions.key("timestampAsOf").stringType().noDefaultValue();
 
     /**
      * An option to specify a {@link io.delta.standalone.Snapshot} version to only read changes
@@ -137,7 +138,16 @@ public class DeltaSourceOptions {
     public static final ConfigOption<Boolean> IGNORE_CHANGES =
         ConfigOptions.key("ignoreChanges").booleanType().defaultValue(false);
 
-    // TODO test all allowed options
+    /**
+     * An option to set the number of rows read per Parquet Reader per batch from underlying Parquet
+     * file. This can improve read performance reducing IO cals to Parquet file at cost of memory
+     * consumption on Task Manager nodes.
+     */
+    public static final ConfigOption<Integer> PARQUET_BATCH_SIZE =
+        ConfigOptions.key("parquetBatchSize").intType().defaultValue(2048)
+            .withDescription("Number of rows read per batch by Parquet Reader from Parquet file.");
+
+    // TODO PR 9.1 test all allowed options
     static {
         VALID_SOURCE_OPTIONS.put(VERSION_AS_OF.key(), VERSION_AS_OF);
         VALID_SOURCE_OPTIONS.put(TIMESTAMP_AS_OF.key(), TIMESTAMP_AS_OF);
@@ -147,5 +157,6 @@ public class DeltaSourceOptions {
         VALID_SOURCE_OPTIONS.put(UPDATE_CHECK_INITIAL_DELAY.key(), UPDATE_CHECK_INITIAL_DELAY);
         VALID_SOURCE_OPTIONS.put(IGNORE_DELETES.key(), IGNORE_DELETES);
         VALID_SOURCE_OPTIONS.put(IGNORE_CHANGES.key(), IGNORE_CHANGES);
+        VALID_SOURCE_OPTIONS.put(PARQUET_BATCH_SIZE.key(), PARQUET_BATCH_SIZE);
     }
 }

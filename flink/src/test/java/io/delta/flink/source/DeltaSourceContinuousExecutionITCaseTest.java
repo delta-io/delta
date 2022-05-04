@@ -10,13 +10,7 @@ import java.util.stream.Collectors;
 
 import io.delta.flink.DeltaTestUtils;
 import io.delta.flink.source.RecordCounterToFail.FailCheck;
-import io.delta.flink.source.internal.DeltaSourceConfiguration;
-import io.delta.flink.source.internal.enumerator.ContinuousSplitEnumeratorProvider;
-import io.delta.flink.source.internal.file.DeltaFileEnumerator;
-import io.delta.flink.source.internal.state.DeltaSourceSplit;
-import org.apache.flink.connector.file.src.assigners.LocalityAwareSplitAssigner;
 import org.apache.flink.core.fs.Path;
-import org.apache.flink.formats.parquet.ParquetColumnarRowInputFormat;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.flink.table.types.logical.RowType;
@@ -80,8 +74,11 @@ public class DeltaSourceContinuousExecutionITCaseTest extends DeltaSourceITBase 
 
         // GIVEN
         DeltaSource<RowData> deltaSource =
-            initContinuousSource(Path.fromLocalFile(new File(nonPartitionedTablePath)),
-                SMALL_TABLE_COLUMN_NAMES, SMALL_TABLE_COLUMN_TYPES);
+            initContinuousSource(
+                nonPartitionedTablePath,
+                SMALL_TABLE_COLUMN_NAMES,
+                SMALL_TABLE_COLUMN_TYPES
+            );
 
         // WHEN
         // Fail TaskManager or JobManager after half of the records or do not fail anything if
@@ -113,9 +110,11 @@ public class DeltaSourceContinuousExecutionITCaseTest extends DeltaSourceITBase 
 
         // GIVEN
         DeltaSource<RowData> deltaSource =
-            initContinuousSource(Path.fromLocalFile(new File(nonPartitionedLargeTablePath)),
+            initContinuousSource(
+                nonPartitionedLargeTablePath,
                 LARGE_TABLE_COLUMN_NAMES,
-                LARGE_TABLE_COLUMN_TYPES);
+                LARGE_TABLE_COLUMN_TYPES
+            );
 
         // WHEN
         List<List<RowData>> resultData = testContinuousDeltaSource(failoverType, deltaSource,
@@ -145,8 +144,11 @@ public class DeltaSourceContinuousExecutionITCaseTest extends DeltaSourceITBase 
 
         // GIVEN
         DeltaSource<RowData> deltaSource =
-            initContinuousSource(Path.fromLocalFile(new File(nonPartitionedTablePath)),
-                SMALL_TABLE_COLUMN_NAMES, SMALL_TABLE_COLUMN_TYPES);
+            initContinuousSource(
+                nonPartitionedTablePath,
+                SMALL_TABLE_COLUMN_NAMES,
+                SMALL_TABLE_COLUMN_TYPES
+            );
 
         ContinuousTestDescriptor testDescriptor = prepareTableUpdates();
 
@@ -194,30 +196,16 @@ public class DeltaSourceContinuousExecutionITCaseTest extends DeltaSourceITBase 
 
     // TODO PR 8 Add tests for Partitions
 
-    // TODO PR 9 for future PRs
-    //  This is a temporary method for creating DeltaSource.
-    //  The Desired state is to use DeltaSourceBuilder which was not included in this PR.
-    //  For reference how DeltaSource creation will look like please go to:
-    //  https://github.com/delta-io/connectors/pull/256/files#:~:text=testWithoutPartitions()
-
-    private DeltaSource<RowData> initContinuousSource(Path nonPartitionedTablePath,
-        String[] columnNames, LogicalType[] columnTypes) {
+    private DeltaSource<RowData> initContinuousSource(
+        String tablePath, String[] columnNames, LogicalType[] columnTypes) {
 
         Configuration hadoopConf = DeltaTestUtils.getHadoopConf();
 
-        ParquetColumnarRowInputFormat<DeltaSourceSplit>
-            fileSourceSplitParquetColumnarRowInputFormat = new ParquetColumnarRowInputFormat<>(
-            hadoopConf,
-            RowType.of(columnTypes, columnNames),
-            2048, // Parquet Reader batchSize
-            true, // isUtcTimestamp
-            true);// isCaseSensitive
-
-        return DeltaSource.forBulkFileFormat(
-            nonPartitionedTablePath,
-            fileSourceSplitParquetColumnarRowInputFormat,
-            new ContinuousSplitEnumeratorProvider(
-                LocalityAwareSplitAssigner::new, DeltaFileEnumerator::new),
-            hadoopConf, new DeltaSourceConfiguration());
+        return DeltaSource.forContinuousRowData(
+            Path.fromLocalFile(new File(tablePath)),
+            columnNames,
+            columnTypes,
+            hadoopConf
+        ).build();
     }
 }

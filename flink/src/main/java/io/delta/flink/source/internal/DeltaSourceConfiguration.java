@@ -12,7 +12,7 @@ import org.apache.flink.configuration.ConfigOption;
  * instance.
  *
  * @implNote This class should not be used directly by user but rather indirectly through {@code
- * DeltaSourceBuilder} which will have dedicated setter methods for public options.
+ * BaseDeltaSourceStepBuilder} which will have dedicated setter methods for public options.
  */
 public class DeltaSourceConfiguration implements Serializable {
 
@@ -27,7 +27,6 @@ public class DeltaSourceConfiguration implements Serializable {
      */
     private final Map<String, Object> usedSourceOptions = new HashMap<>();
 
-    // TODO those methods here will be used by DeltaSourceBuilder.
     public DeltaSourceConfiguration addOption(String name, String value) {
         return addOptionObject(name, value);
     }

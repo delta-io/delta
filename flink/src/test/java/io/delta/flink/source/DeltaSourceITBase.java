@@ -66,7 +66,9 @@ public abstract class DeltaSourceITBase extends TestLogger {
     private static final ExecutorService WORKER_EXECUTOR = Executors.newSingleThreadExecutor();
     @Rule
     public final MiniClusterWithClientResource miniClusterResource = buildCluster();
+
     protected String nonPartitionedTablePath;
+
     protected String nonPartitionedLargeTablePath;
 
     public static void triggerFailover(FailoverType type, JobID jobId, Runnable afterFailAction,
@@ -136,8 +138,27 @@ public abstract class DeltaSourceITBase extends TestLogger {
 
     /**
      * Base method used for testing {@link DeltaSource} in {@link Boundedness#BOUNDED} mode. This
-     * method creates a {@link StreamExecutionEnvironment} and uses provided {@code DeltaSource}
-     * instance.
+     * method creates a {@link StreamExecutionEnvironment} and uses provided {@code
+     * DeltaSource} instance without any failover.
+     *
+     * @param source The {@link DeltaSource} that should be used in this test.
+     * @param <T>    Type of objects produced by source.
+     * @return A {@link List} of produced records.
+     */
+    protected <T> List<T> testBoundDeltaSource(DeltaSource<T> source)
+        throws Exception {
+
+        // Since we don't do any failover here (used FailoverType.NONE) we don't need any
+        // actually FailCheck.
+        // We do need to pass the check at least once, to call
+        // RecordCounterToFail#continueProcessing.get() hence (FailCheck) integer -> true
+        return testBoundDeltaSource(FailoverType.NONE, source, (FailCheck) integer -> true);
+    }
+
+    /**
+     * Base method used for testing {@link DeltaSource} in {@link Boundedness#BOUNDED} mode. This
+     * method creates a {@link StreamExecutionEnvironment} and uses provided {@code
+     * DeltaSource} instance.
      * <p>
      * <p>
      * The created environment can perform a failover after condition described by {@link FailCheck}
@@ -213,7 +234,7 @@ public abstract class DeltaSourceITBase extends TestLogger {
 
         ClientAndIterator<T> client =
             DataStreamUtils.collectWithClient(
-                failingStreamDecorator, "Bounded DeltaSource Test");
+                failingStreamDecorator, "Bounded Delta Source Test");
         JobID jobId = client.client.getJobID();
 
         // Wait with main thread until FailCheck from RecordCounterToFail.wrapWithFailureAfter
@@ -320,7 +341,7 @@ public abstract class DeltaSourceITBase extends TestLogger {
 
         ClientAndIterator<T> client =
             DataStreamUtils.collectWithClient(failingStreamDecorator,
-                "Continuous DeltaSource  Test");
+                "Continuous Delta Source Test");
 
         JobID jobId = client.client.getJobID();
 
@@ -339,11 +360,11 @@ public abstract class DeltaSourceITBase extends TestLogger {
             RecordCounterToFail::continueProcessing,
             miniClusterResource.getMiniCluster());
 
-        // Main thread waits up to 2 minutes for all threads to finish. Fails of timeout.
+        // Main thread waits up to 5 minutes for all threads to finish. Fails of timeout.
         List<List<T>> totalResults = new ArrayList<>();
-        totalResults.add(initialDataFuture.get(3, TimeUnit.MINUTES));
-        totalResults.add(tableUpdaterFuture.get(3, TimeUnit.MINUTES));
-        client.client.cancel().get(3, TimeUnit.MINUTES);
+        totalResults.add(initialDataFuture.get(5, TimeUnit.MINUTES));
+        totalResults.add(tableUpdaterFuture.get(5, TimeUnit.MINUTES));
+        client.client.cancel().get(5, TimeUnit.MINUTES);
 
         return totalResults;
     }

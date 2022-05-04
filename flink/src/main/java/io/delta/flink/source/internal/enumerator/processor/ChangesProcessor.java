@@ -32,7 +32,7 @@ import io.delta.standalone.actions.AddFile;
  * The {@code Snapshot} version is specified by {@link TableMonitor} used when creating an instance
  * of {@code ChangesProcessor}.
  */
-public class ChangesProcessor extends BaseTableProcessor implements ContinuousTableProcessor {
+public class ChangesProcessor extends TableProcessorBase implements ContinuousTableProcessor {
 
     private static final Logger LOG = LoggerFactory.getLogger(ChangesProcessor.class);
 
