@@ -69,6 +69,11 @@ class DelayedCommitProtocol(
 
   }
 
+  /**
+   * Commits a job after the writes succeed. Must be called on the driver. Partitions the written
+   * files into [[AddFile]]s and [[AddCDCFile]]s as these metadata actions are treated differently
+   * by [[TransactionalWrite]] (i.e. AddFile's may have additional statistics injected)
+   */
   override def commitJob(jobContext: JobContext, taskCommits: Seq[TaskCommitMessage]): Unit = {
     val (addFiles, changeFiles) = taskCommits.flatMap(_.obj.asInstanceOf[Seq[_]])
       .partition {
@@ -80,9 +85,7 @@ class DelayedCommitProtocol(
       }
 
     // we cannot add type information above because of type erasure
-    val typedAddFiles = addFiles.map(_.asInstanceOf[AddFile])
-
-    addedStatuses ++= typedAddFiles
+    addedStatuses ++= addFiles.map(_.asInstanceOf[AddFile])
     this.changeFiles ++= changeFiles.map(_.asInstanceOf[AddCDCFile]).toArray[AddCDCFile]
   }
 
@@ -145,6 +148,16 @@ class DelayedCommitProtocol(
     Random.alphanumeric.take(numChars).mkString
   }
 
+  /**
+   * Notifies the commit protocol to add a new file, and gets back the full path that should be
+   * used.
+   *
+   * Includes special logic for CDC files and paths. Specifically, if the directory `dir` contains
+   * the CDC partition `__is_cdc=true` then
+   * - the file name begins with `cdc-` instead of `part-`
+   * - the directory has the `__is_cdc=true` partition removed and is placed in the `_changed_data`
+   *   folder
+   */
   override def newTaskTempFile(
       taskContext: TaskAttemptContext, dir: Option[String], ext: String): String = {
     val partitionValues = dir.map(parsePartitions).getOrElse(Map.empty[String, String])

@@ -207,6 +207,18 @@ object CDCReader extends DeltaLogging {
    * For a sequence of changes(AddFile, RemoveFile, AddCDCFile) create a DataFrame that represents
    * that captured change data between start and end inclusive.
    *
+   * Builds the DataFrame using the following logic: Per each change of type (Long, Seq[Action]) in
+   * `changes`, iterates over the actions and handles two cases.
+   * - If there are any CDC actions, then we ignore the AddFile and RemoveFile actions in that
+   *   version and create an AddCDCFile instead.
+   * - If there are no CDC actions, then we must infer the CDC data from the AddFile and RemoveFile
+   *   actions, taking only those with `dataChange = true`.
+   *
+   * These buffers of AddFile, RemoveFile, and AddCDCFile actions are then used to create
+   * corresponding FileIndexes (e.g. [[TahoeChangeFileIndex]]), where each is suited to use the
+   * given action type to read CDC data. These FileIndexes are then unioned to produce the final
+   * DataFrame.
+   *
    * @param deltaLog - DeltaLog for the table for which we are creating a cdc dataFrame
    * @param start - startingVersion of the changes
    * @param end - endingVersion of the changes
@@ -384,7 +396,7 @@ object CDCReader extends DeltaLogging {
    * Build a dataframe from the specified file index. We can't use a DataFrame scan directly on the
    * file names because that scan wouldn't include partition columns.
    */
-  def scanIndex(
+  private def scanIndex(
       spark: SparkSession,
       index: TahoeFileIndex,
       metadata: Metadata,

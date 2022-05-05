@@ -44,7 +44,6 @@ class TahoeRemoveFileIndex(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): Seq[AddFile] = {
     // Make some fake AddFiles to satisfy the interface.
-    // Make some fake AddFiles to satisfy the interface.
     val addFiles = filesByVersion.flatMap {
       case CDCDataSpec(version, ts, files) =>
         files.map { r =>

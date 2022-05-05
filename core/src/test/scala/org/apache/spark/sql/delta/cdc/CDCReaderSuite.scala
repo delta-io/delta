@@ -225,6 +225,5 @@ class CDCReaderSuite
       }
     }
   }
-
 }
 

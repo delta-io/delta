@@ -275,10 +275,16 @@ object DeltaErrors
   }
 
 
+  /**
+   * Throwable used when CDC options contain no 'start'.
+   */
   def noStartVersionForCDC(): Throwable = {
     new AnalysisException(s"No startingVersion or startingTimestamp provided for CDC read.")
   }
 
+  /**
+   * Throwable used when CDC is not enabled according to table metadata.
+   */
   def changeDataNotRecordedException(version: Long, start: Long, end: Long): Throwable = {
     new DeltaAnalysisException(
       errorClass = "MISSING_CHANGE_DATA",
@@ -286,11 +292,17 @@ object DeltaErrors
         DeltaConfigs.CHANGE_DATA_FEED.key))
   }
 
+  /**
+   * Throwable used for invalid CDC 'start' and 'end' options, where end < start
+   */
   def endBeforeStartVersionInCDC(start: Long, end: Long): Throwable = {
     new IllegalArgumentException(
       s"CDC range from start $start to end $end was invalid. End cannot be before start.")
   }
 
+  /**
+   * Throwable used for invalid CDC 'start' and 'latest' options, where latest < start
+   */
   def startVersionAfterLatestVersion(start: Long, latest: Long): Throwable = {
     new IllegalArgumentException(
       s"Provided Start version($start) for reading change data is invalid. " +
