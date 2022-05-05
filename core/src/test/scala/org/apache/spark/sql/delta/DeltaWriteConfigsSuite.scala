@@ -46,11 +46,17 @@ import org.apache.spark.sql.types.StringType
 class DeltaWriteConfigsSuite extends QueryTest
   with SharedSparkSession  with DeltaSQLCommandTest {
 
-  val config_no_prefix = "randomPrefixLength" // default 2, we set it to 3
-  val config_no_prefix_2 = "logRetentionDuration" // default interval 30 days, we set it to 60 days
+  val config_no_prefix = "dataSkippingNumIndexedCols"
+  val config_no_prefix_value = "33"
 
-  val config_prefix = "delta.randomizeFilePrefixes" // default is false, we set it to true
-  val config_prefix_2 = "delta.checkpointInterval" // default is 10, we set it to 20
+  val config_prefix = "delta.deletedFileRetentionDuration"
+  val config_prefix_value = "interval 2 weeks"
+
+  val config_no_prefix_2 = "logRetentionDuration"
+  val config_no_prefix_2_value = "interval 60 days"
+
+  val config_prefix_2 = "delta.checkpointInterval"
+  val config_prefix_2_value = "20"
 
   override def afterAll(): Unit = {
     import testImplicits._
@@ -96,7 +102,9 @@ class DeltaWriteConfigsSuite extends QueryTest
   private val dfw_v2_output = new ListBuffer[(String, String, Boolean, Boolean)]
   private val dtb_output = new ListBuffer[(String, String, Boolean, Boolean, Boolean)]
   private val sql_output =
-    new ListBuffer[(String, String, String, Boolean, Boolean, Boolean, Boolean, Boolean)]
+    new ListBuffer[(
+      String, String, String, Boolean,
+      Boolean, Boolean, Boolean, Boolean)]
 
   /*
   DataFrameWriter Test Output
@@ -118,8 +126,8 @@ class DeltaWriteConfigsSuite extends QueryTest
         withTempDir { dir =>
           withTable("tbl") {
             var data = spark.range(10).write.format("delta")
-              .option(config_no_prefix, "3")
-              .option(config_prefix, "true")
+              .option(config_no_prefix, config_no_prefix_value)
+              .option(config_prefix, config_prefix_value)
 
             if (outputMode != "create") {
               data = data.mode(outputMode)
@@ -182,8 +190,8 @@ class DeltaWriteConfigsSuite extends QueryTest
               var stream = data.writeStream
                 .format("delta")
                 .option("checkpointLocation", checkpointDir.getCanonicalPath)
-                .option(config_no_prefix, "3")
-                .option(config_prefix, "true")
+                .option(config_no_prefix, config_no_prefix_value)
+                .option(config_prefix, config_prefix_value)
 
               if (outputMode != "create") {
                 stream = stream.outputMode(outputMode)
@@ -240,8 +248,8 @@ class DeltaWriteConfigsSuite extends QueryTest
             }
 
             val data = spark.range(10).writeTo(table).using("delta")
-              .option(config_no_prefix, "3")
-              .option(config_prefix, "true")
+              .option(config_no_prefix, config_no_prefix_value)
+              .option(config_prefix, config_prefix_value)
 
             if (outputMode.contains("replace")) {
               spark.range(100).writeTo(table).using("delta").create()
@@ -315,8 +323,8 @@ class DeltaWriteConfigsSuite extends QueryTest
             }
 
             tblBuilder.addColumn("foo", StringType)
-            tblBuilder = tblBuilder.property(config_no_prefix, "3")
-            tblBuilder = tblBuilder.property(config_prefix, "true")
+            tblBuilder = tblBuilder.property(config_no_prefix, config_no_prefix_value)
+            tblBuilder = tblBuilder.property(config_prefix, config_prefix_value)
 
             val log = (outputLoc, outputMode) match {
               case ("path", "c_or_r_replace") =>
@@ -442,14 +450,17 @@ class DeltaWriteConfigsSuite extends QueryTest
                 var stmt = sqlOpStr + " TABLE tbl " + schemaStr + "USING DELTA\n"
 
                 if (configInput.contains("options")) {
-                  stmt = stmt + s"OPTIONS('$config_no_prefix'=3,'$config_prefix'=true)\n"
+                  stmt = stmt + s"OPTIONS(" +
+                    s"'$config_no_prefix'=$config_no_prefix_value," +
+                    s"'$config_prefix'='$config_prefix_value')\n"
                 }
                 if (outputLoc == "path") {
                   stmt = stmt + s"LOCATION '${dir.getCanonicalPath}'\n"
                 }
                 if (configInput.contains("tblproperties")) {
-                  stmt = stmt + s"TBLPROPERTIES('$config_no_prefix_2'='interval 60 days'," +
-                    s"'$config_prefix_2'=20)\n"
+                  stmt = stmt + s"TBLPROPERTIES(" +
+                    s"'$config_no_prefix_2'='$config_no_prefix_2_value'," +
+                    s"'$config_prefix_2'=$config_prefix_2_value)\n"
                 }
                 if (useAsSelectStmt) {
                   sql("CREATE TABLE other (id INT) USING DELTA")
@@ -459,22 +470,26 @@ class DeltaWriteConfigsSuite extends QueryTest
                 // scalastyle:off println
                 println(stmt)
                 // scalastyle:on println
-                sql(stmt)
-                sql("SHOW TBLPROPERTIES tbl").show(truncate = false)
 
-                val config = sql("SHOW TBLPROPERTIES tbl").collect().map { row =>
-                  val key = row.getString(0)
-                  val value = row.getString(1)
-                  (key, value)
-                }.toMap
+                sql(stmt)
+
+                val log = DeltaLog.forTable(spark, TableIdentifier("tbl"))
+                val config = log.snapshot.metadata.configuration
 
                 val option_no_prefix = config.contains(config_no_prefix)
                 val option_prefix = config.contains(config_prefix)
                 val tblproperties_no_prefix = config.contains(config_no_prefix_2)
                 val tblproperties_prefix = config.contains(config_prefix_2)
 
-                sql_output += ((outputLoc, configInput, sqlOp, useAsSelectStmt, option_no_prefix,
-                  option_prefix, tblproperties_no_prefix, tblproperties_prefix))
+                sql_output += ((
+                  outputLoc,
+                  configInput,
+                  sqlOp,
+                  useAsSelectStmt,
+                  option_no_prefix,
+                  option_prefix,
+                  tblproperties_no_prefix,
+                  tblproperties_prefix))
               }
             }
           }
