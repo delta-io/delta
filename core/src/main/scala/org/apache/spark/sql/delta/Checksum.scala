@@ -72,15 +72,7 @@ trait RecordChecksum extends DeltaLogging {
     }
 
     val version = snapshot.version
-    val checksum = VersionChecksum(
-      tableSizeBytes = snapshot.sizeInBytes,
-      numFiles = snapshot.numOfFiles,
-      numMetadata = snapshot.numOfMetadata,
-      numProtocol = snapshot.numOfProtocol,
-      protocol = snapshot.protocol,
-      metadata = snapshot.metadata,
-      histogramOpt = snapshot.fileSizeHistogram,
-      txnId = Some(txnId))
+    val checksum = snapshot.computeChecksum.copy(txnId = Some(txnId))
     try {
       recordDeltaOperation(deltaLog, "delta.checksum.write") {
         val stream = writer.createAtomic(
