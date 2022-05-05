@@ -25,27 +25,11 @@ import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraint
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 
 /** Thrown when the given data doesn't match the rules defined on the table. */
-case class InvariantViolationException(
-    message: String,
-    errorClass: Option[String],
-    messageParameters: Array[String])
-  extends RuntimeException(message) with DeltaThrowable {
+case class InvariantViolationException(message: String) extends RuntimeException(message)
 
-  def this(message: String) = this(message = message, None, Array.empty)
-
-  def this(errorClass: String, messageParameters: Array[String]) = {
-    this(
-      DeltaThrowableHelper.getMessage(errorClass, messageParameters),
-      Some(errorClass),
-      messageParameters)
-  }
-
-  override def getErrorClass: String = errorClass.get
-}
-
-object InvariantViolationException {
-  def apply(constraint: Constraints.NotNull): InvariantViolationException = {
-    new InvariantViolationException(
+object DeltaInvariantViolationException {
+  def apply(constraint: Constraints.NotNull): DeltaInvariantViolationException = {
+    new DeltaInvariantViolationException(
       errorClass = "DELTA_NOT_NULL_CONSTRAINT_VIOLATED",
       messageParameters = Array(UnresolvedAttribute(constraint.column).name)
     )
@@ -59,9 +43,11 @@ object InvariantViolationException {
    */
   def apply(
       constraint: Constraints.Check,
-      values: Map[String, Any]): InvariantViolationException = {
+      values: Map[String, Any]): DeltaInvariantViolationException = {
     if (constraint.name == CharVarcharConstraint.INVARIANT_NAME) {
-      return new InvariantViolationException("Exceeds char/varchar type length limitation")
+      return new DeltaInvariantViolationException(
+        errorClass = "DELTA_EXCEED_CHAR_VARCHAR_LIMIT",
+        messageParameters = Array.empty)
     }
 
     // Sort by the column name to generate consistent error messages in Scala 2.12 and 2.13.
@@ -69,9 +55,9 @@ object InvariantViolationException {
       case (column, value) =>
         s" - $column : $value"
     }.mkString("\n")
-    new InvariantViolationException(
-      s"CHECK constraint ${constraint.name} ${constraint.expression.sql} " +
-        s"violated by row with values:\n$valueLines")
+    new DeltaInvariantViolationException(
+      errorClass = "DELTA_VIOLATE_CONSTRAINT_WITH_VALUES",
+      messageParameters = Array(constraint.name, constraint.expression.sql, valueLines))
   }
 
   /**
@@ -80,7 +66,15 @@ object InvariantViolationException {
   def apply(
       constraint: Constraints.Check,
       columns: java.util.List[String],
-      values: java.util.List[Any]): InvariantViolationException = {
+      values: java.util.List[Any]): DeltaInvariantViolationException = {
     apply(constraint, columns.asScala.zip(values.asScala).toMap)
   }
+}
+
+class DeltaInvariantViolationException(
+    errorClass: String,
+    messageParameters: Array[String])
+  extends InvariantViolationException(
+    DeltaThrowableHelper.getMessage(errorClass, messageParameters)) with DeltaThrowable {
+  override def getErrorClass: String = errorClass
 }

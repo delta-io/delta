@@ -134,6 +134,10 @@
     "message" : [ "Constraint '%s' already exists as a CHECK constraint. Please delete the old constraint first.", "Old constraint:", "%s" ],
     "sqlState" : "42000"
   },
+  "DELTA_EXCEED_CHAR_VARCHAR_LIMIT" : {
+    "message" : [ "Exceeds char/varchar type length limitation" ],
+    "sqlState" : "22026"
+  },
   "DELTA_EXPRESSIONS_NOT_FOUND_IN_GENERATED_COLUMN" : {
     "message" : [ "Cannot find the expressions in the generated column %s" ],
     "sqlState" : "42000"
@@ -317,6 +321,10 @@
   "DELTA_UNSUPPORTED_TIME_TRAVEL_VIEWS" : {
     "message" : [ "Cannot time travel views, subqueries or streams." ],
     "sqlState" : "0A000"
+  },
+  "DELTA_VIOLATE_CONSTRAINT_WITH_VALUES" : {
+    "message" : [ "CHECK constraint %s %s violated by row with values:", "%s" ],
+    "sqlState" : "23001"
   },
   "DUPLICATE_COLUMNS_ON_UPDATE_TABLE" : {
     "message" : [ "%s\nPlease remove duplicate columns before you update your table." ],

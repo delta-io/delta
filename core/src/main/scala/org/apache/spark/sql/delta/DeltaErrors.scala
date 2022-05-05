@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.schema.{InvariantViolationException, SchemaUtils}
+import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.sql.DeltaSparkSessionExtension
@@ -196,7 +196,7 @@ object DeltaErrors
   }
 
   def notNullColumnMissingException(constraint: Constraints.NotNull): Throwable = {
-    new InvariantViolationException(
+    new DeltaInvariantViolationException(
       errorClass = "MISSING_NOT_NULL_COLUMN_VALUE",
       messageParameters = Array(s"${UnresolvedAttribute(constraint.column).name}"))
   }

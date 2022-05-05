@@ -24,12 +24,13 @@ import scala.sys.process.Process
 import org.apache.spark.sql.delta.DeltaErrors.generateDocsLink
 import org.apache.spark.sql.delta.actions.{Action, Protocol, ProtocolDowngradeException}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.constraints.Constraints.NotNull
 import org.apache.spark.sql.delta.constraints.Invariants
 import org.apache.spark.sql.delta.constraints.Invariants.PersistedRule
 import org.apache.spark.sql.delta.hooks.PostCommitHook
-import org.apache.spark.sql.delta.schema.{InvariantViolationException, SchemaMergingUtils, SchemaUtils}
+import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
@@ -43,6 +44,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, ExprId, SparkVersion}
 import org.apache.spark.sql.catalyst.expressions.Uuid
+import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
@@ -137,11 +139,44 @@ trait DeltaErrorsSuiteBase
       assert(e.getMessage == "Cannot rename path-1 to path-2")
     }
     {
-      val e = intercept[InvariantViolationException] {
+      val e = intercept[DeltaInvariantViolationException] {
         throw DeltaErrors.notNullColumnMissingException(NotNull(Seq("c0", "c1")))
       }
+      assert(e.getErrorClass == "MISSING_NOT_NULL_COLUMN_VALUE")
+      assert(e.getSqlState == "42000")
       assert(e.getMessage == "Column c0.c1, which has a NOT NULL constraint, is missing " +
         "from the data being written into the table.")
+    }
+    {
+      val e = intercept[DeltaInvariantViolationException] {
+        throw DeltaInvariantViolationException(Constraints.NotNull(Seq("col1")))
+      }
+      assert(e.getErrorClass == "DELTA_NOT_NULL_CONSTRAINT_VIOLATED")
+      assert(e.getSqlState == "22004")
+      assert(e.getMessage == "NOT NULL constraint violated for column: col1.\n")
+    }
+    {
+      val e = intercept[DeltaInvariantViolationException] {
+        throw DeltaInvariantViolationException(
+          Constraints.Check(CharVarcharConstraint.INVARIANT_NAME,
+            CatalystSqlParser.parseExpression("id < 0")),
+          Map.empty[String, Any])
+      }
+      assert(e.getErrorClass == "DELTA_EXCEED_CHAR_VARCHAR_LIMIT")
+      assert(e.getSqlState == "22026")
+      assert(e.getMessage == "Exceeds char/varchar type length limitation")
+    }
+    {
+      val e = intercept[DeltaInvariantViolationException] {
+        throw DeltaInvariantViolationException(
+          Constraints.Check("__dummy__",
+            CatalystSqlParser.parseExpression("id < 0")),
+          Map("a" -> "b"))
+      }
+      assert(e.getErrorClass == "DELTA_VIOLATE_CONSTRAINT_WITH_VALUES")
+      assert(e.getSqlState == "23001")
+      assert(e.getMessage == "CHECK constraint __dummy__ (id < 0) violated " +
+        "by row with values:\n - a : b")
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -906,14 +941,6 @@ trait DeltaErrorsSuiteBase
       assert(e.getSqlState == "2F000")
       assert(e.getMessage == "Predicate references non-partition column 'col1'. Only the " +
         "partition columns may be referenced: [col2, col3]")
-    }
-    {
-      val e = intercept[InvariantViolationException] {
-        throw InvariantViolationException(Constraints.NotNull(Seq("col1")))
-      }
-      assert(e.getErrorClass == "DELTA_NOT_NULL_CONSTRAINT_VIOLATED")
-      assert(e.getSqlState == "22004")
-      assert(e.getMessage == "NOT NULL constraint violated for column: col1.\n")
     }
     {
       val e = intercept[DeltaAnalysisException] {
