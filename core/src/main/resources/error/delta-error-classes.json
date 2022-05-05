@@ -326,6 +326,10 @@
     "message" : [ "Failed to cast partition value `%s` to %s" ],
     "sqlState" : "22000"
   },
+  "FAILED_INFER_SCHEMA" : {
+    "message" : [ "Failed to infer schema from the given list of files." ],
+    "sqlState" : "22000"
+  },
   "FAILED_MERGE_SCHEMA_FILE" : {
     "message" : [ "Failed to merge schema of file %s:", "%s" ],
     "sqlState" : "42000"

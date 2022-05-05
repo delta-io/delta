@@ -1141,6 +1141,14 @@ trait DeltaErrorsSuiteBase
       assert(e.getSqlState == "42000")
       assert(e.getMessage == "10 rows in table-1 violate the new CHECK constraint (sample)")
     }
+    {
+      val e = intercept[DeltaRuntimeException] {
+        throw DeltaErrors.failedInferSchema
+      }
+      assert(e.getErrorClass == "FAILED_INFER_SCHEMA")
+      assert(e.getSqlState == "22000")
+      assert(e.getMessage == "Failed to infer schema from the given list of files.")
+    }
   }
 }
 

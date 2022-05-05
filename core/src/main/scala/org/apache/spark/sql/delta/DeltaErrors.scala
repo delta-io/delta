@@ -1785,6 +1785,9 @@ object DeltaErrors
     )
   }
 
+  def failedInferSchema: Throwable = {
+    new DeltaRuntimeException("FAILED_INFER_SCHEMA")
+  }
 }
 
 /** The basic class for all Tahoe commit conflict exceptions. */
