@@ -213,6 +213,17 @@ object DeltaDataSource extends DatabricksLogging {
    */
   final val TIME_TRAVEL_VERSION_KEY = "versionAsOf"
 
+  final val CDC_START_VERSION_KEY = "startingVersion"
+
+  final val CDC_START_TIMESTAMP_KEY = "startingTimestamp"
+
+  final val CDC_END_VERSION_KEY = "endingVersion"
+
+  final val CDC_END_TIMESTAMP_KEY = "endingTimestamp"
+
+  final val CDC_ENABLED_KEY = "readChangeFeed"
+
+  final val CDC_ENABLED_KEY_LEGACY = "readChangeData"
 
   def encodePartitioningColumns(columns: Seq[String]): String = {
     Serialization.write(columns)

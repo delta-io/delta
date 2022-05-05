@@ -275,6 +275,28 @@ object DeltaErrors
   }
 
 
+  def noStartVersionForCDC(): Throwable = {
+    new AnalysisException(s"No startingVersion or startingTimestamp provided for CDC read.")
+  }
+
+  def changeDataNotRecordedException(version: Long, start: Long, end: Long): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "MISSING_CHANGE_DATA",
+      messageParameters = Array(start.toString, end.toString, version.toString,
+        DeltaConfigs.CHANGE_DATA_FEED.key))
+  }
+
+  def endBeforeStartVersionInCDC(start: Long, end: Long): Throwable = {
+    new IllegalArgumentException(
+      s"CDC range from start $start to end $end was invalid. End cannot be before start.")
+  }
+
+  def startVersionAfterLatestVersion(start: Long, latest: Long): Throwable = {
+    new IllegalArgumentException(
+      s"Provided Start version($start) for reading change data is invalid. " +
+        s"Start version cannot be greater than the latest version of the table($latest).")
+  }
+
   def addColumnAtIndexLessThanZeroException(pos: String, col: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "ADD_COLUMN_AT_INDEX_LESS_THAN_ZERO",

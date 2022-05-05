@@ -23,7 +23,8 @@ import java.util.UUID
 import scala.collection.mutable.ArrayBuffer
 import scala.util.Random
 
-import org.apache.spark.sql.delta.actions.{AddFile, FileAction}
+import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
+import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_LOCATION, CDC_PARTITION_COL}
 import org.apache.spark.sql.delta.util.{DateFormatter, PartitionUtils, TimestampFormatter}
 import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.hadoop.mapreduce.{JobContext, TaskAttemptContext}
@@ -32,11 +33,13 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.internal.io.FileCommitProtocol
 import org.apache.spark.internal.io.FileCommitProtocol.TaskCommitMessage
 import org.apache.spark.sql.catalyst.expressions.Cast
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StringType
 
 /**
- * Writes out the files to `path` and returns a list of them in `addedStatuses`.
+ * Writes out the files to `path` and returns a list of them in `addedStatuses`. Includes
+ * special handling for partitioning on [[CDC_PARTITION_COL]] for
+ * compatibility between enabled and disabled CDC; partitions with a value of false in this
+ * column produce no corresponding partitioning directory.
  */
 class DelayedCommitProtocol(
       jobId: String,
@@ -45,18 +48,42 @@ class DelayedCommitProtocol(
   extends FileCommitProtocol with Serializable with Logging {
   // Track the list of files added by a task, only used on the executors.
   @transient protected var addedFiles: ArrayBuffer[(Map[String, String], String)] = _
+
+  // Track the change files added, only used on the driver. Files are sorted between this buffer
+  // and addedStatuses based on the value of the [[CDC_TYPE_COLUMN_NAME]] partition column - a
+  // file goes to addedStatuses if the value is CDC_TYPE_NOT_CDC and changeFiles otherwise.
+  @transient val changeFiles = new ArrayBuffer[AddCDCFile]
+
   // Track the overall files added, only used on the driver.
   @transient val addedStatuses = new ArrayBuffer[AddFile]
 
   val timestampPartitionPattern = "yyyy-MM-dd HH:mm:ss[.S]"
+
+  // Constants for CDC partition manipulation. Used only in newTaskTempFile(), but we define them
+  // here to avoid building a new redundant regex for every file.
+  protected val cdcPartitionFalse = s"${CDC_PARTITION_COL}=false"
+  protected val cdcPartitionTrue = s"${CDC_PARTITION_COL}=true"
+  protected val cdcPartitionTrueRegex = cdcPartitionTrue.r
 
   override def setupJob(jobContext: JobContext): Unit = {
 
   }
 
   override def commitJob(jobContext: JobContext, taskCommits: Seq[TaskCommitMessage]): Unit = {
-    val fileStatuses = taskCommits.flatMap(_.obj.asInstanceOf[Seq[AddFile]]).toArray
-    addedStatuses ++= fileStatuses
+    val (addFiles, changeFiles) = taskCommits.flatMap(_.obj.asInstanceOf[Seq[_]])
+      .partition {
+        case _: AddFile => true
+        case _: AddCDCFile => false
+        case other =>
+          throw new IllegalStateException(
+            s"Unrecognized file action $other with type ${other.getClass}")
+      }
+
+    // we cannot add type information above because of type erasure
+    val typedAddFiles = addFiles.map(_.asInstanceOf[AddFile])
+
+    addedStatuses ++= typedAddFiles
+    this.changeFiles ++= changeFiles.map(_.asInstanceOf[AddCDCFile]).toArray[AddCDCFile]
   }
 
   override def abortJob(jobContext: JobContext): Unit = {
@@ -76,7 +103,12 @@ class DelayedCommitProtocol(
     // the file name is fine and won't overflow.
     val split = taskContext.getTaskAttemptID.getTaskID.getId
     val uuid = UUID.randomUUID.toString
-    f"part-$split%05d-$uuid$ext"
+    // CDC files (CDC_PARTITION_COL = true) are named with "cdc-..." instead of "part-...".
+    if (partitionValues.get(CDC_PARTITION_COL).contains("true")) {
+      f"cdc-$split%05d-$uuid$ext"
+    } else {
+      f"part-$split%05d-$uuid$ext"
+    }
   }
 
   protected def parsePartitions(dir: String): Map[String, String] = {
@@ -122,7 +154,25 @@ class DelayedCommitProtocol(
     }.orElse {
       dir // or else write into the partition directory if it is partitioned
     }.map { subDir =>
-      new Path(subDir, filename)
+      // Do some surgery on the paths we write out to eliminate the CDC_PARTITION_COL. Non-CDC
+      // data is written to the base location, while CDC data is written to a special folder
+      // _change_data.
+      // The code here gets a bit complicated to accommodate two corner cases: an empty subdir
+      // can't be passed to new Path() at all, and a single-level subdir won't have a trailing
+      // slash.
+      if (subDir == cdcPartitionFalse) {
+        new Path(filename)
+      } else if (subDir.startsWith(cdcPartitionTrue)) {
+        val cleanedSubDir = cdcPartitionTrueRegex.replaceFirstIn(subDir, CDC_LOCATION)
+        new Path(cleanedSubDir, filename)
+      } else if (subDir.startsWith(cdcPartitionFalse)) {
+        // We need to remove the trailing slash in addition to the directory - otherwise
+        // it'll be interpreted as an absolute path and fail.
+        val cleanedSubDir = subDir.stripPrefix(cdcPartitionFalse + "/")
+        new Path(cleanedSubDir, filename)
+      } else {
+        new Path(subDir, filename)
+      }
     }.getOrElse(new Path(filename)) // or directly write out to the output path
 
     addedFiles.append((partitionValues, relativePath.toUri.toString))
@@ -139,7 +189,17 @@ class DelayedCommitProtocol(
       f: (Map[String, String], String),
       stat: FileStatus,
       taskContext: TaskAttemptContext): FileAction = {
-    AddFile(f._2, f._1, stat.getLen, stat.getModificationTime, true)
+    // The partitioning in the Delta log action will be read back as part of the data, so our
+    // virtual CDC_PARTITION_COL needs to be stripped out.
+    val partitioning = f._1.filter { case (k, v) => k != CDC_PARTITION_COL }
+    f._1.get(CDC_PARTITION_COL) match {
+      case Some("true") =>
+        val partitioning = f._1.filter { case (k, v) => k != CDC_PARTITION_COL }
+        AddCDCFile(f._2, partitioning, stat.getLen)
+      case _ =>
+        val addFile = AddFile(f._2, partitioning, stat.getLen, stat.getModificationTime, true)
+        addFile
+    }
   }
 
   override def commitTask(taskContext: TaskAttemptContext): TaskCommitMessage = {

@@ -394,7 +394,9 @@ trait DeltaConfigsBase extends DeltaLogging {
     "needs to be a boolean.")
 
   /**
-   * Enable change data feed output. Not implemented.
+   * Enable change data feed output.
+   * When enabled, DELETE, UPDATE, and MERGE INTO operations will need to do additional work to
+   * output their change data in an efficiently readable format.
    */
   val CHANGE_DATA_FEED = buildConfig[Boolean](
     "enableChangeDataFeed",

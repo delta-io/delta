@@ -1448,40 +1448,6 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  test("change data capture not implemented") {
-    withTable("tbl") {
-      sql("CREATE TABLE tbl(id INT) USING DELTA")
-      val ex = intercept[AnalysisException] {
-        sql(s"ALTER TABLE tbl SET TBLPROPERTIES (${DeltaConfigs.CHANGE_DATA_FEED.key} = true)")
-      }
-
-      assert(ex.getMessage.contains("Configuration delta.enableChangeDataFeed cannot be set"))
-    }
-  }
-
-  test("change data capture write not implemented") {
-    withTempDir { dir =>
-      val path = dir.getAbsolutePath
-      spark.range(10).write.format("delta").save(path)
-
-      // Side channel since the config can't normally be set.
-      val log = DeltaLog.forTable(spark, path)
-      log.store.write(
-        deltaFile(log.logPath, 1),
-        Iterator(log.snapshot.metadata.copy(
-          configuration = Map(DeltaConfigs.CHANGE_DATA_FEED.key -> "true")).json),
-        overwrite = false,
-        log.newDeltaHadoopConf())
-      log.update()
-
-      val ex = intercept[AnalysisException] {
-        spark.range(10).write.mode("append").format("delta").save(path)
-      }
-
-      assert(ex.getMessage.contains("Cannot write to table with delta.enableChangeDataFeed set"))
-    }
-  }
-
   test("An external write should be reflected during analysis of a path based query") {
     val tempDir = Utils.createTempDir().toString
     spark.range(10).coalesce(1).write.format("delta").mode("append").save(tempDir)
