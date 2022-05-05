@@ -734,6 +734,7 @@ lazy val flink = (project in file("flink"))
       "-windowtitle", "Flink/Delta Connector " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
       "-noqualifier", "java.lang",
       "-tag", "implNote:a:Implementation Note:",
+      "-tag", "apiNote:a:API Note:",
       "-Xdoclint:all"
     ),
     Compile / doc / javacOptions := (JavaUnidoc / unidoc / javacOptions).value,

@@ -96,17 +96,29 @@ class WorkingDirectory(object):
 if __name__ == "__main__":
     """
     Script to run integration tests which are located in the examples directory.
-    call this by running "python3 run-integration-tests.py"
-    additionally the version can be provided as a command line argument.
+    Call this by running "python3 run-examples.py --version <version>", where <version> is the
+    Delta Connectors repo version to use.
+    
+    There are two version 'modes' you should use to run this file.
+    1. using published or staged jar: explicitly pass in the --version argument.
+    2. using locally-generated jar (e.g. 0.4.0-SNAPSHOT): explicitly pass in the --version argument
+       and --use-local-cache argument.
+       
+       In this mode, ensure that the local jar exists for all scala versions. You can generate it
+       by running the following commands in the root connectors folder.
+       
+       build/sbt '++2.11.12 publishM2'
+       build/sbt '++2.12.8 publishM2'
+       build/sbt '++2.13.8 publishM2'
     """
 
+    # get the version of the package
     root_dir = path.dirname(__file__)
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--version",
-        required=False,
-        default="0.3.0",
+        required=True,
         help="Delta Standalone version to use to run the integration tests")
     parser.add_argument(
         "--maven-repo",

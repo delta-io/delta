@@ -55,6 +55,22 @@ import org.apache.hadoop.fs.Path;
  * To run with SBT:
  * - cd connectors/examples
  * - build/sbt "convertToDelta/runMain example.ConvertToDelta"
+ * - If you encounter any sort of errors like
+ *      ```
+ *      sbt.ResolveException: unresolved dependency: javax.servlet#javax.servlet-api;3.1.0
+ *      ```
+ *   then clear your ~/.ivy2/cache/io.delta
+ *
+ * To run with IntelliJ:
+ * - make sure that this `convert-to-delta` folder is marked as a Module in IntelliJ.
+ *   e.g. File > Project Structure... > Modules > '+' > Import Module >
+ *        Create module from existing sources
+ *
+ * - then, mark the parent `java` folder as Sources Root.
+ *   e.g. right click on `java` > Mark Directory as > Sources Root
+ *
+ * - then, import `pom.xml` as a Maven project.
+ *   e.g. right click on `pom.xml` > Add as Maven Project
  *
  * Find the converted table in: target/classes/$targetTable
  */

@@ -38,7 +38,7 @@ def getStandaloneVersion(): String = {
     println("Using Delta version " + version)
     version
   } else {
-    "0.3.0"
+    "0.4.0"
   }
 }
 
