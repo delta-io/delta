@@ -429,7 +429,7 @@ trait DeltaSQLConfBase {
       .internal()
       .doc("The limit at which we will start parallelizing the checkpoint. We will attempt to " +
           "write a maximum of this many actions per checkpoint file.")
-      .intConf
+      .longConf
       .checkValue(_ > 0, "partSize has to be positive")
       .createOptional
 

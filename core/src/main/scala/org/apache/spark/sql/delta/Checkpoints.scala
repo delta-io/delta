@@ -41,7 +41,7 @@ import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Cast, ElementAt, Literal}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
-import org.apache.spark.sql.functions.{col, count, struct, when}
+import org.apache.spark.sql.functions.{col, coalesce, struct, when}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
@@ -326,7 +326,7 @@ object Checkpoints extends DeltaLogging {
     // Use the string in the closure as Path is not Serializable.
     val paths = checkpointPaths.map(_.toString)
     val base = snapshot.stateDS
-      .repartition(paths.length)
+      .repartition(paths.length, coalesce(col("add.path"), col("remove.path")))
       .map { action =>
         if (action.add != null) {
           numOfFiles.add(1)
@@ -412,23 +412,27 @@ object Checkpoints extends DeltaLogging {
       }.collect()
 
     if (useRename) {
-      val failedPaths = writtenPaths.zipWithIndex.flatMap { case (writtenPath, index) =>
-        val src = new Path(writtenPath)
-        val dest = new Path(paths(index))
-        val fs = dest.getFileSystem(hadoopConf)
-        var renameDone = false
-        if (!fs.rename(src, dest)) {
-          fs.delete(src, false)
-          Some((src, dest))
-        } else {
-          None
+      var renameDone = false
+      try {
+        writtenPaths.zipWithIndex.foreach { case (writtenPath, index) =>
+          val src = new Path(writtenPath)
+          val dest = new Path(paths(index))
+          val fs = dest.getFileSystem(hadoopConf)
+          if (!fs.rename(src, dest)) {
+            throw DeltaErrors.failOnCheckpoint(src, dest)
+          }
         }
-      }
-      // Fail the checkpoint write after letting any failed renames cleanup
-      failedPaths.headOption.foreach { case (src, dest) =>
-        // There should be only one writer writing the checkpoint file, so there must be
-        // something wrong here.
-        throw DeltaErrors.failOnCheckpoint(src, dest)
+        renameDone = true
+      } finally {
+        if (!renameDone) {
+          writtenPaths.foreach { writtenPath =>
+            scala.util.Try {
+              val src = new Path(writtenPath)
+              val fs = src.getFileSystem(hadoopConf)
+              fs.delete(src, false)
+            }
+          }
+        }
       }
     }
 
