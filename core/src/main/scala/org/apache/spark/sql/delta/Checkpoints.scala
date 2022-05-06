@@ -413,11 +413,11 @@ object Checkpoints extends DeltaLogging {
 
     if (useRename) {
       var renameDone = false
+      val fs = snapshot.path.getFileSystem(hadoopConf)
       try {
         writtenPaths.zipWithIndex.foreach { case (writtenPath, index) =>
           val src = new Path(writtenPath)
           val dest = new Path(paths(index))
-          val fs = dest.getFileSystem(hadoopConf)
           if (!fs.rename(src, dest)) {
             throw DeltaErrors.failOnCheckpoint(src, dest)
           }
@@ -428,7 +428,6 @@ object Checkpoints extends DeltaLogging {
           writtenPaths.foreach { writtenPath =>
             scala.util.Try {
               val src = new Path(writtenPath)
-              val fs = src.getFileSystem(hadoopConf)
               fs.delete(src, false)
             }
           }
