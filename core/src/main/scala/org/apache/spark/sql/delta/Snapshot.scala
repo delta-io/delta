@@ -138,16 +138,17 @@ class Snapshot(
               col("add.modificationTime"),
               col("add.dataChange"),
               col(ADD_STATS_TO_USE_COL_NAME).as("stats"),
-              col("add.tags"))))
+              col("add.tags")
+            )))
           .withColumn("remove", when(
             col("remove.path").isNotNull,
             col("remove").withField("path", col(REMOVE_PATH_CANONICAL_COL_NAME))))
           .as[SingleAction]
           .mapPartitions { iter =>
-            val state = new InMemoryLogReplay(
-              localMinFileRetentionTimestamp,
-              localMinSetTransactionRetentionTimestamp)
-
+            val state: LogReplay =
+                new InMemoryLogReplay(
+                  localMinFileRetentionTimestamp,
+                  localMinSetTransactionRetentionTimestamp)
             state.append(0, iter.map(_.unwrap))
             state.checkpoint.map(_.wrap)
           }

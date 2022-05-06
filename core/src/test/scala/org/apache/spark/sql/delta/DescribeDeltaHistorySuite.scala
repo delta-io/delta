@@ -354,6 +354,8 @@ trait DescribeDeltaHistorySuiteBase
   }
 
   test("operations - upgrade protocol") {
+    val readerVersion = Action.supportedProtocolVersion().minReaderVersion
+    val writerVersion = Action.supportedProtocolVersion().minWriterVersion
     withTempDir { path =>
       val log = DeltaLog.forTable(spark, path)
       log.ensureLogDirectoryExist()
@@ -367,8 +369,8 @@ trait DescribeDeltaHistorySuiteBase
       checkLastOperation(
         path.toString,
         Seq("UPGRADE PROTOCOL",
-          s"""{"minReaderVersion":${Action.readerVersion},""" +
-            s""""minWriterVersion":${Action.writerVersion}}"""),
+          s"""{"minReaderVersion":$readerVersion,""" +
+            s""""minWriterVersion":$writerVersion}"""),
         Seq($"operation", $"operationParameters.newProtocol"))
     }
   }

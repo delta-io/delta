@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.{FileNotFoundException, IOException}
+import java.net.URI
 import java.util.ConcurrentModificationException
 
 import org.apache.spark.sql.delta.actions.{CommitInfo, FileAction, Metadata, Protocol}

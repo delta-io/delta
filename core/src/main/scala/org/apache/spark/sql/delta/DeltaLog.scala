@@ -289,13 +289,14 @@ class DeltaLog private(
    * allowed to read the table that is using the given `protocol`.
    */
   def protocolRead(protocol: Protocol): Unit = {
-    if (protocol != null &&
-        Action.readerVersion < protocol.minReaderVersion) {
+    val supportedReaderVersion =
+      Action.supportedProtocolVersion(Some(spark.sessionState.conf)).minReaderVersion
+    if (protocol != null && supportedReaderVersion < protocol.minReaderVersion) {
       recordDeltaEvent(
         this,
         "delta.protocol.failure.read",
         data = Map(
-          "clientVersion" -> Action.readerVersion,
+          "clientVersion" -> supportedReaderVersion,
           "minReaderVersion" -> protocol.minReaderVersion))
       throw new InvalidProtocolVersionException
     }
@@ -306,12 +307,14 @@ class DeltaLog private(
    * allowed to write to the table that is using the given `protocol`.
    */
   def protocolWrite(protocol: Protocol, logUpgradeMessage: Boolean = true): Unit = {
-    if (protocol != null && Action.writerVersion < protocol.minWriterVersion) {
+    val supportedWriterVersion =
+      Action.supportedProtocolVersion(Some(spark.sessionState.conf)).minWriterVersion
+    if (protocol != null && supportedWriterVersion < protocol.minWriterVersion) {
       recordDeltaEvent(
         this,
         "delta.protocol.failure.write",
         data = Map(
-          "clientVersion" -> Action.writerVersion,
+          "clientVersion" -> supportedWriterVersion,
           "minWriterVersion" -> protocol.minWriterVersion))
       throw new InvalidProtocolVersionException
     }

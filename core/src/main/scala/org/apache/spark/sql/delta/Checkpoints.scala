@@ -447,10 +447,10 @@ object Checkpoints extends DeltaLogging {
    */
   private[delta] def buildCheckpoint(state: DataFrame, snapshot: Snapshot): DataFrame = {
     val additionalCols = new mutable.ArrayBuffer[Column]()
+    val sessionConf = state.sparkSession.sessionState.conf
     if (DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_JSON.fromMetaData(snapshot.metadata)) {
       additionalCols += col("add.stats").as("stats")
     }
-    val sessionConf = state.sparkSession.sessionState.conf
     // We provide fine grained control using the session conf for now, until users explicitly
     // opt in our out of the struct conf.
     val includeStructColumns = getWriteStatsAsStructConf(sessionConf, snapshot)

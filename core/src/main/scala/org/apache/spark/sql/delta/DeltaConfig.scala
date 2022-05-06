@@ -240,10 +240,10 @@ trait DeltaConfigsBase extends DeltaLogging {
    */
   val MIN_READER_VERSION = buildConfig[Int](
     "minReaderVersion",
-    Action.readerVersion.toString,
+    Action.supportedProtocolVersion().minReaderVersion.toString,
     _.toInt,
-    v => v > 0 && v <= Action.readerVersion,
-    s"needs to be an integer between [1, ${Action.readerVersion}].")
+    v => v > 0 && v <= Action.supportedProtocolVersion().minReaderVersion,
+    s"needs to be an integer between [1, ${Action.supportedProtocolVersion().minReaderVersion}].")
 
   /**
    * The protocol reader version modelled as a table property. This property is *not* stored as
@@ -252,10 +252,10 @@ trait DeltaConfigsBase extends DeltaLogging {
    */
   val MIN_WRITER_VERSION = buildConfig[Int](
     "minWriterVersion",
-    Action.writerVersion.toString,
+    Action.supportedProtocolVersion().minWriterVersion.toString,
     _.toInt,
-    v => v > 0 && v <= Action.writerVersion,
-    s"needs to be an integer between [1, ${Action.writerVersion}].")
+    v => v > 0 && v <= Action.supportedProtocolVersion().minWriterVersion,
+    s"needs to be an integer between [1, ${Action.supportedProtocolVersion().minWriterVersion}].")
 
   /**
    * The shortest duration we have to keep delta files around before deleting them. We can only
@@ -338,6 +338,7 @@ trait DeltaConfigsBase extends DeltaLogging {
     _ => true,
     "needs to be a boolean.",
     Some(Protocol(0, 2)))
+
 
   /**
    * The number of columns to collect stats on for data skipping. A value of -1 means collecting
