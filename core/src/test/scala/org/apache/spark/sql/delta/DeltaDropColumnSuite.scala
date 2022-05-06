@@ -195,7 +195,7 @@ class DeltaDropColumnSuite extends QueryTest
     }
   }
 
-  test("drop column with constraints - map element") {
+  test("drop column with constraints - map element - oss only") {
     def drop(table: String, columns: Seq[String]): Unit =
       sql(s"alter table $table drop column (${columns.mkString(",")})")
 

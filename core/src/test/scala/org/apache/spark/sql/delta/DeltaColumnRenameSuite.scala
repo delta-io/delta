@@ -245,6 +245,7 @@ class DeltaColumnRenameSuite extends QueryTest
         spark.sql("alter table t1 rename column arr to arr1")
       }
 
+
       // cannot rename b because its child is referenced
       assertException("Cannot rename column b") {
         spark.sql("alter table t1 rename column b to b1")
@@ -280,7 +281,7 @@ class DeltaColumnRenameSuite extends QueryTest
     }
   }
 
-  test("rename with constraints - map element") {
+  test("rename with constraints - map element - oss only") {
     withTable("t1") {
       val schemaWithNotNull =
         simpleNestedData.schema.toDDL.replace("c: STRING", "c: STRING NOT NULL")
