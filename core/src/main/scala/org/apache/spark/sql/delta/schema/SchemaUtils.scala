@@ -607,7 +607,7 @@ object SchemaUtils {
     }
     if (slicePosition == length) {
       if (position.length > 1) {
-        throw new AnalysisException(s"Struct not found at position $slicePosition")
+        throw DeltaErrors.addColumnStructNotFoundException(slicePosition.toString)
       }
       return StructType(schema :+ column)
     }

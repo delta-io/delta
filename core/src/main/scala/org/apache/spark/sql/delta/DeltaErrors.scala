@@ -287,6 +287,12 @@ object DeltaErrors
       messageParameters = Array(colName, scheme))
   }
 
+  def addColumnStructNotFoundException(pos: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_ADD_COLUMN_STRUCT_NOT_FOUND",
+      messageParameters = Array(pos))
+  }
+
   def operationNotSupportedException(
       operation: String, tableIdentifier: TableIdentifier): Throwable = {
     new DeltaAnalysisException(
@@ -342,7 +348,10 @@ object DeltaErrors
 
   def notADeltaSourceException(command: String, plan: Option[LogicalPlan] = None): Throwable = {
     val planName = if (plan.isDefined) plan.toString else ""
-    new AnalysisException(s"$command destination only supports Delta sources.\n$planName")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_SOURCE",
+      messageParameters = Array(command, s"$planName")
+    )
   }
 
   def partitionColumnCastFailed(
@@ -671,7 +680,10 @@ object DeltaErrors
   }
 
   def unrecognizedLogFile(path: Path): Throwable = {
-    new UnsupportedOperationException(s"Unrecognized log file $path")
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNRECOGNIZED_LOGFILE",
+      messageParameters = Array(s"$path")
+    )
   }
 
   def modifyAppendOnlyTableException: Throwable = {
@@ -688,7 +700,10 @@ object DeltaErrors
 
   def deltaVersionsNotContiguousException(
       spark: SparkSession, deltaVersions: Seq[Long]): Throwable = {
-    new IllegalStateException(s"Versions ($deltaVersions) are not contiguous.")
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_VERSIONS_NOT_CONTIGUOUS",
+      messageParameters = Array(deltaVersions.toString())
+    )
   }
 
   def actionNotFoundException(action: String, version: Long): Throwable = {
@@ -735,9 +750,11 @@ object DeltaErrors
         "REPLACE table and an AS SELECT query is not provided.")
   }
 
-  def outputModeNotSupportedException(dataSource: String, outputMode: OutputMode): Throwable = {
-    new AnalysisException(
-      s"Data source $dataSource does not support $outputMode output mode")
+  def outputModeNotSupportedException(dataSource: String, outputMode: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_OUTPUT_MODE",
+      messageParameters = Array(dataSource, outputMode)
+    )
   }
 
   def updateSetColumnNotFoundException(col: String, colList: Seq[String]): Throwable = {
@@ -753,9 +770,10 @@ object DeltaErrors
   }
 
   def updateNonStructTypeFieldNotSupportedException(col: String, s: DataType): Throwable = {
-    new AnalysisException(
-      s"Updating nested fields is only supported for StructType, but you are trying to update " +
-        s"a field of ${formatColumn(col)}, which is of type: $s.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_FIELD_UPDATE_NON_STRUCT",
+      messageParameters = Array(s"${formatColumn(col)}", s"$s")
+    )
   }
 
   def truncateTablePartitionNotSupportedException: Throwable = {
@@ -997,6 +1015,13 @@ object DeltaErrors
     new AnalysisException(s"No reproducible commits found at $logPath")
   }
 
+  def unsupportedAbsPathAddFile(str: String): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNSUPPORTED_ABS_PATH_ADD_FILE",
+      messageParameters = Array(str)
+    )
+  }
+
   case class TimestampEarlierThanCommitRetentionException(
       userTimestamp: java.sql.Timestamp,
       commitTs: java.sql.Timestamp,
@@ -1009,10 +1034,10 @@ object DeltaErrors
       userTimestamp: java.sql.Timestamp,
       commitTs: java.sql.Timestamp,
       timestampString: String): Throwable = {
-    new AnalysisException(
-      s"""The provided timestamp ($userTimestamp) is after the latest version available to this
-         |table ($commitTs). Please use a timestamp before or at $timestampString.
-         """.stripMargin)
+    new DeltaAnalysisException(
+      errorClass = "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
+      messageParameters = Array(s"$userTimestamp", s"$commitTs", timestampString)
+    )
   }
 
   def timestampInvalid(expr: Expression): Throwable = {
@@ -1043,9 +1068,9 @@ object DeltaErrors
   def restoreTimestampGreaterThanLatestException(
       userTimestamp: String,
       latestTimestamp: String): Throwable = {
-    new AnalysisException(
-      s"Cannot restore table to timestamp ($userTimestamp) as it is after the latest version " +
-        s"available. Please use a timestamp before ($latestTimestamp)"
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CANNOT_RESTORE_TIMESTAMP_GREATER",
+      messageParameters = Array(userTimestamp, latestTimestamp)
     )
   }
 
@@ -1098,6 +1123,13 @@ object DeltaErrors
     new DeltaAnalysisException(
       errorClass = "DELTA_MERGE_INVALID_WHEN_NOT_MATCHED_CLAUSE",
       messageParameters = Array(clause)
+    )
+  }
+
+  def unexpectedPartialScan(path: Path): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNEXPECTED_PARTIAL_SCAN",
+      messageParameters = Array(s"$path")
     )
   }
 
@@ -1252,6 +1284,13 @@ object DeltaErrors
   def updateSchemaMismatchExpression(from: StructType, to: StructType): Throwable = {
     new AnalysisException(s"Cannot cast ${from.catalogString} to ${to.catalogString}. All nested " +
       s"columns must match.")
+  }
+
+  def extractReferencesFieldNotFound(field: String, exception: Throwable): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "EXTRACT_REFERENCES_FIELD_NOT_FOUND",
+      messageParameters = Array(field),
+      cause = exception)
   }
 
   def addFilePartitioningMismatchException(
@@ -1420,6 +1459,20 @@ object DeltaErrors
   def unrecognizedInvariant(): Throwable = {
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_UNRECOGNIZED_INVARIANT",
+      messageParameters = Array.empty
+    )
+  }
+
+  def notNullColumnNotFoundInStruct(struct: String): Throwable = {
+    new DeltaIndexOutOfBoundsException(
+      errorClass = "NOT_NULL_COLUMN_NOT_FOUND_IN_STRUCT",
+      messageParameters = Array(struct)
+    )
+  }
+
+  def unSupportedInvariantNonStructType: Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNSUPPORTED_INVARIANT_NON_STRUCT",
       messageParameters = Array.empty
     )
   }
@@ -1995,6 +2048,15 @@ class DeltaIllegalStateException(
     cause: Throwable = null)
   extends IllegalStateException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters), cause)
+    with DeltaThrowable {
+  override def getErrorClass: String = errorClass
+}
+
+class DeltaIndexOutOfBoundsException(
+  errorClass: String,
+  messageParameters: Array[String] = Array.empty)
+  extends IndexOutOfBoundsException(
+    DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
 }

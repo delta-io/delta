@@ -17,6 +17,9 @@
 package org.apache.spark.sql.delta
 
 import java.io.{PrintWriter, StringWriter}
+import java.sql.Timestamp
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 import scala.sys.process.Process
 
@@ -48,8 +51,7 @@ import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
-import org.apache.spark.sql.types.{DateType, IntegerType, MetadataBuilder, NullType, StringType, StructField, StructType}
-
+import org.apache.spark.sql.types.{DataTypes, DateType, IntegerType, MetadataBuilder, NullType, StringType, StructField, StructType}
 
 trait DeltaErrorsSuiteBase
     extends QueryTest
@@ -1175,6 +1177,108 @@ trait DeltaErrorsSuiteBase
       assert(e.getErrorClass == "FAILED_INFER_SCHEMA")
       assert(e.getSqlState == "22000")
       assert(e.getMessage == "Failed to infer schema from the given list of files.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.unexpectedPartialScan(new Path("path-1"))
+      }
+      assert(e.getErrorClass == "DELTA_UNEXPECTED_PARTIAL_SCAN")
+      assert(e.getSqlState == "22000")
+      assert(e.getMessage == "Expect a full scan of Delta sources, but found a partial scan. " +
+        "path:path-1")
+    }
+    {
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.unrecognizedLogFile(new Path("path-1"))
+      }
+      assert(e.getErrorClass == "DELTA_UNRECOGNIZED_LOGFILE")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Unrecognized log file path-1")
+    }
+    {
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.unsupportedAbsPathAddFile("path-1")
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_ABS_PATH_ADD_FILE")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "path-1 does not support adding files with an absolute path")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.outputModeNotSupportedException("source1", "sample")
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_OUTPUT_MODE")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Data source source1 does not support sample output mode")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        val sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
+        throw DeltaErrors.timestampGreaterThanLatestCommit(
+          new Timestamp(sdf.parse("2022-02-28 10:30:00").getTime),
+          new Timestamp(sdf.parse("2022-02-28 10:00:00").getTime), "2022-02-28 10:00:00")
+      }
+      assert(e.getErrorClass == "DELTA_TIMESTAMP_GREATER_THAN_COMMIT")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+    """The provided timestamp (2022-02-28 10:30:00.0) is after the latest version available to this
+          |table (2022-02-28 10:00:00.0). Please use a timestamp before or """.stripMargin +
+          "at 2022-02-28 10:00:00.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.notADeltaSourceException("sample")
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_SOURCE")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "sample destination only supports Delta sources.\n")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.restoreTimestampGreaterThanLatestException("2022-02-02 12:12:12",
+          "2022-02-02 12:12:10")
+      }
+      assert(e.getErrorClass == "DELTA_CANNOT_RESTORE_TIMESTAMP_GREATER")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Cannot restore table to timestamp (2022-02-02 12:12:12) as it is " +
+        "after the latest version available. Please use a timestamp before (2022-02-02 12:12:10)")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.addColumnStructNotFoundException("pos1")
+      }
+      assert(e.getErrorClass == "DELTA_ADD_COLUMN_STRUCT_NOT_FOUND")
+      assert(e.getSqlState == "2F000")
+      assert(e.getMessage == "Struct not found at position pos1")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.updateNonStructTypeFieldNotSupportedException("col1", DataTypes.DateType)
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_FIELD_UPDATE_NON_STRUCT")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Updating nested fields is only supported for StructType, but you " +
+        "are trying to update a field of `col1`, which is of type: DateType.")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.extractReferencesFieldNotFound("struct1",
+          DeltaErrors.updateSchemaMismatchExpression(
+            StructType(Seq(StructField("c0", IntegerType))),
+            StructType(Seq(StructField("c1", IntegerType)))
+          ))
+      }
+      assert(e.getErrorClass == "EXTRACT_REFERENCES_FIELD_NOT_FOUND")
+      assert(e.getSqlState == "22000")
+      assert(e.getMessage == "Field struct1 could not be found when extracting references.")
+    }
+    {
+      val e = intercept[DeltaIndexOutOfBoundsException] {
+        throw DeltaErrors.notNullColumnNotFoundInStruct("struct1")
+      }
+      assert(e.getErrorClass == "NOT_NULL_COLUMN_NOT_FOUND_IN_STRUCT")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Not nullable column not found in struct: struct1")
     }
   }
 }

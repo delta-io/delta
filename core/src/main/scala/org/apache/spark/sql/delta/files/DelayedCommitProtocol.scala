@@ -23,6 +23,7 @@ import java.util.UUID
 import scala.collection.mutable.ArrayBuffer
 import scala.util.Random
 
+import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction}
 import org.apache.spark.sql.delta.util.{DateFormatter, PartitionUtils, TimestampFormatter}
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -131,8 +132,7 @@ class DelayedCommitProtocol(
 
   override def newTaskTempFileAbsPath(
       taskContext: TaskAttemptContext, absoluteDir: String, ext: String): String = {
-    throw new UnsupportedOperationException(
-      s"$this does not support adding files with an absolute path")
+    throw DeltaErrors.unsupportedAbsPathAddFile(s"$this")
   }
 
   protected def buildActionFromAddedFile(

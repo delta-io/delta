@@ -86,6 +86,10 @@
     "message" : [ "Cannot set a new txn as active when one is already active" ],
     "sqlState" : "42000"
   },
+  "DELTA_ADD_COLUMN_STRUCT_NOT_FOUND" : {
+    "message" : [ "Struct not found at position %s" ],
+    "sqlState" : "2F000"
+  },
   "DELTA_AGGREGATION_NOT_SUPPORTED" : {
     "message" : [ "Aggregate functions are not supported in the <operation> <predicate>." ],
     "sqlState" : "0A000"
@@ -128,6 +132,10 @@
   },
   "DELTA_CANNOT_RESOLVE_SOURCE_COLUMN" : {
     "message" : [ "Couldn't resolve qualified source column <columnName> within the source query." ],
+    "sqlState" : "42000"
+  },
+  "DELTA_CANNOT_RESTORE_TIMESTAMP_GREATER" : {
+    "message" : [ "Cannot restore table to timestamp (%s) as it is after the latest version available. Please use a timestamp before (%s)" ],
     "sqlState" : "42000"
   },
   "DELTA_CONSTRAINT_ALREADY_EXISTS" : {
@@ -294,9 +302,25 @@
     "message" : [ "<tableName> is not a Delta table. <operation> is only supported for Delta tables." ],
     "sqlState" : "0A000"
   },
+  "DELTA_TIMESTAMP_GREATER_THAN_COMMIT" : {
+    "message" : [ "The provided timestamp (%s) is after the latest version available to this", "table (%s). Please use a timestamp before or at %s." ],
+    "sqlState" : "42000"
+  },
+  "DELTA_UNEXPECTED_PARTIAL_SCAN" : {
+    "message" : [ "Expect a full scan of Delta sources, but found a partial scan. path:%s" ],
+    "sqlState" : "22000"
+  },
   "DELTA_UNRECOGNIZED_INVARIANT" : {
     "message" : [ "Unrecognized invariant. Please upgrade your Spark version." ],
     "sqlState" : "42000"
+  },
+  "DELTA_UNRECOGNIZED_LOGFILE" : {
+    "message" : [ "Unrecognized log file %s" ],
+    "sqlState" : "42000"
+  },
+  "DELTA_UNSUPPORTED_ABS_PATH_ADD_FILE" : {
+    "message" : [ "%s does not support adding files with an absolute path" ],
+    "sqlState" : "0A000"
   },
   "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP" : {
     "message" : [ "Unsupported ALTER TABLE REPLACE COLUMNS operation. Reason: <details>", "", "Failed to change schema from:", "<oldSchema>", "to:", "<newSchema>" ],
@@ -310,8 +334,24 @@
     "message" : [ "%s cannot be used in a generated column" ],
     "sqlState" : "0A000"
   },
+  "DELTA_UNSUPPORTED_FIELD_UPDATE_NON_STRUCT" : {
+    "message" : [ "Updating nested fields is only supported for StructType, but you are trying to update a field of %s, which is of type: %s." ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_UNSUPPORTED_INVARIANT_NON_STRUCT" : {
+    "message" : [ "Invariants on nested fields other than StructTypes are not supported." ],
+    "sqlState" : "0A000"
+  },
   "DELTA_UNSUPPORTED_NESTED_FIELD_IN_OPERATION" : {
     "message" : [ "Nested field is not supported in the %s (field = %s)." ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_UNSUPPORTED_OUTPUT_MODE" : {
+    "message" : [ "Data source %s does not support %s output mode" ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_UNSUPPORTED_SOURCE" : {
+    "message" : [ "%s destination only supports Delta sources.\n%s" ],
     "sqlState" : "0A000"
   },
   "DELTA_UNSUPPORTED_TIME_TRAVEL_MULTIPLE_FORMATS" : {
@@ -322,6 +362,10 @@
     "message" : [ "Cannot time travel views, subqueries or streams." ],
     "sqlState" : "0A000"
   },
+  "DELTA_VERSIONS_NOT_CONTIGUOUS" : {
+    "message" : [ "Versions (%s) are not contiguous." ],
+    "sqlState" : "0A000"
+  },
   "DELTA_VIOLATE_CONSTRAINT_WITH_VALUES" : {
     "message" : [ "CHECK constraint %s %s violated by row with values:", "%s" ],
     "sqlState" : "23001"
@@ -329,6 +373,10 @@
   "DUPLICATE_COLUMNS_ON_UPDATE_TABLE" : {
     "message" : [ "<message>\nPlease remove duplicate columns before you update your table." ],
     "sqlState" : "42000"
+  },
+  "EXTRACT_REFERENCES_FIELD_NOT_FOUND" : {
+    "message" : [ "Field %s could not be found when extracting references." ],
+    "sqlState" : "22000"
   },
   "FAILED_CAST_PARTITION_VALUE" : {
     "message" : [ "Failed to cast partition value `<value>` to <dataType>" ],
@@ -435,6 +483,10 @@
   },
   "NOT_FOUND_FILE_TO_BE_REWRITTEN" : {
     "message" : [ "File (<path>) to be rewritten not found among candidate files:\n<pathList>" ],
+    "sqlState" : "42000"
+  },
+  "NOT_NULL_COLUMN_NOT_FOUND_IN_STRUCT" : {
+    "message" : [ "Not nullable column not found in struct: %s" ],
     "sqlState" : "42000"
   },
   "NO_COMMITS_FOUND" : {
