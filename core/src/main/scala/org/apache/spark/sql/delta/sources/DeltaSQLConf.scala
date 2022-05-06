@@ -424,6 +424,14 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val LAST_CHECKPOINT_CHECKSUM_ENABLED =
+    buildConf("lastCheckpoint.checksum.enabled")
+      .internal()
+      .doc("Controls whether to write the checksum while writing the LAST_CHECKPOINT file and" +
+        " whether to validate it while reading the LAST_CHECKPOINT file")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_WRITE_CHECKSUM_ENABLED =
     buildConf("writeChecksumFile.enabled")
       .doc("Whether the checksum file can be written.")
