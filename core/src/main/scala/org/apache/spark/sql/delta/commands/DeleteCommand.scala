@@ -34,27 +34,10 @@ import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.functions.udf
 
-/**
- * Performs a Delete based on the search condition
- *
- * Algorithm:
- *   1) Scan all the files and determine which files have
- *      the rows that need to be deleted.
- *   2) Traverse the affected files and rebuild the touched files.
- *   3) Use the Delta protocol to atomically write the remaining rows to new files and remove
- *      the affected files that are identified in step 1.
- */
-case class DeleteCommand(
-    deltaLog: DeltaLog,
-    target: LogicalPlan,
-    condition: Option[Expression])
-  extends LeafRunnableCommand with DeltaCommand {
-
-  override def innerChildren: Seq[QueryPlan[_]] = Seq(target)
-
+trait DeleteCommandMetrics { self: LeafRunnableCommand =>
   @transient private lazy val sc: SparkContext = SparkContext.getOrCreate()
 
-  override lazy val metrics = Map[String, SQLMetric](
+  override lazy val metrics: Map[String, SQLMetric] = Map[String, SQLMetric](
     "numRemovedFiles" -> createMetric(sc, "number of files removed."),
     "numAddedFiles" -> createMetric(sc, "number of files added."),
     "numDeletedRows" -> createMetric(sc, "number of rows deleted."),
@@ -72,6 +55,25 @@ case class DeleteCommand(
     "scanTimeMs" -> createMetric(sc, "time taken to scan the files for matches"),
     "rewriteTimeMs" -> createMetric(sc, "time taken to rewrite the matched files")
   )
+}
+
+/**
+ * Performs a Delete based on the search condition
+ *
+ * Algorithm:
+ *   1) Scan all the files and determine which files have
+ *      the rows that need to be deleted.
+ *   2) Traverse the affected files and rebuild the touched files.
+ *   3) Use the Delta protocol to atomically write the remaining rows to new files and remove
+ *      the affected files that are identified in step 1.
+ */
+case class DeleteCommand(
+    deltaLog: DeltaLog,
+    target: LogicalPlan,
+    condition: Option[Expression])
+  extends LeafRunnableCommand with DeltaCommand with DeleteCommandMetrics {
+
+  override def innerChildren: Seq[QueryPlan[_]] = Seq(target)
 
   final override def run(sparkSession: SparkSession): Seq[Row] = {
     recordDeltaOperation(deltaLog, "delta.dml.delete") {

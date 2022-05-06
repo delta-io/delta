@@ -22,14 +22,25 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.types.{ArrayType, IntegerType, MapType, StringType, StructType}
 
-class DeltaDropColumnSuite extends QueryTest with DeltaArbitraryColumnNameSuiteBase {
+class DeltaDropColumnSuite extends QueryTest
+  with DeltaArbitraryColumnNameSuiteBase {
 
   override protected val sparkConf: SparkConf =
     super.sparkConf.set(DeltaSQLConf.DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED.key, "true")
 
-  test("drop column disallowed with sql flag off") {
+  protected def dropTest(testName: String)(f: ((String, Seq[String]) => Unit) => Unit): Unit = {
+    test(testName) {
+      def drop(table: String, columns: Seq[String]): Unit =
+        sql(s"alter table $table drop column (${columns.mkString(",")})")
+      f(drop)
+
+    }
+  }
+
+  dropTest("drop column disallowed with sql flag off") { drop =>
     withSQLConf(DeltaSQLConf.DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED.key -> "false") {
       withTable("t1") {
         createTableWithSQLAPI("t1",
@@ -37,34 +48,34 @@ class DeltaDropColumnSuite extends QueryTest with DeltaArbitraryColumnNameSuiteB
           Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))
 
         assertException("DROP COLUMN is not supported for your Delta table") {
-          spark.sql(s"alter table t1 drop column arr")
+          drop("t1", "arr" :: Nil)
         }
       }
     }
   }
 
-  test("drop column disallowed with no mapping mode") {
+  dropTest("drop column disallowed with no mapping mode") { drop =>
     withTable("t1") {
       createTableWithSQLAPI("t1", simpleNestedData)
 
       assertException("DROP COLUMN is not supported for your Delta table") {
-        spark.sql(s"alter table t1 drop column arr")
+        drop("t1", "arr" :: Nil)
       }
     }
   }
 
-  test("drop column - basic") {
+  dropTest("drop column - basic") { drop =>
     withTable("t1") {
       createTableWithSQLAPI("t1",
         simpleNestedData,
         Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))
 
       // drop single column
-      spark.sql(s"alter table t1 drop column arr")
+      drop("t1", "arr" :: Nil)
       checkAnswer(spark.table("t1"), simpleNestedData.drop("arr"))
 
       // drop multiple columns
-      spark.sql("alter table t1 drop columns (a, b.c)")
+      drop("t1", "a" :: "b.c" :: Nil)
       checkAnswer(spark.table("t1"),
         Seq(
           Row(Row(1), Map("k1" -> "v1")),
@@ -75,18 +86,17 @@ class DeltaDropColumnSuite extends QueryTest with DeltaArbitraryColumnNameSuiteB
         spark.sql("describe history t1")
           .select("operation", "operationParameters")
           .where("version = 3"),
-        Seq(
-          Row("DROP COLUMNS", Map("columns" -> """["a","b.c"]"""))))
+        Seq(Row("DROP COLUMNS", Map("columns" -> """["a","b.c"]"""))))
     }
   }
 
-  test("dropped columns can no longer be queried") {
+  dropTest("dropped columns can no longer be queried") { drop =>
     withTable("t1") {
       createTableWithSQLAPI("t1",
         simpleNestedData,
         Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))
 
-      spark.sql("alter table t1 drop columns (a, b.c, arr)")
+      drop("t1", "a" :: "b.c" :: "arr" :: Nil)
 
       // dropped column cannot be queried anymore
       val err1 = intercept[AnalysisException] {
@@ -101,30 +111,26 @@ class DeltaDropColumnSuite extends QueryTest with DeltaArbitraryColumnNameSuiteB
     }
   }
 
-  test("drop column - corner cases") {
+  dropTest("drop column - corner cases") { drop =>
     withTable("t1") {
       createTableWithSQLAPI("t1",
         simpleNestedData,
         Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))
 
-      spark.sql("alter table t1 drop columns (a, b.c, arr)")
+      drop("t1", "a" :: "b.c" :: "arr" :: Nil)
 
-      // dropping non-existent field would fail
-      assertException("Missing field a") {
-        spark.sql("alter table t1 drop column (a)")
-      }
       // cannot drop the last nested field
       val e = intercept[AnalysisException] {
-        spark.sql("alter table t1 drop columns (b.d)")
+        drop("t1", "b.d" :: Nil)
       }
       assert(e.getMessage.contains("Cannot drop column from a struct type with a single field"))
 
       // can drop the parent column
-      spark.sql("alter table t1 drop columns b")
+      drop("t1", "b" :: Nil)
 
       // cannot drop the last top-level field
       val e2 = intercept[AnalysisException] {
-        spark.sql("alter table t1 drop columns map")
+        drop("t1", "map" :: Nil)
       }
       assert(e2.getMessage.contains("Cannot drop column from a struct type with a single field"))
 
@@ -132,20 +138,20 @@ class DeltaDropColumnSuite extends QueryTest with DeltaArbitraryColumnNameSuiteB
 
       // can drop a column with arbitrary chars
       spark.sql(s"alter table t1 rename column map to `${colName("map")}`")
-      spark.sql(s"alter table t1 drop columns `${colName("map")}`")
+      drop("t1", s"`${colName("map")}`" :: Nil)
 
       // only column e is left now
       assert(spark.table("t1").schema.map(_.name) == Seq("e"))
 
       // can drop a nested column when the top-level column is the only column
-      spark.sql("alter table t1 drop column e.e1")
+      drop("t1", "e.e1" :: Nil)
       val resultSchema = spark.table("t1").schema
       assert(resultSchema.findNestedField("e" :: "e2" :: Nil).isDefined)
       assert(resultSchema.findNestedField("e" :: "e1" :: Nil).isEmpty)
     }
   }
 
-  test("drop column with constraints") {
+  dropTest("drop column with constraints") { drop =>
     withTable("t1") {
       val schemaWithNotNull =
         simpleNestedData.schema.toDDL.replace("c: STRING", "c: STRING NOT NULL")
@@ -162,39 +168,61 @@ class DeltaDropColumnSuite extends QueryTest with DeltaArbitraryColumnNameSuiteB
 
       spark.sql("alter table t1 add constraint rangeABC check (concat(a, a) > 'str')")
       spark.sql("alter table t1 add constraint rangeBD check (`b`.`d` > 0)")
-      spark.sql("alter table t1" +
-        " add constraint mapValue check (map['k1'] = 'v1' or map['k1'] is null)")
 
       spark.sql("alter table t1 add constraint arrValue check (arr[0] > 0)")
 
       assertException("Cannot drop column a because this column is referenced by") {
-        spark.sql("alter table t1 drop column a")
+        drop("t1", "a" :: Nil)
       }
 
       assertException("Cannot drop column arr because this column is referenced by") {
-        spark.sql("alter table t1 drop column arr")
+        drop("t1", "arr" :: Nil)
       }
 
-      assertException("Cannot drop column map because this column is referenced by") {
-        spark.sql("alter table t1 drop column map")
-      }
 
       // cannot drop b because its child is referenced
       assertException("Cannot drop column b because this column is referenced by") {
-        spark.sql("alter table t1 drop column b")
+        drop("t1", "b" :: Nil)
       }
 
       // can still drop b.c because it's referenced by a null constraint
-      spark.sql("alter table t1 drop column b.c")
+      drop("t1", "b.c" :: Nil)
 
       // this is a safety flag - it won't error when you turn it off
       withSQLConf(DeltaSQLConf.DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS.key -> "false") {
-        spark.sql("alter table t1 drop columns (b, arr)")
+        drop("t1", "b" :: "arr" :: Nil)
       }
     }
   }
 
-  test("drop with generated column") {
+  test("drop column with constraints - map element") {
+    def drop(table: String, columns: Seq[String]): Unit =
+      sql(s"alter table $table drop column (${columns.mkString(",")})")
+
+    withTable("t1") {
+      val schemaWithNotNull =
+        simpleNestedData.schema.toDDL.replace("c: STRING", "c: STRING NOT NULL")
+
+      withTable("source") {
+        spark.sql(
+          s"""
+             |CREATE TABLE t1 ($schemaWithNotNull)
+             |USING DELTA
+             |${propString(Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))}
+             |""".stripMargin)
+        simpleNestedData.write.format("delta").mode("append").saveAsTable("t1")
+      }
+
+      spark.sql("alter table t1 add constraint" +
+        " mapValue check (not array_contains(map_keys(map), 'k1') or map['k1'] = 'v1')")
+
+      assertException("Cannot drop column map because this column is referenced by") {
+        drop("t1", "map" :: Nil)
+      }
+    }
+  }
+
+  dropTest("drop with generated column") { drop =>
     withTable("t1") {
       withSQLConf(DeltaSQLConf.DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED.key -> "true") {
         val tableBuilder = io.delta.tables.DeltaTable.create(spark).tableName("t1")
@@ -227,26 +255,26 @@ class DeltaDropColumnSuite extends QueryTest with DeltaArbitraryColumnNameSuiteB
         simpleNestedData.write.format("delta").mode("append").saveAsTable("t1")
 
         assertException("Cannot drop column a because this column is referenced by") {
-          spark.sql("alter table t1 drop column a")
+          drop("t1", "a" :: Nil)
         }
 
         assertException("Cannot drop column b because this column is referenced by") {
-          spark.sql("alter table t1 drop column b")
+          drop("t1", "b" :: Nil)
         }
 
         assertException("Cannot drop column b.d because this column is referenced by") {
-          spark.sql("alter table t1 drop column b.d")
+          drop("t1", "b.d" :: Nil)
         }
 
         assertException("Cannot drop column arr because this column is referenced by") {
-          spark.sql("alter table t1 drop column arr")
+          drop("t1", "arr" :: Nil)
         }
 
         // you can still drop b.c as it has no dependent gen col
-        spark.sql("alter table t1 drop column b.c")
+        drop("t1", "b.c" :: Nil)
 
         // you can also drop a generated column itself
-        spark.sql("alter table t1 drop column genCol1")
+        drop("t1", "genCol1" :: Nil)
 
         // add new data after dropping
         spark.createDataFrame(
@@ -269,27 +297,27 @@ class DeltaDropColumnSuite extends QueryTest with DeltaArbitraryColumnNameSuiteB
         // this is a safety flag - if you turn it off, it will still error but msg is not as helpful
         withSQLConf(DeltaSQLConf.DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS.key -> "false") {
           assertException("A generated column cannot use a non-existent column") {
-            spark.sql("alter table t1 drop column arr")
+            drop("t1", "arr" :: Nil)
           }
         }
       }
     }
   }
 
-  test("dropping all columns is not allowed") {
+  dropTest("dropping all columns is not allowed") { drop =>
     withTable("t1") {
       createTableWithSQLAPI("t1",
         simpleNestedData,
         Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name")
       )
       val e = intercept[AnalysisException] {
-        sql("alter table t1 drop columns (a, b, map, arr)")
+        drop("t1", "a" :: "b" :: "map" :: "arr" :: Nil)
       }
       assert(e.getMessage.contains("Cannot drop column"))
     }
   }
 
-  test("dropping partition columns is not allowed") {
+  dropTest("dropping partition columns is not allowed") { drop =>
     withTable("t1") {
       createTableWithSQLAPI("t1",
         simpleNestedData,
@@ -297,7 +325,7 @@ class DeltaDropColumnSuite extends QueryTest with DeltaArbitraryColumnNameSuiteB
         partCols = Seq("a")
       )
       val e = intercept[AnalysisException] {
-        sql("alter table t1 drop columns (a)")
+        drop("t1", "a" :: Nil)
       }
       assert(e.getMessage.contains("Dropping partition columns (a) is not allowed"))
     }

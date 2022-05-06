@@ -234,8 +234,6 @@ class DeltaColumnRenameSuite extends QueryTest
 
       spark.sql("alter table t1 add constraint rangeABC check (concat(a, a) > 'str')")
       spark.sql("alter table t1 add constraint rangeBD check (`b`.`d` > 0)")
-      spark.sql("alter table t1 add constraint" +
-        " mapValue check (not array_contains(map_keys(map), 'k1') or map['k1'] = 'v1')")
 
       spark.sql("alter table t1 add constraint arrValue check (arr[0] > 0)")
 
@@ -245,10 +243,6 @@ class DeltaColumnRenameSuite extends QueryTest
 
       assertException("Cannot rename column arr") {
         spark.sql("alter table t1 rename column arr to arr1")
-      }
-
-      assertException("Cannot rename column map") {
-        spark.sql("alter table t1 rename column map to map1")
       }
 
       // cannot rename b because its child is referenced
@@ -283,6 +277,35 @@ class DeltaColumnRenameSuite extends QueryTest
         spark.sql("alter table t1 rename column arr to arr1")
         spark.sql("alter table t1 rename column b to b1")
       }
+    }
+  }
+
+  test("rename with constraints - map element") {
+    withTable("t1") {
+      val schemaWithNotNull =
+        simpleNestedData.schema.toDDL.replace("c: STRING", "c: STRING NOT NULL")
+          .replace("`c`: STRING", "`c`: STRING NOT NULL")
+
+      withTable("source") {
+        spark.sql(
+          s"""
+             |CREATE TABLE t1 ($schemaWithNotNull)
+             |USING DELTA
+             |${partitionStmt(Seq("a"))}
+             |${propString(Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))}
+             |""".stripMargin)
+        simpleNestedData.write.format("delta").mode("append").saveAsTable("t1")
+      }
+
+      spark.sql("alter table t1 add constraint" +
+        " mapValue check (not array_contains(map_keys(map), 'k1') or map['k1'] = 'v1')")
+
+      assertException("Cannot rename column map") {
+        spark.sql("alter table t1 rename column map to map1")
+      }
+
+      spark.sql("insert into t1 " +
+        "values ('str3', struct('str1.3', 3), map('k3', 'v3'), array(3, 33))")
     }
   }
 

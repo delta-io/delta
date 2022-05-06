@@ -110,6 +110,10 @@
     "message" : [ "Cannot describe the history of a view." ],
     "sqlState" : "0A000"
   },
+  "DELTA_CANNOT_EVALUATE_EXPRESSION" : {
+    "message" : [ "Cannot evaluate expression: %s" ],
+    "sqlState" : "0A000"
+  },
   "DELTA_CANNOT_GENERATE_CODE_FOR_EXPRESSION" : {
     "message" : [ "Cannot generate code for expression: %s" ],
     "sqlState" : "0A000"
@@ -162,12 +166,24 @@
     "message" : [ "Index %s to add column %s is larger than struct length: %s" ],
     "sqlState" : "2F000"
   },
+  "DELTA_INVALID_CALENDAR_INTERVAL_EMPTY" : {
+    "message" : [ "Interval cannot be null or blank." ],
+    "sqlState" : "42000"
+  },
   "DELTA_INVALID_COMMITTED_VERSION" : {
     "message" : [ "The committed version is %s but the current version is %s." ],
     "sqlState" : "25000"
   },
   "DELTA_INVALID_LOGSTORE_CONF" : {
     "message" : [ "(`spark.delta.logStore.class`) and (`%s`) cannot be set at the same time. Please set only one group of them." ],
+    "sqlState" : "42000"
+  },
+  "DELTA_INVALID_MANAGED_TABLE_SYNTAX_NO_SCHEMA" : {
+    "message" : [ "", "You are trying to create a managed table %s", "using Delta, but the schema is not specified.", "", "To learn more about Delta, see %s" ],
+    "sqlState" : "42000"
+  },
+  "DELTA_INVALID_PARTITIONING_SCHEMA" : {
+    "message" : [ "", "The AddFile contains partitioning schema different from the table's partitioning schema", "expected: %s", "actual: %s", "To disable this check set %s to \"false\"" ],
     "sqlState" : "42000"
   },
   "DELTA_INVALID_PROTOCOL_DOWNGRADE" : {
@@ -194,6 +210,10 @@
     "message" : [ "This commit has failed as it has been tried %s times but did not succeed.", "This can be caused by the Delta table being committed continuously by many concurrent", "commits.", "", "Commit started at version: %s", "Commit failed at version: %s", "Number of actions attempted to commit: %s", "Total time spent attempting this commit: %s ms" ],
     "sqlState" : "40000"
   },
+  "DELTA_MERGE_INVALID_WHEN_NOT_MATCHED_CLAUSE" : {
+    "message" : [ "%s clauses cannot be part of the WHEN NOT MATCHED clause in MERGE INTO." ],
+    "sqlState" : "42000"
+  },
   "DELTA_MERGE_UNEXPECTED_ASSIGNMENT_KEY" : {
     "message" : [ "Unexpected assignment key: %s - %s" ],
     "sqlState" : "22005"
@@ -202,12 +222,20 @@
     "message" : [ "Cannot find %s in table columns: %s" ],
     "sqlState" : "42000"
   },
+  "DELTA_MISSING_FILES_UNEXPECTED_VERSION" : {
+    "message" : [ "The stream from your Delta table was expecting process data from version %s,", "but the earliest available version in the _delta_log directory is %s. The files", "in the transaction log may have been deleted due to log cleanup. In order to avoid losing", "data, we recommend that you restart your stream with a new checkpoint location and to", "increase your delta.logRetentionDuration setting, if you have explicitly set it below 30", "days.", "If you would like to ignore the missed data and continue your stream from where it left", "off, you can set the .option(\"%s\", \"false\") as part", "of your readStream statement." ],
+    "sqlState" : "42000"
+  },
   "DELTA_MISSING_PARTITION_COLUMN" : {
     "message" : [ "Partition column `%s` not found in schema %s" ],
     "sqlState" : "42000"
   },
   "DELTA_MISSING_PROVIDER_FOR_CONVERT" : {
     "message" : [ "CONVERT TO DELTA only supports parquet tables. Please rewrite your target as parquet.`%s` if it's a parquet directory." ],
+    "sqlState" : "42000"
+  },
+  "DELTA_NEW_CHECK_CONSTRAINT_VIOLATION" : {
+    "message" : [ "%s rows in %s violate the new CHECK constraint (%s)" ],
     "sqlState" : "42000"
   },
   "DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED" : {
@@ -268,6 +296,26 @@
   },
   "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP" : {
     "message" : [ "Unsupported ALTER TABLE REPLACE COLUMNS operation. Reason: %s", "", "Failed to change schema from:", "%s", "to:", "%s" ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_UNSUPPORTED_COLUMN_TYPE_IN_BLOOM_FILTER" : {
+    "message" : [ "Creating a bloom filter index on a column with type %s is unsupported: %s" ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_UNSUPPORTED_EXPRESSION_GENERATED_COLUMN" : {
+    "message" : [ "%s cannot be used in a generated column" ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_UNSUPPORTED_NESTED_FIELD_IN_OPERATION" : {
+    "message" : [ "Nested field is not supported in the %s (field = %s)." ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_UNSUPPORTED_TIME_TRAVEL_MULTIPLE_FORMATS" : {
+    "message" : [ "Cannot specify time travel in multiple formats." ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_UNSUPPORTED_TIME_TRAVEL_VIEWS" : {
+    "message" : [ "Cannot time travel views, subqueries or streams." ],
     "sqlState" : "0A000"
   },
   "DUPLICATE_COLUMNS_ON_UPDATE_TABLE" : {

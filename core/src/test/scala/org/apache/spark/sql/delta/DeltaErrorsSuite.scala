@@ -46,7 +46,7 @@ import org.apache.spark.sql.catalyst.expressions.Uuid
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
-import org.apache.spark.sql.types.{IntegerType, MetadataBuilder, NullType, StringType, StructField, StructType}
+import org.apache.spark.sql.types.{DateType, IntegerType, MetadataBuilder, NullType, StringType, StructField, StructType}
 
 
 trait DeltaErrorsSuiteBase
@@ -1036,6 +1036,110 @@ trait DeltaErrorsSuiteBase
       assert(e.getSqlState == "42000")
       assert(e.getMessage == "Constraint 'name' already exists as a CHECK constraint. Please " +
         "delete the old constraint first.\nOld constraint:\noldExpr")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.timeTravelNotSupportedException
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_TIME_TRAVEL_VIEWS")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Cannot time travel views, subqueries or streams.")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.addFilePartitioningMismatchException(Seq("col3"), Seq("col2"))
+      }
+      assert(e.getErrorClass == "DELTA_INVALID_PARTITIONING_SCHEMA")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        """
+          |The AddFile contains partitioning schema different from the table's partitioning schema
+          |expected: [`col2`]
+          |actual: [`col3`]
+          |To disable this check set """.stripMargin +
+          "spark.databricks.delta.commitValidation.enabled to \"false\"")
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.emptyCalendarInterval
+      }
+      assert(e.getErrorClass == "DELTA_INVALID_CALENDAR_INTERVAL_EMPTY")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Interval cannot be null or blank.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.invalidMergeClauseWhenNotMatched("MAGIC")
+      }
+      assert(e.getErrorClass == "DELTA_MERGE_INVALID_WHEN_NOT_MATCHED_CLAUSE")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "MAGIC clauses cannot be part of the WHEN NOT MATCHED clause" +
+        " in MERGE INTO.")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.createManagedTableWithoutSchemaException("table-1", spark)
+      }
+      assert(e.getErrorClass == "DELTA_INVALID_MANAGED_TABLE_SYNTAX_NO_SCHEMA")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        s"""
+           |You are trying to create a managed table table-1
+           |using Delta, but the schema is not specified.
+           |
+           |To learn more about Delta, see ${generateDocsLink(spark.sparkContext.getConf,
+              "/index.html", skipValidation = true)}""".stripMargin)
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.generatedColumnsUnsupportedExpression("someExp".expr)
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_EXPRESSION_GENERATED_COLUMN")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "'someExp' cannot be used in a generated column")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.bloomFilterOnColumnTypeNotSupportedException("col1", DateType)
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_COLUMN_TYPE_IN_BLOOM_FILTER")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Creating a bloom filter index on a column with type date is " +
+        "unsupported: col1")
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.failOnDataLossException(12, 10)
+      }
+      assert(e.getErrorClass == "DELTA_MISSING_FILES_UNEXPECTED_VERSION")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        s"""The stream from your Delta table was expecting process data from version 12,
+         |but the earliest available version in the _delta_log directory is 10. The files
+         |in the transaction log may have been deleted due to log cleanup. In order to avoid losing
+         |data, we recommend that you restart your stream with a new checkpoint location and to
+         |increase your delta.logRetentionDuration setting, if you have explicitly set it below 30
+         |days.
+         |If you would like to ignore the missed data and continue your stream from where it left
+         |off, you can set the .option("failOnDataLoss", "false") as part
+         |of your readStream statement.""".stripMargin)
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.nestedFieldNotSupported("INSERT clause of MERGE operation", "col1")
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_NESTED_FIELD_IN_OPERATION")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Nested field is not supported in the INSERT clause of MERGE " +
+        "operation (field = col1).")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.newCheckConstraintViolated(10, "table-1", "sample")
+      }
+      assert(e.getErrorClass == "DELTA_NEW_CHECK_CONSTRAINT_VIOLATION")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "10 rows in table-1 violate the new CHECK constraint (sample)")
     }
   }
 }
