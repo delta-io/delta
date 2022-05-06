@@ -315,20 +315,20 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
           exprs.flatMap {
             case Alias(expr, partColName) =>
               expr match {
-                case Cast(GeneratedColumnExtraction(name, TimestampType), DateType, _, _) =>
+                case Cast(ExtractBaseColumn(name, TimestampType), DateType, _, _) =>
                   createExpr(name)(DatePartitionExpr(partColName))
-                case Cast(GeneratedColumnExtraction(name, DateType), DateType, _, _) =>
+                case Cast(ExtractBaseColumn(name, DateType), DateType, _, _) =>
                   createExpr(name)(DatePartitionExpr(partColName))
-                case Year(GeneratedColumnExtraction(name, DateType)) =>
+                case Year(ExtractBaseColumn(name, DateType)) =>
                   createExpr(name)(YearPartitionExpr(partColName))
-                case Year(Cast(GeneratedColumnExtraction(name, TimestampType), DateType, _, _)) =>
+                case Year(Cast(ExtractBaseColumn(name, TimestampType), DateType, _, _)) =>
                   createExpr(name)(YearPartitionExpr(partColName))
-                case Year(Cast(GeneratedColumnExtraction(name, DateType), DateType, _, _)) =>
+                case Year(Cast(ExtractBaseColumn(name, DateType), DateType, _, _)) =>
                   createExpr(name)(YearPartitionExpr(partColName))
-                case Month(Cast(GeneratedColumnExtraction(name, TimestampType), DateType, _, _)) =>
+                case Month(Cast(ExtractBaseColumn(name, TimestampType), DateType, _, _)) =>
                   createExpr(name)(MonthPartitionExpr(partColName))
                 case DateFormatClass(
-                  Cast(GeneratedColumnExtraction(name, DateType), TimestampType, _, _),
+                  Cast(ExtractBaseColumn(name, DateType), TimestampType, _, _),
                       StringLiteral(format), _) =>
                     format match {
                       case DATE_FORMAT_YEAR_MONTH =>
@@ -336,7 +336,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
                           DateFormatPartitionExpr(partColName, DATE_FORMAT_YEAR_MONTH))
                       case _ => None
                     }
-                case DateFormatClass(GeneratedColumnExtraction(name, TimestampType),
+                case DateFormatClass(ExtractBaseColumn(name, TimestampType),
                     StringLiteral(format), _) =>
                   format match {
                     case DATE_FORMAT_YEAR_MONTH =>
@@ -347,15 +347,15 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
                         DateFormatPartitionExpr(partColName, DATE_FORMAT_YEAR_MONTH_DAY_HOUR))
                     case _ => None
                   }
-                case DayOfMonth(Cast(GeneratedColumnExtraction(name, TimestampType),
+                case DayOfMonth(Cast(ExtractBaseColumn(name, TimestampType),
                     DateType, _, _)) =>
                   createExpr(name)(DayPartitionExpr(partColName))
-                case Hour(GeneratedColumnExtraction(name, TimestampType), _) =>
+                case Hour(ExtractBaseColumn(name, TimestampType), _) =>
                   createExpr(name)(HourPartitionExpr(partColName))
-                case Substring(GeneratedColumnExtraction(name, StringType), IntegerLiteral(pos),
+                case Substring(ExtractBaseColumn(name, StringType), IntegerLiteral(pos),
                     IntegerLiteral(len)) =>
                   createExpr(name)(SubstringPartitionExpr(partColName, pos, len))
-                case GeneratedColumnExtraction(name, _) =>
+                case ExtractBaseColumn(name, _) =>
                   createExpr(name)(IdentityPartitionExpr(partColName))
                 case _ => None
               }
@@ -480,17 +480,17 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
 
     val partitionFilters = dataFilters.flatMap { filter =>
       preprocess(filter) match {
-        case LessThan(GeneratedColumnExtraction(name, _), lit: Literal) =>
+        case LessThan(ExtractBaseColumn(name, _), lit: Literal) =>
           toPartitionFilter(name, _.lessThan(lit))
-        case LessThanOrEqual(GeneratedColumnExtraction(name, _), lit: Literal) =>
+        case LessThanOrEqual(ExtractBaseColumn(name, _), lit: Literal) =>
           toPartitionFilter(name, _.lessThanOrEqual(lit))
-        case EqualTo(GeneratedColumnExtraction(name, _), lit: Literal) =>
+        case EqualTo(ExtractBaseColumn(name, _), lit: Literal) =>
           toPartitionFilter(name, _.equalTo(lit))
-        case GreaterThan(GeneratedColumnExtraction(name, _), lit: Literal) =>
+        case GreaterThan(ExtractBaseColumn(name, _), lit: Literal) =>
           toPartitionFilter(name, _.greaterThan(lit))
-        case GreaterThanOrEqual(GeneratedColumnExtraction(name, _), lit: Literal) =>
+        case GreaterThanOrEqual(ExtractBaseColumn(name, _), lit: Literal) =>
           toPartitionFilter(name, _.greaterThanOrEqual(lit))
-        case IsNull(GeneratedColumnExtraction(name, _)) =>
+        case IsNull(ExtractBaseColumn(name, _)) =>
           toPartitionFilter(name, _.isNull)
         case _ => Nil
       }
@@ -528,12 +528,12 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
  * Finds the full dot-separated path to a field and the data type of the field. This unifies
  * handling of nested and non-nested fields, and allows pattern matching on the data type.
  */
-object GeneratedColumnExtraction {
+object ExtractBaseColumn {
   def unapply(e: Expression): Option[(String, DataType)] = e match {
     case AttributeReference(name, dataType, _, _) =>
       Some((escapeName(name), dataType))
     case g: GetStructField => g.child match {
-      case GeneratedColumnExtraction(name, _) =>
+      case ExtractBaseColumn(name, _) =>
         Some((Seq(name, escapeName(g.extractFieldName)).mkString("."), g.dataType))
       case _ => None
     }
