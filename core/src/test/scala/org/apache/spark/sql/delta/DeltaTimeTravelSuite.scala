@@ -193,53 +193,6 @@ class DeltaTimeTravelSuite extends QueryTest
     }
   }
 
-  testQuietly("log cleanup should handle adjusted commit timestamps") {
-    withTempDir { dir =>
-      val start = 1540415658000L
-      val date = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
-      date.setTimeInMillis(start)
-      // We unfortunately need to set a weird timestamp due to day cutoffs
-      val time = DateUtils.truncate(date, Calendar.DAY_OF_MONTH).getTimeInMillis - 10.seconds
-      val clock = new ManualClock(time)
-      val deltaLog = DeltaLog.forTable(spark, new Path(dir.toURI), clock)
-      generateCommitsCheap(deltaLog, time)
-
-      // we need this checkpoint so that we can delete starting with the first version
-      deltaLog.checkpoint()
-      modifyCheckpointTimestamp(deltaLog, deltaLog.snapshot.version, time)
-      generateCommitsCheap(deltaLog, Seq(5, 10, 7, 8, 14).map(time + _.seconds): _*)
-      // We need this checkpoint so that we can delete up to the last version
-      deltaLog.checkpoint()
-      modifyCheckpointTimestamp(deltaLog, deltaLog.snapshot.version, time + 14.seconds)
-
-      assert(deltaLog.history.getHistory(0, None).map(_.timestamp.getTime).reverse ===
-        Seq(time, time + 5.seconds,
-          time + 10.seconds, time + 10.seconds + 1, time + 10.seconds + 2, time + 14.seconds))
-
-      // We shouldn't be able to delete anything in the version range 2-4
-      clock.setTime(time + 10.seconds + deltaLog.deltaRetentionMillis)
-      // Should delete commits at time and time + 5
-      deltaLog.cleanUpExpiredLogs()
-      assert(deltaLog.history.getHistory(0, None).map(_.timestamp.getTime).reverse ===
-        Seq(time + 10.seconds, time + 10.seconds + 1, time + 10.seconds + 2, time + 14.seconds))
-
-      clock.setTime(time + 10.seconds + 1 + deltaLog.deltaRetentionMillis)
-      deltaLog.cleanUpExpiredLogs()
-      assert(deltaLog.history.getHistory(0, None).map(_.timestamp.getTime).reverse ===
-        Seq(time + 10.seconds, time + 10.seconds + 1, time + 10.seconds + 2, time + 14.seconds))
-
-      clock.setTime(time + 10.seconds + 2 + deltaLog.deltaRetentionMillis)
-      deltaLog.cleanUpExpiredLogs()
-      assert(deltaLog.history.getHistory(0, None).map(_.timestamp.getTime).reverse ===
-        Seq(time + 10.seconds, time + 10.seconds + 1, time + 10.seconds + 2, time + 14.seconds))
-
-      clock.setTime(time + 1.day + deltaLog.deltaRetentionMillis)
-      deltaLog.cleanUpExpiredLogs()
-      assert(deltaLog.history.getHistory(0, None).map(_.timestamp.getTime).reverse ===
-        Seq(time + 10.seconds, time + 10.seconds + 1, time + 10.seconds + 2, time + 14.seconds))
-    }
-  }
-
   /**
    * Creates FileStatus objects, where the name is the version of a commit, and the modification
    * timestamps come from the input.

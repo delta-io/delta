@@ -58,7 +58,9 @@ class DeltaTable(object):
         """
         return DataFrame(
             self._jdt.toDF(),
-            self._spark._wrapped  # type: ignore[attr-defined]
+            # Simple trick to avoid warnings from Spark 3.3.0. `_wrapped`
+            # in SparkSession is removed in Spark 3.3.0, see also SPARK-38121.
+            getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
         )
 
     @since(0.4)  # type: ignore[arg-type]
@@ -240,12 +242,12 @@ class DeltaTable(object):
         if retentionHours is None:
             return DataFrame(
                 jdt.vacuum(),
-                self._spark._wrapped  # type: ignore[attr-defined]
+                getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
             )
         else:
             return DataFrame(
                 jdt.vacuum(float(retentionHours)),
-                self._spark._wrapped  # type: ignore[attr-defined]
+                getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
             )
 
     @since(0.4)  # type: ignore[arg-type]
@@ -268,12 +270,12 @@ class DeltaTable(object):
         if limit is None:
             return DataFrame(
                 jdt.history(),
-                self._spark._wrapped  # type: ignore[attr-defined]
+                getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
             )
         else:
             return DataFrame(
                 jdt.history(limit),
-                self._spark._wrapped  # type: ignore[attr-defined]
+                getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
             )
 
     @classmethod
@@ -536,6 +538,58 @@ class DeltaTable(object):
             raise ValueError("The writerVersion needs to be an integer but got '%s'." %
                              type(writerVersion))
         jdt.upgradeTableProtocol(readerVersion, writerVersion)
+
+    @since(1.2)  # type: ignore[arg-type]
+    def restoreToVersion(self, version: int) -> DataFrame:
+        """
+        Restore the DeltaTable to an older version of the table specified by version number.
+
+        Example::
+
+            io.delta.tables.DeltaTable.restoreToVersion(1)
+
+        :param version: target version of restored table
+        :return: Dataframe with metrics of restore operation.
+        :rtype: pyspark.sql.DataFrame
+        """
+
+        DeltaTable._verify_type_int(version, "version")
+        return DataFrame(
+            self._jdt.restoreToVersion(version),
+            getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
+        )
+
+    @since(1.2)  # type: ignore[arg-type]
+    def restoreToTimestamp(self, timestamp: str) -> DataFrame:
+        """
+        Restore the DeltaTable to an older version of the table specified by a timestamp.
+        Timestamp can be of the format yyyy-MM-dd or yyyy-MM-dd HH:mm:ss
+
+        Example::
+
+            io.delta.tables.DeltaTable.restoreToTimestamp('2021-01-01')
+            io.delta.tables.DeltaTable.restoreToTimestamp('2021-01-01 01:01:01')
+
+        :param timestamp: target timestamp of restored table
+        :return: Dataframe with metrics of restore operation.
+        :rtype: pyspark.sql.DataFrame
+        """
+
+        DeltaTable._verify_type_str(timestamp, "timestamp")
+        return DataFrame(
+            self._jdt.restoreToTimestamp(timestamp),
+            getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
+        )
+
+    @staticmethod  # type: ignore[arg-type]
+    def _verify_type_str(variable: str, name: str) -> None:
+        if not isinstance(variable, str) or variable is None:
+            raise ValueError("%s needs to be a string but got '%s'." % (name, type(variable)))
+
+    @staticmethod  # type: ignore[arg-type]
+    def _verify_type_int(variable: int, name: str) -> None:
+        if not isinstance(variable, int) or variable is None:
+            raise ValueError("%s needs to be an int but got '%s'." % (name, type(variable)))
 
     @staticmethod
     def _dict_to_jmap(

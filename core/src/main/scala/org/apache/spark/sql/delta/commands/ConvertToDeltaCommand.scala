@@ -106,10 +106,10 @@ abstract class ConvertToDeltaCommandBase(
 
     // TODO: Leverage the analyzer for all this work
     if (isCatalogTable(spark.sessionState.analyzer, tableIdentifier)) {
-      val ident = Identifier.of(
-        tableIdentifier.database.map(Array(_))
-          .getOrElse(spark.sessionState.catalogManager.currentNamespace),
-        tableIdentifier.table)
+      val namespace =
+          tableIdentifier.database.map(Array(_))
+            .getOrElse(spark.sessionState.catalogManager.currentNamespace)
+      val ident = Identifier.of(namespace, tableIdentifier.table)
       v2SessionCatalog.loadTable(ident) match {
         case v1: V1Table if v1.catalogTable.tableType == CatalogTableType.VIEW =>
           throw DeltaErrors.operationNotSupportedException(
@@ -548,8 +548,8 @@ class ParquetTable(
               try {
                 mergedSchema = SchemaMergingUtils.mergeSchemas(mergedSchema, schema)
               } catch { case cause: AnalysisException =>
-                throw new SparkException(
-                  s"Failed to merge schema of file ${footer.getFile}:\n${schema.treeString}", cause)
+                throw DeltaErrors.failedMergeSchemaFile(
+                  footer.getFile.toString, schema.treeString, cause)
               }
             }
             Iterator.single(mergedSchema)
@@ -701,8 +701,9 @@ object ConvertToDeltaCommand {
         // Check if the partition value can be casted to the provided type
         if (!conf.getConf(DeltaSQLConf.DELTA_CONVERT_PARTITION_VALUES_IGNORE_CAST_FAILURE)) {
           partValues.literals.zip(partitionFields).foreach { case (literal, field) =>
-            if (literal.eval() != null && Cast(literal, field.dataType, tz).eval() == null) {
-              val partitionValue = Cast(literal, StringType, tz).eval()
+            if (literal.eval() != null &&
+                Cast(literal, field.dataType, tz, ansiEnabled = false).eval() == null) {
+              val partitionValue = Cast(literal, StringType, tz, ansiEnabled = false).eval()
               val partitionValueStr = Option(partitionValue).map(_.toString).orNull
               throw DeltaErrors.castPartitionValueException(partitionValueStr, field.dataType)
             }
@@ -711,7 +712,7 @@ object ConvertToDeltaCommand {
 
         val values = partValues
           .literals
-          .map(l => Cast(l, StringType, tz).eval())
+          .map(l => Cast(l, StringType, tz, ansiEnabled = false).eval())
           .map(Option(_).map(_.toString).orNull)
 
         partitionColNames.zip(partValues.columnNames).foreach { case (expected, parsed) =>

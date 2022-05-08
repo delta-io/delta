@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit.NANOSECONDS
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{CommitStats, DeltaErrors, DeltaLog, DeltaOperations, OptimisticTransaction, Serializable}
+import org.apache.spark.sql.delta.{CommitStats, DeltaErrors, DeltaLog, DeltaOperations, DeltaTableIdentifier, OptimisticTransaction, Serializable, Snapshot}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -29,12 +29,12 @@ import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
-
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Analyzer, EliminateSubqueryAliases, NoSuchTableException, UnresolvedAttribute, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.catalog.CatalogTableType
 import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -82,10 +82,7 @@ trait DeltaCommand extends DeltaLogging {
         }
         val nameEquality = spark.sessionState.conf.resolver
         partitionColumns.find(f => nameEquality(f, colName)).getOrElse {
-          throw new AnalysisException(
-            s"Predicate references non-partition column '$colName'. " +
-              "Only the partition columns may be referenced: " +
-              s"[${partitionColumns.mkString(", ")}]")
+          throw DeltaErrors.nonPartitionColumnReference(colName, partitionColumns)
         }
       }
     }
@@ -165,8 +162,7 @@ trait DeltaCommand extends DeltaLogging {
       nameToAddFileMap: Map[String, AddFile]): AddFile = {
     val absolutePath = DeltaFileOperations.absolutePath(basePath.toString, filePath).toString
     nameToAddFileMap.getOrElse(absolutePath, {
-      throw new IllegalStateException(s"File ($absolutePath) to be rewritten not found " +
-        s"among candidate files:\n${nameToAddFileMap.keys.mkString("\n")}")
+      throw DeltaErrors.notFoundFileToBeRewritten(absolutePath, nameToAddFileMap.keys)
     })
   }
 
@@ -223,17 +219,17 @@ trait DeltaCommand extends DeltaLogging {
       spark: SparkSession,
       deltaLog: DeltaLog,
       commitSize: Int,
-      attemptVersion: Long): Unit = {
+      attemptVersion: Long,
+      txnId: String): Snapshot = {
     val currentSnapshot = deltaLog.update()
     if (currentSnapshot.version != attemptVersion) {
-      throw new IllegalStateException(
-        s"The committed version is $attemptVersion but the current version is " +
-          s"${currentSnapshot.version}. Please contact Databricks support.")
+      throw DeltaErrors.invalidCommittedVersion(attemptVersion, currentSnapshot.version)
     }
 
     logInfo(s"Committed delta #$attemptVersion to ${deltaLog.logPath}. Wrote $commitSize actions.")
 
     deltaLog.checkpoint(currentSnapshot)
+    currentSnapshot
   }
 
   /**
@@ -311,8 +307,8 @@ trait DeltaCommand extends DeltaLogging {
         Some(attemptVersion))
       val commitTime = System.nanoTime()
 
-      updateAndCheckpoint(spark, deltaLog, commitSize, attemptVersion)
-      val postCommitSnapshot = deltaLog.snapshot
+      val postCommitSnapshot =
+        updateAndCheckpoint(spark, deltaLog, commitSize, attemptVersion, txn.txnId)
       val postCommitReconstructionTime = System.nanoTime()
       var stats = CommitStats(
         startVersion = txn.readVersion,
@@ -374,4 +370,53 @@ trait DeltaCommand extends DeltaLogging {
         throw e
     }
   }
+
+  /**
+   * Utility method to return the [[DeltaLog]] of an existing Delta table referred
+   * by either the given [[path]] or [[tableIdentifier].
+   *
+   * @param spark [[SparkSession]] reference to use.
+   * @param path Table location. Expects a non-empty [[tableIdentifier]] or [[path]].
+   * @param tableIdentifier Table identifier. Expects a non-empty [[tableIdentifier]] or [[path]].
+   * @param operationName Operation that is getting the DeltaLog, used in error messages.
+   * @return DeltaLog of the table
+   * @throws AnalysisException If either no Delta table exists at the given path/identifier or
+   *                           there is neither [[path]] nor [[tableIdentifier]] is provided.
+   */
+  protected def getDeltaLog(
+      spark: SparkSession,
+      path: Option[String],
+      tableIdentifier: Option[TableIdentifier],
+      operationName: String): DeltaLog = {
+    val tablePath =
+      if (path.nonEmpty) {
+        new Path(path.get)
+      } else if (tableIdentifier.nonEmpty) {
+        val sessionCatalog = spark.sessionState.catalog
+        lazy val metadata = sessionCatalog.getTableMetadata(tableIdentifier.get)
+
+        DeltaTableIdentifier(spark, tableIdentifier.get) match {
+          case Some(id) if id.path.nonEmpty =>
+            new Path(id.path.get)
+          case Some(id) if id.table.nonEmpty =>
+            new Path(metadata.location)
+          case _ =>
+            if (metadata.tableType == CatalogTableType.VIEW) {
+              throw DeltaErrors.viewNotSupported(operationName)
+            }
+            throw DeltaErrors.notADeltaTableException(operationName)
+        }
+      } else {
+        throw DeltaErrors.missingTableIdentifierException(operationName)
+      }
+
+    val deltaLog = DeltaLog.forTable(spark, tablePath)
+    if (deltaLog.snapshot.version < 0) {
+      throw DeltaErrors.notADeltaTableException(
+        operationName,
+        DeltaTableIdentifier(path, tableIdentifier))
+    }
+    deltaLog
+  }
+
 }

@@ -83,8 +83,9 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
       val clock = new ManualClock(System.currentTimeMillis())
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
       val logPath = new File(log.logPath.toUri)
+      val iterationCount = (log.checkpointInterval * 2) + 1
 
-      (1 to 25).foreach { i =>
+      (1 to iterationCount).foreach { i =>
         val txn = if (i == 1) startTxnWithManualLogCleanup(log) else log.startTransaction()
         val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
         val delete: Seq[Action] = if (i > 1) {
@@ -104,7 +105,9 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
       }
 
       // delete some files in the middle
-      getDeltaFiles(logPath).sortBy(_.getName).slice(5, 15).foreach(_.delete())
+      val middleStartIndex = log.checkpointInterval / 2
+      getDeltaFiles(logPath).sortBy(_.getName).slice(
+        middleStartIndex, middleStartIndex + log.checkpointInterval).foreach(_.delete())
       clock.advance(intervalStringToMillis(DeltaConfigs.LOG_RETENTION.defaultValue) +
         intervalStringToMillis("interval 2 day"))
       log.cleanUpExpiredLogs()
@@ -181,6 +184,12 @@ class DeltaRetentionSuite extends QueryTest with DeltaRetentionSuiteBase with SQ
       // Create a new checkpoint so that the previous version can be deleted
       log.startTransaction().commit(AddFile("1", Map.empty, 1, 1, true) :: Nil, testOp)
       log.checkpoint()
+
+      // despite our clock time being set in the future, this doesn't change the FileStatus
+      // lastModified time. this can cause some flakiness during log cleanup. setting it fixes that.
+      getLogFiles(logPath)
+        .filterNot(f => initialFiles.contains(f))
+        .foreach(f => f.setLastModified(clock.getTimeMillis()))
 
       log.cleanUpExpiredLogs()
       val afterCleanup = getLogFiles(logPath)

@@ -44,7 +44,11 @@ abstract class UpdateSuiteBase
 
   protected def tempPath = tempDir.getCanonicalPath
 
-  protected def readDeltaTable(path: String): DataFrame = {
+  protected def readDeltaTable(table: String): DataFrame = {
+    spark.read.format("delta").table(table)
+  }
+
+  protected def readDeltaTableByPath(path: String): DataFrame = {
     spark.read.format("delta").load(path)
   }
 
@@ -87,7 +91,9 @@ abstract class UpdateSuiteBase
       expectedResults: Seq[Row],
       tableName: Option[String] = None): Unit = {
     executeUpdate(tableName.getOrElse(s"delta.`$tempPath`"), setClauses, where = condition.orNull)
-    checkAnswer(readDeltaTable(tempPath), expectedResults)
+    checkAnswer(
+      tableName.map(readDeltaTable(_)).getOrElse(readDeltaTableByPath(tempPath)),
+      expectedResults)
   }
 
   test("basic case") {
@@ -264,7 +270,7 @@ abstract class UpdateSuiteBase
       append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"), partitions)
 
       checkUpdate(condition = Some("key >= 1"),
-        setClauses = "value = key + cast(value as String), key = key + '1'",
+        setClauses = "value = key + cast(value as double), key = cast(key as double) + 1",
         expectedResults = Row(0, 3) :: Row(2, 5) :: Row(3, 4) :: Row(2, 2) :: Nil)
     }
   }
@@ -275,7 +281,7 @@ abstract class UpdateSuiteBase
       append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"), partitions)
 
       checkUpdate(condition = Some("key >= 1"),
-        setClauses = "value = key, key = null + '1'",
+        setClauses = "value = key, key = null + 1D",
         expectedResults = Row(0, 3) :: Row(null, 1) :: Row(null, 1) :: Row(null, 2) :: Nil)
     }
   }
@@ -764,7 +770,7 @@ abstract class UpdateSuiteBase
           toDF(source).createOrReplaceTempView("source")
         }
         executeUpdate(s"delta.`$dir`", set, updateWhere)
-        checkAnswer(readDeltaTable(dir.toString), toDF(expected))
+        checkAnswer(readDeltaTableByPath(dir.toString), toDF(expected))
       }
     }
   }
@@ -850,15 +856,14 @@ abstract class UpdateSuiteBase
           where = "key >= 1 and value < 3",
           set = "value = key + value, key = key + 1"
         )
-        var result = expectedResult
-        checkAnswer(spark.read.format("delta").table("v"), result)
+        checkAnswer(spark.read.format("delta").table("v"), expectedResult)
       }
     }
   }
 
   testComplexTempViews("nontrivial projection")(
     text = "SELECT value as key, key as value FROM tab",
-    expectedResult = Seq(Row(3, 3), Row(3, 4))
+    expectedResult = Seq(Row(3, 0), Row(3, 3))
   )
 
   testComplexTempViews("view with too many internal aliases")(

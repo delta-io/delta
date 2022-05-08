@@ -21,7 +21,6 @@ import java.io.IOException
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.FileAlreadyExistsException
 
-import org.apache.spark.sql.delta.storage.HadoopFileSystemLogStore
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 
@@ -46,7 +45,7 @@ import org.apache.spark.annotation.Unstable
  */
 @Unstable
 class IBMCOSLogStore(sparkConf: SparkConf, initHadoopConf: Configuration)
-  extends HadoopFileSystemLogStore(sparkConf, initHadoopConf) {
+  extends org.apache.spark.sql.delta.storage.HadoopFileSystemLogStore(sparkConf, initHadoopConf) {
   val preconditionFailedExceptionMessage =
     "At least one of the preconditions you specified did not hold"
 

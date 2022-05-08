@@ -25,11 +25,11 @@ import java.util.concurrent.TimeUnit
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, GeneratedColumn}
+import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, DeltaThrowable, DeltaThrowableHelper, GeneratedColumn, OptimizablePartitionExpression}
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
-import com.fasterxml.jackson.annotation.{JsonIgnore, JsonInclude}
+import com.fasterxml.jackson.annotation.{JsonIgnore, JsonIgnoreProperties, JsonInclude}
 import com.fasterxml.jackson.core.{JsonGenerator, JsonProcessingException}
 import com.fasterxml.jackson.databind.{JsonMappingException, JsonSerializer, ObjectMapper, SerializerProvider}
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
@@ -38,7 +38,7 @@ import org.codehaus.jackson.annotate.JsonRawValue
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{Encoder, SparkSession}
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
-import org.apache.spark.sql.types.{DataType, StructType}
+import org.apache.spark.sql.types.{DataType, NullType, StructField, StructType}
 import org.apache.spark.util.Utils
 
 /** Thrown when the protocol version of a table is greater than supported by this client. */
@@ -47,13 +47,17 @@ class InvalidProtocolVersionException extends RuntimeException(
     "Please upgrade to a newer release.")
 
 class ProtocolDowngradeException(oldProtocol: Protocol, newProtocol: Protocol)
-  extends RuntimeException("Protocol version cannot be downgraded from " +
-    s"${oldProtocol.simpleString} to ${newProtocol.simpleString}")
+  extends RuntimeException(DeltaThrowableHelper.getMessage(
+    errorClass = "DELTA_INVALID_PROTOCOL_DOWNGRADE",
+    messageParameters = Array(oldProtocol.simpleString, newProtocol.simpleString)
+  )) with DeltaThrowable {
+  override def getErrorClass: String = "DELTA_INVALID_PROTOCOL_DOWNGRADE"
+}
 
 object Action {
   /** The maximum version of the protocol that this version of Delta understands. */
   val readerVersion = 2
-  val writerVersion = 5
+  val writerVersion = 6
   val protocolVersion: Protocol = Protocol(readerVersion, writerVersion)
 
   def fromJson(json: String): Action = {
@@ -61,6 +65,7 @@ object Action {
   }
 
   lazy val logSchema = ExpressionEncoder[SingleAction].schema
+
 }
 
 /**
@@ -156,6 +161,15 @@ object Protocol {
       throw DeltaErrors.cdcNotAllowedInThisVersion()
     }
 
+    if (ColumnWithDefaultExprUtils.hasIdentityColumn(metadata.schema)) {
+      minimumRequired = Protocol(
+        minReaderVersion = 0,
+        minWriterVersion = ColumnWithDefaultExprUtils.IDENTITY_MIN_WRITER_VERSION
+      )
+      featuresUsed.append("Using IDENTITY Columns")
+      throw DeltaErrors.identityColumnNotSupported()
+    }
+
     if (DeltaColumnMapping.requiresNewProtocol(metadata)) {
       minimumRequired = DeltaColumnMapping.MIN_PROTOCOL_VERSION
     }
@@ -166,9 +180,7 @@ object Protocol {
   /** Cast the table property for the protocol version to an integer. */
   def getVersion(key: String, value: String): Int = {
     try value.toInt catch {
-      case n: NumberFormatException =>
-        throw new IllegalArgumentException(
-          s"Protocol property $key needs to be an integer. Found $value", n)
+      case n: NumberFormatException => throw DeltaErrors.protocolPropNotIntException(key, value)
     }
   }
 
@@ -258,14 +270,22 @@ case class AddFile(
   @JsonIgnore
   lazy val numAutoCompactions: Int = tag(AddFile.Tags.NUM_AUTO_COMPACTIONS).getOrElse("0").toInt
 
+  def optimizedTargetSize: Option[Long] =
+    tag(AddFile.Tags.OPTIMIZE_TARGET_SIZE).map(_.toLong)
+
   def tag(tag: AddFile.Tags.KeyType): Option[String] =
-    Option(tags).getOrElse(Map.empty).get(tag.name)
+    Option(tags).flatMap(_.get(tag.name))
 
   def copyWithTag(tag: AddFile.Tags.KeyType, value: String): AddFile =
     copy(tags = Option(tags).getOrElse(Map.empty) + (tag.name -> value))
 
-  def copyWithoutTag(tag: AddFile.Tags.KeyType): AddFile =
-    copy(tags = Option(tags).getOrElse(Map.empty) - tag.name)
+  def copyWithoutTag(tag: AddFile.Tags.KeyType): AddFile = {
+    if (tags == null) {
+      this
+    } else {
+      copy(tags = tags - tag.name)
+    }
+  }
 
 }
 
@@ -331,20 +351,25 @@ object AddFile {
  * nullable by setting their type Option.
  */
 // scalastyle:off
+@JsonIgnoreProperties(Array("numRecords"))
 case class RemoveFile(
     path: String,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     deletionTimestamp: Option[Long],
     dataChange: Boolean = true,
-    extendedFileMetadata: Option[Boolean] = Some(false),
+    extendedFileMetadata: Option[Boolean] = None,
     partitionValues: Map[String, String] = null,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
-    size: Option[Long] = Some(0L),
-    tags: Map[String, String] = null) extends FileAction {
+    size: Option[Long] = None,
+    tags: Map[String, String] = null,
+    numRecords: Option[Long] = None) extends FileAction {
   override def wrap: SingleAction = SingleAction(remove = this)
 
   @JsonIgnore
   val delTimestamp: Long = deletionTimestamp.getOrElse(0L)
+
+  def optimizedTargetSize: Option[Long] =
+    getTag(AddFile.Tags.OPTIMIZE_TARGET_SIZE.name).map(_.toLong)
 
   /**
    * Return tag value if tags is not null and the tag present.
@@ -458,6 +483,13 @@ case class Metadata(
   lazy val fixedTypeColumns: Set[String] =
     GeneratedColumn.getGeneratedColumnsAndColumnsUsedByGeneratedColumns(schema)
 
+  /**
+   * Store non-partition columns and their corresponding [[OptimizablePartitionExpression]] which
+   * can be used to create partition filters from data filters of these non-partition columns.
+   */
+  @JsonIgnore
+  lazy val optimizablePartitionExpressions: Map[String, Seq[OptimizablePartitionExpression]]
+  = GeneratedColumn.getOptimizablePartitionExpressions(schema, partitionSchema)
 
   override def wrap: SingleAction = SingleAction(metaData = this)
 }

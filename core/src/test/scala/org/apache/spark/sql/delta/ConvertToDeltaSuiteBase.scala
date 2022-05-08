@@ -134,7 +134,8 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaTestUtils
       }
 
       assert(ae.getMessage.contains("Converting a view to a Delta table") ||
-        ae.getMessage.contains("Table default.v not found"))
+        ae.getMessage.contains("Table default.v not found") ||
+        ae.getMessage.contains("Table or view 'v' not found in database 'default'"))
     }
   }
 

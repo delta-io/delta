@@ -85,7 +85,7 @@ object IsolationLevel {
 
   def fromString(s: String): IsolationLevel = {
     allLevelsInDescOrder.find(_.toString.equalsIgnoreCase(s)).getOrElse {
-      throw new IllegalArgumentException(s"invalid isolation level '$s'")
+      throw DeltaErrors.invalidIsolationLevelException(s)
     }
   }
 }

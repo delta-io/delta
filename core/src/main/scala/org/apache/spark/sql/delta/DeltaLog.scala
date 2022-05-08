@@ -51,7 +51,7 @@ import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.sources.{BaseRelation, InsertableRelation}
 import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
-import org.apache.spark.util.{Clock, SystemClock}
+import org.apache.spark.util.{Clock, SystemClock, Utils}
 
 /**
  * Used to query the current state of the log as well as modify it by adding
@@ -111,9 +111,6 @@ class DeltaLog private(
    |  Configuration  |
    * --------------- */
 
-  /** Returns the checkpoint interval for this log. Not transactional. */
-  def checkpointInterval: Int = DeltaConfigs.CHECKPOINT_INTERVAL.fromMetaData(metadata)
-
   /**
    * The max lineage length of a Snapshot before Delta forces to build a Snapshot from scratch.
    * Delta will build a Snapshot on top of the previous one if it doesn't see a checkpoint.
@@ -137,7 +134,12 @@ class DeltaLog private(
    * Tombstones before this timestamp will be dropped from the state and the files can be
    * garbage collected.
    */
-  def minFileRetentionTimestamp: Long = clock.getTimeMillis() - tombstoneRetentionMillis
+  def minFileRetentionTimestamp: Long = {
+    // TODO (Fred): Get rid of this FrameProfiler record once SC-94033 is addressed
+    recordFrameProfile("Delta", "DeltaLog.minFileRetentionTimestamp") {
+      clock.getTimeMillis() - tombstoneRetentionMillis
+    }
+  }
 
   /**
    * Checks whether this table only accepts appends. If so it will throw an error in operations that
@@ -228,8 +230,7 @@ class DeltaLog private(
       SchemaMergingUtils.checkColumnNameDuplication(txn.metadata.schema, "in the table schema")
     } catch {
       case e: AnalysisException =>
-        throw new AnalysisException(
-          e.getMessage + "\nPlease remove duplicate columns before you update your table.")
+        throw DeltaErrors.duplicateColumnsOnUpdateTable(e)
     }
     txn.commit(Seq(newVersion), DeltaOperations.UpgradeProtocol(newVersion))
     logConsole(s"Upgraded table at $dataPath to $newVersion.")
@@ -330,7 +331,7 @@ class DeltaLog private(
     val fs = logPath.getFileSystem(newDeltaHadoopConf())
     if (!fs.exists(logPath)) {
       if (!fs.mkdirs(logPath)) {
-        throw new IOException(s"Cannot create $logPath")
+        throw DeltaErrors.cannotCreateLogPathException(logPath.toString)
       }
     }
   }
@@ -368,7 +369,7 @@ class DeltaLog private(
       // append them to the end of `dataSchema`.
       dataSchema =
         DeltaColumnMapping.dropColumnMappingMetadata(
-          GeneratedColumn.removeGenerationExpressions(snapshot.metadata.schema)),
+          ColumnWithDefaultExprUtils.removeDefaultExpressions(snapshot.metadata.schema)),
       bucketSpec = None,
       snapshot.deltaLog.fileFormat(snapshot.metadata),
       snapshot.metadata.format.options)(spark)
@@ -406,7 +407,7 @@ class DeltaLog private(
       // locations. Otherwise, for any partition columns not in `dataSchema`, Spark would just
       // append them to the end of `dataSchema`
       dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        GeneratedColumn.removeGenerationExpressions(
+        ColumnWithDefaultExprUtils.removeDefaultExpressions(
           SchemaUtils.dropNullTypeColumns(snapshotToUse.metadata.schema))),
       bucketSpec = bucketSpec,
       fileFormat(snapshotToUse.metadata),
@@ -456,6 +457,7 @@ object DeltaLog extends DeltaLogging {
       .foreach(builder.maximumSize)
     builder.build[DeltaLogCacheKey, DeltaLog]()
   }
+
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: String): DeltaLog = {
@@ -531,11 +533,10 @@ object DeltaLog extends DeltaLogging {
     }
   }
 
-  def apply(spark: SparkSession, rawPath: Path, clock: Clock = new SystemClock): DeltaLog = {
+  private def apply(spark: SparkSession, rawPath: Path, clock: Clock = new SystemClock): DeltaLog =
     apply(spark, rawPath, Map.empty, clock)
-  }
 
-  def apply(
+  private def apply(
       spark: SparkSession,
       rawPath: Path,
       options: Map[String, String],
@@ -552,8 +553,9 @@ object DeltaLog extends DeltaLogging {
     // scalastyle:off deltahadoopconfiguration
     val hadoopConf = spark.sessionState.newHadoopConfWithOptions(fileSystemOptions)
     // scalastyle:on deltahadoopconfiguration
-    val fs = rawPath.getFileSystem(hadoopConf)
-    val path = fs.makeQualified(rawPath)
+    var path = rawPath
+    val fs = path.getFileSystem(hadoopConf)
+    path = fs.makeQualified(path)
     def createDeltaLog(): DeltaLog = recordDeltaOperation(
       null,
       "delta.log.create",

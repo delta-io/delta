@@ -84,7 +84,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
         val e = intercept[AnalysisException] {
           vacuumSQLTest(tablePath, viewName)
         }
-        assert(e.getMessage.contains("not found in database"))
+        assert(e.getMessage.contains("not found"))
       }
     }
   }

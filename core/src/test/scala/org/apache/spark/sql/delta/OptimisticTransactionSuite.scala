@@ -256,7 +256,7 @@ class OptimisticTransactionSuite
 
   test("initial commit without metadata should fail") {
     withTempDir { tempDir =>
-      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       val txn = log.startTransaction()
       withSQLConf(DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "true") {
         val e = intercept[IllegalStateException] {
@@ -276,7 +276,7 @@ class OptimisticTransactionSuite
 
   test("initial commit with multiple metadata actions should fail") {
     withTempDir { tempDir =>
-      val log = DeltaLog(spark, new Path(tempDir.getAbsolutePath))
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getAbsolutePath))
       val txn = log.startTransaction()
       val e = intercept[AssertionError] {
         txn.commit(Seq(Metadata(), Metadata()), ManualUpdate)
@@ -287,7 +287,7 @@ class OptimisticTransactionSuite
 
   test("AddFile with different partition schema compared to metadata should fail") {
     withTempDir { tempDir =>
-      val log = DeltaLog(spark, new Path(tempDir.getAbsolutePath))
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getAbsolutePath))
       log.startTransaction().commit(Seq(Metadata(
         schemaString = StructType.fromDDL("col2 string, a int").json,
         partitionColumns = Seq("col2"))), ManualUpdate)
@@ -311,7 +311,7 @@ class OptimisticTransactionSuite
 
   test("isolation level shouldn't be null") {
     withTempDir { tempDir =>
-      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
 
       log.startTransaction().commit(Seq(Metadata()), ManualUpdate)
 
@@ -328,7 +328,7 @@ class OptimisticTransactionSuite
   test("every transaction should use a unique identifier in the commit") {
     withTempDir { tempDir =>
       // Initialize delta table.
-      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       log.startTransaction().commit(Seq(Metadata()), ManualUpdate)
 
       // Start two transactions which commits at same time with same content.

@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.storage
 
 import java.io.Reader
 
+import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.commons.io.IOUtils
 
 /**
@@ -40,7 +41,7 @@ class LineClosableIterator(_reader: Reader) extends ClosableIterator[String] {
       // Check whether we have closed the reader before reading. Even if `nextValue` is valid, we
       // still don't return `nextValue` after a reader is closed. Otherwise, it would be confusing.
       if (closed) {
-        throw new IllegalStateException("Iterator is closed")
+        throw DeltaErrors.iteratorAlreadyClosed()
       }
       if (!gotNext) {
         val nextLine = reader.readLine()

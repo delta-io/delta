@@ -64,7 +64,7 @@ trait DeltaRetentionSuiteBase extends QueryTest
 
   test("startTxnWithManualLogCleanup") {
     withTempDir { tempDir =>
-      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       startTxnWithManualLogCleanup(log).commit(Nil, testOp)
       assert(!log.enableExpiredLogCleanup)
     }

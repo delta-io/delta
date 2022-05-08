@@ -182,6 +182,31 @@ class DeltaTable private[tables](
     executeDelete(None)
   }
 
+  /**
+   * Optimize the data layout of the table. This returns
+   * a [[DeltaOptimizeBuilder]] object that can be used to specify
+   * the partition filter to limit the scope of optimize and
+   * also execute different optimization techniques such as file
+   * compaction or order data using Z-Order curves.
+   *
+   * See the [[DeltaOptimizeBuilder]] for a full description
+   * of this operation.
+   *
+   * Scala example to run file compaction on a subset of
+   * partitions in the table:
+   * {{{
+   *    deltaTable
+   *     .optimize()
+   *     .where("date='2021-11-18'")
+   *     .executeCompaction();
+   * }}}
+   *
+   * @since 1.3.0
+   */
+  def optimize(): DeltaOptimizeBuilder = {
+    DeltaOptimizeBuilder(sparkSession,
+      table.tableIdentifier.getOrElse(s"delta.`${deltaLog.dataPath.toString}`"))
+  }
 
   /**
    * Update rows in the table based on the rules defined by `set`.
@@ -470,8 +495,7 @@ class DeltaTable private[tables](
    * @since 1.2.0
    */
   def restoreToVersion(version: Long): DataFrame = {
-
-    executeRestore(deltaLog, Some(version), None)
+    executeRestore(table, Some(version), None)
   }
 
   /**
@@ -485,8 +509,7 @@ class DeltaTable private[tables](
    * @since 1.2.0
    */
   def restoreToTimestamp(timestamp: String): DataFrame = {
-
-    executeRestore(deltaLog, None, Some(timestamp))
+    executeRestore(table, None, Some(timestamp))
   }
 
 
@@ -605,7 +628,7 @@ object DeltaTable {
    */
   def forPath(path: String): DeltaTable = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
+      throw DeltaErrors.activeSparkSessionNotFound()
     }
     forPath(sparkSession, path)
   }
@@ -634,7 +657,7 @@ object DeltaTable {
    */
   def forName(tableOrViewName: String): DeltaTable = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
+      throw DeltaErrors.activeSparkSessionNotFound()
     }
     forName(sparkSession, tableOrViewName)
   }
@@ -694,7 +717,7 @@ object DeltaTable {
    */
   def isDeltaTable(identifier: String): Boolean = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
+      throw DeltaErrors.activeSparkSessionNotFound()
     }
     isDeltaTable(sparkSession, identifier)
   }
@@ -715,7 +738,7 @@ object DeltaTable {
   @Evolving
   def create(): DeltaTableBuilder = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
+      throw DeltaErrors.activeSparkSessionNotFound()
     }
     create(sparkSession)
   }
@@ -751,7 +774,7 @@ object DeltaTable {
   @Evolving
   def createIfNotExists(): DeltaTableBuilder = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
+      throw DeltaErrors.activeSparkSessionNotFound()
     }
     createIfNotExists(sparkSession)
   }
@@ -787,7 +810,7 @@ object DeltaTable {
   @Evolving
   def replace(): DeltaTableBuilder = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
+      throw DeltaErrors.activeSparkSessionNotFound()
     }
     replace(sparkSession)
   }
@@ -823,7 +846,7 @@ object DeltaTable {
   @Evolving
   def createOrReplace(): DeltaTableBuilder = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
+      throw DeltaErrors.activeSparkSessionNotFound()
     }
     createOrReplace(sparkSession)
   }
@@ -859,7 +882,7 @@ object DeltaTable {
   @Evolving
   def columnBuilder(colName: String): DeltaColumnBuilder = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
+      throw DeltaErrors.activeSparkSessionNotFound()
     }
     columnBuilder(sparkSession, colName)
   }

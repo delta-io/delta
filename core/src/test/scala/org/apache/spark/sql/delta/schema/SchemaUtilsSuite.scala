@@ -926,14 +926,15 @@ class SchemaUtilsSuite extends QueryTest
   test("dropColumn - nested struct") {
     val a = StructField("a", IntegerType)
     val b = StructField("b", StringType)
+    val c = StructField("c", StringType)
     val s = StructField("s", new StructType().add(a).add(b))
-    val schema = new StructType().add(s)
+    val schema = new StructType().add(s).add(c)
 
-    assert(SchemaUtils.dropColumn(schema, Seq(0)) === ((new StructType(), s)))
+    assert(SchemaUtils.dropColumn(schema, Seq(0)) === ((new StructType().add(c), s)))
     assert(SchemaUtils.dropColumn(schema, Seq(0, 0)) ===
-      ((new StructType().add("s", new StructType().add(b)), a)))
+      ((new StructType().add("s", new StructType().add(b)).add(c), a)))
     assert(SchemaUtils.dropColumn(schema, Seq(0, 1)) ===
-      ((new StructType().add("s", new StructType().add(a)), b)))
+      ((new StructType().add("s", new StructType().add(a)).add(c), b)))
 
     expectFailure("Index -1", "lower than 0") {
       SchemaUtils.dropColumn(schema, Seq(0, -1))

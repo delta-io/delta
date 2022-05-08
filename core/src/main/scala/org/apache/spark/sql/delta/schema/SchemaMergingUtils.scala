@@ -20,6 +20,8 @@ import java.util.Locale
 
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.DeltaAnalysisException
+
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.analysis.{Resolver, TypeCoercion, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.Literal
@@ -147,11 +149,11 @@ object SchemaMergingUtils {
                 if (fixedTypeColumnsSet.contains(currentField.name.toLowerCase(Locale.ROOT)) &&
                     !equalsIgnoreCaseAndCompatibleNullability(
                       currentField.dataType, updateField.dataType)) {
-                  throw new AnalysisException(
-                    s"Column ${currentField.name} is a generated column " +
-                      "or a column used by a generated column. " +
-                      s"The data type is ${currentField.dataType.sql}. " +
-                      s"It doesn't accept data type ${updateField.dataType.sql}")
+                  throw new DeltaAnalysisException(
+                    errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+                    messageParameters = Array(currentField.name, currentField.dataType.sql,
+                      updateField.dataType.sql)
+                  )
                 }
                 try {
                   StructField(
@@ -162,7 +164,7 @@ object SchemaMergingUtils {
                 } catch {
                   case NonFatal(e) =>
                     throw new AnalysisException(s"Failed to merge fields '${currentField.name}' " +
-                        s"and '${updateField.name}'. " + e.getMessage)
+                      s"and '${updateField.name}'. " + e.getMessage)
                 }
               case None =>
                 // Retain the old field.
@@ -202,14 +204,18 @@ object SchemaMergingUtils {
           if ((leftPrecision == rightPrecision) && (leftScale == rightScale)) {
             current
           } else if ((leftPrecision != rightPrecision) && (leftScale != rightScale)) {
-            throw new AnalysisException("Failed to merge decimal types with incompatible " +
-              s"precision $leftPrecision and $rightPrecision & scale $leftScale and $rightScale")
+            throw new DeltaAnalysisException(
+              errorClass = "MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+              messageParameters = Array(
+                s"precision $leftPrecision and $rightPrecision & scale $leftScale and $rightScale"))
           } else if (leftPrecision != rightPrecision) {
-            throw new AnalysisException("Failed to merge decimal types with incompatible " +
-              s"precision $leftPrecision and $rightPrecision")
+            throw new DeltaAnalysisException(
+              errorClass = "MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+              messageParameters = Array(s"precision $leftPrecision and $rightPrecision"))
           } else {
-            throw new AnalysisException("Failed to merge decimal types with incompatible " +
-              s"scale $leftScale and $rightScale")
+            throw new DeltaAnalysisException(
+              errorClass = "MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+              messageParameters = Array(s"scale $leftScale and $rightScale"))
           }
         case _ if current == update =>
           current

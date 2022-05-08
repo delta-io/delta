@@ -33,7 +33,10 @@ object Streaming {
       .appName("Streaming")
       .master("local[*]")
       .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-      .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+      .config(
+        "spark.sql.catalog.spark_catalog",
+        "org.apache.spark.sql.delta.catalog.DeltaCatalog"
+      )
       .getOrCreate()
 
     import spark.implicits._
@@ -41,7 +44,9 @@ object Streaming {
     val exampleDir = new File("/tmp/delta-streaming/")
     if (exampleDir.exists()) FileUtils.deleteDirectory(exampleDir)
 
-    println("=== Section 1: write and read delta table using batch queries, and initialize table for later sections")
+    println(
+      "=== Section 1: write and read delta table using batch queries, and initialize table for later sections"
+    )
     // Create a table
     val data = spark.range(0, 5)
     val path = new File("/tmp/delta-streaming/delta-table").getAbsolutePath
@@ -51,11 +56,14 @@ object Streaming {
     val df = spark.read.format("delta").load(path)
     df.show()
 
-
     println("=== Section 2: write and read delta using structured streaming")
     val streamingDf = spark.readStream.format("rate").load()
-    val tablePath2 = new File("/tmp/delta-streaming/delta-table2").getCanonicalPath
-    val checkpointPath = new File("/tmp/delta-streaming/checkpoint").getCanonicalPath
+    val tablePath2 = new File(
+      "/tmp/delta-streaming/delta-table2"
+    ).getCanonicalPath
+    val checkpointPath = new File(
+      "/tmp/delta-streaming/checkpoint"
+    ).getCanonicalPath
     val stream = streamingDf
       .select($"value" as "id")
       .writeStream
@@ -66,8 +74,7 @@ object Streaming {
     stream.awaitTermination(10000)
     stream.stop()
 
-    val stream2 = spark
-      .readStream
+    val stream2 = spark.readStream
       .format("delta")
       .load(tablePath2)
       .writeStream
@@ -77,22 +84,24 @@ object Streaming {
     stream2.awaitTermination(10000)
     stream2.stop()
 
-
     println("=== Section 3: Streaming upserts using MERGE")
     // Function to upsert microBatchOutputDF into Delta Lake table using merge
-    def upsertToDelta(microBatchOutputDF: DataFrame, batchId: Long) {
+    def upsertToDelta(microBatchOutputDF: DataFrame, batchId: Long): Unit = {
       val deltaTable = DeltaTable.forPath(path)
-      deltaTable.as("t")
+      deltaTable
+        .as("t")
         .merge(
           microBatchOutputDF.select($"value" as "id").as("s"),
-          "s.id = t.id")
-        .whenMatched().updateAll()
-        .whenNotMatched().insertAll()
+          "s.id = t.id"
+        )
+        .whenMatched()
+        .updateAll()
+        .whenNotMatched()
+        .insertAll()
         .execute()
     }
 
-    val streamingAggregatesDf = spark
-      .readStream
+    val streamingAggregatesDf = spark.readStream
       .format("rate")
       .load()
       .withColumn("key", col("value") % 10)
@@ -117,24 +126,46 @@ object Streaming {
 
     // Streaming append and concurrent repartition using  data change = false
     // tbl1 is the sink and tbl2 is the source
-    println("############ Streaming appends with concurrent table repartition  ##########")
+    println(
+      "############ Streaming appends with concurrent table repartition  ##########"
+    )
     val tbl1 = "/tmp/delta-streaming/delta-table4"
     val tbl2 = "/tmp/delta-streaming/delta-table5"
     val numRows = 10
     spark.range(numRows).write.mode("overwrite").format("delta").save(tbl1)
     spark.read.format("delta").load(tbl1).show()
-    spark.range(numRows, numRows * 10).write.mode("overwrite").format("delta").save(tbl2)
+    spark
+      .range(numRows, numRows * 10)
+      .write
+      .mode("overwrite")
+      .format("delta")
+      .save(tbl2)
 
     // Start reading tbl2 as a stream and do a streaming write to tbl1
     // Prior to Delta 0.5.0 this would throw StreamingQueryException: Detected a data update in the source table. This is currently not supported.
-    val stream4 = spark.readStream.format("delta").load(tbl2).writeStream.format("delta")
-      .option("checkpointLocation", new File("/tmp/delta-streaming/checkpoint/tbl1").getCanonicalPath)
+    val stream4 = spark.readStream
+      .format("delta")
+      .load(tbl2)
+      .writeStream
+      .format("delta")
+      .option(
+        "checkpointLocation",
+        new File("/tmp/delta-streaming/checkpoint/tbl1").getCanonicalPath
+      )
       .outputMode("append")
       .start(tbl1)
-    
+
     Thread.sleep(10 * 1000)
     // repartition table while streaming job is running
-    spark.read.format("delta").load(tbl2).repartition(10).write.format("delta").mode("overwrite").option("dataChange", "false").save(tbl2)
+    spark.read
+      .format("delta")
+      .load(tbl2)
+      .repartition(10)
+      .write
+      .format("delta")
+      .mode("overwrite")
+      .option("dataChange", "false")
+      .save(tbl2)
 
     stream4.awaitTermination(5 * 1000)
     stream4.stop()

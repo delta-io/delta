@@ -60,7 +60,7 @@ class CheckConstraintsSuite extends QueryTest
       }
       // Make sure we're still getting a useful parse error, even though we do some complicated
       // internal stuff to persist the constraint. Unfortunately this test may be a bit fragile.
-      errorContains(e.getMessage, "mismatched input '<EOF>' expecting")
+      errorContains(e.getMessage, "Syntax error at or near end of input")
       errorContains(e.getMessage,
         """
           |== SQL ==
@@ -136,17 +136,36 @@ class CheckConstraintsSuite extends QueryTest
     }
   }
 
-  test("can drop constraint that doesn't exist") {
+  test("drop constraint that doesn't exist throws an exception") {
     withTestTable { table =>
-      sql(s"ALTER TABLE $table DROP CONSTRAINT IF EXISTS myConstraint")
+      intercept[AnalysisException] {
+        sql(s"ALTER TABLE $table DROP CONSTRAINT myConstraint")
+      }
+    }
+
+    withSQLConf((DeltaSQLConf.DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS.key, "false")) {
+      withTestTable { table =>
+        val e = intercept[AnalysisException] {
+          sql(s"ALTER TABLE $table DROP CONSTRAINT myConstraint")
+        }
+        assert(e.getErrorClass == "CONSTRAINT_DOES_NOT_EXIST")
+        errorContains(e.getMessage,
+          "nonexistent constraint myconstraint from table `default`.`checkconstraintstest`")
+        errorContains(e.getMessage,
+          "databricks.spark.delta.constraints.assumesDropIfExists.enabled to true")
+      }
     }
   }
 
-  // IF EXISTS is provided only for parallelism with existing DataSourceV2 commands that support it
-  // as a stub. It doesn't change any behavior.
   test("can drop constraint that doesn't exist with IF EXISTS") {
     withTestTable { table =>
       sql(s"ALTER TABLE $table DROP CONSTRAINT IF EXISTS myConstraint")
+    }
+
+    withSQLConf((DeltaSQLConf.DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS.key, "true")) {
+      withTestTable { table =>
+        sql(s"ALTER TABLE $table DROP CONSTRAINT myConstraint")
+      }
     }
   }
 

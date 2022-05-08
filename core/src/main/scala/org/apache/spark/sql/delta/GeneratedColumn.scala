@@ -87,7 +87,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
    * generation expressions. Use the other `isGeneratedColumn` to check whether it's a generated
    * column instead.
    */
-  private def isGeneratedColumn(field: StructField): Boolean = {
+  private[delta] def isGeneratedColumn(field: StructField): Boolean = {
     field.metadata.contains(GENERATION_EXPRESSION_METADATA_KEY)
   }
 
@@ -158,31 +158,6 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     }
   }
 
-  /**
-   * Remove generation expressions from the schema. We use this to remove generation expression
-   * metadata when reading a Delta table to avoid propagating generation expressions downstream.
-   */
-  def removeGenerationExpressions(schema: StructType): StructType = {
-    var updated = false
-    val updatedSchema = schema.map { field =>
-      if (isGeneratedColumn(field)) {
-        updated = true
-        val newMetadata = new MetadataBuilder()
-          .withMetadata(field.metadata)
-          .remove(GENERATION_EXPRESSION_METADATA_KEY)
-          .build()
-        field.copy(metadata = newMetadata)
-      } else {
-        field
-      }
-    }
-    if (updated) {
-      StructType(updatedSchema)
-    } else {
-      schema
-    }
-  }
-
   /** Return the generation expression from a field if any. */
   private def getGenerationExpressionStr(field: StructField): Option[String] = {
     getGenerationExpressionStr(field.metadata)
@@ -214,8 +189,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
           new Column(expr).alias(f.name)
         case None =>
           // Should not happen
-          throw new IllegalStateException(
-            s"Cannot find the expressions in the generated column ${f.name}")
+          throw DeltaErrors.expressionsNotFoundInGeneratedColumn(f.name)
       }
     }
     val dfWithExprs = try {
@@ -281,7 +255,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
                 case a: AttributeReference => a.name
                 case other =>
                   // Should not happen since the columns should be resolved
-                throw new IllegalStateException(s"Expected AttributeReference but got $other")
+                  throw DeltaErrors.unexpectedAttributeReference(s"$other")
               }.toSeq :+ column
             case other =>
               // Should not happen since we use `Alias` expressions.
@@ -295,4 +269,261 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     generatedColumnsAndColumnsUsedByGeneratedColumns.map(_.toLowerCase(Locale.ROOT)).toSet
   }
 
+  /**
+   * Try to get `OptimizablePartitionExpression`s of a data column when a partition column is
+   * defined as a generated column and refers to this data column.
+   *
+   * @param schema the table schema
+   * @param partitionSchema the partition schema. If a partition column is defined as a generated
+   *                        column, its column metadata should contain the generation expression.
+   */
+  def getOptimizablePartitionExpressions(
+      schema: StructType,
+      partitionSchema: StructType): Map[String, Seq[OptimizablePartitionExpression]] = {
+    val partitionGenerationExprs = partitionSchema.flatMap { col =>
+      getGenerationExpressionStr(col).map { exprStr =>
+        val expr = parseGenerationExpression(SparkSession.active, exprStr)
+        new Column(expr).alias(col.name)
+      }
+    }
+    if (partitionGenerationExprs.isEmpty) {
+      return Map.empty
+    }
+
+    val spark = SparkSession.active
+    val nameEquality = spark.sessionState.analyzer.resolver
+    val nameNormalizer: String => String =
+      if (spark.sessionState.conf.caseSensitiveAnalysis) x => x else _.toLowerCase(Locale.ROOT)
+
+    /**
+     * If the column `a`'s type matches the expected type, call `func` to create
+     * `OptimizablePartitionExpression`. Returns a normalized column name with its
+     * `OptimizablePartitionExpression`
+     */
+    def checkTypeAndCreateExpr(
+        a: AttributeReference,
+        expectedType: DataType)(
+        func: => OptimizablePartitionExpression):
+      Option[(String, OptimizablePartitionExpression)] = {
+      // Technically, we should only refer to a column in the table schema. Check the column name
+      // here just for safety.
+      if (a.dataType == expectedType &&
+          schema.exists(f => nameEquality(f.name, a.name) && f.dataType == expectedType)) {
+        // `a.name` comes from the generation expressions which users may use different cases. We
+        // need to normalize it to the same case so that we can group expressions for the same
+        // column name together.
+        Some(nameNormalizer(a.name) -> func)
+      } else {
+        None
+      }
+    }
+
+    val df = Dataset.ofRows(SparkSession.active, new LocalRelation(schema.toAttributes))
+    val extractedPartitionExprs =
+      df.select(partitionGenerationExprs: _*).queryExecution.analyzed match {
+        case Project(exprs, _) =>
+          exprs.flatMap {
+            case Alias(expr, partColName) =>
+              expr match {
+                case Cast(a: AttributeReference, DateType, _, _) =>
+                  checkTypeAndCreateExpr(a, TimestampType)(DatePartitionExpr(partColName)).orElse(
+                    checkTypeAndCreateExpr(a, DateType)(DatePartitionExpr(partColName)))
+                case Year(a: AttributeReference) =>
+                  checkTypeAndCreateExpr(a, DateType)(YearPartitionExpr(partColName))
+                case Year(Cast(a: AttributeReference, DateType, _, _)) =>
+                  checkTypeAndCreateExpr(a, TimestampType)(
+                    YearPartitionExpr(partColName)).orElse(
+                    checkTypeAndCreateExpr(a, DateType)(YearPartitionExpr(partColName)))
+                case Month(Cast(a: AttributeReference, DateType, _, _)) =>
+                  checkTypeAndCreateExpr(a, TimestampType)(MonthPartitionExpr(partColName))
+                case DateFormatClass(
+                  Cast(a: AttributeReference, TimestampType, _, _), StringLiteral(format), _) =>
+                    format match {
+                      case DATE_FORMAT_YEAR_MONTH =>
+                        checkTypeAndCreateExpr(a, DateType)(
+                          DateFormatPartitionExpr(partColName, DATE_FORMAT_YEAR_MONTH))
+                      case _ => None
+                    }
+                case DateFormatClass(a: AttributeReference, StringLiteral(format), _) =>
+                  format match {
+                    case DATE_FORMAT_YEAR_MONTH =>
+                      checkTypeAndCreateExpr(a, TimestampType)(
+                        DateFormatPartitionExpr(partColName, DATE_FORMAT_YEAR_MONTH))
+                    case DATE_FORMAT_YEAR_MONTH_DAY_HOUR =>
+                      checkTypeAndCreateExpr(a, TimestampType)(
+                        DateFormatPartitionExpr(partColName, DATE_FORMAT_YEAR_MONTH_DAY_HOUR))
+                    case _ => None
+                  }
+                case DayOfMonth(Cast(a: AttributeReference, DateType, _, _)) =>
+                  checkTypeAndCreateExpr(a, TimestampType)(DayPartitionExpr(partColName))
+                case Hour(a: AttributeReference, _) =>
+                  checkTypeAndCreateExpr(a, TimestampType)(HourPartitionExpr(partColName))
+                case Substring(a: AttributeReference, IntegerLiteral(pos), IntegerLiteral(len)) =>
+                  checkTypeAndCreateExpr(a, StringType)(
+                    SubstringPartitionExpr(partColName, pos, len))
+                case _ => None
+              }
+            case other =>
+              // Should not happen since we use `Alias` expressions.
+              throw new IllegalStateException(s"Expected Alias but got $other")
+          }
+        case other =>
+          // Should not happen since `select` should use `Project`.
+          throw new IllegalStateException(s"Expected Project but got $other")
+      }
+    extractedPartitionExprs.groupBy(_._1).map { case (name, group) =>
+      val groupedExprs = group.map(_._2)
+      val mergedExprs = mergePartitionExpressionsIfPossible(groupedExprs)
+      if (log.isDebugEnabled) {
+        logDebug(s"Optimizable partition expressions for column $name:")
+        mergedExprs.foreach(expr => logDebug(expr.toString))
+      }
+      name -> mergedExprs
+    }
+  }
+
+  /**
+   * Merge multiple partition expressions into one if possible. For example, users may define
+   * three partitions columns, `year`, `month` and `day`, rather than defining a single `date`
+   * partition column. Hence, we need to take the multiple partition columns into a single
+   * part to consider when optimizing queries.
+   */
+  private def mergePartitionExpressionsIfPossible(
+      exprs: Seq[OptimizablePartitionExpression]): Seq[OptimizablePartitionExpression] = {
+    def isRedundantPartitionExpr(f: OptimizablePartitionExpression): Boolean = {
+      f.isInstanceOf[YearPartitionExpr] ||
+        f.isInstanceOf[MonthPartitionExpr] ||
+        f.isInstanceOf[DayPartitionExpr] ||
+        f.isInstanceOf[HourPartitionExpr]
+    }
+
+    // Take the first option because it's safe to drop other duplicate partition expressions
+    val year = exprs.collect { case y: YearPartitionExpr => y }.headOption
+    val month = exprs.collect { case m: MonthPartitionExpr => m }.headOption
+    val day = exprs.collect { case d: DayPartitionExpr => d }.headOption
+    val hour = exprs.collect { case h: HourPartitionExpr => h }.headOption
+    (year ++ month ++ day ++ hour) match {
+      case Seq(
+          year: YearPartitionExpr,
+          month: MonthPartitionExpr,
+          day: DayPartitionExpr,
+          hour: HourPartitionExpr) =>
+        exprs.filterNot(isRedundantPartitionExpr) :+
+          YearMonthDayHourPartitionExpr(year.yearPart, month.monthPart, day.dayPart, hour.hourPart)
+      case Seq(year: YearPartitionExpr, month: MonthPartitionExpr, day: DayPartitionExpr) =>
+        exprs.filterNot(isRedundantPartitionExpr) :+
+          YearMonthDayPartitionExpr(year.yearPart, month.monthPart, day.dayPart)
+      case Seq(year: YearPartitionExpr, month: MonthPartitionExpr) =>
+        exprs.filterNot(isRedundantPartitionExpr) :+
+          YearMonthPartitionExpr(year.yearPart, month.monthPart)
+      case _ =>
+        exprs
+    }
+  }
+
+  def partitionFilterOptimizationEnabled(spark: SparkSession): Boolean = {
+    spark.sessionState.conf
+      .getConf(DeltaSQLConf.GENERATED_COLUMN_PARTITION_FILTER_OPTIMIZATION_ENABLED)
+  }
+
+
+  /**
+   * Try to generate partition filters from data filters if possible.
+   *
+   * @param delta the logical plan that outputs the same attributes as the table schema. This will
+   *              be used to resolve auto generated expressions.
+   */
+  def generatePartitionFilters(
+      spark: SparkSession,
+      snapshot: Snapshot,
+      dataFilters: Seq[Expression],
+      delta: LogicalPlan): Seq[Expression] = {
+    if (!satisfyGeneratedColumnProtocol(snapshot.protocol)) {
+      return Nil
+    }
+    if (snapshot.metadata.optimizablePartitionExpressions.isEmpty) {
+      return Nil
+    }
+
+    val optimizablePartitionExpressions =
+      if (spark.sessionState.conf.caseSensitiveAnalysis) {
+        snapshot.metadata.optimizablePartitionExpressions
+      } else {
+        CaseInsensitiveMap(snapshot.metadata.optimizablePartitionExpressions)
+      }
+
+    /**
+     * Preprocess the data filter such as reordering to ensure the column name appears on the left
+     * and the literal appears on the right.
+     */
+    def preprocess(filter: Expression): Expression = filter match {
+      case LessThan(lit: Literal, a: AttributeReference) =>
+        GreaterThan(a, lit)
+      case LessThanOrEqual(lit: Literal, a: AttributeReference) =>
+        GreaterThanOrEqual(a, lit)
+      case EqualTo(lit: Literal, a: AttributeReference) =>
+        EqualTo(a, lit)
+      case GreaterThan(lit: Literal, a: AttributeReference) =>
+        LessThan(a, lit)
+      case GreaterThanOrEqual(lit: Literal, a: AttributeReference) =>
+        LessThanOrEqual(a, lit)
+      case e => e
+    }
+
+    /**
+     * Find the `OptimizablePartitionExpression`s of column `a` and apply them to get the partition
+     * filters.
+     */
+    def toPartitionFilter(
+        a: AttributeReference,
+        func: (OptimizablePartitionExpression) => Option[Expression]): Seq[Expression] = {
+      optimizablePartitionExpressions.get(a.name).toSeq.flatMap { exprs =>
+        exprs.flatMap(expr => func(expr))
+      }
+    }
+
+    val partitionFilters = dataFilters.flatMap { filter =>
+      preprocess(filter) match {
+        case LessThan(a: AttributeReference, lit: Literal) =>
+          toPartitionFilter(a, _.lessThan(lit))
+        case LessThanOrEqual(a: AttributeReference, lit: Literal) =>
+          toPartitionFilter(a, _.lessThanOrEqual(lit))
+        case EqualTo(a: AttributeReference, lit: Literal) =>
+          toPartitionFilter(a, _.equalTo(lit))
+        case GreaterThan(a: AttributeReference, lit: Literal) =>
+          toPartitionFilter(a, _.greaterThan(lit))
+        case GreaterThanOrEqual(a: AttributeReference, lit: Literal) =>
+          toPartitionFilter(a, _.greaterThanOrEqual(lit))
+        case IsNull(a: AttributeReference) =>
+          toPartitionFilter(a, _.isNull)
+        case _ => Nil
+      }
+    }
+
+    val resolvedPartitionFilters = resolveReferencesForExpressions(spark, partitionFilters, delta)
+
+    if (log.isDebugEnabled) {
+      logDebug("User provided data filters:")
+      dataFilters.foreach(f => logDebug(f.sql))
+      logDebug("Auto generated partition filters:")
+      partitionFilters.foreach(f => logDebug(f.sql))
+      logDebug("Resolved generated partition filters:")
+      resolvedPartitionFilters.foreach(f => logDebug(f.sql))
+    }
+
+    val executionId = Option(spark.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY))
+      .getOrElse("unknown")
+    recordDeltaEvent(
+      snapshot.deltaLog,
+      "delta.generatedColumns.optimize",
+      data = Map(
+        "executionId" -> executionId,
+        "triggered" -> resolvedPartitionFilters.nonEmpty
+      ))
+
+    resolvedPartitionFilters
+  }
+
+  private val DATE_FORMAT_YEAR_MONTH = "yyyy-MM"
+  private val DATE_FORMAT_YEAR_MONTH_DAY_HOUR = "yyyy-MM-dd-HH"
 }
