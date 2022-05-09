@@ -57,31 +57,31 @@ class DeltaWriteConfigsSuite extends QueryTest
     // scalastyle:off println
 
     println("DataFrameWriter Test Output")
-    dfw_output
+    dfw_output.toSeq
       .toDF("Output Location", "Output Mode", s"Contains No-Prefix Option",
         "Contains Prefix-Option")
       .show(100, false)
 
     println("DataStreamWriter Test Output")
-    dsw_output
+    dsw_output.toSeq
       .toDF("Output Location", "Output Mode", s"Contains No-Prefix Option",
         "Contains Prefix-Option")
       .show(100, false)
 
     println("DataFrameWriterV2 Test Output")
-    dfw_v2_output
+    dfw_v2_output.toSeq
       .toDF("Output Location", "Output Mode", s"Contains No-Prefix Option",
         "Contains Prefix-Option")
       .show(100, false)
 
     println("DeltaTableBuilder Test Output")
-    dtb_output
+    dtb_output.toSeq
       .toDF("Output Location", "Output Mode", s"Contains No-Prefix Option",
         "Contains Prefix-Option", "ERROR")
       .show(100, false)
 
     println("SQL Test Output")
-    sql_output
+    sql_output.toSeq
       .toDF("Output Location", "Config Input", s"SQL Operation", "AS SELECT",
         "Contains OPTION no-prefix", "Contains OPTION prefix", "Contains TBLPROPERTIES no-prefix",
         "Contains TBLPROPERTIES prefix")
