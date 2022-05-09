@@ -72,7 +72,7 @@ case class OptimizeTableCommand(
         deltaLog.snapshot.metadata.partitionColumns,
         predicates)
       predicates
-    }).getOrElse(Seq(Literal.TrueLiteral))
+    }).getOrElse(Seq.empty)
 
     new OptimizeExecutor(sparkSession, deltaLog, partitionPredicates)
         .optimize()
