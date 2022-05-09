@@ -1686,7 +1686,7 @@ class DeltaSuite extends QueryTest
         .withColumn("part", $"value" % 2)
         .write
         .format("delta")
-        .option("delta.sampleRetentionDuration", "123 days")
+        .option("delta.logRetentionDuration", "123 days")
         .option("mergeSchema", "true")
         .partitionBy("part")
         .mode("append")
@@ -1694,7 +1694,7 @@ class DeltaSuite extends QueryTest
 
       val deltaLog = DeltaLog.forTable(spark, testPath)
       assert(deltaLog.snapshot.metadata.configuration ===
-        Map("delta.sampleRetentionDuration" -> "123 days"))
+        Map("delta.logRetentionDuration" -> "123 days"))
     }
   }
 }
