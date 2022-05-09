@@ -16,7 +16,6 @@
 
 package io.delta.storage
 
-import org.apache.spark.sql.delta.storage.HadoopFileSystemLogStore
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 
@@ -43,7 +42,7 @@ import org.apache.spark.annotation.Unstable
  */
 @Unstable
 class OracleCloudLogStore(sparkConf: SparkConf, initHadoopConf: Configuration)
-  extends HadoopFileSystemLogStore(sparkConf, initHadoopConf) {
+  extends org.apache.spark.sql.delta.storage.HadoopFileSystemLogStore(sparkConf, initHadoopConf) {
 
   override def write(path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit = {
     write(path, actions, overwrite, getHadoopConfiguration)

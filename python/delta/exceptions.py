@@ -14,9 +14,20 @@
 # limitations under the License.
 #
 
+from typing import TYPE_CHECKING, Optional
+
 from pyspark import SparkContext
 from pyspark.sql import utils
-from pyspark.sql.utils import CapturedException
+from pyspark.sql.utils import (
+    AnalysisException,
+    CapturedException,
+    IllegalArgumentException,
+    ParseException
+)
+from py4j.java_gateway import is_instance_of  # type: ignore[import]
+
+if TYPE_CHECKING:
+    from py4j.java_gateway import JavaObject, JVMView  # type: ignore[import]
 
 
 class DeltaConcurrentModificationException(CapturedException):
@@ -105,13 +116,27 @@ class ConcurrentTransactionException(CapturedException):
 _delta_exception_patched = False
 
 
-def _convert_delta_exception(e):
+def _convert_delta_exception(e: "JavaObject") -> Optional[CapturedException]:
     """
     Convert Delta's Scala concurrent exceptions to the corresponding Python exceptions.
     """
-    s = e.toString()
-    c = e.getCause()
-    stacktrace = SparkContext._jvm.org.apache.spark.util.Utils.exceptionString(e)
+    s: str = e.toString()
+    c: "JavaObject" = e.getCause()
+
+    jvm: "JVMView" = SparkContext._jvm  # type: ignore[attr-defined]
+    gw = SparkContext._gateway  # type: ignore[attr-defined]
+    stacktrace = jvm.org.apache.spark.util.Utils.exceptionString(e)
+
+    # Temporary workaround until Delta Lake is upgraded to Spark 3.3
+    # Below three exception handling cases are copied from
+    # https://github.com/apache/spark/blob/master/python/pyspark/sql/utils.py#L156
+    if is_instance_of(gw, e, "org.apache.spark.sql.catalyst.parser.ParseException"):
+        return ParseException(s.split(': ', 1)[1], stacktrace, c)
+    # Order matters. ParseException inherits AnalysisException.
+    if is_instance_of(gw, e, "org.apache.spark.sql.AnalysisException"):
+        return AnalysisException(s.split(': ', 1)[1], stacktrace, c)
+    if is_instance_of(gw, e, "java.lang.IllegalArgumentException"):
+        return IllegalArgumentException(s.split(': ', 1)[1], stacktrace, c)
 
     if s.startswith('io.delta.exceptions.DeltaConcurrentModificationException: '):
         return DeltaConcurrentModificationException(s.split(': ', 1)[1], stacktrace, c)
@@ -132,14 +157,14 @@ def _convert_delta_exception(e):
     return None
 
 
-def _patch_convert_exception():
+def _patch_convert_exception() -> None:
     """
     Patch PySpark's exception convert method to convert Delta's Scala concurrent exceptions to the
     corresponding Python exceptions.
     """
     convert_sql_exception = utils.convert_exception
 
-    def convert_delta_exception(e):
+    def convert_delta_exception(e: "JavaObject") -> Optional[CapturedException]:
         delta_exception = _convert_delta_exception(e)
         if delta_exception is not None:
             return delta_exception

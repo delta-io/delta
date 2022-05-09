@@ -185,14 +185,6 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = predicate.map("predicate" -> _).toMap
     override val operationMetrics: Set[String] = DeltaOperationMetrics.UPDATE
 
-    override def transformMetrics(metrics: Map[String, SQLMetric]): Map[String, String] = {
-      val numOutputRows = metrics("numOutputRows").value
-      val numUpdatedRows = metrics("numUpdatedRows").value
-      var strMetrics = super.transformMetrics(metrics)
-      val numCopiedRows = numOutputRows - numUpdatedRows
-      strMetrics += "numCopiedRows" -> numCopiedRows.toString
-      strMetrics
-    }
     override def changesData: Boolean = true
   }
   /** Recorded when the table is created. */
@@ -256,6 +248,15 @@ object DeltaOperations {
           ) ++ colPosition.map("position" -> _.toString)
       }))
   }
+
+  /** Recorded when columns are dropped. */
+  case class DropColumns(
+    colsToDrop: Seq[Seq[String]]) extends Operation("DROP COLUMNS") {
+
+    override val parameters: Map[String, Any] = Map(
+      "columns" -> JsonUtils.toJson(colsToDrop.map(UnresolvedAttribute(_).name)))
+  }
+
   /** Recorded when columns are changed. */
   case class ChangeColumn(
       columnPath: Seq[String],
@@ -318,6 +319,36 @@ object DeltaOperations {
         Map("name" -> constraintName, "existed" -> "false")
       }
     }
+  }
+
+  /** Recorded when recomputing stats on the table. */
+  case class ComputeStats(predicate: Seq[String]) extends Operation("COMPUTE STATS") {
+    override val parameters: Map[String, Any] = Map(
+      "predicate" -> JsonUtils.toJson(predicate))
+  }
+
+  /** Recorded when restoring a Delta table to an older version. */
+  case class Restore(
+      version: Option[Long],
+      timestamp: Option[String]) extends Operation("RESTORE") {
+    override val parameters: Map[String, Any] = Map(
+      "version" -> version,
+      "timestamp" -> timestamp)
+    override def changesData: Boolean = true
+
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.RESTORE
+  }
+
+  val OPTIMIZE_OPERATION_NAME = "OPTIMIZE"
+
+  /** Recorded when optimizing the table. */
+  case class Optimize(
+      predicate: Seq[String]
+  ) extends Operation(OPTIMIZE_OPERATION_NAME) {
+    override val parameters: Map[String, Any] = Map(
+      "predicate" -> JsonUtils.toJson(predicate)
+      )
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.OPTIMIZE
   }
 
 
@@ -413,4 +444,24 @@ private[delta] object DeltaOperationMetrics {
     "rewriteTimeMs" // time taken to rewrite the matched files
   )
 
+  val OPTIMIZE = Set(
+    "numAddedFiles", // number of files added
+    "numRemovedFiles", // number of files removed
+    "numAddedBytes", // number of bytes added by optimize
+    "numRemovedBytes", // number of bytes removed by optimize
+    "minFileSize", // the size of the smallest file
+    "p25FileSize", // the size of the 25th percentile file
+    "p50FileSize", // the median file size
+    "p75FileSize", // the 75th percentile of the file sizes
+    "maxFileSize" // the size of the largest file
+  )
+
+  val RESTORE = Set(
+    "tableSizeAfterRestore", // table size in bytes after restore
+    "numOfFilesAfterRestore", // number of files in the table after restore
+    "numRemovedFiles", // number of files removed by the restore operation
+    "numRestoredFiles", // number of files that were added as a result of the restore
+    "removedFilesSize", // size in bytes of files removed by the restore
+    "restoredFilesSize" // size in bytes of files added by the restore
+  )
 }

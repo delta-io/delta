@@ -17,6 +17,8 @@
 package org.apache.spark.sql.delta.hooks
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.net.URI
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -208,7 +210,9 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
           new Path(relativeManifestFilePath).getParent.toString // returns "col1=0/col2=0"
         }.filterNot(_.trim.isEmpty).toSet
       } else Set.empty[String]
-    }
+    }.map(uri => new Path(new URI(uri)).toString)
+    // paths returned from inputFiles are URI encoded so we need to convert them back to string.
+    // So that they can compared with newManifestPartitionRelativePaths in the next step.
 
     // Delete manifest files for partitions that are not in current and so weren't overwritten
     val manifestFilePartitionsToDelete =
@@ -244,7 +248,7 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
     val spark = fileNamesForManifest.sparkSession
     import spark.implicits._
 
-    val tableAbsPathForManifest = LogStore(spark.sparkContext)
+    val tableAbsPathForManifest = LogStore(spark)
       .resolvePathOnPhysicalStorage(deltaLogDataPath, hadoopConf.value).toString
 
     /** Write the data file relative paths to manifestDirAbsPath/manifest as absolute paths */

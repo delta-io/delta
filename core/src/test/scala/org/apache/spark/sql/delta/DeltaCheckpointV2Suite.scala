@@ -28,8 +28,7 @@ import org.apache.spark.sql.types._
 
 class DeltaCheckpointV2Suite
   extends QueryTest
-  with SharedSparkSession
-  with DeltaColumnMappingTestUtils
+  with SharedSparkSession  with DeltaColumnMappingTestUtils
   with DeltaSQLCommandTest {
 
   import testImplicits._
@@ -325,3 +324,12 @@ class DeltaCheckpointV2Suite
   }
 }
 
+
+class DeltaCheckpointV2NameColumnMappingSuite extends DeltaCheckpointV2Suite
+  with DeltaColumnMappingEnableNameMode {
+
+  override protected def runOnlyTests = Seq(
+    "unpartitioned table",
+    "partitioned table"
+  )
+}

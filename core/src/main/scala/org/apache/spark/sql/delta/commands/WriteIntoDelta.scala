@@ -117,7 +117,8 @@ case class WriteIntoDelta(
     // change the actual behavior, but makes DESC TABLE to show varchar instead of char.
     val dataSchema = CharVarcharUtils.replaceCharVarcharWithStringInSchema(
       replaceCharWithVarchar(CharVarcharUtils.getRawSchema(data.schema)).asInstanceOf[StructType])
-    updateMetadata(data.sparkSession, txn, schemaInCatalog.getOrElse(dataSchema),
+    var finalSchema = schemaInCatalog.getOrElse(dataSchema)
+    updateMetadata(data.sparkSession, txn, finalSchema,
       partitionColumns, configuration, isOverwriteOperation, rearrangeOnly)
 
     val replaceOnDataColsEnabled =
@@ -189,16 +190,13 @@ case class WriteIntoDelta(
         deletedFiles.map {
           case add: AddFile => add.copy(dataChange = !rearrangeOnly)
           case remove: RemoveFile => remove.copy(dataChange = !rearrangeOnly)
-          case other =>
-            throw new IllegalStateException(
-              s"Illegal files found in a dataChange = false transaction. Files: $other")
+          case other => throw DeltaErrors.illegalFilesFound(other.toString)
         }
     } else {
       newFiles ++ deletedFiles
     }
     fileActions
   }
-
 
   private def extractConstraints(
       sparkSession: SparkSession,

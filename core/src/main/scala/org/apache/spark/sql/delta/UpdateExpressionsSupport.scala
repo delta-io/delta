@@ -73,7 +73,15 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
               val indexVar = NamedLambdaVariable("indexVar", IntegerType, false)
               LambdaFunction(structConverter(elementVar, indexVar), Seq(elementVar, indexVar))
             }
-            cast(ArrayTransform(fromExpression, transformLambdaFunc), dataType)
+            // Transforms every element in the array using the lambda function.
+            // Because castIfNeeded is called recursively for array elements, which
+            // generates nullable expression, ArrayTransform will generate an ArrayType with
+            // containsNull as true. Thus, the ArrayType to be casted to need to have containsNull
+            // as true to avoid casting failures.
+            cast(
+              ArrayTransform(fromExpression, transformLambdaFunc),
+              ArrayType(toEt, containsNull = true)
+            )
           case (from: StructType, to: StructType)
               if !DataType.equalsIgnoreCaseAndNullability(from, to) && resolveStructsByName =>
             // All from fields must be present in the final schema, or we'll silently lose data.
@@ -226,8 +234,7 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
                 generatedColumns = Nil)
                 .map(_.getOrElse {
                   // Should not happen
-                  throw new IllegalStateException("Calling without generated columns should " +
-                    "always return a update expression for each column")
+                  throw DeltaErrors.cannotGenerateUpdateExpressions()
                 })
               // Reconstruct the expression for targetCol using its possibly updated children
               val namedStructExprs = fields
@@ -314,8 +321,7 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
               resolveReferencesForExpressions(SparkSession.active, expr :: Nil, fakePlan).head
             case None =>
               // Should not happen
-              throw new IllegalStateException(s"$targetCol is not a generated column " +
-                s"but is missing its update expression")
+              throw DeltaErrors.nonGeneratedColumnMissingUpdateExpression(targetCol)
           }
         // As `resolvedExpr` will refer to attributes in `fakePlan`, we need to manually replace
         // these attributes with their update expressions.

@@ -43,8 +43,7 @@ import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.ManualClock
 
 trait DeltaVacuumSuiteBase extends QueryTest
-  with SharedSparkSession
-  with GivenWhenThen
+  with SharedSparkSession  with GivenWhenThen
   with SQLTestUtils  with DeltaTestUtilsForTempViews {
 
   testQuietly("basic case - SQL command on path-based tables with direct 'path'") {
@@ -85,7 +84,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
         val e = intercept[AnalysisException] {
           vacuumSQLTest(tablePath, viewName)
         }
-        assert(e.getMessage.contains("not found in database"))
+        assert(e.getMessage.contains("not found"))
       }
     }
   }

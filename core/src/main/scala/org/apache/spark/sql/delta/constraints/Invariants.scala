@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.constraints
 
+import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.util.JsonUtils
 
@@ -82,8 +83,7 @@ object Invariants {
           case Some(PersistedExpression(exprString)) =>
             ArbitraryExpression(spark, exprString)
           case _ =>
-            throw new UnsupportedOperationException(
-              "Unrecognized invariant. Please upgrade your Spark version.")
+            throw DeltaErrors.unrecognizedInvariant()
         }
         Constraints.Check(invariant.name, invariant.expression)
     }

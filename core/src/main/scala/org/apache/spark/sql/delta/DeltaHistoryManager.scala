@@ -63,7 +63,7 @@ class DeltaHistoryManager(
   def getHistory(limitOpt: Option[Int]): Seq[DeltaHistory] = {
     val listStart = limitOpt.map { limit =>
       math.max(deltaLog.update().version - limit + 1, 0)
-    }.getOrElse(getEarliestDeltaFile)
+    }.getOrElse(getEarliestDeltaFile(deltaLog))
     getHistory(listStart)
   }
 
@@ -116,7 +116,11 @@ class DeltaHistoryManager(
       mustBeRecreatable: Boolean = true,
       canReturnEarliestCommit: Boolean = false): Commit = {
     val time = timestamp.getTime
-    val earliest = if (mustBeRecreatable) getEarliestReproducibleCommit else getEarliestDeltaFile
+    val earliest = if (mustBeRecreatable) {
+      getEarliestReproducibleCommit
+    } else {
+      getEarliestDeltaFile(deltaLog)
+    }
     val latestVersion = deltaLog.update().version
 
     // Search for the commit
@@ -155,7 +159,11 @@ class DeltaHistoryManager(
    * @param mustBeRecreatable whether the snapshot of this version needs to be recreated.
    */
   def checkVersionExists(version: Long, mustBeRecreatable: Boolean = true): Unit = {
-    val earliest = if (mustBeRecreatable) getEarliestReproducibleCommit else getEarliestDeltaFile
+    val earliest = if (mustBeRecreatable) {
+      getEarliestReproducibleCommit
+    } else {
+      getEarliestDeltaFile(deltaLog)
+    }
     val latest = deltaLog.update().version
     if (version < earliest || version > latest) {
       throw VersionNotFoundException(version, earliest, latest)
@@ -178,23 +186,6 @@ class DeltaHistoryManager(
       start,
       end,
       maxKeysPerList)
-  }
-
-  /**
-   * Get the earliest commit available for this table. Note that this version isn't guaranteed to
-   * exist when performing an action as a concurrent operation can delete the file during cleanup.
-   * This value must be used as a lower bound.
-   */
-  private def getEarliestDeltaFile: Long = {
-    val earliestVersionOpt = deltaLog.store.listFrom(
-         FileNames.deltaFile(deltaLog.logPath, 0),
-         deltaLog.newDeltaHadoopConf())
-      .filter(f => FileNames.isDeltaFile(f.getPath))
-      .take(1).toArray.headOption
-    if (earliestVersionOpt.isEmpty) {
-      throw DeltaErrors.noHistoryFound(deltaLog.logPath)
-    }
-    FileNames.deltaVersion(earliestVersionOpt.get.getPath)
   }
 
   /**
@@ -278,6 +269,23 @@ object DeltaHistoryManager extends DeltaLogging {
     } finally {
       logs.close()
     }
+  }
+
+  /**
+   * Get the earliest commit available for this table. Note that this version isn't guaranteed to
+   * exist when performing an action as a concurrent operation can delete the file during cleanup.
+   * This value must be used as a lower bound.
+   */
+  def getEarliestDeltaFile(deltaLog: DeltaLog): Long = {
+    val earliestVersionOpt = deltaLog.store.listFrom(
+      FileNames.deltaFile(deltaLog.logPath, 0),
+      deltaLog.newDeltaHadoopConf())
+      .filter(f => FileNames.isDeltaFile(f.getPath))
+      .take(1).toArray.headOption
+    if (earliestVersionOpt.isEmpty) {
+      throw DeltaErrors.noHistoryFound(deltaLog.logPath)
+    }
+    FileNames.deltaVersion(earliestVersionOpt.get.getPath)
   }
 
   /**

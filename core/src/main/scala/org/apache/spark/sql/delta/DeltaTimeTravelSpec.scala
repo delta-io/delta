@@ -52,7 +52,8 @@ case class DeltaTimeTravelSpec(
     val timeZone = conf.sessionLocalTimeZone
     val evaluable = timestamp match {
       case Some(e) => e.transform {
-        case rr: RuntimeReplaceable => rr.child
+        case rr: RuntimeReplaceable =>
+          rr.children.head
         case e: Unevaluable =>
           recordDeltaEvent(null, "delta.timeTravel.unexpected", data = e.sql)
           throw new IllegalStateException(s"Unsupported expression (${e.sql}) for time travel.")
@@ -64,7 +65,7 @@ case class DeltaTimeTravelSpec(
       // scalastyle:on throwerror
     }
     val strict = conf.getConf(DeltaSQLConf.DELTA_TIME_TRAVEL_STRICT_TIMESTAMP_PARSING)
-    val castResult = Cast(evaluable, TimestampType, Option(timeZone)).eval()
+    val castResult = Cast(evaluable, TimestampType, Option(timeZone), ansiEnabled = false).eval()
     if (strict && castResult == null) {
       throw DeltaErrors.timestampInvalid(evaluable)
     }
@@ -129,9 +130,7 @@ object DeltaTimeTravelSpec {
       PreciseTimestampConversion(Literal(sqlTs), LongType, TimestampType)
     } catch {
       case e: java.text.ParseException =>
-        throw new AnalysisException(
-          s"The provided timestamp $ts doesn't match the expected syntax $TIMESTAMP_FORMAT.",
-          cause = Some(e))
+        throw DeltaErrors.invalidTimestampFormat(ts, TIMESTAMP_FORMAT, Some(e))
     }
   }
 }

@@ -38,8 +38,7 @@ class DeltaGenerateSymlinkManifestSuite
   with DeltaSQLCommandTest
 
 trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
-  with SharedSparkSession
-  with DeltaTestUtilsForTempViews {
+  with SharedSparkSession  with DeltaTestUtilsForTempViews {
 
   import testImplicits._
 
@@ -482,6 +481,55 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
 
       generateSymlinkManifest(tablePath.toString)
       assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 2)
+    }
+  }
+
+  Seq(true, false).foreach { useIncremental =>
+    test(s"delete partition column with special char - incremental=$useIncremental") {
+
+      def writePartition(dir: File, partName: String): Unit = {
+        spark.range(10)
+          .withColumn("part", lit(partName))
+          .repartition(1)
+          .write
+          .format("delta")
+          .mode("append")
+          .partitionBy("part")
+          .save(dir.toString)
+      }
+
+      withTempDir { dir =>
+        // create table and write first manifest
+        writePartition(dir, "noSpace")
+        generateSymlinkManifest(dir.toString)
+
+        withIncrementalManifest(dir, useIncremental) {
+          // 1. test paths with spaces
+          writePartition(dir, "yes space")
+
+          if (!useIncremental) { generateSymlinkManifest(dir.toString) }
+          assertManifest(dir, expectSameFiles = true, expectedNumFiles = 2)
+
+          // delete partition
+          sql(s"""DELETE FROM delta.`${dir.toString}` WHERE part="yes space";""")
+
+          if (!useIncremental) { generateSymlinkManifest(dir.toString) }
+          assertManifest(dir, expectSameFiles = true, expectedNumFiles = 1)
+
+          // 2. test special characters
+          // scalastyle:off nonascii
+          writePartition(dir, "库尔 勒")
+          if (!useIncremental) { generateSymlinkManifest(dir.toString) }
+          assertManifest(dir, expectSameFiles = true, expectedNumFiles = 2)
+
+          // delete partition
+          sql(s"""DELETE FROM delta.`${dir.toString}` WHERE part="库尔 勒";""")
+          // scalastyle:on nonascii
+
+          if (!useIncremental) { generateSymlinkManifest(dir.toString) }
+          assertManifest(dir, expectSameFiles = true, expectedNumFiles = 1)
+        }
+      }
     }
   }
 

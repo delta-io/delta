@@ -17,13 +17,15 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
-import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, RemoveFile, SetTransaction}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Metadata, Protocol, RemoveFile, SetTransaction}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{EqualTo, Literal}
 import org.apache.spark.sql.types.{IntegerType, StructType}
+import org.apache.spark.util.ManualClock
 
 
 class OptimisticTransactionSuite
@@ -137,6 +139,38 @@ class OptimisticTransactionSuite
     actions = Seq())
 
   check(
+    "add in part=2 / read from part=1,2 and write to part=1",
+    conflicts = true,
+    setup = Seq(
+      Metadata(
+        schemaString = new StructType().add("x", IntegerType).json,
+        partitionColumns = Seq("x"))
+    ),
+    reads = Seq(
+      t => {
+        // Filter files twice - once for x=1 and again for x=2
+        t.filterFiles(Seq(EqualTo('x, Literal(1))))
+        t.filterFiles(Seq(EqualTo('x, Literal(2))))
+      }
+    ),
+    concurrentWrites = Seq(
+      AddFile(
+        path = "a",
+        partitionValues = Map("x" -> "1"),
+        size = 1,
+        modificationTime = 1,
+        dataChange = true)
+    ),
+    actions = Seq(
+      AddFile(
+        path = "b",
+        partitionValues = Map("x" -> "2"),
+        size = 1,
+        modificationTime = 1,
+        dataChange = true)
+    ))
+
+  check(
     "delete / read",
     conflicts = true,
     setup = Seq(
@@ -222,7 +256,7 @@ class OptimisticTransactionSuite
 
   test("initial commit without metadata should fail") {
     withTempDir { tempDir =>
-      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       val txn = log.startTransaction()
       withSQLConf(DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "true") {
         val e = intercept[IllegalStateException] {
@@ -242,7 +276,7 @@ class OptimisticTransactionSuite
 
   test("initial commit with multiple metadata actions should fail") {
     withTempDir { tempDir =>
-      val log = DeltaLog(spark, new Path(tempDir.getAbsolutePath))
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getAbsolutePath))
       val txn = log.startTransaction()
       val e = intercept[AssertionError] {
         txn.commit(Seq(Metadata(), Metadata()), ManualUpdate)
@@ -253,7 +287,7 @@ class OptimisticTransactionSuite
 
   test("AddFile with different partition schema compared to metadata should fail") {
     withTempDir { tempDir =>
-      val log = DeltaLog(spark, new Path(tempDir.getAbsolutePath))
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getAbsolutePath))
       log.startTransaction().commit(Seq(Metadata(
         schemaString = StructType.fromDDL("col2 string, a int").json,
         partitionColumns = Seq("col2"))), ManualUpdate)
@@ -277,7 +311,7 @@ class OptimisticTransactionSuite
 
   test("isolation level shouldn't be null") {
     withTempDir { tempDir =>
-      val log = DeltaLog(spark, new Path(tempDir.getCanonicalPath))
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
 
       log.startTransaction().commit(Seq(Metadata()), ManualUpdate)
 
@@ -287,7 +321,42 @@ class OptimisticTransactionSuite
       val isolationLevels = log.history.getHistory(Some(10)).map(_.isolationLevel)
       assert(isolationLevels.size == 2)
       assert(isolationLevels(0).exists(_.contains("Serializable")))
-      assert(isolationLevels(1) == Some(SnapshotIsolation.toString))
+      assert(isolationLevels(0).exists(_.contains("Serializable")))
+    }
+  }
+
+  test("every transaction should use a unique identifier in the commit") {
+    withTempDir { tempDir =>
+      // Initialize delta table.
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      log.startTransaction().commit(Seq(Metadata()), ManualUpdate)
+
+      // Start two transactions which commits at same time with same content.
+      val clock = new ManualClock()
+      val txn1 = new OptimisticTransaction(log)(clock)
+      val txn2 = new OptimisticTransaction(log)(clock)
+      clock.advance(100)
+      val version1 = txn1.commit(Seq(), ManualUpdate)
+      val version2 = txn2.commit(Seq(), ManualUpdate)
+
+      // Validate that actions in both transactions are not exactly same.
+      def readActions(version: Long): Seq[Action] = {
+        log.store.read(FileNames.deltaFile(log.logPath, version), log.newDeltaHadoopConf())
+          .map(Action.fromJson)
+      }
+      def removeTxnIdFromActions(actions: Seq[Action]): Seq[Action] = actions.map {
+        case c: CommitInfo => c.copy(txnId = None)
+        case other => other
+      }
+      val actions1 = readActions(version1)
+      val actions2 = readActions(version2)
+      val actionsWithoutTxnId1 = removeTxnIdFromActions(actions1)
+      val actionsWithoutTxnId2 = removeTxnIdFromActions(actions2)
+      assert(actions1 !== actions2)
+      // Without the txn id, the actions are same as of today but they need not be in future. In
+      // future we might have other fields which may make these actions from two different
+      // transactions different. In that case, the below assertion can be removed.
+      assert(actionsWithoutTxnId1 === actionsWithoutTxnId2)
     }
   }
 }

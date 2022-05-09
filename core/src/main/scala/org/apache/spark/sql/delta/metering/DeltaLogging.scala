@@ -20,7 +20,6 @@ import scala.util.Try
 import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
-
 import com.databricks.spark.util.{DatabricksLogging, OpType, TagDefinition}
 import com.databricks.spark.util.MetricDefinitions.{EVENT_LOGGING_FAILURE, EVENT_TAHOE}
 import com.databricks.spark.util.TagDefinitions.{TAG_OP_TYPE, TAG_TAHOE_ID, TAG_TAHOE_PATH}
@@ -28,6 +27,8 @@ import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.util.DeltaProgressReporter
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
+
+import org.apache.spark.sql.SparkSession
 
 /**
  * Convenience wrappers for logging that include delta specific options and
@@ -109,7 +110,18 @@ trait DeltaLogging
     recordOperation(
       new OpType(opType, ""),
       extraTags = tableTags ++ tags) {
-          thunk
+        recordFrameProfile("Delta", opType) {
+            thunk
+        }
     }
   }
+  protected def recordFrameProfile[T](group: String, name: String)(thunk: => T): T = {
+    // future work to capture runtime information ...
+    thunk
+  }
+
+  protected def withDmqTag[T](thunk: => T): T = {
+    thunk
+  }
 }
+

@@ -796,6 +796,8 @@ class SchemaUtilsSuite extends QueryTest
         new StructType()
           .add("k", new StructType()
           .add("l", IntegerType))))
+      .add("m", ArrayType(
+        MapType(StringType, StringType)))
     assert(SchemaUtils.findColumnPosition(Seq("a"), schema) === ((Seq(0), 2)))
     assert(SchemaUtils.findColumnPosition(Seq("A"), schema) === ((Seq(0), 2)))
     expectFailure("Couldn't find", schema.treeString) {
@@ -818,6 +820,7 @@ class SchemaUtilsSuite extends QueryTest
     assert(SchemaUtils.findColumnPosition(Seq("i", "value", "k"), schema) === ((Seq(4, 1, 0), 1)))
     assert(SchemaUtils.findColumnPosition(Seq("i", "key"), schema) === ((Seq(4, 0), 0)))
     assert(SchemaUtils.findColumnPosition(Seq("i", "value"), schema) === ((Seq(4, 1), 1)))
+    assert(SchemaUtils.findColumnPosition(Seq("m"), schema) === ((Seq(5), 0)))
 
     val resolver = org.apache.spark.sql.catalyst.analysis.caseSensitiveResolution
     Seq(Seq("A", "b"), Seq("a", "B"), Seq("d", "element", "B"), Seq("f", "key", "H"))
@@ -923,14 +926,15 @@ class SchemaUtilsSuite extends QueryTest
   test("dropColumn - nested struct") {
     val a = StructField("a", IntegerType)
     val b = StructField("b", StringType)
+    val c = StructField("c", StringType)
     val s = StructField("s", new StructType().add(a).add(b))
-    val schema = new StructType().add(s)
+    val schema = new StructType().add(s).add(c)
 
-    assert(SchemaUtils.dropColumn(schema, Seq(0)) === ((new StructType(), s)))
+    assert(SchemaUtils.dropColumn(schema, Seq(0)) === ((new StructType().add(c), s)))
     assert(SchemaUtils.dropColumn(schema, Seq(0, 0)) ===
-      ((new StructType().add("s", new StructType().add(b)), a)))
+      ((new StructType().add("s", new StructType().add(b)).add(c), a)))
     assert(SchemaUtils.dropColumn(schema, Seq(0, 1)) ===
-      ((new StructType().add("s", new StructType().add(a)), b)))
+      ((new StructType().add("s", new StructType().add(a)).add(c), b)))
 
     expectFailure("Index -1", "lower than 0") {
       SchemaUtils.dropColumn(schema, Seq(0, -1))
@@ -1422,5 +1426,93 @@ class SchemaUtilsSuite extends QueryTest
     // Dot in the column name should be converted correctly
     assert(SchemaUtils.fieldToColumn(StructField("a.b", IntegerType)).expr ==
       new UnresolvedAttribute("a.b" :: Nil))
+  }
+
+  ////////////////////////////
+  // findNestedFieldIgnoreCase
+  ////////////////////////////
+
+  test("complex schema access") {
+    val st = StringType
+    val it = IntegerType
+    def m(a: DataType, b: DataType): MapType = MapType(a, b)
+    def a(el: DataType): ArrayType = ArrayType(el)
+    def struct(el: DataType): StructType = new StructType().add("f1", el)
+
+    val schema = new StructType()
+      .add("a", it)
+      .add("b", struct(st))
+      .add("c", struct(struct(struct(st))))
+      .add("d", a(it))
+      .add("e", a(a(it)))
+      .add("f", a(a(struct(st))))
+      .add("g", m(m(st, it), m(st, it)))
+      .add("h", m(a(st), a(it)))
+      .add("i", m(a(struct(st)), a(struct(st))))
+      .add("j", m(m(struct(st), struct(it)), m(struct(st), struct(it))))
+      .add("k", m(struct(a(a(struct(a(struct(st)))))),
+                m(m(struct(st), struct(it)), m(struct(st), struct(it)))))
+
+    def find(names: Seq[String]): Option[StructField] =
+      SchemaUtils.findNestedFieldIgnoreCase(schema, names, true)
+
+    val checks = Map(
+      "a" -> it,
+      "b" -> struct(st),
+      "b.f1" -> st,
+      "c.f1.f1.f1" -> st,
+      "d.element" -> it,
+      "e.element.element" -> it,
+      "f.element.element.f1" -> st,
+      "g.key.key" -> st,
+      "g.key.value" -> it,
+      "g.value.key" -> st,
+      "g.value.value" -> it,
+      "h.key.element" -> st,
+      "h.value.element" -> it,
+      "i.key.element.f1" -> st,
+      "i.value.element.f1" -> st,
+      "j.key.key.f1" -> st,
+      "j.key.value.f1" -> it,
+      "j.value.key.f1" -> st,
+      "j.value.value.f1" -> it,
+      "k.key.f1.element.element.f1.element.f1" -> st,
+      "k.value.key.key.f1" -> st,
+      "k.value.key.value.f1" -> it,
+      "k.value.value.key.f1" -> st,
+      "k.value.value.value.f1" -> it
+    )
+
+    checks.foreach { pair =>
+      val (key, t) = pair
+      val path = key.split('.')
+      val f = find(path)
+      assert(f.isDefined, s"cannot find $key")
+      assert(f.get.name == path.last && f.get.dataType == t)
+    }
+
+    val negativeChecks = Seq(
+      "x",
+      "b.f2",
+      "c.f1.f2",
+      "c.f1.f1.f2",
+      "d.f1",
+      "d.element.f1",
+      "e.element.element.f1",
+      "f.element.key.f1",
+      "g.key.element",
+      "g.key.keyy",
+      "g.key.valuee",
+      "h.key.element.f1",
+      "k.key.f1.element.element.f2.element.f1",
+      "k.value.value.f1"
+    )
+
+    negativeChecks.foreach { key =>
+      val path = key.split('.')
+      val f = find(path)
+      assert(f.isEmpty, s"$key should be empty")
+    }
+
   }
 }

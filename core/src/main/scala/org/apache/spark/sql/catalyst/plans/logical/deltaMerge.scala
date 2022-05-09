@@ -18,6 +18,7 @@ package org.apache.spark.sql.catalyst.plans.logical
 
 import java.util.Locale
 
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaIllegalArgumentException, DeltaUnsupportedOperationException}
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -37,11 +38,18 @@ import org.apache.spark.sql.types.{DataType, StructField, StructType}
 trait DeltaUnevaluable extends Expression {
   final override def foldable: Boolean = false
 
-  final override def eval(input: InternalRow = null): Any =
-    throw new UnsupportedOperationException(s"Cannot evaluate expression: $this")
+  final override def eval(input: InternalRow = null): Any = {
+    throw new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_CANNOT_EVALUATE_EXPRESSION",
+      messageParameters = Array(s"$this")
+    )
+  }
 
   final override protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode =
-    throw new UnsupportedOperationException(s"Cannot generate code for expression: $this")
+    throw new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_CANNOT_GENERATE_CODE_FOR_EXPRESSION",
+      messageParameters = Array(s"$this")
+    )
 }
 
 /**
@@ -150,7 +158,9 @@ object DeltaMergeIntoClause {
         case Assignment(key: UnresolvedAttribute, expr) => DeltaMergeAction(key.nameParts, expr)
         case Assignment(key: Attribute, expr) => DeltaMergeAction(Seq(key.name), expr)
         case other =>
-          throw new AnalysisException(s"Unexpected assignment key: ${other.getClass} - $other")
+          throw new DeltaAnalysisException(
+            errorClass = "DELTA_MERGE_UNEXPECTED_ASSIGNMENT_KEY",
+            messageParameters = Array(s"${other.getClass}", s"$other"))
       }
     }
   }
@@ -282,8 +292,9 @@ object DeltaMergeInto {
 
     // check that only last NOT MATCHED clause omits the condition
     if (insertClauses.length > 1 && !insertClauses.init.forall(_.condition.nonEmpty)) {
-      throw new AnalysisException("When there are more than one NOT MATCHED clauses in a MERGE " +
-        "statement, only the last NOT MATCHED clause can omit the condition.")
+      throw new DeltaAnalysisException(
+        errorClass = "DELTA_NON_LAST_NOT_MATCHED_CLAUSE_OMIT_CONDITION",
+        messageParameters = Array.empty)
     }
 
     DeltaMergeInto(
@@ -373,10 +384,10 @@ object DeltaMergeInto {
                       val nameParts = qualifier :+ name
                       val sourceExpr = source.resolve(nameParts, conf.resolver).getOrElse {
                         // This shouldn't be able to happen - we're coming from within the source
-                        throw new IllegalArgumentException(
-                          s"Couldn't resolve qualified source column" +
-                            s"${UnresolvedAttribute(nameParts).name} within the source query. " +
-                            s"Please contact Databricks support.")
+                        throw new DeltaIllegalArgumentException(
+                          errorClass = "DELTA_CANNOT_RESOLVE_SOURCE_COLUMN",
+                          messageParameters = Array(s"${UnresolvedAttribute(nameParts).name}")
+                        )
                       }
                       Seq(DeltaMergeAction(nameParts, sourceExpr, targetColNameResolved = true))
                   }
@@ -395,9 +406,16 @@ object DeltaMergeInto {
             // If clause allows nested field to be target, then this will return the all the
             // parts of the name (e.g., "a.b" -> Seq("a", "b")). Otherwise, this will
             // return only one string.
-            val resolvedNameParts = DeltaUpdateTable.getTargetColNameParts(
-              resolveOrFail(unresolvedAttrib, fakeTargetPlan, s"$typ clause"),
-              resolutionErrorMsg)
+            val resolvedNameParts = {
+              try {
+                DeltaUpdateTable.getTargetColNameParts(
+                  resolveOrFail(unresolvedAttrib, fakeTargetPlan, s"$typ clause"),
+                  resolutionErrorMsg)
+              } catch {
+                case e: Throwable => throw e
+              }
+            }
+
             val resolvedExpr = resolveOrFail(expr, planToResolveAction, s"$typ clause")
             Seq(DeltaMergeAction(resolvedNameParts, resolvedExpr, targetColNameResolved = true))
 
@@ -426,7 +444,7 @@ object DeltaMergeInto {
     val containsStarAction =
       (matchedClauses ++ notMatchedClause).flatMap(_.actions).exists(_.isInstanceOf[UnresolvedStar])
 
-    val migrateSchema = canAutoMigrate && containsStarAction
+    var migrateSchema = canAutoMigrate && containsStarAction
 
     val finalSchema = if (migrateSchema) {
       // The implicit conversions flag allows any type to be merged from source to target if Spark

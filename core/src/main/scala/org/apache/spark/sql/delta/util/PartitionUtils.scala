@@ -46,6 +46,7 @@ import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.Try
 
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaRuntimeException}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.AnalysisException
@@ -359,8 +360,8 @@ private[delta] object PartitionUtils {
         val columnValue = columnValueLiteral.eval()
         val castedValue = Cast(columnValueLiteral, dataType, Option(timeZone.getID)).eval()
         if (validatePartitionColumns && columnValue != null && castedValue == null) {
-          throw new RuntimeException(s"Failed to cast value `$columnValue` to `$dataType` " +
-            s"for partition column `$columnName`")
+          throw DeltaErrors.partitionColumnCastFailed(
+            columnValue.toString, dataType.toString, columnName)
         }
         Literal.create(castedValue, dataType)
       } else {
@@ -421,7 +422,7 @@ private[delta] object PartitionUtils {
       resolver: Resolver): Map[String, T] = {
     val normalizedPartSpec = partitionSpec.toSeq.map { case (key, value) =>
       val normalizedKey = partColNames.find(resolver(_, key)).getOrElse {
-        throw new AnalysisException(s"$key is not a valid partition column in table $tblName.")
+        throw DeltaErrors.invalidPartitionColumn(key, tblName)
       }
       normalizedKey -> value
     }
@@ -620,7 +621,7 @@ private[delta] object PartitionUtils {
     StructType(partitionColumns.map { col =>
       schema.find(f => equality(f.name, col)).getOrElse {
         val schemaCatalog = schema.catalogString
-        throw new AnalysisException(s"Partition column `$col` not found in schema $schemaCatalog")
+        throw DeltaErrors.missingPartitionColumn(col, schemaCatalog)
       }
     }).asNullable
   }

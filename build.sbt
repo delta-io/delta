@@ -19,20 +19,23 @@ import java.nio.file.Files
 val sparkVersion = "3.2.0"
 val scala212 = "2.12.14"
 val scala213 = "2.13.5"
+val default_scala_version = scala212
+val all_scala_versions = Seq(scala212, scala213)
 
-scalaVersion := scala212
+scalaVersion := default_scala_version
 
 // crossScalaVersions must be set to Nil on the root project
 crossScalaVersions := Nil
 
 lazy val commonSettings = Seq(
   organization := "io.delta",
-  scalaVersion := "2.12.14",
-  crossScalaVersions := Seq(scala212, scala213),
+  scalaVersion := default_scala_version,
+  crossScalaVersions := all_scala_versions,
   fork := true
 )
 
 lazy val core = (project in file("core"))
+  .dependsOn(storage)
   .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin, Antlr4Plugin)
   .settings (
     name := "delta-core",
@@ -47,6 +50,10 @@ lazy val core = (project in file("core"))
       "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
       "org.apache.spark" %% "spark-core" % sparkVersion % "provided",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion % "provided",
+
+      // spark-sql 3.2.0's parquet-hadoop 1.12.1 dependency no longer includes org.codehaus.jackson
+      // as a dependency, so we include it here instead.
+      "org.codehaus.jackson" % "jackson-core-asl" % "1.9.13",
 
       // Test deps
       "org.scalatest" %% "scalatest" % "3.2.9" % "test",
@@ -154,6 +161,41 @@ lazy val contribs = (project in file("contribs"))
     Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value
   )
 
+// TODO javastyle tests
+// TODO unidoc
+// TODO(scott): figure out a better way to include tests in this project
+lazy val storage = (project in file("storage"))
+  .settings (
+    name := "delta-storage",
+    commonSettings,
+    javaOnlyReleaseSettings,
+    libraryDependencies ++= Seq(
+      // User can provide any 2.x or 3.x version. We don't use any new fancy APIs. Watch out for
+      // versions with known vulnerabilities.
+      "org.apache.hadoop" % "hadoop-common" % "3.3.1" % "provided",
+
+      // Test Deps
+      "org.scalatest" %% "scalatest" % "3.2.11" % "test",
+    )
+  )
+
+lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
+  .dependsOn(storage % "compile->compile;test->test;provided->provided")
+  .dependsOn(core % "test->test")
+  .settings (
+    name := "delta-storage-s3-dynamodb",
+    commonSettings,
+    javaOnlyReleaseSettings,
+
+    // uncomment only when testing FailingS3DynamoDBLogStore. this will include test sources in
+    // a separate test jar.
+    // Test / publishArtifact := true,
+
+    libraryDependencies ++= Seq(
+      "com.amazonaws" % "aws-java-sdk" % "1.7.4" % "provided"
+    )
+  )
+
 /**
  * Get list of python files and return the mapping between source files and target paths
  * in the generated package JAR.
@@ -199,20 +241,27 @@ lazy val scalaStyleSettings = Seq(
  *  MIMA settings   *
  ********************
  */
-def getPrevVersion(currentVersion: String): String = {
+
+/**
+ * @return tuple of (major, minor, patch) versions extracted from a version string.
+ *         e.g. "1.2.3" would return (1, 2, 3)
+ */
+def getMajorMinorPatch(versionStr: String): (Int, Int, Int) = {
   implicit def extractInt(str: String): Int = {
     """\d+""".r.findFirstIn(str).map(java.lang.Integer.parseInt).getOrElse {
       throw new Exception(s"Could not extract version number from $str in $version")
     }
   }
 
-  val (major, minor, patch): (Int, Int, Int) = {
-    currentVersion.split("\\.").toList match {
-      case majorStr :: minorStr :: patchStr :: _ =>
-        (majorStr, minorStr, patchStr)
-      case _ => throw new Exception(s"Could not find previous version for $version.")
-    }
+  versionStr.split("\\.").toList match {
+    case majorStr :: minorStr :: patchStr :: _ =>
+      (majorStr, minorStr, patchStr)
+    case _ => throw new Exception(s"Could not parse version for $version.")
   }
+}
+
+def getPrevVersion(currentVersion: String): String = {
+  val (major, minor, patch) = getMajorMinorPatch(currentVersion)
 
   val majorToLastMinorVersions = Map(
     0 -> 8
@@ -231,15 +280,7 @@ def getPrevVersion(currentVersion: String): String = {
 
 lazy val mimaSettings = Seq(
   Test / test := ((Test / test) dependsOn mimaReportBinaryIssues).value,
-  mimaPreviousArtifacts := {
-    if (CrossVersion.partialVersion(scalaVersion.value) == Some((2, 13))) {
-      // Skip mima check since we don't have a Scala 2.13 release yet.
-      // TODO Update this after releasing 1.1.0.
-      Set.empty
-    } else {
-      Set("io.delta" %% "delta-core" % getPrevVersion(version.value))
-    }
-  },
+  mimaPreviousArtifacts := Set("io.delta" %% "delta-core" %  getPrevVersion(version.value)),
   mimaBinaryIssueFilters ++= MimaExcludes.ignoredABIProblems
 )
 
@@ -255,16 +296,36 @@ def ignoreUndocumentedPackages(packages: Seq[Seq[java.io.File]]): Seq[Seq[java.i
     .map(_.filterNot(_.getName.contains("$")))
     .map(_.filterNot(_.getCanonicalPath.contains("io/delta/sql")))
     .map(_.filterNot(_.getCanonicalPath.contains("io/delta/tables/execution")))
+    .map { _.filterNot { f =>
+        // LogStore.java and CloseableIterator.java are the only public io.delta.storage APIs
+        f.getCanonicalPath.contains("io/delta/storage") &&
+        f.getName != "LogStore.java" &&
+        f.getName != "CloseableIterator.java"
+      }
+    }
     .map(_.filterNot(_.getCanonicalPath.contains("spark")))
 }
 
 lazy val unidocSettings = Seq(
-  
+
   // Configure Scala unidoc
   ScalaUnidoc / unidoc / scalacOptions ++= Seq(
     "-skip-packages", "org:com:io.delta.sql:io.delta.tables.execution",
     "-doc-title", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " ScalaDoc"
   ),
+
+  ScalaUnidoc / unidoc / unidocAllSources := {
+    (ScalaUnidoc / unidoc / unidocAllSources).value
+      // ignore Scala (non-public) io.delta.storage classes
+      .map(_.filterNot(_.getCanonicalPath.contains("io/delta/storage"))) ++
+    // include public io.delta.storage classes
+    (JavaUnidoc / unidoc / unidocAllSources).value
+      .map { _.filter { f =>
+          f.getCanonicalPath.contains("io/delta/storage") &&
+          (f.getName == "LogStore.java" || f.getName == "CloseableIterator.java")
+        }
+      }
+  },
 
   // Configure Java unidoc
   JavaUnidoc / unidoc / javacOptions := Seq(
@@ -292,9 +353,35 @@ lazy val unidocSettings = Seq(
  */
 import ReleaseTransformations._
 
+lazy val skipReleaseSettings = Seq(
+  publishArtifact := false,
+  publish / skip := true
+)
+
+/**
+ * Release settings for artifact that contains only Java source code
+ */
+lazy val javaOnlyReleaseSettings = releaseSettings ++ Seq(
+  // drop off Scala suffix from artifact names
+  crossPaths := false,
+
+  // we publish jars for each scalaVersion in crossScalaVersions. however, we only need to publish
+  // one java jar. thus, only do so when the current scala version == default scala version
+  publishArtifact := {
+    val (expMaj, expMin, _) = getMajorMinorPatch(default_scala_version)
+    s"$expMaj.$expMin" == scalaBinaryVersion.value
+  },
+
+  // exclude scala-library from dependencies in generated pom.xml
+  autoScalaLibrary := false,
+)
+
 lazy val releaseSettings = Seq(
   publishMavenStyle := true,
-
+  publishArtifact := true,
+  Test / publishArtifact := false,
+  releasePublishArtifactsAction := PgpKeys.publishSigned.value,
+  releaseCrossBuild := true,
   publishTo := {
     val nexus = "https://oss.sonatype.org/"
     if (isSnapshot.value) {
@@ -303,25 +390,7 @@ lazy val releaseSettings = Seq(
       Some("releases"  at nexus + "service/local/staging/deploy/maven2")
     }
   },
-
-  releasePublishArtifactsAction := PgpKeys.publishSigned.value,
-
-  releaseCrossBuild := true,
-
-  releaseProcess := Seq[ReleaseStep](
-    checkSnapshotDependencies,
-    inquireVersions,
-    runTest,
-    setReleaseVersion,
-    commitReleaseVersion,
-    tagRelease,
-    releaseStepCommandAndRemaining("+publishLocalSigned"),
-    setNextVersion,
-    commitNextVersion
-  ),
-
   licenses += ("Apache-2.0", url("http://www.apache.org/licenses/LICENSE-2.0")),
-
   pomExtra :=
     <url>https://delta.io/</url>
       <scm>
@@ -369,6 +438,17 @@ lazy val releaseSettings = Seq(
 
 // Looks like some of release settings should be set for the root project as well.
 publishArtifact := false  // Don't release the root project
-publish := {}
+publish / skip := true
 publishTo := Some("snapshots" at "https://oss.sonatype.org/content/repositories/snapshots")
-releaseCrossBuild := false
+releaseCrossBuild := false  // Don't use sbt-release's cross facility
+releaseProcess := Seq[ReleaseStep](
+  checkSnapshotDependencies,
+  inquireVersions,
+  runTest,
+  setReleaseVersion,
+  commitReleaseVersion,
+  tagRelease,
+  releaseStepCommandAndRemaining("+publishSigned"),
+  setNextVersion,
+  commitNextVersion
+)

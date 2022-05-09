@@ -17,24 +17,20 @@
 package org.apache.spark.sql.delta.schema
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.util.Locale
-
 import scala.collection.Set._
 import scala.collection.mutable
+import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, GeneratedColumn, NoMapping}
-import org.apache.spark.sql.delta.actions
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, GeneratedColumn, NoMapping}
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.analysis.{Resolver, TypeCoercion, UnresolvedAttribute}
-import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
-import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
-import org.apache.spark.sql.connector.catalog.Identifier
-import org.apache.spark.sql.execution.datasources.parquet.ParquetSchemaConverter
+import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
+import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
@@ -123,14 +119,14 @@ object SchemaUtils {
         struct(nested: _*).alias(sf.name)
       case a: ArrayType if typeExistsRecursively(a)(_.isInstanceOf[NullType]) =>
         val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
-        throw new AnalysisException(
-          s"Found nested NullType in column $colName which is of ArrayType. Delta doesn't " +
-            "support writing NullType in complex types.")
+        throw new DeltaAnalysisException(
+          errorClass = "COMPLEX_TYPE_COLUMN_CANNOT_CONTAIN_NULL_TYPE",
+          messageParameters = Array(colName, "ArrayType"))
       case m: MapType if typeExistsRecursively(m)(_.isInstanceOf[NullType]) =>
         val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
-        throw new AnalysisException(
-          s"Found nested NullType in column $colName which is of MapType. Delta doesn't " +
-            "support writing NullType in complex types.")
+        throw new DeltaAnalysisException(
+          errorClass = "COMPLEX_TYPE_COLUMN_CANNOT_CONTAIN_NULL_TYPE",
+          messageParameters = Array(colName, "NullType"))
       case _ =>
         val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
         col(colName).alias(sf.name)
@@ -160,6 +156,29 @@ object SchemaUtils {
   }
 
   /**
+   * Returns the name of the first column/field that has null type (void).
+   */
+  def findNullTypeColumn(schema: StructType): Option[String] = {
+    // Helper method to recursively check nested structs.
+    def findNullTypeColumnRec(s: StructType, nameStack: Seq[String]): Option[String] = {
+      val nullFields = s.flatMap {
+        case StructField(name, n: NullType, _, _) => Some((nameStack :+ name).mkString("."))
+        case StructField(name, s: StructType, _, _) => findNullTypeColumnRec(s, nameStack :+ name)
+        // Note that we don't recursively check Array and Map types because NullTypes are already
+        // not allowed (see 'dropNullTypeColumns').
+        case _ => None
+      }
+      return nullFields.headOption
+    }
+
+    if (typeExistsRecursively(schema)(_.isInstanceOf[NullType])) {
+      findNullTypeColumnRec(schema, Seq.empty)
+    } else {
+      None
+    }
+  }
+
+  /**
    * Rewrite the query field names according to the table schema. This method assumes that all
    * schema validation checks have been made and this is the last operation before writing into
    * Delta.
@@ -185,8 +204,7 @@ object SchemaUtils {
         val originalCase: String = baseFields.get(field.name) match {
           case Some(original) => original.name
           case None =>
-            throw new AnalysisException(
-              s"Can't resolve column ${field.name} in ${baseSchema.treeString}")
+            throw DeltaErrors.cannotResolveColumn(field, baseSchema)
         }
         if (originalCase != field.name) {
           fieldToColumn(field).as(originalCase)
@@ -414,53 +432,55 @@ object SchemaUtils {
    * @param fieldNames The path to the field, in order from the root. For example, the column
    *                   nested.a.b.c would be Seq("nested", "a", "b", "c").
    */
-  @scala.annotation.tailrec
   def findNestedFieldIgnoreCase(
       schema: StructType,
       fieldNames: Seq[String],
       includeCollections: Boolean = false): Option[StructField] = {
-    val fieldOption = fieldNames.headOption.flatMap {
-      fieldName => schema.find(_.name.equalsIgnoreCase(fieldName))
+
+    @scala.annotation.tailrec
+    def findRecursively(
+      dataType: DataType,
+      fieldNames: Seq[String],
+      includeCollections: Boolean): Option[StructField] = {
+
+      (fieldNames, dataType, includeCollections) match {
+        case (Seq(fieldName, names @ _*), struct: StructType, _) =>
+          val field = struct.find(_.name.equalsIgnoreCase(fieldName))
+          if (names.isEmpty || field.isEmpty) {
+            field
+          } else {
+            findRecursively(field.get.dataType, names, includeCollections)
+          }
+
+        case (_, _, false) => None // types nested in maps and arrays are not used
+
+        case (Seq("key"), MapType(keyType, _, _), true) =>
+          // return the key type as a struct field to include nullability
+          Some(StructField("key", keyType, nullable = false))
+
+        case (Seq("key", names @ _*), MapType(keyType, _, _), true) =>
+          findRecursively(keyType, names, includeCollections)
+
+        case (Seq("value"), MapType(_, valueType, isNullable), true) =>
+          // return the value type as a struct field to include nullability
+          Some(StructField("value", valueType, nullable = isNullable))
+
+        case (Seq("value", names @ _*), MapType(_, valueType, _), true) =>
+          findRecursively(valueType, names, includeCollections)
+
+        case (Seq("element"), ArrayType(elementType, isNullable), true) =>
+          // return the element type as a struct field to include nullability
+          Some(StructField("element", elementType, nullable = isNullable))
+
+        case (Seq("element", names @ _*), ArrayType(elementType, _), true) =>
+          findRecursively(elementType, names, includeCollections)
+
+        case _ =>
+          None
+      }
     }
-    fieldOption match {
-      case Some(field) =>
-        (fieldNames.tail, field.dataType, includeCollections) match {
-          case (Seq(), _, _) =>
-            Some(field)
 
-          case (names, struct: StructType, _) =>
-            findNestedFieldIgnoreCase(struct, names, includeCollections)
-
-          case (_, _, false) =>
-            None // types nested in maps and arrays are not used
-
-          case (Seq("key"), MapType(keyType, _, _), true) =>
-            // return the key type as a struct field to include nullability
-            Some(StructField("key", keyType, nullable = false))
-
-          case (Seq("key", names @ _*), MapType(struct: StructType, _, _), true) =>
-            findNestedFieldIgnoreCase(struct, names, includeCollections)
-
-          case (Seq("value"), MapType(_, valueType, isNullable), true) =>
-            // return the value type as a struct field to include nullability
-            Some(StructField("value", valueType, nullable = isNullable))
-
-          case (Seq("value", names @ _*), MapType(_, struct: StructType, _), true) =>
-            findNestedFieldIgnoreCase(struct, names, includeCollections)
-
-          case (Seq("element"), ArrayType(elementType, isNullable), true) =>
-            // return the element type as a struct field to include nullability
-            Some(StructField("element", elementType, nullable = isNullable))
-
-          case (Seq("element", names @ _*), ArrayType(struct: StructType, _), true) =>
-            findNestedFieldIgnoreCase(struct, names, includeCollections)
-
-          case _ =>
-            None
-        }
-      case _ =>
-        None
-    }
+    findRecursively(schema, fieldNames, includeCollections)
   }
 
   /**
@@ -503,7 +523,7 @@ object SchemaUtils {
         case (Seq(), ArrayType(s: StructType, _)) =>
           find(colTail, s, stack :+ thisCol)
         case (Seq(), ArrayType(_, _)) =>
-          (Seq(0), 0)
+          (Nil, 0)
         case (_, ArrayType(_, _)) =>
           throw new AnalysisException(
             s"""An ArrayType was found. In order to access elements of an ArrayType, specify
@@ -578,12 +598,12 @@ object SchemaUtils {
     require(position.nonEmpty, s"Don't know where to add the column $column")
     val slicePosition = position.head
     if (slicePosition < 0) {
-      throw new AnalysisException(s"Index $slicePosition to add column $column is lower than 0")
+      throw DeltaErrors.addColumnAtIndexLessThanZeroException(
+        slicePosition.toString, column.toString)
     }
     val length = schema.length
     if (slicePosition > length) {
-      throw new AnalysisException(
-        s"Index $slicePosition to add column $column is larger than struct length: $length")
+      throw DeltaErrors.indexLargerThanStruct(slicePosition, column, length)
     }
     if (slicePosition == length) {
       if (position.length > 1) {
@@ -614,10 +634,7 @@ object SchemaUtils {
           }
 
           if (posTail.head != ARRAY_ELEMENT_INDEX) {
-            throw new AnalysisException(
-              s"""Incorrectly accessing an ArrayType. Use arrayname.element.elementname position to
-                 |add to an array.
-               """.stripMargin)
+            throw DeltaErrors.incorrectArrayAccess()
           }
 
           StructField(
@@ -672,8 +689,7 @@ object SchemaUtils {
     }
     val length = schema.length
     if (slicePosition >= length) {
-      throw new AnalysisException(
-        s"Index $slicePosition to drop column equals to or is larger than struct length: $length")
+      throw DeltaErrors.indexLargerOrEqualThanStruct(slicePosition, length)
     }
     val pre = schema.take(slicePosition)
     if (position.length > 1) {
@@ -686,6 +702,10 @@ object SchemaUtils {
       }
       (StructType(pre ++ Seq(mid) ++ schema.slice(slicePosition + 1, length)), original)
     } else {
+      if (length == 1) {
+        throw new AnalysisException(
+          "Cannot drop column from a struct type with a single field: " + schema)
+      }
       (StructType(pre ++ schema.slice(slicePosition + 1, length)), schema(slicePosition))
     }
   }
@@ -699,10 +719,11 @@ object SchemaUtils {
       from: DataType,
       to: DataType,
       resolver: Resolver,
+      columnMappingMode: DeltaColumnMappingMode,
       columnPath: Seq[String] = Seq.empty): Option[String] = {
     def verify(cond: Boolean, err: => String): Unit = {
       if (!cond) {
-        throw new AnalysisException(err)
+        throw DeltaErrors.cannotChangeDataType(err)
       }
     }
 
@@ -738,14 +759,16 @@ object SchemaUtils {
                   UnresolvedAttribute(columnPath :+ toField.name).name)
             }
           }
-          verify(remainingFields.isEmpty,
-            s"dropping column(s) [${remainingFields.map(_.name).mkString(", ")}]" +
-            (if (columnPath.nonEmpty) s" from ${UnresolvedAttribute(columnPath).name}" else ""))
+          if (columnMappingMode == NoMapping) {
+            verify(remainingFields.isEmpty,
+              s"dropping column(s) [${remainingFields.map(_.name).mkString(", ")}]" +
+                (if (columnPath.nonEmpty) s" from ${UnresolvedAttribute(columnPath).name}" else ""))
+          }
 
         case (fromDataType, toDataType) =>
           verify(fromDataType == toDataType,
             s"changing data type of ${UnresolvedAttribute(columnPath).name} " +
-            s"from $fromDataType to $toDataType")
+              s"from $fromDataType to $toDataType")
       }
     }
 
@@ -791,18 +814,21 @@ object SchemaUtils {
   /**
    * Transform (nested) columns in a schema. Runs the transform function on all nested StructTypes
    *
+   * If `colName` is defined, we also check if the struct to process contains the column name.
+   *
    * @param schema to transform.
+   * @param colName Optional name to match for
    * @param tf function to apply on the StructType.
    * @return the transformed schema.
    */
   def transformColumnsStructs(
       schema: StructType,
-      colName: String)(
+      colName: Option[String] = None)(
       tf: (Seq[String], StructType, Resolver) => Seq[StructField]): StructType = {
     def transform[E <: DataType](path: Seq[String], dt: E): E = {
       val newDt = dt match {
         case struct @ StructType(fields) =>
-          val newFields = if (fields.exists(_.name == colName)) {
+          val newFields = if (colName.isEmpty || fields.exists(f => colName.contains(f.name))) {
             tf(path, struct, DELTA_COL_RESOLVER)
           } else {
             fields.toSeq
@@ -864,7 +890,6 @@ object SchemaUtils {
 
   /**
    * Check if the schema contains invalid char in the column names depending on the mode.
-   * TODO: We can suggest the mapping mode flag when this feature is in public preview.
    */
   def checkSchemaFieldNames(schema: StructType, columnMappingMode: DeltaColumnMappingMode): Unit = {
     if (columnMappingMode != NoMapping) return
@@ -882,7 +907,12 @@ object SchemaUtils {
    * columns have these characters.
    */
   def checkFieldNames(names: Seq[String]): Unit = {
-    names.foreach(ParquetSchemaConverter.checkFieldName)
+    names.foreach { name =>
+      // ,;{}()\n\t= and space are special characters in Delta schema
+      if (name.matches(".*[ ,;{}()\n\t=].*")) {
+        throw QueryCompilationErrors.columnNameContainsInvalidCharactersError(name)
+      }
+    }
     // The method checkFieldNames doesn't have a valid regex to search for '\n'. That should be
     // fixed in Apache Spark, and we can remove this additional check here.
     names.find(_.contains("\n")).foreach(col => throw DeltaErrors.invalidColumnName(col))
@@ -941,7 +971,62 @@ object SchemaUtils {
     col(UnresolvedAttribute.quoted(field.name).name)
   }
 
+  /**  converting field name to column type with quoted back-ticks */
+  def fieldNameToColumn(field: String): Column = {
+    col(quoteIdentifier(field))
+  }
   // Escapes back-ticks within the identifier name with double-back-ticks, and then quote the
   // identifier with back-ticks.
   def quoteIdentifier(part: String): String = s"`${part.replace("`", "``")}`"
+
+  /**
+   * Will a column change, e.g., rename, need to be populated to the expression. This is true when
+   * the column to change itself or any of its descendent column is referenced by expression.
+   * For example:
+   *  - a, length(a) -> true
+   *  - b, (b.c + 1) -> true, because renaming b1 will need to change the expr to (b1.c + 1).
+   *  - b.c, (cast b as string) -> false, because you can change b.c to b.c1 without affecting b.
+   */
+  def containsDependentExpression(
+      spark: SparkSession,
+      columnToChange: Seq[String],
+      exprString: String,
+      resolver: Resolver): Boolean = {
+    val expression = spark.sessionState.sqlParser.parseExpression(exprString)
+    expression.foreach {
+      case refCol: UnresolvedAttribute =>
+        // columnToChange is the referenced column or its prefix
+        val prefixMatched = columnToChange.size <= refCol.nameParts.size &&
+          refCol.nameParts.zip(columnToChange).forall(pair => resolver(pair._1, pair._2))
+        if (prefixMatched) return true
+      case _ =>
+    }
+    false
+  }
+
+  /**
+   * Find all the generated columns that depend on the given target column.
+   */
+  def findDependentGeneratedColumns(
+      sparkSession: SparkSession,
+      targetColumn: Seq[String],
+      protocol: Protocol,
+      schema: StructType): Seq[StructField] = {
+    if (GeneratedColumn.satisfyGeneratedColumnProtocol(protocol) &&
+        GeneratedColumn.hasGeneratedColumns(schema)) {
+
+      val dependentGenCols = ArrayBuffer[StructField]()
+      SchemaMergingUtils.transformColumns(schema) { (_, field, _) =>
+        GeneratedColumn.getGenerationExpressionStr(field.metadata).foreach { exprStr =>
+          val needsToChangeExpr = SchemaUtils.containsDependentExpression(
+            sparkSession, targetColumn, exprStr, sparkSession.sessionState.conf.resolver)
+          if (needsToChangeExpr) dependentGenCols += field
+        }
+        field
+      }
+      dependentGenCols.toList
+    } else {
+      Seq.empty
+    }
+  }
 }

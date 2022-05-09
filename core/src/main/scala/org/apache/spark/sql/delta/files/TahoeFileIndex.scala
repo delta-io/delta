@@ -31,6 +31,7 @@ import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.{Cast, Expression, GenericInternalRow, Literal}
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.types.StructType
@@ -78,7 +79,8 @@ abstract class TahoeFileIndex(
       case (partitionValues, files) =>
         val rowValues: Array[Any] = partitionSchema.map { p =>
           val colName = DeltaColumnMapping.getPhysicalName(p)
-          Cast(Literal(partitionValues(colName)), p.dataType, Option(timeZone)).eval()
+          val partValue = Literal(partitionValues.get(colName).orNull)
+          Cast(partValue, p.dataType, Option(timeZone), ansiEnabled = false).eval()
         }.toArray
 
 
@@ -173,6 +175,13 @@ case class TahoeLogFileIndex(
             snapshotSchema,
             mentionLegacyFlag = snapshotToScan.metadata.columnMappingMode == NoMapping)
       }
+    }
+
+    // disallow reading table with empty schema, which we support creating now
+    if (snapshotToScan.schema.isEmpty) {
+      // print the catalog identifier or delta.`/path/to/table`
+      var message = TableIdentifier(deltaLog.dataPath.toString, Some("delta")).quotedString
+      throw DeltaErrors.readTableWithoutSchemaException(message)
     }
 
     snapshotToScan

@@ -27,7 +27,8 @@ import org.apache.hadoop.util.Progressable
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 
-class CheckpointsSuite extends QueryTest with SharedSparkSession {
+class CheckpointsSuite extends QueryTest
+    with SharedSparkSession {
 
   protected override def sparkConf = {
     // Set the gs LogStore impl to `LocalLogStore` so that it will work with `FakeGCSFileSystem`.

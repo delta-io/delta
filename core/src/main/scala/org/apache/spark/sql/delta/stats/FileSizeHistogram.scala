@@ -43,6 +43,21 @@ private[delta] case class FileSizeHistogram(
     " same as size of totalBytes")
 
   /**
+   * Not intended to be used for [[Map]] structure keys. Implemented for the sole purpose of having
+   * an equals method, which requires overriding hashCode as well, so an incomplete hash is okay.
+   * We only require a == b implies a.hashCode == b.hashCode
+   */
+  override def hashCode(): Int = totalBytes.toSeq.hashCode
+
+  override def equals(that: Any): Boolean = that match {
+    case FileSizeHistogram(thatSB, thatFC, thatTB) =>
+      sortedBinBoundaries == thatSB &&
+      java.util.Arrays.equals(fileCounts, thatFC) &&
+      java.util.Arrays.equals(totalBytes, thatTB)
+    case _ => false
+  }
+
+  /**
    * Insert a given value into the appropriate histogram bin
    */
   def insert(fileSize: Long): Unit = {
@@ -50,6 +65,18 @@ private[delta] case class FileSizeHistogram(
     if (index >= 0) {
       fileCounts(index) += 1
       totalBytes(index) += fileSize
+    }
+  }
+
+  /**
+   * Remove a given value from the appropriate histogram bin
+   * @param fileSize to remove
+   */
+  def remove(fileSize: Long): Unit = {
+    val index = FileSizeHistogram.getBinIndex(fileSize, sortedBinBoundaries)
+    if (index >= 0) {
+      fileCounts(index) -= 1
+      totalBytes(index) -= fileSize
     }
   }
 }
@@ -82,5 +109,5 @@ private[delta] object FileSizeHistogram {
     )
   }
 
-  val schema: StructType = ExpressionEncoder[FileSizeHistogram]().schema
+  lazy val schema: StructType = ExpressionEncoder[FileSizeHistogram]().schema
 }

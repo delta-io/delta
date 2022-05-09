@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.constraints
 
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.DeltaErrors
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaIllegalStateException}
 import org.apache.spark.sql.delta.constraints.Constraints.{Check, NotNull}
 import org.apache.spark.sql.delta.schema.SchemaUtils
 
@@ -174,9 +174,11 @@ object DeltaInvariantCheckerExec {
           optimizedLogicalPlan match {
             case ExpressionLogicalPlanWrapper(e) => e
             // This should never happen.
-            case plan => throw new IllegalStateException(
-              "Applying type casting resulted in a bad plan rather than a simple expression.\n" +
-              s"Plan:${plan.prettyJson}\n")
+            case plan => throw new DeltaIllegalStateException(
+              errorClass = "INTERNAL_ERROR",
+              messageParameters = Array(
+                "Applying type casting resulted in a bad plan rather than a simple expression.\n" +
+               s"Plan:${plan.prettyJson}\n"))
           }
       }
 

@@ -31,8 +31,8 @@ import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
 
-abstract class EvolvabilitySuiteBase extends QueryTest
-    with SharedSparkSession with SQLTestUtils {
+abstract class EvolvabilitySuiteBase extends QueryTest with SharedSparkSession
+    with SQLTestUtils {
   import testImplicits._
 
   protected def testEvolvability(tablePath: String): Unit = {
@@ -46,7 +46,8 @@ abstract class EvolvabilitySuiteBase extends QueryTest
     assert(deltaLog.snapshot.metadata.partitionSchema === StructType.fromDDL("id INT"))
 
     // Check we can load CheckpointMetaData
-    assert(deltaLog.lastCheckpoint === Some(CheckpointMetaData(3, 6L, None)))
+    assert(deltaLog.lastCheckpoint.get.version === 3)
+    assert(deltaLog.lastCheckpoint.get.size === 6L)
 
     // Check we can parse all `Action`s in delta files. It doesn't check correctness.
     deltaLog.getChanges(0L).toList.map(_._2.toList)

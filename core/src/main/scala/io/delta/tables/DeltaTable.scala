@@ -16,6 +16,8 @@
 
 package io.delta.tables
 
+import java.sql.Timestamp
+
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
@@ -180,6 +182,31 @@ class DeltaTable private[tables](
     executeDelete(None)
   }
 
+  /**
+   * Optimize the data layout of the table. This returns
+   * a [[DeltaOptimizeBuilder]] object that can be used to specify
+   * the partition filter to limit the scope of optimize and
+   * also execute different optimization techniques such as file
+   * compaction or order data using Z-Order curves.
+   *
+   * See the [[DeltaOptimizeBuilder]] for a full description
+   * of this operation.
+   *
+   * Scala example to run file compaction on a subset of
+   * partitions in the table:
+   * {{{
+   *    deltaTable
+   *     .optimize()
+   *     .where("date='2021-11-18'")
+   *     .executeCompaction();
+   * }}}
+   *
+   * @since 1.3.0
+   */
+  def optimize(): DeltaOptimizeBuilder = {
+    DeltaOptimizeBuilder(sparkSession,
+      table.tableIdentifier.getOrElse(s"delta.`${deltaLog.dataPath.toString}`"))
+  }
 
   /**
    * Update rows in the table based on the rules defined by `set`.
@@ -460,6 +487,33 @@ class DeltaTable private[tables](
   }
 
   /**
+   * Restore the DeltaTable to an older version of the table specified by version number.
+   *
+   * An example would be
+   * {{{ io.delta.tables.DeltaTable.restoreToVersion(7) }}}
+   *
+   * @since 1.2.0
+   */
+  def restoreToVersion(version: Long): DataFrame = {
+    executeRestore(table, Some(version), None)
+  }
+
+  /**
+   * Restore the DeltaTable to an older version of the table specified by a timestamp.
+   *
+   * Timestamp can be of the format yyyy-MM-dd or yyyy-MM-dd HH:mm:ss
+   *
+   * An example would be
+   * {{{ io.delta.tables.DeltaTable.restoreToTimestamp("2019-01-01") }}}
+   *
+   * @since 1.2.0
+   */
+  def restoreToTimestamp(timestamp: String): DataFrame = {
+    executeRestore(table, None, Some(timestamp))
+  }
+
+
+  /**
    * Updates the protocol version of the table to leverage new features. Upgrading the reader
    * version will prevent all clients that have an older version of Delta Lake from accessing this
    * table. Upgrading the writer version will prevent older versions of Delta Lake to write to this
@@ -574,7 +628,7 @@ object DeltaTable {
    */
   def forPath(path: String): DeltaTable = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
+      throw DeltaErrors.activeSparkSessionNotFound()
     }
     forPath(sparkSession, path)
   }
@@ -603,7 +657,7 @@ object DeltaTable {
    */
   def forName(tableOrViewName: String): DeltaTable = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
+      throw DeltaErrors.activeSparkSessionNotFound()
     }
     forName(sparkSession, tableOrViewName)
   }
@@ -663,7 +717,7 @@ object DeltaTable {
    */
   def isDeltaTable(identifier: String): Boolean = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
+      throw DeltaErrors.activeSparkSessionNotFound()
     }
     isDeltaTable(sparkSession, identifier)
   }
@@ -684,7 +738,7 @@ object DeltaTable {
   @Evolving
   def create(): DeltaTableBuilder = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
+      throw DeltaErrors.activeSparkSessionNotFound()
     }
     create(sparkSession)
   }
@@ -720,7 +774,7 @@ object DeltaTable {
   @Evolving
   def createIfNotExists(): DeltaTableBuilder = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
+      throw DeltaErrors.activeSparkSessionNotFound()
     }
     createIfNotExists(sparkSession)
   }
@@ -756,7 +810,7 @@ object DeltaTable {
   @Evolving
   def replace(): DeltaTableBuilder = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
+      throw DeltaErrors.activeSparkSessionNotFound()
     }
     replace(sparkSession)
   }
@@ -792,7 +846,7 @@ object DeltaTable {
   @Evolving
   def createOrReplace(): DeltaTableBuilder = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
+      throw DeltaErrors.activeSparkSessionNotFound()
     }
     createOrReplace(sparkSession)
   }
@@ -828,7 +882,7 @@ object DeltaTable {
   @Evolving
   def columnBuilder(colName: String): DeltaColumnBuilder = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
+      throw DeltaErrors.activeSparkSessionNotFound()
     }
     columnBuilder(sparkSession, colName)
   }

@@ -34,8 +34,7 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructType}
 
-class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession
-  with DeltaSQLCommandTest {
+class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession  with DeltaSQLCommandTest {
 
   override protected def verifyDescribeTable(tblName: String): Unit = {
     val res = sql(s"DESCRIBE TABLE $tblName").collect()
@@ -81,6 +80,15 @@ class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession
   }
 }
 
+
+class DeltaDDLNameColumnMappingSuite extends DeltaDDLSuite
+  with DeltaColumnMappingEnableNameMode {
+
+  override protected def runOnlyTests = Seq(
+    "create table with NOT NULL - check violation through file writing",
+    "ALTER TABLE CHANGE COLUMN with nullability change in struct type - relaxed"
+  )
+}
 
 
 abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {

@@ -16,13 +16,15 @@
 
 package org.apache.spark.sql.delta.storage
 
-import java.io.{BufferedReader, FileNotFoundException, InputStreamReader}
+import java.io.{BufferedReader, InputStreamReader}
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.FileAlreadyExistsException
 import java.util.UUID
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.DeltaErrors
+import org.apache.spark.sql.delta.DeltaIllegalStateException
 import org.apache.commons.io.IOUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
@@ -78,7 +80,7 @@ abstract class HadoopFileSystemLogStore(
   override def listFrom(path: Path, hadoopConf: Configuration): Iterator[FileStatus] = {
     val fs = path.getFileSystem(hadoopConf)
     if (!fs.exists(path.getParent)) {
-      throw new FileNotFoundException(s"No such file or directory: ${path.getParent}")
+      throw DeltaErrors.fileOrDirectoryNotFoundException(s"${path.getParent}")
     }
     val files = fs.listStatus(path.getParent)
     files.filter(_.getPath.getName >= path.getName).sortBy(_.getPath.getName).iterator
@@ -118,7 +120,7 @@ abstract class HadoopFileSystemLogStore(
     val fs = path.getFileSystem(hadoopConf)
 
     if (!fs.exists(path.getParent)) {
-      throw new FileNotFoundException(s"No such file or directory: ${path.getParent}")
+      throw DeltaErrors.fileOrDirectoryNotFoundException(s"${path.getParent}")
     }
     if (overwrite) {
       val stream = fs.create(path, true)
@@ -146,7 +148,7 @@ abstract class HadoopFileSystemLogStore(
             if (fs.exists(path)) {
               throw new FileAlreadyExistsException(path.toString)
             } else {
-              throw new IllegalStateException(s"Cannot rename $tempPath to $path")
+              throw DeltaErrors.cannotRenamePath(tempPath.toString, path.toString)
             }
           }
         } catch {

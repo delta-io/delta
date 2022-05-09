@@ -22,6 +22,7 @@ import com.typesafe.tools.mima.core.ProblemFilters._
  */
 object MimaExcludes {
   val ignoredABIProblems = Seq(
+      // scalastyle:off line.size.limit
       ProblemFilters.exclude[Problem]("org.*"),
       ProblemFilters.exclude[Problem]("io.delta.sql.parser.*"),
       ProblemFilters.exclude[Problem]("io.delta.tables.execution.*"),
@@ -77,7 +78,13 @@ object MimaExcludes {
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaMergeBuilder.initializeLogIfNecessary$default$2"),
 
       // Changes in 0.7.0
-      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.makeUpdateTable")
+      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.makeUpdateTable"),
+
+      // Changes in 1.2.0
+      ProblemFilters.exclude[MissingClassProblem]("io.delta.storage.LogStore"),
+      ProblemFilters.exclude[MissingClassProblem]("io.delta.storage.CloseableIterator")
+
+      // scalastyle:on line.size.limit
   )
 }
 
