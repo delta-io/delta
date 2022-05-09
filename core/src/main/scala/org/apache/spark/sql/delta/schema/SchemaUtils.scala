@@ -1007,7 +1007,7 @@ object SchemaUtils {
   /**
    * Find the unsupported data type in a table schema. Return all columns that are using unsupported
    * data types. For example,
-   * `findUnsupportedDataType(struct<&lt;>a: struct&lt;b: unsupported_type&gt;&gt;)` will return
+   * `findUnsupportedDataType(struct&lt;a: struct&lt;b: unsupported_type&gt;&gt;)` will return
    * `Some(unsupported_type, Some("a.b"))`.
    */
   def findUnsupportedDataTypes(schema: StructType): Seq[UnsupportedDataTypeInfo] = {
