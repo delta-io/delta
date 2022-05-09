@@ -302,6 +302,10 @@
     "message" : [ "Creating a bloom filter index on a column with type %s is unsupported: %s" ],
     "sqlState" : "0A000"
   },
+  "DELTA_UNSUPPORTED_DATA_TYPES" : {
+    "message" : [ "Found columns using unsupported data types: %s. You can set '%s' to 'false' to disable the type check. Disabling this type check may allow users to create unsupported Delta tables and should only be used when trying to read/write legacy tables." ],
+    "sqlState" : "0A000"
+  },
   "DELTA_UNSUPPORTED_EXPRESSION_GENERATED_COLUMN" : {
     "message" : [ "%s cannot be used in a generated column" ],
     "sqlState" : "0A000"
