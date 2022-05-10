@@ -39,6 +39,7 @@ import org.apache.spark.util.ThreadUtils
  */
 case class CapturedSnapshot(snapshot: Snapshot, updateTimestamp: Long)
 
+
 /**
  * Manages the creation, computation, and access of Snapshot's for Delta tables. Responsibilities
  * include:
