@@ -33,7 +33,7 @@ import org.apache.spark.sql.catalyst.catalog.BucketSpec
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, LogicalPlan, Project}
-import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, quoteIfNeeded}
 import org.apache.spark.sql.connector.expressions.{BucketTransform, Transform}
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
@@ -531,18 +531,12 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
 object ExtractBaseColumn {
   def unapply(e: Expression): Option[(String, DataType)] = e match {
     case AttributeReference(name, dataType, _, _) =>
-      Some((escapeName(name), dataType))
+      Some((quoteIfNeeded(name), dataType))
     case g: GetStructField => g.child match {
       case ExtractBaseColumn(name, _) =>
-        Some((Seq(name, escapeName(g.extractFieldName)).mkString("."), g.dataType))
+        Some((Seq(name, quoteIfNeeded(g.extractFieldName)).mkString("."), g.dataType))
       case _ => None
     }
     case _ => None
   }
-
-  /**
-   * Copied from UnresolvedAttribute's behavior. Periods are ambiguous if they exist inside a
-   * field name, therefore escape any fields with a period in it.
-   */
-  def escapeName(colName: String): String = if (colName.contains(".")) s"`$colName`" else colName
 }

@@ -707,6 +707,29 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
   )
 
   testOptimizablePartitionExpression(
+    "outer struct<inner struct<nested: struct<value:STRING>>>",
+    "substr STRING",
+    Map("substr" -> "SUBSTRING(outer.inner.nested.value, 1, 3)"),
+    expectedPartitionExpr = SubstringPartitionExpr("substr", 1, 3),
+    auxiliaryTestName = Some(" deeply nested"),
+    expressionKey = Some("outer.inner.nested.value"),
+    ignoreNested = true,
+    filterTestCases = Seq(
+      "outer.inner.nested.value < 'foo'" ->
+        Seq("((substr IS NULL) OR (substr <= substring('foo', 1, 3)))"),
+      "outer.inner.nested.value <= 'foo'" ->
+        Seq("((substr IS NULL) OR (substr <= substring('foo', 1, 3)))"),
+      "outer.inner.nested.value = 'foo'" ->
+        Seq("((substr IS NULL) OR (substr = substring('foo', 1, 3)))"),
+      "outer.inner.nested.value > 'foo'" ->
+        Seq("((substr IS NULL) OR (substr >= substring('foo', 1, 3)))"),
+      "outer.inner.nested.value >= 'foo'" ->
+        Seq("((substr IS NULL) OR (substr >= substring('foo', 1, 3)))"),
+      "outer.inner.nested.value is null" -> Seq("(substr IS NULL)")
+    )
+  )
+
+  testOptimizablePartitionExpression(
     "value STRING",
     "part STRING",
     Map("part" -> "value"),
