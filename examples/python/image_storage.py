@@ -27,23 +27,25 @@ import shutil
 from urllib import request
 import os
 
-# set up the spark session
-spark = SparkSession.builder \
-    .appName("image_storage") \
-    .master("local[*]") \
-    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
-    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
-    .config("spark.sql.sources.parallelPartitionDiscovery.parallelism", "4") \
-    .getOrCreate()
+# # If running as part of the integration tests, set up the spark session
+# spark = SparkSession.builder \
+#     .appName("image_storage") \
+#     .master("local[*]") \
+#     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+#     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
+#     .config("spark.sql.sources.parallelPartitionDiscovery.parallelism", "4") \
+#     .getOrCreate()
 
-# If you are running this example directly, you can set up the spark session directly using the following 2 commands
-# builder = (
-#   SparkSession.builder
-#     .appName('image_storage')
-#     .config('spark.sql.extensions', 'io.delta.sql.DeltaSparkSessionExtension')
-#     .config('spark.sql.catalog.spark_catalog', 'org.apache.spark.sql.delta.catalog.DeltaCatalog')
-# )
-# spark = configure_spark_with_delta_pip(builder).getOrCreate()
+# To run this example directly, set up the spark session using the following 2 commands
+# You will need to run using Python3
+# You will also need to install the python packages pyspark and delta-spark, we advise using pip
+builder = (
+  SparkSession.builder
+    .appName('image_storage')
+    .config('spark.sql.extensions', 'io.delta.sql.DeltaSparkSessionExtension')
+    .config('spark.sql.catalog.spark_catalog', 'org.apache.spark.sql.delta.catalog.DeltaCatalog')
+)
+spark = configure_spark_with_delta_pip(builder).getOrCreate()
 
 # Flowers dataset from the TensorFlow team - https://www.tensorflow.org/datasets/catalog/tf_flowers
 imageGzipUrl = "https://storage.googleapis.com/download.tensorflow.org/example_images/flower_photos.tgz"
