@@ -27,15 +27,6 @@ import shutil
 from urllib import request
 import os
 
-# # If running as part of the integration tests, set up the spark session
-# spark = SparkSession.builder \
-#     .appName("image_storage") \
-#     .master("local[*]") \
-#     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
-#     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
-#     .config("spark.sql.sources.parallelPartitionDiscovery.parallelism", "4") \
-#     .getOrCreate()
-
 # To run this example directly, set up the spark session using the following 2 commands
 # You will need to run using Python3
 # You will also need to install the python packages pyspark and delta-spark, we advise using pip
