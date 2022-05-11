@@ -339,15 +339,19 @@ object DeltaOperations {
     override val operationMetrics: Set[String] = DeltaOperationMetrics.RESTORE
   }
 
+  sealed abstract class OptimizeOrReorg(override val name: String) extends Operation(name)
+
+  /** operation name for OPTIMIZE command */
   val OPTIMIZE_OPERATION_NAME = "OPTIMIZE"
 
   /** Recorded when optimizing the table. */
   case class Optimize(
       predicate: Seq[String]
-  ) extends Operation(OPTIMIZE_OPERATION_NAME) {
+  ) extends OptimizeOrReorg(OPTIMIZE_OPERATION_NAME) {
     override val parameters: Map[String, Any] = Map(
       "predicate" -> JsonUtils.toJson(predicate)
-      )
+    )
+
     override val operationMetrics: Set[String] = DeltaOperationMetrics.OPTIMIZE
   }
 
