@@ -40,8 +40,6 @@ trait DeleteCommandMetrics { self: LeafRunnableCommand =>
   override lazy val metrics: Map[String, SQLMetric] = Map[String, SQLMetric](
     "numRemovedFiles" -> createMetric(sc, "number of files removed."),
     "numAddedFiles" -> createMetric(sc, "number of files added."),
-    "numAddedChangeFiles" -> createMetric(sc, "number of change data capture files generated"),
-    "changeFileBytes" -> createMetric(sc, "total size of change data capture files generated"),
     "numDeletedRows" -> createMetric(sc, "number of rows deleted."),
     "numFilesBeforeSkipping" -> createMetric(sc, "number of files before skipping"),
     "numBytesBeforeSkipping" -> createMetric(sc, "number of bytes before skipping"),
@@ -51,12 +49,14 @@ trait DeleteCommandMetrics { self: LeafRunnableCommand =>
     "numPartitionsAddedTo" -> createMetric(sc, "number of partitions added"),
     "numPartitionsRemovedFrom" -> createMetric(sc, "number of partitions removed"),
     "numCopiedRows" -> createMetric(sc, "number of rows copied"),
-    "numTouchedRows" -> createMetric(sc, "number of rows touched"),
     "numBytesAdded" -> createMetric(sc, "number of bytes added"),
     "numBytesRemoved" -> createMetric(sc, "number of bytes removed"),
     "executionTimeMs" -> createMetric(sc, "time taken to execute the entire operation"),
     "scanTimeMs" -> createMetric(sc, "time taken to scan the files for matches"),
-    "rewriteTimeMs" -> createMetric(sc, "time taken to rewrite the matched files")
+    "rewriteTimeMs" -> createMetric(sc, "time taken to rewrite the matched files"),
+    "numAddedChangeFiles" -> createMetric(sc, "number of change data capture files generated"),
+    "changeFileBytes" -> createMetric(sc, "total size of change data capture files generated"),
+    "numTouchedRows" -> createMetric(sc, "number of rows touched")
   )
 }
 
@@ -315,7 +315,7 @@ case class DeleteCommand(
       baseData: DataFrame,
       filterCondition: Expression,
       numFilesToRewrite: Long): Seq[FileAction] = {
-    val writeCdc = DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(txn.metadata)
+    val shouldWriteCdc = DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(txn.metadata)
 
     val numTouchedRows = metrics("numTouchedRows")
     val numTouchedRowsUdf = udf { () =>
@@ -325,12 +325,13 @@ case class DeleteCommand(
 
     withStatusCode(
       "DELTA", s"Rewriting $numFilesToRewrite files for DELETE operation") {
-      val dfToWrite = if (writeCdc) {
+      val dfToWrite = if (shouldWriteCdc) {
         import org.apache.spark.sql.delta.commands.cdc.CDCReader._
         // The logic here ends up being surprisingly elegant, with all source rows ending up in
-        // the output. All rows which match the condition are retained as table data (we flipped
-        // the user-provided condition earlier), while all rows which don't match are removed from
-        // the rewritten table data but do get included in the output as CDC events.
+        // the output. Recall that we flipped the user-provided delete condition earlier, before the
+        // call to `rewriteFiles`. All rows which match this latest `filterCondition` are retained
+        // as table data, while all rows which don't match are removed from the rewritten table data
+        // but do get included in the output as CDC events.
         baseData
           .filter(numTouchedRowsUdf())
           .withColumn(

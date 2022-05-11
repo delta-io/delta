@@ -37,12 +37,10 @@ class DeleteCDCSuite extends DeleteSQLSuite {
       partitionColumns: Seq[String] = Seq.empty,
       deleteCondition: String,
       expectedData: => Dataset[_],
-      expectedChangeData: => Dataset[_],
-      randomizeFilePrefixes: Boolean = false): Unit = {
+      expectedChangeData: => Dataset[_]
+    ): Unit = {
     test(s"CDC - $name") {
       withSQLConf(
-          (DeltaConfigs.RANDOMIZE_FILE_PREFIXES.defaultTablePropertyKey,
-            randomizeFilePrefixes.toString),
           (DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")) {
         withTempDir { dir =>
           val path = dir.getAbsolutePath
@@ -116,16 +114,6 @@ class DeleteCDCSuite extends DeleteSQLSuite {
   )
 
 
-  testCDCDelete("randomized file prefixes")(
-    initialData = spark.range(100).selectExpr("id % 10 as part", "id"),
-    partitionColumns = Seq("part"),
-    deleteCondition = "id < 1000",
-    expectedData = Seq.empty[(Long, Long)].toDF("part", "id"),
-    expectedChangeData =
-      spark.range(100)
-        .selectExpr("id % 10 as part", "id", "'delete' as _change_type", "1 as _commit_version"),
-    randomizeFilePrefixes = true)
-
   testCDCDelete("partition-optimized delete")(
     initialData = spark.range(100).selectExpr("id % 10 as part", "id"),
     partitionColumns = Seq("part"),
@@ -135,7 +123,6 @@ class DeleteCDCSuite extends DeleteSQLSuite {
     expectedChangeData =
       Range(0, 10).map(x => x * 10 + 3).toDF("id")
         .selectExpr("3 as part", "id", "'delete' as _change_type", "1 as _commit_version"))
-
 
 }
 

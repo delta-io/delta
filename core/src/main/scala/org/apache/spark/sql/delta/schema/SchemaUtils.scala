@@ -191,7 +191,8 @@ object SchemaUtils {
     if (dataFields.subsetOf(tableFields)) {
       data.toDF()
     } else {
-      // Allow the same shortcut logic if the only extra fields are CDC metadata fields.
+      // Allow the same shortcut logic (as the above `if` stmt) if the only extra fields are CDC
+      // metadata fields.
       val nonCdcFields = dataFields.filterNot { f =>
         f == CDCReader.CDC_PARTITION_COL || f == CDCReader.CDC_TYPE_COLUMN_NAME
       }

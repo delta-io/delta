@@ -899,9 +899,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
 
     // Post stats
+    // Here, we efficiently calculate various stats (number of each different action, number of
+    // bytes per action, etc.) by iterating over all actions, case matching by type, and updating
+    // variables. This is more efficient than a functional approach.
     var numAbsolutePaths = 0
     val distinctPartitions = new mutable.HashSet[Map[String, String]]
-
     var bytesNew: Long = 0L
     var numAdd: Int = 0
     var numRemove: Int = 0
