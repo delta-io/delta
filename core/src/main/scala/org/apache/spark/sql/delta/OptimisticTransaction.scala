@@ -901,12 +901,26 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // Post stats
     var numAbsolutePaths = 0
     val distinctPartitions = new mutable.HashSet[Map[String, String]]
-    val adds = actions.collect {
+
+    var bytesNew: Long = 0L
+    var numAdd: Int = 0
+    var numRemove: Int = 0
+    var numCdcFiles: Int = 0
+    var cdcBytesNew: Long = 0L
+    actions.foreach {
       case a: AddFile =>
+        numAdd += 1
         if (a.pathAsUri.isAbsolute) numAbsolutePaths += 1
         distinctPartitions += a.partitionValues
-        a
+        if (a.dataChange) bytesNew += a.size
+      case r: RemoveFile =>
+        numRemove += 1
+      case c: AddCDCFile =>
+        numCdcFiles += 1
+        cdcBytesNew += c.size
+      case _ =>
     }
+
     val needsCheckpoint = shouldCheckpoint(attemptVersion)
     val stats = CommitStats(
       startVersion = snapshot.version,
@@ -917,13 +931,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       fsWriteDurationMs = NANOSECONDS.toMillis(commitEndNano - fsWriteStartNano),
       stateReconstructionDurationMs =
         NANOSECONDS.toMillis(postCommitReconstructionTime - commitEndNano),
-      numAdd = adds.size,
-      numRemove = actions.collect { case r: RemoveFile => r }.size,
-      bytesNew = adds.filter(_.dataChange).map(_.size).sum,
+      numAdd = numAdd,
+      numRemove = numRemove,
+      bytesNew = bytesNew,
       numFilesTotal = postCommitSnapshot.numOfFiles,
       sizeInBytesTotal = postCommitSnapshot.sizeInBytes,
-      numCdcFiles = 0,
-      cdcBytesNew = 0,
+      numCdcFiles = numCdcFiles,
+      cdcBytesNew = cdcBytesNew,
       protocol = postCommitSnapshot.protocol,
       commitSizeBytes = jsonActions.map(_.size).sum,
       checkpointSizeBytes = postCommitSnapshot.checkpointSizeInBytes(),

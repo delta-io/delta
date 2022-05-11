@@ -20,6 +20,7 @@ package org.apache.spark.sql.delta.schema
 import java.util.Locale
 import java.util.regex.Pattern
 
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.scalatest.GivenWhenThen
@@ -997,6 +998,15 @@ class SchemaUtilsSuite extends QueryTest
     assert(normalizeColumnNames(schema, df).schema.fieldNames === Seq("a", "b"))
   }
 
+  test("can normalize CDC type column") {
+    val df = Seq((1, 2, 3, 4)).toDF("Abc", "def", "gHi", CDCReader.CDC_TYPE_COLUMN_NAME)
+    val schema = new StructType()
+      .add("abc", IntegerType)
+      .add("Def", IntegerType)
+      .add("ghi", IntegerType)
+    assert(normalizeColumnNames(schema, df).schema.fieldNames ===
+      schema.fieldNames :+ CDCReader.CDC_TYPE_COLUMN_NAME)
+  }
 
   ////////////////////////////
   // mergeSchemas
