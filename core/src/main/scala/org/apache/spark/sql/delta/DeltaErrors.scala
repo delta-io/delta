@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils}
+import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.sql.DeltaSparkSessionExtension
@@ -1453,6 +1453,18 @@ object DeltaErrors
     new DeltaAnalysisException(
       errorClass = "DELTA_CANNOT_CHANGE_DATA_TYPE",
       messageParameters = Array(msg)
+    )
+  }
+
+  def unsupportedDataTypes(
+      unsupportedDataType: UnsupportedDataTypeInfo,
+      moreUnsupportedDataTypes: UnsupportedDataTypeInfo*): Throwable = {
+    val prettyMessage = (unsupportedDataType +: moreUnsupportedDataTypes)
+      .map(dt => s"${dt.column}: ${dt.dataType}")
+      .mkString("[", ", ", "]")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_DATA_TYPES",
+      messageParameters = Array(prettyMessage, DeltaSQLConf.DELTA_SCHEMA_TYPE_CHECK.key)
     )
   }
 

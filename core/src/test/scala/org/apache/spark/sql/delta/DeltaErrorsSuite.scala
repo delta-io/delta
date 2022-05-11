@@ -33,7 +33,7 @@ import org.apache.spark.sql.delta.constraints.Constraints.NotNull
 import org.apache.spark.sql.delta.constraints.Invariants
 import org.apache.spark.sql.delta.constraints.Invariants.PersistedRule
 import org.apache.spark.sql.delta.hooks.PostCommitHook
-import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaMergingUtils, SchemaUtils}
+import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaMergingUtils, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
@@ -51,7 +51,7 @@ import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
-import org.apache.spark.sql.types.{DataTypes, DateType, IntegerType, MetadataBuilder, NullType, StringType, StructField, StructType}
+import org.apache.spark.sql.types.{CalendarIntervalType, DataTypes, DateType, IntegerType, MetadataBuilder, NullType, StringType, StructField, StructType, TimestampNTZType}
 
 trait DeltaErrorsSuiteBase
     extends QueryTest
@@ -1135,6 +1135,20 @@ trait DeltaErrorsSuiteBase
       assert(e.getSqlState == "0A000")
       assert(e.getMessage == "Creating a bloom filter index on a column with type date is " +
         "unsupported: col1")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.unsupportedDataTypes(
+          UnsupportedDataTypeInfo("foo", CalendarIntervalType),
+          UnsupportedDataTypeInfo("bar", TimestampNTZType))
+      }
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_DATA_TYPES")
+      assert(e.getSqlState == "0A000")
+      assert(e.getMessage == "Found columns using unsupported data types: " +
+        "[foo: CalendarIntervalType, bar: TimestampNTZType]. " +
+        "You can set 'spark.databricks.delta.schema.typeCheck.enabled' to 'false' " +
+        "to disable the type check. Disabling this type check may allow users to create " +
+        "unsupported Delta tables and should only be used when trying to read/write legacy tables.")
     }
     {
       val e = intercept[DeltaIllegalStateException] {

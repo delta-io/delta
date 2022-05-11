@@ -292,6 +292,16 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_SCHEMA_TYPE_CHECK =
+    buildConf("schema.typeCheck.enabled")
+      .doc(
+        """Enable the data type check when updating the table schema. Disabling this flag may
+          | allow users to create unsupported Delta tables and should only be used when trying to
+          | read/write legacy tables.""".stripMargin)
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS =
     buildConf("constraints.assumesDropIfExists.enabled")
       .doc("""If true, DROP CONSTRAINT quietly drops nonexistent constraints even without
