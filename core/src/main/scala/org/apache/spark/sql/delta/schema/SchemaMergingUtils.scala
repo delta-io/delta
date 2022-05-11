@@ -205,16 +205,16 @@ object SchemaMergingUtils {
             current
           } else if ((leftPrecision != rightPrecision) && (leftScale != rightScale)) {
             throw new DeltaAnalysisException(
-              errorClass = "MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+              errorClass = "DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE",
               messageParameters = Array(
                 s"precision $leftPrecision and $rightPrecision & scale $leftScale and $rightScale"))
           } else if (leftPrecision != rightPrecision) {
             throw new DeltaAnalysisException(
-              errorClass = "MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+              errorClass = "DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE",
               messageParameters = Array(s"precision $leftPrecision and $rightPrecision"))
           } else {
             throw new DeltaAnalysisException(
-              errorClass = "MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+              errorClass = "DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE",
               messageParameters = Array(s"scale $leftScale and $rightScale"))
           }
         case _ if current == update =>

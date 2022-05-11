@@ -120,12 +120,12 @@ object SchemaUtils {
       case a: ArrayType if typeExistsRecursively(a)(_.isInstanceOf[NullType]) =>
         val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
         throw new DeltaAnalysisException(
-          errorClass = "COMPLEX_TYPE_COLUMN_CANNOT_CONTAIN_NULL_TYPE",
+          errorClass = "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE",
           messageParameters = Array(colName, "ArrayType"))
       case m: MapType if typeExistsRecursively(m)(_.isInstanceOf[NullType]) =>
         val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
         throw new DeltaAnalysisException(
-          errorClass = "COMPLEX_TYPE_COLUMN_CANNOT_CONTAIN_NULL_TYPE",
+          errorClass = "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE",
           messageParameters = Array(colName, "NullType"))
       case _ =>
         val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name

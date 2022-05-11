@@ -144,7 +144,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaInvariantViolationException] {
         throw DeltaErrors.notNullColumnMissingException(NotNull(Seq("c0", "c1")))
       }
-      assert(e.getErrorClass == "MISSING_NOT_NULL_COLUMN_VALUE")
+      assert(e.getErrorClass == "DELTA_MISSING_NOT_NULL_COLUMN_VALUE")
       assert(e.getSqlState == "42000")
       assert(e.getMessage == "Column c0.c1, which has a NOT NULL constraint, is missing " +
         "from the data being written into the table.")
@@ -218,7 +218,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.bloomFilterOnNestedColumnNotSupportedException("c0")
       }
-      assert(e.getErrorClass == "UNSUPPORTED_NESTED_COLUMN_IN_BLOOM_FILTER")
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_NESTED_COLUMN_IN_BLOOM_FILTER")
       assert(e.getSqlState == "0A000")
       assert(e.getMessage == "Creating a bloom filer index on a nested " +
         "column is currently unsupported: c0")
@@ -227,7 +227,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.bloomFilterOnPartitionColumnNotSupportedException("c0")
       }
-      assert(e.getErrorClass == "UNSUPPORTED_PARTITION_COLUMN_IN_BLOOM_FILTER")
+      assert(e.getErrorClass == "DELTA_UNSUPPORTED_PARTITION_COLUMN_IN_BLOOM_FILTER")
       assert(e.getSqlState == "0A000")
       assert(e.getMessage == "Creating a bloom filter index on a partitioning column " +
         "is unsupported: c0")
@@ -698,7 +698,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaSparkException] {
         throw DeltaErrors.failedMergeSchemaFile("file", "schema", null)
       }
-      assert(e.getErrorClass == "FAILED_MERGE_SCHEMA_FILE")
+      assert(e.getErrorClass == "DELTA_FAILED_MERGE_SCHEMA_FILE")
       assert(e.getMessage == "Failed to merge schema of file file:\nschema")
     }
     {
@@ -706,7 +706,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.operationNotSupportedException("op", id)
       }
-      assert(e.getErrorClass == "OPERATION_NOT_ALLOWED")
+      assert(e.getErrorClass == "DELTA_OPERATION_NOT_ALLOWED")
       assert(e.getMessage == s"Operation not allowed: `op` is not supported " +
         s"for Delta tables: $id")
     }
@@ -714,42 +714,42 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaFileNotFoundException] {
         throw DeltaErrors.fileOrDirectoryNotFoundException("path")
       }
-      assert(e.getErrorClass == "FILE_OR_DIR_NOT_FOUND")
+      assert(e.getErrorClass == "DELTA_FILE_OR_DIR_NOT_FOUND")
       assert(e.getMessage == "No such file or directory: path")
     }
     {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.invalidPartitionColumn("col", "tbl")
       }
-      assert(e.getErrorClass == "INVALID_PARTITION_COLUMN")
+      assert(e.getErrorClass == "DELTA_INVALID_PARTITION_COLUMN")
       assert(e.getMessage == "col is not a valid partition column in table tbl.")
     }
     {
       val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.cannotFindSourceVersionException("json")
       }
-      assert(e.getErrorClass == "CANNOT_FIND_VERSION")
+      assert(e.getErrorClass == "DELTA_CANNOT_FIND_VERSION")
       assert(e.getMessage == "Cannot find 'sourceVersion' in json")
     }
     {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.unknownConfigurationKeyException("confKey")
       }
-      assert(e.getErrorClass == "UNKNOWN_CONFIGURATION")
+      assert(e.getErrorClass == "DELTA_UNKNOWN_CONFIGURATION")
       assert(e.getMessage == "Unknown configuration was specified: confKey")
     }
     {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.pathNotExistsException("path")
       }
-      assert(e.getErrorClass == "PATH_DOES_NOT_EXIST")
+      assert(e.getErrorClass == "DELTA_PATH_DOES_NOT_EXIST")
       assert(e.getMessage == "path doesn't exist")
     }
     {
       val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.illegalFilesFound("file")
       }
-      assert(e.getErrorClass == "ILLEGAL_FILE_FOUND")
+      assert(e.getErrorClass == "DELTA_ILLEGAL_FILE_FOUND")
       assert(e.getMessage == "Illegal files found in a dataChange = false transaction. Files: file")
     }
     {
@@ -761,28 +761,28 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.createTableWithDifferentSchemaException(
           path, specifiedSchema, existingSchema, diffs)
       }
-      assert(e.getErrorClass == "CREATE_TABLE_SCHEME_MISMATCH")
+      assert(e.getErrorClass == "DELTA_CREATE_TABLE_SCHEME_MISMATCH")
     }
     {
       val path = new Path("parent", "child")
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.noHistoryFound(path)
       }
-      assert(e.getErrorClass == "NO_COMMITS_FOUND")
+      assert(e.getErrorClass == "DELTA_NO_COMMITS_FOUND")
       assert(e.getMessage == s"No commits found at $path")
     }
     {
       val e = intercept[DeltaRuntimeException] {
         throw DeltaErrors.castPartitionValueException("partitionValue", StringType)
       }
-      assert(e.getErrorClass == "FAILED_CAST_PARTITION_VALUE")
+      assert(e.getErrorClass == "DELTA_FAILED_CAST_PARTITION_VALUE")
       assert(e.getMessage == s"Failed to cast partition value `partitionValue` to $StringType")
     }
     {
       val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.sparkSessionNotSetException()
       }
-      assert(e.getErrorClass == "SPARK_SESSION_NOT_SET")
+      assert(e.getErrorClass == "DELTA_SPARK_SESSION_NOT_SET")
       assert(e.getMessage == "Active SparkSession not set.")
     }
     {
@@ -790,7 +790,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.cannotReplaceMissingTableException(id)
       }
-      assert(e.getErrorClass == "CANNOT_REPLACE_MISSING_TABLE")
+      assert(e.getErrorClass == "DELTA_CANNOT_REPLACE_MISSING_TABLE")
       assert(e.getMessage == s"Table $id cannot be replaced as it does not exist. " +
         s"Use CREATE OR REPLACE TABLE to create the table.")
     }
@@ -798,14 +798,14 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaIOException] {
         throw DeltaErrors.cannotCreateLogPathException("logPath")
       }
-      assert(e.getErrorClass == "CANNOT_CREATE_LOG_PATH")
+      assert(e.getErrorClass == "DELTA_CANNOT_CREATE_LOG_PATH")
       assert(e.getMessage == "Cannot create logPath")
     }
     {
       val e = intercept[DeltaIllegalArgumentException] {
         throw DeltaErrors.protocolPropNotIntException("key", "value")
       }
-      assert(e.getErrorClass == "PROTOCOL_PROPERTY_NOT_INT")
+      assert(e.getErrorClass == "DELTA_PROTOCOL_PROPERTY_NOT_INT")
       assert(e.getMessage == "Protocol property key needs to be an integer. Found value")
     }
     {
@@ -818,7 +818,7 @@ trait DeltaErrorsSuiteBase
         |from `$path` using Delta, but there is no transaction log present at
         |`$path/_delta_log`. Check the upstream job to make sure that it is writing using
         |format("delta") and that the path is the root of the table.""".stripMargin
-      assert(e.getErrorClass == "CREATE_EXTERNAL_TABLE_WITHOUT_TXN_LOG")
+      assert(e.getErrorClass == "DELTA_CREATE_EXTERNAL_TABLE_WITHOUT_TXN_LOG")
       assert(e.getMessage.startsWith(msg))
     }
     {
@@ -896,7 +896,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.bloomFilterMultipleConfForSingleColumnException("col1")
       }
-      assert(e.getErrorClass == "MULTIPLE_CONF_FOR_SINGLE_COLUMN_IN_BLOOM_FILTER")
+      assert(e.getErrorClass == "DELTA_MULTIPLE_CONF_FOR_SINGLE_COLUMN_IN_BLOOM_FILTER")
       assert(e.getSqlState == "0A000")
       assert(e.getMessage == "Multiple bloom filter index configurations passed to " +
         "command for column: col1")
@@ -1188,7 +1188,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaRuntimeException] {
         throw DeltaErrors.failedInferSchema
       }
-      assert(e.getErrorClass == "FAILED_INFER_SCHEMA")
+      assert(e.getErrorClass == "DELTA_FAILED_INFER_SCHEMA")
       assert(e.getSqlState == "22000")
       assert(e.getMessage == "Failed to infer schema from the given list of files.")
     }
@@ -1282,7 +1282,7 @@ trait DeltaErrorsSuiteBase
             StructType(Seq(StructField("c1", IntegerType)))
           ))
       }
-      assert(e.getErrorClass == "EXTRACT_REFERENCES_FIELD_NOT_FOUND")
+      assert(e.getErrorClass == "DELTA_EXTRACT_REFERENCES_FIELD_NOT_FOUND")
       assert(e.getSqlState == "22000")
       assert(e.getMessage == "Field struct1 could not be found when extracting references.")
     }
@@ -1290,7 +1290,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaIndexOutOfBoundsException] {
         throw DeltaErrors.notNullColumnNotFoundInStruct("struct1")
       }
-      assert(e.getErrorClass == "NOT_NULL_COLUMN_NOT_FOUND_IN_STRUCT")
+      assert(e.getErrorClass == "DELTA_NOT_NULL_COLUMN_NOT_FOUND_IN_STRUCT")
       assert(e.getSqlState == "42000")
       assert(e.getMessage == "Not nullable column not found in struct: struct1")
     }
