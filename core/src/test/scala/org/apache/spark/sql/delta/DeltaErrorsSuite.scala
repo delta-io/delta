@@ -61,14 +61,13 @@ trait DeltaErrorsSuiteBase
   val MAX_URL_ACCESS_RETRIES = 3
   val path = "/sample/path"
 
-  // Map of error name to the actual error message it throws
-  // When adding an error, add the name of the function throwing the error as the key and the value
-  // as the error being thrown
+  // Map of error function to the error
+  // When adding a function...
+  // (a) if the function is just a message: add the name of the message/function as the key, and an
+  // error that uses that message as the value
+  // (b) if the function is an error function: add the name of the function as the key, and the
+  // value as the error being thrown
   def errorsToTest: Map[String, Throwable] = Map(
-    "useDeltaOnOtherFormatPathException" ->
-      DeltaErrors.useDeltaOnOtherFormatPathException("operation", path, spark),
-    "useOtherFormatOnDeltaPathException" ->
-      DeltaErrors.useOtherFormatOnDeltaPathException("operation", path, path, "format", spark),
     "createExternalTableWithoutLogException" ->
       DeltaErrors.createExternalTableWithoutLogException(new Path(path), "tableName", spark),
     "createExternalTableWithoutSchemaException" ->
@@ -77,17 +76,25 @@ trait DeltaErrorsSuiteBase
       DeltaErrors.createManagedTableWithoutSchemaException("tableName", spark),
     "multipleSourceRowMatchingTargetRowInMergeException" ->
       DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(spark),
-    "concurrentModificationException" -> new ConcurrentWriteException(None),
-    "foundInvalidCharsInColumnNames" -> DeltaErrors.foundInvalidCharsInColumnNames(
-      QueryCompilationErrors.columnNameContainsInvalidCharactersError("tableName")))
+    "concurrentModificationExceptionMsg" -> new ConcurrentWriteException(None),
+    "incorrectLogStoreImplementationException" ->
+      DeltaErrors.incorrectLogStoreImplementationException(sparkConf, new Throwable()),
+    "sourceNotDeterministicInMergeException" ->
+      DeltaErrors.sourceNotDeterministicInMergeException(spark),
+    "columnMappingAdviceMessage" ->
+      DeltaErrors.columnRenameNotSupported
+  )
 
   def otherMessagesToTest: Map[String, String] = Map(
-    "deltaFileNotFoundHint" ->
+    "faqRelativePath" ->
       DeltaErrors.deltaFileNotFoundHint(
         DeltaErrors.generateDocsLink(
           sparkConf,
           DeltaErrors.faqRelativePath,
-          skipValidation = true), path))
+          skipValidation = true), path),
+    "ignoreStreamingUpdatesAndDeletesWarning" ->
+      DeltaErrors.ignoreStreamingUpdatesAndDeletesWarning(spark)
+  )
 
   def errorMessagesToTest: Map[String, String] =
     errorsToTest.mapValues(_.getMessage).toMap ++ otherMessagesToTest
@@ -129,6 +136,10 @@ trait DeltaErrorsSuiteBase
   }
 
   test("Validate that links to docs in DeltaErrors are correct") {
+    // verify DeltaErrors.errorsWithDocsLinks is consistent with DeltaErrorsSuite
+    assert(errorsToTest.keySet ++ otherMessagesToTest.keySet ==
+      DeltaErrors.errorsWithDocsLinks.toSet
+    )
     testUrls()
   }
 
