@@ -41,6 +41,10 @@ benchmarks = {
 
 }
 
+delta_log_store_classes = {
+    "aws": "spark.delta.logStore.class=org.apache.spark.sql.delta.storage.S3SingleDriverLogStore",
+    "gcp": "spark.delta.logStore.gs.impl=io.delta.storage.GCSLogStore",
+}
 
 if __name__ == "__main__":
     """
@@ -62,7 +66,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--cluster-hostname",
         required=True,
-        help="Hostname or public IP of the EMR driver")
+        help="Hostname or public IP of the cluster driver")
     parser.add_argument(
         "--ssh-id-file", "-i",
         required=True,
@@ -79,6 +83,10 @@ if __name__ == "__main__":
         help="Local path to delta repository which will be used for running the benchmark " +
              "instead of the version specified in the specification. Make sure that new delta" +
              " version is compatible with version in the spec.")
+    parser.add_argument(
+        "--cloud-provider",
+        choices=delta_log_store_classes.keys(),
+        help="Cloud where the benchmark will be executed.")
 
     args, passthru_args = parser.parse_known_args()
 
@@ -95,6 +103,7 @@ if __name__ == "__main__":
                         "\n".join(benchmarks.keys()) +
                         "\nSee this python file for more details.")
     benchmark_spec.append_spark_confs(args.spark_conf)
+    benchmark_spec.append_spark_conf(delta_log_store_classes.get(args.cloud_provider))
     benchmark_spec.append_main_class_args(passthru_args)
     print("------")
     print("Benchmark spec to run:\n" + str(vars(benchmark_spec)))

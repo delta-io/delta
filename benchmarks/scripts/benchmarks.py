@@ -27,7 +27,7 @@ class BenchmarkSpec:
     :param maven_artifacts: Maven artifact name in x:y:z format
     :param spark_confs: list of spark conf strings in key=value format
     :param benchmark_main_class: Name of main Scala class from the JAR to run
-    :param main_class_args command line args for the main class
+    :param main_class_args: command line args for the main class
     """
     def __init__(
             self, format_name, maven_artifacts, spark_confs,
@@ -42,6 +42,10 @@ class BenchmarkSpec:
         self.benchmark_main_class = benchmark_main_class
         self.benchmark_main_class_args = main_class_args
         self.extra_spark_shell_args = extra_spark_shell_args
+
+    def append_spark_conf(self, new_conf):
+        if isinstance(new_conf, str):
+            self.spark_confs.append(new_conf)
 
     def append_spark_confs(self, new_confs):
         if new_confs is not None and isinstance(new_confs, list):
@@ -120,8 +124,7 @@ class DeltaBenchmarkSpec(BenchmarkSpec):
     def __init__(self, delta_version, benchmark_main_class, main_class_args=None, scala_version="2.12", **kwargs):
         delta_spark_confs = [
             "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension",
-            "spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog",
-            "spark.delta.logStore.class=org.apache.spark.sql.delta.storage.S3SingleDriverLogStore"
+            "spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog"
         ]
         self.scala_version = scala_version
 
