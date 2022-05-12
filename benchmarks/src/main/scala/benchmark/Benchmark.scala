@@ -17,6 +17,7 @@
 package benchmark
 
 import scala.collection.mutable
+import java.net.URI
 import java.nio.file.{Files, Paths}
 import java.nio.charset.StandardCharsets
 
@@ -202,7 +203,10 @@ abstract class Benchmark(private val conf: BenchmarkConf) {
 
   private def uploadFile(localPath: String, targetPath: String): Unit = {
     try {
-      s"aws s3 cp $localPath $targetPath/" !
+      val scheme = new URI(targetPath).getScheme
+      if (scheme.equals("s3")) s"aws s3 cp $localPath $targetPath/" !
+      else if (scheme.equals("gs")) s"gsutil cp $localPath $targetPath/" !
+      else throw new IllegalArgumentException(String.format("Unsupported scheme %s.", scheme))
 
       println(s"FILE UPLOAD: Uploaded $localPath to $targetPath")
     } catch {
