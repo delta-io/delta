@@ -12,7 +12,7 @@
     "sqlState" : "2F000"
   },
   "DELTA_ADD_COLUMN_STRUCT_NOT_FOUND" : {
-    "message" : [ "Struct not found at position %s" ],
+    "message" : [ "Struct not found at position <position>" ],
     "sqlState" : "2F000"
   },
   "DELTA_AGGREGATION_NOT_SUPPORTED" : {
@@ -52,7 +52,7 @@
     "sqlState" : "42000"
   },
   "DELTA_CANNOT_EVALUATE_EXPRESSION" : {
-    "message" : [ "Cannot evaluate expression: %s" ],
+    "message" : [ "Cannot evaluate expression: <expression>" ],
     "sqlState" : "0A000"
   },
   "DELTA_CANNOT_FIND_VERSION" : {
@@ -88,7 +88,7 @@
     "sqlState" : "22000"
   },
   "DELTA_CANNOT_RESTORE_TIMESTAMP_GREATER" : {
-    "message" : [ "Cannot restore table to timestamp (%s) as it is after the latest version available. Please use a timestamp before (%s)" ],
+    "message" : [ "Cannot restore table to timestamp (<requestedTimestamp>) as it is after the latest version available. Please use a timestamp before (<latestTimestamp>)" ],
     "sqlState" : "42000"
   },
   "DELTA_CANNOT_UPDATE_ARRAY_FIELD" : {
@@ -140,11 +140,11 @@
     "sqlState" : "42000"
   },
   "DELTA_CREATE_EXTERNAL_TABLE_WITHOUT_TXN_LOG" : {
-    "message" : [ "", "You are trying to create an external table <tableName>", "from `%2$s` using Delta, but there is no transaction log present at", "`%2$s/_delta_log`. Check the upstream job to make sure that it is writing using", "format(\"delta\") and that the path is the root of the table.", "", "To learn more about Delta, see %s" ],
+    "message" : [ "", "You are trying to create an external table <tableName>", "from `%2$s` using Delta, but there is no transaction log present at", "`%2$s/_delta_log`. Check the upstream job to make sure that it is writing using", "format(\"delta\") and that the path is the root of the table.", "", "To learn more about Delta, see <docLink>" ],
     "sqlState" : "42000"
   },
   "DELTA_CREATE_TABLE_SCHEME_MISMATCH" : {
-    "message" : [ "The specified schema does not match the existing schema at <path>.", "", "== Specified ==", "%s", "", "== Existing ==", "%s", "", "== Differences ==", "%s", "", "If your intention is to keep the existing schema, you can omit the", "schema from the create table command. Otherwise please ensure that", "the schema matches." ],
+    "message" : [ "The specified schema does not match the existing schema at <path>.", "", "== Specified ==", "<specifiedSchema>", "", "== Existing ==", "<existingSchema>", "", "== Differences ==", "<schemaDifferences>", "", "If your intention is to keep the existing schema, you can omit the", "schema from the create table command. Otherwise please ensure that", "the schema matches." ],
     "sqlState" : "42000"
   },
   "DELTA_DUPLICATE_COLUMNS_ON_UPDATE_TABLE" : {
@@ -160,7 +160,7 @@
     "sqlState" : "42000"
   },
   "DELTA_EXTRACT_REFERENCES_FIELD_NOT_FOUND" : {
-    "message" : [ "Field %s could not be found when extracting references." ],
+    "message" : [ "Field <fieldName> could not be found when extracting references." ],
     "sqlState" : "22000"
   },
   "DELTA_FAILED_CAST_PARTITION_VALUE" : {
@@ -218,7 +218,7 @@
     "sqlState" : "0A000"
   },
   "DELTA_INDEX_LARGER_OR_EQUAL_THAN_STRUCT" : {
-    "message" : [ "Index %s to drop column equals to or is larger than struct length: %s" ],
+    "message" : [ "Index <index> to drop column equals to or is larger than struct length: <length>" ],
     "sqlState" : "2F000"
   },
   "DELTA_INDEX_LARGER_THAN_STRUCT" : {
@@ -249,10 +249,6 @@
     "message" : [ "The committed version is <committedVersion> but the current version is <currentVersion>." ],
     "sqlState" : "25000"
   },
-  "DELTA_INVALID_COPY_ENCRYPTION" : {
-    "message" : [ "Invalid %s. COPY INTO source %s." ],
-    "sqlState" : "42000"
-  },
   "DELTA_INVALID_GENERATED_COLUMN_REFERENCES" : {
     "message" : [ "A generated column cannot use a non-existent column or another generated column" ],
     "sqlState" : "42000"
@@ -266,11 +262,11 @@
     "sqlState" : "42000"
   },
   "DELTA_INVALID_MANAGED_TABLE_SYNTAX_NO_SCHEMA" : {
-    "message" : [ "", "You are trying to create a managed table %s", "using Delta, but the schema is not specified.", "", "To learn more about Delta, see %s" ],
+    "message" : [ "", "You are trying to create a managed table <tableName>", "using Delta, but the schema is not specified.", "", "To learn more about Delta, see <docLink>" ],
     "sqlState" : "42000"
   },
   "DELTA_INVALID_PARTITIONING_SCHEMA" : {
-    "message" : [ "", "The AddFile contains partitioning schema different from the table's partitioning schema", "expected: %s", "actual: %s", "To disable this check set %s to \"false\"" ],
+    "message" : [ "", "The AddFile contains partitioning schema different from the table's partitioning schema", "expected: <neededPartitioning>", "actual: <specifiedPartitioning>", "To disable this check set <config> to \"false\"" ],
     "sqlState" : "42000"
   },
   "DELTA_INVALID_PARTITION_COLUMN" : {
@@ -290,7 +286,7 @@
     "sqlState" : "22000"
   },
   "DELTA_INVALID_TIMESTAMP_FORMAT" : {
-    "message" : [ "The provided timestamp %s does not match the expected syntax <format>." ],
+    "message" : [ "The provided timestamp <timestamp> does not match the expected syntax <format>." ],
     "sqlState" : "22000"
   },
   "DELTA_INVALID_V1_TABLE_CALL" : {
@@ -310,7 +306,7 @@
     "sqlState" : "22005"
   },
   "DELTA_MERGE_INVALID_WHEN_NOT_MATCHED_CLAUSE" : {
-    "message" : [ "%s clauses cannot be part of the WHEN NOT MATCHED clause in MERGE INTO." ],
+    "message" : [ "<clause> clauses cannot be part of the WHEN NOT MATCHED clause in MERGE INTO." ],
     "sqlState" : "42000"
   },
   "DELTA_MERGE_UNEXPECTED_ASSIGNMENT_KEY" : {
@@ -330,7 +326,7 @@
     "sqlState" : "42000"
   },
   "DELTA_MISSING_FILES_UNEXPECTED_VERSION" : {
-    "message" : [ "The stream from your Delta table was expecting process data from version %s,", "but the earliest available version in the _delta_log directory is %s. The files", "in the transaction log may have been deleted due to log cleanup. In order to avoid losing", "data, we recommend that you restart your stream with a new checkpoint location and to", "increase your delta.logRetentionDuration setting, if you have explicitly set it below 30", "days.", "If you would like to ignore the missed data and continue your stream from where it left", "off, you can set the .option(\"%s\", \"false\") as part", "of your readStream statement." ],
+    "message" : [ "The stream from your Delta table was expecting process data from version <startVersion>,", "but the earliest available version in the _delta_log directory is <earliestVersion>. The files", "in the transaction log may have been deleted due to log cleanup. In order to avoid losing", "data, we recommend that you restart your stream with a new checkpoint location and to", "increase your delta.logRetentionDuration setting, if you have explicitly set it below 30", "days.", "If you would like to ignore the missed data and continue your stream from where it left", "off, you can set the .option(\"<option>\", \"false\") as part", "of your readStream statement." ],
     "sqlState" : "42000"
   },
   "DELTA_MISSING_NOT_NULL_COLUMN_VALUE" : {
@@ -358,7 +354,7 @@
     "sqlState" : "0A000"
   },
   "DELTA_NEW_CHECK_CONSTRAINT_VIOLATION" : {
-    "message" : [ "%s rows in %s violate the new CHECK constraint (%s)" ],
+    "message" : [ "<numRows> rows in <tableName> violate the new CHECK constraint (<checkConstraint>)" ],
     "sqlState" : "42000"
   },
   "DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED" : {
@@ -390,7 +386,7 @@
     "sqlState" : "42000"
   },
   "DELTA_NOT_NULL_COLUMN_NOT_FOUND_IN_STRUCT" : {
-    "message" : [ "Not nullable column not found in struct: %s" ],
+    "message" : [ "Not nullable column not found in struct: <struct>" ],
     "sqlState" : "42000"
   },
   "DELTA_NOT_NULL_CONSTRAINT_VIOLATED" : {
@@ -469,7 +465,7 @@
     "sqlState" : "0A000"
   },
   "DELTA_TIMESTAMP_GREATER_THAN_COMMIT" : {
-    "message" : [ "The provided timestamp (%s) is after the latest version available to this", "table (%s). Please use a timestamp before or at %s." ],
+    "message" : [ "The provided timestamp (<providedTimestamp>) is after the latest version available to this", "table (<tableName>). Please use a timestamp before or at <maximumTimestamp>." ],
     "sqlState" : "42000"
   },
   "DELTA_UNEXPECTED_ATTRIBUTE_REFERENCE" : {
@@ -477,7 +473,7 @@
     "sqlState" : "42000"
   },
   "DELTA_UNEXPECTED_PARTIAL_SCAN" : {
-    "message" : [ "Expect a full scan of Delta sources, but found a partial scan. path:%s" ],
+    "message" : [ "Expect a full scan of Delta sources, but found a partial scan. path:<path>" ],
     "sqlState" : "22000"
   },
   "DELTA_UNKNOWN_CONFIGURATION" : {
@@ -489,7 +485,7 @@
     "sqlState" : "42000"
   },
   "DELTA_UNRECOGNIZED_LOGFILE" : {
-    "message" : [ "Unrecognized log file %s" ],
+    "message" : [ "Unrecognized log file <filename>" ],
     "sqlState" : "42000"
   },
   "DELTA_UNSET_NON_EXISTENT_PROPERTY" : {
@@ -497,7 +493,7 @@
     "sqlState" : "42000"
   },
   "DELTA_UNSUPPORTED_ABS_PATH_ADD_FILE" : {
-    "message" : [ "%s does not support adding files with an absolute path" ],
+    "message" : [ "<path> does not support adding files with an absolute path" ],
     "sqlState" : "0A000"
   },
   "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP" : {
@@ -521,11 +517,11 @@
     "sqlState" : "0A000"
   },
   "DELTA_UNSUPPORTED_COLUMN_TYPE_IN_BLOOM_FILTER" : {
-    "message" : [ "Creating a bloom filter index on a column with type %s is unsupported: %s" ],
+    "message" : [ "Creating a bloom filter index on a column with type <dataType> is unsupported: <columnName>" ],
     "sqlState" : "0A000"
   },
   "DELTA_UNSUPPORTED_DATA_TYPES" : {
-    "message" : [ "Found columns using unsupported data types: %s. You can set '%s' to 'false' to disable the type check. Disabling this type check may allow users to create unsupported Delta tables and should only be used when trying to read/write legacy tables." ],
+    "message" : [ "Found columns using unsupported data types: <dataTypeList>. You can set '<config>' to 'false' to disable the type check. Disabling this type check may allow users to create unsupported Delta tables and should only be used when trying to read/write legacy tables." ],
     "sqlState" : "0A000"
   },
   "DELTA_UNSUPPORTED_DROP_COLUMN" : {
@@ -536,11 +532,11 @@
     "message" : [ "Dropping partition columns (<columnList>) is not allowed." ]
   },
   "DELTA_UNSUPPORTED_EXPRESSION_GENERATED_COLUMN" : {
-    "message" : [ "%s cannot be used in a generated column" ],
+    "message" : [ "<expression> cannot be used in a generated column" ],
     "sqlState" : "0A000"
   },
   "DELTA_UNSUPPORTED_FIELD_UPDATE_NON_STRUCT" : {
-    "message" : [ "Updating nested fields is only supported for StructType, but you are trying to update a field of %s, which is of type: %s." ],
+    "message" : [ "Updating nested fields is only supported for StructType, but you are trying to update a field of <columnName>, which is of type: <dataType>." ],
     "sqlState" : "0A000"
   },
   "DELTA_UNSUPPORTED_INVARIANT_NON_STRUCT" : {
@@ -556,11 +552,11 @@
     "sqlState" : "0A000"
   },
   "DELTA_UNSUPPORTED_NESTED_FIELD_IN_OPERATION" : {
-    "message" : [ "Nested field is not supported in the %s (field = %s)." ],
+    "message" : [ "Nested field is not supported in the <operation> (field = <fieldName>)." ],
     "sqlState" : "0A000"
   },
   "DELTA_UNSUPPORTED_OUTPUT_MODE" : {
-    "message" : [ "Data source %s does not support %s output mode" ],
+    "message" : [ "Data source <dataSource> does not support <mode> output mode" ],
     "sqlState" : "0A000"
   },
   "DELTA_UNSUPPORTED_PARTITION_COLUMN_IN_BLOOM_FILTER" : {
@@ -572,7 +568,7 @@
     "sqlState" : "0A000"
   },
   "DELTA_UNSUPPORTED_SOURCE" : {
-    "message" : [ "%s destination only supports Delta sources.\n%s" ],
+    "message" : [ "<operation> destination only supports Delta sources.\n<plan>" ],
     "sqlState" : "0A000"
   },
   "DELTA_UNSUPPORTED_TIME_TRAVEL_MULTIPLE_FORMATS" : {
@@ -584,11 +580,11 @@
     "sqlState" : "0A000"
   },
   "DELTA_VERSIONS_NOT_CONTIGUOUS" : {
-    "message" : [ "Versions (%s) are not contiguous." ],
+    "message" : [ "Versions (<versionList>) are not contiguous." ],
     "sqlState" : "0A000"
   },
   "DELTA_VIOLATE_CONSTRAINT_WITH_VALUES" : {
-    "message" : [ "CHECK constraint %s %s violated by row with values:", "%s" ],
+    "message" : [ "CHECK constraint <constraintName> <expression> violated by row with values:", "<values>" ],
     "sqlState" : "23001"
   }
 }
