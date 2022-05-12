@@ -317,6 +317,7 @@ case class DeleteCommand(
       numFilesToRewrite: Long): Seq[FileAction] = {
     val shouldWriteCdc = DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(txn.metadata)
 
+    // number of total rows that we have seen / are either copying or deleting (sum of both).
     val numTouchedRows = metrics("numTouchedRows")
     val numTouchedRowsUdf = udf { () =>
       numTouchedRows += 1

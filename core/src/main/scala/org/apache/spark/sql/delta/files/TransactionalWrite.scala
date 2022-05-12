@@ -217,14 +217,15 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
   }
 
   /**
-   * If this is a CDC write, we need to generate the CDC_PARTITION_COL in order to properly
-   * dispatch rows between the main table and CDC event records. This is a virtual partition and
-   * will be stripped out later in [[DelayedCommitProtocol]].
-   *
-   * Note that the ordering of the partition schema is relevant - CDC_PARTITION_COL must
-   * come first in order to ensure CDC data lands in the right place.
+   * Returns a tuple of (data, partition schema). For CDC writes, a `__is_cdc` column is added to
+   * the data and `__is_cdc=true/false` is added to the front of the partition schema.
    */
   protected def performCDCPartition(inputData: Dataset[_]): (DataFrame, StructType) = {
+    // If this is a CDC write, we need to generate the CDC_PARTITION_COL in order to properly
+    // dispatch rows between the main table and CDC event records. This is a virtual partition
+    // and will be stripped out later in [[DelayedCommitProtocolEdge]].
+    // Note that the ordering of the partition schema is relevant - CDC_PARTITION_COL must
+    // come first in order to ensure CDC data lands in the right place.
     if (CDCReader.isCDCEnabledOnTable(metadata) &&
       inputData.schema.fieldNames.contains(CDCReader.CDC_TYPE_COLUMN_NAME)) {
       val augmentedData = inputData.withColumn(
