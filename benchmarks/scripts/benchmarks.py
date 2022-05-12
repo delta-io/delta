@@ -187,6 +187,7 @@ class Benchmark:
             self.benchmark_spec.update_delta_version(delta_version_to_use)
 
         jar_path_in_cluster = self.upload_jar_to_cluster(cluster_hostname, ssh_id_file, ssh_user)
+        self.install_dependencies_via_ssh(cluster_hostname, ssh_id_file, ssh_user)
         self.start_benchmark_via_ssh(cluster_hostname, ssh_id_file, jar_path_in_cluster, ssh_user)
         Benchmark.wait_for_completion(cluster_hostname, ssh_id_file, self.benchmark_id, ssh_user)
 
@@ -234,6 +235,26 @@ touch {self.completed_file}
         print(">>> Benchmark JAR uploaded to cluster\n")
         return f"~/{jar_remote_path}"
 
+    def install_dependencies_via_ssh(self, cluster_hostname, ssh_id_file, ssh_user):
+        script_file_name = f"{self.benchmark_id}-install-deps.sh"
+        script_file_text = """
+#!/bin/bash
+packagesNeeded='screen'
+if [ -x "$(command -v yum)" ]; then sudo yum install $packagesNeeded
+elif [ -x "$(command -v apt)" ]; then sudo apt install $packagesNeeded
+else echo "Failed to install packages: Package manager not found. You must manually install: $packagesNeeded">&2; exit 1; fi
+        """.strip()
+        self.copy_script_via_ssh(cluster_hostname, ssh_id_file, ssh_user, script_file_name, script_file_text)
+        print(">>> Install dependencies script generated and uploaded\n")
+
+        job_cmd = (
+                f"ssh -i {ssh_id_file} {ssh_user}@{cluster_hostname} " +
+                f"bash {script_file_name}"
+        )
+        print(job_cmd)
+        run_cmd(job_cmd, stream_output=True)
+        print(">>> Dependencies have been installed\n")
+
     def start_benchmark_via_ssh(self, cluster_hostname, ssh_id_file, jar_path, ssh_user):
         # Generate and upload the script to run the benchmark
         script_file_name = f"{self.benchmark_id}-cmd.sh"
@@ -241,22 +262,8 @@ touch {self.completed_file}
             script_file_text = self.spark_shell_script_content(jar_path)
         else:
             script_file_text = self.spark_submit_script_content(jar_path)
-        # print("Benchmark script:\n----\n" + script_file_text + "\n----")
-        try:
-            script_file = open(script_file_name, "w")
-            script_file.write(script_file_text)
-            script_file.close()
 
-            scp_cmd = (
-                f"scp -i {ssh_id_file} {script_file_name}" +
-                f" {ssh_user}@{cluster_hostname}:{script_file_name}"
-            )
-            print(scp_cmd)
-            run_cmd(scp_cmd, stream_output=True)
-            run_cmd(f"ssh -i {ssh_id_file} {ssh_user}@{cluster_hostname} chmod +x {script_file_name}")
-        finally:
-            if os.path.exists(script_file_name):
-                os.remove(script_file_name)
+        self.copy_script_via_ssh(cluster_hostname, ssh_id_file, ssh_user, script_file_name, script_file_text)
         print(">>> Benchmark script generated and uploaded\n")
 
         # Start the script
@@ -273,6 +280,24 @@ touch {self.completed_file}
                 stream_output=True, throw_on_error=False)
         print(f">>> Benchmark id {self.benchmark_id} started in a screen. Stdout piped into {self.output_file}. "
               f"Final report will be generated on completion in {self.json_report_file}.\n")
+
+    @staticmethod
+    def copy_script_via_ssh(cluster_hostname, ssh_id_file, ssh_user, script_file_name, script_file_text):
+        try:
+            script_file = open(script_file_name, "w")
+            script_file.write(script_file_text)
+            script_file.close()
+
+            scp_cmd = (
+                    f"scp -i {ssh_id_file} {script_file_name}" +
+                    f" {ssh_user}@{cluster_hostname}:{script_file_name}"
+            )
+            print(scp_cmd)
+            run_cmd(scp_cmd, stream_output=True)
+            run_cmd(f"ssh -i {ssh_id_file} {ssh_user}@{cluster_hostname} chmod +x {script_file_name}")
+        finally:
+            if os.path.exists(script_file_name):
+                os.remove(script_file_name)
 
     @staticmethod
     def output_file(benchmark_id):
