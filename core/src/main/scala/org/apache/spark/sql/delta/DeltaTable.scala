@@ -65,8 +65,7 @@ object DeltaFullTable {
           s"Expect a full scan of the latest version of the Delta source, but found a historical " +
           s"scan of version ${index.versionToUse.get}")
       } else {
-        throw new AnalysisException(
-          s"Expect a full scan of Delta sources, but found a partial scan. path:${index.path}")
+        throw DeltaErrors.unexpectedPartialScan(index.path)
       }
     // Convert V2 relations to V1 and perform the check
     case DeltaRelation(lr) => unapply(lr)

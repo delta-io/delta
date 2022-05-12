@@ -34,7 +34,7 @@ import java.net.URI
  */
 class InMemoryLogReplay(
     minFileRetentionTimestamp: Long,
-    minSetTransactionRetentionTimestamp: Option[Long]) {
+    minSetTransactionRetentionTimestamp: Option[Long]) extends LogReplay {
 
   var currentProtocolVersion: Protocol = null
   var currentVersion: Long = -1
@@ -43,7 +43,7 @@ class InMemoryLogReplay(
   val activeFiles = new scala.collection.mutable.HashMap[URI, AddFile]()
   private val tombstones = new scala.collection.mutable.HashMap[URI, RemoveFile]()
 
-  def append(version: Long, actions: Iterator[Action]): Unit = {
+  override def append(version: Long, actions: Iterator[Action]): Unit = {
     assert(currentVersion == -1 || version == currentVersion + 1,
       s"Attempted to replay version $version, but state is at $currentVersion")
     currentVersion = version
@@ -72,11 +72,11 @@ class InMemoryLogReplay(
   }
 
   private def getTransactions: Iterable[SetTransaction] = {
-      transactions.values
+    transactions.values
   }
 
   /** Returns the current state of the Table as an iterator of actions. */
-  def checkpoint: Iterator[Action] = {
+  override def checkpoint: Iterator[Action] = {
     Option(currentProtocolVersion).toIterator ++
     Option(currentMetaData).toIterator ++
     getTransactions ++

@@ -223,10 +223,6 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       data: Dataset[_],
       writeOptions: Option[DeltaOptions],
       additionalConstraints: Seq[Constraint]): Seq[FileAction] = {
-    if (DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(metadata)) {
-      throw DeltaErrors.cdcWriteNotAllowedInThisVersion()
-    }
-
     hasWritten = true
 
     val spark = data.sparkSession

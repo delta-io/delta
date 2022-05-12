@@ -18,9 +18,8 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
-class ConvertToDeltaSQLSuite
-  extends ConvertToDeltaSuiteBase  with DeltaSQLCommandTest
-  {
+trait ConvertToDeltaSQLSuiteBase extends ConvertToDeltaSuiteBaseCommons
+  with DeltaSQLCommandTest {
   override protected def convertToDelta(
       identifier: String,
       partitionSchema: Option[String] = None): Unit = {
@@ -32,3 +31,6 @@ class ConvertToDeltaSQLSuite
     }
   }
 }
+
+class ConvertToDeltaSQLSuite extends ConvertToDeltaSQLSuiteBase
+  with ConvertToDeltaSuiteBase

@@ -572,7 +572,7 @@ class ParquetTable(
       batch: Seq[SerializableFileStatus],
       serializedConf: SerializableConfiguration): StructType = {
     mergeSchemasInParallel(spark, batch.map(_.toFileStatus), serializedConf).getOrElse(
-      throw new RuntimeException("Failed to infer schema from the given list of files."))
+      throw DeltaErrors.failedInferSchema)
   }
 
   private def inferSchema(): Unit = {

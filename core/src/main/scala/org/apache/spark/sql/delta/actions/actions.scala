@@ -30,14 +30,15 @@ import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation.{JsonIgnore, JsonIgnoreProperties, JsonInclude}
-import com.fasterxml.jackson.core.{JsonGenerator, JsonProcessingException}
-import com.fasterxml.jackson.databind.{JsonMappingException, JsonSerializer, ObjectMapper, SerializerProvider}
+import com.fasterxml.jackson.core.JsonGenerator
+import com.fasterxml.jackson.databind.{JsonSerializer, ObjectMapper, SerializerProvider}
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 import org.codehaus.jackson.annotate.JsonRawValue
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{Encoder, SparkSession}
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, NullType, StructField, StructType}
 import org.apache.spark.util.Utils
 
@@ -55,10 +56,30 @@ class ProtocolDowngradeException(oldProtocol: Protocol, newProtocol: Protocol)
 }
 
 object Action {
-  /** The maximum version of the protocol that this version of Delta understands. */
-  val readerVersion = 2
-  val writerVersion = 6
-  val protocolVersion: Protocol = Protocol(readerVersion, writerVersion)
+  /**
+   * The maximum version of the protocol that this version of Delta understands by default.
+   *
+   * Use [[supportedProtocolVersion()]] instead, except to define new feature-gated versions.
+   */
+  private[actions] val readerVersion = 2
+  private[actions] val writerVersion = 6
+  private[actions] val protocolVersion: Protocol = Protocol(readerVersion, writerVersion)
+
+  /**
+   * The maximum protocol version we are currently allowed to use based on `conf`.
+   *
+   * This is used to feature-gate certain protocol versions using config values.
+   * If no `conf` is given, then this is the same all feature-gated versions being disabled and
+   * we return [[protocolVersion]].
+   *
+   * Feature-gated versions will always be the same or newer than [[protocolVersion]].
+   *
+   * In all places in the code where we are validating which version can be read, or which version
+   * we are currently writing, pass in `conf` so that features are correctly enabled.
+   */
+  private[delta] def supportedProtocolVersion(conf: Option[SQLConf] = None): Protocol = {
+      protocolVersion
+  }
 
   def fromJson(json: String): Action = {
     JsonUtils.mapper.readValue[SingleAction](json).unwrap
@@ -158,7 +179,6 @@ object Protocol {
     if (DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(metadata)) {
       minimumRequired = Protocol(0, minWriterVersion = 4)
       featuresUsed.append("Change data feed")
-      throw DeltaErrors.cdcNotAllowedInThisVersion()
     }
 
     if (ColumnWithDefaultExprUtils.hasIdentityColumn(metadata.schema)) {
@@ -173,6 +193,7 @@ object Protocol {
     if (DeltaColumnMapping.requiresNewProtocol(metadata)) {
       minimumRequired = DeltaColumnMapping.MIN_PROTOCOL_VERSION
     }
+
 
     minimumRequired -> featuresUsed.toSeq
   }
@@ -243,7 +264,8 @@ case class AddFile(
     dataChange: Boolean,
     @JsonRawValue
     stats: String = null,
-    tags: Map[String, String] = null) extends FileAction {
+    tags: Map[String, String] = null
+) extends FileAction {
   require(path.nonEmpty)
 
   override def wrap: SingleAction = SingleAction(add = this)
@@ -257,7 +279,8 @@ case class AddFile(
     // scalastyle:off
     RemoveFile(
       path, Some(timestamp), dataChange,
-      extendedFileMetadata = Some(true), partitionValues, Some(size), newTags)
+      extendedFileMetadata = Some(true), partitionValues, Some(size), newTags
+    )
     // scalastyle:on
   }
 
@@ -362,12 +385,15 @@ case class RemoveFile(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     size: Option[Long] = None,
     tags: Map[String, String] = null,
-    numRecords: Option[Long] = None) extends FileAction {
+    numRecords: Option[Long] = None
+) extends FileAction {
   override def wrap: SingleAction = SingleAction(remove = this)
 
   @JsonIgnore
   val delTimestamp: Long = deletionTimestamp.getOrElse(0L)
 
+
+  @JsonIgnore
   def optimizedTargetSize: Option[Long] =
     getTag(AddFile.Tags.OPTIMIZE_TARGET_SIZE.name).map(_.toLong)
 

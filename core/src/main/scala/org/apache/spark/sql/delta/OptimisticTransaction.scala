@@ -251,6 +251,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   /** Unique identifier for the transaction */
   val txnId = UUID.randomUUID().toString
 
+  /** Whether to check unsupported data type when updating the table schema */
+  protected var checkUnsupportedDataType: Boolean =
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SCHEMA_TYPE_CHECK)
+
   /** The end to end execution time of this transaction. */
   def txnExecutionTimeMs: Option[Long] = if (commitEndNano == -1) {
     None
@@ -423,6 +427,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         GeneratedColumn.validateGeneratedColumns(spark, metadata.schema)
       }
       recordDeltaEvent(deltaLog, "delta.generatedColumns.definition")
+    }
+
+    if (checkUnsupportedDataType) {
+      val unsupportedTypes = SchemaUtils.findUnsupportedDataTypes(metadata.schema)
+      if (unsupportedTypes.nonEmpty) {
+        throw DeltaErrors.unsupportedDataTypes(unsupportedTypes.head, unsupportedTypes.tail: _*)
+      }
     }
 
     val needsProtocolUpdate = Protocol.checkProtocolRequirements(spark, metadata, protocol)

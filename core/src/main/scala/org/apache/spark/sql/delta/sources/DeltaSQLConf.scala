@@ -292,6 +292,16 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_SCHEMA_TYPE_CHECK =
+    buildConf("schema.typeCheck.enabled")
+      .doc(
+        """Enable the data type check when updating the table schema. Disabling this flag may
+          | allow users to create unsupported Delta tables and should only be used when trying to
+          | read/write legacy tables.""".stripMargin)
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS =
     buildConf("constraints.assumesDropIfExists.enabled")
       .doc("""If true, DROP CONSTRAINT quietly drops nonexistent constraints even without
@@ -421,6 +431,14 @@ trait DeltaSQLConfBase {
     buildConf("checkpointV2.enabled")
       .internal()
       .doc("Write checkpoints where the partition values are parsed according to the data type.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val LAST_CHECKPOINT_CHECKSUM_ENABLED =
+    buildConf("lastCheckpoint.checksum.enabled")
+      .internal()
+      .doc("Controls whether to write the checksum while writing the LAST_CHECKPOINT file and" +
+        " whether to validate it while reading the LAST_CHECKPOINT file")
       .booleanConf
       .createWithDefault(true)
 

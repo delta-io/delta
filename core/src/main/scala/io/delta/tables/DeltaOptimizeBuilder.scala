@@ -19,7 +19,7 @@ package io.delta.tables
 import org.apache.spark.sql.delta.commands.OptimizeTableCommand
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
-import org.apache.spark.annotation.Unstable
+import org.apache.spark.annotation._
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.parser.ParseException

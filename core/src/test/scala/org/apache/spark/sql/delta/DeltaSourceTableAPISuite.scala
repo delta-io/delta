@@ -119,7 +119,7 @@ class DeltaSourceTableAPISuite extends StreamTest
         spark.table(tableName).as[Int],
         1, 2, 3)
 
-      val path = spark.sessionState.catalog.defaultTablePath(TableIdentifier(tableName))
+      val path = spark.sessionState.catalog.getTableRawMetadata(TableIdentifier(tableName)).location
       checkDatasetUnorderly(
         spark.read.format("delta").load(new File(path).getCanonicalPath).as[Int],
         1, 2, 3)
@@ -141,8 +141,8 @@ class DeltaSourceTableAPISuite extends StreamTest
           spark.table(tableName).as[Int],
           1, 2, 3)
 
-        val path = spark.sessionState.catalog.defaultTablePath(
-          spark.sessionState.sqlParser.parseTableIdentifier(tableName))
+        val path = spark.sessionState.catalog.getTableRawMetadata(
+          spark.sessionState.sqlParser.parseTableIdentifier(tableName)).location
         checkDatasetUnorderly(
           spark.read.format("delta").load(new File(path).getCanonicalPath).as[Int],
           1, 2, 3)
