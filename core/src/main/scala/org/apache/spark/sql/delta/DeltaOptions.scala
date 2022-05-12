@@ -187,6 +187,7 @@ object DeltaOptions extends DeltaLogging {
   val DATA_CHANGE_OPTION = "dataChange"
   val STARTING_VERSION_OPTION = "startingVersion"
   val STARTING_TIMESTAMP_OPTION = "startingTimestamp"
+  val COMPRESSION = "compression"
 
   val validOptionKeys : Set[String] = Set(
     REPLACE_WHERE_OPTION,
@@ -203,6 +204,7 @@ object DeltaOptions extends DeltaLogging {
     DATA_CHANGE_OPTION,
     STARTING_TIMESTAMP_OPTION,
     STARTING_VERSION_OPTION,
+    COMPRESSION,
     "queryName",
     "checkpointLocation",
     "path",
