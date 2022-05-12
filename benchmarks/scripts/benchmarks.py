@@ -179,16 +179,16 @@ class Benchmark:
         self.use_spark_shell = use_spark_shell
         self.local_delta_dir = local_delta_dir
 
-    def run(self, cluster_hostname, ssh_id_file):
+    def run(self, cluster_hostname, ssh_id_file, ssh_user):
         if self.local_delta_dir and isinstance(self.benchmark_spec, DeltaBenchmarkSpec):
             # Upload new Delta jar to cluster and update spec to use the jar's version
             delta_version_to_use = \
-                self.upload_delta_jars_to_cluster_and_get_version(cluster_hostname, ssh_id_file)
+                self.upload_delta_jars_to_cluster_and_get_version(cluster_hostname, ssh_id_file, ssh_user)
             self.benchmark_spec.update_delta_version(delta_version_to_use)
 
-        jar_path_in_cluster = self.upload_jar_to_cluster(cluster_hostname, ssh_id_file)
-        self.start_benchmark_via_ssh(cluster_hostname, ssh_id_file, jar_path_in_cluster)
-        Benchmark.wait_for_completion(cluster_hostname, ssh_id_file, self.benchmark_id)
+        jar_path_in_cluster = self.upload_jar_to_cluster(cluster_hostname, ssh_id_file, ssh_user)
+        self.start_benchmark_via_ssh(cluster_hostname, ssh_id_file, jar_path_in_cluster, ssh_user)
+        Benchmark.wait_for_completion(cluster_hostname, ssh_id_file, self.benchmark_id, ssh_user)
 
     def spark_submit_script_content(self, jar_path):
         return f"""
@@ -215,7 +215,7 @@ echo '{shell_init_file_content}' > {shell_init_file_name}
 touch {self.completed_file} 
 """.strip()
 
-    def upload_jar_to_cluster(self, cluster_hostname, ssh_id_file, delta_version_to_use=None):
+    def upload_jar_to_cluster(self, cluster_hostname, ssh_id_file, ssh_user, delta_version_to_use=None):
         # Compile JAR
         # Note: Deleting existing JARs instead of sbt clean is faster
         if os.path.exists("target"):
@@ -228,13 +228,13 @@ touch {self.completed_file}
         jar_local_path = out.decode("utf-8").strip()
         jar_remote_path = f"{self.benchmark_id}-benchmarks.jar"
         scp_cmd = \
-            f"scp -C -i {ssh_id_file} {jar_local_path} hadoop@{cluster_hostname}:{jar_remote_path}"
+            f"scp -C -i {ssh_id_file} {jar_local_path} {ssh_user}@{cluster_hostname}:{jar_remote_path}"
         print(scp_cmd)
         run_cmd(scp_cmd, stream_output=True)
         print(">>> Benchmark JAR uploaded to cluster\n")
         return f"~/{jar_remote_path}"
 
-    def start_benchmark_via_ssh(self, cluster_hostname, ssh_id_file, jar_path):
+    def start_benchmark_via_ssh(self, cluster_hostname, ssh_id_file, jar_path, ssh_user):
         # Generate and upload the script to run the benchmark
         script_file_name = f"{self.benchmark_id}-cmd.sh"
         if self.use_spark_shell:
@@ -249,11 +249,11 @@ touch {self.completed_file}
 
             scp_cmd = (
                 f"scp -i {ssh_id_file} {script_file_name}" +
-                f" hadoop@{cluster_hostname}:{script_file_name}"
+                f" {ssh_user}@{cluster_hostname}:{script_file_name}"
             )
             print(scp_cmd)
             run_cmd(scp_cmd, stream_output=True)
-            run_cmd(f"ssh -i {ssh_id_file} hadoop@{cluster_hostname} chmod +x {script_file_name}")
+            run_cmd(f"ssh -i {ssh_id_file} {ssh_user}@{cluster_hostname} chmod +x {script_file_name}")
         finally:
             if os.path.exists(script_file_name):
                 os.remove(script_file_name)
@@ -261,14 +261,14 @@ touch {self.completed_file}
 
         # Start the script
         job_cmd = (
-            f"ssh -i {ssh_id_file} hadoop@{cluster_hostname} " +
+            f"ssh -i {ssh_id_file} {ssh_user}@{cluster_hostname} " +
             f"screen -d -m bash {script_file_name}"
         )
         print(job_cmd)
         run_cmd(job_cmd, stream_output=True)
 
         # Print the screen where it is running
-        run_cmd(f"ssh -i {ssh_id_file} hadoop@{cluster_hostname}" +
+        run_cmd(f"ssh -i {ssh_id_file} {ssh_user}@{cluster_hostname}" +
                 f""" "screen -ls ; sleep 2; echo Files for this benchmark: ; ls {self.benchmark_id}*" """,
                 stream_output=True, throw_on_error=False)
         print(f">>> Benchmark id {self.benchmark_id} started in a screen. Stdout piped into {self.output_file}. "
@@ -291,7 +291,7 @@ touch {self.completed_file}
         return f"{benchmark_id}-completed.txt"
 
     @staticmethod
-    def wait_for_completion(cluster_hostname, ssh_id_file, benchmark_id, copy_report=True):
+    def wait_for_completion(cluster_hostname, ssh_id_file, benchmark_id, ssh_user, copy_report=True):
         completed = False
         succeeded = False
         output_file = Benchmark.output_file(benchmark_id)
@@ -303,7 +303,7 @@ touch {self.completed_file}
         while not completed:
             # Print the size of the output file to show progress
             (_, out, _) = run_cmd_over_ssh(f"stat -c '%n:   [%y]   [%s bytes]' {output_file}",
-                                           cluster_hostname, ssh_id_file,
+                                           cluster_hostname, ssh_id_file, ssh_user,
                                            throw_on_error=False)
             out = out.decode("utf-8").strip()
             print(out)
@@ -312,7 +312,7 @@ touch {self.completed_file}
                 return
 
             # Check for the existence of the completed file
-            (_, out, _) = run_cmd_over_ssh(f"ls {completed_file}", cluster_hostname, ssh_id_file,
+            (_, out, _) = run_cmd_over_ssh(f"ls {completed_file}", cluster_hostname, ssh_id_file, ssh_user,
                                            throw_on_error=False)
             if completed_file in out.decode("utf-8"):
                 completed = True
@@ -320,7 +320,7 @@ touch {self.completed_file}
                 time.sleep(60)
 
         # Check the last few lines of output files to identify success
-        (_, out, _) = run_cmd_over_ssh(f"tail {output_file}", cluster_hostname, ssh_id_file,
+        (_, out, _) = run_cmd_over_ssh(f"tail {output_file}", cluster_hostname, ssh_id_file, ssh_user,
                                        throw_on_error=False)
         if "SUCCESS" in out.decode("utf-8"):
             succeeded = True
@@ -330,14 +330,14 @@ touch {self.completed_file}
 
         # Copy reports
         if succeeded and copy_report:
-            report_files = [ json_report_file, csv_report_file]
+            report_files = [json_report_file, csv_report_file]
             for report_file in report_files:
                 run_cmd(f"scp -C -i {ssh_id_file} " +
-                        f"hadoop@{cluster_hostname}:{report_file} {report_file}",
+                        f"{ssh_user}@{cluster_hostname}:{report_file} {report_file}",
                         stream_output=True)
             print(">>> Copied reports to local directory")
 
-    def upload_delta_jars_to_cluster_and_get_version(self, cluster_hostname, ssh_id_file):
+    def upload_delta_jars_to_cluster_and_get_version(self, cluster_hostname, ssh_id_file, ssh_user):
         if not self.local_delta_dir:
             raise Exception("Path to delta repo not specified")
         delta_repo_dir = os.path.abspath(self.local_delta_dir)
@@ -360,13 +360,12 @@ touch {self.completed_file}
             # Upload JARs to cluster's local maven cache
             remote_maven_dir = ".ivy2/local/"  # must have "/" at the end
             run_cmd_over_ssh(f"rm -rf {remote_maven_dir}/*", cluster_hostname,
-                             ssh_id_file, stream_output=True, throw_on_error=False)
+                             ssh_id_file, ssh_user, stream_output=True, throw_on_error=False)
             run_cmd_over_ssh(f"mkdir -p {remote_maven_dir}", cluster_hostname,
-                             ssh_id_file, stream_output=True)
+                             ssh_id_file, ssh_user, stream_output=True)
             scp_cmd = f"""scp -r -C -i {ssh_id_file} {local_maven_delta_dir.rstrip("/")} """ +\
-                      f"hadoop@{cluster_hostname}:{remote_maven_dir}"
+                      f"{ssh_user}@{cluster_hostname}:{remote_maven_dir}"
             print(scp_cmd)
             run_cmd(scp_cmd, stream_output=True)
             print(f">>> Delta {version} JAR uploaded to cluster\n")
             return version
-

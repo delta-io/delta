@@ -87,12 +87,16 @@ if __name__ == "__main__":
         "--cloud-provider",
         choices=delta_log_store_classes.keys(),
         help="Cloud where the benchmark will be executed.")
+    parser.add_argument(
+        "--ssh-user",
+        default="hadoop",
+        help="The user which is used to communicate with the master via SSH.")
 
     args, passthru_args = parser.parse_known_args()
 
     if args.resume_benchmark is not None:
         Benchmark.wait_for_completion(
-            args.cluster_hostname, args.ssh_id_file, args.resume_benchmark)
+            args.cluster_hostname, args.ssh_id_file, args.resume_benchmark, args.ssh_user)
         exit(0)
 
     # Create and run the benchmark
@@ -113,4 +117,4 @@ if __name__ == "__main__":
                           use_spark_shell=True, local_delta_dir=args.use_local_delta_dir)
     benchmark_dir = os.path.dirname(os.path.abspath(__file__))
     with WorkingDirectory(benchmark_dir):
-        benchmark.run(args.cluster_hostname, args.ssh_id_file)
+        benchmark.run(args.cluster_hostname, args.ssh_id_file, args.ssh_user)
