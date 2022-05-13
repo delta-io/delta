@@ -22,14 +22,12 @@ import java.util.UUID
 
 import scala.concurrent.duration._
 import scala.language.implicitConversions
-
 import org.apache.spark.sql.delta.actions.{AddFile, InvalidProtocolVersionException, Protocol}
 import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
-
 import org.apache.spark.sql.{AnalysisException, Dataset, Row}
 import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.streaming._
@@ -527,6 +525,145 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
         checkAnswer(sql("SELECT * from maxBytesPerTriggerTest"), (0 until 5).map(_.toString).toDF)
       } finally {
         q2.stop()
+      }
+    }
+  }
+
+  test("readAtomicCommits: read complete commits") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+
+      spark.range(0, 50).map(_.toString).repartition(2)
+        .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+      spark.range(50, 100).map(_.toString).repartition(2)
+        .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+
+      val q1 = spark.readStream
+        .format("delta")
+        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
+        .option(DeltaOptions.READ_ATOMIC_COMMITS_OPTION, "true")
+        .load(inputDir.getCanonicalPath)
+        .writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start(outputDir.getCanonicalPath)
+      try {
+        q1.processAllAvailable()
+        val progress = q1.recentProgress.filter(_.numInputRows != 0)
+        // read the whole snapshot
+        assert(progress.length === 1)
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getAbsolutePath),
+          (0 until 100).map(_.toString).toDF)
+      } finally {
+        q1.stop()
+      }
+
+      spark.range(100, 150).map(_.toString).repartition(2)
+        .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+      spark.range(150, 200).map(_.toString).repartition(2)
+        .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+
+      val q2 = spark.readStream
+        .format("delta")
+        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
+        .option(DeltaOptions.READ_ATOMIC_COMMITS_OPTION, "true")
+        .load(inputDir.getCanonicalPath)
+        .writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start(outputDir.getCanonicalPath)
+      try {
+        q2.processAllAvailable()
+        val progress = q2.recentProgress.filter(_.numInputRows != 0)
+        // read one commit each time
+        assert(progress.length === 2)
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getAbsolutePath),
+          (0 until 200).map(_.toString).toDF)
+      } finally {
+        q2.stop()
+      }
+
+      spark.range(200, 250).map(_.toString).repartition(2)
+        .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+      spark.range(250, 300).map(_.toString).repartition(2)
+        .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+
+      val q3 = spark.readStream
+        .format("delta")
+        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "2")
+        .option(DeltaOptions.READ_ATOMIC_COMMITS_OPTION, "true")
+        .load(inputDir.getCanonicalPath)
+        .writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start(outputDir.getCanonicalPath)
+      try {
+        q3.processAllAvailable()
+        val progress = q3.recentProgress.filter(_.numInputRows != 0)
+        assert(progress.length === 2)
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getAbsolutePath),
+          (0 until 300).map(_.toString).toDF)
+      } finally {
+        q3.stop()
+      }
+
+      spark.range(300, 350).map(_.toString).repartition(2)
+        .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+      spark.range(350, 400).map(_.toString).repartition(2)
+        .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+
+      val q4 = spark.readStream
+        .format("delta")
+        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "3")
+        .option(DeltaOptions.READ_ATOMIC_COMMITS_OPTION, "true")
+        .load(inputDir.getCanonicalPath)
+        .writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start(outputDir.getCanonicalPath)
+      try {
+        q4.processAllAvailable()
+        val progress = q4.recentProgress.filter(_.numInputRows != 0)
+        assert(progress.length === 1)
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getAbsolutePath),
+          (0 until 400).map(_.toString).toDF)
+      } finally {
+        q4.stop()
+      }
+    }
+  }
+
+  test("readAtomicCommits: process at least one commit") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+
+      (0 until 5).foreach { i =>
+        val v = Seq(i.toString).toDF
+        v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+      }
+
+      val q = spark.readStream
+        .format("delta")
+        .option(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION, "1b")
+        .option(DeltaOptions.READ_ATOMIC_COMMITS_OPTION, "true")
+        .load(inputDir.getCanonicalPath)
+        .writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start(outputDir.getCanonicalPath)
+      try {
+        q.processAllAvailable()
+        val progress = q.recentProgress.filter(_.numInputRows != 0)
+        assert(progress.length === 1)
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getAbsolutePath),
+          (0 until 5).map(_.toString).toDF)
+      } finally {
+        q.stop()
       }
     }
   }

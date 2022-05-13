@@ -112,6 +112,9 @@ trait DeltaReadOptions extends DeltaOptionParser {
     }
   }
 
+  val readAtomicCommits = options.get(READ_ATOMIC_COMMITS_OPTION)
+    .exists(toBoolean(_, READ_ATOMIC_COMMITS_OPTION))
+
   val ignoreFileDeletion = options.get(IGNORE_FILE_DELETION_OPTION)
     .exists(toBoolean(_, IGNORE_FILE_DELETION_OPTION))
 
@@ -187,6 +190,7 @@ object DeltaOptions extends DeltaLogging {
   val DATA_CHANGE_OPTION = "dataChange"
   val STARTING_VERSION_OPTION = "startingVersion"
   val STARTING_TIMESTAMP_OPTION = "startingTimestamp"
+  val READ_ATOMIC_COMMITS_OPTION = "readAtomicCommits"
 
   val validOptionKeys : Set[String] = Set(
     REPLACE_WHERE_OPTION,
@@ -203,6 +207,7 @@ object DeltaOptions extends DeltaLogging {
     DATA_CHANGE_OPTION,
     STARTING_TIMESTAMP_OPTION,
     STARTING_VERSION_OPTION,
+    READ_ATOMIC_COMMITS_OPTION,
     "queryName",
     "checkpointLocation",
     "path",
