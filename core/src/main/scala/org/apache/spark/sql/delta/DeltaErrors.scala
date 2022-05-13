@@ -176,6 +176,31 @@ object DeltaErrors
   }
 
 
+  def cdcColumnsInData(columns: Seq[String]): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "RESERVED_CDC_COLUMNS_ON_WRITE",
+      messageParameters = Array(columns.mkString("[", ",", "]"), DeltaConfigs.CHANGE_DATA_FEED.key)
+    )
+  }
+
+  def tableAlreadyContainsCDCColumns(columns: Seq[String]): Throwable = {
+    new DeltaIllegalStateException(errorClass = "DELTA_TABLE_ALREADY_CONTAINS_CDC_COLUMNS",
+      messageParameters = Array(columns.mkString("[", ",", "]")))
+  }
+
+  def unexpectedChangeFilesFound(changeFiles: String): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_UNEXPECTED_CHANGE_FILES_FOUND",
+      messageParameters = Array(changeFiles))
+  }
+
+  def incompleteFileCopy(targetPath: Path, expected: Long, found: Long): Throwable = {
+    new DeltaIOException(
+      errorClass = "DELTA_INCOMPLETE_FILE_COPY",
+      messageParameters = Array(s"$targetPath", s"$expected", s"$found")
+    )
+  }
+
   def formatColumn(colName: String): String = s"`$colName`"
 
   def formatColumnList(colNames: Seq[String]): String =
@@ -271,6 +296,17 @@ object DeltaErrors
       " currently not supported during inserts")
   }
 
+
+  /**
+   * @param position - Specifies which option was duplicated in the read.
+   *                   Values are "starting" or "ending"
+   */
+  def multipleCDCBoundaryException(position: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_MULTIPLE_CDC_BOUNDARY",
+      messageParameters = Array(position, position, position)
+    )
+  }
 
   /**
    * Throwable used when CDC options contain no 'start'.

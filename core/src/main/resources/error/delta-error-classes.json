@@ -586,5 +586,17 @@
   "DELTA_VIOLATE_CONSTRAINT_WITH_VALUES" : {
     "message" : [ "CHECK constraint <constraintName> <expression> violated by row with values:", "<values>" ],
     "sqlState" : "23001"
+  },
+  "DELTA_TABLE_ALREADY_CONTAINS_CDC_COLUMNS" : {
+    "message" : [ "Unable to enable Change Data Capture on the table. The table already contains", "reserved columns <columnList> that will", "be used internally as metadata for the table's Change Data Feed. To enable", "Change Data Feed on the table rename/drop these columns.", "" ],
+    "sqlState" : "42000"
+  },
+  "DELTA_UNEXPECTED_CHANGE_FILES_FOUND" : {
+    "message" : [ "Change files found in a dataChange = false transaction. Files:", "<fileList>" ],
+    "sqlState" : "0A000"
+  },
+  "RESERVED_CDC_COLUMNS_ON_WRITE" : {
+    "message" : [ "", "The write contains reserved columns <columnList> that are used", "internally as metadata for Change Data Feed. To write to the table either rename/drop", "these columns or disable Change Data Feed on the table by setting", "<config> to false." ],
+    "sqlState" : "42000"
   }
 }
