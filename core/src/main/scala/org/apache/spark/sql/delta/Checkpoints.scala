@@ -47,7 +47,7 @@ import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Cast, ElementAt, Literal}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
-import org.apache.spark.sql.functions.{col, struct, when}
+import org.apache.spark.sql.functions.{coalesce, col, struct, when}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
@@ -446,16 +446,38 @@ object Checkpoints extends DeltaLogging {
 
     val checkpointRowCount = spark.sparkContext.longAccumulator("checkpointRowCount")
     val numOfFiles = spark.sparkContext.longAccumulator("numOfFiles")
+
+    val sessionConf = spark.sessionState.conf
+    val checkpointPartSize =
+        sessionConf.getConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE)
+
+    val numParts = checkpointPartSize.map { partSize =>
+      math.ceil((snapshot.numOfFiles + snapshot.numOfRemoves).toDouble / partSize).toLong
+    }.getOrElse(1L)
+
+    val checkpointPaths = if (numParts > 1) {
+      checkpointFileWithParts(snapshot.path, snapshot.version, numParts.toInt)
+    } else {
+      checkpointFileSingular(snapshot.path, snapshot.version) :: Nil
+    }
+
+    val numPartsOption = if (numParts > 1) {
+      Some(checkpointPaths.length)
+    } else {
+      None
+    }
+
     // Use the string in the closure as Path is not Serializable.
-    val path = checkpointFileSingular(snapshot.path, snapshot.version).toString
+    val paths = checkpointPaths.map(_.toString)
     val base = snapshot.stateDS
-      .repartition(1)
+      .repartition(paths.length, coalesce(col("add.path"), col("remove.path")))
       .map { action =>
         if (action.add != null) {
           numOfFiles.add(1)
         }
         action
-      }.drop("commitInfo", "cdc")
+      }
+      .drop("commitInfo", "cdc")
 
     val chk = buildCheckpoint(base, snapshot)
     val schema = chk.schema.asNullable
@@ -469,11 +491,12 @@ object Checkpoints extends DeltaLogging {
 
     val checkpointSizeInBytes = spark.sparkContext.longAccumulator("checkpointSizeInBytes")
 
-    val writtenPath = chk
+    val writtenPaths = chk
       .queryExecution // This is a hack to get spark to write directly to a file.
       .executedPlan
       .execute()
-      .mapPartitions { iter =>
+      .mapPartitionsWithIndex { case (index, iter) =>
+        val path = paths(index)
         val writtenPath =
           if (useRename) {
             val p = new Path(path)
@@ -530,24 +553,28 @@ object Checkpoints extends DeltaLogging {
           writeAction()
         }
         Iterator(writtenPath)
-      }.collect().head
+      }.collect()
 
     if (useRename) {
-      val src = new Path(writtenPath)
-      val dest = new Path(path)
-      val fs = dest.getFileSystem(hadoopConf)
       var renameDone = false
+      val fs = snapshot.path.getFileSystem(hadoopConf)
       try {
-        if (fs.rename(src, dest)) {
-          renameDone = true
-        } else {
-          // There should be only one writer writing the checkpoint file, so there must be
-          // something wrong here.
-          throw DeltaErrors.failOnCheckpoint(src, dest)
+        writtenPaths.zipWithIndex.foreach { case (writtenPath, index) =>
+          val src = new Path(writtenPath)
+          val dest = new Path(paths(index))
+          if (!fs.rename(src, dest)) {
+            throw DeltaErrors.failOnCheckpoint(src, dest)
+          }
         }
+        renameDone = true
       } finally {
         if (!renameDone) {
-          fs.delete(src, false)
+          writtenPaths.foreach { writtenPath =>
+            scala.util.Try {
+              val src = new Path(writtenPath)
+              fs.delete(src, false)
+            }
+          }
         }
       }
     }
@@ -561,7 +588,7 @@ object Checkpoints extends DeltaLogging {
     if (checkpointRowCount.value == 0) {
       logWarning(DeltaErrors.EmptyCheckpointErrorMessage)
     }
-    CheckpointMetaData(snapshot.version, checkpointRowCount.value, None,
+    CheckpointMetaData(snapshot.version, checkpointRowCount.value, numPartsOption,
       Some(checkpointSizeInBytes.value), Some(snapshot.numOfFiles))
   }
 

@@ -442,6 +442,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_CHECKPOINT_PART_SIZE =
+    buildConf("checkpoint.partSize")
+        .internal()
+        .doc("The limit at which we will start parallelizing the checkpoint. We will attempt to " +
+                 "write a maximum of this many actions per checkpoint file.")
+        .longConf
+        .checkValue(_ > 0, "partSize has to be positive")
+        .createOptional
+
   val DELTA_WRITE_CHECKSUM_ENABLED =
     buildConf("writeChecksumFile.enabled")
       .doc("Whether the checksum file can be written.")
