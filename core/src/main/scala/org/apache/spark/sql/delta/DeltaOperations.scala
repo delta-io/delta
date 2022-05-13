@@ -89,9 +89,6 @@ object DeltaOperations {
 
     override def transformMetrics(metrics: Map[String, SQLMetric]): Map[String, String] = {
       var strMetrics = super.transformMetrics(metrics)
-      if (metrics.contains("numOutputRows")) {
-        strMetrics += "numCopiedRows" -> metrics("numOutputRows").value.toString
-      }
       // find the case where deletedRows are not captured
       if (strMetrics("numDeletedRows") == "0" && strMetrics("numRemovedFiles") != "0") {
         // identify when row level metrics are unavailable. This will happen when the entire
