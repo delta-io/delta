@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.skipping
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.expressions.RangePartitionId
+import org.apache.spark.sql.delta.expressions.{InterleaveBits, RangePartitionId}
 
 import org.apache.spark.sql.Column
 import org.apache.spark.sql.catalyst.expressions.Expression
@@ -36,5 +36,22 @@ object MultiDimClusteringFunctions {
    */
   def range_partition_id(col: Column, numPartitions: Int): Column = withExpr {
     RangePartitionId(col.expr, numPartitions)
+  }
+
+  /**
+   * Interleaves the bits of its input data in a round-robin fashion.
+   *
+   * If the input data is seen as a series of multidimensional points, this function computes the
+   * corresponding Z-values, in a way that's preserving data locality: input points that are close
+   * in the multidimensional space will be mapped to points that are close on the Z-order curve.
+   *
+   * The returned value is a byte array where the size of the array is 4 * num of input columns.
+   *
+   * @see https://en.wikipedia.org/wiki/Z-order_curve
+   *
+   * @note Only supports input expressions of type Int for now.
+   */
+  def interleave_bits(cols: Column*): Column = withExpr {
+    InterleaveBits(cols.map(_.expr))
   }
 }
