@@ -271,6 +271,7 @@ case class DeleteCommand(
     numPartitionsAfterSkipping.foreach(metrics("numPartitionsAfterSkipping").set)
     numPartitionsAddedTo.foreach(metrics("numPartitionsAddedTo").set)
     numPartitionsRemovedFrom.foreach(metrics("numPartitionsRemovedFrom").set)
+    numCopiedRows.foreach(metrics("numCopiedRows").set)
     txn.registerSQLMetrics(sparkSession, metrics)
     // This is needed to make the SQL metrics visible in the Spark UI
     val executionId = sparkSession.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
