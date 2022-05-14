@@ -182,6 +182,31 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
     }
   }
 
+  test("delta table: describe detail always run on the latest snapshot") {
+    val tableName = "tbl_name_on_latest_snapshot"
+    withTable(tableName) {
+      val tempDir = Utils.createTempDir().toString
+      sql(s"CREATE TABLE $tableName USING DELTA LOCATION '$tempDir'")
+
+      val deltaLog = DeltaLog.forTable(spark, tempDir)
+      DeltaLog.clearCache()
+
+      // Cache a new DeltaLog
+      sql(s"DESCRIBE DETAIL $tableName")
+
+      val txn = deltaLog.startTransaction()
+      val metadata = txn.snapshot.metadata
+      val newMetadata = metadata.copy(configuration =
+        metadata.configuration ++ Map("foo" -> "bar")
+      )
+      txn.commit(newMetadata :: Nil, DeltaOperations.ManualUpdate)
+      checkResult(sql(s"DESCRIBE DETAIL $tableName"),
+        Seq(Map("foo" -> "bar")),
+        Seq("properties")
+      )
+    }
+  }
+
   // TODO: run it with OSS Delta after it's supported
 }
 
