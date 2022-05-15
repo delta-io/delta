@@ -65,7 +65,9 @@ class DeltaScanSuite extends QueryTest
       IsNotNull(GetStructField(prunedAttr, 0))
     )
 
-    assert(DeltaScan.filtersMatch(ExpressionSet(originalExprs), ExpressionSet(prunedExprs)))
+    val resolver = org.apache.spark.sql.catalyst.analysis.caseSensitiveResolution
+    assert(DeltaScan.filtersMatch(ExpressionSet(originalExprs), ExpressionSet(prunedExprs),
+      resolver))
   }
 }
 
