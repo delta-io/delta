@@ -63,7 +63,8 @@ class BenchmarkSpec:
         main_class_args = ' '.join(self.benchmark_main_class_args)
         spark_shell_args_str = ' '.join(self.extra_spark_shell_args)
         spark_submit_cmd = (
-            f"spark-submit {spark_shell_args_str} --packages {self.maven_artifacts} " +
+            f"spark-submit {spark_shell_args_str} " +
+            (f"--packages {self.maven_artifacts} " if self.maven_artifacts else "") +
             f"{spark_conf_str} --class {self.benchmark_main_class} " +
             f"{benchmark_jar_path} {main_class_args}"
         )
@@ -77,7 +78,8 @@ class BenchmarkSpec:
             spark_conf_str += f"""--conf "{conf}" """
         spark_shell_args_str = ' '.join(self.extra_spark_shell_args)
         spark_shell_cmd = (
-                f"spark-shell {spark_shell_args_str} --packages {self.maven_artifacts} " +
+                f"spark-shell {spark_shell_args_str} " +
+                (f"--packages {self.maven_artifacts} " if self.maven_artifacts else "") +
                 f"{spark_conf_str} --jars {benchmark_jar_path} -I {benchmark_init_file_path}"
         )
         print(spark_shell_cmd)
@@ -154,6 +156,34 @@ class DeltaTPCDSDataLoadSpec(TPCDSDataLoadSpec, DeltaBenchmarkSpec):
 class DeltaTPCDSBenchmarkSpec(TPCDSBenchmarkSpec, DeltaBenchmarkSpec):
     def __init__(self, delta_version, scale_in_gb=1):
         super().__init__(delta_version=delta_version, scale_in_gb=scale_in_gb)
+
+
+# ============== Parquet benchmark specifications ==============
+
+
+class ParquetBenchmarkSpec(BenchmarkSpec):
+    """
+    Specification of a benchmark using the Parquet format
+    """
+    def __init__(self, benchmark_main_class, main_class_args=None, **kwargs):
+        super().__init__(
+            format_name="parquet",
+            maven_artifacts=None,
+            spark_confs=[],
+            benchmark_main_class=benchmark_main_class,
+            main_class_args=main_class_args,
+            **kwargs
+        )
+
+
+class ParquetTPCDSDataLoadSpec(TPCDSDataLoadSpec, ParquetBenchmarkSpec):
+    def __init__(self, scale_in_gb=1):
+        super().__init__(scale_in_gb=scale_in_gb)
+
+
+class ParquetTPCDSBenchmarkSpec(TPCDSBenchmarkSpec, ParquetBenchmarkSpec):
+    def __init__(self, scale_in_gb=1):
+        super().__init__(scale_in_gb=scale_in_gb)
 
 
 # ============== General benchmark execution ==============
