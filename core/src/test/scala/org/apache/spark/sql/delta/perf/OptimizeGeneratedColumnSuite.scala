@@ -56,10 +56,15 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
    * Verify we can recognize an `OptimizablePartitionExpression` and generate corresponding
    * partition filters correctly.
    *
-   * @param normalColDDL DDL to define a data column
-   * @param generatedPartColDDL a list of generated partition columns defined using the above data
-   *                            column
+   * @param dataSchema DDL of the data columns
+   * @param partitionSchema DDL of the partition columns
+   * @param generatedColumns a map of generated partition columns defined using the above data
+   *                         columns
    * @param expectedPartitionExpr the expected `OptimizablePartitionExpression` to be recognized
+   * @param auxiliaryTestName string to append to the generated test name
+   * @param expressionKey key to check for the optmizable expression if not the default first
+   *                      word in the data schema
+   * @param skipNested Whether to skip the nested variant of the test
    * @param filterTestCases test cases for partition filters. The key is the data filter, and the
    *                        value is the partition filters we should generate.
    */
@@ -70,7 +75,7 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
       expectedPartitionExpr: OptimizablePartitionExpression,
       auxiliaryTestName: Option[String] = None,
       expressionKey: Option[String] = None,
-      ignoreNested: Boolean = false,
+      skipNested: Boolean = false,
       filterTestCases: Seq[(String, Seq[String])]): Unit = {
     test(expectedPartitionExpr.toString + auxiliaryTestName.getOrElse("")) {
       val normalCol = dataSchema.split(" ")(0)
@@ -95,7 +100,7 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
       }
     }
 
-    if (!ignoreNested) {
+    if (!skipNested) {
       test(expectedPartitionExpr.toString + auxiliaryTestName.getOrElse("") + " nested") {
         val normalCol = dataSchema.split(" ")(0)
         val nestedSchema = s"nested struct<${dataSchema.replace(" ", ": ")}>"
@@ -713,7 +718,7 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
     expectedPartitionExpr = SubstringPartitionExpr("substr", 1, 3),
     auxiliaryTestName = Some(" deeply nested"),
     expressionKey = Some("outer.inner.nested.value"),
-    ignoreNested = true,
+    skipNested = true,
     filterTestCases = Seq(
       "outer.inner.nested.value < 'foo'" ->
         Seq("((substr IS NULL) OR (substr <= substring('foo', 1, 3)))"),
@@ -757,7 +762,7 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
     auxiliaryTestName = Some(" escaped field names"),
     expectedPartitionExpr = IdentityPartitionExpr("part1"),
     expressionKey = Some("`nested.value`"),
-    ignoreNested = true,
+    skipNested = true,
     filterTestCases = Seq(
       "`nested.value` < 'foo'" -> Seq("((part1 IS NULL) OR (part1 < 'foo'))"),
       "`nested.value` <= 'foo'" -> Seq("((part1 IS NULL) OR (part1 <= 'foo'))"),

@@ -534,7 +534,7 @@ object ExtractBaseColumn {
       Some((quoteIfNeeded(name), dataType))
     case g: GetStructField => g.child match {
       case ExtractBaseColumn(name, _) =>
-        Some(s"${name}.${quoteIfNeeded(g.extractFieldName)}", g.dataType))
+        Some(s"${name}.${quoteIfNeeded(g.extractFieldName)}", g.dataType)
       case _ => None
     }
     case _ => None
