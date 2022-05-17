@@ -124,65 +124,65 @@ Verify that you have the following information
     
 Then run a simple table write-read test: Run the following in your shell.
  
-    ```sh
-    ./run-benchmark.py --cluster-hostname <HOSTNAME> -i <PEM_FILE> --benchmark-path <BENCHMARK_PATH> --benchmark test 
-    ```
+```sh
+./run-benchmark.py --cluster-hostname <HOSTNAME> -i <PEM_FILE> --benchmark-path <BENCHMARK_PATH> --benchmark test 
+```
 
 If this works correctly, then you should see an output that look like this.
      
-    ```text
-    >>> Benchmark script generated and uploaded
+```text
+>>> Benchmark script generated and uploaded
+
+...
+There is a screen on:
+12001..ip-172-31-21-247	(Detached)
+
+Files for this benchmark:
+20220126-191336-test-benchmarks.jar
+20220126-191336-test-cmd.sh
+20220126-191336-test-out.txt
+>>> Benchmark script started in a screen. Stdout piped into 20220126-191336-test-out.txt.Final report will be generated on completion in 20220126-191336-test-report.json.
+```
+
+The test workload launched in a `screen` is going to run the following: 
+- Spark jobs to run a simple SQL query
+- Create a Delta table in the given location 
+- Read it back
     
-    ...
-    There is a screen on:
-    12001..ip-172-31-21-247	(Detached)
-    
-    Files for this benchmark:
-    20220126-191336-test-benchmarks.jar
-    20220126-191336-test-cmd.sh
-    20220126-191336-test-out.txt
-    >>> Benchmark script started in a screen. Stdout piped into 20220126-191336-test-out.txt.Final report will be generated on completion in 20220126-191336-test-report.json.
-    ```
-   
-    The test workload launched in a `screen` is going to run the following: 
-    - Spark jobs to run a simple SQL query
-    - Create a Delta table in the given location 
-    - Read it back
-    
-    To see whether they worked correctly, SSH into the node and check the output of 20220126-191336-test-out.txt. Once the workload terminates, the last few lines should be something like the following:
-    ```text
-    RESULT:
-    {
-      "benchmarkSpecs" : {
-        "benchmarkPath" : ...,
-        "benchmarkId" : "20220126-191336-test"
-      },
-      "queryResults" : [ {
-        "name" : "sql-test",
-        "durationMs" : 11075
-      }, {
-        "name" : "db-list-test",
-        "durationMs" : 208
-      }, {
-        "name" : "db-create-test",
-        "durationMs" : 4070
-      }, {
-        "name" : "db-use-test",
-        "durationMs" : 41
-      }, {
-        "name" : "table-drop-test",
-        "durationMs" : 74
-      }, {
-        "name" : "table-create-test",
-        "durationMs" : 33812
-      }, {
-        "name" : "table-query-test",
-        "durationMs" : 4795
-      } ]
-    }
-    FILE UPLOAD: Uploaded /home/hadoop/20220126-191336-test-report.json to s3:// ...
-    SUCCESS
-    ```
+To see whether they worked correctly, SSH into the node and check the output of 20220126-191336-test-out.txt. Once the workload terminates, the last few lines should be something like the following:
+```text
+RESULT:
+{
+  "benchmarkSpecs" : {
+    "benchmarkPath" : ...,
+    "benchmarkId" : "20220126-191336-test"
+  },
+  "queryResults" : [ {
+    "name" : "sql-test",
+    "durationMs" : 11075
+  }, {
+    "name" : "db-list-test",
+    "durationMs" : 208
+  }, {
+    "name" : "db-create-test",
+    "durationMs" : 4070
+  }, {
+    "name" : "db-use-test",
+    "durationMs" : 41
+  }, {
+    "name" : "table-drop-test",
+    "durationMs" : 74
+  }, {
+    "name" : "table-create-test",
+    "durationMs" : 33812
+  }, {
+    "name" : "table-query-test",
+    "durationMs" : 4795
+  } ]
+}
+FILE UPLOAD: Uploaded /home/hadoop/20220126-191336-test-report.json to s3:// ...
+SUCCESS
+```
     
 The above metrics are also written to a json file and uploaded to the given path. Please verify that both the table and report are generated in that path. 
 
