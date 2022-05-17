@@ -349,6 +349,10 @@
     "message" : [ "Specified mode '<mode>' is not supported. Supported modes are: <supportedModes>" ],
     "sqlState" : "0A000"
   },
+  "DELTA_MULTIPLE_CDC_BOUNDARY" : {
+    "message" : [ "Multiple <startingOrEnding> arguments provided for CDC read. Please provide one of either <startingOrEnding>Timestamp or <startingOrEnding>Version." ],
+    "sqlState" : "42000"
+  },
   "DELTA_MULTIPLE_CONF_FOR_SINGLE_COLUMN_IN_BLOOM_FILTER" : {
     "message" : [ "Multiple bloom filter index configurations passed to command for column: <columnName>" ],
     "sqlState" : "0A000"

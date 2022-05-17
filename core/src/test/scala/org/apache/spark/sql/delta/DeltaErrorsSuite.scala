@@ -172,6 +172,15 @@ trait DeltaErrorsSuiteBase
            |delta.enableChangeDataFeed to false.""".stripMargin)
     }
     {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.multipleCDCBoundaryException("sample")
+      }
+      assert(e.getErrorClass == "DELTA_MULTIPLE_CDC_BOUNDARY")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage == "Multiple sample arguments provided for CDC read. Please provide " +
+        "one of either sampleTimestamp or sampleVersion.")
+    }
+    {
       val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.failOnCheckpoint(new Path("path-1"), new Path("path-2"))
       }
