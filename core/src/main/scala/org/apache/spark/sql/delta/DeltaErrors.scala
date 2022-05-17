@@ -195,6 +195,20 @@ object DeltaErrors
       messageParameters = Array(columns.mkString("[", ",", "]")))
   }
 
+  /**
+   * Thrown when a CDC query contains conflict 'starting' or 'ending' options, e.g. when both
+   * starting version and starting timestamp are specified.
+   *
+   * @param position Specifies which option was duplicated in the read. Values are "starting" or
+   *                 "ending"
+   */
+  def multipleCDCBoundaryException(position: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_MULTIPLE_CDC_BOUNDARY",
+      messageParameters = Array(position, position, position)
+    )
+  }
+
   def formatColumn(colName: String): String = s"`$colName`"
 
   def formatColumnList(colNames: Seq[String]): String =
@@ -290,20 +304,6 @@ object DeltaErrors
       " currently not supported during inserts")
   }
 
-
-  /**
-   * Thrown when a CDC query contains conflict 'starting' or 'ending' options, e.g. when both
-   * starting version and starting timestamp are specified.
-   *
-   * @param position Specifies which option was duplicated in the read. Values are "starting" or
-   *                 "ending"
-   */
-  def multipleCDCBoundaryException(position: String): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "DELTA_MULTIPLE_CDC_BOUNDARY",
-      messageParameters = Array(position, position, position)
-    )
-  }
 
   /**
    * Throwable used when CDC options contain no 'start'.
