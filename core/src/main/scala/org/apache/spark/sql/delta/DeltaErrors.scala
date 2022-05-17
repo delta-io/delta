@@ -176,6 +176,39 @@ object DeltaErrors
   }
 
 
+  /**
+   * Thrown when main table data contains columns that are reserved for CDF, such as `_change_type`.
+   */
+  def cdcColumnsInData(columns: Seq[String]): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "RESERVED_CDC_COLUMNS_ON_WRITE",
+      messageParameters = Array(columns.mkString("[", ",", "]"), DeltaConfigs.CHANGE_DATA_FEED.key)
+    )
+  }
+
+  /**
+   * Thrown when main table data already contains columns that are reserved for CDF, such as
+   * `_change_type`, but CDF is not yet enabled on that table.
+   */
+  def tableAlreadyContainsCDCColumns(columns: Seq[String]): Throwable = {
+    new DeltaIllegalStateException(errorClass = "DELTA_TABLE_ALREADY_CONTAINS_CDC_COLUMNS",
+      messageParameters = Array(columns.mkString("[", ",", "]")))
+  }
+
+  /**
+   * Thrown when a CDC query contains conflict 'starting' or 'ending' options, e.g. when both
+   * starting version and starting timestamp are specified.
+   *
+   * @param position Specifies which option was duplicated in the read. Values are "starting" or
+   *                 "ending"
+   */
+  def multipleCDCBoundaryException(position: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_MULTIPLE_CDC_BOUNDARY",
+      messageParameters = Array(position, position, position)
+    )
+  }
+
   def formatColumn(colName: String): String = s"`$colName`"
 
   def formatColumnList(colNames: Seq[String]): String =

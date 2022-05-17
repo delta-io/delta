@@ -437,6 +437,7 @@ private[delta] object DeltaOperationMetrics {
     "rewriteTimeMs" // time taken to rewrite the matched files
   )
 
+
   val UPDATE = Set(
     "numAddedFiles", // number of files added
     "numRemovedFiles", // number of files removed

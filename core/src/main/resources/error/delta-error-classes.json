@@ -349,6 +349,10 @@
     "message" : [ "Specified mode '<mode>' is not supported. Supported modes are: <supportedModes>" ],
     "sqlState" : "0A000"
   },
+  "DELTA_MULTIPLE_CDC_BOUNDARY" : {
+    "message" : [ "Multiple <startingOrEnding> arguments provided for CDC read. Please provide one of either <startingOrEnding>Timestamp or <startingOrEnding>Version." ],
+    "sqlState" : "42000"
+  },
   "DELTA_MULTIPLE_CONF_FOR_SINGLE_COLUMN_IN_BLOOM_FILTER" : {
     "message" : [ "Multiple bloom filter index configurations passed to command for column: <columnName>" ],
     "sqlState" : "0A000"
@@ -447,6 +451,10 @@
   "DELTA_STATE_RECOVER_ERROR" : {
     "message" : [ "The <operation> of your Delta table could not be recovered while Reconstructing", "version: <version>. Did you manually delete files in the _delta_log directory?", "Set <config> to \"false\"", "to skip validation." ],
     "sqlState" : "22000"
+  },
+  "DELTA_TABLE_ALREADY_CONTAINS_CDC_COLUMNS" : {
+    "message" : [ "Unable to enable Change Data Capture on the table. The table already contains", "reserved columns <columnList> that will", "be used internally as metadata for the table's Change Data Feed. To enable", "Change Data Feed on the table rename/drop these columns.", "" ],
+    "sqlState" : "42000"
   },
   "DELTA_TABLE_ALREADY_EXISTS" : {
     "message" : [ "Table <tableName> already exists." ],
@@ -586,5 +594,9 @@
   "DELTA_VIOLATE_CONSTRAINT_WITH_VALUES" : {
     "message" : [ "CHECK constraint <constraintName> <expression> violated by row with values:", "<values>" ],
     "sqlState" : "23001"
+  },
+  "RESERVED_CDC_COLUMNS_ON_WRITE" : {
+    "message" : [ "", "The write contains reserved columns <columnList> that are used", "internally as metadata for Change Data Feed. To write to the table either rename/drop", "these columns or disable Change Data Feed on the table by setting", "<config> to false." ],
+    "sqlState" : "42000"
   }
 }
