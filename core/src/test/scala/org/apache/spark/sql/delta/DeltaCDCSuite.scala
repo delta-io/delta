@@ -98,6 +98,7 @@ abstract class DeltaCDCSuiteBase
     }
   }
 
+  /** Create table utility method */
   def ctas(srcTbl: String, dstTbl: String, disableCDC: Boolean = false): Unit = {
     val readDf = cdcRead(new TableName(srcTbl), StartingVersion("0"), EndingVersion("1"))
     if (disableCDC) {
@@ -114,10 +115,11 @@ abstract class DeltaCDCSuiteBase
   testQuietly("writes with metadata columns") {
     withTable("src", "dst") {
 
-      // populate src table
+      // populate src table with CDC data
       createTblWithThreeVersions(tblName = Some("src"))
 
-      // writing cdc to a new table with cdc enabled should fail.
+      // writing cdc data to a new table with cdc enabled should fail. the source table has columns
+      // that are reserved for CDC only, and shouldn't be allowed into the target table.
       val e = intercept[IllegalStateException] {
         ctas("src", "dst")
       }
@@ -150,7 +152,8 @@ abstract class DeltaCDCSuiteBase
         )
       }
 
-      // re-enabling cdc should be disallowed
+      // re-enabling cdc should be disallowed, since the dst table already contains column that are
+      // reserved for CDC only.
       val e2 = intercept[IllegalStateException] {
         sql(s"ALTER TABLE dst SET TBLPROPERTIES " +
           s"(${DeltaConfigs.CHANGE_DATA_FEED.key}=true)")
@@ -528,7 +531,7 @@ abstract class DeltaCDCSuiteBase
   }
 }
 
-class DeltaCDCSuite extends DeltaCDCSuiteBase {
+class DeltaCDCScalaSuite extends DeltaCDCSuiteBase {
 
   /** Single method to do all kinds of CDC reads */
   def cdcRead(

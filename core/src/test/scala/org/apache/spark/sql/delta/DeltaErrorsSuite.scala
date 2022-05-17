@@ -147,6 +147,32 @@ trait DeltaErrorsSuiteBase
   test("test DeltaErrors OSS methods") {
     {
       val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.tableAlreadyContainsCDCColumns(Seq("col1", "col2"))
+      }
+      assert(e.getErrorClass == "DELTA_TABLE_ALREADY_CONTAINS_CDC_COLUMNS")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        s"""Unable to enable Change Data Capture on the table. The table already contains
+           |reserved columns [col1,col2] that will
+           |be used internally as metadata for the table's Change Data Feed. To enable
+           |Change Data Feed on the table rename/drop these columns.
+           |""".stripMargin)
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.cdcColumnsInData(Seq("col1", "col2"))
+      }
+      assert(e.getErrorClass == "RESERVED_CDC_COLUMNS_ON_WRITE")
+      assert(e.getSqlState == "42000")
+      assert(e.getMessage ==
+        s"""
+           |The write contains reserved columns [col1,col2] that are used
+           |internally as metadata for Change Data Feed. To write to the table either rename/drop
+           |these columns or disable Change Data Feed on the table by setting
+           |delta.enableChangeDataFeed to false.""".stripMargin)
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.failOnCheckpoint(new Path("path-1"), new Path("path-2"))
       }
       assert(e.getMessage == "Cannot rename path-1 to path-2")

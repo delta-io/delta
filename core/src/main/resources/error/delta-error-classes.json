@@ -476,10 +476,6 @@
     "message" : [ "Expected AttributeReference but got <ref>" ],
     "sqlState" : "42000"
   },
-  "DELTA_UNEXPECTED_CHANGE_FILES_FOUND" : {
-    "message" : [ "Change files found in a dataChange = false transaction. Files:", "<fileList>" ],
-    "sqlState" : "0A000"
-  },
   "DELTA_UNEXPECTED_PARTIAL_SCAN" : {
     "message" : [ "Expect a full scan of Delta sources, but found a partial scan. path:<path>" ],
     "sqlState" : "22000"

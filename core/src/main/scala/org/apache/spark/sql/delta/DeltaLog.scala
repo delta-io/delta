@@ -404,7 +404,6 @@ class DeltaLog private(
     // For CDC we have to return the relation that represents the change data instead of actual
     // data.
     if (!cdcOptions.isEmpty) {
-      // Note that the content of the CDC options isn't centralized in the logs
       recordDeltaEvent(this, "delta.cdf.read", data = cdcOptions.asCaseSensitiveMap())
       return CDCReader.getCDCRelation(spark,
         this, snapshotToUse, partitionFilters, spark.sessionState.conf, cdcOptions)
