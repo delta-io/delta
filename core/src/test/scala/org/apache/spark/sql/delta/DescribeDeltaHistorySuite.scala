@@ -799,7 +799,7 @@ trait DescribeDeltaHistorySuiteBase
     }
   }
 
-  ignore("operation metrics - delete") {
+  test("operation metrics - delete") {
     withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
       withTempDir { tempDir =>
         // Create the initial table as a single file
