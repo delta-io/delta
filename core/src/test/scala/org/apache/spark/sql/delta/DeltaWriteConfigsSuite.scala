@@ -65,59 +65,60 @@ class DeltaWriteConfigsSuite extends QueryTest
     println("DataFrameWriter Test Output")
     dfw_output.toSeq
       .toDF("Output Location", "Output Mode", s"Contains No-Prefix Option",
-        "Contains Prefix-Option")
+        "Contains Prefix-Option", "Config")
       .show(100, false)
 
     println("DataStreamWriter Test Output")
     dsw_output.toSeq
       .toDF("Output Location", "Output Mode", s"Contains No-Prefix Option",
-        "Contains Prefix-Option")
+        "Contains Prefix-Option", "Config")
       .show(100, false)
 
     println("DataFrameWriterV2 Test Output")
     dfw_v2_output.toSeq
       .toDF("Output Location", "Output Mode", s"Contains No-Prefix Option",
-        "Contains Prefix-Option")
+        "Contains Prefix-Option", "Config")
       .show(100, false)
 
     println("DeltaTableBuilder Test Output")
     dtb_output.toSeq
-      .toDF("Output Location", "Output Mode", s"Contains No-Prefix Option",
-        "Contains Prefix-Option", "ERROR")
+      .toDF("Output Location", "Output Mode", s"Contains No-Prefix Option (lowercase)",
+        s"Contains No-Prefix Option", "Contains Prefix-Option", "ERROR", "Config")
       .show(100, false)
 
     println("SQL Test Output")
     sql_output.toSeq
       .toDF("Output Location", "Config Input", s"SQL Operation", "AS SELECT",
         "Contains OPTION no-prefix", "Contains OPTION prefix", "Contains TBLPROPERTIES no-prefix",
-        "Contains TBLPROPERTIES prefix")
+        "Contains TBLPROPERTIES prefix", "Config")
       .show(100, false)
 
     // scalastyle:on println
     super.afterAll()
   }
 
-  private val dfw_output = new ListBuffer[(String, String, Boolean, Boolean)]
-  private val dsw_output = new ListBuffer[(String, String, Boolean, Boolean)]
-  private val dfw_v2_output = new ListBuffer[(String, String, Boolean, Boolean)]
-  private val dtb_output = new ListBuffer[(String, String, Boolean, Boolean, Boolean)]
+  private val dfw_output = new ListBuffer[(String, String, Boolean, Boolean, String)]
+  private val dsw_output = new ListBuffer[(String, String, Boolean, Boolean, String)]
+  private val dfw_v2_output = new ListBuffer[(String, String, Boolean, Boolean, String)]
+  private val dtb_output =
+    new ListBuffer[(String, String, Boolean, Boolean, Boolean, Boolean, String)]
   private val sql_output =
     new ListBuffer[(
       String, String, String, Boolean,
-      Boolean, Boolean, Boolean, Boolean)]
+      String, String, String, String, String)]
 
   /*
   DataFrameWriter Test Output
-  +---------------+-----------+-------------------------+----------------------+
-  |Output Location|Output Mode|Contains No-Prefix Option|Contains Prefix-Option|
-  +---------------+-----------+-------------------------+----------------------+
-  |path           |create     |false                    |false                 |
-  |path           |overwrite  |false                    |false                 |
-  |path           |append     |false                    |false                 |
-  |table          |create     |false                    |true                  |
-  |table          |overwrite  |false                    |true                  |
-  |table          |append     |false                    |true                  |
-  +---------------+-----------+-------------------------+----------------------+
+  +---------------+-----------+-------------------------+----------------------+------------------------------------------------------+
+  |Output Location|Output Mode|Contains No-Prefix Option|Contains Prefix-Option|Config                                                |
+  +---------------+-----------+-------------------------+----------------------+------------------------------------------------------+
+  |path           |create     |false                    |false                 |                                                      |
+  |path           |overwrite  |false                    |false                 |                                                      |
+  |path           |append     |false                    |false                 |                                                      |
+  |table          |create     |false                    |true                  |delta.deletedFileRetentionDuration -> interval 2 weeks|
+  |table          |overwrite  |false                    |true                  |delta.deletedFileRetentionDuration -> interval 2 weeks|
+  |table          |append     |false                    |true                  |delta.deletedFileRetentionDuration -> interval 2 weeks|
+  +---------------+-----------+-------------------------+----------------------+------------------------------------------------------+
   */
   Seq("path", "table").foreach { outputLoc =>
     Seq("create", "overwrite", "append").foreach { outputMode =>
@@ -148,8 +149,10 @@ class DeltaWriteConfigsSuite extends QueryTest
 
             assert(!answer_no_prefix)
             assert(answer_prefix == (outputLoc == "table"))
+            assert(config.size == (if (outputLoc == "table") 1 else 0))
 
-            dfw_output += ((outputLoc, outputMode, answer_no_prefix, answer_prefix))
+            dfw_output += ((outputLoc, outputMode, answer_no_prefix, answer_prefix,
+              config.mkString(",")))
           }
         }
       }
@@ -158,16 +161,16 @@ class DeltaWriteConfigsSuite extends QueryTest
 
   /*
   DataStreamWriter Test Output
-  +---------------+-----------+-------------------------+----------------------+
-  |Output Location|Output Mode|Contains No-Prefix Option|Contains Prefix-Option|
-  +---------------+-----------+-------------------------+----------------------+
-  |path           |create     |false                    |false                 |
-  |path           |append     |false                    |false                 |
-  |path           |complete   |false                    |false                 |
-  |table          |create     |false                    |false                 |
-  |table          |append     |false                    |false                 |
-  |table          |complete   |false                    |false                 |
-  +---------------+-----------+-------------------------+----------------------+
+  +---------------+-----------+-------------------------+----------------------+------+
+  |Output Location|Output Mode|Contains No-Prefix Option|Contains Prefix-Option|Config|
+  +---------------+-----------+-------------------------+----------------------+------+
+  |path           |create     |false                    |false                 |      |
+  |path           |append     |false                    |false                 |      |
+  |path           |complete   |false                    |false                 |      |
+  |table          |create     |false                    |false                 |      |
+  |table          |append     |false                    |false                 |      |
+  |table          |complete   |false                    |false                 |      |
+  +---------------+-----------+-------------------------+----------------------+------+
   */
   // Data source DeltaDataSource does not support Update output mode
   Seq("path", "table").foreach { outputLoc =>
@@ -210,10 +213,12 @@ class DeltaWriteConfigsSuite extends QueryTest
               val answer_no_prefix = config.contains(config_no_prefix)
               val answer_prefix = config.contains(config_prefix)
 
+              assert(config.isEmpty)
               assert(!answer_no_prefix)
               assert(!answer_prefix)
 
-              dsw_output += ((outputLoc, outputMode, answer_no_prefix, answer_prefix))
+              dsw_output += ((outputLoc, outputMode, answer_no_prefix, answer_prefix,
+                config.mkString(",")))
             }
           }
         }
@@ -223,18 +228,18 @@ class DeltaWriteConfigsSuite extends QueryTest
 
   /*
   DataFrameWriterV2 Test Output
-  +---------------+--------------+-------------------------+----------------------+
-  |Output Location|Output Mode   |Contains No-Prefix Option|Contains Prefix-Option|
-  +---------------+--------------+-------------------------+----------------------+
-  |path           |create        |false                    |true                  |
-  |path           |replace       |false                    |true                  |
-  |path           |c_or_r_create |false                    |true                  |
-  |path           |c_or_r_replace|false                    |true                  |
-  |table          |create        |false                    |true                  |
-  |table          |replace       |false                    |true                  |
-  |table          |c_or_r_create |false                    |true                  |
-  |table          |c_or_r_replace|false                    |true                  |
-  +---------------+--------------+-------------------------+----------------------+
+  +---------------+--------------+-------------------------+----------------------+------------------------------------------------------+
+  |Output Location|Output Mode   |Contains No-Prefix Option|Contains Prefix-Option|Config                                                |
+  +---------------+--------------+-------------------------+----------------------+------------------------------------------------------+
+  |path           |create        |false                    |true                  |delta.deletedFileRetentionDuration -> interval 2 weeks|
+  |path           |replace       |false                    |true                  |delta.deletedFileRetentionDuration -> interval 2 weeks|
+  |path           |c_or_r_create |false                    |true                  |delta.deletedFileRetentionDuration -> interval 2 weeks|
+  |path           |c_or_r_replace|false                    |true                  |delta.deletedFileRetentionDuration -> interval 2 weeks|
+  |table          |create        |false                    |true                  |delta.deletedFileRetentionDuration -> interval 2 weeks|
+  |table          |replace       |false                    |true                  |delta.deletedFileRetentionDuration -> interval 2 weeks|
+  |table          |c_or_r_create |false                    |true                  |delta.deletedFileRetentionDuration -> interval 2 weeks|
+  |table          |c_or_r_replace|false                    |true                  |delta.deletedFileRetentionDuration -> interval 2 weeks|
+  +---------------+--------------+-------------------------+----------------------+------------------------------------------------------+
   */
   Seq("path", "table").foreach { outputLoc =>
     Seq("create", "replace", "c_or_r_create", "c_or_r_replace").foreach { outputMode =>
@@ -267,13 +272,17 @@ class DeltaWriteConfigsSuite extends QueryTest
             }
 
             val config = log.snapshot.metadata.configuration
+
             val answer_no_prefix = config.contains(config_no_prefix)
             val answer_prefix = config.contains(config_prefix)
 
+
             assert(!answer_no_prefix)
             assert(answer_prefix)
+//            assert(config.size == 2) // 1 valid + 1 invalid option
 
-            dfw_v2_output += ((outputLoc, outputMode, answer_no_prefix, answer_prefix))
+            dfw_v2_output += ((outputLoc, outputMode, answer_no_prefix, answer_prefix,
+              config.mkString(",")))
           }
         }
       }
@@ -282,18 +291,18 @@ class DeltaWriteConfigsSuite extends QueryTest
 
   /*
   DeltaTableBuilder Test Output
-  +---------------+--------------+-------------------------+----------------------+-----+
-  |Output Location|Output Mode   |Contains No-Prefix Option|Contains Prefix-Option|ERROR|
-  +---------------+--------------+-------------------------+----------------------+-----+
-  |path           |create        |false                    |true                  |false|
-  |path           |replace       |false                    |true                  |false|
-  |path           |c_or_r_create |false                    |true                  |false|
-  |path           |c_or_r_replace|false                    |false                 |true |
-  |table          |create        |false                    |true                  |false|
-  |table          |replace       |false                    |true                  |false|
-  |table          |c_or_r_create |false                    |true                  |false|
-  |table          |c_or_r_replace|false                    |true                  |false|
-  +---------------+--------------+-------------------------+----------------------+-----+
+  +---------------+--------------+-------------------------------------+-------------------------+----------------------+-----+---------------------------------------------------------------------------------------+
+  |Output Location|Output Mode   |Contains No-Prefix Option (lowercase)|Contains No-Prefix Option|Contains Prefix-Option|ERROR|Config                                                                                 |
+  +---------------+--------------+-------------------------------------+-------------------------+----------------------+-----+---------------------------------------------------------------------------------------+
+  |path           |create        |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataskippingnumindexedcols -> 33|
+  |path           |replace       |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataskippingnumindexedcols -> 33|
+  |path           |c_or_r_create |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataskippingnumindexedcols -> 33|
+  |path           |c_or_r_replace|false                                |false                    |false                 |true |                                                                                       |
+  |table          |create        |true                                 |false                    |true                  |false|dataskippingnumindexedcols -> 33,delta.deletedFileRetentionDuration -> interval 2 weeks|
+  |table          |replace       |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataskippingnumindexedcols -> 33|
+  |table          |c_or_r_create |true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataskippingnumindexedcols -> 33|
+  |table          |c_or_r_replace|true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataskippingnumindexedcols -> 33|
+  +---------------+--------------+-------------------------------------+-------------------------+----------------------+-----+---------------------------------------------------------------------------------------+
   */
   Seq("path", "table").foreach { outputLoc =>
     Seq("create", "replace", "c_or_r_create", "c_or_r_replace").foreach { outputMode =>
@@ -349,16 +358,22 @@ class DeltaWriteConfigsSuite extends QueryTest
                 // Specified schema is missing field(s): bar
                 // Specified schema has additional field(s): foo
                 assert(outputLoc == "path" && outputMode == "c_or_r_replace")
-                dtb_output += ((outputLoc, outputMode, false, false, true))
+                dtb_output += ((outputLoc, outputMode, false, false, false, true, ""))
               case _ =>
                 val config = log.snapshot.metadata.configuration
+
+                val answer_no_prefix_lowercase =
+                  config.contains(config_no_prefix.toLowerCase(Locale.ROOT))
                 val answer_no_prefix = config.contains(config_no_prefix)
                 val answer_prefix = config.contains(config_prefix)
 
+                assert(answer_no_prefix_lowercase) // bizarre!
                 assert(!answer_no_prefix)
                 assert(answer_prefix)
+                assert(config.size == 2) // bizarre!
 
-                dtb_output += ((outputLoc, outputMode, answer_no_prefix, answer_prefix, false))
+                dtb_output += ((outputLoc, outputMode, answer_no_prefix_lowercase,
+                  answer_no_prefix, answer_prefix, false, config.mkString(",")))
             }
           }
         }
@@ -369,58 +384,58 @@ class DeltaWriteConfigsSuite extends QueryTest
   // scalastyle:off line.size.limit
   /*
   SQL Test Output
-  +---------------+-------------------------+--------------+---------+-------------------------+----------------------+--------------------------------+-----------------------------+
-  |Output Location|Config Input             |SQL Operation |AS SELECT|Contains OPTION no-prefix|Contains OPTION prefix|Contains TBLPROPERTIES no-prefix|Contains TBLPROPERTIES prefix|
-  +---------------+-------------------------+--------------+---------+-------------------------+----------------------+--------------------------------+-----------------------------+
-  |path           |options                  |create        |true     |false                    |true                  |false                           |false                        |
-  |path           |options                  |create        |false    |true                     |true                  |false                           |false                        |
-  |path           |options                  |replace       |true     |false                    |true                  |false                           |false                        |
-  |path           |options                  |replace       |false    |false                    |true                  |false                           |false                        |
-  |path           |options                  |c_or_r_create |true     |false                    |true                  |false                           |false                        |
-  |path           |options                  |c_or_r_create |false    |false                    |true                  |false                           |false                        |
-  |path           |options                  |c_or_r_replace|true     |false                    |true                  |false                           |false                        |
-  |path           |options                  |c_or_r_replace|false    |false                    |true                  |false                           |false                        |
-  |path           |tblproperties            |create        |true     |false                    |false                 |true                            |true                         |
-  |path           |tblproperties            |create        |false    |false                    |false                 |true                            |true                         |
-  |path           |tblproperties            |replace       |true     |false                    |false                 |true                            |true                         |
-  |path           |tblproperties            |replace       |false    |false                    |false                 |true                            |true                         |
-  |path           |tblproperties            |c_or_r_create |true     |false                    |false                 |true                            |true                         |
-  |path           |tblproperties            |c_or_r_create |false    |false                    |false                 |true                            |true                         |
-  |path           |tblproperties            |c_or_r_replace|true     |false                    |false                 |true                            |true                         |
-  |path           |tblproperties            |c_or_r_replace|false    |false                    |false                 |true                            |true                         |
-  |path           |options_and_tblproperties|create        |true     |false                    |true                  |true                            |true                         |
-  |path           |options_and_tblproperties|create        |false    |true                     |true                  |true                            |true                         |
-  |path           |options_and_tblproperties|replace       |true     |false                    |true                  |true                            |true                         |
-  |path           |options_and_tblproperties|replace       |false    |false                    |true                  |true                            |true                         |
-  |path           |options_and_tblproperties|c_or_r_create |true     |false                    |true                  |true                            |true                         |
-  |path           |options_and_tblproperties|c_or_r_create |false    |false                    |true                  |true                            |true                         |
-  |path           |options_and_tblproperties|c_or_r_replace|true     |false                    |true                  |true                            |true                         |
-  |path           |options_and_tblproperties|c_or_r_replace|false    |false                    |true                  |true                            |true                         |
-  |table          |options                  |create        |true     |false                    |true                  |false                           |false                        |
-  |table          |options                  |create        |false    |true                     |true                  |false                           |false                        |
-  |table          |options                  |replace       |true     |false                    |true                  |false                           |false                        |
-  |table          |options                  |replace       |false    |false                    |true                  |false                           |false                        |
-  |table          |options                  |c_or_r_create |true     |false                    |true                  |false                           |false                        |
-  |table          |options                  |c_or_r_create |false    |false                    |true                  |false                           |false                        |
-  |table          |options                  |c_or_r_replace|true     |false                    |true                  |false                           |false                        |
-  |table          |options                  |c_or_r_replace|false    |false                    |true                  |false                           |false                        |
-  |table          |tblproperties            |create        |true     |false                    |false                 |true                            |true                         |
-  |table          |tblproperties            |create        |false    |false                    |false                 |true                            |true                         |
-  |table          |tblproperties            |replace       |true     |false                    |false                 |true                            |true                         |
-  |table          |tblproperties            |replace       |false    |false                    |false                 |true                            |true                         |
-  |table          |tblproperties            |c_or_r_create |true     |false                    |false                 |true                            |true                         |
-  |table          |tblproperties            |c_or_r_create |false    |false                    |false                 |true                            |true                         |
-  |table          |tblproperties            |c_or_r_replace|true     |false                    |false                 |true                            |true                         |
-  |table          |tblproperties            |c_or_r_replace|false    |false                    |false                 |true                            |true                         |
-  |table          |options_and_tblproperties|create        |true     |false                    |true                  |true                            |true                         |
-  |table          |options_and_tblproperties|create        |false    |true                     |true                  |true                            |true                         |
-  |table          |options_and_tblproperties|replace       |true     |false                    |true                  |true                            |true                         |
-  |table          |options_and_tblproperties|replace       |false    |false                    |true                  |true                            |true                         |
-  |table          |options_and_tblproperties|c_or_r_create |true     |false                    |true                  |true                            |true                         |
-  |table          |options_and_tblproperties|c_or_r_create |false    |false                    |true                  |true                            |true                         |
-  |table          |options_and_tblproperties|c_or_r_replace|true     |false                    |true                  |true                            |true                         |
-  |table          |options_and_tblproperties|c_or_r_replace|false    |false                    |true                  |true                            |true                         |
-  +---------------+-------------------------+--------------+---------+-------------------------+----------------------+--------------------------------+-----------------------------+
+  +---------------+-------------------------+--------------+---------+-------------------------+----------------------+--------------------------------+-----------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+  |Output Location|Config Input             |SQL Operation |AS SELECT|Contains OPTION no-prefix|Contains OPTION prefix|Contains TBLPROPERTIES no-prefix|Contains TBLPROPERTIES prefix|Config                                                                                                                                                                                                                                                               |
+  +---------------+-------------------------+--------------+---------+-------------------------+----------------------+--------------------------------+-----------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+  |path           |options                  |create        |true     |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |path           |options                  |create        |false    |true                     |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,option.delta.deletedFileRetentionDuration -> interval 2 weeks,option.dataSkippingNumIndexedCols -> 33                                                                        |
+  |path           |options                  |replace       |true     |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |path           |options                  |replace       |false    |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |path           |options                  |c_or_r_create |true     |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |path           |options                  |c_or_r_create |false    |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |path           |options                  |c_or_r_replace|true     |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |path           |options                  |c_or_r_replace|false    |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |path           |tblproperties            |create        |true     |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |path           |tblproperties            |create        |false    |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |path           |tblproperties            |replace       |true     |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |path           |tblproperties            |replace       |false    |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |path           |tblproperties            |c_or_r_create |true     |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |path           |tblproperties            |c_or_r_create |false    |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |path           |tblproperties            |c_or_r_replace|true     |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |path           |tblproperties            |c_or_r_replace|false    |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |path           |options_and_tblproperties|create        |true     |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |path           |options_and_tblproperties|create        |false    |true                     |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20,option.delta.deletedFileRetentionDuration -> interval 2 weeks,option.dataSkippingNumIndexedCols -> 33|
+  |path           |options_and_tblproperties|replace       |true     |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |path           |options_and_tblproperties|replace       |false    |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |path           |options_and_tblproperties|c_or_r_create |true     |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |path           |options_and_tblproperties|c_or_r_create |false    |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |path           |options_and_tblproperties|c_or_r_replace|true     |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |path           |options_and_tblproperties|c_or_r_replace|false    |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |table          |options                  |create        |true     |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |table          |options                  |create        |false    |true                     |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,option.delta.deletedFileRetentionDuration -> interval 2 weeks,option.dataSkippingNumIndexedCols -> 33                                                                        |
+  |table          |options                  |replace       |true     |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |table          |options                  |replace       |false    |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |table          |options                  |c_or_r_create |true     |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |table          |options                  |c_or_r_create |false    |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |table          |options                  |c_or_r_replace|true     |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |table          |options                  |c_or_r_replace|false    |false                    |true                  |N/A                             |N/A                          |delta.deletedFileRetentionDuration -> interval 2 weeks                                                                                                                                                                                                               |
+  |table          |tblproperties            |create        |true     |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |table          |tblproperties            |create        |false    |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |table          |tblproperties            |replace       |true     |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |table          |tblproperties            |replace       |false    |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |table          |tblproperties            |c_or_r_create |true     |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |table          |tblproperties            |c_or_r_create |false    |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |table          |tblproperties            |c_or_r_replace|true     |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |table          |tblproperties            |c_or_r_replace|false    |N/A                      |N/A                   |true                            |true                         |logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                                                                              |
+  |table          |options_and_tblproperties|create        |true     |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |table          |options_and_tblproperties|create        |false    |true                     |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,dataSkippingNumIndexedCols -> 33,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20,option.delta.deletedFileRetentionDuration -> interval 2 weeks,option.dataSkippingNumIndexedCols -> 33|
+  |table          |options_and_tblproperties|replace       |true     |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |table          |options_and_tblproperties|replace       |false    |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |table          |options_and_tblproperties|c_or_r_create |true     |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |table          |options_and_tblproperties|c_or_r_create |false    |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |table          |options_and_tblproperties|c_or_r_replace|true     |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  |table          |options_and_tblproperties|c_or_r_replace|false    |false                    |true                  |true                            |true                         |delta.deletedFileRetentionDuration -> interval 2 weeks,logRetentionDuration -> interval 60 days,delta.checkpointInterval -> 20                                                                                                                                       |
+  +---------------+-------------------------+--------------+---------+-------------------------+----------------------+--------------------------------+-----------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
   */
   // scalastyle:on line.size.limit
   Seq("path", "table").foreach { outputLoc =>
@@ -476,6 +491,9 @@ class DeltaWriteConfigsSuite extends QueryTest
                 val log = DeltaLog.forTable(spark, TableIdentifier("tbl"))
                 val config = log.snapshot.metadata.configuration
 
+                val option_was_set = configInput.contains("options")
+                val tblproperties_was_set = configInput.contains("tblproperties")
+
                 val option_no_prefix = config.contains(config_no_prefix)
                 val option_prefix = config.contains(config_prefix)
                 val tblproperties_no_prefix = config.contains(config_no_prefix_2)
@@ -486,10 +504,12 @@ class DeltaWriteConfigsSuite extends QueryTest
                   configInput,
                   sqlOp,
                   useAsSelectStmt,
-                  option_no_prefix,
-                  option_prefix,
-                  tblproperties_no_prefix,
-                  tblproperties_prefix))
+                  if (option_was_set) option_no_prefix.toString else "N/A",
+                  if (option_was_set) option_prefix.toString else "N/A",
+                  if (tblproperties_was_set) tblproperties_no_prefix.toString else "N/A",
+                  if (tblproperties_was_set) tblproperties_prefix.toString else "N/A",
+                  config.mkString(",")
+                ))
               }
             }
           }
