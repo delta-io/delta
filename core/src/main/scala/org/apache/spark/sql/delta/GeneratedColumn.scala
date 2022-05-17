@@ -270,6 +270,10 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     generatedColumnsAndColumnsUsedByGeneratedColumns.map(_.toLowerCase(Locale.ROOT)).toSet
   }
 
+  private def createFieldPath(nameParts: Seq[String]): String = {
+    nameParts.map(quoteIfNeeded _).mkString(".")
+  }
+
   /**
    * Try to get `OptimizablePartitionExpression`s of a data column when a partition column is
    * defined as a generated column and refers to this data column.
@@ -292,7 +296,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     }
 
     val spark = SparkSession.active
-    val nameEquality = spark.sessionState.analyzer.resolver
+    val resolver = spark.sessionState.analyzer.resolver
 
     // `a.name` comes from the generation expressions which users may use different cases. We
     // need to normalize it to the same case so that we can group expressions for the same
@@ -303,9 +307,13 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     /**
      * Returns a normalized column name with its `OptimizablePartitionExpression`
      */
-    def createExpr(name: String)(func: => OptimizablePartitionExpression):
+    def createExpr(nameParts: Seq[String])(func: => OptimizablePartitionExpression):
       Option[(String, OptimizablePartitionExpression)] = {
-      Some(nameNormalizer(name) -> func)
+      if (schema.findNestedField(nameParts, resolver = resolver).isDefined) {
+        Some(nameNormalizer(createFieldPath(nameParts)) -> func)
+      } else {
+        None
+      }
     }
 
     val df = Dataset.ofRows(SparkSession.active, new LocalRelation(schema.toAttributes))
@@ -471,27 +479,27 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
      * filters.
      */
     def toPartitionFilter(
-        name: String,
+        nameParts: Seq[String],
         func: (OptimizablePartitionExpression) => Option[Expression]): Seq[Expression] = {
-      optimizablePartitionExpressions.get(name).toSeq.flatMap { exprs =>
+      optimizablePartitionExpressions.get(createFieldPath(nameParts)).toSeq.flatMap { exprs =>
         exprs.flatMap(expr => func(expr))
       }
     }
 
     val partitionFilters = dataFilters.flatMap { filter =>
       preprocess(filter) match {
-        case LessThan(ExtractBaseColumn(name, _), lit: Literal) =>
-          toPartitionFilter(name, _.lessThan(lit))
-        case LessThanOrEqual(ExtractBaseColumn(name, _), lit: Literal) =>
-          toPartitionFilter(name, _.lessThanOrEqual(lit))
-        case EqualTo(ExtractBaseColumn(name, _), lit: Literal) =>
-          toPartitionFilter(name, _.equalTo(lit))
-        case GreaterThan(ExtractBaseColumn(name, _), lit: Literal) =>
-          toPartitionFilter(name, _.greaterThan(lit))
-        case GreaterThanOrEqual(ExtractBaseColumn(name, _), lit: Literal) =>
-          toPartitionFilter(name, _.greaterThanOrEqual(lit))
-        case IsNull(ExtractBaseColumn(name, _)) =>
-          toPartitionFilter(name, _.isNull)
+        case LessThan(ExtractBaseColumn(nameParts, _), lit: Literal) =>
+          toPartitionFilter(nameParts, _.lessThan(lit))
+        case LessThanOrEqual(ExtractBaseColumn(nameParts, _), lit: Literal) =>
+          toPartitionFilter(nameParts, _.lessThanOrEqual(lit))
+        case EqualTo(ExtractBaseColumn(nameParts, _), lit: Literal) =>
+          toPartitionFilter(nameParts, _.equalTo(lit))
+        case GreaterThan(ExtractBaseColumn(nameParts, _), lit: Literal) =>
+          toPartitionFilter(nameParts, _.greaterThan(lit))
+        case GreaterThanOrEqual(ExtractBaseColumn(nameParts, _), lit: Literal) =>
+          toPartitionFilter(nameParts, _.greaterThanOrEqual(lit))
+        case IsNull(ExtractBaseColumn(nameParts, _)) =>
+          toPartitionFilter(nameParts, _.isNull)
         case _ => Nil
       }
     }
@@ -529,12 +537,12 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
  * handling of nested and non-nested fields, and allows pattern matching on the data type.
  */
 object ExtractBaseColumn {
-  def unapply(e: Expression): Option[(String, DataType)] = e match {
+  def unapply(e: Expression): Option[(Seq[String], DataType)] = e match {
     case AttributeReference(name, dataType, _, _) =>
-      Some((quoteIfNeeded(name), dataType))
+      Some(Seq(name), dataType)
     case g: GetStructField => g.child match {
-      case ExtractBaseColumn(name, _) =>
-        Some(s"${name}.${quoteIfNeeded(g.extractFieldName)}", g.dataType)
+      case ExtractBaseColumn(nameParts, _) =>
+        Some(nameParts :+ g.extractFieldName, g.dataType)
       case _ => None
     }
     case _ => None
