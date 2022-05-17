@@ -439,16 +439,16 @@ trait DataSkippingReaderBase
     case Not(EqualTo(v: Literal, a)) =>
       constructDataFilters(Not(EqualTo(a, v)))
 
-    // Match `EqualNullSafe` on a NotNullLiteral. Rewrite `EqualNullSafe(a, NotNullLiteral)` as
-    // `And(IsNotNull(a), EqualTo(a, NotNullLiteral))` to let the existing logic handle it.
-    // `EqualNullSafe(a, null)` will be replaced with `isNull(a)` by `NullPropagation` in Spark, so
-    // we don't need to handle `EqualNullSafe(a, null)`.
-    case EqualNullSafe(a, v: Literal) if v.value != null =>
-      constructDataFilters(And(IsNotNull(a), EqualTo(a, v)))
+    // Rewrite `EqualNullSafe(a, NotNullLiteral)` as `And(IsNotNull(a), EqualTo(a, NotNullLiteral))`
+    // and rewrite `EqualNullSafe(a, null)` as `IsNull(a)` to let the existing logic handle it.
+    case EqualNullSafe(a, v: Literal) =>
+      val rewrittenExpr = if (v.value != null) And(IsNotNull(a), EqualTo(a, v)) else IsNull(a)
+      constructDataFilters(rewrittenExpr)
     case EqualNullSafe(v: Literal, a) =>
       constructDataFilters(EqualNullSafe(a, v))
-    case Not(EqualNullSafe(a, v: Literal)) if v.value != null =>
-      constructDataFilters(Not(And(IsNotNull(a), EqualTo(a, v))))
+    case Not(EqualNullSafe(a, v: Literal)) =>
+      val rewrittenExpr = if (v.value != null) And(IsNotNull(a), EqualTo(a, v)) else IsNull(a)
+      constructDataFilters(Not(rewrittenExpr))
     case Not(EqualNullSafe(v: Literal, a)) =>
       constructDataFilters(Not(EqualNullSafe(a, v)))
 
