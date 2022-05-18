@@ -704,6 +704,11 @@ object DeltaErrors
       s"Invalid value '$input' for option '$name', $explain")
   }
 
+  def invalidIdempotentWritesOptionsException(explain: String): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS",
+      messageParameters = Array(explain))
+  }
 
   def startingVersionAndTimestampBothSetException(
       versionOptKey: String,
