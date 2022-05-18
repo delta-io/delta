@@ -63,7 +63,8 @@ class Snapshot(
     val deltaLog: DeltaLog,
     val timestamp: Long,
     val checksumOpt: Option[VersionChecksum],
-    val minSetTransactionRetentionTimestamp: Option[Long] = None)
+    val minSetTransactionRetentionTimestamp: Option[Long] = None,
+    checkpointMetadataOpt: Option[CheckpointMetaData] = None)
   extends StateCache
   with StatisticsCollection
   with DataSkippingReader
@@ -326,6 +327,8 @@ class Snapshot(
     assertLogFilesBelongToTable(path, logSegment.checkpoint)
     DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT, logSegment.checkpoint)
   }
+
+  def getCheckpointMetadataOpt: Option[CheckpointMetaData] = checkpointMetadataOpt
 
   def deltaFileSizeInBytes(): Long = deltaFileIndexOpt.map(_.sizeInBytes).getOrElse(0L)
   def checkpointSizeInBytes(): Long = checkpointFileIndexOpt.map(_.sizeInBytes).getOrElse(0L)

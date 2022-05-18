@@ -434,6 +434,14 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val CHECKPOINT_SCHEMA_WRITE_THRESHOLD_LENGTH =
+    buildConf("checkpointSchema.writeThresholdLength")
+      .internal()
+      .doc("Checkpoint schema larger than this threshold won't be written to the last checkpoint" +
+        " file")
+      .intConf
+      .createWithDefault(20000)
+
   val LAST_CHECKPOINT_CHECKSUM_ENABLED =
     buildConf("lastCheckpoint.checksum.enabled")
       .internal()
