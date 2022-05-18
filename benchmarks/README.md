@@ -111,6 +111,20 @@ gcloud dataproc clusters create delta-performance-benchmarks-cluster \
     --image-version 2.0-debian10
 ```
 
+#### Input data
+The benchmark is run using the raw TPC-DS data which has been provided as Apache Parquet files. There are two
+predefined datasets of different size, 1GB and 3TB, located in `s3://devrel-delta-datasets/tpcds-2.13/tpcds_sf1_parquet/`
+and `s3://devrel-delta-datasets/tpcds-2.13/tpcds_sf3000_parquet/`, respectively. Please keep in mind that
+`devrel-delta-datasets` bucket is configured as [Requester Pays](https://docs.aws.amazon.com/AmazonS3/latest/userguide/ObjectsinRequesterPaysBuckets.html) bucket,
+so [access requests have to be configured properly](https://docs.aws.amazon.com/AmazonS3/latest/userguide/ObjectsinRequesterPaysBuckets.html).
+
+Unfortunately, Hadoop in versions available in Dataproc does not support *Requester Pays* feature. It will be available
+as of Hadoop 3.3.4 ([HADOOP-14661](https://issues.apache.org/jira/browse/HADOOP-14661)).
+
+In consequence, one need to copy the datasets to Google Storage manually before running benchmarks. The simplest
+solution is to copy the data in two steps: first to a S3 bucket with *Requester Pays* disabled, then copy the data
+using [Cloud Storage Transfer Service](https://cloud.google.com/storage-transfer/docs/how-to).
+
 _________________
 
 ### Test the cluster setup
