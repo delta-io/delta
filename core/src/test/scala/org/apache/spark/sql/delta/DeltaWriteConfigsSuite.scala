@@ -107,6 +107,7 @@ class DeltaWriteConfigsSuite extends QueryTest
       String, String, String, Boolean,
       String, String, String, String, String)]
 
+  // scalastyle:off line.size.limit
   /*
   DataFrameWriter Test Output
   +---------------+-----------+-------------------------+----------------------+------------------------------------------------------+
@@ -120,6 +121,7 @@ class DeltaWriteConfigsSuite extends QueryTest
   |table          |append     |false                    |true                  |delta.deletedFileRetentionDuration -> interval 2 weeks|
   +---------------+-----------+-------------------------+----------------------+------------------------------------------------------+
   */
+  // scalastyle:on line.size.limit
   Seq("path", "table").foreach { outputLoc =>
     Seq("create", "overwrite", "append").foreach { outputMode =>
       val testName = s"DataFrameWriter - outputLoc=$outputLoc & mode=$outputMode"
@@ -159,6 +161,7 @@ class DeltaWriteConfigsSuite extends QueryTest
     }
   }
 
+  // scalastyle:off line.size.limit
   /*
   DataStreamWriter Test Output
   +---------------+-----------+-------------------------+----------------------+------+
@@ -172,6 +175,7 @@ class DeltaWriteConfigsSuite extends QueryTest
   |table          |complete   |false                    |false                 |      |
   +---------------+-----------+-------------------------+----------------------+------+
   */
+  // scalastyle:on line.size.limit
   // Data source DeltaDataSource does not support Update output mode
   Seq("path", "table").foreach { outputLoc =>
     Seq("create", "append", "complete").foreach { outputMode =>
@@ -226,6 +230,7 @@ class DeltaWriteConfigsSuite extends QueryTest
     }
   }
 
+  // scalastyle:off line.size.limit
   /*
   DataFrameWriterV2 Test Output
   +---------------+--------------+-------------------------+----------------------+------------------------------------------------------+
@@ -241,6 +246,7 @@ class DeltaWriteConfigsSuite extends QueryTest
   |table          |c_or_r_replace|false                    |true                  |delta.deletedFileRetentionDuration -> interval 2 weeks|
   +---------------+--------------+-------------------------+----------------------+------------------------------------------------------+
   */
+  // scalastyle:on line.size.limit
   Seq("path", "table").foreach { outputLoc =>
     Seq("create", "replace", "c_or_r_create", "c_or_r_replace").foreach { outputMode =>
       val testName = s"DataFrameWriterV2 - outputLoc=$outputLoc & outputMode=$outputMode"
@@ -276,10 +282,9 @@ class DeltaWriteConfigsSuite extends QueryTest
             val answer_no_prefix = config.contains(config_no_prefix)
             val answer_prefix = config.contains(config_prefix)
 
-
             assert(!answer_no_prefix)
             assert(answer_prefix)
-//            assert(config.size == 2) // 1 valid + 1 invalid option
+            assert(config.size == 1)
 
             dfw_v2_output += ((outputLoc, outputMode, answer_no_prefix, answer_prefix,
               config.mkString(",")))
@@ -289,6 +294,7 @@ class DeltaWriteConfigsSuite extends QueryTest
     }
   }
 
+  // scalastyle:off line.size.limit
   /*
   DeltaTableBuilder Test Output
   +---------------+--------------+-------------------------------------+-------------------------+----------------------+-----+---------------------------------------------------------------------------------------+
@@ -304,6 +310,7 @@ class DeltaWriteConfigsSuite extends QueryTest
   |table          |c_or_r_replace|true                                 |false                    |true                  |false|delta.deletedFileRetentionDuration -> interval 2 weeks,dataskippingnumindexedcols -> 33|
   +---------------+--------------+-------------------------------------+-------------------------+----------------------+-----+---------------------------------------------------------------------------------------+
   */
+  // scalastyle:on line.size.limit
   Seq("path", "table").foreach { outputLoc =>
     Seq("create", "replace", "c_or_r_create", "c_or_r_replace").foreach { outputMode =>
       val testName = s"DeltaTableBuilder - outputLoc=$outputLoc & outputMode=$outputMode"
@@ -498,6 +505,25 @@ class DeltaWriteConfigsSuite extends QueryTest
                 val option_prefix = config.contains(config_prefix)
                 val tblproperties_no_prefix = config.contains(config_no_prefix_2)
                 val tblproperties_prefix = config.contains(config_prefix_2)
+
+                var expectedSize = 0
+                if (option_was_set) {
+                  assert(option_prefix)
+                  expectedSize += 1
+                  if (sqlOp == "create" && !useAsSelectStmt) {
+                    assert(option_no_prefix)
+                    assert(config.contains(s"option.$config_prefix"))
+                    assert(config.contains(s"option.$config_no_prefix"))
+                    expectedSize += 3
+                  }
+                }
+                if (tblproperties_was_set) {
+                  assert(tblproperties_prefix)
+                  assert(tblproperties_no_prefix)
+                  expectedSize += 2
+                }
+
+                assert(config.size == expectedSize)
 
                 sql_output += ((
                   outputLoc,
