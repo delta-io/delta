@@ -84,7 +84,7 @@ class MultiDimClusteringFunctionsSuite extends QueryTest
         Row("b", 20)))
   }
 
-  test("range_partition_id(): corner cases") {
+  testQuietly("range_partition_id(): corner cases") {
     // invalid number of partitions.
     val ex1 = intercept[IllegalArgumentException] {
       spark.range(10).select(range_partition_id($"id", 0)).show
