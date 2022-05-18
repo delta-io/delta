@@ -30,6 +30,9 @@ object MultiDimClusteringFunctions {
    * Conceptually range-partitions the domain of values of the given column into `numPartitions`
    * partitions and computes the partition number that every value of that column corresponds to.
    * One can think of this as an approximate rank() function.
+   *
+   * Ex. For a column with values (0, 1, 3, 15, 36, 99) and numPartitions = 3 returns
+   * partition range ids as (0, 0, 1, 1, 2, 2).
    */
   def range_partition_id(col: Column, numPartitions: Int): Column = withExpr {
     RangePartitionId(col.expr, numPartitions)

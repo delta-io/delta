@@ -50,10 +50,15 @@ class MultiDimClusteringFunctionsSuite extends QueryTest
     val data = Seq("a" -> 10, "b" -> 20, "c" -> 30, "d" -> 40)
 
     checkAnswer(
+      // randomize the order and expect the partition ids assigned correctly in sorted order
       Random.shuffle(data).toDF("c1", "c2")
         .withColumn("r1", range_partition_id($"c1", 2))
         .withColumn("r2", range_partition_id($"c2", 4)),
       Seq(
+        // Column c1 has values (a, b, c, d). Splitting this value range into two partitions
+        // gets ranges [a, b] and [c, d]. Values in each range map to partition 0 and 1.
+        // Similarly column c2 has values (10, 20, 30, 40). Splitting this into four partitions
+        // gets ranges [10], [20], [30] and [40] which map to partition ids 0 to 3.
         Row("a", 10, 0, 0),
         Row("b", 20, 0, 1),
         Row("c", 30, 1, 2),
@@ -79,25 +84,33 @@ class MultiDimClusteringFunctionsSuite extends QueryTest
         Row("b", 20)))
   }
 
-  testQuietly("range_partition_id(): corner cases") {
-    intercept[IllegalArgumentException] {
+  test("range_partition_id(): corner cases") {
+    // invalid number of partitions.
+    val ex1 = intercept[IllegalArgumentException] {
       spark.range(10).select(range_partition_id($"id", 0)).show
     }
+    assert(ex1.getMessage contains "expected the number partitions to be greater than zero")
 
-    intercept[IllegalArgumentException] {
+    // invalid sample size used in sample selection for determining the range boundaries.
+    val ex2 = intercept[IllegalArgumentException] {
       withSQLConf(SQLConf.RANGE_EXCHANGE_SAMPLE_SIZE_PER_PARTITION.key -> "0") {
         spark.range(10).withColumn("rpi", range_partition_id($"id", 10)).show
       }
     }
+    assert(ex2.getMessage contains "Sample points per partition must be greater than 0 but found 0")
 
+    // Number of partitions is way more than the cardinality of input column values
     checkAnswer(
       spark.range(1).withColumn("rpi", range_partition_id($"id", 1000)),
       Row(0, 0))
 
+    // compute range_partition_id on a dataframe with zero rows
     checkAnswer(
       spark.range(0).withColumn("rpi", range_partition_id($"id", 1000)),
       Seq.empty[Row])
 
+
+    // compute range_partition_id on column with null values
     checkAnswer(
       Seq("a", null, "b", null).toDF("id").withColumn("rpi", range_partition_id($"id", 10)),
       Seq(
@@ -106,17 +119,15 @@ class MultiDimClusteringFunctionsSuite extends QueryTest
         Row(null, 0),
         Row(null, 0)))
 
+    // compute range_partition_id on column with one value which is null
     checkAnswer(
       spark.range(1).withColumn("id", lit(null)).withColumn("rpi", range_partition_id($"id", 10)),
       Row(null, 0))
 
+    // compute range_partition_id on array type column
     checkAnswer(
       spark.range(1).withColumn("id", lit(Array(1, 2)))
         .withColumn("rpi", range_partition_id($"id", 10)),
       Row(Array(1, 2), 0))
-  }
-
-  def intToBinary(x: Int): Array[Byte] = {
-    ByteBuffer.allocate(4).putInt(x).array()
   }
 }

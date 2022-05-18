@@ -36,7 +36,7 @@ import org.apache.spark.sql.types._
 case class RangePartitionId(child: Expression, numPartitions: Int)
   extends UnaryExpression with Unevaluable {
 
-  require(numPartitions > 0)
+  require(numPartitions > 0, "expected the number partitions to be greater than zero")
 
   override def checkInputDataTypes(): TypeCheckResult = {
     if (RowOrdering.isOrderable(child.dataType)) {
