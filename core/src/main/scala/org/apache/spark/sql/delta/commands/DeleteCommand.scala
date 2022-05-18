@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.commands
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, FileAction}
+import org.apache.spark.sql.delta.commands.DeleteCommand.{rewritingFilesMsg, FINDING_TOUCHED_FILES_MSG}
 import org.apache.spark.sql.delta.commands.MergeIntoCommand.totalBytesAndDistinctPartitionValues
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
@@ -195,7 +196,7 @@ case class DeleteCommand(
             true
           }.asNondeterministic()
           val filesToRewrite =
-            withStatusCode("DELTA", s"Finding files to rewrite for DELETE operation") {
+            withStatusCode("DELTA", FINDING_TOUCHED_FILES_MSG) {
               if (candidateFiles.isEmpty) {
                 Array.empty[String]
               } else {
@@ -326,7 +327,7 @@ case class DeleteCommand(
     }.asNondeterministic()
 
     withStatusCode(
-      "DELTA", s"Rewriting $numFilesToRewrite files for DELETE operation") {
+      "DELTA", rewritingFilesMsg(numFilesToRewrite)) {
       val dfToWrite = if (shouldWriteCdc) {
         import org.apache.spark.sql.delta.commands.cdc.CDCReader._
         // The logic here ends up being surprisingly elegant, with all source rows ending up in
@@ -365,7 +366,11 @@ object DeleteCommand {
     DeleteCommand(index.deltaLog, delete.child, delete.condition)
   }
 
-  val FILE_NAME_COLUMN = "_input_file_name_"
+  val FILE_NAME_COLUMN: String = "_input_file_name_"
+  val FINDING_TOUCHED_FILES_MSG: String = "Finding files to rewrite for DELETE operation"
+
+  def rewritingFilesMsg(numFilesToRewrite: Long): String =
+    s"Rewriting $numFilesToRewrite files for DELETE operation"
 }
 
 /**
