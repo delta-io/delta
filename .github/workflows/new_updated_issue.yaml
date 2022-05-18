@@ -9,7 +9,7 @@ on:
 
 jobs:
   automate-new-updated-issues:
-    if: ${{ !github.event.issue.pull_request && !contains('allisonport-db dennyglee scottsand-db tdas zsxwing', github.event.sender.login) }}
+    if: ${{ !github.event.issue.pull_request && !contains('allisonport-db dennyglee scottsand-db tdas vkorukanti zsxwing', github.event.sender.login) }}
     runs-on: ubuntu-latest
     steps:
       - uses: alex-page/github-project-automation-plus@v0.8.1

@@ -9,7 +9,7 @@ on:
 jobs:
   automate-updated-pull-requests:
     if: ${{ (github.event.issue.pull_request || github.event.pull_request) &&
-            !contains('allisonport-db dennyglee scottsand-db tdas zsxwing', github.event.sender.login) &&
+            !contains('allisonport-db dennyglee scottsand-db tdas vkorukanti zsxwing', github.event.sender.login) &&
             (github.event.pull_request.state == 'open' || github.event.issue.state == 'open') }}
     runs-on: ubuntu-latest
     steps:
