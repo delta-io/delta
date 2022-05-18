@@ -1233,3 +1233,28 @@ class DataSkippingDeltaV1Suite extends DataSkippingDeltaTests {
     }
   }
 }
+
+/** DataSkipping tests under id column mapping */
+trait DataSkippingDeltaIdColumnMappingTests extends DataSkippingDeltaTests
+  with DeltaColumnMappingTestUtils {
+
+  override def expectedStatsForFile(index: Int, colName: String, deltaLog: DeltaLog): String = {
+    val x = colName.phy(deltaLog)
+    s"""{"numRecords":1,"minValues":{"$x":$index},"maxValues":{"$x":$index},""" +
+      s""""nullCount":{"$x":0}}""".stripMargin
+  }
+}
+
+trait DataSkippingDeltaTestV1ColumnMappingMode extends DataSkippingDeltaIdColumnMappingTests {
+  override protected def getStatsDf(deltaLog: DeltaLog, columns: Column*): DataFrame = {
+    deltaLog.snapshot.withStats.select("stats.*")
+      .select(convertToPhysicalColumns(columns, deltaLog): _*)
+  }
+}
+
+class DataSkippingDeltaV1NameColumnMappingSuite
+  extends DataSkippingDeltaV1Suite
+    with DeltaColumnMappingEnableNameMode
+    with DataSkippingDeltaTestV1ColumnMappingMode {
+  override protected def runAllTests: Boolean = true
+}

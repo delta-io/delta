@@ -34,14 +34,14 @@ import org.apache.spark.SparkContext.SPARK_JOB_GROUP_ID
 import org.apache.spark.sql.{Encoders, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Expression, Literal}
-import org.apache.spark.sql.execution.command.LeafRunnableCommand
+import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableCommand}
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.util.{SystemClock, ThreadUtils}
 
 /** Base class defining abstract optimize command */
-abstract class OptimizeTableCommandBase extends LeafRunnableCommand with DeltaCommand {
+abstract class OptimizeTableCommandBase extends RunnableCommand with DeltaCommand {
 
   override val output: Seq[Attribute] = Seq(
     AttributeReference("path", StringType)(),
@@ -58,7 +58,7 @@ case class OptimizeTableCommand(
     path: Option[String],
     tableId: Option[TableIdentifier],
     partitionPredicate: Option[String])
-  extends OptimizeTableCommandBase {
+  extends OptimizeTableCommandBase with LeafRunnableCommand {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = getDeltaLog(sparkSession, path, tableId, "OPTIMIZE")

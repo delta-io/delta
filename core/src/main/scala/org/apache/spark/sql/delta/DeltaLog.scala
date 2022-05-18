@@ -31,6 +31,7 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinitions._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
@@ -399,6 +400,15 @@ class DeltaLog private(
       // out in this case.
       throw DeltaErrors.pathNotExistsException(dataPath.toString)
     }
+
+    // For CDC we have to return the relation that represents the change data instead of actual
+    // data.
+    if (!cdcOptions.isEmpty) {
+      recordDeltaEvent(this, "delta.cdf.read", data = cdcOptions.asCaseSensitiveMap())
+      return CDCReader.getCDCRelation(spark,
+        this, snapshotToUse, partitionFilters, spark.sessionState.conf, cdcOptions)
+    }
+
     val fileIndex = TahoeLogFileIndex(
       spark, this, dataPath, snapshotToUse, partitionFilters, isTimeTravelQuery)
     var bucketSpec: Option[BucketSpec] = None

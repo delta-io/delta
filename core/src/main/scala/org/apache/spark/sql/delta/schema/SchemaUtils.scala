@@ -24,6 +24,7 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, GeneratedColumn, NoMapping}
 import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -120,12 +121,12 @@ object SchemaUtils {
       case a: ArrayType if typeExistsRecursively(a)(_.isInstanceOf[NullType]) =>
         val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
         throw new DeltaAnalysisException(
-          errorClass = "COMPLEX_TYPE_COLUMN_CANNOT_CONTAIN_NULL_TYPE",
+          errorClass = "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE",
           messageParameters = Array(colName, "ArrayType"))
       case m: MapType if typeExistsRecursively(m)(_.isInstanceOf[NullType]) =>
         val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
         throw new DeltaAnalysisException(
-          errorClass = "COMPLEX_TYPE_COLUMN_CANNOT_CONTAIN_NULL_TYPE",
+          errorClass = "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE",
           messageParameters = Array(colName, "NullType"))
       case _ =>
         val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
@@ -190,6 +191,14 @@ object SchemaUtils {
     if (dataFields.subsetOf(tableFields)) {
       data.toDF()
     } else {
+      // Allow the same shortcut logic (as the above `if` stmt) if the only extra fields are CDC
+      // metadata fields.
+      val nonCdcFields = dataFields.filterNot { f =>
+        f == CDCReader.CDC_PARTITION_COL || f == CDCReader.CDC_TYPE_COLUMN_NAME
+      }
+      if (nonCdcFields.subsetOf(tableFields)) {
+        return data.toDF()
+      }
       // Check that nested columns don't need renaming. We can't handle that right now
       val topLevelDataFields = dataFields.map(UnresolvedAttribute.parseAttributeName(_).head)
       if (topLevelDataFields.subsetOf(tableFields)) {
@@ -203,6 +212,9 @@ object SchemaUtils {
       val aliasExpressions = dataSchema.map { field =>
         val originalCase: String = baseFields.get(field.name) match {
           case Some(original) => original.name
+          // This is a virtual partition column used for doing CDC writes. It's not actually
+          // in the table schema.
+          case None if field.name == CDCReader.CDC_TYPE_COLUMN_NAME => field.name
           case None =>
             throw DeltaErrors.cannotResolveColumn(field, baseSchema)
         }
@@ -1005,6 +1017,78 @@ object SchemaUtils {
   }
 
   /**
+   * Find the unsupported data type in a table schema. Return all columns that are using unsupported
+   * data types. For example,
+   * `findUnsupportedDataType(struct&lt;a: struct&lt;b: unsupported_type&gt;&gt;)` will return
+   * `Some(unsupported_type, Some("a.b"))`.
+   */
+  def findUnsupportedDataTypes(schema: StructType): Seq[UnsupportedDataTypeInfo] = {
+    val unsupportedDataTypes = mutable.ArrayBuffer[UnsupportedDataTypeInfo]()
+    findUnsupportedDataTypesRecursively(unsupportedDataTypes, schema)
+    unsupportedDataTypes.toSeq
+  }
+
+  /**
+   * Find the unsupported data types in a `DataType` recursively. Add the unsupported data types to
+   * the provided `unsupportedDataTypes` buffer.
+   *
+   * @param unsupportedDataTypes the buffer to store the found unsupport data types and the column
+   *                             paths.
+   * @param dataType the data type to search.
+   * @param columnPath the column path to access the given data type. The callder should make sure
+   *                   `columnPath` is not empty when `dataType` is not `StructType`.
+   */
+  private def findUnsupportedDataTypesRecursively(
+      unsupportedDataTypes: mutable.ArrayBuffer[UnsupportedDataTypeInfo],
+      dataType: DataType,
+      columnPath: Seq[String] = Nil): Unit = dataType match {
+    case NullType =>
+    case BooleanType =>
+    case ByteType =>
+    case ShortType =>
+    case IntegerType | _: YearMonthIntervalType =>
+    case LongType | _: DayTimeIntervalType =>
+    case FloatType =>
+    case DoubleType =>
+    case StringType =>
+    case DateType =>
+    case TimestampType =>
+    case TimestampNTZType =>
+      assert(columnPath.nonEmpty, "'columnPath' must not be empty")
+      unsupportedDataTypes += UnsupportedDataTypeInfo(prettyFieldName(columnPath), TimestampNTZType)
+    case BinaryType =>
+    case _: DecimalType =>
+    case a: ArrayType =>
+      assert(columnPath.nonEmpty, "'columnPath' must not be empty")
+      findUnsupportedDataTypesRecursively(
+        unsupportedDataTypes,
+        a.elementType,
+        columnPath.dropRight(1) :+ columnPath.last + "[]")
+    case m: MapType =>
+      assert(columnPath.nonEmpty, "'columnPath' must not be empty")
+      findUnsupportedDataTypesRecursively(
+        unsupportedDataTypes,
+        m.keyType,
+        columnPath.dropRight(1) :+ columnPath.last + "[key]")
+      findUnsupportedDataTypesRecursively(
+        unsupportedDataTypes,
+        m.valueType,
+        columnPath.dropRight(1) :+ columnPath.last + "[value]")
+    case s: StructType =>
+      s.fields.foreach { f =>
+        findUnsupportedDataTypesRecursively(
+          unsupportedDataTypes,
+          f.dataType,
+          columnPath :+ f.name)
+      }
+    case udt: UserDefinedType[_] =>
+      findUnsupportedDataTypesRecursively(unsupportedDataTypes, udt.sqlType, columnPath)
+    case dt: DataType =>
+      assert(columnPath.nonEmpty, "'columnPath' must not be empty")
+      unsupportedDataTypes += UnsupportedDataTypeInfo(prettyFieldName(columnPath), dt)
+  }
+
+  /**
    * Find all the generated columns that depend on the given target column.
    */
   def findDependentGeneratedColumns(
@@ -1030,3 +1114,11 @@ object SchemaUtils {
     }
   }
 }
+
+/**
+ * The information of unsupported data type returned by [[SchemaUtils.findUnsupportedDataTypes]].
+ *
+ * @param column the column path to access the column using an unsupported data type, such as `a.b`.
+ * @param dataType the unsupported data type.
+ */
+case class UnsupportedDataTypeInfo(column: String, dataType: DataType)
