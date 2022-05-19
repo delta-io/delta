@@ -265,7 +265,8 @@ trait SnapshotManagement { self: DeltaLog =>
         logInfo(s"Loading version ${segment.version}$startCheckpoint")
         val snapshot = createSnapshot(
           initSegment = segment,
-          minFileRetentionTimestamp = minFileRetentionTimestamp)
+          minFileRetentionTimestamp = minFileRetentionTimestamp,
+          checkpointMetadataOptHint = lastCheckpointOpt)
 
         logInfo(s"Returning initial snapshot $snapshot")
         CapturedSnapshot(snapshot, currentTimestamp)
@@ -281,7 +282,8 @@ trait SnapshotManagement { self: DeltaLog =>
 
   protected def createSnapshot(
       initSegment: LogSegment,
-      minFileRetentionTimestamp: Long): Snapshot = {
+      minFileRetentionTimestamp: Long,
+      checkpointMetadataOptHint: Option[CheckpointMetaData]): Snapshot = {
     val checksumOpt = readChecksum(initSegment.version)
     createSnapshotFromGivenOrEquivalentLogSegment(initSegment) { segment =>
       new Snapshot(
@@ -292,8 +294,25 @@ trait SnapshotManagement { self: DeltaLog =>
         deltaLog = this,
         timestamp = segment.lastCommitTimestamp,
         checksumOpt = checksumOpt,
-        minSetTransactionRetentionTimestamp = None)
+        minSetTransactionRetentionTimestamp = None,
+        checkpointMetadataOpt = getCheckpointMetadataForSegment(segment, checkpointMetadataOptHint))
     }
+  }
+
+  /**
+   * Returns the [[CheckpointMetaData]] for the given [[LogSegment]].
+   * If the passed `checkpointMetadataOptHint` matches the `segment`, then it is returned
+   * directly.
+   */
+  protected def getCheckpointMetadataForSegment(
+      segment: LogSegment,
+      checkpointMetadataOptHint: Option[CheckpointMetaData]): Option[CheckpointMetaData] = {
+    // validate that `checkpointMetadataOptHint` and `segment` has same info regarding the
+    // checkpoint version and parts.
+    val checkpointMatches =
+      (segment.checkpointVersionOpt == checkpointMetadataOptHint.map(_.version)) &&
+        (segment.checkpoint.size == checkpointMetadataOptHint.flatMap(_.parts).getOrElse(1))
+    if (checkpointMatches) checkpointMetadataOptHint else CheckpointMetaData.fromLogSegment(segment)
   }
 
   /**
@@ -547,7 +566,8 @@ trait SnapshotManagement { self: DeltaLog =>
 
         val newSnapshot = createSnapshot(
           initSegment = segment,
-          minFileRetentionTimestamp = minFileRetentionTimestamp)
+          minFileRetentionTimestamp = minFileRetentionTimestamp,
+          checkpointMetadataOptHint = snapshot.getCheckpointMetadataOpt)
 
         if (previousSnapshot.version > -1 &&
           previousSnapshot.metadata.id != newSnapshot.metadata.id) {
@@ -596,7 +616,8 @@ trait SnapshotManagement { self: DeltaLog =>
     getLogSegmentForVersion(startingCheckpoint.map(_.version), Some(version)).map { segment =>
       createSnapshot(
         initSegment = segment,
-        minFileRetentionTimestamp = minFileRetentionTimestamp)
+        minFileRetentionTimestamp = minFileRetentionTimestamp,
+        checkpointMetadataOptHint = None)
     }.getOrElse {
       // We can't return InitialSnapshot because our caller asked for a specific snapshot version.
       throw DeltaErrors.emptyDirectoryException(logPath.toString)

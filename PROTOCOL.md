@@ -157,6 +157,7 @@ size | The number of actions that are stored in the checkpoint.
 parts | The number of fragments if the last checkpoint was written in multiple parts. This field is optional.
 sizeInBytes | The number of bytes of the checkpoint. This field is optional.
 numOfAddFiles | The number of AddFile actions in the checkpoint. This field is optional.
+checkpointSchema | The schema of the checkpoint file. This field is optional.
 checksum | The checksum of the last checkpoint JSON. This field is optional.
 
 The checksum field is an optional field which contains the MD5 checksum for fields of the last checkpoint json file.
