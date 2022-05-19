@@ -598,7 +598,7 @@ class DeltaSuite extends QueryTest
 
   test("batch write: append, dynamic partition overwrite") {
     withTempDir { tempDir =>
-      def data = spark.read.format("delta").load(tempDir.toString)
+      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
 
       Seq(1, 2, 3).toDF
         .withColumn("part", $"value" % 2)
@@ -620,7 +620,7 @@ class DeltaSuite extends QueryTest
     }
 
     withTempDir { tempDir =>
-      def data = spark.read.format("delta").load(tempDir.toString)
+      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
 
       Seq(("a", "x"), ("b", "y"), ("c", "x")).toDF("value", "part")
         .write
@@ -642,7 +642,7 @@ class DeltaSuite extends QueryTest
     withTempDir { tempDir =>
       // overwrites nothing
 
-      def data = spark.read.format("delta").load(tempDir.toString)
+      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
 
       Seq(("a", "x"), ("b", "y"), ("c", "x")).toDF("value", "part")
         .write
@@ -665,7 +665,7 @@ class DeltaSuite extends QueryTest
     withTempDir { tempDir =>
       // multiple partition columns
 
-      def data = spark.read.format("delta").load(tempDir.toString)
+      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
 
       Seq(("a", "x", 1), ("b", "y", 2), ("c", "x", 3)).toDF("part1", "part2", "value")
         .write
@@ -688,7 +688,7 @@ class DeltaSuite extends QueryTest
 
   test("batch write: append, dynamic partition overwrite with replaceWhere") {
     withTempDir { tempDir =>
-      def data = spark.read.format("delta").load(tempDir.toString)
+      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
 
       Seq((1, "x"), (2, "y"), (3, "z")).toDF("value", "sub")
         .withColumn("part", $"value" % 2)
@@ -714,7 +714,7 @@ class DeltaSuite extends QueryTest
 
   test("batch write: append, overwrite without partitions should ignore partition overwrite mode") {
     withTempDir { tempDir =>
-      def data = spark.read.format("delta").load(tempDir.toString)
+      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
 
       Seq(1, 2, 3).toDF
         .withColumn("part", $"value" % 2)
