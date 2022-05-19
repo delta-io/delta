@@ -52,6 +52,10 @@ import org.apache.spark.sql.types.StructType
  * In combination with `Overwrite`, a `replaceWhere` option can be used to transactionally
  * replace data that matches a predicate.
  *
+ * In combination with `Overwrite` dynamic partition overwrite mode (option `partitionOverwriteMode`
+ * set to `dynamic`) is also supported. However a `replaceWhere` will always take precedent over
+ * dynamic partition overwrite mode (and effectively disable it).
+ *
  * @param schemaInCatalog The schema created in Catalog. We will use this schema to update metadata
  *                        when it is set (in CTAS code path), and otherwise use schema from `data`.
  */
