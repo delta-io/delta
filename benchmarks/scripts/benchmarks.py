@@ -145,7 +145,7 @@ class DeltaBenchmarkSpec(BenchmarkSpec):
 
     @staticmethod
     def delta_maven_artifacts(delta_version, scala_version):
-        return f"io.delta:delta-core_{scala_version}:{delta_version},io.delta:delta-hive_{scala_version}:0.2.0"
+        return f"io.delta:delta-core_{scala_version}:{delta_version},io.delta:delta-contribs_{scala_version}:{delta_version},io.delta:delta-hive_{scala_version}:0.2.0"
 
 
 class DeltaTPCDSDataLoadSpec(TPCDSDataLoadSpec, DeltaBenchmarkSpec):
