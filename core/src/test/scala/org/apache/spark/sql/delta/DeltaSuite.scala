@@ -616,14 +616,17 @@ class DeltaSuite extends QueryTest
         .mode("overwrite")
         .option("partitionOverwriteMode", "dynamic")
         .save(tempDir.getCanonicalPath)
-      checkDatasetUnorderly(data.toDF.select($"value".as[Int]), 1, 2, 5)
+      checkDatasetUnorderly(data.select("value").as[Int], 1, 2, 5)
+    }
+
+    withTempDir { tempDir =>
+      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
 
       Seq(("a", "x"), ("b", "y"), ("c", "x")).toDF("value", "part")
         .write
         .format("delta")
         .partitionBy("part")
-        .mode("overwrite")
-        .option("overwriteSchema", true)
+        .mode("append")
         .save(tempDir.getCanonicalPath)
 
       Seq(("a", "x"), ("d", "x")).toDF("value", "part")
@@ -633,7 +636,53 @@ class DeltaSuite extends QueryTest
         .mode("overwrite")
         .option("partitionOverwriteMode", "dynamic")
         .save(tempDir.getCanonicalPath)
-      checkDatasetUnorderly(data.toDF.select($"value".as[String]), "a", "b", "d")
+      checkDatasetUnorderly(data.toDF.select("value").as[String], "a", "b", "d")
+    }
+
+    withTempDir { tempDir =>
+      // overwrites nothing
+
+      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+      Seq(("a", "x"), ("b", "y"), ("c", "x")).toDF("value", "part")
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .mode("append")
+        .save(tempDir.getCanonicalPath)
+
+      Seq(("d", "z")).toDF("value", "part")
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .mode("overwrite")
+        .option("partitionOverwriteMode", "dynamic")
+        .save(tempDir.getCanonicalPath)
+      checkDatasetUnorderly(data.toDF.select("value", "part").as[(String, String)],
+        ("a", "x"), ("b", "y"), ("c", "x"), ("d", "z"))
+    }
+
+    withTempDir { tempDir =>
+      // multiple partition columns
+
+      def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+
+      Seq(("a", "x", 1), ("b", "y", 2), ("c", "x", 3)).toDF("part1", "part2", "value")
+        .write
+        .format("delta")
+        .partitionBy("part1", "part2")
+        .mode("append")
+        .save(tempDir.getCanonicalPath)
+
+      Seq(("x", "a", 4), ("x", "d", 5)).toDF("part2", "part1", "value")
+        .write
+        .format("delta")
+        .partitionBy("part1", "part2")
+        .mode("overwrite")
+        .option("partitionOverwriteMode", "dynamic")
+        .save(tempDir.getCanonicalPath)
+      checkDatasetUnorderly(data.toDF.select("part1", "part2", "value").as[(String, String, Int)],
+        ("a", "x", 4), ("b", "y", 2), ("c", "x", 3), ("d", "x", 5))
     }
   }
 
@@ -658,7 +707,7 @@ class DeltaSuite extends QueryTest
         .option(DeltaOptions.REPLACE_WHERE_OPTION, "part = 1")
         .option("partitionOverwriteMode", "dynamic")
         .save(tempDir.getCanonicalPath)
-      checkDatasetUnorderly(data.toDF.select($"value".as[Int], $"sub".as[String]),
+      checkDatasetUnorderly(data.toDF.select("value", "sub").as[(Int, String)],
         (2, "y"), (3, "x"), (5, "x"))
     }
   }

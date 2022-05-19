@@ -23,7 +23,7 @@ import scala.util.Try
 import scala.util.matching.Regex
 
 import org.apache.spark.sql.delta.DeltaOptions.{DATA_CHANGE_OPTION, MERGE_SCHEMA_OPTION, OVERWRITE_SCHEMA_OPTION,
-  PARTITION_OVERWRITE_MODE}
+  PARTITION_OVERWRITE_MODE_OPTION}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -94,13 +94,24 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
     options.get(DATA_CHANGE_OPTION).exists(!toBoolean(_, DATA_CHANGE_OPTION))
   }
 
+  /**
+   * Validate that partitionOverwriteMode is set to either STATIC or DYNAMIC
+   * and returns true if its DYNAMIC.
+   */
+  def validatePartitionOverwriteMode(mode: String): Boolean = {
+    if (!mode.equalsIgnoreCase("STATIC") && !mode.equalsIgnoreCase("DYNAMIC")) {
+      throw DeltaErrors.illegalDeltaOptionException(
+        PARTITION_OVERWRITE_MODE_OPTION, mode, "must be either 'STATIC' or 'DYNAMIC'"
+      )
+    }
+    mode.equalsIgnoreCase("DYNAMIC")
+  }
+
   /** Whether to only overwrite partitions that have data written into it at runtime. */
   def isDynamicPartitionOverwriteMode: Boolean = {
-    val mode = options.get(PARTITION_OVERWRITE_MODE)
+    val mode = options.get(PARTITION_OVERWRITE_MODE_OPTION)
       .getOrElse(sqlConf.getConf(SQLConf.PARTITION_OVERWRITE_MODE))
-    require(mode.equalsIgnoreCase("STATIC") || mode.equalsIgnoreCase("DYNAMIC"),
-      s"invalid setting for ${PARTITION_OVERWRITE_MODE}")
-    mode.equalsIgnoreCase("DYNAMIC")
+    validatePartitionOverwriteMode(mode)
   }
 }
 
@@ -183,7 +194,7 @@ object DeltaOptions extends DeltaLogging {
   val OVERWRITE_SCHEMA_OPTION = "overwriteSchema"
   /** An option to specify user-defined metadata in commitInfo */
   val USER_METADATA_OPTION = "userMetadata"
-  val PARTITION_OVERWRITE_MODE = "partitionOverwriteMode"
+  val PARTITION_OVERWRITE_MODE_OPTION = "partitionOverwriteMode"
 
   val MAX_FILES_PER_TRIGGER_OPTION = "maxFilesPerTrigger"
   val MAX_FILES_PER_TRIGGER_OPTION_DEFAULT = 1000
@@ -204,6 +215,7 @@ object DeltaOptions extends DeltaLogging {
     EXCLUDE_REGEX_OPTION,
     OVERWRITE_SCHEMA_OPTION,
     USER_METADATA_OPTION,
+    PARTITION_OVERWRITE_MODE_OPTION,
     MAX_FILES_PER_TRIGGER_OPTION,
     IGNORE_FILE_DELETION_OPTION,
     IGNORE_CHANGES_OPTION,

@@ -500,7 +500,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   /** Returns files within the given partitions. */
   def filterFiles(partitions: Set[Map[String, String]]): Seq[AddFile] = {
-    import org.apache.spark.sql.functions.{array, col, lit}
+    import org.apache.spark.sql.functions.{array, col}
     val partitionValues = partitions.map { partition =>
       metadata.partitionColumns.map(partition).toArray
     }
