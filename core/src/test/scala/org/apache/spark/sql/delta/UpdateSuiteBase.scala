@@ -92,7 +92,10 @@ abstract class UpdateSuiteBase
       tableName: Option[String] = None): Unit = {
     executeUpdate(tableName.getOrElse(s"delta.`$tempPath`"), setClauses, where = condition.orNull)
     checkAnswer(
-      tableName.map(readDeltaTable(_)).getOrElse(readDeltaTableByPath(tempPath)),
+      tableName
+        .map(readDeltaTable(_))
+        .getOrElse(readDeltaTableByPath(tempPath))
+        .select("key", "value"),
       expectedResults)
   }
 
