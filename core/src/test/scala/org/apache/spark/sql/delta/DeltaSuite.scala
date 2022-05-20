@@ -636,7 +636,7 @@ class DeltaSuite extends QueryTest
         .mode("overwrite")
         .option("partitionOverwriteMode", "dynamic")
         .save(tempDir.getCanonicalPath)
-      checkDatasetUnorderly(data.toDF.select("value").as[String], "a", "b", "d")
+      checkDatasetUnorderly(data.select("value").as[String], "a", "b", "d")
     }
 
     withTempDir { tempDir =>
@@ -674,7 +674,7 @@ class DeltaSuite extends QueryTest
         .mode("append")
         .save(tempDir.getCanonicalPath)
 
-      Seq(("x", "a", 4), ("x", "d", 5)).toDF("part2", "part1", "value")
+      Seq(("a", "x", 4), ("d", "x", 5)).toDF("part1", "part2", "value")
         .write
         .format("delta")
         .partitionBy("part1", "part2")
