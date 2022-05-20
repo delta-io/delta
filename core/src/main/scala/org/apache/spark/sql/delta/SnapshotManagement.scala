@@ -500,7 +500,7 @@ trait SnapshotManagement { self: DeltaLog =>
     if (!doAsync) {
       recordFrameProfile("Delta", "SnapshotManagement.update") {
         lockInterruptibly {
-          updateInternal(capturedSnapshot.snapshot, isAsync = false)
+          updateInternal(isAsync = false)
         }
       }
     } else {
@@ -512,7 +512,7 @@ trait SnapshotManagement { self: DeltaLog =>
             jobGroup,
             s"Updating state of Delta table at ${capturedSnapshot.snapshot.path}",
             interruptOnCancel = true)
-          tryUpdate(capturedSnapshot.snapshot, isAsync = true)
+          tryUpdate(isAsync = true)
         }(SnapshotManagement.deltaLogAsyncUpdateThreadPool)
       }
       currentSnapshot.snapshot
@@ -523,10 +523,10 @@ trait SnapshotManagement { self: DeltaLog =>
    * Try to update ActionLog. If another thread is updating ActionLog, then this method returns
    * at once and return the current snapshot. The return snapshot may be stale.
    */
-  private def tryUpdate(previousSnapshot: Snapshot, isAsync: Boolean): Snapshot = {
+  private def tryUpdate(isAsync: Boolean): Snapshot = {
     if (deltaLogLock.tryLock()) {
       try {
-        updateInternal(previousSnapshot, isAsync)
+        updateInternal(isAsync)
       } finally {
         deltaLogLock.unlock()
       }
@@ -538,11 +538,11 @@ trait SnapshotManagement { self: DeltaLog =>
   /**
    * Queries the store for new delta files and applies them to the current state.
    * Note: the caller should hold `deltaLogLock` before calling this method.
-   * previousSnapshot refers to the snapshot at the start of the update() call.
    */
-  protected def updateInternal(previousSnapshot: Snapshot, isAsync: Boolean): Snapshot =
+  protected def updateInternal(isAsync: Boolean): Snapshot =
     recordDeltaOperation(this, "delta.log.update", Map(TAG_ASYNC -> isAsync.toString)) {
       val updateTimestamp = clock.getTimeMillis()
+      val previousSnapshot = currentSnapshot.snapshot
       val segmentOpt =
         getLogSegmentForVersion(previousSnapshot.logSegment.checkpointVersionOpt)
       installSnapshotInternal(previousSnapshot, segmentOpt, updateTimestamp, isAsync)
