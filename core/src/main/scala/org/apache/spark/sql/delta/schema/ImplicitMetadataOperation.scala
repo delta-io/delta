@@ -93,7 +93,8 @@ trait ImplicitMetadataOperation extends DeltaLogging {
           description = description,
           schemaString = dataSchema.json,
           partitionColumns = normalizedPartitionCols,
-          configuration = cleanedConfs))
+          configuration = cleanedConfs,
+          createdTime = Some(System.currentTimeMillis())))
     } else if (isOverwriteMode && canOverwriteSchema && (isNewSchema || isPartitioningChanged)) {
       // Can define new partitioning in overwrite mode
       val newMetadata = txn.metadata.copy(

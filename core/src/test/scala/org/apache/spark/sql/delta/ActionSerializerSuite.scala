@@ -221,20 +221,27 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession {
 
   {
     val schemaStr = new StructType().add("a", "long").json
+    val metadata = Metadata(
+      name = "t1",
+      description = "desc",
+      format = Format(provider = "parquet", options = Map("o1" -> "v1")),
+      partitionColumns = Seq("a"),
+      createdTime = Some(2222),
+      configuration = Map("delta.enableXyz" -> "true"),
+      schemaString = schemaStr)
     testActionSerDe(
-      "Metadata - json serialization/deserialization",
-      Metadata(
-        name = "t1",
-        description = "desc",
-        format = Format(provider = "parquet", options = Map("o1" -> "v1")),
-        partitionColumns = Seq("a"),
-        createdTime = Some(2222),
-        configuration = Map("delta.enableXyz" -> "true"),
-        schemaString = schemaStr),
+      "Metadata - json serialization/deserialization", metadata,
       expectedJson = """{"metaData":{"id":"testId","name":"t1","description":"desc",""" +
         """"format":{"provider":"parquet","options":{"o1":"v1"}},""" +
         s""""schemaString":${JsonUtils.toJson(schemaStr)},"partitionColumns":["a"],""" +
         """"configuration":{"delta.enableXyz":"true"},"createdTime":2222}}""".stripMargin)
+    testActionSerDe(
+      "Metadata with empty createdTime- json serialization/deserialization",
+      metadata.copy(createdTime = None),
+      expectedJson = """{"metaData":{"id":"testId","name":"t1","description":"desc",""" +
+        """"format":{"provider":"parquet","options":{"o1":"v1"}},""" +
+        s""""schemaString":${JsonUtils.toJson(schemaStr)},"partitionColumns":["a"],""" +
+        """"configuration":{"delta.enableXyz":"true"}}}""".stripMargin)
   }
 
   {
