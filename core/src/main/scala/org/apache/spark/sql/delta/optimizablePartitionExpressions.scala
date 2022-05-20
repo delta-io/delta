@@ -21,6 +21,7 @@ import org.apache.spark.sql.delta.OptimizablePartitionExpression._
 import org.apache.spark.sql.Column
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{Cast, DateFormatClass, DayOfMonth, Expression, Hour, IsNull, Literal, Month, Or, Substring, UnixTimestamp, Year}
+import org.apache.spark.sql.catalyst.util.quoteIfNeeded
 import org.apache.spark.sql.types.{DateType, StringType, TimestampType}
 
 /**
@@ -76,7 +77,8 @@ sealed trait OptimizablePartitionExpression {
 object OptimizablePartitionExpression {
   /** Provide a convenient method to convert a string to a column expression */
   implicit class ColumnExpression(val colName: String) extends AnyVal {
-    def toCol: Expression = new Column(colName).expr
+    // This will always be a top level column so quote it if necessary
+    def toPartCol: Expression = new Column(quoteIfNeeded(colName)).expr
   }
 }
 
@@ -89,8 +91,8 @@ case class DatePartitionExpr(partitionColumn: String) extends OptimizablePartiti
 
   override def lessThanOrEqual(lit: Literal): Option[Expression] = {
     val expr = lit.dataType match {
-      case TimestampType => Some(partitionColumn.toCol <= Cast(lit, DateType))
-      case DateType => Some(partitionColumn.toCol <= lit)
+      case TimestampType => Some(partitionColumn.toPartCol <= Cast(lit, DateType))
+      case DateType => Some(partitionColumn.toPartCol <= lit)
       case _ => None
     }
     // to avoid any expression which yields null
@@ -99,8 +101,8 @@ case class DatePartitionExpr(partitionColumn: String) extends OptimizablePartiti
 
   override def equalTo(lit: Literal): Option[Expression] = {
     val expr = lit.dataType match {
-      case TimestampType => Some(partitionColumn.toCol === Cast(lit, DateType))
-      case DateType => Some(partitionColumn.toCol === lit)
+      case TimestampType => Some(partitionColumn.toPartCol === Cast(lit, DateType))
+      case DateType => Some(partitionColumn.toPartCol === lit)
       case _ => None
     }
     // to avoid any expression which yields null
@@ -114,15 +116,15 @@ case class DatePartitionExpr(partitionColumn: String) extends OptimizablePartiti
 
   override def greaterThanOrEqual(lit: Literal): Option[Expression] = {
     val expr = lit.dataType match {
-      case TimestampType => Some(partitionColumn.toCol >= Cast(lit, DateType))
-      case DateType => Some(partitionColumn.toCol >= lit)
+      case TimestampType => Some(partitionColumn.toPartCol >= Cast(lit, DateType))
+      case DateType => Some(partitionColumn.toPartCol >= lit)
       case _ => None
     }
     // to avoid any expression which yields null
     expr.map(e => Or(e, IsNull(e)))
   }
 
-  override def isNull(): Option[Expression] = Some(partitionColumn.toCol.isNull)
+  override def isNull(): Option[Expression] = Some(partitionColumn.toPartCol.isNull)
 }
 
 /**
@@ -139,7 +141,7 @@ case class YearPartitionExpr(yearPart: String) extends OptimizablePartitionExpre
 
   override def lessThanOrEqual(lit: Literal): Option[Expression] = {
     val expr = lit.dataType match {
-      case TimestampType | DateType => Some(yearPart.toCol <= Year(lit))
+      case TimestampType | DateType => Some(yearPart.toPartCol <= Year(lit))
       case _ => None
     }
     // to avoid any expression which yields null
@@ -148,7 +150,7 @@ case class YearPartitionExpr(yearPart: String) extends OptimizablePartitionExpre
 
   override def equalTo(lit: Literal): Option[Expression] = {
     val expr = lit.dataType match {
-      case TimestampType | DateType => Some(yearPart.toCol.expr === Year(lit))
+      case TimestampType | DateType => Some(yearPart.toPartCol.expr === Year(lit))
       case _ => None
     }
     // to avoid any expression which yields null
@@ -162,14 +164,14 @@ case class YearPartitionExpr(yearPart: String) extends OptimizablePartitionExpre
 
   override def greaterThanOrEqual(lit: Literal): Option[Expression] = {
     val expr = lit.dataType match {
-      case TimestampType | DateType => Some(yearPart.toCol >= Year(lit))
+      case TimestampType | DateType => Some(yearPart.toPartCol >= Year(lit))
       case _ => None
     }
     // to avoid any expression which yields null
     expr.map(e => Or(e, IsNull(e)))
   }
 
-  override def isNull(): Option[Expression] = Some(yearPart.toCol.isNull)
+  override def isNull(): Option[Expression] = Some(yearPart.toPartCol.isNull)
 }
 
 /**
@@ -215,8 +217,8 @@ case class YearMonthPartitionExpr(
     lit.dataType match {
       case TimestampType =>
         Some(
-          (yearPart.toCol < Year(lit)) ||
-            (yearPart.toCol === Year(lit) && monthPart.toCol <= Month(lit))
+          (yearPart.toPartCol < Year(lit)) ||
+            (yearPart.toPartCol === Year(lit) && monthPart.toPartCol <= Month(lit))
         )
       case _ => None
     }
@@ -226,7 +228,7 @@ case class YearMonthPartitionExpr(
     lit.dataType match {
       case TimestampType =>
         Some(
-          yearPart.toCol === Year(lit) && monthPart.toCol === Month(lit)
+          yearPart.toPartCol === Year(lit) && monthPart.toPartCol === Month(lit)
         )
       case _ => None
     }
@@ -241,8 +243,8 @@ case class YearMonthPartitionExpr(
     lit.dataType match {
       case TimestampType =>
         Some(
-          (yearPart.toCol > Year(lit)) ||
-            (yearPart.toCol === Year(lit) && monthPart.toCol >= Month(lit))
+          (yearPart.toPartCol > Year(lit)) ||
+            (yearPart.toPartCol === Year(lit) && monthPart.toPartCol >= Month(lit))
         )
       case _ => None
     }
@@ -251,7 +253,7 @@ case class YearMonthPartitionExpr(
   override def isNull(): Option[Expression] = {
     // `yearPart` and `monthPart` are derived columns, so they must be `null` when the input column
     // is `null`.
-    Some(yearPart.toCol.isNull && monthPart.toCol.isNull)
+    Some(yearPart.toPartCol.isNull && monthPart.toPartCol.isNull)
   }
 }
 
@@ -276,11 +278,11 @@ case class YearMonthDayPartitionExpr(
     lit.dataType match {
       case TimestampType =>
         Some(
-          (yearPart.toCol < Year(lit)) ||
-            (yearPart.toCol === Year(lit) && monthPart.toCol < Month(lit)) ||
+          (yearPart.toPartCol < Year(lit)) ||
+            (yearPart.toPartCol === Year(lit) && monthPart.toPartCol < Month(lit)) ||
               (
-                yearPart.toCol === Year(lit) && monthPart.toCol === Month(lit) &&
-                  dayPart.toCol <= DayOfMonth(lit)
+                yearPart.toPartCol === Year(lit) && monthPart.toPartCol === Month(lit) &&
+                  dayPart.toPartCol <= DayOfMonth(lit)
               )
         )
       case _ => None
@@ -291,8 +293,8 @@ case class YearMonthDayPartitionExpr(
     lit.dataType match {
       case TimestampType =>
         Some(
-          yearPart.toCol === Year(lit) && monthPart.toCol === Month(lit) &&
-            dayPart.toCol === DayOfMonth(lit))
+          yearPart.toPartCol === Year(lit) && monthPart.toPartCol === Month(lit) &&
+            dayPart.toPartCol === DayOfMonth(lit))
       case _ => None
     }
   }
@@ -306,11 +308,11 @@ case class YearMonthDayPartitionExpr(
     lit.dataType match {
       case TimestampType =>
         Some(
-          (yearPart.toCol > Year(lit)) ||
-            (yearPart.toCol === Year(lit) && monthPart.toCol > Month(lit)) ||
+          (yearPart.toPartCol > Year(lit)) ||
+            (yearPart.toPartCol === Year(lit) && monthPart.toPartCol > Month(lit)) ||
             (
-              yearPart.toCol === Year(lit) && monthPart.toCol === Month(lit) &&
-                dayPart.toCol >= DayOfMonth(lit)
+              yearPart.toPartCol === Year(lit) && monthPart.toPartCol === Month(lit) &&
+                dayPart.toPartCol >= DayOfMonth(lit)
             )
         )
       case _ => None
@@ -320,7 +322,7 @@ case class YearMonthDayPartitionExpr(
   override def isNull(): Option[Expression] = {
     // `yearPart`, `monthPart` and `dayPart` are derived columns, so they must be `null` when the
     // input column is `null`.
-    Some(yearPart.toCol.isNull && monthPart.toCol.isNull && dayPart.toCol.isNull)
+    Some(yearPart.toPartCol.isNull && monthPart.toPartCol.isNull && dayPart.toPartCol.isNull)
   }
 }
 
@@ -347,15 +349,15 @@ case class YearMonthDayHourPartitionExpr(
     lit.dataType match {
       case TimestampType =>
         Some(
-          (yearPart.toCol < Year(lit)) ||
-            (yearPart.toCol === Year(lit) && monthPart.toCol < Month(lit)) ||
+          (yearPart.toPartCol < Year(lit)) ||
+            (yearPart.toPartCol === Year(lit) && monthPart.toPartCol < Month(lit)) ||
             (
-              yearPart.toCol === Year(lit) && monthPart.toCol === Month(lit) &&
-                dayPart.toCol < DayOfMonth(lit)
+              yearPart.toPartCol === Year(lit) && monthPart.toPartCol === Month(lit) &&
+                dayPart.toPartCol < DayOfMonth(lit)
               ) ||
             (
-              yearPart.toCol === Year(lit) && monthPart.toCol === Month(lit) &&
-                dayPart.toCol === DayOfMonth(lit) && hourPart.toCol <= Hour(lit)
+              yearPart.toPartCol === Year(lit) && monthPart.toPartCol === Month(lit) &&
+                dayPart.toPartCol === DayOfMonth(lit) && hourPart.toPartCol <= Hour(lit)
               )
         )
       case _ => None
@@ -366,8 +368,8 @@ case class YearMonthDayHourPartitionExpr(
     lit.dataType match {
       case TimestampType =>
         Some(
-          yearPart.toCol === Year(lit) && monthPart.toCol === Month(lit) &&
-            dayPart.toCol === DayOfMonth(lit) && hourPart.toCol === Hour(lit))
+          yearPart.toPartCol === Year(lit) && monthPart.toPartCol === Month(lit) &&
+            dayPart.toPartCol === DayOfMonth(lit) && hourPart.toPartCol === Hour(lit))
       case _ => None
     }
   }
@@ -381,15 +383,15 @@ case class YearMonthDayHourPartitionExpr(
     lit.dataType match {
       case TimestampType =>
         Some(
-          (yearPart.toCol > Year(lit)) ||
-            (yearPart.toCol === Year(lit) && monthPart.toCol > Month(lit)) ||
+          (yearPart.toPartCol > Year(lit)) ||
+            (yearPart.toPartCol === Year(lit) && monthPart.toPartCol > Month(lit)) ||
             (
-              yearPart.toCol === Year(lit) && monthPart.toCol === Month(lit) &&
-                dayPart.toCol > DayOfMonth(lit)
+              yearPart.toPartCol === Year(lit) && monthPart.toPartCol === Month(lit) &&
+                dayPart.toPartCol > DayOfMonth(lit)
               ) ||
             (
-              yearPart.toCol === Year(lit) && monthPart.toCol === Month(lit) &&
-                dayPart.toCol === DayOfMonth(lit) && hourPart.toCol >= Hour(lit)
+              yearPart.toPartCol === Year(lit) && monthPart.toPartCol === Month(lit) &&
+                dayPart.toPartCol === DayOfMonth(lit) && hourPart.toPartCol >= Hour(lit)
               )
         )
       case _ => None
@@ -399,8 +401,8 @@ case class YearMonthDayHourPartitionExpr(
   override def isNull(): Option[Expression] = {
     // `yearPart`, `monthPart`, `dayPart` and `hourPart` are derived columns, so they must be `null`
     // when the input column is `null`.
-    Some(yearPart.toCol.isNull && monthPart.toCol.isNull &&
-      dayPart.toCol.isNull && hourPart.toCol.isNull)
+    Some(yearPart.toPartCol.isNull && monthPart.toPartCol.isNull &&
+      dayPart.toPartCol.isNull && hourPart.toPartCol.isNull)
   }
 }
 
@@ -431,8 +433,8 @@ case class SubstringPartitionExpr(
       lit.dataType match {
         case StringType =>
           Some(
-            partitionColumn.toCol.isNull ||
-              partitionColumn.toCol <= Substring(lit, substringPos, substringLen))
+            partitionColumn.toPartCol.isNull ||
+              partitionColumn.toPartCol <= Substring(lit, substringPos, substringLen))
         case _ => None
       }
     } else {
@@ -444,8 +446,8 @@ case class SubstringPartitionExpr(
     lit.dataType match {
       case StringType =>
         Some(
-          partitionColumn.toCol.isNull ||
-            partitionColumn.toCol === Substring(lit, substringPos, substringLen))
+          partitionColumn.toPartCol.isNull ||
+            partitionColumn.toPartCol === Substring(lit, substringPos, substringLen))
       case _ => None
     }
   }
@@ -461,8 +463,8 @@ case class SubstringPartitionExpr(
       lit.dataType match {
         case StringType =>
           Some(
-            partitionColumn.toCol.isNull ||
-              partitionColumn.toCol >= Substring(lit, substringPos, substringLen))
+            partitionColumn.toPartCol.isNull ||
+              partitionColumn.toPartCol >= Substring(lit, substringPos, substringLen))
         case _ => None
       }
     } else {
@@ -470,7 +472,7 @@ case class SubstringPartitionExpr(
     }
   }
 
-  override def isNull(): Option[Expression] = Some(partitionColumn.toCol.isNull)
+  override def isNull(): Option[Expression] = Some(partitionColumn.toPartCol.isNull)
 }
 
 /**
@@ -488,7 +490,7 @@ case class SubstringPartitionExpr(
 case class DateFormatPartitionExpr(
     partitionColumn: String, format: String) extends OptimizablePartitionExpression {
 
-  private val partitionColumnUnixTimestamp = UnixTimestamp(partitionColumn.toCol, format)
+  private val partitionColumnUnixTimestamp = UnixTimestamp(partitionColumn.toPartCol, format)
 
   private def litUnixTimestamp(lit: Literal): UnixTimestamp =
     UnixTimestamp(DateFormatClass(lit, format), format)
@@ -541,6 +543,40 @@ case class DateFormatPartitionExpr(
   }
 
   override def isNull(): Option[Expression] = {
-    Some(partitionColumn.toCol.isNull)
+    Some(partitionColumn.toPartCol.isNull)
   }
+}
+
+/**
+ * The rules for the generation of identity expressions, used for partitioning on a nested column.
+ * Note:
+ * - Writing an empty string to a partition column would become `null` (SPARK-24438) so generated
+ *   partition filters always pick up the `null` partition for safety.
+ *
+ * @param partitionColumn the partition column name used in the generation expression.
+ */
+case class IdentityPartitionExpr(partitionColumn: String)
+    extends OptimizablePartitionExpression {
+
+  override def lessThan(lit: Literal): Option[Expression] = {
+    Some(partitionColumn.toPartCol.isNull || partitionColumn.toPartCol < lit)
+  }
+
+  override def lessThanOrEqual(lit: Literal): Option[Expression] = {
+    Some(partitionColumn.toPartCol.isNull || partitionColumn.toPartCol <= lit)
+  }
+
+  override def equalTo(lit: Literal): Option[Expression] = {
+    Some(partitionColumn.toPartCol.isNull || partitionColumn.toPartCol === lit)
+  }
+
+  override def greaterThan(lit: Literal): Option[Expression] = {
+    Some(partitionColumn.toPartCol.isNull || partitionColumn.toPartCol > lit)
+  }
+
+  override def greaterThanOrEqual(lit: Literal): Option[Expression] = {
+    Some(partitionColumn.toPartCol.isNull || partitionColumn.toPartCol >= lit)
+  }
+
+  override def isNull(): Option[Expression] = Some(partitionColumn.toPartCol.isNull)
 }
