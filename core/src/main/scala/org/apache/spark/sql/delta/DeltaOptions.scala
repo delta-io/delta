@@ -193,6 +193,8 @@ object DeltaOptions extends DeltaLogging {
   val CDC_END_TIMESTAMP = "endingTimestamp"
   val CDC_READ_OPTION = "readChangeFeed"
   val CDC_READ_OPTION_LEGACY = "readChangeData"
+  val COMPRESSION = "compression"
+  val MAX_RECORDS_PER_FILE = "maxRecordsPerFile"
 
   val validOptionKeys : Set[String] = Set(
     REPLACE_WHERE_OPTION,
@@ -215,6 +217,8 @@ object DeltaOptions extends DeltaLogging {
     CDC_END_TIMESTAMP,
     CDC_START_VERSION,
     CDC_END_VERSION,
+    COMPRESSION,
+    MAX_RECORDS_PER_FILE,
     "queryName",
     "checkpointLocation",
     "path",
