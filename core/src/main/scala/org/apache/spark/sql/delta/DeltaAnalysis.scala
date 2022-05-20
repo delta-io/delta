@@ -23,6 +23,7 @@ import org.apache.spark.sql.catalyst.TimeTravel
 import org.apache.spark.sql.delta.DeltaErrors.{TemporallyUnstableInputException, TimestampEarlierThanCommitRetentionException}
 import org.apache.spark.sql.delta.catalog.{DeltaCatalog, DeltaTableV2}
 import org.apache.spark.sql.delta.commands.RestoreTableCommand
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -403,8 +404,11 @@ object DeltaRelation extends DeltaLogging {
       options: CaseInsensitiveStringMap): LogicalRelation = {
     recordFrameProfile("DeltaAnalysis", "fromV2Relation") {
       val relation = d.withOptions(options.asScala.toMap).toBaseRelation
-      var output = v2Relation.output
-
+      val output = if (CDCReader.isCDCRead(options)) {
+        CDCReader.cdcReadSchema(d.schema()).toAttributes
+      } else {
+        v2Relation.output
+      }
       val catalogTable = if (d.catalogTable.isDefined) {
         Some(d.v1Table)
       } else {

@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
+import com.fasterxml.jackson.annotation.JsonPropertyOrder
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
@@ -42,12 +43,11 @@ import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
 import org.apache.hadoop.mapreduce.{Job, TaskType}
 
-import org.apache.spark.SparkException
 import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Cast, ElementAt, Literal}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
-import org.apache.spark.sql.functions.{col, struct, when}
+import org.apache.spark.sql.functions.{coalesce, col, struct, when}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
@@ -63,14 +63,23 @@ import org.apache.spark.util.Utils
  * convert it into a [[CheckpointMetaData]] object that contains invalid data. In order to prevent
  * using it, we do a checksum match on the read json to validate that it is consistent.
  *
+ * For old Delta versions, which do not have checksum logic, we want to make sure that the old
+ * fields (i.e. version, size, parts) are together in the beginning of last_checkpoint json. All
+ * these fields together are less than 50 bytes, so even in split read scenario, we want to make
+ * sure that old delta readers which do not do have checksum validation logic, gets all 3 fields
+ * from one read request. For this reason, we use `JsonPropertyOrder` to force them in the beginning
+ * together.
+ *
  * @param version the version of this checkpoint
- * @param size the number of actions in the checkpoint
+ * @param size the number of actions in the checkpoint, -1 if the information is unavailable.
  * @param parts the number of parts when the checkpoint has multiple parts. None if this is a
  *              singular checkpoint
  * @param sizeInBytes the number of bytes of the checkpoint
  * @param numOfAddFiles the number of AddFile actions in the checkpoint
+ * @param checkpointSchema the schema of the underlying checkpoint files
  * @param checksum the checksum of the [[CheckpointMetaData]].
  */
+@JsonPropertyOrder(Array("version", "size", "parts"))
 case class CheckpointMetaData(
     version: Long,
     size: Long,
@@ -79,6 +88,7 @@ case class CheckpointMetaData(
     sizeInBytes: Option[Long],
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     numOfAddFiles: Option[Long],
+    checkpointSchema: Option[StructType],
     checksum: Option[String] = None)
 
 object CheckpointMetaData {
@@ -196,6 +206,19 @@ object CheckpointMetaData {
         f"%%$c%02X"
     }.mkString
     s""""$result""""
+  }
+
+  def fromLogSegment(segment: LogSegment): Option[CheckpointMetaData] = {
+    segment.checkpointVersionOpt.map { version =>
+      CheckpointMetaData(
+        version = version,
+        size = -1L,
+        parts = numCheckpointParts(segment.checkpoint.head.getPath),
+        sizeInBytes = None,
+        numOfAddFiles = None,
+        checkpointSchema = None
+      )
+    }
   }
 }
 
@@ -373,7 +396,8 @@ trait Checkpoints extends DeltaLogging {
       size = -1,
       parts = cv.numParts,
       sizeInBytes = None,
-      numOfAddFiles = None)
+      numOfAddFiles = None,
+      checkpointSchema = None)
   }
 
   /**
@@ -425,6 +449,19 @@ trait Checkpoints extends DeltaLogging {
 }
 
 object Checkpoints extends DeltaLogging {
+
+  /**
+   * Returns the checkpoint schema that should be written to the last checkpoint file based on
+   * [[DeltaSQLConf.CHECKPOINT_SCHEMA_WRITE_THRESHOLD_LENGTH]] conf.
+   */
+  private[delta] def checkpointSchemaToWriteInLastCheckpointFile(
+      spark: SparkSession,
+      schema: StructType): Option[StructType] = {
+    val checkpointSchemaSizeThreshold = spark.sessionState.conf.getConf(
+      DeltaSQLConf.CHECKPOINT_SCHEMA_WRITE_THRESHOLD_LENGTH)
+    Some(schema).filter(s => JsonUtils.toJson(s).length <= checkpointSchemaSizeThreshold)
+  }
+
   /**
    * Writes out the contents of a [[Snapshot]] into a checkpoint file that
    * can be used to short-circuit future replays of the log.
@@ -446,16 +483,38 @@ object Checkpoints extends DeltaLogging {
 
     val checkpointRowCount = spark.sparkContext.longAccumulator("checkpointRowCount")
     val numOfFiles = spark.sparkContext.longAccumulator("numOfFiles")
+
+    val sessionConf = spark.sessionState.conf
+    val checkpointPartSize =
+        sessionConf.getConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE)
+
+    val numParts = checkpointPartSize.map { partSize =>
+      math.ceil((snapshot.numOfFiles + snapshot.numOfRemoves).toDouble / partSize).toLong
+    }.getOrElse(1L)
+
+    val checkpointPaths = if (numParts > 1) {
+      checkpointFileWithParts(snapshot.path, snapshot.version, numParts.toInt)
+    } else {
+      checkpointFileSingular(snapshot.path, snapshot.version) :: Nil
+    }
+
+    val numPartsOption = if (numParts > 1) {
+      Some(checkpointPaths.length)
+    } else {
+      None
+    }
+
     // Use the string in the closure as Path is not Serializable.
-    val path = checkpointFileSingular(snapshot.path, snapshot.version).toString
+    val paths = checkpointPaths.map(_.toString)
     val base = snapshot.stateDS
-      .repartition(1)
+      .repartition(paths.length, coalesce(col("add.path"), col("remove.path")))
       .map { action =>
         if (action.add != null) {
           numOfFiles.add(1)
         }
         action
-      }.drop("commitInfo", "cdc")
+      }
+      .drop("commitInfo", "cdc")
 
     val chk = buildCheckpoint(base, snapshot)
     val schema = chk.schema.asNullable
@@ -469,11 +528,12 @@ object Checkpoints extends DeltaLogging {
 
     val checkpointSizeInBytes = spark.sparkContext.longAccumulator("checkpointSizeInBytes")
 
-    val writtenPath = chk
+    val writtenPaths = chk
       .queryExecution // This is a hack to get spark to write directly to a file.
       .executedPlan
       .execute()
-      .mapPartitions { iter =>
+      .mapPartitionsWithIndex { case (index, iter) =>
+        val path = paths(index)
         val writtenPath =
           if (useRename) {
             val p = new Path(path)
@@ -530,24 +590,28 @@ object Checkpoints extends DeltaLogging {
           writeAction()
         }
         Iterator(writtenPath)
-      }.collect().head
+      }.collect()
 
     if (useRename) {
-      val src = new Path(writtenPath)
-      val dest = new Path(path)
-      val fs = dest.getFileSystem(hadoopConf)
       var renameDone = false
+      val fs = snapshot.path.getFileSystem(hadoopConf)
       try {
-        if (fs.rename(src, dest)) {
-          renameDone = true
-        } else {
-          // There should be only one writer writing the checkpoint file, so there must be
-          // something wrong here.
-          throw DeltaErrors.failOnCheckpoint(src, dest)
+        writtenPaths.zipWithIndex.foreach { case (writtenPath, index) =>
+          val src = new Path(writtenPath)
+          val dest = new Path(paths(index))
+          if (!fs.rename(src, dest)) {
+            throw DeltaErrors.failOnCheckpoint(src, dest)
+          }
         }
+        renameDone = true
       } finally {
         if (!renameDone) {
-          fs.delete(src, false)
+          writtenPaths.foreach { writtenPath =>
+            scala.util.Try {
+              val src = new Path(writtenPath)
+              fs.delete(src, false)
+            }
+          }
         }
       }
     }
@@ -561,8 +625,13 @@ object Checkpoints extends DeltaLogging {
     if (checkpointRowCount.value == 0) {
       logWarning(DeltaErrors.EmptyCheckpointErrorMessage)
     }
-    CheckpointMetaData(snapshot.version, checkpointRowCount.value, None,
-      Some(checkpointSizeInBytes.value), Some(snapshot.numOfFiles))
+    CheckpointMetaData(
+      version = snapshot.version,
+      size = checkpointRowCount.value,
+      parts = numPartsOption,
+      sizeInBytes = Some(checkpointSizeInBytes.value),
+      numOfAddFiles = Some(snapshot.numOfFiles),
+      checkpointSchema = checkpointSchemaToWriteInLastCheckpointFile(spark, schema))
   }
 
   // scalastyle:off line.size.limit

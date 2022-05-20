@@ -89,20 +89,16 @@ trait DocsPath {
    *       be tested
    */
   def errorsWithDocsLinks: Seq[String] = Seq(
-    "useDeltaOnOtherFormatPathException",
-    "useOtherFormatOnDeltaPathException",
     "createExternalTableWithoutLogException",
     "createExternalTableWithoutSchemaException",
     "createManagedTableWithoutSchemaException",
-    "createExternalTableWithoutSchemaPathNotExistException",
     "multipleSourceRowMatchingTargetRowInMergeException",
     "faqRelativePath",
     "ignoreStreamingUpdatesAndDeletesWarning",
     "concurrentModificationExceptionMsg",
     "incorrectLogStoreImplementationException",
-    "columnRenameNotSupported",
     "sourceNotDeterministicInMergeException",
-    "foundInvalidCharsInColumnNames"
+    "columnMappingAdviceMessage"
   )
 }
 
@@ -110,8 +106,8 @@ trait DocsPath {
  * A holder object for Delta errors.
  *
  * IMPORTANT: Any time you add a test that references the docs, add to the Seq defined in
- * DeltaErrorsSuite so that the doc links that are generated can be verified to work in Azure,
- * docs.databricks.com and docs.delta.io
+ * DeltaErrorsSuite so that the doc links that are generated can be verified to work in
+ * docs.delta.io
  */
 object DeltaErrors
     extends DocsPath
@@ -179,6 +175,39 @@ object DeltaErrors
       messageParameters = Array(s"$src", s"$dest"))
   }
 
+
+  /**
+   * Thrown when main table data contains columns that are reserved for CDF, such as `_change_type`.
+   */
+  def cdcColumnsInData(columns: Seq[String]): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "RESERVED_CDC_COLUMNS_ON_WRITE",
+      messageParameters = Array(columns.mkString("[", ",", "]"), DeltaConfigs.CHANGE_DATA_FEED.key)
+    )
+  }
+
+  /**
+   * Thrown when main table data already contains columns that are reserved for CDF, such as
+   * `_change_type`, but CDF is not yet enabled on that table.
+   */
+  def tableAlreadyContainsCDCColumns(columns: Seq[String]): Throwable = {
+    new DeltaIllegalStateException(errorClass = "DELTA_TABLE_ALREADY_CONTAINS_CDC_COLUMNS",
+      messageParameters = Array(columns.mkString("[", ",", "]")))
+  }
+
+  /**
+   * Thrown when a CDC query contains conflict 'starting' or 'ending' options, e.g. when both
+   * starting version and starting timestamp are specified.
+   *
+   * @param position Specifies which option was duplicated in the read. Values are "starting" or
+   *                 "ending"
+   */
+  def multipleCDCBoundaryException(position: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_MULTIPLE_CDC_BOUNDARY",
+      messageParameters = Array(position, position, position)
+    )
+  }
 
   def formatColumn(colName: String): String = s"`$colName`"
 
@@ -571,40 +600,6 @@ object DeltaErrors
       "data feed from Delta is not yet available.")
   }
 
-  def useDeltaOnOtherFormatPathException(
-      operation: String, path: String, spark: SparkSession): Throwable = {
-    new AnalysisException(
-      s"""Incompatible format detected.
-        |
-        |You are trying to $operation `$path` using Delta Lake, but there is no
-        |transaction log present. Check the upstream job to make sure that it is writing
-        |using format("delta") and that you are trying to $operation the table base path.
-        |
-        |To disable this check, SET spark.databricks.delta.formatCheck.enabled=false
-        |To learn more about Delta, see ${generateDocsLink(spark.sparkContext.getConf,
-        "/index.html")}
-        |""".stripMargin)
-  }
-
-  def useOtherFormatOnDeltaPathException(
-      operation: String,
-      deltaRootPath: String,
-      path: String,
-      format: String,
-      spark: SparkSession): Throwable = {
-    new AnalysisException(
-      s"""Incompatible format detected.
-        |
-        |A transaction log for Delta Lake was found at `$deltaRootPath/_delta_log`,
-        |but you are trying to $operation `$path` using format("$format"). You must use
-        |'format("delta")' when reading and writing to a delta table.
-        |
-        |To disable this check, SET spark.databricks.delta.formatCheck.enabled=false
-        |To learn more about Delta, see ${generateDocsLink(spark.sparkContext.getConf,
-        "/index.html")}
-        |""".stripMargin)
-  }
-
   def pathNotSpecifiedException: Throwable = {
     new IllegalArgumentException("'path' is not specified")
   }
@@ -627,10 +622,11 @@ object DeltaErrors
       version: Long,
       metadata: Metadata): Throwable = {
     val logRetention = DeltaConfigs.LOG_RETENTION.fromMetaData(metadata)
-    val message = s"$path: Unable to reconstruct state at version $version as the " +
+    val checkpointRetention = DeltaConfigs.CHECKPOINT_RETENTION_DURATION.fromMetaData(metadata)
+    new FileNotFoundException(s"$path: Unable to reconstruct state at version $version as the " +
       s"transaction log has been truncated due to manual deletion or the log retention policy " +
-      s"(${DeltaConfigs.LOG_RETENTION.key}=$logRetention)"
-    new FileNotFoundException(message)
+      s"(${DeltaConfigs.LOG_RETENTION.key}=$logRetention) and checkpoint retention policy " +
+      s"(${DeltaConfigs.CHECKPOINT_RETENTION_DURATION.key}=$checkpointRetention)")
   }
 
   def logFileNotFoundExceptionForStreamingSource(e: FileNotFoundException): Throwable = {

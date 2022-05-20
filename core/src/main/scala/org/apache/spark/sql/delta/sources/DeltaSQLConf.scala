@@ -180,6 +180,13 @@ trait DeltaSQLConfBase {
       .intConf
       .createWithDefault(1000000)
 
+  val DELTA_SAMPLE_ESTIMATOR_ENABLED =
+    buildConf("sampling.enabled")
+      .internal()
+      .doc("Enable sample based estimation.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_CONVERT_METADATA_CHECK_ENABLED =
     buildConf("convert.metadataCheck.enabled")
       .doc(
@@ -434,6 +441,14 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val CHECKPOINT_SCHEMA_WRITE_THRESHOLD_LENGTH =
+    buildConf("checkpointSchema.writeThresholdLength")
+      .internal()
+      .doc("Checkpoint schema larger than this threshold won't be written to the last checkpoint" +
+        " file")
+      .intConf
+      .createWithDefault(20000)
+
   val LAST_CHECKPOINT_CHECKSUM_ENABLED =
     buildConf("lastCheckpoint.checksum.enabled")
       .internal()
@@ -441,6 +456,15 @@ trait DeltaSQLConfBase {
         " whether to validate it while reading the LAST_CHECKPOINT file")
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_CHECKPOINT_PART_SIZE =
+    buildConf("checkpoint.partSize")
+        .internal()
+        .doc("The limit at which we will start parallelizing the checkpoint. We will attempt to " +
+                 "write a maximum of this many actions per checkpoint file.")
+        .longConf
+        .checkValue(_ > 0, "partSize has to be positive")
+        .createOptional
 
   val DELTA_WRITE_CHECKSUM_ENABLED =
     buildConf("writeChecksumFile.enabled")
@@ -661,10 +685,11 @@ trait DeltaSQLConfBase {
     buildConf("alterTable.dropColumn.enabled")
       .internal()
       .doc(
-        "Whether to enable the drop column feature. This feature is behind this flag with default" +
-          " off until the physical deletion of dropped columns is supported")
+        """Whether to enable the drop column feature for Delta.
+          |This is a safety switch - we should only turn this off when there is an issue.
+          |""".stripMargin)
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

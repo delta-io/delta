@@ -416,10 +416,7 @@ trait DataSkippingReaderBase
       constructDataFilters(IsNull(e))
 
     // Match any file whose min/max range contains the requested point.
-    // `v = null` will be replaced with `false`, and `v <=> null` will be replaced with `isNull(v)`
-    // by Spark. So we don't need to handle `lit.value == null`.
-    case Equality(SkippingEligibleColumn(a), lit @ SkippingEligibleLiteral(v))
-        if lit.value != null =>
+    case EqualTo(SkippingEligibleColumn(a), SkippingEligibleLiteral(v)) =>
       val minCol = StatsColumn(MIN, a)
       val maxCol = StatsColumn(MAX, a)
       getStatsColumnOpt(minCol).flatMap { min =>
@@ -429,8 +426,6 @@ trait DataSkippingReaderBase
       }
     case EqualTo(v: Literal, a) =>
       constructDataFilters(EqualTo(a, v))
-    case EqualNullSafe(v: Literal, a) =>
-      constructDataFilters(EqualNullSafe(a, v))
 
     // Match any file whose min/max range contains anything other than the rejected point.
     case Not(EqualTo(SkippingEligibleColumn(a), SkippingEligibleLiteral(v))) =>
@@ -441,27 +436,19 @@ trait DataSkippingReaderBase
           DataSkippingPredicate(!(min === v && max === v), minCol, maxCol)
         }
       }
-    case Not(EqualNullSafe(SkippingEligibleColumn(a), lit @ SkippingEligibleLiteral(v)))
-        if lit.value != null =>
-      val minCol = StatsColumn(MIN, a)
-      val maxCol = StatsColumn(MAX, a)
-      val nullCountCol = StatsColumn(NULL_COUNT, a)
-      // since `Not(Literal(null, _) <=> NotNullLiteral(v, _))` returns true, means we can't
-      // skipping the file which has stats with `nullCount > 0`.
-      getStatsColumnOpt(nullCountCol).flatMap { nullCount =>
-        getStatsColumnOpt(minCol).flatMap { min =>
-          getStatsColumnOpt(maxCol).map { max =>
-            DataSkippingPredicate(
-              min.isNull || max.isNull || nullCount.isNull ||
-                !(min === v && max === v && nullCount === 0),
-              minCol,
-              maxCol,
-              nullCountCol)
-          }
-        }
-      }
     case Not(EqualTo(v: Literal, a)) =>
       constructDataFilters(Not(EqualTo(a, v)))
+
+    // Rewrite `EqualNullSafe(a, NotNullLiteral)` as `And(IsNotNull(a), EqualTo(a, NotNullLiteral))`
+    // and rewrite `EqualNullSafe(a, null)` as `IsNull(a)` to let the existing logic handle it.
+    case EqualNullSafe(a, v: Literal) =>
+      val rewrittenExpr = if (v.value != null) And(IsNotNull(a), EqualTo(a, v)) else IsNull(a)
+      constructDataFilters(rewrittenExpr)
+    case EqualNullSafe(v: Literal, a) =>
+      constructDataFilters(EqualNullSafe(a, v))
+    case Not(EqualNullSafe(a, v: Literal)) =>
+      val rewrittenExpr = if (v.value != null) And(IsNotNull(a), EqualTo(a, v)) else IsNull(a)
+      constructDataFilters(Not(rewrittenExpr))
     case Not(EqualNullSafe(v: Literal, a)) =>
       constructDataFilters(Not(EqualNullSafe(a, v)))
 

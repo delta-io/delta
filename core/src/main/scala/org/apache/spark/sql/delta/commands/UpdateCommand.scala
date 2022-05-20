@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.commands
 
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, DeltaTableUtils, OptimisticTransaction}
-import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction}
+import org.apache.spark.sql.delta.actions.{AddFile, FileAction}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.Path
@@ -32,7 +32,6 @@ import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.functions.{input_file_name, udf}
-import org.apache.spark.sql.types.BooleanType
 
 /**
  * Performs an Update using `updateExpression` on the rows that match `condition`
@@ -99,30 +98,14 @@ case class UpdateCommand(
 
     scanTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
 
-    val actions: Seq[Action] = if (candidateFiles.isEmpty) {
+    val filesToRewrite: Seq[AddFile] = if (candidateFiles.isEmpty) {
       // Case 1: Do nothing if no row qualifies the partition predicates
       // that are part of Update condition
       Nil
     } else if (dataPredicates.isEmpty) {
       // Case 2: Update all the rows from the files that are in the specified partitions
       // when the data filter is empty
-      numTouchedFiles = candidateFiles.length
-
-      val filesToRewrite = candidateFiles.map(_.path)
-      val operationTimestamp = System.currentTimeMillis()
-      val deleteActions = candidateFiles.map(_.removeWithTimestamp(operationTimestamp))
-
-      val rewrittenFiles =
-        withStatusCode(
-          "DELTA", s"Rewriting ${filesToRewrite.size} files for UPDATE operation (metadata)") {
-          rewriteFiles(sparkSession, txn, tahoeFileIndex.path,
-            filesToRewrite, nameToAddFile, updateCondition)
-        }
-
-      numRewrittenFiles = rewrittenFiles.size
-      rewriteTimeMs = (System.nanoTime() - startTime) / 1000 / 1000 - scanTimeMs
-
-      deleteActions ++ rewrittenFiles
+      candidateFiles
     } else {
       // Case 3: Find all the affected files using the user-specified condition
       val fileIndex = new TahoeBatchFileIndex(
@@ -136,54 +119,64 @@ case class UpdateCommand(
         updatedRowCount += 1
         true
       }.asNondeterministic()
-      val filesToRewrite =
+      val pathsToRewrite =
         withStatusCode("DELTA", s"Finding files to rewrite for UPDATE operation") {
           data.filter(new Column(updateCondition))
             .filter(updatedRowUdf())
             .select(input_file_name())
-            .distinct().as[String].collect()
+            .distinct()
+            .as[String]
+            .collect()
         }
 
       scanTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
-      numTouchedFiles = filesToRewrite.length
 
-      if (filesToRewrite.isEmpty) {
-        // Case 3.1: Do nothing if no row qualifies the UPDATE condition
-        Nil
-      } else {
-        // Case 3.2: Delete the old files and generate the new files containing the updated
-        // values
-        val operationTimestamp = System.currentTimeMillis()
-        val deleteActions =
-          removeFilesFromPaths(deltaLog, nameToAddFile, filesToRewrite, operationTimestamp)
-        val rewrittenFiles =
-          withStatusCode("DELTA", s"Rewriting ${filesToRewrite.size} files for UPDATE operation") {
-            rewriteFiles(sparkSession, txn, tahoeFileIndex.path,
-              filesToRewrite, nameToAddFile, updateCondition)
-          }
+      pathsToRewrite.map(getTouchedFile(deltaLog.dataPath, _, nameToAddFile)).toSeq
+    }
 
-        numRewrittenFiles = rewrittenFiles.size
-        rewriteTimeMs = (System.nanoTime() - startTime) / 1000 / 1000 - scanTimeMs
+    numTouchedFiles = filesToRewrite.length
 
-        deleteActions ++ rewrittenFiles
+    val newAddActions = if (filesToRewrite.isEmpty) {
+      // Do nothing if no row qualifies the UPDATE condition
+      Nil
+    } else {
+      // Generate the new files containing the updated values
+      withStatusCode("DELTA", s"Rewriting ${filesToRewrite.size} files for UPDATE operation") {
+        rewriteFiles(sparkSession, txn, tahoeFileIndex.path,
+          filesToRewrite.map(_.path), nameToAddFile, updateCondition)
       }
     }
 
-    if (actions.nonEmpty) {
+    rewriteTimeMs = (System.nanoTime() - startTime) / 1000 / 1000 - scanTimeMs
+    numRewrittenFiles = newAddActions.size
+
+    val totalActions = if (filesToRewrite.isEmpty) {
+      // Do nothing if no row qualifies the UPDATE condition
+      Nil
+    } else {
+      // Delete the old files and return those delete actions along with the new AddFile actions for
+      // files containing the updated values
+      val operationTimestamp = System.currentTimeMillis()
+      val deleteActions = filesToRewrite.map(_.removeWithTimestamp(operationTimestamp))
+
+      deleteActions ++ newAddActions
+    }
+
+    if (totalActions.nonEmpty) {
       metrics("numAddedFiles").set(numRewrittenFiles)
       metrics("numRemovedFiles").set(numTouchedFiles)
       metrics("executionTimeMs").set((System.nanoTime() - startTime) / 1000 / 1000)
       metrics("scanTimeMs").set(scanTimeMs)
       metrics("rewriteTimeMs").set(rewriteTimeMs)
       // In the case where the numUpdatedRows is not captured, we can siphon out the metrics from
-      // the BasicWriteStatsTracker. This is for the case where the entire partition is re-written.
+      // the BasicWriteStatsTracker. This is for case #2 where the entire partition is re-written.
       val outputRows = txn.getMetric("numOutputRows").map(_.value).getOrElse(-1L)
       if (metrics("numUpdatedRows").value == 0 && outputRows != 0) {
         metrics("numUpdatedRows").set(outputRows)
       }
       metrics("numCopiedRows").set(outputRows - metrics("numUpdatedRows").value)
       txn.registerSQLMetrics(sparkSession, metrics)
-      txn.commit(actions, DeltaOperations.Update(condition.map(_.toString)))
+      txn.commit(totalActions, DeltaOperations.Update(condition.map(_.toString)))
       // This is needed to make the SQL metrics visible in the Spark UI
       val executionId = sparkSession.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
       SQLMetrics.postDriverMetricUpdates(

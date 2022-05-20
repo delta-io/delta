@@ -41,12 +41,24 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
   private def makeCorruptCheckpointFile(
       path: String,
       checkpointVersion: Long,
-      shouldBeEmpty: Boolean): Unit = {
-    val checkpointFile =
-      FileNames.checkpointFileSingular(new Path(path, "_delta_log"), checkpointVersion).toString
-    val cp = new RandomAccessFile(checkpointFile, "rw")
-    cp.setLength(if (shouldBeEmpty) 0 else 10)
-    cp.close()
+      shouldBeEmpty: Boolean,
+      multipart: Option[(Int, Int)] = None): Unit = {
+    if (multipart.isDefined) {
+      val (part, totalParts) = multipart.get
+      val checkpointFile = FileNames.checkpointFileWithParts(new Path(path, "_delta_log"),
+        checkpointVersion, totalParts)(part - 1).toString
+      assert(new File(checkpointFile).exists)
+      val cp = new RandomAccessFile(checkpointFile, "rw")
+      cp.setLength(if (shouldBeEmpty) 0 else 10)
+      cp.close()
+    } else {
+      val checkpointFile =
+        FileNames.checkpointFileSingular(new Path(path, "_delta_log"), checkpointVersion).toString
+      assert(new File(checkpointFile).exists)
+      val cp = new RandomAccessFile(checkpointFile, "rw")
+      cp.setLength(if (shouldBeEmpty) 0 else 10)
+      cp.close()
+    }
   }
 
   private def deleteLogVersion(path: String, version: Long): Unit = {
@@ -55,16 +67,33 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
     assert(deltaFile.delete(), s"Failed to delete $deltaFile")
   }
 
-  testQuietly("recover from a corrupt checkpoint: previous checkpoint doesn't exist") {
+  private def testWithAndWithoutMultipartCheckpoint(name: String)(f: (Option[Int]) => Unit) = {
+    testQuietly(name) {
+      withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "1") {
+        f(Some(1))
+        f(Some(2))
+      }
+      f(None)
+    }
+  }
+
+  testWithAndWithoutMultipartCheckpoint("recover from a corrupt checkpoint: previous checkpoint " +
+      "doesn't exist") { partToCorrupt =>
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath
       spark.range(10).write.format("delta").save(path)
-      val deltaLog = DeltaLog.forTable(spark, path)
+      var deltaLog = DeltaLog.forTable(spark, path)
       deltaLog.checkpoint()
+
+      DeltaLog.clearCache()
+      deltaLog = DeltaLog.forTable(spark, path)
+      val checkpointParts = deltaLog.snapshot.logSegment.checkpoint.length
+      val multipart = partToCorrupt.map((_, checkpointParts))
 
       // We have different code paths for empty and non-empty checkpoints
       for (testEmptyCheckpoint <- Seq(true, false)) {
-        makeCorruptCheckpointFile(path, checkpointVersion = 0, shouldBeEmpty = testEmptyCheckpoint)
+        makeCorruptCheckpointFile(path, checkpointVersion = 0,
+          shouldBeEmpty = testEmptyCheckpoint, multipart = multipart)
         DeltaLog.clearCache()
         // Checkpoint 0 is corrupted. Verify that we can still create the snapshot using
         // existing json files.
@@ -73,20 +102,27 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
     }
   }
 
-  testQuietly("recover from a corrupt checkpoint: previous checkpoint exists") {
+  testWithAndWithoutMultipartCheckpoint("recover from a corrupt checkpoint: previous checkpoint " +
+      "exists") { partToCorrupt =>
     withTempDir { tempDir =>
       // Create checkpoint 0 and 1
       val path = tempDir.getCanonicalPath
       spark.range(10).write.format("delta").save(path)
-      val deltaLog = DeltaLog.forTable(spark, path)
+      var deltaLog = DeltaLog.forTable(spark, path)
       deltaLog.checkpoint()
       spark.range(10).write.format("delta").mode("append").save(path)
       deltaLog.update()
       deltaLog.checkpoint()
 
+      DeltaLog.clearCache()
+      deltaLog = DeltaLog.forTable(spark, path)
+      val checkpointParts = deltaLog.snapshot.logSegment.checkpoint.length
+      val multipart = partToCorrupt.map((_, checkpointParts))
+
       // We have different code paths for empty and non-empty checkpoints
       for (testEmptyCheckpoint <- Seq(true, false)) {
-        makeCorruptCheckpointFile(path, checkpointVersion = 1, shouldBeEmpty = testEmptyCheckpoint)
+        makeCorruptCheckpointFile(path, checkpointVersion = 1,
+          shouldBeEmpty = testEmptyCheckpoint, multipart = multipart)
         // Checkpoint 1 is corrupted. Verify that we can still create the snapshot using
         // checkpoint 0.
         DeltaLog.clearCache()
@@ -95,8 +131,8 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
     }
   }
 
-  testQuietly("should not recover when the current checkpoint is broken but we don't have the " +
-    "entire history") {
+  testWithAndWithoutMultipartCheckpoint("should not recover when the current checkpoint is " +
+      "broken but we don't have the entire history") { partToCorrupt =>
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath
       spark.range(10).write.format("delta").save(path)
@@ -105,11 +141,17 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
       deleteLogVersion(path, version = 0)
       DeltaLog.clearCache()
 
-      // We have different code paths for empty and non-empty checkpoints, and also different code
-      // paths when listing with or without a checkpoint hint.
-      for (testEmptyCheckpoint <- Seq(true, false)) {
-        makeCorruptCheckpointFile(path, checkpointVersion = 1, shouldBeEmpty = testEmptyCheckpoint)
+      val deltaLog = DeltaLog.forTable(spark, path)
+      val checkpointParts = deltaLog.snapshot.logSegment.checkpoint.length
+      val multipart = partToCorrupt.map((_, checkpointParts))
 
+      DeltaLog.clearCache()
+
+      // We have different code paths for empty and non-empty checkpoints, and also different
+      // code paths when listing with or without a checkpoint hint.
+      for (testEmptyCheckpoint <- Seq(true, false)) {
+        makeCorruptCheckpointFile(path, checkpointVersion = 1,
+          shouldBeEmpty = testEmptyCheckpoint, multipart = multipart)
         // When finding a Delta log for the first time, we rely on _last_checkpoint hint
         val e = intercept[Exception] { DeltaLog.forTable(spark, path).snapshot }
         if (testEmptyCheckpoint) {
@@ -117,8 +159,8 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
           // - try to get an alternative LogSegment in `getLogSegmentForVersion`
           // - fail to get an alternative LogSegment
           // - throw the below exception
-          assert(e.isInstanceOf[IllegalStateException] &&
-            e.getMessage.contains("Couldn't find all part files of the checkpoint version: 1"))
+          assert(e.isInstanceOf[IllegalStateException] && e.getMessage.contains(
+            "Couldn't find all part files of the checkpoint version: 1"))
         } else {
           // - checkpoint 1 is in the list result
           // - Snapshot creation triggers state reconstruction
@@ -127,14 +169,17 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
           // - fail to get an alternative LogSegment
           // - cannot find log file 0 so throw the above checkpoint 1 read failure
           // Guava cache wraps the root cause
-          assert(e.isInstanceOf[ExecutionException] && e.getCause.isInstanceOf[SparkException] &&
-            e.getMessage.contains("0001.checkpoint.parquet is not a Parquet file"))
+          assert(e.isInstanceOf[ExecutionException] &&
+            e.getCause.isInstanceOf[SparkException] &&
+            e.getMessage.contains("0001.checkpoint") &&
+            e.getMessage.contains(".parquet is not a Parquet file"))
         }
       }
     }
   }
 
-  testQuietly("should not recover when both the current and previous checkpoints are broken") {
+  testWithAndWithoutMultipartCheckpoint("should not recover when both the current and previous " +
+      "checkpoints are broken") { partToCorrupt =>
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath
       val staleLog = DeltaLog.forTable(spark, path)
@@ -143,15 +188,28 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
       spark.range(10).write.format("delta").save(path)
       val deltaLog = DeltaLog.forTable(spark, path)
       deltaLog.checkpoint()
+      DeltaLog.clearCache()
+      val checkpointParts0 =
+        DeltaLog.forTable(spark, path).snapshot.logSegment.checkpoint.length
+
       spark.range(10).write.format("delta").mode("append").save(path)
       deltaLog.update()
       deltaLog.checkpoint()
       deleteLogVersion(path, version = 0)
-      makeCorruptCheckpointFile(path, checkpointVersion = 0, shouldBeEmpty = false)
+
+      DeltaLog.clearCache()
+      val checkpointParts1 =
+        DeltaLog.forTable(spark, path).snapshot.logSegment.checkpoint.length
+
+      makeCorruptCheckpointFile(path, checkpointVersion = 0, shouldBeEmpty = false,
+        multipart = partToCorrupt.map((_, checkpointParts0)))
+
+      val multipart = partToCorrupt.map((_, checkpointParts1))
 
       // We have different code paths for empty and non-empty checkpoints
       for (testEmptyCheckpoint <- Seq(true, false)) {
-        makeCorruptCheckpointFile(path, checkpointVersion = 1, shouldBeEmpty = testEmptyCheckpoint)
+        makeCorruptCheckpointFile(path, checkpointVersion = 1,
+          shouldBeEmpty = testEmptyCheckpoint, multipart = multipart)
 
         // The code paths are different, but the error and message end up being the same:
         //
@@ -170,7 +228,8 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
         // - cannot find log file 0 so throw the original checkpoint 1 read failure
         val e = intercept[SparkException] { staleLog.update() }
         val version = if (testEmptyCheckpoint) 0 else 1
-        assert(e.getMessage.contains(f"$version%020d.checkpoint.parquet is not a Parquet file"))
+        assert(e.getMessage.contains(f"$version%020d.checkpoint") &&
+          e.getMessage.contains(".parquet is not a Parquet file"))
       }
     }
   }
@@ -311,6 +370,8 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
       val path = tempDir.getCanonicalPath
       spark.range(10).write.format("delta").save(path)
       DeltaLog.clearCache()
+      // Corrupted snapshot tests leave a cached snapshot not tracked by the DeltaLog cache
+      sparkContext.getPersistentRDDs.foreach(_._2.unpersist())
       assert(sparkContext.getPersistentRDDs.isEmpty)
 
       withSQLConf(DeltaSQLConf.DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL.key -> "DISK_ONLY") {

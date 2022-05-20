@@ -24,6 +24,7 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, GeneratedColumn, NoMapping}
 import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -190,6 +191,14 @@ object SchemaUtils {
     if (dataFields.subsetOf(tableFields)) {
       data.toDF()
     } else {
+      // Allow the same shortcut logic (as the above `if` stmt) if the only extra fields are CDC
+      // metadata fields.
+      val nonCdcFields = dataFields.filterNot { f =>
+        f == CDCReader.CDC_PARTITION_COL || f == CDCReader.CDC_TYPE_COLUMN_NAME
+      }
+      if (nonCdcFields.subsetOf(tableFields)) {
+        return data.toDF()
+      }
       // Check that nested columns don't need renaming. We can't handle that right now
       val topLevelDataFields = dataFields.map(UnresolvedAttribute.parseAttributeName(_).head)
       if (topLevelDataFields.subsetOf(tableFields)) {
@@ -203,6 +212,9 @@ object SchemaUtils {
       val aliasExpressions = dataSchema.map { field =>
         val originalCase: String = baseFields.get(field.name) match {
           case Some(original) => original.name
+          // This is a virtual partition column used for doing CDC writes. It's not actually
+          // in the table schema.
+          case None if field.name == CDCReader.CDC_TYPE_COLUMN_NAME => field.name
           case None =>
             throw DeltaErrors.cannotResolveColumn(field, baseSchema)
         }

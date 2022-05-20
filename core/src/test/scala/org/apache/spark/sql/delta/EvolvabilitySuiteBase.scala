@@ -48,6 +48,7 @@ abstract class EvolvabilitySuiteBase extends QueryTest with SharedSparkSession
     // Check we can load CheckpointMetaData
     assert(deltaLog.lastCheckpoint.get.version === 3)
     assert(deltaLog.lastCheckpoint.get.size === 6L)
+    assert(deltaLog.lastCheckpoint.get.checkpointSchema.isEmpty)
 
     // Check we can parse all `Action`s in delta files. It doesn't check correctness.
     deltaLog.getChanges(0L).toList.map(_._2.toList)
