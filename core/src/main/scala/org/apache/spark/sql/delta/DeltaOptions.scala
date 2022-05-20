@@ -94,24 +94,16 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
     options.get(DATA_CHANGE_OPTION).exists(!toBoolean(_, DATA_CHANGE_OPTION))
   }
 
-  /**
-   * Validate that partitionOverwriteMode is set to either STATIC or DYNAMIC
-   * and returns true if its DYNAMIC.
-   */
-  def validatePartitionOverwriteMode(mode: String): Boolean = {
+  /** Whether to only overwrite partitions that have data written into it at runtime. */
+  val isDynamicPartitionOverwriteMode: Boolean = {
+    val mode = options.get(PARTITION_OVERWRITE_MODE_OPTION)
+      .getOrElse(sqlConf.getConf(SQLConf.PARTITION_OVERWRITE_MODE))
     if (!mode.equalsIgnoreCase("STATIC") && !mode.equalsIgnoreCase("DYNAMIC")) {
       throw DeltaErrors.illegalDeltaOptionException(
         PARTITION_OVERWRITE_MODE_OPTION, mode, "must be either 'STATIC' or 'DYNAMIC'"
       )
     }
     mode.equalsIgnoreCase("DYNAMIC")
-  }
-
-  /** Whether to only overwrite partitions that have data written into it at runtime. */
-  def isDynamicPartitionOverwriteMode: Boolean = {
-    val mode = options.get(PARTITION_OVERWRITE_MODE_OPTION)
-      .getOrElse(sqlConf.getConf(SQLConf.PARTITION_OVERWRITE_MODE))
-    validatePartitionOverwriteMode(mode)
   }
 }
 
