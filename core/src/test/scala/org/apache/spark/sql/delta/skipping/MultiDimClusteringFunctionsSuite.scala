@@ -23,7 +23,7 @@ import scala.util.Random
 import org.apache.spark.sql.delta.skipping.MultiDimClusteringFunctions._
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
-import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
@@ -129,4 +129,107 @@ class MultiDimClusteringFunctionsSuite extends QueryTest
       Row(Array(1, 2), 0))
   }
 
+  test("interleave_bits(): 1 input = cast to binary") {
+    val data = Seq.fill(100)(Random.nextInt())
+    checkAnswer(
+      data.toDF("id").select(interleave_bits($"id")),
+      data.map(i => Row(intToBinary(i)))
+    )
+  }
+
+  test(s"interleave_bits(): arbitrary num inputs") {
+    val n = 1 + Random.nextInt(7)
+    val zDF = spark.range(1).select()
+
+    // Output is an array with number of elements equal to 4 * num_of_input_columns to interleave
+
+    // Multiple columns each has value 0. Expect the final output an array of zeros
+    checkAnswer(
+      1.to(n).foldLeft(zDF)((df, i) => df.withColumn(s"c$i", lit(0x00000000)))
+        .select(interleave_bits(1.to(n).map(i => $"c$i"): _*)),
+      Row(Array.fill(n * 4)(0x00.toByte))
+    )
+
+    // Multiple column each has value 1. As the bits are interleaved expect the following output
+    // Inputs: c1=0x00000001, c2=0x00000001, c3=0x00000001, c4=0x00000001
+    // Output (divided into array of 4 bytes for readability)
+    //  [0x00, 0x00, 0x00, 0x00] [0x00, 0x00, 0x00, 0x00]
+    //  [0x00, 0x00, 0x00, 0x00] [0x00, 0x00, 0x00, 0x08]
+    // (Inputs have last bit as 1 as we are interleaving bits across columns, all these
+    // bits of value 1 they will end up as last 4 bits in the last byte of the output)
+    checkAnswer(
+      1.to(n).foldLeft(zDF)((df, i) => df.withColumn(s"c$i", lit(0x00000001)))
+        .select(interleave_bits(1.to(n).map(i => $"c$i"): _*)),
+      Row(Array.fill(n * 4 - 1)(0x00.toByte) :+ ((1 << n) - 1).toByte)
+    )
+
+    // Multiple columns each has value 0xFFFFFFFF. Expect the final output an array of 0xFF
+    checkAnswer(
+      1.to(n).foldLeft(zDF)((df, i) => df.withColumn(s"c$i", lit(0xffffffff)))
+        .select(interleave_bits(1.to(n).map(i => $"c$i"): _*)),
+      Row(Array.fill(n * 4)(0xff.toByte))
+    )
+  }
+
+  test("interleave_bits(): corner cases") {
+    // null input
+    checkAnswer(
+      spark.range(1).select(interleave_bits(lit(null))),
+      Row(Array.fill(4)(0x00.toByte))
+    )
+
+    // no inputs to interleave_bits -> expect an empty row
+    checkAnswer(
+      spark.range(1).select(interleave_bits()),
+      Row(Array.empty[Byte])
+    )
+
+    // Non-integer type as input column
+    val ex = intercept[AnalysisException] {
+      Seq(false).toDF("col").select(interleave_bits($"col")).show
+    }
+    assert(ex.getMessage contains "")
+
+    def invalidColumnTypeInput(df: DataFrame): Unit = {
+      val ex = intercept[AnalysisException] {
+        df.select(interleave_bits($"col")).show
+      }
+      assert(ex.getMessage contains "")
+    }
+
+    // Expect failure when a non-int type column is provided as input
+    invalidColumnTypeInput(Seq(0L).toDF("col"))
+    invalidColumnTypeInput(Seq(0.0).toDF("col"))
+    invalidColumnTypeInput(Seq("asd").toDF("col"))
+    invalidColumnTypeInput(Seq(Array(1, 2, 3)).toDF("col"))
+  }
+
+  test("interleave_bits(range_partition_ids)") {
+    // test the combination of range_partition_id and interleave
+    checkAnswer(
+      spark.range(100).select(interleave_bits(range_partition_id($"id", 10))),
+      0.until(100).map(i => Row(intToBinary(i / 10)))
+    )
+
+    // test the combination of range_partition_id and interleave on multiple columns
+    checkAnswer(
+      Seq(
+        (false, 0, "0"),
+        (true, 1, "1")
+      ).toDF("c1", "c2", "c3")
+        .select(interleave_bits(
+          range_partition_id($"c1", 2),
+          range_partition_id($"c2", 2),
+          range_partition_id($"c3", 2)
+        )),
+      Seq(
+        Row(Array.fill(3 * 4)(0x00.toByte)),
+        Row(Array.fill(3 * 4 - 1)(0x00.toByte) :+ 0x07.toByte)
+      )
+    )
+  }
+
+  private def intToBinary(x: Int): Array[Byte] = {
+    ByteBuffer.allocate(4).putInt(x).array()
+  }
 }
