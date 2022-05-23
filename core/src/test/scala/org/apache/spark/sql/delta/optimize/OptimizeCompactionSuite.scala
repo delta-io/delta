@@ -412,6 +412,31 @@ trait OptimizeCompactionSuiteBase extends QueryTest
     }
   }
 
+  test("optimize command with multiple partition predicates") {
+    withTempDir { tempDir =>
+      def writeData(count: Int): Unit = {
+        spark.range(count).select('id, lit("2017-10-10").cast("date") as 'date, 'id % 5 as 'part)
+            .write
+            .partitionBy("date", "part")
+            .format("delta")
+            .mode("append")
+            .save(tempDir.getAbsolutePath)
+      }
+
+      writeData(10)
+      writeData(100)
+
+      executeOptimizePath(tempDir.getAbsolutePath, Some("date = '2017-10-10' and part = 3"))
+
+      val df = spark.read.format("delta").load(tempDir.getAbsolutePath)
+      val deltaLog = loadDeltaLog(tempDir.getAbsolutePath)
+      val part = "part".phy(deltaLog)
+      val files = groupInputFilesByPartition(df.inputFiles, deltaLog)
+      assert(files.filter(_._1._1 == part).minBy(_._2.length)._1 === (part, "3"),
+        "part 3 should have been optimized and have least amount of files")
+    }
+  }
+
   /**
    * Utility method to append the given data to the Delta table located at the given path.
    * Optionally partitions the data.
@@ -431,6 +456,7 @@ trait OptimizeCompactionSuiteBase extends QueryTest
  */
 class OptimizeCompactionSQLSuite extends OptimizeCompactionSuiteBase
     with DeltaSQLCommandTest {
+  import testImplicits._
 
   def executeOptimizeTable(table: String, condition: Option[String] = None): Unit = {
     val conditionClause = condition.map(c => s"WHERE $c").getOrElse("")
@@ -460,6 +486,30 @@ class OptimizeCompactionSQLSuite extends OptimizeCompactionSuiteBase
       spark.sql(s"OPTIMIZE /doesnt/exist WHERE 1+1")
     }
     assert(e.getMessage.contains("OPTIMIZE"))
+  }
+
+  test("optimize with partition value containing space") {
+    withTempDir { tempDir =>
+      val baseDf = Seq(("a space", 1), ("other", 2)).toDF("name", "value")
+
+      def write(): Unit = {
+        baseDf.write
+          .format("delta")
+          .partitionBy("name")
+          .mode("append")
+          .save(tempDir.getAbsolutePath)
+      }
+
+      write()
+      write()
+
+      sql(s"optimize '${tempDir.getAbsolutePath}'")
+      val df = spark.read.format("delta").load(tempDir.getAbsolutePath)
+      assert(df.inputFiles.length === 2, "2 files for 2 partitions")
+      checkAnswer(
+        df,
+        baseDf.union(baseDf))
+    }
   }
 }
 
