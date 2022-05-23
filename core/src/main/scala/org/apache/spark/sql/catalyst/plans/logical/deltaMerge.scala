@@ -38,8 +38,12 @@ import org.apache.spark.sql.types.{DataType, StructField, StructType}
 trait DeltaUnevaluable extends Expression {
   final override def foldable: Boolean = false
 
-  final override def eval(input: InternalRow = null): Any =
-    throw new UnsupportedOperationException(s"Cannot evaluate expression: $this")
+  final override def eval(input: InternalRow = null): Any = {
+    throw new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_CANNOT_EVALUATE_EXPRESSION",
+      messageParameters = Array(s"$this")
+    )
+  }
 
   final override protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode =
     throw new DeltaUnsupportedOperationException(
@@ -288,8 +292,9 @@ object DeltaMergeInto {
 
     // check that only last NOT MATCHED clause omits the condition
     if (insertClauses.length > 1 && !insertClauses.init.forall(_.condition.nonEmpty)) {
-      throw new AnalysisException("When there are more than one NOT MATCHED clauses in a MERGE " +
-        "statement, only the last NOT MATCHED clause can omit the condition.")
+      throw new DeltaAnalysisException(
+        errorClass = "DELTA_NON_LAST_NOT_MATCHED_CLAUSE_OMIT_CONDITION",
+        messageParameters = Array.empty)
     }
 
     DeltaMergeInto(

@@ -63,7 +63,8 @@ class Snapshot(
     val deltaLog: DeltaLog,
     val timestamp: Long,
     val checksumOpt: Option[VersionChecksum],
-    val minSetTransactionRetentionTimestamp: Option[Long] = None)
+    val minSetTransactionRetentionTimestamp: Option[Long] = None,
+    checkpointMetadataOpt: Option[CheckpointMetaData] = None)
   extends StateCache
   with StatisticsCollection
   with DataSkippingReader
@@ -138,16 +139,17 @@ class Snapshot(
               col("add.modificationTime"),
               col("add.dataChange"),
               col(ADD_STATS_TO_USE_COL_NAME).as("stats"),
-              col("add.tags"))))
+              col("add.tags")
+            )))
           .withColumn("remove", when(
             col("remove.path").isNotNull,
             col("remove").withField("path", col(REMOVE_PATH_CANONICAL_COL_NAME))))
           .as[SingleAction]
           .mapPartitions { iter =>
-            val state = new InMemoryLogReplay(
-              localMinFileRetentionTimestamp,
-              localMinSetTransactionRetentionTimestamp)
-
+            val state: LogReplay =
+                new InMemoryLogReplay(
+                  localMinFileRetentionTimestamp,
+                  localMinSetTransactionRetentionTimestamp)
             state.append(0, iter.map(_.unwrap))
             state.checkpoint.map(_.wrap)
           }
@@ -257,6 +259,22 @@ class Snapshot(
   def numOfRemoves: Long = computedState.numOfRemoves
   def numOfSetTransactions: Long = computedState.numOfSetTransactions
 
+  /**
+   * Computes all the information that is needed by the checksum for the current snapshot.
+   * May kick off state reconstruction if needed by any of the underlying fields.
+   * Note that it's safe to set txnId to none, since the snapshot doesn't always have a txn
+   * attached. E.g. if a snapshot is created by reading a checkpoint, then no txnId is present.
+   */
+  def computeChecksum: VersionChecksum = VersionChecksum(
+    tableSizeBytes = sizeInBytes,
+    numFiles = numOfFiles,
+    numMetadata = numOfMetadata,
+    numProtocol = numOfProtocol,
+    protocol = protocol,
+    metadata = metadata,
+    histogramOpt = fileSizeHistogram,
+    txnId = None)
+
   /** A map to look up transaction version by appId. */
   lazy val transactions: Map[String, Long] = setTransactions.map(t => t.appId -> t.version).toMap
 
@@ -309,6 +327,8 @@ class Snapshot(
     assertLogFilesBelongToTable(path, logSegment.checkpoint)
     DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT, logSegment.checkpoint)
   }
+
+  def getCheckpointMetadataOpt: Option[CheckpointMetaData] = checkpointMetadataOpt
 
   def deltaFileSizeInBytes(): Long = deltaFileIndexOpt.map(_.sizeInBytes).getOrElse(0L)
   def checkpointSizeInBytes(): Long = checkpointFileIndexOpt.map(_.sizeInBytes).getOrElse(0L)
@@ -464,13 +484,23 @@ class InitialSnapshot(
     val logPath: Path,
     override val deltaLog: DeltaLog,
     override val metadata: Metadata)
-  extends Snapshot(logPath, -1, LogSegment.empty(logPath), -1, deltaLog, -1, None) {
+  extends Snapshot(
+    path = logPath,
+    version = -1,
+    logSegment = LogSegment.empty(logPath),
+    minFileRetentionTimestamp = -1,
+    deltaLog = deltaLog,
+    timestamp = -1,
+    checksumOpt = None,
+    minSetTransactionRetentionTimestamp = None) {
 
   def this(logPath: Path, deltaLog: DeltaLog) = this(
     logPath,
     deltaLog,
-    Metadata(configuration = DeltaConfigs.mergeGlobalConfigs(
-      SparkSession.active.sessionState.conf, Map.empty))
+    Metadata(
+      configuration = DeltaConfigs.mergeGlobalConfigs(
+        SparkSession.active.sessionState.conf, Map.empty),
+      createdTime = Some(System.currentTimeMillis()))
   )
 
   override def stateDS: Dataset[SingleAction] = emptyDF.as[SingleAction]

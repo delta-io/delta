@@ -23,6 +23,7 @@ import org.apache.spark.sql.catalyst.TimeTravel
 import org.apache.spark.sql.delta.DeltaErrors.{TemporallyUnstableInputException, TimestampEarlierThanCommitRetentionException}
 import org.apache.spark.sql.delta.catalog.{DeltaCatalog, DeltaTableV2}
 import org.apache.spark.sql.delta.commands.RestoreTableCommand
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -198,8 +199,7 @@ class DeltaAnalysis(session: SparkSession)
         case insert: InsertStarAction =>
           DeltaMergeIntoInsertClause(insert.condition, DeltaMergeIntoClause.toActions(Nil))
         case other =>
-          throw new AnalysisException(s"${other.prettyName} clauses cannot be part of the " +
-            s"WHEN NOT MATCHED clause in MERGE INTO.")
+          throw DeltaErrors.invalidMergeClauseWhenNotMatched(s"${other.prettyName}")
       }
       // rewrites Delta from V2 to V1
       val newTarget =
@@ -285,8 +285,7 @@ class DeltaAnalysis(session: SparkSession)
       val targetAttr = targetAttrs.find(t => session.sessionState.conf.resolver(t.name, attr.name))
         .getOrElse {
           // This is a sanity check. Spark should have done the check.
-          throw new AnalysisException(s"Cannot find ${attr.name} in table columns:" +
-            s" ${targetAttrs.map(_.name).mkString(", ")}")
+          throw DeltaErrors.missingColumn(attr, targetAttrs)
         }
       addCastToColumn(attr, targetAttr, deltaTable.name())
     }
@@ -405,8 +404,11 @@ object DeltaRelation extends DeltaLogging {
       options: CaseInsensitiveStringMap): LogicalRelation = {
     recordFrameProfile("DeltaAnalysis", "fromV2Relation") {
       val relation = d.withOptions(options.asScala.toMap).toBaseRelation
-      var output = v2Relation.output
-
+      val output = if (CDCReader.isCDCRead(options)) {
+        CDCReader.cdcReadSchema(d.schema()).toAttributes
+      } else {
+        v2Relation.output
+      }
       val catalogTable = if (d.catalogTable.isDefined) {
         Some(d.v1Table)
       } else {

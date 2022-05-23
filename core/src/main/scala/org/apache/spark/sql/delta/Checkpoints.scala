@@ -20,6 +20,7 @@ import java.io.FileNotFoundException
 import java.util.UUID
 
 import scala.collection.mutable
+import scala.collection.mutable.ArrayBuffer
 import scala.math.Ordering.Implicits._
 import scala.util.control.NonFatal
 
@@ -31,6 +32,12 @@ import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
+import com.fasterxml.jackson.annotation.JsonPropertyOrder
+import com.fasterxml.jackson.databind.DeserializationFeature
+import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize
+import com.fasterxml.jackson.databind.node.ObjectNode
+import org.apache.commons.codec.digest.DigestUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
@@ -40,7 +47,7 @@ import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Cast, ElementAt, Literal}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
-import org.apache.spark.sql.functions.{col, struct, when}
+import org.apache.spark.sql.functions.{coalesce, col, struct, when}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
@@ -49,15 +56,171 @@ import org.apache.spark.util.Utils
 /**
  * Records information about a checkpoint.
  *
+ * This class provides the checksum validation logic, needed to ensure that content of
+ * LAST_CHECKPOINT file points to a valid json. The readers might read some part from old file and
+ * some part from the new file (if the file is read across multiple requests). In some rare
+ * scenarios, the split read might produce a valid json and readers will be able to parse it and
+ * convert it into a [[CheckpointMetaData]] object that contains invalid data. In order to prevent
+ * using it, we do a checksum match on the read json to validate that it is consistent.
+ *
+ * For old Delta versions, which do not have checksum logic, we want to make sure that the old
+ * fields (i.e. version, size, parts) are together in the beginning of last_checkpoint json. All
+ * these fields together are less than 50 bytes, so even in split read scenario, we want to make
+ * sure that old delta readers which do not do have checksum validation logic, gets all 3 fields
+ * from one read request. For this reason, we use `JsonPropertyOrder` to force them in the beginning
+ * together.
+ *
  * @param version the version of this checkpoint
- * @param size the number of actions in the checkpoint
+ * @param size the number of actions in the checkpoint, -1 if the information is unavailable.
  * @param parts the number of parts when the checkpoint has multiple parts. None if this is a
  *              singular checkpoint
+ * @param sizeInBytes the number of bytes of the checkpoint
+ * @param numOfAddFiles the number of AddFile actions in the checkpoint
+ * @param checkpointSchema the schema of the underlying checkpoint files
+ * @param checksum the checksum of the [[CheckpointMetaData]].
  */
+@JsonPropertyOrder(Array("version", "size", "parts"))
 case class CheckpointMetaData(
     version: Long,
     size: Long,
-    parts: Option[Int])
+    parts: Option[Int],
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    sizeInBytes: Option[Long],
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    numOfAddFiles: Option[Long],
+    checkpointSchema: Option[StructType],
+    checksum: Option[String] = None)
+
+object CheckpointMetaData {
+
+  val STORED_CHECKSUM_KEY = "checksum"
+
+  /**
+   * Returns the json representation of this [[CheckpointMetaData]] object.
+   * Also adds the checksum to the returned json if `addChecksum` is set. The checksum can be
+   * used by readers to validate consistency of the [[CheckpointMetadata]].
+   * It is calculated using rules mentioned in "JSON checksum" section in PROTOCOL.md.
+   */
+  def serializeToJson(chkMetadata: CheckpointMetaData, addChecksum: Boolean): String = {
+    val jsonStr: String = JsonUtils.toJson(chkMetadata.copy(checksum = None))
+    if (!addChecksum) return jsonStr
+    val rootNode = JsonUtils.mapper.readValue(jsonStr, classOf[ObjectNode])
+    val checksum = treeNodeToChecksum(rootNode)
+    rootNode.put(STORED_CHECKSUM_KEY, checksum).toString
+  }
+
+  /**
+   * Converts the given `jsonStr` into a [[CheckpointMetaData]] object.
+   * if `validate` is set, then it also validates the consistency of the json:
+   *  - calculating the checksum and comparing it with the `storedChecksum`.
+   *  - json should not have any duplicates.
+   */
+  def deserializeFromJson(jsonStr: String, validate: Boolean): CheckpointMetaData = {
+    if (validate) {
+      val (storedChecksumOpt, actualChecksum) = CheckpointMetaData.getChecksums(jsonStr)
+      storedChecksumOpt.filter(_ != actualChecksum).foreach { storedChecksum =>
+        throw new IllegalStateException(s"Checksum validation failed for json: $jsonStr,\n" +
+          s"storedChecksum:$storedChecksum, actualChecksum:$actualChecksum")
+      }
+    }
+
+    // This means:
+    // 1) EITHER: Checksum validation is config-disabled
+    // 2) OR: The json lacked a checksum (e.g. written by old client). Nothing to validate.
+    // 3) OR: The Stored checksum matches the calculated one. Validation succeeded.
+    JsonUtils.fromJson[CheckpointMetaData](jsonStr)
+  }
+
+  /**
+   * Analyzes the json representation of [[CheckpointMetaData]] and returns checksum tuple where
+   * - first element refers to the stored checksum in the json representation of
+   *   [[CheckpointMetaData]], None if the checksum is not present.
+   * - second element refers to the checksum computed from the canonicalized json representation of
+   *   the [[CheckpointMetaData]].
+   */
+  def getChecksums(jsonStr: String): (Option[String], String) = {
+    val reader =
+      JsonUtils.mapper.reader().withFeatures(DeserializationFeature.FAIL_ON_READING_DUP_TREE_KEY)
+    val rootNode = reader.readTree(jsonStr)
+    val storedChecksum = if (rootNode.has(STORED_CHECKSUM_KEY)) {
+        Some(rootNode.get(STORED_CHECKSUM_KEY).asText())
+      } else {
+        None
+      }
+    val actualChecksum = treeNodeToChecksum(rootNode)
+    storedChecksum -> actualChecksum
+  }
+
+  /**
+   * Canonicalizes the given `treeNode` json and returns its md5 checksum.
+   * Refer to "JSON checksum" section in PROTOCOL.md for canonicalization steps.
+   */
+  def treeNodeToChecksum(treeNode: JsonNode): String = {
+    val jsonEntriesBuffer = ArrayBuffer.empty[(String, String)]
+
+    import scala.collection.JavaConverters._
+    def traverseJsonNode(currentNode: JsonNode, prefix: ArrayBuffer[String]): Unit = {
+      if (currentNode.isObject) {
+        currentNode.fields().asScala.foreach { entry =>
+          prefix.append(encodeString(entry.getKey))
+          traverseJsonNode(entry.getValue, prefix)
+          prefix.trimEnd(1)
+        }
+      } else if (currentNode.isArray) {
+        currentNode.asScala.zipWithIndex.foreach { case (jsonNode, index) =>
+          prefix.append(index.toString)
+          traverseJsonNode(jsonNode, prefix)
+          prefix.trimEnd(1)
+        }
+      } else {
+        var nodeValue = currentNode.asText()
+        if (currentNode.isTextual) nodeValue = encodeString(nodeValue)
+        jsonEntriesBuffer.append(prefix.mkString("+") -> nodeValue)
+      }
+    }
+    traverseJsonNode(treeNode, prefix = ArrayBuffer.empty)
+    import Ordering.Implicits._
+    val normalizedJsonKeyValues = jsonEntriesBuffer
+      .filter { case (k, _) => k != s""""$STORED_CHECKSUM_KEY"""" }
+      .map { case (k, v) => s"$k=$v" }
+      .sortBy(_.toSeq: Seq[Char])
+      .mkString(",")
+    DigestUtils.md5Hex(normalizedJsonKeyValues)
+  }
+
+  private val isUnreservedOctet =
+    (Set.empty ++ ('a' to 'z') ++ ('A' to 'Z') ++ ('0' to '9') ++ "-._~").map(_.toByte)
+
+  /**
+   * URL encodes a String based on the following rules:
+   * 1. Use uppercase hexadecimals for all percent encodings
+   * 2. percent-encode everything other than unreserved characters
+   * 3. unreserved characters are = a-z / A-Z / 0-9 / "-" / "." / "_" / "~"
+   */
+  private def encodeString(str: String): String = {
+    val result = str.getBytes(java.nio.charset.StandardCharsets.UTF_8).map {
+      case b if isUnreservedOctet(b) => b.toChar.toString
+      case b =>
+        // convert to char equivalent of unsigned byte
+        val c = (b & 0xff)
+        f"%%$c%02X"
+    }.mkString
+    s""""$result""""
+  }
+
+  def fromLogSegment(segment: LogSegment): Option[CheckpointMetaData] = {
+    segment.checkpointVersionOpt.map { version =>
+      CheckpointMetaData(
+        version = version,
+        size = -1L,
+        parts = numCheckpointParts(segment.checkpoint.head.getPath),
+        sizeInBytes = None,
+        numOfAddFiles = None,
+        checkpointSchema = None
+      )
+    }
+  }
+}
 
 /**
  * A class to help with comparing checkpoints with each other, where we may have had concurrent
@@ -147,15 +310,7 @@ trait Checkpoints extends DeltaLogging {
         if (snapshotToCheckpoint.version < 0) {
           throw DeltaErrors.checkpointNonExistTable(dataPath)
         }
-        val checkpointMetaData = writeCheckpointFiles(snapshotToCheckpoint)
-        val json = JsonUtils.toJson(checkpointMetaData)
-        store.write(
-          LAST_CHECKPOINT,
-          Iterator(json),
-          overwrite = true,
-          newDeltaHadoopConf())
-
-        doLogCleanup()
+        checkpointAndCleanUpDeltaLog(snapshotToCheckpoint)
       } catch {
         // Catch all non-fatal exceptions, since the checkpoint is written after the commit
         // has completed. From the perspective of the user, the commit completed successfully.
@@ -181,6 +336,17 @@ trait Checkpoints extends DeltaLogging {
     }
   }
 
+  protected def checkpointAndCleanUpDeltaLog(
+      snapshotToCheckpoint: Snapshot): Unit = {
+    val lastCheckpointChecksumEnabled = spark.sessionState.conf.getConf(
+      DeltaSQLConf.LAST_CHECKPOINT_CHECKSUM_ENABLED)
+
+    val checkpointMetaData = writeCheckpointFiles(snapshotToCheckpoint)
+    val json = CheckpointMetaData.serializeToJson(checkpointMetaData, lastCheckpointChecksumEnabled)
+    store.write(LAST_CHECKPOINT, Iterator(json), overwrite = true, newDeltaHadoopConf())
+    doLogCleanup()
+  }
+
   protected def writeCheckpointFiles(snapshotToCheckpoint: Snapshot): CheckpointMetaData = {
     Checkpoints.writeCheckpoint(spark, this, snapshotToCheckpoint)
   }
@@ -195,9 +361,9 @@ trait Checkpoints extends DeltaLogging {
     recordFrameProfile("Delta", "Checkpoints.loadMetadataFromFile") {
       try {
         val checkpointMetadataJson = store.read(LAST_CHECKPOINT, newDeltaHadoopConf())
-        val checkpointMetadata =
-          JsonUtils.mapper.readValue[CheckpointMetaData](checkpointMetadataJson.head)
-        Some(checkpointMetadata)
+        val validate = spark.sessionState.conf.getConf(
+          DeltaSQLConf.LAST_CHECKPOINT_CHECKSUM_ENABLED)
+        Some(CheckpointMetaData.deserializeFromJson(checkpointMetadataJson.head, validate))
       } catch {
         case _: FileNotFoundException =>
           None
@@ -207,6 +373,12 @@ trait Checkpoints extends DeltaLogging {
           Thread.sleep(1000)
           loadMetadataFromFile(tries + 1)
         case NonFatal(e) =>
+          recordDeltaEvent(
+            self,
+            "delta.lastCheckpoint.read.corruptedJson",
+            data = Map("exception" -> Utils.exceptionString(e))
+          )
+
           logWarning(s"$LAST_CHECKPOINT is corrupted. Will search the checkpoint files directly", e)
           // Hit a partial file. This could happen on Azure as overwriting _last_checkpoint file is
           // not atomic. We will try to list all files to find the latest checkpoint and restore
@@ -219,7 +391,13 @@ trait Checkpoints extends DeltaLogging {
 
   /** Loads the given checkpoint manually to come up with the CheckpointMetaData */
   protected def manuallyLoadCheckpoint(cv: CheckpointInstance): CheckpointMetaData = {
-    CheckpointMetaData(cv.version, -1L, cv.numParts)
+    CheckpointMetaData(
+      version = cv.version,
+      size = -1,
+      parts = cv.numParts,
+      sizeInBytes = None,
+      numOfAddFiles = None,
+      checkpointSchema = None)
   }
 
   /**
@@ -271,6 +449,19 @@ trait Checkpoints extends DeltaLogging {
 }
 
 object Checkpoints extends DeltaLogging {
+
+  /**
+   * Returns the checkpoint schema that should be written to the last checkpoint file based on
+   * [[DeltaSQLConf.CHECKPOINT_SCHEMA_WRITE_THRESHOLD_LENGTH]] conf.
+   */
+  private[delta] def checkpointSchemaToWriteInLastCheckpointFile(
+      spark: SparkSession,
+      schema: StructType): Option[StructType] = {
+    val checkpointSchemaSizeThreshold = spark.sessionState.conf.getConf(
+      DeltaSQLConf.CHECKPOINT_SCHEMA_WRITE_THRESHOLD_LENGTH)
+    Some(schema).filter(s => JsonUtils.toJson(s).length <= checkpointSchemaSizeThreshold)
+  }
+
   /**
    * Writes out the contents of a [[Snapshot]] into a checkpoint file that
    * can be used to short-circuit future replays of the log.
@@ -292,16 +483,38 @@ object Checkpoints extends DeltaLogging {
 
     val checkpointRowCount = spark.sparkContext.longAccumulator("checkpointRowCount")
     val numOfFiles = spark.sparkContext.longAccumulator("numOfFiles")
+
+    val sessionConf = spark.sessionState.conf
+    val checkpointPartSize =
+        sessionConf.getConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE)
+
+    val numParts = checkpointPartSize.map { partSize =>
+      math.ceil((snapshot.numOfFiles + snapshot.numOfRemoves).toDouble / partSize).toLong
+    }.getOrElse(1L)
+
+    val checkpointPaths = if (numParts > 1) {
+      checkpointFileWithParts(snapshot.path, snapshot.version, numParts.toInt)
+    } else {
+      checkpointFileSingular(snapshot.path, snapshot.version) :: Nil
+    }
+
+    val numPartsOption = if (numParts > 1) {
+      Some(checkpointPaths.length)
+    } else {
+      None
+    }
+
     // Use the string in the closure as Path is not Serializable.
-    val path = checkpointFileSingular(snapshot.path, snapshot.version).toString
+    val paths = checkpointPaths.map(_.toString)
     val base = snapshot.stateDS
-      .repartition(1)
+      .repartition(paths.length, coalesce(col("add.path"), col("remove.path")))
       .map { action =>
         if (action.add != null) {
           numOfFiles.add(1)
         }
         action
-      }.drop("commitInfo", "cdc")
+      }
+      .drop("commitInfo", "cdc")
 
     val chk = buildCheckpoint(base, snapshot)
     val schema = chk.schema.asNullable
@@ -313,11 +526,14 @@ object Checkpoints extends DeltaLogging {
         new SerializableConfiguration(job.getConfiguration))
     }
 
-    val writtenPath = chk
+    val checkpointSizeInBytes = spark.sparkContext.longAccumulator("checkpointSizeInBytes")
+
+    val writtenPaths = chk
       .queryExecution // This is a hack to get spark to write directly to a file.
       .executedPlan
       .execute()
-      .mapPartitions { iter =>
+      .mapPartitionsWithIndex { case (index, iter) =>
+        val path = paths(index)
         val writtenPath =
           if (useRename) {
             val p = new Path(path)
@@ -348,6 +564,10 @@ object Checkpoints extends DeltaLogging {
             // storage and create an incomplete file. A concurrent reader might see it and fail.
             // This would leak resources but we don't have a way to abort the storage request here.
             writer.close()
+
+            val filePath = new Path(writtenPath)
+            val stat = filePath.getFileSystem(serConf.value).getFileStatus(filePath)
+            checkpointSizeInBytes.add(stat.getLen)
           } catch {
             case e: org.apache.hadoop.fs.FileAlreadyExistsException if !useRename =>
               val p = new Path(writtenPath)
@@ -370,24 +590,28 @@ object Checkpoints extends DeltaLogging {
           writeAction()
         }
         Iterator(writtenPath)
-      }.collect().head
+      }.collect()
 
     if (useRename) {
-      val src = new Path(writtenPath)
-      val dest = new Path(path)
-      val fs = dest.getFileSystem(hadoopConf)
       var renameDone = false
+      val fs = snapshot.path.getFileSystem(hadoopConf)
       try {
-        if (fs.rename(src, dest)) {
-          renameDone = true
-        } else {
-          // There should be only one writer writing the checkpoint file, so there must be
-          // something wrong here.
-          throw DeltaErrors.failOnCheckpoint(src, dest)
+        writtenPaths.zipWithIndex.foreach { case (writtenPath, index) =>
+          val src = new Path(writtenPath)
+          val dest = new Path(paths(index))
+          if (!fs.rename(src, dest)) {
+            throw DeltaErrors.failOnCheckpoint(src, dest)
+          }
         }
+        renameDone = true
       } finally {
         if (!renameDone) {
-          fs.delete(src, false)
+          writtenPaths.foreach { writtenPath =>
+            scala.util.Try {
+              val src = new Path(writtenPath)
+              fs.delete(src, false)
+            }
+          }
         }
       }
     }
@@ -401,7 +625,13 @@ object Checkpoints extends DeltaLogging {
     if (checkpointRowCount.value == 0) {
       logWarning(DeltaErrors.EmptyCheckpointErrorMessage)
     }
-    CheckpointMetaData(snapshot.version, checkpointRowCount.value, None)
+    CheckpointMetaData(
+      version = snapshot.version,
+      size = checkpointRowCount.value,
+      parts = numPartsOption,
+      sizeInBytes = Some(checkpointSizeInBytes.value),
+      numOfAddFiles = Some(snapshot.numOfFiles),
+      checkpointSchema = checkpointSchemaToWriteInLastCheckpointFile(spark, schema))
   }
 
   // scalastyle:off line.size.limit
@@ -428,10 +658,10 @@ object Checkpoints extends DeltaLogging {
    */
   private[delta] def buildCheckpoint(state: DataFrame, snapshot: Snapshot): DataFrame = {
     val additionalCols = new mutable.ArrayBuffer[Column]()
+    val sessionConf = state.sparkSession.sessionState.conf
     if (DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_JSON.fromMetaData(snapshot.metadata)) {
       additionalCols += col("add.stats").as("stats")
     }
-    val sessionConf = state.sparkSession.sessionState.conf
     // We provide fine grained control using the session conf for now, until users explicitly
     // opt in our out of the struct conf.
     val includeStructColumns = getWriteStatsAsStructConf(sessionConf, snapshot)

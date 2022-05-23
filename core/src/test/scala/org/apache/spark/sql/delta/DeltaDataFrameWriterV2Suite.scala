@@ -33,6 +33,7 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{LongType, StringType, StructType}
+import org.apache.spark.util.Utils
 
 // These tests are copied from Apache Spark (minus partition by expressions) and should work exactly
 // the same with Delta minus some writer options
@@ -52,12 +53,16 @@ trait OpenSourceDataFrameWriterV2Tests
 
   after {
     spark.sessionState.catalog.listTables("default").foreach { ti =>
-      spark.sessionState.catalog.dropTable(ti, ignoreIfNotExists = false, purge = true)
+      spark.sessionState.catalog.dropTable(ti, ignoreIfNotExists = false, purge = false)
     }
   }
 
   def catalog: TableCatalog = {
     spark.sessionState.catalogManager.currentCatalog.asInstanceOf[TableCatalog]
+  }
+
+  protected def catalogPrefix: String = {
+    ""
   }
 
   protected def getProperties(table: Table): Map[String, String] = {
@@ -193,7 +198,8 @@ trait OpenSourceDataFrameWriterV2Tests
       spark.table("source2").withColumn("id", $"id" - 2)
         .writeTo("table_name").overwritePartitions()
     }
-    assert(e.getMessage.contains("Table default.table_name does not support dynamic overwrite"))
+    assert(e.getMessage.contains(
+      s"Table ${catalogPrefix}default.table_name does not support dynamic overwrite"))
 
     checkAnswer(
       spark.table("table_name"),
@@ -214,7 +220,8 @@ trait OpenSourceDataFrameWriterV2Tests
     val e = intercept[AnalysisException] {
       spark.table("source2").writeTo("table_name").overwritePartitions()
     }
-    assert(e.getMessage.contains("Table default.table_name does not support dynamic overwrite"))
+    assert(e.getMessage.contains(
+      s"Table ${catalogPrefix}default.table_name does not support dynamic overwrite"))
   }
 
   test("OverwritePartitions: by name not position") {
@@ -227,7 +234,8 @@ trait OpenSourceDataFrameWriterV2Tests
         .writeTo("table_name").overwritePartitions()
     }
 
-    assert(e.getMessage.contains("Table default.table_name does not support dynamic overwrite"))
+    assert(e.getMessage.contains(
+      s"Table ${catalogPrefix}default.table_name does not support dynamic overwrite"))
 
     checkAnswer(
       spark.table("table_name"),
@@ -251,7 +259,7 @@ trait OpenSourceDataFrameWriterV2Tests
 
     val table = catalog.loadTable(Identifier.of(Array("default"), "table_name"))
 
-    assert(table.name === "default.table_name")
+    assert(table.name === s"${catalogPrefix}default.table_name")
     assert(table.schema === new StructType().add("id", LongType).add("data", StringType))
     assert(table.partitioning.isEmpty)
     assert(getProperties(table).isEmpty)
@@ -266,7 +274,7 @@ trait OpenSourceDataFrameWriterV2Tests
 
     val table = catalog.loadTable(Identifier.of(Array("default"), "table_name"))
 
-    assert(table.name === "default.table_name")
+    assert(table.name === s"${catalogPrefix}default.table_name")
     assert(table.schema === new StructType().add("id", LongType).add("data", StringType))
     assert(table.partitioning.isEmpty)
     assert(getProperties(table).isEmpty)
@@ -282,7 +290,7 @@ trait OpenSourceDataFrameWriterV2Tests
 
     val table = catalog.loadTable(Identifier.of(Array("default"), "table_name"))
 
-    assert(table.name === "default.table_name")
+    assert(table.name === s"${catalogPrefix}default.table_name")
     assert(table.schema === new StructType().add("id", LongType).add("data", StringType))
     assert(table.partitioning.isEmpty)
     assert(getProperties(table) === Map("prop" -> "value"))
@@ -297,7 +305,7 @@ trait OpenSourceDataFrameWriterV2Tests
 
     val table = catalog.loadTable(Identifier.of(Array("default"), "table_name"))
 
-    assert(table.name === "default.table_name")
+    assert(table.name === s"${catalogPrefix}default.table_name")
     assert(table.schema === new StructType().add("id", LongType).add("data", StringType))
     assert(table.partitioning === Seq(IdentityTransform(FieldReference("id"))))
     assert(getProperties(table).isEmpty)
@@ -316,7 +324,7 @@ trait OpenSourceDataFrameWriterV2Tests
     val table = catalog.loadTable(Identifier.of(Array("default"), "table_name"))
 
     // table should not have been changed
-    assert(table.name === "default.table_name")
+    assert(table.name === s"${catalogPrefix}default.table_name")
     assert(table.schema === new StructType().add("id", LongType).add("data", StringType))
     assert(table.partitioning === Seq(IdentityTransform(FieldReference("id"))))
     assert(getProperties(table).isEmpty)
@@ -334,7 +342,7 @@ trait OpenSourceDataFrameWriterV2Tests
     val table = catalog.loadTable(Identifier.of(Array("default"), "table_name"))
 
     // validate the initial table
-    assert(table.name === "default.table_name")
+    assert(table.name === s"${catalogPrefix}default.table_name")
     assert(table.schema === new StructType().add("id", LongType).add("data", StringType))
     assert(table.partitioning === Seq(IdentityTransform(FieldReference("id"))))
     assert(getProperties(table).isEmpty)
@@ -351,7 +359,7 @@ trait OpenSourceDataFrameWriterV2Tests
     val replaced = catalog.loadTable(Identifier.of(Array("default"), "table_name"))
 
     // validate the replacement table
-    assert(replaced.name === "default.table_name")
+    assert(replaced.name === s"${catalogPrefix}default.table_name")
     assert(replaced.schema === new StructType()
       .add("id", LongType)
       .add("data", StringType)
@@ -371,7 +379,7 @@ trait OpenSourceDataFrameWriterV2Tests
     val table = catalog.loadTable(Identifier.of(Array("default"), "table_name"))
 
     // validate the initial table
-    assert(table.name === "default.table_name")
+    assert(table.name === s"${catalogPrefix}default.table_name")
     assert(table.schema === new StructType().add("id", LongType).add("data", StringType))
     assert(table.partitioning.isEmpty)
     assert(getProperties(table).isEmpty)
@@ -389,7 +397,7 @@ trait OpenSourceDataFrameWriterV2Tests
     val replaced = catalog.loadTable(Identifier.of(Array("default"), "table_name"))
 
     // validate the replacement table
-    assert(replaced.name === "default.table_name")
+    assert(replaced.name === s"${catalogPrefix}default.table_name")
     assert(replaced.schema === new StructType()
       .add("id", LongType)
       .add("data", StringType)
@@ -416,7 +424,7 @@ trait OpenSourceDataFrameWriterV2Tests
     val replaced = catalog.loadTable(Identifier.of(Array("default"), "table_name"))
 
     // validate the replacement table
-    assert(replaced.name === "default.table_name")
+    assert(replaced.name === s"${catalogPrefix}default.table_name")
     assert(replaced.schema === new StructType().add("id", LongType).add("data", StringType))
     assert(replaced.partitioning.isEmpty)
     assert(getProperties(replaced).isEmpty)
@@ -434,7 +442,7 @@ trait OpenSourceDataFrameWriterV2Tests
     val table = catalog.loadTable(Identifier.of(Array("default"), "table_name"))
 
     // validate the initial table
-    assert(table.name === "default.table_name")
+    assert(table.name === s"${catalogPrefix}default.table_name")
     assert(table.schema === new StructType().add("id", LongType).add("data", StringType))
     assert(table.partitioning === Seq(IdentityTransform(FieldReference("id"))))
     assert(getProperties(table).isEmpty)
@@ -450,7 +458,7 @@ trait OpenSourceDataFrameWriterV2Tests
     val replaced = catalog.loadTable(Identifier.of(Array("default"), "table_name"))
 
     // validate the replacement table
-    assert(replaced.name === "default.table_name")
+    assert(replaced.name === s"${catalogPrefix}default.table_name")
     assert(replaced.schema === new StructType()
       .add("id", LongType)
       .add("data", StringType)
@@ -567,7 +575,7 @@ class DeltaDataFrameWriterV2Suite
 
     val table = catalog.loadTable(Identifier.of(Array("default"), "table_name"))
 
-    assert(table.name === "default.table_name")
+    assert(table.name === s"${catalogPrefix}default.table_name")
     assert(table.schema === new StructType().add("id", LongType).add("data", StringType))
     assert(table.partitioning === Seq(IdentityTransform(FieldReference("id"))))
     assert(getProperties(table) === Map("delta.appendOnly" -> "true"))
@@ -585,7 +593,7 @@ class DeltaDataFrameWriterV2Suite
     val table = catalog.loadTable(Identifier.of(Array("default"), "table_name"))
 
     // validate the initial table
-    assert(table.name === "default.table_name")
+    assert(table.name === s"${catalogPrefix}default.table_name")
     assert(table.schema === new StructType().add("id", LongType).add("data", StringType))
     assert(table.partitioning === Seq(IdentityTransform(FieldReference("id"))))
     assert(getProperties(table).isEmpty)
@@ -602,7 +610,7 @@ class DeltaDataFrameWriterV2Suite
     val replaced = catalog.loadTable(Identifier.of(Array("default"), "table_name"))
 
     // validate the replacement table
-    assert(replaced.name === "default.table_name")
+    assert(replaced.name === s"${catalogPrefix}default.table_name")
     assert(replaced.schema === new StructType()
         .add("id", LongType)
         .add("data", StringType)

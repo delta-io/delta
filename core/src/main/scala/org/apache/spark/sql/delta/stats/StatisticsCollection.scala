@@ -208,6 +208,29 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
       name: String,
       schema: StructType)(
       function: PartialFunction[(Column, StructField), Column]): Column = {
+
+    def collectStats(
+      schema: StructType,
+      parent: Option[Column],
+      function: PartialFunction[(Column, StructField), Column]): Seq[Column] = {
+      schema.flatMap {
+        case f @ StructField(name, s: StructType, _, _) =>
+          val column = parent.map(_.getItem(name))
+            .getOrElse(new Column(UnresolvedAttribute.quoted(name)))
+          val stats = collectStats(s, Some(column), function)
+          if (stats.nonEmpty) {
+            Some(struct(stats: _*) as DeltaColumnMapping.getPhysicalName(f))
+          } else {
+            None
+          }
+        case f @ StructField(name, _, _, _) =>
+          val column = parent.map(_.getItem(name))
+            .getOrElse(new Column(UnresolvedAttribute.quoted(name)))
+          // alias the column with its physical name
+          function.lift((column, f)).map(_.as(DeltaColumnMapping.getPhysicalName(f)))
+      }
+    }
+
     val allStats = collectStats(schema, None, function)
     val stats = if (numIndexedCols > 0) {
       allStats.take(numIndexedCols)
@@ -219,29 +242,6 @@ trait StatisticsCollection extends UsesMetadataFields with DeltaLogging {
       struct(stats: _*).as(name)
     } else {
       lit(null).as(name)
-    }
-  }
-
-  /** Inner recursive call for `collectStats`, should only be called by its overloaded companion. */
-  private def collectStats(
-      schema: StructType,
-      parent: Option[Column],
-      function: PartialFunction[(Column, StructField), Column]): Seq[Column] = {
-    schema.flatMap {
-      case f @ StructField(name, s: StructType, _, _) =>
-        val column = parent.map(_.getItem(name))
-          .getOrElse(new Column(UnresolvedAttribute.quoted(name)))
-        val stats = collectStats(s, Some(column), function)
-        if (stats.nonEmpty) {
-          Some(struct(stats: _*) as DeltaColumnMapping.getPhysicalName(f))
-        } else {
-          None
-        }
-      case f @ StructField(name, _, _, _) =>
-        val column = parent.map(_.getItem(name))
-          .getOrElse(new Column(UnresolvedAttribute.quoted(name)))
-        // alias the column with its physical name
-        function.lift((column, f)).map(_.as(DeltaColumnMapping.getPhysicalName(f)))
     }
   }
 }

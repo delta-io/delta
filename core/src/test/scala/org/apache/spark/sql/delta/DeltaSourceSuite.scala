@@ -625,7 +625,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
           true
         },
         StartStream(),
-        ExpectFailure[IllegalStateException] { e =>
+        ExpectFailure[DeltaIllegalStateException] { e =>
           for (msg <- Seq("delete", "checkpoint", "restart")) {
             assert(e.getMessage.contains(msg))
           }
@@ -1709,8 +1709,72 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase with DeltaSQLCommandTest {
 
 }
 
+abstract class DeltaSourceColumnMappingSuiteBase extends DeltaSourceSuite {
+  import testImplicits._
 
-class DeltaSourceNameColumnMappingSuite extends DeltaSourceSuite
+  testQuietly("drop column from source disallowed by MicroBatchExecution") {
+    withSQLConf(DeltaSQLConf.DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED.key -> "true") {
+      withTempDir { inputDir =>
+        val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+        (0 until 5).foreach { i =>
+          val v = Seq((i.toString, i.toString)).toDF("id", "value")
+          v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+        }
+
+        val df = spark.readStream
+          .format("delta")
+          .load(inputDir.getCanonicalPath)
+
+        testStream(df)(
+          AssertOnQuery { _ =>
+            sql(s"ALTER TABLE delta.`${inputDir.getCanonicalPath}` DROP COLUMN value")
+            true
+          },
+          // Failed MicroBatchExecution's assertion that number of batch schema fields must match
+          // with source schema fields
+          ExpectFailure[AssertionError](t => assert(t.getMessage.contains("Invalid batch")))
+        )
+      }
+    }
+  }
+
+  testQuietly("rename a column disallowed by DeltaSource's schema check") {
+    withTempDir { inputDir =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      (0 until 5).foreach { i =>
+        val v = Seq((i.toString, i.toString)).toDF("id", "value")
+        v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+      }
+
+      val df = spark.readStream
+        .format("delta")
+        .load(inputDir.getCanonicalPath)
+
+      testStream(df)(
+        ProcessAllAvailable(),
+        CheckAnswer((0 until 5).map(i => (i.toString, i.toString)): _*),
+        AssertOnQuery { _ =>
+          sql(s"ALTER TABLE delta.`${inputDir.getCanonicalPath}` " +
+            s"RENAME COLUMN value TO new_value")
+          true
+        },
+        AssertOnQuery { _ =>
+          (6 until 10).foreach { i =>
+            val v = Seq((i.toString, i.toString)).toDF("id", "new_value")
+            v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+          }
+          true
+        },
+        ExpectFailure[IllegalStateException](t =>
+          assert(t.getMessage.contains("Detected schema change")))
+      )
+    }
+  }
+
+}
+
+
+class DeltaSourceNameColumnMappingSuite extends DeltaSourceColumnMappingSuiteBase
   with DeltaColumnMappingEnableNameMode {
 
   override protected def runOnlyTests = Seq(

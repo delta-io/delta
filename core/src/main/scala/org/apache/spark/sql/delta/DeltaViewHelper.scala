@@ -89,9 +89,7 @@ object DeltaViewHelper {
             case newAttr if conf.resolver(oldAttr.qualifiedName, newAttr.qualifiedName) =>
               newAttr.exprId
           }.getOrElse {
-            throw new IllegalStateException(
-              s"Could not find a new attribute ID for column ${oldAttr.qualifiedName}. This " +
-                s"should have been checked earlier.")
+            throw DeltaErrors.noNewAttributeId(oldAttr)
           }
           oldAttr.withExprId(newId)
         }

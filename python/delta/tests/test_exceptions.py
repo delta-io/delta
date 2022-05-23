@@ -20,6 +20,7 @@ import unittest
 import delta.exceptions as exceptions
 
 from delta.testing.utils import DeltaTestCase
+from pyspark.sql.utils import AnalysisException, IllegalArgumentException
 
 if TYPE_CHECKING:
     from py4j.java_gateway import JVMView  # type: ignore[import]
@@ -69,6 +70,17 @@ class DeltaExceptionTests(DeltaTestCase):
         e = self.jvm.io.delta.exceptions.ConcurrentTransactionException
         self.assertRaises(exceptions.ConcurrentTransactionException,
                           lambda: self._raise_concurrent_exception(e))
+
+    def test_capture_delta_analysis_exception(self) -> None:
+        e = self.jvm.org.apache.spark.sql.delta.DeltaErrors.invalidColumnName
+        self.assertRaises(AnalysisException,
+                          lambda: self.jvm.scala.util.Failure(e("invalid")).get())
+
+    def test_capture_delta_illegal_argument_exception(self) -> None:
+        e = self.jvm.org.apache.spark.sql.delta.DeltaErrors
+        method = e.throwDeltaIllegalArgumentException
+        self.assertRaises(IllegalArgumentException,
+                          lambda: self.jvm.scala.util.Failure(method()).get())
 
 
 if __name__ == "__main__":

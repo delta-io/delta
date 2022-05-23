@@ -58,7 +58,7 @@ See the [online documentation](https://docs.delta.io/latest/) for the latest rel
 * [Python API docs](https://docs.delta.io/latest/api/python/index.html)
 
 ## Compatibility
-[Delta Standalone](https://www.youtube.com/c/deltalake) library is a single-node Java library that can be used to read from and write to Delta tables. Specifically, this library provides APIs to interact with a table’s metadata in the transaction log, implementing the Delta Transaction Log Protocol to achieve the transactional guarantees of the Delta Lake format.
+[Delta Standalone](https://docs.delta.io/latest/delta-standalone.html) library is a single-node Java library that can be used to read from and write to Delta tables. Specifically, this library provides APIs to interact with a table’s metadata in the transaction log, implementing the Delta Transaction Log Protocol to achieve the transactional guarantees of the Delta Lake format.
 
 
 ### API Compatibility
@@ -104,6 +104,7 @@ Delta Lake ensures _serializability_ for concurrent reads and writes. Please see
 We use [GitHub Issues](https://github.com/delta-io/delta/issues) to track community reported issues. You can also [contact](#community) the community for getting answers.
 
 ## Contributing 
+
 We welcome contributions to Delta Lake. See our [CONTRIBUTING.md](https://github.com/delta-io/delta/blob/master/CONTRIBUTING.md) for more details.
 
 We also adhere to the [Delta Lake Code of Conduct](https://github.com/delta-io/delta/blob/master/CODE_OF_CONDUCT.md).
@@ -123,6 +124,14 @@ To generate artifacts, run
 To execute tests, run
 
     build/sbt test
+
+To execute a single test suite, run
+
+    build/sbt 'testOnly org.apache.spark.sql.delta.optimize.OptimizeCompactionSuite'
+
+To execute a single test within and a single test suite, run
+
+    build/sbt 'testOnly *.OptimizeCompactionSuite -- -z "optimize command: on partitioned table - all partitions"'
 
 Refer to [SBT docs](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.html) for more commands.
 

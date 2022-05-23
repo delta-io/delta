@@ -105,8 +105,7 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
                   // This shouldn't be possible - if all columns aren't present when struct
                   // evolution is disabled, we should have thrown an error earlier.
                   if (!allowStructEvolution) {
-                    throw new IllegalStateException(
-                      s"Field $field could not be found when extracting references.",
+                    throw DeltaErrors.extractReferencesFieldNotFound(s"$field",
                       DeltaErrors.updateSchemaMismatchExpression(from, to))
                   }
                   Literal(null)
@@ -321,8 +320,7 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
               resolveReferencesForExpressions(SparkSession.active, expr :: Nil, fakePlan).head
             case None =>
               // Should not happen
-              throw new IllegalStateException(s"$targetCol is not a generated column " +
-                s"but is missing its update expression")
+              throw DeltaErrors.nonGeneratedColumnMissingUpdateExpression(targetCol)
           }
         // As `resolvedExpr` will refer to attributes in `fakePlan`, we need to manually replace
         // these attributes with their update expressions.

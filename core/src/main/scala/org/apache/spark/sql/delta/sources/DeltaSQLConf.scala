@@ -151,6 +151,21 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+    val DELTA_ALLOW_CREATE_EMPTY_SCHEMA_TABLE =
+    buildConf("createEmptySchemaTable.enabled")
+      .internal()
+      .doc(
+        s"""If enabled, creating a Delta table with an empty schema will be allowed through SQL API
+           |`CREATE TABLE table () USING delta ...`, or Delta table APIs.
+           |Creating a Delta table with empty schema table using dataframe operations or
+           |`CREATE OR REPLACE` syntax are not supported.
+           |The result Delta table can be updated using schema evolution operations such as
+           |`df.save()` with `mergeSchema = true`.
+           |Reading the empty schema table using DataframeReader or `SELECT` is not allowed.
+           |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_IMPORT_BATCH_SIZE_STATS_COLLECTION =
     buildConf("import.batchSize.statsCollection")
       .internal()
@@ -164,6 +179,13 @@ trait DeltaSQLConfBase {
       .doc("The number of files per batch for schema inference during import.")
       .intConf
       .createWithDefault(1000000)
+
+  val DELTA_SAMPLE_ESTIMATOR_ENABLED =
+    buildConf("sampling.enabled")
+      .internal()
+      .doc("Enable sample based estimation.")
+      .booleanConf
+      .createWithDefault(false)
 
   val DELTA_CONVERT_METADATA_CHECK_ENABLED =
     buildConf("convert.metadataCheck.enabled")
@@ -277,6 +299,16 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_SCHEMA_TYPE_CHECK =
+    buildConf("schema.typeCheck.enabled")
+      .doc(
+        """Enable the data type check when updating the table schema. Disabling this flag may
+          | allow users to create unsupported Delta tables and should only be used when trying to
+          | read/write legacy tables.""".stripMargin)
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS =
     buildConf("constraints.assumesDropIfExists.enabled")
       .doc("""If true, DROP CONSTRAINT quietly drops nonexistent constraints even without
@@ -306,6 +338,7 @@ trait DeltaSQLConfBase {
           |on a synchronous state update before running the query.
         """.stripMargin)
       .timeConf(TimeUnit.MILLISECONDS)
+      .checkValue(_ >= 0, "Staleness limit cannot be negative")
       .createWithDefault(0L) // Don't let tables go stale
 
   val DELTA_ALTER_LOCATION_BYPASS_SCHEMA_CHECK =
@@ -407,6 +440,31 @@ trait DeltaSQLConfBase {
       .doc("Write checkpoints where the partition values are parsed according to the data type.")
       .booleanConf
       .createWithDefault(true)
+
+  val CHECKPOINT_SCHEMA_WRITE_THRESHOLD_LENGTH =
+    buildConf("checkpointSchema.writeThresholdLength")
+      .internal()
+      .doc("Checkpoint schema larger than this threshold won't be written to the last checkpoint" +
+        " file")
+      .intConf
+      .createWithDefault(20000)
+
+  val LAST_CHECKPOINT_CHECKSUM_ENABLED =
+    buildConf("lastCheckpoint.checksum.enabled")
+      .internal()
+      .doc("Controls whether to write the checksum while writing the LAST_CHECKPOINT file and" +
+        " whether to validate it while reading the LAST_CHECKPOINT file")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_CHECKPOINT_PART_SIZE =
+    buildConf("checkpoint.partSize")
+        .internal()
+        .doc("The limit at which we will start parallelizing the checkpoint. We will attempt to " +
+                 "write a maximum of this many actions per checkpoint file.")
+        .longConf
+        .checkValue(_ > 0, "partSize has to be positive")
+        .createOptional
 
   val DELTA_WRITE_CHECKSUM_ENABLED =
     buildConf("writeChecksumFile.enabled")
@@ -619,6 +677,16 @@ trait DeltaSQLConfBase {
           |
           |This is a safety switch - we should only turn this off when there is an issue with
           |expression checking logic that prevents a valid column change from going through.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED =
+    buildConf("alterTable.dropColumn.enabled")
+      .internal()
+      .doc(
+        """Whether to enable the drop column feature for Delta.
+          |This is a safety switch - we should only turn this off when there is an issue.
           |""".stripMargin)
       .booleanConf
       .createWithDefault(true)

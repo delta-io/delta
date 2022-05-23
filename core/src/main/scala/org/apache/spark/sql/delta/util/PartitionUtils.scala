@@ -621,7 +621,7 @@ private[delta] object PartitionUtils {
     StructType(partitionColumns.map { col =>
       schema.find(f => equality(f.name, col)).getOrElse {
         val schemaCatalog = schema.catalogString
-        throw new AnalysisException(s"Partition column `$col` not found in schema $schemaCatalog")
+        throw DeltaErrors.missingPartitionColumn(col, schemaCatalog)
       }
     }).asNullable
   }

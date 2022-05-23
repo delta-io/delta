@@ -93,7 +93,7 @@ trait DeltaConfigsBase extends DeltaLogging {
    */
   def parseCalendarInterval(s: String): CalendarInterval = {
     if (s == null || s.trim.isEmpty) {
-      throw new IllegalArgumentException("Interval cannot be null or blank.")
+      throw DeltaErrors.emptyCalendarInterval
     }
     val sInLowerCase = s.trim.toLowerCase(Locale.ROOT)
     val interval =
@@ -240,10 +240,10 @@ trait DeltaConfigsBase extends DeltaLogging {
    */
   val MIN_READER_VERSION = buildConfig[Int](
     "minReaderVersion",
-    Action.readerVersion.toString,
+    Action.supportedProtocolVersion().minReaderVersion.toString,
     _.toInt,
-    v => v > 0 && v <= Action.readerVersion,
-    s"needs to be an integer between [1, ${Action.readerVersion}].")
+    v => v > 0 && v <= Action.supportedProtocolVersion().minReaderVersion,
+    s"needs to be an integer between [1, ${Action.supportedProtocolVersion().minReaderVersion}].")
 
   /**
    * The protocol reader version modelled as a table property. This property is *not* stored as
@@ -252,10 +252,10 @@ trait DeltaConfigsBase extends DeltaLogging {
    */
   val MIN_WRITER_VERSION = buildConfig[Int](
     "minWriterVersion",
-    Action.writerVersion.toString,
+    Action.supportedProtocolVersion().minWriterVersion.toString,
     _.toInt,
-    v => v > 0 && v <= Action.writerVersion,
-    s"needs to be an integer between [1, ${Action.writerVersion}].")
+    v => v > 0 && v <= Action.supportedProtocolVersion().minWriterVersion,
+    s"needs to be an integer between [1, ${Action.supportedProtocolVersion().minWriterVersion}].")
 
   /**
    * The shortest duration we have to keep delta files around before deleting them. We can only
@@ -269,6 +269,30 @@ trait DeltaConfigsBase extends DeltaLogging {
     isValidIntervalConfigValue,
     "needs to be provided as a calendar interval such as '2 weeks'. Months " +
     "and years are not accepted. You may specify '365 days' for a year instead.")
+
+  /**
+   * The shortest duration we have to keep delta sample files around before deleting them.
+   */
+  val SAMPLE_RETENTION = buildConfig[CalendarInterval](
+    "sampleRetentionDuration",
+    "interval 7 days",
+    parseCalendarInterval,
+    isValidIntervalConfigValue,
+    "needs to be provided as a calendar interval such as '2 weeks'. Months " +
+      "and years are not accepted. You may specify '365 days' for a year instead.")
+
+  /**
+   * The shortest duration we have to keep checkpoint files around before deleting them. Note that
+   * we'll never delete the most recent checkpoint. We may keep checkpoint files beyond this
+   * duration until the next calendar day.
+   */
+  val CHECKPOINT_RETENTION_DURATION = buildConfig[CalendarInterval](
+    "checkpointRetentionDuration",
+    "interval 2 days",
+    parseCalendarInterval,
+    isValidIntervalConfigValue,
+    "needs to be provided as a calendar interval such as '2 weeks'. Months " +
+      "and years are not accepted. You may specify '365 days' for a year instead.")
 
   /** How often to checkpoint the delta log. */
   val CHECKPOINT_INTERVAL = buildConfig[Int](
@@ -285,6 +309,20 @@ trait DeltaConfigsBase extends DeltaLogging {
     _.toBoolean,
     _ => true,
     "needs to be a boolean.")
+
+  /**
+   * If true, a delta table can be rolled back to any point within LOG_RETENTION. Leaving this on
+   * requires converting the oldest delta file we have into a checkpoint, which we do once a day. If
+   * doing that operation is too expensive, it can be turned off, but the table can only be rolled
+   * back CHECKPOINT_RETENTION_DURATION ago instead of LOG_RETENTION ago.
+   */
+  val ENABLE_FULL_RETENTION_ROLLBACK = buildConfig[Boolean](
+    "enableFullRetentionRollback",
+    "true",
+    _.toBoolean,
+    _ => true,
+    "needs to be a boolean."
+  )
 
   /**
    * The shortest duration we have to keep logically deleted data files around before deleting them
@@ -338,6 +376,17 @@ trait DeltaConfigsBase extends DeltaLogging {
     _ => true,
     "needs to be a boolean.",
     Some(Protocol(0, 2)))
+
+
+  /**
+   * Whether this table will automatically optimize the layout of files during writes.
+   */
+  val AUTO_OPTIMIZE = buildConfig[Option[Boolean]](
+    "autoOptimize",
+    null,
+    v => Option(v).map(_.toBoolean),
+    _ => true,
+    "needs to be a boolean.")
 
   /**
    * The number of columns to collect stats on for data skipping. A value of -1 means collecting
@@ -394,7 +443,9 @@ trait DeltaConfigsBase extends DeltaLogging {
     "needs to be a boolean.")
 
   /**
-   * Enable change data feed output. Not implemented.
+   * Enable change data feed output.
+   * When enabled, DELETE, UPDATE, and MERGE INTO operations will need to do additional work to
+   * output their change data in an efficiently readable format.
    */
   val CHANGE_DATA_FEED = buildConfig[Boolean](
     "enableChangeDataFeed",

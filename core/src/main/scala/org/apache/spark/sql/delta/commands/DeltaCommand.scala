@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.{CommitStats, DeltaErrors, DeltaLog, DeltaOper
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.util.DeltaFileOperations
@@ -39,6 +40,7 @@ import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
 
 /**
@@ -61,7 +63,7 @@ trait DeltaCommand extends DeltaLogging {
     }
   }
 
-  protected def verifyPartitionPredicates(
+  def verifyPartitionPredicates(
       spark: SparkSession,
       partitionColumns: Seq[String],
       predicates: Seq[Expression]): Unit = {
@@ -82,10 +84,7 @@ trait DeltaCommand extends DeltaLogging {
         }
         val nameEquality = spark.sessionState.conf.resolver
         partitionColumns.find(f => nameEquality(f, colName)).getOrElse {
-          throw new AnalysisException(
-            s"Predicate references non-partition column '$colName'. " +
-              "Only the partition columns may be referenced: " +
-              s"[${partitionColumns.mkString(", ")}]")
+          throw DeltaErrors.nonPartitionColumnReference(colName, partitionColumns)
         }
       }
     }
@@ -165,8 +164,7 @@ trait DeltaCommand extends DeltaLogging {
       nameToAddFileMap: Map[String, AddFile]): AddFile = {
     val absolutePath = DeltaFileOperations.absolutePath(basePath.toString, filePath).toString
     nameToAddFileMap.getOrElse(absolutePath, {
-      throw new IllegalStateException(s"File ($absolutePath) to be rewritten not found " +
-        s"among candidate files:\n${nameToAddFileMap.keys.mkString("\n")}")
+      throw DeltaErrors.notFoundFileToBeRewritten(absolutePath, nameToAddFileMap.keys)
     })
   }
 
@@ -227,9 +225,7 @@ trait DeltaCommand extends DeltaLogging {
       txnId: String): Snapshot = {
     val currentSnapshot = deltaLog.update()
     if (currentSnapshot.version != attemptVersion) {
-      throw new IllegalStateException(
-        s"The committed version is $attemptVersion but the current version is " +
-          s"${currentSnapshot.version}. Please contact Databricks support.")
+      throw DeltaErrors.invalidCommittedVersion(attemptVersion, currentSnapshot.version)
     }
 
     logInfo(s"Committed delta #$attemptVersion to ${deltaLog.logPath}. Wrote $commitSize actions.")

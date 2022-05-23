@@ -89,9 +89,6 @@ object DeltaOperations {
 
     override def transformMetrics(metrics: Map[String, SQLMetric]): Map[String, String] = {
       var strMetrics = super.transformMetrics(metrics)
-      if (metrics.contains("numOutputRows")) {
-        strMetrics += "numCopiedRows" -> metrics("numOutputRows").value.toString
-      }
       // find the case where deletedRows are not captured
       if (strMetrics("numDeletedRows") == "0" && strMetrics("numRemovedFiles") != "0") {
         // identify when row level metrics are unavailable. This will happen when the entire
@@ -248,6 +245,15 @@ object DeltaOperations {
           ) ++ colPosition.map("position" -> _.toString)
       }))
   }
+
+  /** Recorded when columns are dropped. */
+  case class DropColumns(
+    colsToDrop: Seq[Seq[String]]) extends Operation("DROP COLUMNS") {
+
+    override val parameters: Map[String, Any] = Map(
+      "columns" -> JsonUtils.toJson(colsToDrop.map(UnresolvedAttribute(_).name)))
+  }
+
   /** Recorded when columns are changed. */
   case class ChangeColumn(
       columnPath: Seq[String],
@@ -330,15 +336,19 @@ object DeltaOperations {
     override val operationMetrics: Set[String] = DeltaOperationMetrics.RESTORE
   }
 
+  sealed abstract class OptimizeOrReorg(override val name: String) extends Operation(name)
+
+  /** operation name for OPTIMIZE command */
   val OPTIMIZE_OPERATION_NAME = "OPTIMIZE"
 
   /** Recorded when optimizing the table. */
   case class Optimize(
       predicate: Seq[String]
-  ) extends Operation(OPTIMIZE_OPERATION_NAME) {
+  ) extends OptimizeOrReorg(OPTIMIZE_OPERATION_NAME) {
     override val parameters: Map[String, Any] = Map(
       "predicate" -> JsonUtils.toJson(predicate)
-      )
+    )
+
     override val operationMetrics: Set[String] = DeltaOperationMetrics.OPTIMIZE
   }
 
@@ -384,6 +394,7 @@ private[delta] object DeltaOperationMetrics {
   val DELETE = Set(
     "numAddedFiles", // number of files added
     "numRemovedFiles", // number of files removed
+    "numAddedChangeFiles", // number of CDC files
     "numDeletedRows", // number of rows removed
     "numCopiedRows", // number of rows copied in the process of deleting files
     "executionTimeMs", // time taken to execute the entire operation
@@ -397,6 +408,7 @@ private[delta] object DeltaOperationMetrics {
    */
   val DELETE_PARTITIONS = Set(
     "numRemovedFiles", // number of files removed
+    "numAddedChangeFiles", // number of CDC files generated - generally 0 in this case
     "executionTimeMs", // time taken to execute the entire operation
     "scanTimeMs", // time taken to scan the files for matches
     "rewriteTimeMs" // time taken to rewrite the matched files
@@ -424,6 +436,7 @@ private[delta] object DeltaOperationMetrics {
     "scanTimeMs", // time taken to scan the files for matches
     "rewriteTimeMs" // time taken to rewrite the matched files
   )
+
 
   val UPDATE = Set(
     "numAddedFiles", // number of files added

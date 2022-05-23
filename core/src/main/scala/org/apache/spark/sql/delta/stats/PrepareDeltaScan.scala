@@ -193,7 +193,11 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
 
   override def apply(_plan: LogicalPlan): LogicalPlan = {
     var plan = _plan
-    if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)) {
+
+    val shouldPrepareDeltaScan = (
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)
+    )
+    if (shouldPrepareDeltaScan) {
 
       // Should not be applied to subqueries to avoid duplicate delta jobs.
       val isSubquery = plan.isInstanceOf[Subquery] || plan.isInstanceOf[SupportsSubquery]

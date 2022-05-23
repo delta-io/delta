@@ -173,7 +173,7 @@ case class CreateDeltaTableCommand(
           // guard against it, in case of checkpoint corruption bugs.
           val noExistingMetadata = txn.readVersion == -1 || txn.metadata.schema.isEmpty
           if (noExistingMetadata) {
-            assertTableSchemaDefined(fs, tableLocation, tableWithLocation, sparkSession)
+            assertTableSchemaDefined(fs, tableLocation, tableWithLocation, txn, sparkSession)
             assertPathEmpty(hadoopConf, tableWithLocation)
             // This is a user provided schema.
             // Doesn't come from a query, Follow nullability invariants.
@@ -232,7 +232,8 @@ case class CreateDeltaTableCommand(
       description = table.comment.orNull,
       schemaString = schemaString,
       partitionColumns = table.partitionColumnNames,
-      configuration = table.properties)
+      configuration = table.properties,
+      createdTime = Some(System.currentTimeMillis()))
   }
 
   private def assertPathEmpty(
@@ -254,7 +255,15 @@ case class CreateDeltaTableCommand(
       fs: FileSystem,
       path: Path,
       table: CatalogTable,
+      txn: OptimisticTransaction,
       sparkSession: SparkSession): Unit = {
+    // If we allow creating an empty schema table and indeed the table is new, we just need to
+    // make sure:
+    // 1. txn.readVersion == -1 to read a new table
+    // 2. for external tables: path must either doesn't exist or is completely empty
+    val allowCreatingTableWithEmptySchema = sparkSession.sessionState
+      .conf.getConf(DeltaSQLConf.DELTA_ALLOW_CREATE_EMPTY_SCHEMA_TABLE) && txn.readVersion == -1
+
     // Users did not specify the schema. We expect the schema exists in Delta.
     if (table.schema.isEmpty) {
       if (table.tableType == CatalogTableType.EXTERNAL) {
@@ -262,10 +271,12 @@ case class CreateDeltaTableCommand(
           throw DeltaErrors.createExternalTableWithoutLogException(
             path, table.identifier.quotedString, sparkSession)
         } else {
+          if (allowCreatingTableWithEmptySchema) return
           throw DeltaErrors.createExternalTableWithoutSchemaException(
             path, table.identifier.quotedString, sparkSession)
         }
       } else {
+        if (allowCreatingTableWithEmptySchema) return
         throw DeltaErrors.createManagedTableWithoutSchemaException(
           table.identifier.quotedString, sparkSession)
       }

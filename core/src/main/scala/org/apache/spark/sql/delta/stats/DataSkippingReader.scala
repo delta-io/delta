@@ -29,11 +29,11 @@ import org.apache.spark.sql.{DataFrame, _}
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.Literal.{FalseLiteral, TrueLiteral}
-import org.apache.spark.sql.catalyst.util.{GenericArrayData, TypeUtils}
+import org.apache.spark.sql.catalyst.util.TypeUtils
 import org.apache.spark.sql.execution.InSubqueryExec
 import org.apache.spark.sql.expressions.SparkUserDefinedFunction
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.types.{AtomicType, BooleanType, ByteType, CalendarIntervalType, DataType, DateType, DoubleType, FloatType, IntegerType, LongType, NumericType, ShortType, StringType, StructType, TimestampType}
+import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, NumericType, StringType, StructType, TimestampType}
 import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
 
 /**
@@ -438,6 +438,19 @@ trait DataSkippingReaderBase
       }
     case Not(EqualTo(v: Literal, a)) =>
       constructDataFilters(Not(EqualTo(a, v)))
+
+    // Rewrite `EqualNullSafe(a, NotNullLiteral)` as `And(IsNotNull(a), EqualTo(a, NotNullLiteral))`
+    // and rewrite `EqualNullSafe(a, null)` as `IsNull(a)` to let the existing logic handle it.
+    case EqualNullSafe(a, v: Literal) =>
+      val rewrittenExpr = if (v.value != null) And(IsNotNull(a), EqualTo(a, v)) else IsNull(a)
+      constructDataFilters(rewrittenExpr)
+    case EqualNullSafe(v: Literal, a) =>
+      constructDataFilters(EqualNullSafe(a, v))
+    case Not(EqualNullSafe(a, v: Literal)) =>
+      val rewrittenExpr = if (v.value != null) And(IsNotNull(a), EqualTo(a, v)) else IsNull(a)
+      constructDataFilters(Not(rewrittenExpr))
+    case Not(EqualNullSafe(v: Literal, a)) =>
+      constructDataFilters(Not(EqualNullSafe(a, v)))
 
     // Match any file whose min is less than the requested upper bound.
     case LessThan(SkippingEligibleColumn(a), SkippingEligibleLiteral(v)) =>

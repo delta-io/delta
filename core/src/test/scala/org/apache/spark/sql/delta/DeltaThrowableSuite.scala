@@ -53,6 +53,12 @@ class DeltaThrowableSuite extends SparkFunSuite {
     assert(deltaErrorClassToInfoMap.keySet.intersect(sparkErrorClassesMap.keySet).isEmpty)
   }
 
+  test("No word 'databricks' in OSS Delta errors") {
+    val errorClasses = deltaErrorClassToInfoMap.keys.toSeq
+    val errorMsgs = deltaErrorClassToInfoMap.values.toSeq.flatMap(_.message)
+    checkCondition(errorClasses ++ errorMsgs, s => !s.toLowerCase().contains("databricks"))
+  }
+
   test("Delta error classes are correctly formatted") {
     val errorClassFileContents = IOUtils.toString(deltaErrorClassSource.openStream())
     val mapper = JsonMapper.builder()

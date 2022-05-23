@@ -35,12 +35,21 @@ trait DeltaColumnMappingSelectedTestMixin extends SparkFunSuite with SQLTestUtil
 
   protected def columnMappingMode: String = NoMapping.name
 
+  /**
+   * If true, will run all tests.
+   * Requires that `runOnlyTests` is empty.
+   */
+  protected def runAllTests: Boolean = false
+
   private val testsRun: mutable.Set[String] = mutable.Set.empty
 
   override protected def test(
       testName: String,
       testTags: Tag*)(testFun: => Any)(implicit pos: Position): Unit = {
-    if (runOnlyTests.contains(testName)) {
+    require(!runAllTests || runOnlyTests.isEmpty,
+      "If `runAllTests` is true then `runOnlyTests` must be empty")
+
+    if (runAllTests || runOnlyTests.contains(testName)) {
       super.test(s"$testName - column mapping $columnMappingMode mode", testTags: _*) {
         testsRun.add(testName)
         withSQLConf(

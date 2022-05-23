@@ -126,15 +126,14 @@ object DeltaInvariantCheckerExec {
                 val ordinal = fields.indexWhere(f =>
                   SchemaUtils.DELTA_COL_RESOLVER(f.name, fieldName))
                 if (ordinal == -1) {
-                  throw new IndexOutOfBoundsException(s"Not nullable column not found in struct: " +
-                      s"${fields.map(_.name).mkString("[", ",", "]")}")
+                  throw DeltaErrors.notNullColumnNotFoundInStruct(
+                    s"${fields.map(_.name).mkString("[", ",", "]")}")
                 }
                 GetStructField(e, ordinal, Some(fieldName))
               case _ =>
                 // NOTE: We should also update `GeneratedColumn.validateGeneratedColumns` to enable
                 // `GetMapValue` and `GetArrayStructFields` expressions when this is supported.
-                throw new UnsupportedOperationException(
-                  "Invariants on nested fields other than StructTypes are not supported.")
+                throw DeltaErrors.unSupportedInvariantNonStructType
             }
           }
           Some(nested)

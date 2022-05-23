@@ -27,6 +27,7 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{GenerateSymlinkManifest, PostCommitHook}
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -38,6 +39,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.{Clock, Utils}
 
 /** Record metrics about a successful commit. */
@@ -142,7 +144,7 @@ object OptimisticTransaction {
    */
   private[delta] def setActive(txn: OptimisticTransaction): Unit = {
     if (active.get != null) {
-      throw new IllegalStateException("Cannot set a new txn as active when one is already active")
+      throw DeltaErrors.activeTransactionAlreadySet()
     }
     active.set(txn)
   }
@@ -250,6 +252,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   /** Unique identifier for the transaction */
   val txnId = UUID.randomUUID().toString
+
+  /** Whether to check unsupported data type when updating the table schema */
+  protected var checkUnsupportedDataType: Boolean =
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SCHEMA_TYPE_CHECK)
 
   /** The end to end execution time of this transaction. */
   def txnExecutionTimeMs: Option[Long] = if (commitEndNano == -1) {
@@ -425,6 +431,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       recordDeltaEvent(deltaLog, "delta.generatedColumns.definition")
     }
 
+    if (checkUnsupportedDataType) {
+      val unsupportedTypes = SchemaUtils.findUnsupportedDataTypes(metadata.schema)
+      if (unsupportedTypes.nonEmpty) {
+        throw DeltaErrors.unsupportedDataTypes(unsupportedTypes.head, unsupportedTypes.tail: _*)
+      }
+    }
+
     val needsProtocolUpdate = Protocol.checkProtocolRequirements(spark, metadata, protocol)
     if (needsProtocolUpdate.isDefined) {
       newProtocol = needsProtocolUpdate
@@ -529,6 +542,29 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   /**
+   * Checks if the new schema contains any CDC columns (which is invalid) and throws the appropriate
+   * error
+   */
+  protected def performCdcMetadataCheck(): Unit = {
+    if (newMetadata.nonEmpty) {
+      if (CDCReader.isCDCEnabledOnTable(newMetadata.get)) {
+        val schema = newMetadata.get.schema.fieldNames
+        val reservedColumnsUsed = CDCReader.cdcReadSchema(new StructType()).fieldNames
+          .intersect(schema)
+        if (reservedColumnsUsed.length > 0) {
+          if (!CDCReader.isCDCEnabledOnTable(snapshot.metadata)) {
+            // cdc was not enabled previously but reserved columns are present in the new schema.
+            throw DeltaErrors.tableAlreadyContainsCDCColumns(reservedColumnsUsed)
+          } else {
+            // cdc was enabled but reserved columns are present in the new metadata.
+            throw DeltaErrors.cdcColumnsInData(reservedColumnsUsed)
+          }
+        }
+      }
+    }
+  }
+
+  /**
    * Modifies the state of the log by adding a new commit that is based on a read at
    * the given `lastVersion`.  In the case of a conflict with a concurrent writer this
    * method will throw an exception.
@@ -543,6 +579,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     commitStartNano = System.nanoTime()
 
     val (version, actualCommittedActions) = try {
+      // Check for CDC metadata columns
+      performCdcMetadataCheck()
+
       // Try to commit at the next version.
       val preparedActions = prepareCommit(actions, op)
 
@@ -899,14 +938,30 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
 
     // Post stats
+    // Here, we efficiently calculate various stats (number of each different action, number of
+    // bytes per action, etc.) by iterating over all actions, case matching by type, and updating
+    // variables. This is more efficient than a functional approach.
     var numAbsolutePaths = 0
     val distinctPartitions = new mutable.HashSet[Map[String, String]]
-    val adds = actions.collect {
+    var bytesNew: Long = 0L
+    var numAdd: Int = 0
+    var numRemove: Int = 0
+    var numCdcFiles: Int = 0
+    var cdcBytesNew: Long = 0L
+    actions.foreach {
       case a: AddFile =>
+        numAdd += 1
         if (a.pathAsUri.isAbsolute) numAbsolutePaths += 1
         distinctPartitions += a.partitionValues
-        a
+        if (a.dataChange) bytesNew += a.size
+      case r: RemoveFile =>
+        numRemove += 1
+      case c: AddCDCFile =>
+        numCdcFiles += 1
+        cdcBytesNew += c.size
+      case _ =>
     }
+
     val needsCheckpoint = shouldCheckpoint(attemptVersion)
     val stats = CommitStats(
       startVersion = snapshot.version,
@@ -917,13 +972,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       fsWriteDurationMs = NANOSECONDS.toMillis(commitEndNano - fsWriteStartNano),
       stateReconstructionDurationMs =
         NANOSECONDS.toMillis(postCommitReconstructionTime - commitEndNano),
-      numAdd = adds.size,
-      numRemove = actions.collect { case r: RemoveFile => r }.size,
-      bytesNew = adds.filter(_.dataChange).map(_.size).sum,
+      numAdd = numAdd,
+      numRemove = numRemove,
+      bytesNew = bytesNew,
       numFilesTotal = postCommitSnapshot.numOfFiles,
       sizeInBytesTotal = postCommitSnapshot.sizeInBytes,
-      numCdcFiles = 0,
-      cdcBytesNew = 0,
+      numCdcFiles = numCdcFiles,
+      cdcBytesNew = cdcBytesNew,
       protocol = postCommitSnapshot.protocol,
       commitSizeBytes = jsonActions.map(_.size).sum,
       checkpointSizeBytes = postCommitSnapshot.checkpointSizeInBytes(),

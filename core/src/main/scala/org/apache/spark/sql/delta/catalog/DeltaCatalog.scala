@@ -27,8 +27,7 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, DeltaTableUtils}
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
 import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
-import org.apache.spark.sql.delta.commands.{AlterTableAddColumnsDeltaCommand, AlterTableChangeColumnDeltaCommand, AlterTableSetLocationDeltaCommand, AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand, CreateDeltaTableCommand, TableCreationModes}
-import org.apache.spark.sql.delta.commands.{AlterTableAddConstraintDeltaCommand, AlterTableDropConstraintDeltaCommand, WriteIntoDelta}
+import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.hadoop.fs.Path
@@ -331,8 +330,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
           s"$table is a view. You may not write data into a view.")
       }
       if (!DeltaSourceUtils.isDeltaTable(oldTable.provider)) {
-        throw new AnalysisException(s"$table is not a Delta table. Please drop this " +
-          "table first if you would like to recreate it with Delta Lake.")
+        throw DeltaErrors.notADeltaTable(table.table)
       }
       Some(oldTable)
     } else {
@@ -431,6 +429,10 @@ class DeltaCatalog extends DelegatingCatalogExtension
               Option(col.position()).map(UnresolvedFieldPosition))
           }).run(spark)
 
+      case (t, deleteColumns) if t == classOf[DeleteColumn] =>
+        AlterTableDropColumnsDeltaCommand(
+          table, deleteColumns.asInstanceOf[Seq[DeleteColumn]].map(_.fieldNames().toSeq)).run(spark)
+
       case (t, newProperties) if t == classOf[SetProperty] =>
         AlterTableSetPropertiesDeltaCommand(
           table,
@@ -456,8 +458,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
               spark.sessionState.conf.resolver)
               .map(_._2)
             val field = fieldOpt.getOrElse {
-              throw new AnalysisException(
-                s"Couldn't find column $colName in:\n${schema.treeString}")
+              throw DeltaErrors.nonExistentColumnInSchema(colName, schema.treeString)
             }
             field -> None
           })

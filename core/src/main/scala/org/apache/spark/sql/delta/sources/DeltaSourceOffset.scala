@@ -84,8 +84,7 @@ object DeltaSourceOffset {
         validateSourceVersion(s.json)
         val o = JsonUtils.mapper.readValue[DeltaSourceOffset](s.json)
         if (o.reservoirId != reservoirId) {
-          throw new IllegalStateException(s"Delta table ${o.reservoirId} doesn't exist. " +
-              s"Please delete your streaming query checkpoint and restart.")
+          throw DeltaErrors.nonExistentDeltaTable(o.reservoirId)
         }
         o
     }
@@ -95,7 +94,7 @@ object DeltaSourceOffset {
     val parsedJson = parse(json)
     val versionOpt = jsonOption(parsedJson \ "sourceVersion").map {
       case i: JInt => i.num.longValue
-      case other => throw new IllegalStateException(s"sourceVersion($other) is invalid")
+      case other => throw DeltaErrors.invalidSourceVersion(other)
     }
     if (versionOpt.isEmpty) {
       throw DeltaErrors.cannotFindSourceVersionException(json)

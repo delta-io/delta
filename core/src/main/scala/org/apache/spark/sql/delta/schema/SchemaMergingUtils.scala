@@ -149,11 +149,11 @@ object SchemaMergingUtils {
                 if (fixedTypeColumnsSet.contains(currentField.name.toLowerCase(Locale.ROOT)) &&
                     !equalsIgnoreCaseAndCompatibleNullability(
                       currentField.dataType, updateField.dataType)) {
-                  throw new AnalysisException(
-                    s"Column ${currentField.name} is a generated column " +
-                      "or a column used by a generated column. " +
-                      s"The data type is ${currentField.dataType.sql}. " +
-                      s"It doesn't accept data type ${updateField.dataType.sql}")
+                  throw new DeltaAnalysisException(
+                    errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+                    messageParameters = Array(currentField.name, currentField.dataType.sql,
+                      updateField.dataType.sql)
+                  )
                 }
                 try {
                   StructField(
@@ -205,16 +205,16 @@ object SchemaMergingUtils {
             current
           } else if ((leftPrecision != rightPrecision) && (leftScale != rightScale)) {
             throw new DeltaAnalysisException(
-              errorClass = "MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+              errorClass = "DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE",
               messageParameters = Array(
                 s"precision $leftPrecision and $rightPrecision & scale $leftScale and $rightScale"))
           } else if (leftPrecision != rightPrecision) {
             throw new DeltaAnalysisException(
-              errorClass = "MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+              errorClass = "DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE",
               messageParameters = Array(s"precision $leftPrecision and $rightPrecision"))
           } else {
             throw new DeltaAnalysisException(
-              errorClass = "MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+              errorClass = "DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE",
               messageParameters = Array(s"scale $leftScale and $rightScale"))
           }
         case _ if current == update =>
