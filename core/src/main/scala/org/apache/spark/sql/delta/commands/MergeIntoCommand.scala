@@ -21,6 +21,11 @@ import java.util.concurrent.TimeUnit
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.actions.AddCDCFile
+
+import org.apache.spark.sql.catalyst.expressions.Literal
+import org.apache.spark.sql.types.DataTypes
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction}
 import org.apache.spark.sql.delta.files._
@@ -216,6 +221,7 @@ case class MergeIntoCommand(
   import MergeIntoCommand._
 
   import SQLMetrics._
+  import org.apache.spark.sql.delta.commands.cdc.CDCReader._
 
   override val canMergeSchema: Boolean = conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE)
   override val canOverwriteSchema: Boolean = false
@@ -254,6 +260,10 @@ case class MergeIntoCommand(
     "numTargetFilesAfterSkipping" -> createMetric(sc, "number of target files after skipping"),
     "numTargetFilesRemoved" -> createMetric(sc, "number of files removed to target"),
     "numTargetFilesAdded" -> createMetric(sc, "number of files added to target"),
+    "numTargetChangeFilesAdded" ->
+      createMetric(sc, "number of change data capture files generated"),
+    "numTargetChangeFileBytes" ->
+      createMetric(sc, "total size of change data capture files generated"),
     "numTargetBytesBeforeSkipping" -> createMetric(sc, "number of target bytes before skipping"),
     "numTargetBytesAfterSkipping" -> createMetric(sc, "number of target bytes after skipping"),
     "numTargetBytesRemoved" -> createMetric(sc, "number of target bytes removed"),
@@ -450,6 +460,7 @@ case class MergeIntoCommand(
       deltaTxn: OptimisticTransaction
     ): Seq[FileAction] = recordMergeOperation(sqlMetricName = "rewriteTimeMs") {
 
+    // TODO: insert
     // UDFs to update metrics
     val incrSourceRowCountExpr = makeMetricUpdateUDF("numSourceRows")
     val incrInsertedCountExpr = makeMetricUpdateUDF("numTargetRowsInserted")
@@ -494,7 +505,7 @@ case class MergeIntoCommand(
     metrics("numTargetBytesRemoved") += 0
     metrics("numTargetPartitionsRemovedFrom") += 0
     val (addedBytes, addedPartitions) = totalBytesAndDistinctPartitionValues(newFiles)
-    metrics("numTargetFilesAdded") += newFiles.size
+    metrics("numTargetFilesAdded") += newFiles.count(_.isInstanceOf[AddFile])
     metrics("numTargetBytesAdded") += addedBytes
     metrics("numTargetPartitionsAddedTo") += addedPartitions
     newFiles
@@ -503,6 +514,8 @@ case class MergeIntoCommand(
   /**
    * Write new files by reading the touched files and updating/inserting data using the source
    * query/table. This is implemented using a full|right-outer-join using the merge condition.
+   *
+   * TODO: update docs
    */
   private def writeAllChanges(
     spark: SparkSession,
@@ -553,21 +566,35 @@ case class MergeIntoCommand(
       tryResolveReferencesForExpressions(spark, exprs, joinedPlan)
     }
 
-    def matchedClauseOutput(clause: DeltaMergeIntoMatchedClause): Seq[Expression] = {
+    def matchedClauseOutput(clause: DeltaMergeIntoMatchedClause): Seq[Seq[Expression]] = {
       val exprs = clause match {
         case u: DeltaMergeIntoUpdateClause =>
           // Generate update expressions and set ROW_DELETED_COL = false
-          u.resolvedActions.map(_.expr) :+ Literal.FalseLiteral :+ incrUpdatedCountExpr
+          val mainDataOutput = u.resolvedActions.map(_.expr) :+ Literal.FalseLiteral :+
+            incrUpdatedCountExpr :+ Literal(CDC_TYPE_NOT_CDC)
+          val preImageOutput = targetOutputCols :+ Literal.FalseLiteral :+ Literal.TrueLiteral :+
+            Literal(CDC_TYPE_UPDATE_PREIMAGE)
+          val postImageOutput = mainDataOutput.dropRight(2) :+ Literal.TrueLiteral :+
+            Literal(CDC_TYPE_UPDATE_POSTIMAGE)
+          Seq(mainDataOutput, preImageOutput, postImageOutput)
         case _: DeltaMergeIntoDeleteClause =>
           // Generate expressions to set the ROW_DELETED_COL = true
-          targetOutputCols :+ Literal.TrueLiteral :+ incrDeletedCountExpr
+          val mainDataOutput = targetOutputCols :+ Literal.TrueLiteral :+ incrDeletedCountExpr :+
+            Literal(CDC_TYPE_NOT_CDC)
+          val deleteCdcOutput = mainDataOutput.dropRight(3) :+ Literal.FalseLiteral :+
+            Literal.TrueLiteral :+ Literal(CDC_TYPE_DELETE)
+          Seq(mainDataOutput, deleteCdcOutput)
       }
-      resolveOnJoinedPlan(exprs)
+      exprs.map(resolveOnJoinedPlan)
     }
 
-    def notMatchedClauseOutput(clause: DeltaMergeIntoInsertClause): Seq[Expression] = {
-      resolveOnJoinedPlan(
-        clause.resolvedActions.map(_.expr) :+ Literal.FalseLiteral :+ incrInsertedCountExpr)
+    def notMatchedClauseOutput(clause: DeltaMergeIntoInsertClause): Seq[Seq[Expression]] = {
+      val mainDataOutput = resolveOnJoinedPlan(
+        clause.resolvedActions.map(_.expr) :+ Literal.FalseLiteral :+ incrInsertedCountExpr :+
+          Literal(CDC_TYPE_NOT_CDC))
+      val insertCdcOutput = mainDataOutput.dropRight(2) :+ Literal.TrueLiteral :+
+        Literal(CDC_TYPE_INSERT)
+      Seq(mainDataOutput, insertCdcOutput)
     }
 
     def clauseCondition(clause: DeltaMergeIntoClause): Expression = {
@@ -576,8 +603,13 @@ case class MergeIntoCommand(
       resolveOnJoinedPlan(Seq(condExpr)).head
     }
 
+    // TODO: update name of increment metric column
     val joinedRowEncoder = RowEncoder(joinedPlan.schema)
-    val outputRowEncoder = RowEncoder(deltaTxn.metadata.schema).resolveAndBind()
+    val outputRowEncoder = RowEncoder(deltaTxn.metadata.schema
+      .add(ROW_DROPPED_COL, DataTypes.BooleanType)
+      .add("INCR_ROW_COUNT_COL", DataTypes.BooleanType)
+      .add(CDC_TYPE_COLUMN_NAME, DataTypes.StringType)
+    ).resolveAndBind()
 
     val processor = new JoinedRowProcessor(
       targetRowHasNoMatch = resolveOnJoinedPlan(Seq(col(SOURCE_ROW_PRESENT_COL).isNull.expr)).head,
@@ -587,15 +619,18 @@ case class MergeIntoCommand(
       notMatchedConditions = notMatchedClauses.map(clauseCondition),
       notMatchedOutputs = notMatchedClauses.map(notMatchedClauseOutput),
       noopCopyOutput =
-        resolveOnJoinedPlan(targetOutputCols :+ Literal.FalseLiteral :+ incrNoopCountExpr),
+        resolveOnJoinedPlan(targetOutputCols :+ Literal.FalseLiteral :+ incrNoopCountExpr :+
+          Literal(CDC_TYPE_NOT_CDC)),
       deleteRowOutput =
-        resolveOnJoinedPlan(targetOutputCols :+ Literal.TrueLiteral :+ Literal.TrueLiteral),
+        resolveOnJoinedPlan(targetOutputCols :+ Literal.TrueLiteral :+ Literal.TrueLiteral :+
+          Literal(CDC_TYPE_NOT_CDC)),
       joinedAttributes = joinedPlan.output,
       joinedRowEncoder = joinedRowEncoder,
       outputRowEncoder = outputRowEncoder)
 
     val outputDF =
       Dataset.ofRows(spark, joinedPlan).mapPartitions(processor.processPartition)(outputRowEncoder)
+        .drop(ROW_DROPPED_COL, "INCR_ROW_COUNT_COL")
     logDebug("writeAllChanges: join output plan:\n" + outputDF.queryExecution)
 
     // Write to Delta
@@ -604,7 +639,8 @@ case class MergeIntoCommand(
 
     // Update metrics
     val (addedBytes, addedPartitions) = totalBytesAndDistinctPartitionValues(newFiles)
-    metrics("numTargetFilesAdded") += newFiles.size
+    metrics("numTargetFilesAdded") += newFiles.count(_.isInstanceOf[AddFile])
+    metrics("numTargetChangeFilesAdded") += newFiles.count(_.isInstanceOf[AddCDCFile])
     metrics("numTargetBytesAdded") += addedBytes
     metrics("numTargetPartitionsAddedTo") += addedPartitions
 
@@ -748,14 +784,15 @@ object MergeIntoCommand {
   val FILE_NAME_COL = "_file_name_"
   val SOURCE_ROW_PRESENT_COL = "_source_row_present_"
   val TARGET_ROW_PRESENT_COL = "_target_row_present_"
+  val ROW_DROPPED_COL = "_row_dropped_"
 
   class JoinedRowProcessor(
       targetRowHasNoMatch: Expression,
       sourceRowHasNoMatch: Expression,
       matchedConditions: Seq[Expression],
-      matchedOutputs: Seq[Seq[Expression]],
+      matchedOutputs: Seq[Seq[Seq[Expression]]],
       notMatchedConditions: Seq[Expression],
-      notMatchedOutputs: Seq[Seq[Expression]],
+      notMatchedOutputs: Seq[Seq[Seq[Expression]]],
       noopCopyOutput: Seq[Expression],
       deleteRowOutput: Seq[Expression],
       joinedAttributes: Seq[Attribute],
@@ -775,20 +812,21 @@ object MergeIntoCommand {
       val targetRowHasNoMatchPred = generatePredicate(targetRowHasNoMatch)
       val sourceRowHasNoMatchPred = generatePredicate(sourceRowHasNoMatch)
       val matchedPreds = matchedConditions.map(generatePredicate)
-      val matchedProjs = matchedOutputs.map(generateProjection)
+      val matchedProjs = matchedOutputs.map(_.map(generateProjection))
       val notMatchedPreds = notMatchedConditions.map(generatePredicate)
-      val notMatchedProjs = notMatchedOutputs.map(generateProjection)
+      val notMatchedProjs = notMatchedOutputs.map(_.map(generateProjection))
       val noopCopyProj = generateProjection(noopCopyOutput)
       val deleteRowProj = generateProjection(deleteRowOutput)
       val outputProj = UnsafeProjection.create(outputRowEncoder.schema)
 
+      // this is accessing ROW_DROPPED_COL
       def shouldDeleteRow(row: InternalRow): Boolean =
-        row.getBoolean(outputRowEncoder.schema.fields.size)
+        row.getBoolean(outputRowEncoder.schema.fields.size - 3)
 
-      def processRow(inputRow: InternalRow): InternalRow = {
+      def processRow(inputRow: InternalRow): Iterator[InternalRow] = {
         if (targetRowHasNoMatchPred.eval(inputRow)) {
           // Target row did not match any source row, so just copy it to the output
-          noopCopyProj.apply(inputRow)
+          Iterator(noopCopyProj.apply(inputRow))
         } else {
           // identify which set of clauses to execute: matched or not-matched ones
           val (predicates, projections, noopAction) = if (sourceRowHasNoMatchPred.eval(inputRow)) {
@@ -805,8 +843,9 @@ object MergeIntoCommand {
           }
 
           pair match {
-            case Some((_, projections)) => projections.apply(inputRow)
-            case None => noopAction.apply(inputRow)
+            case Some((_, projections)) =>
+              projections.map(_.apply(inputRow)).iterator
+            case None => Iterator(noopAction.apply(inputRow))
           }
         }
       }
@@ -815,7 +854,7 @@ object MergeIntoCommand {
       val fromRow = outputRowEncoder.createDeserializer()
       rowIterator
         .map(toRow)
-        .map(processRow)
+        .flatMap(processRow)
         .filter(!shouldDeleteRow(_))
         .map { notDeletedInternalRow =>
           fromRow(outputProj(notDeletedInternalRow))
