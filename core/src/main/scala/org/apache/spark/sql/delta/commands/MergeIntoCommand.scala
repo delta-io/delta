@@ -617,11 +617,10 @@ case class MergeIntoCommand(
       resolveOnJoinedPlan(Seq(condExpr)).head
     }
 
-    // TODO: update name of increment metric column
     val joinedRowEncoder = RowEncoder(joinedPlan.schema)
     val outputRowEncoder = RowEncoder(deltaTxn.metadata.schema
       .add(ROW_DROPPED_COL, DataTypes.BooleanType)
-      .add("INCR_ROW_COUNT_COL", DataTypes.BooleanType)
+      .add(INCR_ROW_COUNT_COL, DataTypes.BooleanType)
       .add(CDC_TYPE_COLUMN_NAME, DataTypes.StringType)
     ).resolveAndBind()
 
@@ -644,7 +643,7 @@ case class MergeIntoCommand(
 
     val outputDF =
       Dataset.ofRows(spark, joinedPlan).mapPartitions(processor.processPartition)(outputRowEncoder)
-        .drop(ROW_DROPPED_COL, "INCR_ROW_COUNT_COL")
+        .drop(ROW_DROPPED_COL, INCR_ROW_COUNT_COL)
     logDebug("writeAllChanges: join output plan:\n" + outputDF.queryExecution)
 
     // Write to Delta
@@ -799,6 +798,7 @@ object MergeIntoCommand {
   val SOURCE_ROW_PRESENT_COL = "_source_row_present_"
   val TARGET_ROW_PRESENT_COL = "_target_row_present_"
   val ROW_DROPPED_COL = "_row_dropped_"
+  val INCR_ROW_COUNT_COL = "_incr_row_count_"
 
   class JoinedRowProcessor(
       targetRowHasNoMatch: Expression,
